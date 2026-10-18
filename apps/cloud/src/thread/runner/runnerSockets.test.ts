@@ -1,11 +1,15 @@
 import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
-import { RUNNER_PROTOCOL_VERSION } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { requestCancellation } from "../preparationTesting.ts";
 
 import type * as ThreadRunner from "./ThreadRunner.ts";
+import { terminalTestServices } from "../TerminalTesting.ts";
+import {
+  MIN_RUNNER_PROTOCOL_VERSION,
+  RUNNER_PROTOCOL_VERSION,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   capabilities,
   claudeDriver,
@@ -124,6 +128,54 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect.each([MIN_RUNNER_PROTOCOL_VERSION, RUNNER_PROTOCOL_VERSION])(
+    "does not hold an unsupported terminal on a protocol %s runner",
+    (protocolVersion) =>
+      withObject(
+        freshDatabase(),
+        (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const plan = yield* runner.reconcile;
+            if (plan.ensure === null) throw new Error("expected a machine request");
+            const { terminals, store: records } = terminalTestServices(context);
+            yield* terminals.open(owner, { threadId, terminalId: "before-hello", cwd: "/scratch" });
+            const socket = fakeSocket();
+            const host = yield* hostFor(runner, [socket.socket], undefined, terminals);
+            const { terminalProcessId: _processId, ...request } = hello(
+              plan.ensure.generation,
+              plan.ensure.token,
+            );
+            yield* say(host, socket, { ...request, protocolVersion });
+            expect(yield* records.get("before-hello")).toMatchObject({ status: "error" });
+            yield* terminals.close(owner, { threadId, terminalId: "before-hello" });
+            yield* terminals.open(owner, { threadId, terminalId: "after-hello", cwd: "/scratch" });
+            yield* Effect.promise(() => pushRunnerWork(host));
+            expect(yield* records.get("after-hello")).toMatchObject({ status: "error" });
+            yield* terminals.close(owner, { threadId, terminalId: "after-hello" });
+            expect(yield* records.get("after-hello")).toMatchObject({ status: "closed" });
+            expect(yield* terminals.held).toBe(false);
+            expect(socket.sent.some((message) => message.type === "terminal.command")).toBe(false);
+          }),
+        { drives: true },
+      ),
+  );
+  it.effect("ignores retirement from a socket replaced by a reconnect", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { host, socket, generation, token, turn } = yield* runningTurn(engine, runner, false);
+        const replacement = fakeSocket();
+        host.ctx.getWebSockets("runner").push(replacement.socket);
+        yield* say(host, replacement, {
+          ...hello(generation, token),
+          takenRunIds: [turn.runId],
+        });
+        yield* say(host, socket, { type: "end", reason: "old connection stopped" });
+        expect((yield* runner.work).activeRunId).toBe(turn.runId);
+        expect((yield* runner.reconcile).release).toBeNull();
+      }),
+    ),
+  );
   it.effect(
     "sends addressed cancellation and a fresh same-run generation, granting handoff only after ready",
     () =>

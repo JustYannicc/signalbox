@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "c1cd1923"
+      "output": "bbb5401f"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "c1cd1923"
+      "output": "bbb5401f"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "db56df35"
+      "output": "9bf1970f"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -217,7 +217,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "25c7d51b"
+      "output": "4984b08b"
     },
     {
       "name": "automations.notices",
@@ -232,14 +232,14 @@
       "rpc": "automations.publish",
       "access": "write",
       "input": "b3f469e7",
-      "output": "c1cd1923"
+      "output": "bbb5401f"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "c1cd1923"
+      "output": "bbb5401f"
     },
     {
       "name": "automations.run",
@@ -276,21 +276,21 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "07cb0ccd"
+      "output": "ab296cc7"
     },
     {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "c1cd1923"
+      "output": "bbb5401f"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "c1cd1923"
+      "output": "bbb5401f"
     },
     {
       "name": "automations.stopAttached",
@@ -298,6 +298,13 @@
       "access": "write",
       "input": "1276a316",
       "output": "78961bd6"
+    },
+    {
+      "name": "automations.taskLifecycle",
+      "rpc": "automations.taskLifecycle",
+      "access": "write",
+      "input": "3213177c",
+      "output": "0f37fbd8"
     },
     {
       "name": "automations.validate",
@@ -1164,7 +1171,7 @@
       "name": "provider.uploadFeedback",
       "rpc": "provider.uploadFeedback",
       "access": "write",
-      "input": "d0c0d40f",
+      "input": "46ba7a16",
       "output": "597e8af2"
     },
     {
@@ -1185,7 +1192,7 @@
       "name": "pullRequests.comment",
       "rpc": "pullRequests.comment",
       "access": "write",
-      "input": "fa46166d",
+      "input": "a9574c96",
       "output": "794c92c1"
     },
     {
@@ -1346,7 +1353,7 @@
       "name": "pullRequests.submitReview",
       "rpc": "pullRequests.submitReview",
       "access": "write",
-      "input": "69ff938f",
+      "input": "366b3a10",
       "output": "794c92c1"
     },
     {
@@ -1720,14 +1727,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "0640135d",
-      "output": "5e95f168"
+      "output": "919dd194"
     },
     {
       "name": "terminal.open",
       "rpc": "terminal.open",
       "access": "write",
       "input": "95f54c5d",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.resize",
@@ -1741,13 +1748,13 @@
       "rpc": "terminal.restart",
       "access": "write",
       "input": "5a677a5f",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.write",
       "rpc": "terminal.write",
       "access": "write",
-      "input": "db19ce54",
+      "input": "7554b8ff",
       "output": "794c92c1"
     },
     {
@@ -1756,7 +1763,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "b6f8ae30"
+      "output": "af17df5c"
     },
     {
       "name": "terminalMetadata.subscribe",
@@ -1764,7 +1771,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "fd689900"
+      "output": "dd899e48"
     },
     {
       "name": "threadKinds.list",
@@ -2106,7 +2113,7 @@
       "rpc": "orchestration.dispatchCommand",
       "command": "thread.settle",
       "access": "write",
-      "input": "b1be93e6",
+      "input": "b3fd246d",
       "output": "c5e5cd7a"
     },
     {
@@ -2217,6 +2224,46 @@
       "access": "write",
       "input": "a63efefe",
       "output": "aaa9ffaf"
+    },
+    {
+      "name": "trash.empty",
+      "rpc": "signalbox.trash.empty",
+      "access": "write",
+      "destructive": true,
+      "input": "6b3c9036",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.folder",
+      "rpc": "signalbox.trash.folder",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "fc93b206",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.list",
+      "rpc": "signalbox.trash.list",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.restore",
+      "rpc": "signalbox.trash.restore",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.thread",
+      "rpc": "signalbox.trash.thread",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "1236b61d",
+      "output": "7b32ad46"
     },
     {
       "name": "usage.refreshRates",

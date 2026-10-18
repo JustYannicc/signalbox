@@ -51,10 +51,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "pullRequests.generateReviewGuide": gap("#815"),
   "pullRequests.filesViewed": gap("#815"),
   "pullRequests.setFilesViewed": gap("#815"),
-  "pullRequests.comment": gap("#816"),
-  "pullRequests.updateComment": gap("#816"),
-  "pullRequests.submitReview": gap("#816"),
-  "pullRequests.setReaction": gap("#816"),
   "pullRequests.runAction": gap("#817"),
   "pullRequests.update": gap("#817"),
   "pullRequests.reviewerCandidates": gap("#817"),
@@ -66,17 +62,14 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Git beyond the thread's own branch.
   "sourceControl.cloneRepository": githubImports,
-  "sourceControl.publishRepository": gap("#810"),
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),
   "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
-  "assets.persistChatAttachments": gap("#813"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "pools.advice": gap("#819"),
   "provider.auth.respond": gap("#205"),
   "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
@@ -85,7 +78,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   ),
   "provider.consumeResetCredit": gap("#820"),
   "provider.install.*": poolHarnesses,
-  "provider.uploadFeedback": gap("#822"),
   "server.updateProvider": poolHarnesses,
 
   "acpRegistry.*": exempt("ACP agents install on a host; cloud threads run on pool harnesses."),
@@ -106,9 +98,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "server.updateServer": selfDeploying,
   "server.updateServerWithProgress": selfDeploying,
   "storage.*": noHost,
-  "terminal.*": gap("#744"),
-  "terminalEvents.subscribe": gap("#744"),
-  "terminalMetadata.subscribe": gap("#744"),
   "usage.*": gap("#786"),
   "vcs.createRef": ownBranch,
   "vcs.switchRef": ownBranch,

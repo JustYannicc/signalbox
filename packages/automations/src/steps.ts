@@ -62,7 +62,7 @@ export const wakeAt = (options: unknown) =>
   });
 
 /** Now plus `ms`, as stored in `wake_at`. */
-export const afterMs = (ms: number) =>
+const afterMs = (ms: number) =>
   DateTime.now.pipe(
     Effect.map((now) => DateTime.formatIso(DateTime.add(now, { milliseconds: ms }))),
   );

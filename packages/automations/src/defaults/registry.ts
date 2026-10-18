@@ -1,6 +1,8 @@
 import type { AutomationBuiltIn } from "@t3tools/contracts";
 
 import { MERGE_GATE } from "./mergeGate.ts";
+import { SETTLE_TASK } from "./settleTask.ts";
+import { TASK_DONE } from "./taskDone.ts";
 import { PAYMENT } from "./payment.ts";
 import { WAIT_FOR } from "./waitFor.ts";
 import { WATCH_PULL_REQUEST } from "./watchPullRequest.ts";
@@ -25,9 +27,27 @@ export interface BuiltInAutomation {
   readonly name: string;
   readonly description: string;
   readonly source: string;
+  /** Domain events that install this default in the thread's folder before delivery. */
+  readonly defaultOn?: ReadonlyArray<string>;
 }
 
 export const BUILT_IN_AUTOMATIONS: ReadonlyArray<BuiltInAutomation> = [
+  {
+    slug: "task-done",
+    name: "Task done",
+    description:
+      "Proposes an editable done-condition and archives the task with an outcome when it holds.",
+    source: TASK_DONE,
+    defaultOn: ["thread.created", "thread.pull-request-link-updated", "run.updated"],
+  },
+  {
+    slug: "settle-task",
+    name: "Settle task",
+    description:
+      "Records why a task was settled early, finishes work that is done enough, and asks quietly when the reason is unclear.",
+    source: SETTLE_TASK,
+    defaultOn: ["thread.settled"],
+  },
   {
     slug: "watch-pull-request",
     name: "Watch pull request",

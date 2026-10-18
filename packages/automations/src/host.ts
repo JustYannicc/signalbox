@@ -8,6 +8,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2CreationSource,
   OrchestrationV2DomainEvent,
+  OrchestrationV2Command,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
@@ -31,8 +32,7 @@ import type { Envelope } from "./events/eventTriggers.ts";
 import type { WorkflowStore } from "./WorkflowStore.ts";
 
 /**
- * What the automation engine needs from the environment hosting it: a
- * self-hosted server (`serverHost.ts`) or a user's cloud object. The engine
+ * What the automation engine needs from its cloud object. The engine
  * reaches threads, the machine, compiling and its log sink only through
  * these, so each host decides how they work there.
  */
@@ -127,6 +127,24 @@ export interface AutomationThreadsShape {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<void, AutomationError>;
+  /** Lifecycle commands keep their snapshot guards in the host's event-sourced decider. */
+  readonly dispatchLifecycle?: (
+    command: Extract<
+      OrchestrationV2Command,
+      {
+        readonly type:
+          | "thread.settle"
+          | "thread.auto-settle"
+          | "thread.unsettle"
+          | "thread.unarchive"
+          | "thread.auto-settle.set";
+      }
+    >,
+  ) => Effect.Effect<void, AutomationError>;
+  /** Cloud kinds exclude chats from task defaults; servers without kinds treat threads as tasks. */
+  readonly getTaskKind?: (threadId: ThreadId) => Effect.Effect<"chat" | "task", AutomationError>;
+  /** False where `w.llm`/`judge`/`extract` can't run; built-ins then skip their model steps. */
+  readonly modelSteps?: boolean;
   /** Every domain event of the host's threads, live from when it's run. */
   readonly domainEvents: Stream.Stream<OrchestrationV2DomainEvent, AutomationError>;
   /** The attached runs a thread lists now; an empty list clears them. */

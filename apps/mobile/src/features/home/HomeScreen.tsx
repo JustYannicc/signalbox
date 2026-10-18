@@ -591,7 +591,10 @@ export function HomeScreen(props: HomeScreenProps) {
     threadListInboxReturns.observe(workingShelfEnabled ? props.threads : null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: folderScope.threads.filter((thread) => thread.archivedAt === null),
+      // signalbox: settled tasks are archived but stay on the settled shelf.
+      threads: folderScope.threads.filter(
+        (thread) => thread.archivedAt === null || thread.settledOverride === "settled",
+      ),
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -906,7 +909,9 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
+    props.threads.some(
+      (thread) => thread.archivedAt === null || thread.settledOverride === "settled", // signalbox: settled tasks
+    ) || props.pendingTasks.length > 0;
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null

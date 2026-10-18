@@ -1155,7 +1155,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
-  it.effect("dismisses message-capable questions directly and while settling", () =>
+  it.effect("dismisses message-capable questions directly and while early settling", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -1282,6 +1282,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         type: "thread.settle",
         commandId: CommandId.make("runtime-settle-question-command"),
         threadId: settled.threadId,
+        stopWork: true,
       });
       const settledProjection = yield* orchestrator.getThreadProjection(settled.threadId);
       assert.equal(settledProjection.thread.settledOverride, "settled");
@@ -1951,6 +1952,121 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(projection.thread.modelSelection.model, "gpt-5.5");
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
+    }),
+  );
+
+  it.effect("archives a task only for its current idle snapshot and reopens it reversibly", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-task-lifecycle-project");
+      const threadId = ThreadId.make("runtime-layer-task-lifecycle-thread");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-task-lifecycle-create"),
+        threadId,
+        projectId,
+        title: "Finish the lifecycle work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "task-lifecycle",
+        worktreePath: "/tmp/task-lifecycle",
+      });
+
+      const initial = yield* orchestrator.getThreadProjection(threadId);
+      const stale = yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-task-lifecycle-stale"),
+        threadId,
+        snapshotAt: DateTime.subtract(initial.thread.updatedAt, { milliseconds: 1 }),
+      });
+      assert.include(
+        stale.storedEvents.map((stored) => stored.event.type),
+        "thread.metadata-updated",
+      );
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+
+      const current = yield* orchestrator.getThreadProjection(threadId);
+      const completed = yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-task-lifecycle-complete"),
+        threadId,
+        snapshotAt: current.thread.updatedAt,
+      });
+      assert.include(
+        completed.storedEvents.map((stored) => stored.event.type),
+        "thread.settled",
+      );
+      const archived = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNotNull(archived.thread.archivedAt);
+      assert.equal(archived.thread.settledOverride, "settled");
+      assert.isNotNull(archived.thread.settledAt);
+      assert.include(
+        (yield* orchestrator.getShellSnapshot()).archivedThreads.map((thread) => thread.id),
+        threadId,
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-task-lifecycle-unarchive"),
+        threadId,
+      });
+      const reopened = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(reopened.thread.archivedAt);
+      assert.equal(reopened.thread.settledOverride, "active");
+      assert.isNull(reopened.thread.settledAt);
+      assert.include(
+        (yield* orchestrator.getShellSnapshot()).threads.map((thread) => thread.id),
+        threadId,
+      );
+      assert.equal(reopened.thread.title, archived.thread.title);
+      assert.equal(reopened.thread.branch, archived.thread.branch);
+      assert.equal(reopened.thread.worktreePath, archived.thread.worktreePath);
+      assert.deepEqual(reopened.messages, archived.messages);
+      assert.deepEqual(reopened.runs, archived.runs);
+
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-task-lifecycle-manual-settle"),
+        threadId,
+      });
+      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-task-lifecycle-manual-reopen"),
+        threadId,
+      });
+
+      const settledAgain = yield* orchestrator.getThreadProjection(threadId);
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-task-lifecycle-complete-again"),
+        threadId,
+        snapshotAt: settledAgain.thread.updatedAt,
+      });
+      const sent = yield* threadManagement.sendToThread({
+        projectId,
+        commandId: CommandId.make("runtime-layer-task-lifecycle-user-reply"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-task-lifecycle-user-reply"),
+        text: "One more thing.",
+        attachments: [],
+        mode: "auto",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.include(
+        sent.dispatch.storedEvents.map((stored) => stored.event.type),
+        "thread.unarchived",
+      );
+      assert.isNull(sent.projection.thread.archivedAt);
+      assert.isNull(sent.projection.thread.settledOverride);
+      assert.isNull(sent.projection.thread.settledAt);
+      assert.equal(sent.projection.thread.branch, "task-lifecycle");
+      assert.isTrue(sent.projection.messages.some((message) => message.id === sent.message.id));
     }),
   );
 
@@ -3322,6 +3438,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("rejects settling a thread while a run is active", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const threadId = ThreadId.make("runtime-layer-active-settle-thread");
 
       yield* orchestrator.dispatch({
@@ -3355,6 +3472,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-active-settle-queued-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-active-settle-queued-message"),
+        text: "Keep this queued message.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
 
       const nonEmptyClaim = yield* orchestrator
         .dispatch({
@@ -3366,6 +3495,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.instanceOf(nonEmptyClaim, Orchestrator.OrchestratorDispatchError);
+
+      const activeSnapshot = yield* orchestrator.getThreadProjection(threadId);
+      const skippedCompletion = yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-active-settle-done-condition"),
+        threadId,
+        stopWork: true,
+        snapshotAt: activeSnapshot.thread.updatedAt,
+      });
+      assert.include(
+        skippedCompletion.storedEvents.map((stored) => stored.event.type),
+        "thread.metadata-updated",
+      );
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
 
       const error = yield* orchestrator
         .dispatch({
@@ -3382,6 +3525,40 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNull(projection.thread.settledOverride);
       assert.isNull(projection.thread.settledAt);
       assert.isNotNull(projection.thread.unsettledAt);
+
+      const earlyCommandId = CommandId.make("runtime-layer-active-settle-early");
+      const early = yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: earlyCommandId,
+        threadId,
+        stopWork: true,
+      });
+      assert.include(
+        early.storedEvents.map((stored) => stored.event.type),
+        "thread.settled",
+      );
+      assert.include(
+        early.storedEvents.map((stored) => stored.event.type),
+        "run.updated",
+      );
+      assert.isTrue(early.storedEvents.every((stored) => stored.commandId === earlyCommandId));
+
+      const earlyProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(earlyProjection.runs[0]?.status, "interrupted");
+      assert.equal(earlyProjection.runs[1]?.status, "queued");
+      assert.isTrue(earlyProjection.runs[1]?.queueHeld);
+      assert.equal(
+        earlyProjection.messages.find(
+          (message) => message.id === MessageId.make("runtime-layer-active-settle-queued-message"),
+        )?.text,
+        "Keep this queued message.",
+      );
+      assert.equal(earlyProjection.thread.settledOverride, "settled");
+      assert.isNotNull(earlyProjection.thread.archivedAt);
+      assert.include(
+        (yield* outbox.listByCommandId(earlyCommandId)).map((effect) => effect.request.type),
+        "delegated-tasks.stop",
+      );
     }),
   );
 

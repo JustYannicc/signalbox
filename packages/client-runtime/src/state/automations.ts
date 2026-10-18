@@ -180,6 +180,11 @@ export function createAutomationAtoms<R, E>(
       label: "environment-data:automations:answer",
       tag: AUTOMATION_WS_METHODS.automationsAnswer,
     }),
+    /** Read or change a task's completion condition, settlement, or archive state. */
+    taskLifecycle: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:automations:task-lifecycle",
+      tag: AUTOMATION_WS_METHODS.automationsTaskLifecycle,
+    }),
   };
 }
 

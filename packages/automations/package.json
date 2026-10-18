@@ -13,14 +13,12 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
-    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
-    "evlog": "2.30.0",
-    "quickjs-emscripten-core": "0.32.0"
+    "evlog": "2.30.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

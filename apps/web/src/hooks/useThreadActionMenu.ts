@@ -8,6 +8,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
+import {
   AuthOrchestrationOperateScope,
   type ScopedThreadRef,
   type ThreadId,
@@ -36,6 +40,8 @@ import {
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentServerConfigsAtom } from "../state/server";
 import { readLocalApi } from "../localApi";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -302,11 +308,14 @@ export function useThreadActionMenu(input: {
         }
         case "delete": {
           if (confirmThreadDelete) {
+            const cloud = serverConfigSupportsSignalboxTrash(
+              appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId),
+            );
             const confirmed = await settlePromise(() =>
               api.dialogs.confirm(
                 [
                   `Delete thread "${thread.title}"?`,
-                  "This permanently clears conversation history for this thread.",
+                  threadDeleteConfirmationMessage({ cloud, other: !cloud, scope: "thread" }),
                 ].join("\n"),
                 { variant: "destructive" },
               ),

@@ -1,4 +1,7 @@
-import { fetchAccountSessionState } from "@t3tools/client-runtime/account";
+import {
+  fetchAccountSessionState,
+  startGitHubNativeConnect,
+} from "@t3tools/client-runtime/account";
 import {
   ACCOUNT_SIGN_OUT_PATH,
   type AccountProfile,
@@ -68,4 +71,50 @@ export async function signOutAccount(httpBaseUrl: string, token: string): Promis
     { method: "POST", headers: bearerHeaders(token) },
   );
   if (!response.ok) throw new Error(`Sign-out failed (${response.status}).`);
+}
+
+function parseUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Asks the environment, with its own bearer session, for a one-time link that connects this
+ * person's GitHub in a browser and comes back to `returnUrl`. Throws with a message fit to show.
+ */
+export async function startGitHubConnect(
+  httpBaseUrl: string,
+  token: string,
+  returnUrl: string,
+): Promise<string> {
+  const status = { current: null as number | null };
+  let link: string;
+  try {
+    link = await startGitHubNativeConnect(httpBaseUrl, token, returnUrl, {
+      fetch: fetchWithTimeout(status, REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    if (status.current === null) {
+      throw new Error("Couldn’t reach Signalbox to connect GitHub. Try again.");
+    }
+    if (status.current < 200 || status.current >= 300) {
+      throw new Error(`Couldn’t start connecting GitHub (${status.current}).`);
+    }
+    // A 2xx the shared helper couldn’t decode: no link to open.
+    link = "";
+  }
+  const url = parseUrl(link);
+  if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) {
+    throw new Error("Signalbox sent a connect link this app can’t open.");
+  }
+  return url.toString();
+}
+
+/** How connecting ended, from `?github=` on the return URL. Anything else counts as failed. */
+export function parseGitHubConnectReturn(url: string): "connected" | "cancelled" | "failed" {
+  const outcome = parseUrl(url)?.searchParams.get("github");
+  return outcome === "connected" || outcome === "cancelled" ? outcome : "failed";
 }

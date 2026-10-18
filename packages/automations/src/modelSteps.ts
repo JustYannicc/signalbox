@@ -4,8 +4,8 @@ import { toJson } from "./json.ts";
 import { jsonModelOutput, judgeVerdict } from "./modelOutput.ts";
 
 /**
- * Model steps use supplied text only. Hosts with a model gateway call it
- * directly; self-hosted servers retain their plan-mode thread adapter.
+ * Model steps use supplied text only. The cloud calls its model gateway
+ * without giving it tools or access to the workspace.
  */
 
 const MODEL_VERBS = new Set(["llm", "judge", "extract"] as const);

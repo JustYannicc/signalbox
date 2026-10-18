@@ -1650,7 +1650,10 @@ export default function ChatView(props: ChatViewProps) {
     container: workspaceLayoutElement,
     widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
   });
-  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const liveActiveThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  // signalbox: a settled task is archived (#671) and only has its detail shell.
+  const activeThreadShell =
+    liveActiveThreadShell ?? (serverThreadShell === null ? serverThread : null);
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&

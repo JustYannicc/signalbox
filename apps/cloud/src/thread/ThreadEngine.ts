@@ -38,6 +38,7 @@ import type {
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
+import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -70,7 +71,7 @@ import { commandOutputStream } from "./commandOutput/outputStream.ts";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { decide, decideLaunch, type Decision, type ThreadWorktree } from "./threadDecider.ts";
-import type { DecisionContext } from "./threadEvents.ts";
+import { threadEvent, type DecisionContext } from "./threadEvents.ts";
 import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
 import { activeRun } from "./runLifecycle.ts";
 import * as ThreadSecretStore from "./secrets/ThreadSecretStore.ts";
@@ -79,6 +80,7 @@ import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadP
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as ThreadTrash from "./threadTrash.ts";
 import * as PullState from "./PullState.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
@@ -103,7 +105,12 @@ import {
   documentsForItems,
   documentsForProjection,
 } from "./searchDocuments.ts";
-import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
+import type {
+  ThreadMonitor,
+  ThreadSnapshotWire,
+  ThreadSummaryWire,
+  ThreadWorkspace,
+} from "./threadWire.ts";
 
 /**
  * One thread's orchestration, inside its Durable Object. Commands and provider
@@ -126,7 +133,7 @@ export { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./T
  */
 export interface ThreadCreation {
   readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
-  /** The branch and worktree a new thread gets, when its drive has threads work on their own branch. */
+  /** Server-resolved workspace, including an existing local thread adopting its drive's remote. */
   readonly worktree?: ThreadWorktree | null;
   /**
    * What the owner's tree resolves each project to (`turnPool.ts`), for a
@@ -215,6 +222,24 @@ export class ThreadEngine extends Context.Service<
       OrchestrationV2ThreadLaunchResult,
       ThreadNotFoundError | ThreadCommandRejectedError
     >;
+    readonly trash: (
+      actor: Actor,
+      input: { readonly trashId: string; readonly deletedAt: number; readonly purgeAfter: number },
+    ) => Effect.Effect<
+      ThreadStore.ThreadTrashReceipt,
+      ThreadNotFoundError | ThreadCommandRejectedError
+    >;
+    readonly restoreTrash: (
+      actor: Actor,
+      trashId: string,
+    ) => Effect.Effect<
+      ThreadStore.ThreadTrashReceipt,
+      ThreadNotFoundError | ThreadCommandRejectedError
+    >;
+    readonly purgeTrash: (
+      actor: Actor,
+      input: { readonly trashId: string; readonly empty?: boolean | undefined },
+    ) => Effect.Effect<never, ThreadNotFoundError | ThreadCommandRejectedError>;
     readonly preparation: Effect.Effect<PreparationState | null>;
     readonly subscribePreparation: (
       actor: Actor,
@@ -243,6 +268,7 @@ export class ThreadEngine extends Context.Service<
       OrchestrationV2CommandOutputError | ThreadNotFoundError
     >;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
+    readonly workspace: (actor: Actor) => Effect.Effect<ThreadWorkspace, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
      * the completion marker when asked for, then live batches as they commit.
@@ -727,7 +753,7 @@ const make = Effect.gen(function* () {
   const readable = (actor: Actor) =>
     Effect.flatMap(Ref.get(state), (current) => {
       const thread = visibleTo(current, actor);
-      return thread === null
+      return thread === null || thread.projection.thread.deletedAt !== null
         ? Effect.fail(new ThreadNotFoundError())
         : Effect.succeed({ head: current.head, projection: thread.projection });
     });
@@ -768,6 +794,9 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
         }
+        if (current.thread !== null && current.thread.projection.thread.deletedAt !== null) {
+          return yield* ThreadCommandRejectedError.forCommand(command, "This thread is in Trash.");
+        }
         const { place } = creation;
         if (current.thread === null && place === null) {
           return yield* ThreadCommandRejectedError.forCommand(command, NO_CONTEXT);
@@ -777,12 +806,48 @@ const make = Effect.gen(function* () {
           creation.pools === null || projectId === undefined
             ? undefined
             : forThread(creation.pools, projectId);
-        const decision = decideWith(
-          current.thread?.projection ?? null,
-          yield* context,
-          pool,
-          current.preparation,
-        );
+        const ctx = yield* context;
+        let projection = current.thread?.projection ?? null;
+        const adoption: Array<OrchestrationV2DomainEvent> = [];
+        if (
+          current.thread !== null &&
+          projection !== null &&
+          projection.thread.branch === null &&
+          projection.thread.worktreePath === null &&
+          creation.worktree != null
+        ) {
+          const driveId = current.thread.owner.driveId;
+          if (driveId === null) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              "This thread has no drive.",
+            );
+          }
+          const expected = remoteThreadWorktree(driveId, projection.thread.id);
+          if (
+            creation.worktree.branch !== expected.branch ||
+            creation.worktree.path !== expected.path
+          ) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              "Invalid remote workspace.",
+            );
+          }
+          adoption.push(
+            threadEvent(ctx, "thread.metadata-updated", {
+              ...projection.thread,
+              branch: expected.branch,
+              worktreePath: expected.path,
+              updatedAt: ctx.now,
+            }),
+          );
+          projection = applyEvents(projection, adoption);
+        }
+        const decided = decideWith(projection, ctx, pool, current.preparation);
+        const decision =
+          decided._tag === "accepted"
+            ? { ...decided, events: [...adoption, ...decided.events] }
+            : decided;
         const refuse = (message: string, options: { readonly record: boolean }) =>
           Effect.gen(function* () {
             // Only a thread that exists keeps receipts; an unknown id leaves no trace.
@@ -894,11 +959,11 @@ const make = Effect.gen(function* () {
           typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
         return decide(
           projection,
-          onItsPool.type === "thread.create" && creation.worktree
+          onItsPool.type === "thread.create"
             ? {
                 ...onItsPool,
-                branch: creation.worktree.branch,
-                worktreePath: creation.worktree.path,
+                branch: creation.worktree?.branch ?? null,
+                worktreePath: creation.worktree?.path ?? null,
               }
             : onItsPool,
           ctx,
@@ -942,6 +1007,64 @@ const make = Effect.gen(function* () {
       const { projection } = yield* readable(actor);
       return { threadId: input.threadId, projection, resumed: result.replayed };
     });
+
+  const trash: ThreadEngine["Service"]["trash"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = visibleTo(current, actor);
+        if (thread === null) return yield* new ThreadNotFoundError();
+        const receipt = yield* Effect.orDie(store.beginTrash(input));
+        if (receipt.trashId !== input.trashId) {
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: input.trashId, type: "thread.trash" },
+            "A different trash entry already owns this thread.",
+          );
+        }
+        if (receipt.state === "trashed" && thread.projection.thread.deletedAt === null) {
+          yield* commit({ events: ThreadTrash.trashEvents(thread.projection, input.deletedAt) });
+        }
+        return receipt;
+      }),
+    );
+
+  const restoreTrash: ThreadEngine["Service"]["restoreTrash"] = (actor, trashId) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = visibleTo(current, actor);
+        if (thread === null) return yield* new ThreadNotFoundError();
+        const receipt = yield* Effect.orDie(store.restoreTrash(trashId));
+        const active = yield* Effect.orDie(store.currentTrash);
+        if (
+          receipt === null ||
+          active?.trashId !== trashId ||
+          active.generation !== receipt.generation
+        ) {
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: trashId, type: "thread.restore" },
+            "That trash entry no longer owns this thread.",
+          );
+        }
+        if (thread.projection.thread.deletedAt !== null) {
+          const events = ThreadTrash.restoreEvents(thread.projection, yield* DateTime.now);
+          if (events.length > 0) yield* commit({ events });
+        }
+        return receipt;
+      }),
+    );
+
+  const purgeTrash: ThreadEngine["Service"]["purgeTrash"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        if (visibleTo(current, actor) === null) return yield* new ThreadNotFoundError();
+        return yield* ThreadCommandRejectedError.forCommand(
+          { id: input.trashId, type: "thread.purge" },
+          "Permanent thread cleanup is not enabled yet.",
+        );
+      }),
+    );
 
   const preparation: ThreadEngine["Service"]["preparation"] = Effect.map(
     Ref.get(state),
@@ -1163,6 +1286,13 @@ const make = Effect.gen(function* () {
   const snapshot: ThreadEngine["Service"]["snapshot"] = (actor) =>
     Effect.map(readable(actor), ({ head, projection }) => ({ snapshotSequence: head, projection }));
 
+  const workspace: ThreadEngine["Service"]["workspace"] = (actor) =>
+    Effect.map(readable(actor), ({ projection: { thread } }) => ({
+      projectId: thread.projectId,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+    }));
+
   const subscribe: ThreadEngine["Service"]["subscribe"] = (actor, input) =>
     serialized(
       Effect.gen(function* () {
@@ -1246,7 +1376,8 @@ const make = Effect.gen(function* () {
   const step: ThreadEngine["Service"]["step"] = serialized(
     Effect.gen(function* () {
       const current = yield* Ref.get(state);
-      if (current.thread === null) return false;
+      if (current.thread === null || current.thread.projection.thread.deletedAt !== null)
+        return false;
       const events = scriptedStep(current.thread.projection, yield* context);
       if (events.length > 0) yield* commit({ events });
       const after = yield* Ref.get(state);
@@ -1261,7 +1392,10 @@ const make = Effect.gen(function* () {
 
   const hasTurnWork: ThreadEngine["Service"]["hasTurnWork"] = Effect.map(
     Ref.get(state),
-    (current) => current.thread !== null && hasPendingTurnWork(current.thread.projection),
+    (current) =>
+      current.thread !== null &&
+      current.thread.projection.thread.deletedAt === null &&
+      hasPendingTurnWork(current.thread.projection),
   );
 
   const summaryOf = (
@@ -1460,7 +1594,10 @@ const make = Effect.gen(function* () {
     });
 
   const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
-    Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
+    Effect.map(Ref.get(state), (current) => {
+      const thread = visibleTo(current, actor);
+      return thread !== null && thread.projection.thread.deletedAt === null;
+    });
 
   return ThreadEngine.of({
     preparation,
@@ -1471,7 +1608,11 @@ const make = Effect.gen(function* () {
     stopWorkflow,
     dispatch,
     launch,
+    trash,
+    restoreTrash,
+    purgeTrash,
     snapshot,
+    workspace,
     commandOutput,
     subscribe,
     apply,

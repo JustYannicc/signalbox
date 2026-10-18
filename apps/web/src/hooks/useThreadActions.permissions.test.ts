@@ -36,6 +36,8 @@ const state = vi.hoisted(() => ({
   toasts: [] as string[],
   afterRequest: undefined as ((action: string) => void) | undefined,
   sessionLookupFails: false,
+  failDelete: false,
+  serverConfigs: new Map<string, { environment: { capabilities: { folders: boolean } } }>(),
 }));
 
 vi.mock("react", () => ({
@@ -51,6 +53,12 @@ vi.mock("../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
 }));
+vi.mock("../state/server", () => ({ environmentServerConfigsAtom: "server-configs" }));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: {
+    get: (atom: string) => (atom === "server-configs" ? state.serverConfigs : undefined),
+  },
+}));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
     (action: string) =>
@@ -60,6 +68,9 @@ vi.mock("../state/use-atom-command", () => ({
         action === "removeWorktree" ? AuthSourceControlWriteScope : AuthOrchestrationOperateScope;
       if (!state.scopes.get(request.environmentId)?.has(scope)) {
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
+      }
+      if (action === "delete" && state.failDelete) {
+        return AsyncResult.failure(Cause.fail(new Error("Trash rejected the thread")));
       }
       state.afterRequest?.(action);
       return AsyncResult.success(undefined);
@@ -127,6 +138,9 @@ vi.mock("../terminalUiStateStore", () => ({
     select({
       clearTerminalUiState: () => state.localEffects.push("clear-terminal-ui"),
     }),
+}));
+vi.mock("../previewStateStore", () => ({
+  clearThreadPreviewState: () => state.localEffects.push("clear-preview-ui"),
 }));
 vi.mock("../uiStateStore", () => ({
   useUiStateStore: (select: (store: unknown) => unknown) =>
@@ -230,6 +244,11 @@ beforeEach(() => {
   state.toasts = [];
   state.afterRequest = undefined;
   state.sessionLookupFails = false;
+  state.failDelete = false;
+  state.serverConfigs = new Map([
+    [primary, { environment: { capabilities: { folders: false } } }],
+    [secondary, { environment: { capabilities: { folders: false } } }],
+  ]);
 });
 
 describe("thread action permissions", () => {
@@ -330,6 +349,32 @@ describe("thread action permissions", () => {
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
+  });
+
+  it("lets cloud Trash stop the session without local worktree cleanup", async () => {
+    state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
+    state.serverConfigs.set(secondary, { environment: { capabilities: { folders: true } } });
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.threads[0]!.session = { status: "ready" };
+
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
+    expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(state.localEffects).toContain("clear-terminal-ui");
+    expect(state.localEffects).toContain("release-uploads");
+  });
+
+  it("keeps local state and the worktree when cloud Trash rejects deletion", async () => {
+    state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
+    state.serverConfigs.set(secondary, { environment: { capabilities: { folders: true } } });
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.threads[0]!.session = { status: "ready" };
+    state.failDelete = true;
+
+    expect((await useThreadActions().deleteThread(target))._tag).toBe("Failure");
+    expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
+    expect(state.localEffects).toEqual([]);
+    expect(state.threads).toHaveLength(1);
   });
 
   it("does not request worktree removal after its grant is revoked during delete", async () => {

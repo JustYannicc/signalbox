@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import {
+  clearCommentWriteAttempt,
   clearSubmittedReview,
   pullRequestReviewKey,
   ReviewDraftDocument,
@@ -25,6 +26,22 @@ describe("mobile review draft recovery", () => {
   it("round trips renamed/deleted line anchors and a separate unsent PR comment", () => {
     const saved = JSON.stringify({ version: 1, drafts: { key: draft } });
     expect(decodeDocument(JSON.parse(saved)).drafts.key).toEqual(draft);
+  });
+  it("persists failed write attempts and clears them only after the matching success", () => {
+    const attempt = { requestKey: "request", operationId: "operation-1", headSha: "head-a" };
+    const withAttempts: ReviewDraft = {
+      ...draft,
+      reviewWriteAttempt: attempt,
+      commentWriteAttempt: { ...attempt, operationId: "operation-2" },
+    };
+    const restored = decodeDocument(
+      JSON.parse(JSON.stringify({ version: 1, drafts: { key: withAttempts } })),
+    ).drafts.key!;
+
+    expect(restored).toEqual(withAttempts);
+    expect(clearSubmittedReview(restored, draft).reviewWriteAttempt).toBeUndefined();
+    expect(clearCommentWriteAttempt(restored, "other-operation")).toBe(restored);
+    expect(clearCommentWriteAttempt(restored, "operation-2").commentWriteAttempt).toBeUndefined();
   });
   it("rejects a damaged document instead of replacing drafts with an empty file", () => {
     expect(() =>

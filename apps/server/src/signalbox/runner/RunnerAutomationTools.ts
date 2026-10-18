@@ -35,6 +35,7 @@ import type { DrivesView } from "./RunnerDrivesView.ts";
  */
 const FORWARDED = [
   "automation_list",
+  "task_lifecycle",
   "automation_read",
   "automation_publish",
   "automation_discard_draft",

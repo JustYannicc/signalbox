@@ -8,6 +8,7 @@ import { driveOfProject } from "../user/contextProjects.ts";
 import * as UserContexts from "../user/UserContexts.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
+import * as UserFolders from "../user/UserFolders.ts";
 import type { SearchHome } from "./SearchIndex.ts";
 import { searchHomeForThread } from "./searchHome.ts";
 import { SearchIndexError } from "./SearchIndex.ts";
@@ -37,6 +38,7 @@ const make = Effect.gen(function* () {
   const store = yield* UserStore.UserStore;
   const contexts = yield* UserContexts.UserContexts;
   const drives = yield* UserDrives.UserDrives;
+  const folders = yield* UserFolders.UserFolders;
   return SearchAuthority.of({
     current: (actor) =>
       Effect.gen(function* () {
@@ -53,6 +55,9 @@ const make = Effect.gen(function* () {
         if (profile?.id !== actor.userId)
           return { actor: currentActor, revision, grants: [], homes: [] };
         const index = yield* store.threadIndex;
+        const folderTrashes = yield* folders.activeTrashes;
+        const hiddenThreads = new Set(folderTrashes.flatMap((trash) => trash.threadIds));
+        const hiddenDrives = new Set(folderTrashes.flatMap((trash) => trash.driveIds));
         const homes = new Map<string, { home: SearchHome; threadIds: Array<string> }>();
         const access = new Map<string, boolean>();
         const grants: Array<SearchHome> = [];
@@ -72,6 +77,12 @@ const make = Effect.gen(function* () {
             continue;
           const driveId = driveOfProject(row.shell.projectId, actor.userId);
           if (driveId === null || parseDriveId(driveId)?.contextId !== row.contextId) continue;
+          // Folder Trash commits before child tombstones. Explicit filing elsewhere still wins.
+          if (
+            (hiddenThreads.has(row.shell.id) || hiddenDrives.has(driveId)) &&
+            (yield* folders.trashedHomeOfThread(row.shell.id)) !== null
+          )
+            continue;
           let allowed = access.get(driveId);
           if (allowed === undefined) {
             allowed = (yield* drives.access(driveId)) !== null;

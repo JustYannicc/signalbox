@@ -536,7 +536,11 @@ describe("cloud native runtime requests", () => {
             ThreadsLive.layer.pipe(
               Layer.provide(
                 Layer.succeed(ThreadDirectory.ThreadDirectory, {
-                  forThread: (id) => ({ ...directory.forThread(id), dispatch: engine.dispatch }),
+                  forThread: (id) => ({
+                    ...directory.forThread(id),
+                    dispatch: engine.dispatch,
+                    workspace: engine.workspace,
+                  }),
                 }),
               ),
               Layer.provide(layerPersonalThreadContexts(owner.userId)),
