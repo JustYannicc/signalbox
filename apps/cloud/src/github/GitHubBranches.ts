@@ -313,20 +313,11 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  /** The thread's branch in its drive, and how many commits it has over its base. */
   const branchState = (drive: DriveHandle, threadId: string) =>
-    Effect.gen(function* () {
-      const refs = yield* drive.refs(threadId);
-      // The remote has its base, its main and every remote commit the drive holds one deep.
-      const known = [refs.base, refs.main, ...refs.shallow].filter(
-        (oid): oid is Oid => oid !== null,
-      );
-      const walked =
-        refs.thread === null
-          ? { commits: [], reached: new Set<Oid>() }
-          : yield* commitsSince(drive, refs.thread, new Set(known));
-      return { head: refs.thread, ahead: walked.commits.length, refs };
-    }).pipe(Effect.mapError(driveUnavailable));
+    drive.refs(threadId).pipe(
+      Effect.map((refs) => ({ head: refs.thread, refs })),
+      Effect.mapError(driveUnavailable),
+    );
 
   /** The committed thread tree and its newest auto-save, which holds live file edits. */
   const workingTreeOf = (target: Target, state: Effect.Success<ReturnType<typeof branchState>>) =>
@@ -348,6 +339,7 @@ const make = Effect.gen(function* () {
     userToken: string,
     remoteHead: Oid,
     cwd: string,
+    known: ReadonlyArray<Oid>,
   ) =>
     Effect.gen(function* () {
       if (state.head === remoteHead) return { aheadCount: 0, behindCount: 0 };
@@ -355,12 +347,7 @@ const make = Effect.gen(function* () {
       const local = yield* commitsSince(
         target.drive,
         state.head,
-        new Set([
-          remoteHead,
-          ...[state.refs.base, state.refs.main, ...state.refs.shallow].filter(
-            (oid): oid is Oid => oid !== null,
-          ),
-        ]),
+        new Set([remoteHead, ...known]),
       ).pipe(Effect.mapError(() => failure(cwd, "status", "The drive is unavailable right now.")));
       if (
         local.reached.has(remoteHead) &&
@@ -443,15 +430,31 @@ const make = Effect.gen(function* () {
         [
           github.api.branchHead(userToken, repository, branch),
           github.api.pullForBranch(userToken, repository, branch),
+          target.remote.mode === "source"
+            ? github.api.branchHead(userToken, repository, target.remote.defaultBranch)
+            : Effect.succeed(null),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(Effect.option);
       if (remote._tag === "None") return { local: branchLocal, remote: null };
-      const [remoteHead, pr] = remote.value;
+      const [remoteHead, pr, sourceDefaultHead] = remote.value;
+      // Source-mode main and base are local. Only checked remote commits and GitHub's
+      // current default head can stop the walk there.
+      const known = (
+        target.remote.mode === "source"
+          ? [sourceDefaultHead, ...state.refs.shallow]
+          : [state.refs.base, state.refs.main, ...state.refs.shallow]
+      ).filter((oid): oid is Oid => oid !== null);
+      const aheadOfDefaultCount =
+        state.head === null
+          ? 0
+          : (yield* commitsSince(target.drive, state.head, new Set(known)).pipe(
+              Effect.mapError(() => failure(cwd, "status", "The drive is unavailable right now.")),
+            )).commits.length;
       const relation =
         remoteHead === null
-          ? { aheadCount: state.ahead, behindCount: 0 }
-          : yield* compareWithRemote(target, state, userToken, remoteHead, cwd).pipe(
+          ? { aheadCount: aheadOfDefaultCount, behindCount: 0 }
+          : yield* compareWithRemote(target, state, userToken, remoteHead, cwd, known).pipe(
               Effect.mapError(() => failure(cwd, "status", "The drive is unavailable right now.")),
             );
       if (relation === null) return { local: branchLocal, remote: null };
@@ -461,7 +464,7 @@ const make = Effect.gen(function* () {
           hasUpstream: remoteHead !== null,
           aheadCount: relation.aheadCount,
           behindCount: relation.behindCount,
-          aheadOfDefaultCount: state.ahead,
+          aheadOfDefaultCount,
           pr: pr === null ? null : toChangeRequest(pr),
         },
       };
@@ -532,14 +535,19 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const repository = target.remote.repository;
-      const [refs, old] = yield* Effect.all(
+      const [refs, old, sourceDefaultHead] = yield* Effect.all(
         [
           target.drive.refs(threadId).pipe(Effect.mapError(driveUnavailable)),
           github.api
             .branchHead(userToken, repository, branch)
             .pipe(Effect.mapError(gitHubRefusal("push"))),
+          target.remote.mode === "source"
+            ? github.api
+                .branchHead(userToken, repository, target.remote.defaultBranch)
+                .pipe(Effect.mapError(gitHubRefusal("push")))
+            : Effect.succeed(null),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       );
       if (refs.thread === null) {
         return yield* refusal("nothing_saved", "This thread has not saved any work yet.");
@@ -550,9 +558,10 @@ const make = Effect.gen(function* () {
         driveId: target.driveId,
         head,
         old,
-        remoteHas: [refs.base, refs.main, ...refs.shallow].filter(
-          (oid): oid is Oid => oid !== null,
-        ),
+        remoteHas: (target.remote.mode === "source"
+          ? [sourceDefaultHead, ...refs.shallow]
+          : [refs.base, refs.main, ...refs.shallow]
+        ).filter((oid): oid is Oid => oid !== null),
         limits: GITHUB_LIMITS,
         // GitHub still checks `old` as it moves the branch, so a lease never races a push.
         force: old !== null && old === lease,

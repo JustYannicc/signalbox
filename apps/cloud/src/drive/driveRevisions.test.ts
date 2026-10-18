@@ -641,6 +641,8 @@ describe("drive checkpoints and revisions", () => {
     );
     return Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE packs (seq INTEGER PRIMARY KEY, name TEXT NOT NULL)`;
+      yield* sql`CREATE TABLE remote (id INTEGER PRIMARY KEY)`;
       yield* sql`CREATE TABLE threads (
         thread_id TEXT PRIMARY KEY, base TEXT, generation INTEGER NOT NULL, opened_at INTEGER NOT NULL
       )`;
@@ -677,6 +679,8 @@ describe("drive checkpoints and revisions", () => {
         [8, "drive_restore_snapshots"],
         [9, "ref_deletions"],
         [10, "drive_pull_receipts"],
+        [10, "shared_history_packs"],
+        [11, "shared_history_transfers"],
       ]);
     }).pipe(Effect.provide(layer));
   });

@@ -37,19 +37,23 @@ import { PULL_PATHS, pullReceiptPath } from "./PullProtocol.ts";
  * thread and its machine generation; a token from an older machine, or for
  * another thread's refs, is refused.
  *
- * A drive backed by a remote repository (#135) keeps the remote as its home:
+ * A drive backed by a remote repository (#135) uses it as its home unless
+ * `mode: "source"` keeps a child drive's own history:
  *
  * - `state` reads the drive without opening it, so a new thread can bring
  *   `main` up to date before its branch starts there.
  * - `remote` is the remote repository over git's smart HTTP, fetch only, with
  *   the turn's remote token as bearer. The cloud adds the credential; the
  *   machine never holds one, and the token stops working when the turn ends.
- * - `main` mirrors the remote's default branch: the machine fetches the
- *   remote's history (blobless, #394), uploads its head with
+ * - With no mode, `main` mirrors the remote's default branch. The machine
+ *   fetches its history (blobless, #394), uploads its head with
  *   `REMOTE_HEAD_HEADER` (the drive holds it one commit deep, its files
  *   promised), and `mirror`s `main` to it. The cloud checks both against the
  *   remote. Such a drive never `reconcile`s; merging a pull request on the
  *   remote lands the work.
+ * - With `mode: "source"`, the drive keeps and reconciles its own `main`,
+ *   while its threads can fetch source history and promised files. It never
+ *   advances `main` to the source's newer default branch automatically.
  *
  * A drive's shortcuts (#142) show other drives at paths of its tree, read-only
  * and with their own history. The machine mounts each one as a repository of
@@ -182,6 +186,8 @@ export const DriveRemote = Schema.Struct({
   /** `owner/name`. */
   repository: Schema.String,
   defaultBranch: Schema.String,
+  /** Omit when this drive mirrors the repository; `source` keeps its own main. */
+  mode: Schema.optional(Schema.Literal("source")),
 });
 export type DriveRemote = typeof DriveRemote.Type;
 

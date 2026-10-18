@@ -114,7 +114,9 @@ import * as UserShell from "./user/UserShell.ts";
 import * as UserThreadStatus from "./user/UserThreadStatus.ts";
 import * as UserStore from "./user/UserStore.ts";
 import * as UserModelSettings from "./user/UserModelSettings.ts";
+import * as UserKeybindings from "./user/UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./user/UserAnalyticsPreference.ts";
+import * as UserTimezone from "./user/UserTimezone.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
 
@@ -150,7 +152,9 @@ export const layerMemoryStore = LegacySections.layer.pipe(
     Layer.mergeAll(
       UserStore.layer,
       UserModelSettings.layer,
+      UserKeybindings.layer,
       UserAnalyticsPreference.layer,
+      UserTimezone.layer,
       UserContexts.layerWithDrives,
       ResourceBindings.layer,
       OnePasswordAccount.layer,

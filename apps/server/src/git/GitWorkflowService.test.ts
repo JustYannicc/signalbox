@@ -150,6 +150,69 @@ describe("GitWorkflowService", () => {
     }).pipe(Effect.provide(layerTest));
   });
 
+  it.effect("reads the checked-out branch with one narrow Git command", () => {
+    const execute = vi.fn((_input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.succeed({
+        exitCode: 0 as GitVcsDriver.ExecuteGitResult["exitCode"],
+        stdout: "feature/local-name\n",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+    );
+    const layerTest = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+        }),
+      ),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({ execute })),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const branch = yield* workflow.currentBranch("/repo");
+
+      assert.equal(branch, "feature/local-name");
+      assert.deepStrictEqual(execute.mock.calls[0]?.[0], {
+        operation: "GitWorkflowService.currentBranch",
+        cwd: "/repo",
+        args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      });
+    }).pipe(Effect.provide(layerTest));
+  });
+
+  it.effect("returns no branch when the current checkout has detached HEAD", () => {
+    const execute = vi.fn((_input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.succeed({
+        exitCode: 1 as GitVcsDriver.ExecuteGitResult["exitCode"],
+        stdout: "",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+    );
+    const layerTest = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+        }),
+      ),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({ execute })),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+
+      assert.isNull(yield* workflow.currentBranch("/repo"));
+      assert.equal(execute.mock.calls.length, 1);
+    }).pipe(Effect.provide(layerTest));
+  });
+
   it.effect("returns an empty ref list when no VCS repository is detected", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
