@@ -27,6 +27,7 @@ export type Route =
 /** The dimensions every wide event uses the same names for (#284). Ids only. */
 export interface CloudFields {
   readonly person?: { readonly id: string };
+  readonly org?: { readonly id: string };
   readonly folder?: { readonly id: string };
   readonly thread?: { readonly id: string };
   readonly turn?: Record<string, unknown> & { readonly id: string };
