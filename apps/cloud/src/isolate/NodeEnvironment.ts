@@ -4,10 +4,18 @@ import {
   type NodeNativeAddonDeclaration,
 } from "./NodeNativeAddon.ts";
 
-export type NodeEnvironmentPackage = "undici" | "yaml";
+export type NodeEnvironmentPackage = "undici" | "yaml" | "ws" | "node-fetch" | "bun:jsc";
+
+const environmentPackages = new Set<NodeEnvironmentPackage>([
+  "undici",
+  "yaml",
+  "ws",
+  "node-fetch",
+  "bun:jsc",
+]);
 
 export interface NodeEnvironmentOptions {
-  /** Actual bundled package exports, loaded once before release evaluation. */
+  /** Actual exports loaded by the environment before the release evaluates. */
   readonly packages: Readonly<Partial<Record<NodeEnvironmentPackage, object>>>;
   readonly addons: readonly NodeNativeAddonDeclaration[];
   readonly prepared?: NodePreparedModuleResolver;
@@ -18,7 +26,7 @@ export function createNodeEnvironmentResolver(
 ): NodePreparedModuleResolver {
   const packages = new Map(Object.entries(options.packages));
   for (const [name, value] of packages) {
-    if (name !== "undici" && name !== "yaml")
+    if (!environmentPackages.has(name as NodeEnvironmentPackage))
       throw new TypeError(`Unknown environment package: ${name}`);
     if (value === null || (typeof value !== "object" && typeof value !== "function")) {
       throw new TypeError(`Environment package ${name} needs its actual exports`);

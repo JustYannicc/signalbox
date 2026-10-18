@@ -31,6 +31,7 @@ export interface NodeRuntimeIdentity {
   readonly execPath: string;
   readonly argv0: string;
   readonly argv: readonly string[];
+  readonly execArgv?: readonly string[];
   readonly main?: unknown;
 }
 
@@ -117,6 +118,13 @@ export function validateNodeRuntimeIdentity(identity: NodeRuntimeIdentity): void
     identity.argv.some((argument) => typeof argument !== "string")
   ) {
     throw new TypeError("Node host identity requires a string argv array");
+  }
+  if (
+    identity.execArgv !== undefined &&
+    (!Array.isArray(identity.execArgv) ||
+      identity.execArgv.some((argument) => typeof argument !== "string"))
+  ) {
+    throw new TypeError("Node host identity execArgv must be a string array when supplied");
   }
 }
 
