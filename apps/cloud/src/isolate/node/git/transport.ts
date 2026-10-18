@@ -138,7 +138,7 @@ async function hasExistingEntries(fs: NodeGitFsClient, path: string): Promise<bo
   }
 }
 
-export async function withCloneGitDirectoryClaim<T>(
+async function withCloneGitDirectoryClaim<T>(
   fs: NodeGitFsClient,
   path: string,
   clone: () => Promise<T>,

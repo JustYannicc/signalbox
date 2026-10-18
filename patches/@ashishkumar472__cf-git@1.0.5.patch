@@ -25,7 +25,7 @@ index 4785f13ca6536bc201ad3fb207f5b34d4a0acec9..65894e1bf9a559086e84383a2e098856
  /**
   * Find the merge base for a set of commits
 diff --git a/index.js b/index.js
-index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa542cfefe5e 100644
+index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..5c7e4e9f3f537ea0e69ee970bf44305a73b9fc44 100644
 --- a/index.js
 +++ b/index.js
 @@ -2676,7 +2676,7 @@ async function readObjectLoose({ fs, gitdir, oid }) {
@@ -62,7 +62,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
    const reader = new StreamReader(stream);
    let PACK = await reader.read(4);
    PACK = PACK.toString('utf8');
-@@ -2942,22 +2951,51 @@ async function listpack(stream, onData) {
+@@ -2942,22 +2951,48 @@ async function listpack(stream, onData) {
  
    let numObjects = await reader.read(4);
    numObjects = numObjects.readUInt32BE(0);
@@ -70,9 +70,6 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
 -  if (numObjects < 1) return
 +  const declaredObjectCount = numObjects;
 +  let declaredObjectBytes = budget.used ?? 0;
-+  if (declaredObjectCount < 1) {
-+    throw new InternalError('Packfile contains no objects')
-+  }
  
 -  while (!reader.eof() && numObjects--) {
 +  let parsedObjectCount = 0;
@@ -121,7 +118,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
            throw new InternalError(
              `Inflated object size is different from that stated in packfile.`
            )
-@@ -2968,9 +3006,9 @@ async function listpack(stream, onData) {
+@@ -2968,9 +3003,9 @@ async function listpack(stream, onData) {
          await reader.read(chunk.length - inflator.strm.avail_in);
          const end = reader.tell();
          await onData({
@@ -133,7 +130,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
            offset,
            end,
            reference,
-@@ -2978,7 +3016,13 @@ async function listpack(stream, onData) {
+@@ -2978,7 +3013,13 @@ async function listpack(stream, onData) {
          });
        }
      }
@@ -147,7 +144,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
  }
  
  async function parseHeader(reader) {
-@@ -3024,7 +3068,25 @@ async function parseHeader(reader) {
+@@ -3024,7 +3065,25 @@ async function parseHeader(reader) {
  
  let supportsDecompressionStream = false;
  
@@ -174,7 +171,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
    if (supportsDecompressionStream === null) {
      supportsDecompressionStream = testDecompressionStream();
    }
-@@ -3086,6 +3148,7 @@ class GitPackIndex {
+@@ -3086,6 +3145,7 @@ class GitPackIndex {
    constructor(stuff) {
      Object.assign(this, stuff);
      this.offsetCache = {};
@@ -182,7 +179,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
    }
  
    static async fromIdx({ idx, getExternalRefDelta }) {
-@@ -3132,7 +3195,14 @@ class GitPackIndex {
+@@ -3132,7 +3192,14 @@ class GitPackIndex {
      })
    }
  
@@ -198,7 +195,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
      const listpackTypes = {
        1: 'commit',
        2: 'tree',
-@@ -3143,10 +3213,15 @@ class GitPackIndex {
+@@ -3143,10 +3210,15 @@ class GitPackIndex {
      };
      const offsetToObject = {};
  
@@ -217,7 +214,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
  
      const hashes = [];
      const crcs = {};
-@@ -3154,7 +3229,7 @@ class GitPackIndex {
+@@ -3154,7 +3226,7 @@ class GitPackIndex {
      let totalObjectCount = null;
      let lastPercent = null;
  
@@ -226,7 +223,20 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
        if (totalObjectCount === null) totalObjectCount = num;
        const percent = Math.floor(
          ((totalObjectCount - num) * 100) / totalObjectCount
-@@ -3188,7 +3263,15 @@ class GitPackIndex {
+@@ -3170,7 +3242,11 @@ class GitPackIndex {
+       }
+       lastPercent = percent;
+       // Change type from a number to a meaningful string
+-      type = listpackTypes[type];
++      const objectType = listpackTypes[type];
++      if (objectType === undefined) {
++        throw new InternalError(`Unsupported pack object type: ${type}`)
++      }
++      type = objectType;
+ 
+       if (['commit', 'tree', 'blob', 'tag'].includes(type)) {
+         offsetToObject[offset] = {
+@@ -3188,7 +3264,20 @@ class GitPackIndex {
            offset,
          };
        }
@@ -237,13 +247,18 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
 +        `Packfile declared ${declaredObjectCount} objects but parsed ${parsedPack.objectCount}`
 +      )
 +    }
++    if (Object.keys(offsetToObject).length !== declaredObjectCount) {
++      throw new InternalError(
++        `Packfile indexed ${Object.keys(offsetToObject).length} of ${declaredObjectCount} declared objects`
++      )
++    }
 +    if (parsedPack.endOffset !== pack.byteLength - 20) {
 +      throw new InternalError('Packfile object count does not match its body length')
 +    }
  
      // We need to know the lengths of the slices to compute the CRCs.
      const offsetArray = Object.keys(offsetToObject).map(Number);
-@@ -3209,42 +3292,53 @@ class GitPackIndex {
+@@ -3209,42 +3298,53 @@ class GitPackIndex {
        hashes,
        offsets,
        getExternalRefDelta,
@@ -317,15 +332,15 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
 +          if (!(err instanceof NotFoundError)) throw err
 +          retryOffsets.push(offset);
 +        }
-       }
++      }
 +      if (retryOffsets.length > 0 && resolvedThisPass === 0) {
 +        throw new InternalError(`Could not resolve ${retryOffsets.length} packfile delta object(s)`)
-+      }
+       }
 +      unresolvedOffsets = retryOffsets;
      }
  
      hashes.sort();
-@@ -3368,7 +3462,7 @@ class GitPackIndex {
+@@ -3368,7 +3468,7 @@ class GitPackIndex {
      }
      // Handle undeltified objects
      const buffer = raw.slice(reader.tell());
@@ -334,7 +349,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
      // Assert that the object length is as expected.
      if (object.byteLength !== length) {
        throw new InternalError(
-@@ -3376,7 +3470,26 @@ class GitPackIndex {
+@@ -3376,7 +3476,26 @@ class GitPackIndex {
        )
      }
      if (base) {
@@ -362,7 +377,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
      }
      // Cache the result based on depth.
      if (this.readDepth > 3) {
-@@ -6915,7 +7028,7 @@ async function _checkout({
+@@ -6915,7 +7034,7 @@ async function _checkout({
        await GitIndexManager.acquire(
          { fs, gitdir, cache, allowUnmerged: true },
          async function(index) {
@@ -371,7 +386,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
              ops
                .filter(
                  ([method]) =>
-@@ -6926,66 +7039,63 @@ async function _checkout({
+@@ -6926,66 +7045,63 @@ async function _checkout({
                )
                .map(async function([method, fullpath, oid, mode, chmod]) {
                  const filepath = `${dir}/${fullpath}`;
@@ -489,7 +504,23 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
          }
        );
      }
-@@ -8605,6 +8715,8 @@ async function _fetch({
+@@ -8196,15 +8312,6 @@ async function hasObject({
+   return result
+ }
+ 
+-// TODO: make a function that just returns obCount. then emptyPackfile = () => sizePack(pack) === 0
+-function emptyPackfile(pack) {
+-  const pheader = '5041434b';
+-  const version = '00000002';
+-  const obCount = '00000000';
+-  const header = pheader + version + obCount;
+-  return pack.slice(0, 12).toString('hex') === header
+-}
+-
+ function filterCapabilities(server, client) {
+   const serverNames = server.map(cap => cap.split('=', 1)[0]);
+   return client.filter(cap => {
+@@ -8605,6 +8712,8 @@ async function _fetch({
    headers = {},
    prune = false,
    pruneTags = false,
@@ -498,7 +529,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
  }) {
    const ref = _ref || (await _currentBranch({ fs, gitdir, test: true }));
    const config = await GitConfigManager.get({ fs, gitdir });
-@@ -8746,80 +8858,66 @@ async function _fetch({
+@@ -8746,80 +8855,66 @@ async function _fetch({
    if (raw.headers) {
      response.headers = raw.headers;
    }
@@ -634,7 +665,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
    // We need this value later for the `clone` command.
    response.HEAD = remoteHTTP.symrefs.get('HEAD');
    // AWS CodeCommit doesn't list HEAD as a symref, but we can reverse engineer it
-@@ -8861,6 +8959,7 @@ async function _fetch({
+@@ -8861,6 +8956,7 @@ async function _fetch({
      });
    }
    const packfile = Buffer.from(await collect(response.packfile));
@@ -642,8 +673,18 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
    if (raw.body.error) throw raw.body.error
    const packfileSha = packfile.slice(-20).toString('hex');
    const res = {
-@@ -8883,15 +8982,19 @@ async function _fetch({
-   if (packfileSha !== '' && !emptyPackfile(packfile)) {
+@@ -8874,24 +8970,22 @@ async function _fetch({
+   if (prune) {
+     res.pruned = response.pruned;
+   }
+-  // This is a quick fix for the empty .git/objects/pack/pack-.pack file error,
+-  // which due to the way `git-list-pack` works causes the program to hang when it tries to read it.
+-  // TODO: Longer term, we should actually:
+-  // a) NOT concatenate the entire packfile into memory (line 78),
+-  // b) compute the SHA of the stream except for the last 20 bytes, using the same library used in push.js, and
+-  // c) compare the computed SHA with the last 20 bytes of the stream before saving to disk, and throwing a "packfile got corrupted during download" error if the SHA doesn't match.
+-  if (packfileSha !== '' && !emptyPackfile(packfile)) {
++  if (packfileSha !== '') {
      res.packfile = `objects/pack/pack-${packfileSha}.pack`;
      const fullpath = join(gitdir, res.packfile);
 -    await fs.write(fullpath, packfile);
@@ -664,7 +705,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
    return res
  }
  
-@@ -9003,6 +9106,8 @@ async function _clone({
+@@ -9003,6 +9097,8 @@ async function _clone({
    headers,
    nonBlocking,
    batchSize = 100,
@@ -673,7 +714,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
  }) {
    try {
      await _init({ fs, gitdir });
-@@ -9032,6 +9137,8 @@ async function _clone({
+@@ -9032,6 +9128,8 @@ async function _clone({
        singleBranch,
        headers,
        tags: !noTags,
@@ -682,7 +723,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
      });
      if (fetchHead === null) return
      ref = ref || defaultBranch;
-@@ -9134,6 +9241,8 @@ async function clone({
+@@ -9134,6 +9232,8 @@ async function clone({
    cache = {},
    nonBlocking = false,
    batchSize = 100,
@@ -691,7 +732,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
  }) {
    try {
      assertParameter('fs', fs);
-@@ -9170,6 +9279,8 @@ async function clone({
+@@ -9170,6 +9270,8 @@ async function clone({
        headers,
        nonBlocking,
        batchSize,
@@ -700,7 +741,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
      })
    } catch (err) {
      err.caller = 'git.clone';
-@@ -10651,6 +10762,8 @@ async function fetch({
+@@ -10651,6 +10753,8 @@ async function fetch({
    prune = false,
    pruneTags = false,
    cache = {},
@@ -709,7 +750,7 @@ index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..302f9505e22f253c710ba6d4252eaa54
  }) {
    try {
      assertParameter('fs', fs);
-@@ -10681,6 +10794,8 @@ async function fetch({
+@@ -10681,6 +10785,8 @@ async function fetch({
        headers,
        prune,
        pruneTags,

@@ -152,7 +152,7 @@ packageExtensionsChecksum: sha256-LqbQVZ78YJ7rEiOmew/mcqvuPEqoHTre5x99sYBD0e4=
 pnpmfileChecksum: sha256-F2nnRBrWvcEUVdK/58ZL6W5ygAC316wA2G9A5J+XwHo=
 
 patchedDependencies:
-  '@ashishkumar472/cf-git@1.0.5': d269effdf670cecd0a58933a897df8d5827cb9f4836733c1ca10f885b7dd4e95
+  '@ashishkumar472/cf-git@1.0.5': 2766c201c17998933b107dee5ab7dbdc6c65bd9ddb173cc9e134ad9556510fdb
   '@clerk/expo-native-components@0.2.0': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@distilled.cloud/cloudflare@1.0.0-rc.13': 6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68
   '@effect/vitest@4.0.5': 2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02
@@ -309,7 +309,7 @@ importers:
         version: 7.0.12
       isomorphic-git:
         specifier: npm:@ashishkumar472/cf-git@1.0.5
-        version: '@ashishkumar472/cf-git@1.0.5(patch_hash=d269effdf670cecd0a58933a897df8d5827cb9f4836733c1ca10f885b7dd4e95)'
+        version: '@ashishkumar472/cf-git@1.0.5(patch_hash=2766c201c17998933b107dee5ab7dbdc6c65bd9ddb173cc9e134ad9556510fdb)'
       jose:
         specifier: 'catalog:'
         version: 6.2.2
@@ -15499,7 +15499,7 @@ packages:
       '@types/emscripten': '>=1.39.6'
 
 snapshots:
-  '@ashishkumar472/cf-git@1.0.5(patch_hash=d269effdf670cecd0a58933a897df8d5827cb9f4836733c1ca10f885b7dd4e95)':
+  '@ashishkumar472/cf-git@1.0.5(patch_hash=2766c201c17998933b107dee5ab7dbdc6c65bd9ddb173cc9e134ad9556510fdb)':
     dependencies:
       clean-git-ref: 2.0.1
       crc-32: 1.2.2

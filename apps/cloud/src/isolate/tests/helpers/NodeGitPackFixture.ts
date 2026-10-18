@@ -33,6 +33,10 @@ export function forwardRefDeltaPack(baseText: string, suffixText: string): Forwa
   return { pack: withPackChecksum(body), baseOid, targetOid };
 }
 
+export function emptyGitPack(): Uint8Array {
+  return withPackChecksum(joinBytes(encoder.encode("PACK"), uint32(2), uint32(0)));
+}
+
 export function invalidPackFixtures(): readonly {
   readonly name: string;
   readonly pack: Uint8Array;
@@ -48,10 +52,32 @@ export function invalidPackFixtures(): readonly {
   corruptTrailer[checksumIndex] = corruptTrailer[checksumIndex]! ^ 1;
 
   return [
+    { name: "reserved pack object type zero", pack: packWithReservedType(0) },
+    { name: "reserved pack object type five", pack: packWithReservedType(5) },
     { name: "truncated object data", pack: withPackChecksum(body.subarray(0, -4)) },
     { name: "declared object count mismatch", pack: withPackChecksum(countBody) },
     { name: "missing pack trailer", pack: missingTrailer },
     { name: "corrupt pack trailer", pack: corruptTrailer },
+  ];
+}
+
+export function invalidEmptyPackFixtures(): readonly {
+  readonly name: string;
+  readonly pack: Uint8Array;
+}[] {
+  const valid = emptyGitPack();
+  const header = valid.subarray(0, 12);
+  const corruptTrailer = valid.slice();
+  const checksumIndex = corruptTrailer.byteLength - 1;
+  corruptTrailer[checksumIndex] = corruptTrailer[checksumIndex]! ^ 1;
+
+  return [
+    { name: "zero-object pack missing its checksum trailer", pack: header },
+    { name: "zero-object pack with a corrupt checksum trailer", pack: corruptTrailer },
+    {
+      name: "zero-object pack with trailing body data",
+      pack: withPackChecksum(joinBytes(header, new Uint8Array([0xff]))),
+    },
   ];
 }
 
@@ -85,6 +111,18 @@ function packObjectHeader(type: number, size: number): Uint8Array {
     bytes.push(next);
   }
   return new Uint8Array(bytes);
+}
+
+function packWithReservedType(type: 0 | 5): Uint8Array {
+  const object = encoder.encode("reserved");
+  const body = joinBytes(
+    encoder.encode("PACK"),
+    uint32(2),
+    uint32(1),
+    packObjectHeader(type, object.byteLength),
+    NodeZlib.deflateSync(object),
+  );
+  return withPackChecksum(body);
 }
 
 function uint32(value: number): Uint8Array {

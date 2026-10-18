@@ -155,6 +155,7 @@ export async function finishGit(
 export function createSmartHttpServer(options: {
   readonly authenticate: boolean;
   readonly commit?: string;
+  readonly additionalBranches?: readonly string[];
   readonly pack?: Uint8Array;
   readonly fatalSideband?: string;
 }) {
@@ -185,9 +186,12 @@ export function createSmartHttpServer(options: {
       );
     }
     if (method === "GET" && url.pathname.endsWith("/info/refs")) {
-      return new Response(responseBuffer(advertisement(options.commit ?? GIT_FIXTURE_COMMIT)), {
-        headers: { "content-type": "application/x-git-upload-pack-advertisement" },
-      });
+      return new Response(
+        responseBuffer(
+          advertisement(options.commit ?? GIT_FIXTURE_COMMIT, options.additionalBranches ?? []),
+        ),
+        { headers: { "content-type": "application/x-git-upload-pack-advertisement" } },
+      );
     }
     if (method === "POST" && url.pathname.endsWith("/git-upload-pack")) {
       const body =
@@ -243,12 +247,13 @@ function stdio(output: { stdout: string[]; stderr: string[] }) {
   ] as const;
 }
 
-function advertisement(commit: string): Uint8Array {
+function advertisement(commit: string, additionalBranches: readonly string[]): Uint8Array {
   return joinBytes(
     packet("# service=git-upload-pack\n"),
     encoder.encode("0000"),
     packet(`${commit} HEAD\0multi_ack ofs-delta side-band-64k symref=HEAD:refs/heads/main\n`),
     packet(`${commit} refs/heads/main\n`),
+    ...additionalBranches.map((branch) => packet(`${commit} refs/heads/${branch}\n`)),
     encoder.encode("0000"),
   );
 }

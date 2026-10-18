@@ -10,7 +10,12 @@ import {
   GIT_FIXTURE_COMMIT,
   spawnGit,
 } from "./helpers/NodeGitFixture.ts";
-import { forwardRefDeltaPack, invalidPackFixtures } from "./helpers/NodeGitPackFixture.ts";
+import {
+  emptyGitPack,
+  forwardRefDeltaPack,
+  invalidEmptyPackFixtures,
+  invalidPackFixtures,
+} from "./helpers/NodeGitPackFixture.ts";
 
 describe("NodeGit HTTP pack validation", () => {
   it("indexes a valid forward-reference delta pack", async () => {
@@ -31,6 +36,51 @@ describe("NodeGit HTTP pack validation", () => {
       expect(new TextDecoder().decode(target.blob)).toBe("base!");
     } finally {
       run.fixture.close();
+    }
+  });
+
+  it("accepts a valid empty pack when fetching a ref for an existing object", async () => {
+    const fixture = createNodeGitFixture();
+    const fs = createNodeFs(fixture.filesystem).fs;
+    try {
+      const seed = await spawnGit(
+        fixture.filesystem,
+        createNodeGitProgram({
+          local: createLocalGitRunner(),
+          fetch: createSmartHttpServer({ authenticate: false }).fetch,
+        }),
+        ["/usr/bin/git", "clone", "https://git.invalid/upstream.git", "repo"],
+      );
+      const seedStatus = await finishGit(seed.host, seed.handle);
+      expect(seedStatus.exitCode, fixture.stderr()).toBe(0);
+
+      const server = createSmartHttpServer({
+        authenticate: false,
+        commit: GIT_FIXTURE_COMMIT,
+        additionalBranches: ["new-branch"],
+        pack: emptyGitPack(),
+      });
+      const fetch = await spawnGit(
+        fixture.filesystem,
+        createNodeGitProgram({ local: createLocalGitRunner(), fetch: server.fetch }),
+        ["/usr/bin/git", "-C", "repo", "fetch", "origin"],
+      );
+      const fetchStatus = await finishGit(fetch.host, fetch.handle);
+
+      expect(fetchStatus.exitCode, fixture.stderr()).toBe(0);
+      expect(server.requests.some(({ method }) => method === "POST")).toBe(true);
+      expect(
+        await git.resolveRef({ fs, dir: "/work/repo", ref: "refs/remotes/origin/new-branch" }),
+      ).toBe(GIT_FIXTURE_COMMIT);
+      const object = await git.readBlob({
+        fs,
+        dir: "/work/repo",
+        oid: GIT_FIXTURE_COMMIT,
+        filepath: "README.md",
+      });
+      expect(new TextDecoder().decode(object.blob)).toBe("remote README\n");
+    } finally {
+      fixture.close();
     }
   });
 
@@ -64,8 +114,8 @@ describe("NodeGit HTTP pack validation", () => {
     }
   });
 
-  it("rejects truncated objects, mismatched counts, and missing or corrupt trailers", async () => {
-    for (const invalid of invalidPackFixtures()) {
+  it("rejects reserved types and malformed packs before publishing refs", async () => {
+    for (const invalid of [...invalidPackFixtures(), ...invalidEmptyPackFixtures()]) {
       const run = await runFetch(invalid.pack, "1111111111111111111111111111111111111111");
       try {
         expect(run.status.exitCode, invalid.name).toBe(128);
