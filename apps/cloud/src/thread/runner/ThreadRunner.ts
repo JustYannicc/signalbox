@@ -620,6 +620,7 @@ const make = Effect.gen(function* () {
           ),
           ctx,
           lease.steers === true,
+          handoffTokenCap,
         );
         const events = [...prepared.events, ...runnerEvents];
         const preparation =

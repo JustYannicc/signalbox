@@ -34,13 +34,16 @@ export function hasUnconfirmedHandoff(projection: Projection, turn: Turn): boole
       (run) => run.ordinal < turn.runOrdinal && run.providerThreadId === turn.providerThread.id,
     )
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  const handoff = projection.contextHandoffs.find(
+    (candidate) => candidate.id === previous?.contextHandoffId,
+  );
   return (
     previous !== undefined &&
     (previous.status === "failed" || previous.status === "interrupted") &&
-    previous.contextHandoffId !== null &&
-    !projection.providerTurns.some(
-      (providerTurn) => providerTurn.runAttemptId === previous.activeAttemptId,
-    ) &&
+    handoff !== undefined &&
+    handoff.status !== "superseded" &&
+    handoff.delivery?.status === "inline" &&
+    // Claude announces its provider turn before offering the prompt to the query.
     !projection.turnItems.some(
       (item) =>
         item.runId === previous.id &&
@@ -124,6 +127,7 @@ export function prepareFreshSession(
       omittedItems: items.length - messages.length,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
+      if (!fresh) return { _tag: "ready", turn, events: [] };
       return {
         _tag: "refused",
         message:
@@ -156,29 +160,28 @@ export function prepareFreshSession(
       updatedAt: ctx.now,
     };
   }
-  // An empty pending native id means the turn must start fresh. A nonempty id
-  // identifies the session whose resume may make this fallback unnecessary.
-  const nativeThreadId = fresh ? "" : (turn.providerThread.nativeThreadRef?.nativeId ?? "");
+  const text = `Context handoff (${handoff.strategy}):\n${handoff.summaryText}\n\nUser message:\n${turn.message.text}`;
+  // A fallback that native resume never uses must not grow durable thread history.
+  if (!fresh) return { _tag: "ready", turn: { ...turn, freshSessionText: text }, events: [] };
   if (
     handoff.status !== "ready" ||
-    handoff.delivery?.nativeThreadId !== nativeThreadId ||
+    handoff.delivery?.nativeThreadId !== "" ||
     handoff.delivery.status !== "pending"
   ) {
     handoff = {
       ...handoff,
       status: "ready",
       delivery: {
-        nativeThreadId,
+        nativeThreadId: "",
         status: "pending",
         itemIds: handoff.history?.messages.map((message) => message.itemId) ?? [],
       },
       updatedAt: ctx.now,
     };
   }
-  const text = `Context handoff (${handoff.strategy}):\n${handoff.summaryText}\n\nUser message:\n${turn.message.text}`;
   return {
     _tag: "ready",
-    turn: fresh ? onFreshSession(turn, text) : { ...turn, freshSessionText: text },
+    turn: onFreshSession(turn, text),
     events: [
       ...(handoff === existing ? [] : [handoffEvent(handoff, ctx)]),
       ...(run.contextHandoffId === handoff.id

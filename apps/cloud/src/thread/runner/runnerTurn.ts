@@ -19,7 +19,7 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import { driverFor, isHarnessInstance, runnerInstanceFor } from "../../models/ModelRouting.ts";
-import { deliveredHandoffEvents } from "./freshSession.ts";
+import { deliveredHandoffEvents, prepareFreshSession } from "./freshSession.ts";
 import { activeRun, finishRunEvents, providerThreadFor, type RunEnding } from "../runLifecycle.ts";
 import {
   attemptEvent,
@@ -166,6 +166,7 @@ function startedEvents(
   run: Run,
   item: Extract<RunnerItem, { readonly kind: "turn.started" }>,
   ctx: DecisionContext,
+  handoffTokenCap: number,
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
   if (!awaitsHandoff(run) && !(run.status === "waiting" && attempt?.status === "pending"))
@@ -183,7 +184,17 @@ function startedEvents(
       item.providerThread.nativeThreadRef.driver !== driver)
   )
     return [];
-  const delivered = deliveredHandoffEvents(projection, run, item.providerThread, ctx);
+  const turn = run.contextHandoffId === null ? runnerTurnFor(projection) : null;
+  // A changed native identity proves the Runner used the otherwise unstored fallback.
+  const fallback =
+    turn?.providerThread.nativeThreadRef != null &&
+    turn.providerThread.nativeThreadRef.nativeId !== item.providerThread.nativeThreadRef?.nativeId
+      ? prepareFreshSession(projection, turn, ctx, handoffTokenCap, true)
+      : null;
+  const fallbackEvents = fallback?._tag === "ready" ? fallback.events : [];
+  const receiving = applyEvents(projection, fallbackEvents) ?? projection;
+  const receivingRun = receiving.runs.find((candidate) => candidate.id === run.id) ?? run;
+  const delivered = deliveredHandoffEvents(receiving, receivingRun, item.providerThread, ctx);
   // The harness's native state, under the thread's own identity for the record.
   const providerThread = {
     ...item.providerThread,
@@ -198,8 +209,8 @@ function startedEvents(
     handoffIds:
       delivered.some(
         (event) => event.type === "turn-item.updated" && event.payload.type === "handoff",
-      ) && run.contextHandoffId !== null
-        ? [...new Set([...current.handoffIds, run.contextHandoffId])]
+      ) && receivingRun.contextHandoffId !== null
+        ? [...new Set([...current.handoffIds, receivingRun.contextHandoffId])]
         : current.handoffIds,
     forkedFrom: current.forkedFrom,
     status: "active" as const,
@@ -209,11 +220,12 @@ function startedEvents(
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
   return [
+    ...fallbackEvents,
     ...delivered,
     providerSessionEvent(ctx, threadId, item.providerSession),
     providerThreadEvent(ctx, threadId, providerThread),
     runEvent(ctx, "run.updated", {
-      ...run,
+      ...receivingRun,
       status: run.status === "waiting" ? "waiting" : "running",
       startedAt: ctx.now,
     }),
@@ -273,6 +285,7 @@ function itemEvents(
   projection: Projection,
   item: RunnerItem,
   ctx: DecisionContext,
+  handoffTokenCap: number,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   if (item.kind === "workflow.stopped") return workflowStopResult(projection, item, ctx);
   const run = harnessRun(projection);
@@ -305,7 +318,7 @@ function itemEvents(
     case "preparation.failed":
       return [];
     case "turn.started":
-      return startedEvents(projection, run, item, ctx);
+      return startedEvents(projection, run, item, ctx, handoffTokenCap);
     case "turn.failed":
       return failRunEvents(projection, run, unknownFailure(item.message), ctx);
     case "drive.checkpoint":
@@ -396,7 +409,8 @@ export function runnerBatchEvents(
   projection: Projection,
   items: ReadonlyArray<RunnerItem>,
   ctx: DecisionContext,
-  steers = false,
+  steers: boolean,
+  handoffTokenCap: number,
 ): {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly undecodable: ReadonlyArray<string>;
@@ -413,7 +427,7 @@ export function runnerBatchEvents(
       return { events, undecodable, outgrown: item.reason, drained };
     }
     if (item.kind === "machine.drained") drained = { id: item.id, unsaved: item.unsaved };
-    const next = itemEvents(current, item, ctx);
+    const next = itemEvents(current, item, ctx, handoffTokenCap);
     if (next === "undecodable") {
       undecodable.push(item.kind === "provider" ? String(item.event.type) : item.kind);
       continue;
