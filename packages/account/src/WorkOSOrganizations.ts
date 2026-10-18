@@ -19,13 +19,12 @@ export interface WorkOSPersonalOrganizationConfig {
 export class WorkOSPersonalOrganizationError extends Schema.TaggedError<WorkOSPersonalOrganizationError>()(
   "WorkOSPersonalOrganizationError",
   {
-    operation: Schema.Literal("resolve"),
     /** HTTP status, absent when the request never got a response. */
     status: Schema.optional(Schema.Number),
   },
 ) {
   override get message(): string {
-    return `WorkOS personal organization ${this.operation} failed (${this.status ?? "no response"}).`;
+    return `WorkOS personal organization resolve failed (${this.status ?? "no response"}).`;
   }
 }
 
@@ -34,12 +33,6 @@ const OrganizationBody = Schema.Struct({
   id: Schema.NonEmptyString.check(Schema.isTrimmed()),
   external_id: Schema.String,
 });
-
-const resolveError = (status?: number) =>
-  new WorkOSPersonalOrganizationError({
-    operation: "resolve",
-    ...(status === undefined ? {} : { status }),
-  });
 
 /**
  * `GET /organizations/external_id/:external_id`: the user's personal
@@ -62,16 +55,18 @@ export const resolvePersonalOrganization = Effect.fn("WorkOSPersonalOrganization
           HttpClientRequest.bearerToken(Redacted.value(config.apiKey)),
         ),
       )
-      .pipe(Effect.mapError(() => resolveError()));
+      .pipe(Effect.mapError(() => new WorkOSPersonalOrganizationError({})));
     if (response.status === 404) return null;
     if (response.status < 200 || response.status >= 300) {
-      return yield* resolveError(response.status);
+      return yield* new WorkOSPersonalOrganizationError({ status: response.status });
     }
 
     const organization = yield* HttpClientResponse.schemaBodyJson(OrganizationBody)(response).pipe(
-      Effect.mapError(() => resolveError(response.status)),
+      Effect.mapError(() => new WorkOSPersonalOrganizationError({ status: response.status })),
     );
-    if (organization.external_id !== externalId) return yield* resolveError(response.status);
+    if (organization.external_id !== externalId) {
+      return yield* new WorkOSPersonalOrganizationError({ status: response.status });
+    }
     return organization.id;
   },
 );

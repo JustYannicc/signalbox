@@ -105,7 +105,7 @@ describe("WorkOSOrganizations.resolvePersonalOrganization", () => {
     Effect.gen(function* () {
       const failure = yield* resolveFailure(() => "network-failure");
       expect(failure._tag).toBe("WorkOSPersonalOrganizationError");
-      expect(failure.operation).toBe("resolve");
+      expect(failure.message).toBe("WorkOS personal organization resolve failed (no response).");
       expect(failure.status).toBeUndefined();
     }),
   );
@@ -116,7 +116,7 @@ describe("WorkOSOrganizations.resolvePersonalOrganization", () => {
       const raw = `workos-body-secret-${status}`;
       return Effect.gen(function* () {
         const failure = yield* resolveFailure(() => json({ message: raw, code: raw }, status));
-        expect(failure.operation).toBe("resolve");
+        expect(failure.message).toBe(`WorkOS personal organization resolve failed (${status}).`);
         expect(failure.status).toBe(status);
         expectNoLeak(failure, raw);
       });
@@ -167,7 +167,7 @@ describe("WorkOSOrganizations.resolvePersonalOrganization", () => {
   it.effect.each(malformed)("fails on %s without the response body or API key", ([, respond]) =>
     Effect.gen(function* () {
       const failure = yield* resolveFailure(respond);
-      expect(failure.operation).toBe("resolve");
+      expect(failure.message).toBe("WorkOS personal organization resolve failed (200).");
       expect(failure.status).toBe(200);
       expectNoLeak(failure, "raw-response-secret");
     }),

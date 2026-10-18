@@ -209,10 +209,7 @@ const make = Effect.gen(function* () {
         WorkOSOrganizations.resolvePersonalOrganization(realm, userId).pipe(
           Effect.timeoutOrElse({
             duration: CONTEXTS_SYNC_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new WorkOSOrganizations.WorkOSPersonalOrganizationError({ operation: "resolve" }),
-              ),
+            orElse: () => Effect.fail(new WorkOSOrganizations.WorkOSPersonalOrganizationError({})),
           }),
         ),
       ],
