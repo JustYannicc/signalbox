@@ -12,23 +12,57 @@ import { makePullRequestThread, threadId } from "./pullRequestThreadTesting.ts";
 import * as ScriptedProvider from "../thread/scriptedProvider.ts";
 
 const userId = "user_1";
-const commit = "a".repeat(40);
+const decodeVerifierReply = Schema.decodeUnknownEffect(Schema.Struct({ text: Schema.String }));
 
 afterEach(() => vi.restoreAllMocks());
 
-const withVerificationReply = (proof: {
+type VerificationReply = {
   readonly state: "live" | "none" | "failed" | "unknown";
-  readonly commit: string;
+  readonly commit?: string;
   readonly evidence: string;
-}) => {
+  readonly runId?: string;
+};
+const withVerificationReply = (proof: VerificationReply | VerificationReply[]) => {
+  const replies = Array.isArray(proof) ? [...proof] : [proof];
   const scriptedReply = ScriptedProvider.scriptedReply;
-  return vi
-    .spyOn(ScriptedProvider, "scriptedReply")
-    .mockImplementation((prompt) =>
-      prompt.includes("This is a read-only verification task")
-        ? JSON.stringify(proof)
-        : scriptedReply(prompt),
-    );
+  return vi.spyOn(ScriptedProvider, "scriptedReply").mockImplementation((prompt) => {
+    if (!prompt.includes("This is a read-only verification task")) {
+      // Streaming recomputes a reply, so advance only when the repair message reaches the task.
+      if (prompt.startsWith("The merged task is not live.") && replies.length > 1) replies.shift();
+      return scriptedReply(prompt);
+    }
+    const reply = replies[0]!;
+    return JSON.stringify({
+      runId: "123",
+      ...reply,
+      commit: reply.commit ?? prompt.match(/actual merge commit is ([a-f0-9]{40})/)?.[1],
+    });
+  });
+};
+
+const makeDeployedThread = (
+  deployment: { status: string; conclusion: string | null } = {
+    status: "completed",
+    conclusion: "success",
+  },
+) => {
+  const fixture = makePullRequestThread({
+    more: (method, url) =>
+      method === "GET" && url.pathname === "/repos/owner/repo/actions/runs/123"
+        ? new Response(
+            JSON.stringify({
+              id: 123,
+              html_url: "https://github.test/owner/repo/actions/runs/123",
+              head_sha: fixture.github.pulls[0]?.headOid,
+              head_branch: "main",
+              event: "push",
+              ...deployment,
+            }),
+            { headers: { "content-type": "application/json" } },
+          )
+        : null,
+  });
+  return fixture;
 };
 
 const taskRecord = (tool: (name: string, input: unknown) => Effect.Effect<unknown>) =>
@@ -44,16 +78,68 @@ const compiledOf = (source: string) => {
 };
 
 describe("cloud Task done automation", () => {
+  it.effect.each(["deploy", "smoke"] as const)(
+    "wakes the task agent once across workflow replays with the failed %s and deployment link",
+    (failure) => {
+      withVerificationReply([
+        {
+          state: failure === "deploy" ? "live" : "failed",
+          evidence:
+            failure === "deploy"
+              ? "The verifier claimed success."
+              : "Configured smoke returned HTTP 500.",
+        },
+        { state: "unknown", evidence: "Waiting for the repair deployment." },
+      ]);
+      const { cloud, github, open, tool, messages, run } = makeDeployedThread({
+        status: "completed",
+        conclusion: failure === "deploy" ? "failure" : "success",
+      });
+      return run(
+        Effect.gen(function* () {
+          const { rpc } = yield* open;
+          yield* cloud.settle;
+          github.merge(1);
+          yield* cloud.syncPullRequests(threadId);
+          yield* cloud.settle;
+
+          const current = yield* taskRecord(tool);
+          const conditionRunId = current.record?.condition?.runId;
+          expect(conditionRunId).toBeTruthy();
+          const evaluation = yield* cloud.inUser(
+            userId,
+            WorkflowEngine.WorkflowEngine.use((engine) => engine.getRun(conditionRunId!)),
+          );
+          expect(evaluation.run.error).toBeNull();
+          expect(current.thread.archivedAt).toBeNull();
+          expect(current.thread.settledAt).toBeNull();
+          expect(current.record?.outcome).toBeNull();
+          const transcript = yield* messages(rpc);
+          expect(transcript).toContainEqual(
+            expect.stringContaining(
+              failure === "deploy"
+                ? "Failed run: https://github.test/owner/repo/actions/runs/123"
+                : "Configured smoke returned HTTP 500.",
+            ),
+          );
+          expect(
+            transcript.filter((text) => text.startsWith("The merged task is not live.")).length,
+          ).toBe(1);
+          expect(current.runs.length).toBeGreaterThan(0);
+        }),
+      );
+    },
+  );
+
   it.effect("proposes the linked default and archives only after a live verification", () => {
     withVerificationReply({
       state: "live",
-      commit,
       evidence: "Production deployment passed its read-only smoke check.",
     });
-    const { cloud, github, open, tool, run } = makePullRequestThread();
+    const { cloud, github, open, tool, run } = makeDeployedThread();
     return run(
       Effect.gen(function* () {
-        const { rpc } = yield* open;
+        const { rpc, turn: commit } = yield* open;
         yield* cloud.settle;
 
         const proposed = yield* taskRecord(tool);
@@ -74,7 +160,7 @@ describe("cloud Task done automation", () => {
         const completed = yield* taskRecord(tool);
         expect(completed.record).toMatchObject({
           condition: proposed.record?.condition,
-          outcome: `Live at ${commit.slice(0, 12)}`,
+          outcome: `[Live at ${commit.slice(0, 12)}](https://github.test/owner/repo/actions/runs/123)`,
           settledAt: expect.any(String),
         });
         expect(completed.thread).toMatchObject({
@@ -106,13 +192,13 @@ describe("cloud Task done automation", () => {
         expect(verifier).toMatchObject({
           verb: "agent",
           status: "succeeded",
-          result: {
-            text: JSON.stringify({
-              state: "live",
-              commit,
-              evidence: "Production deployment passed its read-only smoke check.",
-            }),
-          },
+        });
+        const reply = yield* decodeVerifierReply(verifier?.result);
+        expect(JSON.parse(reply.text)).toEqual({
+          state: "live",
+          commit,
+          runId: "123",
+          evidence: "Production deployment passed its read-only smoke check.",
         });
         const projection = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
           threadId,
@@ -126,13 +212,12 @@ describe("cloud Task done automation", () => {
   it.effect("treats an affirmative no-deploy result as complete and records an outcome", () => {
     withVerificationReply({
       state: "none",
-      commit,
       evidence: "Repository configuration has no deployment.",
     });
     const { cloud, github, open, tool, run } = makePullRequestThread();
     return run(
       Effect.gen(function* () {
-        yield* open;
+        const { turn: commit } = yield* open;
         yield* cloud.settle;
         github.merge(1);
         yield* cloud.syncPullRequests(threadId);
@@ -151,7 +236,6 @@ describe("cloud Task done automation", () => {
   it.effect("reopens on a new user message and does not rearchive from the old merged PR", () => {
     withVerificationReply({
       state: "none",
-      commit,
       evidence: "Repository configuration has no deployment.",
     });
     const { cloud, github, open, tool, run } = makePullRequestThread();

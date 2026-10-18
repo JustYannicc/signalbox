@@ -84,7 +84,8 @@ function fixture(
     unsettledAt?: string | null;
     otherThreads?: Record<string, { archivedAt?: string | null; unsettledAt?: string | null }>;
     recordCondition?: { summary: string; input?: unknown } | null;
-    verification?: Array<{ state: string; evidence?: string; commit?: string }>;
+    verification?: Array<{ state: string; evidence?: string; commit?: string; runId?: string }>;
+    deployment?: { status: "pending" | "failed" | "succeeded"; commit?: string };
     wait?: (label: string, args: Record<string, unknown>) => unknown;
     staleAfterVerification?: "generation" | "message";
     modelSteps?: boolean;
@@ -143,6 +144,20 @@ function fixture(
       calls.push({ operation, args: actionArgs });
       timeline.push(`call:${action}`);
 
+      if (operation === "signalbox.pull_request_deployment")
+        return {
+          commit: COMMIT,
+          baseBranch: "main",
+          run:
+            actionArgs.runId === undefined
+              ? null
+              : {
+                  id: String(actionArgs.runId),
+                  url: "https://github.com/example/project/actions/runs/123",
+                  status: options.deployment?.status ?? "succeeded",
+                  commit: options.deployment?.commit ?? COMMIT,
+                },
+        };
       if (operation !== "signalbox.task_lifecycle") return { applied: true };
       if (action === "read") {
         if (threadId === "verification-1") return verifierState();
@@ -185,6 +200,7 @@ function fixture(
         state: reply.state,
         evidence: reply.evidence ?? `Observed ${reply.state} deployment state.`,
         commit: reply.commit ?? COMMIT,
+        runId: reply.runId ?? "123",
       });
       return { threadId: `verification-${agents.length}`, text: verificationText };
     },
@@ -220,7 +236,7 @@ function fixture(
     llmCalls,
     timeline,
     setVerificationText: (text: string) => {
-      verificationText = text;
+      verificationText = JSON.stringify({ runId: "123", ...JSON.parse(text) });
     },
     setPullRequests: (value: PullRequest[]) => {
       pullRequests = value;
@@ -274,6 +290,43 @@ describe("Task done automation", () => {
       },
     ]);
     expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+  });
+
+  it("rejects a verifier's live claim for another commit and requests corrected proof", async () => {
+    const waiting = new Error("waiting for exact commit proof");
+    const test = fixture({
+      verification: [{ state: "live", commit: "b".repeat(40) }],
+      wait: () => {
+        throw waiting;
+      },
+    });
+    await expect(test.run({ threadId: "task-1", event: "thread.created" })).rejects.toBe(waiting);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+    expect(
+      test.calls.find((call) => call.operation === "signalbox.t3_thread_send")?.args,
+    ).toMatchObject({
+      threadId: "verification-1",
+      message: expect.stringContaining(COMMIT),
+    });
+  });
+
+  it("keeps a premature live claim waiting while the actual deployment is pending", async () => {
+    const waiting = new Error("waiting for deploy");
+    const test = fixture({
+      deployment: { status: "pending" },
+      verification: [{ state: "live" }],
+      wait: () => {
+        throw waiting;
+      },
+    });
+    await expect(test.run({ threadId: "task-1", event: "thread.created" })).rejects.toBe(waiting);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+    expect(
+      test.calls.find((call) => call.operation === "signalbox.t3_thread_send")?.args,
+    ).toMatchObject({
+      threadId: "verification-1",
+      message: expect.stringContaining("still pending"),
+    });
   });
 
   it("reports a failed deployment, waits for the task repair, then verifies again", async () => {

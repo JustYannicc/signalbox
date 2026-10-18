@@ -6,6 +6,14 @@ import { descriptor } from "../environment.ts";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves deployment evidence as a read available to agents", () => {
+    const operation = operations.find(
+      (candidate) => candidate.name === "automations.deploymentEvidence",
+    )!;
+    expect(operation).toMatchObject({ access: "read", humanOnly: false });
+    expect(cloudServes(operation)).toBe(true);
+    expect(cloudUnserved(operation)).toBeUndefined();
+  });
   it("serves pool advice through the API and MCP reach entry", () => {
     const advice = operations.find((operation) => operation.name === "pools.advice");
     expect(advice).toBeDefined();

@@ -91,6 +91,9 @@ export const SIGNALBOX_RPC_REACH = {
   "automations.taskLifecycle": write({
     summary: "Read or change a task's completion condition and lifecycle.",
   }),
+  "automations.deploymentEvidence": read({
+    summary: "Read a linked pull request's actual merge commit and deployment run at that commit.",
+  }),
 
   "sections.subscribe": read({ name: "sections.list" }),
   "sections.create": write(),

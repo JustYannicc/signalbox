@@ -25,6 +25,8 @@ import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import type { UserFolders } from "../user/UserFolders.ts";
 import { setFolderPhase } from "./folderPhaseTool.ts";
+import { DeploymentEvidenceInput } from "@t3tools/contracts/deploymentEvidence";
+import type { DeploymentEvidenceReader } from "./deploymentEvidence.ts";
 
 /**
  * `w.call("…", "signalbox.<tool>")` in the cloud: the Signalbox tools the
@@ -46,6 +48,7 @@ const threadIdOf = (args: Args) =>
 /** A pull request's web URL: host, owner/repo and number. */
 const PULL_URL = /^https?:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)/;
 const isMergeMethod = Schema.is(PullRequestMergeMethod);
+const decodeDeploymentEvidence = Schema.decodeUnknownEffect(DeploymentEvidenceInput);
 
 export const makeCloudBuiltinTools = (deps: {
   readonly threads: AutomationThreadsShape;
@@ -53,6 +56,7 @@ export const makeCloudBuiltinTools = (deps: {
   readonly owner: Effect.Effect<Actor, AutomationError>;
   readonly merges: PullRequestMerges["Service"];
   readonly folders: UserFolders["Service"];
+  readonly deploymentEvidence: DeploymentEvidenceReader["Service"]["read"];
 }): BuiltinToolHandler => {
   const shellOf = (threadId: ThreadId) =>
     deps.threads
@@ -105,6 +109,14 @@ export const makeCloudBuiltinTools = (deps: {
     string,
     (call: BuiltinToolCall, args: Args) => Effect.Effect<unknown, AutomationError>
   > = {
+    pull_request_deployment: (_call, args) =>
+      decodeDeploymentEvidence(args).pipe(
+        Effect.mapError(
+          () =>
+            new AutomationError({ message: "Pass threadId, url and an optional numeric runId." }),
+        ),
+        Effect.flatMap(deps.deploymentEvidence),
+      ),
     list_thread_pull_requests: (_call, args) =>
       threadIdOf(args).pipe(Effect.flatMap(shellOf), Effect.map(listed)),
     link_pull_request: (call, args) =>

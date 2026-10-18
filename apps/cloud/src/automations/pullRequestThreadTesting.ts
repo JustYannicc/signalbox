@@ -14,6 +14,7 @@ import {
   ProjectId,
   ThreadId,
   WS_METHODS,
+  type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import { afterEach, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -97,12 +98,17 @@ const setup = () => {
  * over a real bare repository), for tests of what follows: watching it,
  * merging it. `run` provides what the steps need.
  */
-export const makePullRequestThread = () => {
+export const makePullRequestThread = (
+  options: {
+    readonly more?: Parameters<typeof makeFakeGitHub>[0]["more"];
+  } = {},
+) => {
   const remote = setup();
   const github = makeFakeGitHub({
     bare: remote.bare,
     repository: "owner/repo",
     defaultBranch: "main",
+    ...(options.more ? { more: options.more } : {}),
   });
   const cloud = makeMemoryCloud({ github: github.layer });
 
@@ -204,12 +210,17 @@ export const makePullRequestThread = () => {
     );
 
   /** A public API call (a key, the CLI, or MCP when `kind` is an agent), as the user. */
-  const api = (name: string, body: unknown, kind: ApiCaller["kind"]) =>
+  const api = (
+    name: string,
+    body: unknown,
+    kind: ApiCaller["kind"],
+    scopes: ReadonlyArray<AuthEnvironmentScope> = CLOUD_CLIENT_SCOPES,
+  ) =>
     callOperation({
       operation: operations.find((operation) => operation.name === name)!,
       body,
       follow: false,
-      caller: { userId, kind, scopes: CLOUD_CLIENT_SCOPES, credentialId: "key-1" },
+      caller: { userId, kind, scopes, credentialId: "key-1" },
       identity,
     }).pipe(Effect.provide(cloud.layerFor(userId)));
 

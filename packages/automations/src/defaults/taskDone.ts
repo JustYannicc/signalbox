@@ -56,7 +56,8 @@ type Lifecycle = {
   modelSteps?: boolean;
 };
 type Event = { event?: string; threadId?: string };
-type Verified = Map<string, { commit: string; state: string; evidence: string }>;
+type Proof = { commit: string; state: string; evidence: string; runId?: string; deployUrl?: string; correction?: boolean };
+type Verified = Map<string, Proof>;
 /** What a done-condition has seen so far, kept across re-evaluations so a fired event stays fired. */
 type Progress = { now: number; held: boolean; satisfied: boolean[] | null };
 type Input = {
@@ -116,16 +117,43 @@ function pullRequestsMerged(state: Lifecycle) {
   return links.length > 0 && links.every((pr) => mergedAfterReopen(pr, state.thread));
 }
 
-function parseVerification(text: string) {
+function parseVerification(text: string, expectedCommit: string): Proof {
   try {
     const value = JSON.parse(text) as Record<string, unknown>;
     const state = value.state;
     const commit = typeof value.commit === "string" ? value.commit.trim() : "";
     const evidence = typeof value.evidence === "string" ? value.evidence.trim() : "";
-    if (["live", "none", "failed", "unknown"].includes(String(state)) && evidence && /^[a-f0-9]{40}$/i.test(commit))
-      return { state: String(state), commit, evidence };
+    const runId = typeof value.runId === "string" && /^[1-9][0-9]*$/.test(value.runId) ? value.runId : undefined;
+    if (["live", "none", "failed", "unknown"].includes(String(state)) && evidence && commit.toLowerCase() === expectedCommit.toLowerCase())
+      return { state: String(state), commit: expectedCommit, evidence, runId };
   } catch {}
-  return { state: "unknown", commit: "", evidence: "The verification agent did not return deployment evidence for a merge commit." };
+  return { state: "unknown", commit: expectedCommit, evidence: "Return deployment evidence for the actual merge commit " + expectedCommit + ".", correction: true };
+}
+
+async function verifyDeploymentRun(w, text: string, threadId: string, pr: PullRequest, commit: string): Promise<Proof> {
+  const proof = parseVerification(text, commit);
+  if (proof.state === "unknown" || proof.state === "none") return proof;
+  if (!proof.runId)
+    return { ...proof, state: "unknown", evidence: "Return the folder's GitHub Actions deployment runId for " + commit + ". A green PR preview is not a production deployment.", correction: true };
+  try {
+    const host = await w.call("Check the deployment at the merge commit", "signalbox.pull_request_deployment", {
+      threadId,
+      url: pr.url,
+      runId: proof.runId,
+    });
+    if (host.commit !== commit || !host.run || host.run.status === "pending")
+      return { ...proof, state: "unknown", evidence: "The deployment for " + commit + " is still pending. Wait for its run to finish before verifying the smoke check.", correction: true };
+    return {
+      ...proof,
+      state: host.run.status === "failed" ? "failed" : proof.state,
+      deployUrl: host.run.url,
+      evidence: host.run.status === "failed"
+        ? "The deployment failed for " + commit + ". Failed run: " + host.run.url
+        : proof.evidence + " Deployment run: " + host.run.url + " (" + host.run.status + ").",
+    };
+  } catch (error) {
+    return { ...proof, state: "unknown", evidence: "The host could not confirm that deployment: " + String(error), correction: true };
+  }
 }
 
 function conditionType(condition: Condition) {
@@ -247,27 +275,46 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
     for (const pr of pending) {
       let accepted = false;
       while (!accepted) {
+        const merge = await w.call("Read the actual merge commit", "signalbox.pull_request_deployment", {
+          threadId,
+          url: pr.url,
+        });
         const result = await w.agent("Verify the merged work is live", {
           prompt: [
             "You represent this project folder. Verify completion of " + pr.url + ". This is a read-only verification task; do not change files, merge, deploy, or publish anything.",
-            "Read the pull request's actual merge commit, then inspect this repository's deployment configuration. A green PR preview or checks on its head do not establish production deployment.",
+            "The host confirms its actual merge commit is " + merge.commit + " on " + merge.baseBranch + ". Inspect this repository's deployment configuration at that commit. A green PR preview or checks on its head do not establish production deployment.",
             "If the repository deploys, verify the production deployment for that merge commit and run its configured read-only smoke check. Use wait_for with a concrete source or time if the deployment is still running, then continue until it finishes. Do not infer live from a merge alone.",
-            "Return only JSON with state (live, none, failed, or unknown), commit (the full 40-character merge commit), and evidence (specific observed deployment/smoke results and links, or affirmative repository configuration showing no deployment). Use none only after inspecting configuration and establishing there is no deploy. Use unknown for missing access or missing proof, and ask for what is missing in this verification thread.",
+            "Return only JSON with state (live, none, failed, or unknown), commit (exactly " + merge.commit + "), runId (the numeric GitHub Actions deployment run id as a string, required for live or failed), and evidence (specific observed deployment/smoke results, or affirmative repository configuration showing no deployment). Use failed when the deploy OR its configured smoke check fails. Use live only after the deploy succeeds and the configured smoke check passes, if there is one. Use none only after inspecting configuration and establishing there is no deploy. Use unknown for missing access, other deployment hosts, or missing proof, and ask for what is missing in this verification thread.",
           ].join("\\n\\n"),
         });
-        let proof = parseVerification(result.text);
+        let proof = await verifyDeploymentRun(w, result.text, threadId, pr, merge.commit);
+        let lastCorrection = "";
         while (proof.state === "unknown") {
+          const beforeWait = await read(w, threadId);
+          if (beforeWait.record?.generation !== generation || beforeWait.thread.archivedAt !== null)
+            return { valid: false, state: beforeWait, outcome: "" };
+          if (proof.correction && proof.evidence !== lastCorrection) {
+            lastCorrection = proof.evidence;
+            await w.call("Request exact deployment evidence", "signalbox.t3_thread_send", {
+              threadId: result.threadId,
+              mode: "queue",
+              message: "This is a read-only verification task. The actual merge commit is " + merge.commit + ". " + proof.evidence + " Return the corrected verification JSON when the deploy and optional smoke check finish. If access or configuration is missing, ask here and wait for the answer.",
+            });
+          }
           await w.waitFor("Wait for deployment evidence", {
             on: "turn.finished",
             where: { threadId: result.threadId },
           });
           const verification = await read(w, result.threadId, true);
-          proof = parseVerification(verification.messages.filter((message) => message.role === "assistant").at(-1)?.text ?? "");
+          proof = await verifyDeploymentRun(w, verification.messages.filter((message) => message.role === "assistant").at(-1)?.text ?? "", threadId, pr, merge.commit);
           const current = await read(w, threadId);
           if (current.record?.generation !== generation || current.thread.archivedAt !== null)
             return { valid: false, state: current, outcome: "" };
         }
         if (proof.state === "failed") {
+          const current = await read(w, threadId);
+          if (current.record?.generation !== generation || current.thread.archivedAt !== null)
+            return { valid: false, state: current, outcome: "" };
           await w.call("Report the failed deployment", "signalbox.t3_thread_send", {
             threadId,
             mode: "queue",
@@ -290,7 +337,9 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
   }
   const outcome = currentLinks(state)
     .map((pr) => verified.get(pr.url)!)
-    .map((proof) => (proof.state === "live" ? "Live at " : "Merged at ") + proof.commit.slice(0, 12))
+    .map((proof) => proof.state === "live"
+      ? "[Live at " + proof.commit.slice(0, 12) + "](" + proof.deployUrl + ")"
+      : "Merged at " + proof.commit.slice(0, 12))
     .join("; ")
     .slice(0, 400);
   return { valid: true, state, outcome };

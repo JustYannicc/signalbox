@@ -38,6 +38,7 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { ThreadDetailsControl } from "../chat/ThreadDetailsControl";
 import { ThreadDetailsSection } from "../chat/ThreadDetailsSection";
+import { TaskOutcomeText } from "./TaskOutcomeText";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 const codeTaskCondition = {
@@ -323,7 +324,13 @@ function TaskLifecycleTaskRow(props: {
             {shell.title}
           </Link>
           <span className="truncate text-3xs text-sidebar-muted-foreground/70">
-            {recordReady ? (displayedOutcome ?? displayedSummary) : "Loading outcome…"}
+            {!recordReady ? (
+              "Loading outcome…"
+            ) : displayedOutcome ? (
+              <TaskOutcomeText text={displayedOutcome} />
+            ) : (
+              displayedSummary
+            )}
           </span>
         </div>
         <Button
@@ -376,7 +383,9 @@ function TaskLifecycleTaskRow(props: {
           ) : null}
         </div>
         {displayedOutcome ? (
-          <p className="px-2.5 pb-1 text-xs text-muted-foreground">{displayedOutcome}</p>
+          <p className="px-2.5 pb-1 text-xs text-muted-foreground">
+            <TaskOutcomeText text={displayedOutcome} />
+          </p>
         ) : null}
         {readError ? <p className="px-2.5 pb-1 text-xs text-destructive">{readError}</p> : null}
       </ThreadDetailsSection>
