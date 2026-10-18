@@ -798,12 +798,11 @@ export function createEnvironmentRpcCommand<
   options: {
     readonly label: string;
     readonly tag: TTag;
-    readonly execute?: (
-      input: Input,
-    ) => Effect.Effect<
+    readonly execute?: (input: Input) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
-      EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
+      // signalbox: guarded RPC commands may derive retry ids from the platform Crypto service.
+      EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry | R
     >;
     readonly scheduler?: AtomCommandScheduler;
     readonly concurrency?: AtomCommandConcurrency<{

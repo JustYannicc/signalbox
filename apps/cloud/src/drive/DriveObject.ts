@@ -49,6 +49,18 @@ const makeRuntime = (ctx: DurableObjectState, driveId: string, env: DriveObjectE
 type OutboxServices = ManagedRuntime.ManagedRuntime.Services<ReturnType<typeof makeRuntime>>;
 
 export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveObjectApi {
+  packStorage(...args: Parameters<DriveObjectApi["packStorage"]>) {
+    return this.api.packStorage(...args);
+  }
+  history(...args: Parameters<DriveObjectApi["history"]>) {
+    return this.api.history(...args);
+  }
+  historyOrigin(...args: Parameters<DriveObjectApi["historyOrigin"]>) {
+    return this.api.historyOrigin(...args);
+  }
+  startFromHistory(...args: Parameters<DriveObjectApi["startFromHistory"]>) {
+    return this.api.startFromHistory(...args);
+  }
   private readonly api: DriveObjectApi;
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly driveId: string;
@@ -132,6 +144,14 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
 
   updateRefs(...args: Parameters<DriveObjectApi["updateRefs"]>) {
     return this.api.updateRefs(...args);
+  }
+
+  savePull(...args: Parameters<DriveObjectApi["savePull"]>) {
+    return this.api.savePull(...args);
+  }
+
+  pullReceipt(...args: Parameters<DriveObjectApi["pullReceipt"]>) {
+    return this.api.pullReceipt(...args);
   }
 
   reconcile(...args: Parameters<DriveObjectApi["reconcile"]>) {

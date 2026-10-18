@@ -19,7 +19,8 @@ export const WorkflowCronTrigger = Schema.Struct({
     description: "Five-field cron expression, such as '0 9 * * 1'.",
   }),
   timezone: Schema.optional(TrimmedNonEmptyString).annotate({
-    description: "IANA time zone for the cron expression. Defaults to the server's time zone.",
+    description:
+      "IANA time zone for the cron expression. New cloud crons use the person's saved time zone when omitted; unchanged saved crons keep their previous zone.",
   }),
 });
 export type WorkflowCronTrigger = typeof WorkflowCronTrigger.Type;

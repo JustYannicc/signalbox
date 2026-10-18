@@ -134,6 +134,11 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
 const RefsBody = Schema.Array(Schema.Struct({ ref: Schema.String, ...RefBody.fields }));
 const CommitBody = Schema.Struct({ sha: Schema.String });
+const CompareBody = Schema.Struct({
+  ahead_by: Schema.Number,
+  behind_by: Schema.Number,
+  merge_base_commit: Schema.Struct({ sha: Schema.String }),
+});
 const MergeBody = Schema.Struct({ merged: Schema.Boolean });
 const TreeBody = Schema.Struct({
   tree: Schema.Array(
@@ -591,6 +596,26 @@ export const makeGitHubApi = (
         ),
         token,
       ).pipe(Effect.map((body) => body?.object.sha ?? null)),
+    /** Exact commit counts between two GitHub-known commits or refs. */
+    compare: (token: string, repository: string, base: string, head: string) =>
+      json(
+        "compare",
+        CompareBody,
+        HttpClientRequest.get(
+          `${api}/repos/${repository}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+        ),
+        token,
+      ).pipe(
+        Effect.map((body) =>
+          body === null
+            ? null
+            : {
+                aheadBy: body.ahead_by,
+                behindBy: body.behind_by,
+                mergeBase: body.merge_base_commit.sha,
+              },
+        ),
+      ),
     /** All branch refs. GitHub's matching-refs endpoint returns the whole namespace without paging. */
     listRefs: (token: string, repository: string) =>
       json(

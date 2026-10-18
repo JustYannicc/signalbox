@@ -805,8 +805,10 @@ export const makeEngine = <R>(
     return {
       ...catalog,
       // A built-in's host row changes only with the code.
-      save: (input, authorize) =>
-        builtIns.guardSave(input).pipe(Effect.andThen(catalog.save(input, authorize))),
+      save: (input, authorize, approvedBy, defaultTimezone) =>
+        builtIns
+          .guardSave(input)
+          .pipe(Effect.andThen(catalog.save(input, authorize, approvedBy, defaultTimezone))),
       remove,
       startRun,
       builtIns: Effect.sync(() => BUILT_IN_AUTOMATIONS.map(builtInSummary)),

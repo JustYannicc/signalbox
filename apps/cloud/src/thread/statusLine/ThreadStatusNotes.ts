@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { poolIdOfInstance } from "../providerCatalog.ts";
+import { poolIdOfInstance } from "../../models/ModelRouting.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import * as ThreadStore from "../ThreadStore.ts";
 import { StatusNoteModel } from "./StatusNoteModel.ts";

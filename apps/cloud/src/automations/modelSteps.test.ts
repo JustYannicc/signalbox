@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { AutomationModelSteps } from "@signalbox/automations/host";
 import { transientCause } from "@signalbox/automations/stepPolicy";
 
@@ -8,6 +9,7 @@ import * as CloudModelSteps from "./cloudModelSteps.ts";
 import { HOOK_USER } from "./hookTesting.ts";
 import { SCRATCH_PROJECT_ID } from "../environment.ts";
 import * as ModelCompletion from "../models/ModelCompletion.ts";
+import * as UserModelSettings from "../user/UserModelSettings.ts";
 
 import {
   claudeModelSelection,
@@ -40,6 +42,50 @@ const allFieldNames = (value: unknown): Array<string> => {
 };
 
 describe("cloud model steps", () => {
+  it.effect("fails model steps when neither the automation nor its project has a model", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      for (const verb of ["llm", "judge", "extract"]) {
+        const automation = yield* harness.save(
+          `export const meta = { name: "No model ${verb}" } as const;
+export default workflow(async (w) => await w.${verb}("Ready?", { prompt: "Checks passed", input: "Checks passed" }));`,
+          SCRATCH_PROJECT_ID,
+          null,
+        );
+        const done = yield* harness.startAndWait(automation.id);
+        expect(done.run.status).toBe("failed");
+        expect(done.steps[0]?.error).toContain("Choose a default model");
+      }
+      expect(yield* harness.threadProjectionIds()).toEqual([]);
+    }),
+  );
+
+  it.effect("completes on the person's default when the automation saved none", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeModelStepHarness();
+      const { gateway } = yield* connectModelPool(harness.cloud, ["claude"], () => ({
+        text: "Summary",
+      }));
+      yield* UserModelSettings.UserModelSettings.use((settings) =>
+        settings.update(
+          { defaultModelSelection: claudeModelSelection },
+          new Map([[claudeModelSelection.instanceId, new Set([claudeModelSelection.model])]]),
+        ),
+      ).pipe(Effect.provide(harness.cloud.userObject(HOOK_USER)));
+      const automation = yield* harness.save(
+        `export const meta = { name: "Person default" } as const;
+export default workflow(async (w) => await w.llm("Summarize", { prompt: "Summarize the release" }));`,
+        SCRATCH_PROJECT_ID,
+        null,
+      );
+
+      const done = yield* harness.startAndWait(automation.id);
+
+      expect(done.run.status).toBe("succeeded");
+      expect(gateway.requests.map(({ body }) => body.model)).toEqual([claudeModelSelection.model]);
+    }),
+  );
+
   it.effect("passes the pool's Retry-After to the model retry policy", () =>
     Effect.gen(function* () {
       const harness = yield* makeModelStepHarness();
@@ -55,9 +101,12 @@ describe("cloud model steps", () => {
           prompt: "Hello",
         }),
       ).pipe(
-        Effect.provide(CloudModelSteps.layer),
-        Effect.provide(ModelCompletion.layer((name) => harness.cloud.pools.objectFor(name).api)),
-        Effect.provide(harness.cloud.userObject(HOOK_USER)),
+        Effect.provide(
+          CloudModelSteps.layer.pipe(
+            Layer.provide(ModelCompletion.layer((name) => harness.cloud.pools.objectFor(name).api)),
+            Layer.provide(harness.cloud.userObject(HOOK_USER)),
+          ),
+        ),
         Effect.flip,
       );
       expect(transientCause(error)?.retryAfterMs).toBe(60_000);

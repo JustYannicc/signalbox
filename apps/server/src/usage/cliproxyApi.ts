@@ -106,6 +106,11 @@ const CreditList = Schema.Struct({
 
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeProbeIdentity = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Tuple([Schema.String, Schema.NullOr(Schema.String), Schema.NullOr(Schema.String)]),
+  ),
+);
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(ClaudeUsage);
@@ -493,7 +498,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
         },
       };
     });
-    return yield* probes.read(probeKey(config, account.id), read).pipe(
+    // signalbox: replacing a credential must not reuse the previous account's identity or bars.
+    const identity = encodeProbeIdentity([
+      account.provider,
+      account.email ?? null,
+      account.id_token?.chatgpt_account_id ?? null,
+    ]);
+    return yield* probes.read(probeKey(config, account.id), read, identity).pipe(
       Effect.catch((error) =>
         Effect.succeed({
           ...base,

@@ -93,7 +93,12 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
     Effect.gen(function* () {
       const fail = (message: string) => new DriveReadError({ message });
       if (depth > 64) return yield* fail("Delta chain too deep.");
-      const bytes = yield* packs.range(driveId, location.pack, location.offset, location.length);
+      const bytes = yield* packs.range(
+        location.storageDriveId ?? driveId,
+        location.pack,
+        location.offset,
+        location.length,
+      );
       const header = yield* Effect.try({
         try: () => readEntryHeader(bytes),
         catch: () => fail(`Unreadable object ${location.oid}.`),
