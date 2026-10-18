@@ -397,6 +397,8 @@ describe("Signalbox's MCP", () => {
         (operation) => operation.name,
       );
       expect(names).not.toContain("threads.respond");
+      expect(names).not.toContain("threads.dismissQuestion");
+      expect(names).not.toContain("secrets.answer");
       expect(names).not.toContain("folders.delete");
       expect(names).not.toContain("keys.create");
       const refused = yield* tool("signalbox_call", {
@@ -404,6 +406,11 @@ describe("Signalbox's MCP", () => {
         input: { id: "folder" },
       });
       expect(refused.isError).toBe(true);
+      for (const operation of ["threads.respond", "threads.dismissQuestion", "secrets.answer"]) {
+        const answer = yield* tool("signalbox_call", { operation, input: {} });
+        expect(answer.isError).toBe(true);
+        expect(answer.content[0]?.text).toContain(`No operation ${operation} you can call`);
+      }
     }),
   );
 });

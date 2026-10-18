@@ -5,7 +5,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 
-import { isLiveRun } from "../runLifecycle.ts";
+import { isLiveRun } from "../runState.ts";
 import { runnerBatchEvents } from "../runner/runnerTurn.ts";
 import type { DecisionContext } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";

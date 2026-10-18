@@ -89,9 +89,7 @@ describe("summary confirmation revisions", () => {
           )
           .pipe(Effect.forkChild);
         yield* Deferred.await(storageCommitted);
-        expect((yield* Effect.orDie(store.outbox)).revision).toBeGreaterThan(before.revision);
-
-        // The commit has written SQLite but has not yet replaced the engine's state.
+        // Storage has written inside the transaction; the engine has not yet published its state.
         const reading =
           read === "summary"
             ? engine.summary(owner)
@@ -101,6 +99,7 @@ describe("summary confirmation revisions", () => {
         yield* Deferred.succeed(finishCommit, undefined);
         expect(readBeforeCommitFinished).toBe(false);
         const receipt = yield* Fiber.join(writer);
+        expect(receipt.summaryRevision).toBeGreaterThan(before.revision);
         const summary = yield* Fiber.join(reader);
         expect(summary?.shell).toMatchObject({
           title: "Renamed",

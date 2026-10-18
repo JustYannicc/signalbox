@@ -19,6 +19,7 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { TurnItemId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -45,6 +46,7 @@ import { gatewayProviderFor, poolIdOfInstance } from "../../models/ModelRouting.
 import { holdsNativeSession } from "../session/nativeSession.ts";
 import * as PreviewState from "../PreviewState.ts";
 import { steersOf } from "../steering.ts";
+import { runtimeResponses } from "../runtimeRequests.ts";
 import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
@@ -59,6 +61,8 @@ import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
 import { isModelToken, type ModelGrant, modelToken } from "../ModelTokens.ts";
 import { freshSessionText, freshSessionTurn } from "./freshSession.ts";
 import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
+import { systemNoticeEvents } from "./runnerEvents.ts";
+import { runtimeResponseUpgrade } from "./runtimeResponseUpgrade.ts";
 import {
   accountMovedEvents,
   failRunEvents,
@@ -228,6 +232,7 @@ export interface RunnerWork {
   readonly activeRunId: RunId | null;
   /** The messages steered into the live run while its harness runs it, oldest first (#562). */
   readonly steers: ReadonlyArray<RunnerMessageInput>;
+  readonly runtimeResponses: ReturnType<typeof runtimeResponses>;
 }
 
 export class ThreadRunner extends Context.Service<
@@ -515,6 +520,9 @@ const make = Effect.gen(function* () {
             drains: hello.drains === true,
             steers: hello.steers === true,
             pulls: hello.pulls === true,
+            runtimeResponses: hello.runtimeResponses === true,
+            runtimeResponsesUpgrade:
+              hello.runtimeResponses === true ? undefined : lease.runtimeResponsesUpgrade,
           },
           result: {
             _tag: "welcome",
@@ -794,13 +802,21 @@ const make = Effect.gen(function* () {
 
   const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease, now }) =>
     Effect.gen(function* () {
+      const run = projection === null ? undefined : harnessRun(projection);
+      const upgrade = runtimeResponseUpgrade(lease, projection, run, now, DRAIN_TIMEOUT_MS);
+      const blockedNoticeMissing =
+        upgrade.type === "blocked" &&
+        projection !== null &&
+        run !== undefined &&
+        !projection.turnItems.some(
+          (item) => item.id === `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
+        );
       const untraced = projection === null ? null : yield* turnFor(projection);
       const turn =
-        untraced === null
+        untraced === null || upgrade.type !== "none"
           ? null
           : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
-      const run = projection === null ? undefined : harnessRun(projection);
       let pending = projection === null ? null : yield* Effect.orDie(pullState.pending);
       if (pending !== null && lease.status === "connected" && lease.pulls !== true) {
         yield* pulls.revoke(
@@ -843,6 +859,8 @@ const make = Effect.gen(function* () {
         generation: lease.generation,
         pull,
         needsUpkeep:
+          (upgrade.type !== "none" && upgrade.type !== "blocked") ||
+          blockedNoticeMissing ||
           pending?.retry_at != null ||
           (pending !== null && pending.attempts >= PullState.MAX_PULL_FAILURES) ||
           needsUpkeep(
@@ -880,6 +898,8 @@ const make = Effect.gen(function* () {
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
         activeRunId: run?.id ?? null,
+        runtimeResponses:
+          projection === null || run === undefined ? [] : runtimeResponses(projection, run.id),
         // Only a Runner that takes steers is handed them.
         steers:
           projection === null || run?.status !== "running" || lease.steers !== true
@@ -1152,6 +1172,88 @@ const make = Effect.gen(function* () {
           }
         }
         const runId = run?.id ?? null;
+        const upgrade = runtimeResponseUpgrade(lease, projection, run, now, DRAIN_TIMEOUT_MS);
+        if (upgrade.type !== "none" && projection !== null && run !== undefined) {
+          const notice = () =>
+            systemNoticeEvents(
+              projection,
+              run,
+              {
+                id: TurnItemId.make(`turn-item:${run.id}:runner-update:${lease.generation}`),
+                title: "Machine",
+                message: "Updating this machine so it can answer questions and approvals.",
+              },
+              ctx,
+            );
+          if (upgrade.type === "blocked") {
+            const id = TurnItemId.make(
+              `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
+            );
+            if (projection.turnItems.some((item) => item.id === id))
+              return keep({ ...IDLE, runId });
+            return {
+              events: systemNoticeEvents(
+                projection,
+                run,
+                {
+                  id,
+                  title: "Machine",
+                  message:
+                    "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying.",
+                },
+                ctx,
+              ),
+              result: { ...IDLE, runId },
+            };
+          }
+          if (upgrade.type === "drain")
+            return {
+              events: notice(),
+              machine: { ...lease, drain: { _tag: "asked", id: now } as const },
+              result: {
+                ...IDLE,
+                runId,
+                drain: { generation: lease.generation, id: now },
+                wakeAt: now + DRAIN_TIMEOUT_MS,
+              },
+            };
+          if (upgrade.type === "wait") return keep({ ...IDLE, runId, wakeAt: upgrade.deadline });
+          const events = awaitsHandoff(run) ? [] : recoverRunEvents(projection, run, ctx);
+          const generation = lease.generation + 1;
+          const token = yield* newToken;
+          yield* sessionEnded(lease, {
+            reason: "updated",
+            detail: "Updating the Runner for native answers.",
+            runId,
+            now,
+          });
+          yield* diagnostics.machineRequested({
+            generation,
+            run,
+            now,
+            machineClass: classOf(lease),
+          });
+          return {
+            events: [...events, ...notice()],
+            machine: {
+              ...ThreadStore.NO_MACHINE,
+              generation,
+              token,
+              status: "requested" as const,
+              requestedAt: now,
+              machineClass: lease.machineClass,
+              movedUp: lease.movedUp,
+              runtimeResponsesUpgrade: true,
+            },
+            result: {
+              ...IDLE,
+              ensure: { generation, token },
+              release: lease.generation,
+              runId,
+              wakeAt: now + ENSURE_RETRY_MS,
+            },
+          };
+        }
         /**
          * Lets the machine go. `failure` fails the live run with it; `recover`
          * continues it on the next machine (`runRecovery.ts`), and then the
