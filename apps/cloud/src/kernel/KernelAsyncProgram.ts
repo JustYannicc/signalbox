@@ -35,4 +35,15 @@ export interface KernelAsyncProgram {
   run(context: KernelAsyncProgramContext): Promise<KernelExitStatus>;
 }
 
+/** An exec failure that occurred before the replacement image was committed. */
+export class KernelProgramExecAdmissionError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "KernelProgramExecAdmissionError";
+    this.code = code;
+  }
+}
+
 export type { KernelExitStatus };

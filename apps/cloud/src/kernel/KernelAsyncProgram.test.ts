@@ -9,6 +9,7 @@ import {
 } from "./KernelAbi.ts";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
 import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
+import { KernelProgramExecAdmissionError } from "./KernelAsyncProgram.ts";
 import { KernelProgramHost, type KernelProgramBinding } from "./KernelProgramHost.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
 
@@ -105,6 +106,7 @@ describe("KernelAsyncProgram", () => {
                 } catch (error) {
                   missingLookupPreservedCloseOnExec =
                     error instanceof Error &&
+                    error instanceof KernelProgramExecAdmissionError &&
                     "code" in error &&
                     error.code === "ENOENT" &&
                     program.filesystem.descriptors.has(removed);
@@ -167,6 +169,75 @@ describe("KernelAsyncProgram", () => {
       expect(new TextDecoder().decode(output.subarray(0, count))).toBe("same process");
       expect(() => prepared.filesystem.cwd).toThrow(expect.objectContaining({ code: "EBADF" }));
       expect(context.host.processes.reap(child).status).toBe("ok");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("does not resume the old image after a committed replacement fails", async () => {
+    let continuedAfterExec = false;
+    let replacementFailureIsAdmission = false;
+    let closeOnExecWasSwept = false;
+    const context = setup(
+      new Map([
+        [
+          "/bin/outer",
+          {
+            manifest: manifest("outer"),
+            implementation: {
+              kind: "async",
+              run: async (program) => {
+                const removed = program.filesystem.open(
+                  "/removed-on-exec",
+                  KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_CLOEXEC,
+                );
+                try {
+                  const result = await program.exec({
+                    filesystem: program.filesystem,
+                    identity: program.identity,
+                    args: [],
+                    env: program.env,
+                    signal: program.signal,
+                    path: "/bin/replacement",
+                    ...(program.home === undefined ? {} : { home: program.home }),
+                  });
+                  continuedAfterExec = true;
+                  return result;
+                } catch (error) {
+                  replacementFailureIsAdmission = error instanceof KernelProgramExecAdmissionError;
+                  closeOnExecWasSwept = !program.filesystem.descriptors.has(removed);
+                  throw error;
+                }
+              },
+            },
+          } satisfies KernelProgramBinding,
+        ],
+        [
+          "/bin/replacement",
+          {
+            manifest: manifest("replacement"),
+            implementation: {
+              kind: "async",
+              run: async () => {
+                await Promise.resolve();
+                throw Object.assign(new Error("replacement failed"), { code: "EIO" });
+              },
+            },
+          } satisfies KernelProgramBinding,
+        ],
+      ]),
+    );
+    const prepared = context.host.prepare({ filesystem: context.filesystem });
+    try {
+      const child = spawn(context.host, prepared);
+      await expect(context.host.exitStatus(child)).resolves.toMatchObject({
+        status: "error",
+        error: { code: "IO_ERROR" },
+      });
+      expect(replacementFailureIsAdmission).toBe(false);
+      expect(closeOnExecWasSwept).toBe(true);
+      expect(continuedAfterExec).toBe(false);
+      expect(context.host.processes.reap(child).status).toBe("error");
     } finally {
       await context.close();
     }

@@ -3,6 +3,7 @@ import type {
   KernelAsyncProgramContext,
   KernelAsyncProgramExecRequest,
 } from "../KernelAsyncProgram.ts";
+import { KernelProgramExecAdmissionError } from "../KernelAsyncProgram.ts";
 import type { AgentOsSpawnRequest } from "../AgentOsProcessWire.ts";
 import type { KernelExitStatus, KernelProcessTable } from "../KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
@@ -47,37 +48,44 @@ export function execKernelProgram(
   return runKernelExecution(request.signal, async () => {
     if (request.signal.aborted)
       throw new KernelProcessCancelledError("Program execution cancelled");
-    const resolved = options.resolve(request.path);
+    const resolved = beforeExecCommit(() => options.resolve(request.path));
     if (resolved.status !== "ok") {
+      if (resolved.status === "error" && resolved.error.code === "CANCELLED") {
+        throw new KernelProcessCancelledError(resolved.error.message);
+      }
       const code =
         resolved.status === "would_block" ? "EAGAIN" : kernelCodeToErrno(resolved.error.code);
-      throw errnoError(
+      throw new KernelProgramExecAdmissionError(
         code,
         resolved.status === "would_block"
           ? "Program resolution would block"
           : resolved.error.message,
       );
     }
-    const binding = options.bindingFor(resolved.value);
-    if (!binding) throw errnoError("EIO", "Resolved program lost its implementation");
+    const binding = beforeExecCommit(() => options.bindingFor(resolved.value));
+    if (!binding) {
+      throw new KernelProgramExecAdmissionError("EIO", "Resolved program lost its implementation");
+    }
 
     const { implementation } = binding;
     const prepared = { filesystem: request.filesystem, home: request.home };
-    const spawn = options.spawnFor(request);
+    const spawn = beforeExecCommit(() => options.spawnFor(request));
     if (implementation.kind === "wasm") {
       // Validate every import before CLOEXEC descriptors are removed.
-      const runtime = createKernelWasiRuntime(implementation.module, {
-        prepared,
-        descriptorOwnership: "borrowed",
-        args: request.args,
-        env: environmentWithHome(request.home, request.env),
-        asyncMode: true,
-        identity: request.identity,
-        signal: request.signal,
-        processes: options.processes,
-        wakes: options.wakes,
-        spawn,
-      });
+      const runtime = beforeExecCommit(() =>
+        createKernelWasiRuntime(implementation.module, {
+          prepared,
+          descriptorOwnership: "borrowed",
+          args: request.args,
+          env: environmentWithHome(request.home, request.env),
+          asyncMode: true,
+          identity: request.identity,
+          signal: request.signal,
+          processes: options.processes,
+          wakes: options.wakes,
+          spawn,
+        }),
+      );
       try {
         sweepCloseOnExec(request);
         const exitCode = await runtime.lifecycle.startAsync(runtime.instance);
@@ -121,6 +129,30 @@ export function execKernelProgram(
 
 function sweepCloseOnExec(request: KernelAsyncProgramExecRequest): void {
   runSync(request.filesystem.descriptors.closeOnExecSweep());
+}
+
+function beforeExecCommit<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (error instanceof KernelProcessCancelledError) throw error;
+    if (error instanceof KernelProgramExecAdmissionError) throw error;
+    const code = errorCode(error);
+    if (code === "ECANCELED" || code === "CANCELLED") {
+      throw new KernelProcessCancelledError(errorMessage(error));
+    }
+    throw new KernelProgramExecAdmissionError(code ?? "EIO", errorMessage(error), error);
+  }
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Program execution admission failed";
 }
 
 function environmentWithHome(
