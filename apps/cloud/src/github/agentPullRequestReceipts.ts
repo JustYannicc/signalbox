@@ -1,4 +1,3 @@
-import type { Request } from "@signalbox/runner-protocol/PullRequestTools";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -13,7 +12,7 @@ type ReceiptRow = {
   readonly result: string | null;
 };
 
-type WriteRequest = Extract<Request, { readonly _tag: "comment" | "reply" | "image" }>;
+type WriteRequest = { readonly operationId: string };
 
 type RefusalCategory = "conflict" | "pending" | "unavailable";
 type Refuse = (category: RefusalCategory) => AgentPullRequestError;
@@ -34,7 +33,7 @@ export const makeAgentPullRequestReceipts = (refuse: Refuse) =>
       PRIMARY KEY (thread_id, operation_id)
     )`;
 
-    const hashRequest = (threadId: string, repository: string, request: Request) =>
+    const hashRequest = (threadId: string, repository: string, request: unknown) =>
       crypto
         .digest(
           "SHA-256",
@@ -97,7 +96,7 @@ export const makeAgentPullRequestReceipts = (refuse: Refuse) =>
       readonly threadId: string;
       readonly repository: string;
       readonly operationId: string;
-      readonly request: Request;
+      readonly request: unknown;
       readonly write: () => Effect.Effect<A, E>;
     }) =>
       Effect.gen(function* () {

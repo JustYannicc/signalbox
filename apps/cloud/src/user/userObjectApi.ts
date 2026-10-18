@@ -192,7 +192,7 @@ export const makeUserObjectApi = (
                   _tag: "operation-error",
                   operation: error.operation,
                   detail: error.detail,
-                  ...(error.reason === undefined ? {} : { reason: error.reason }),
+                  ...(error.reason === "not-found" ? { reason: error.reason } : {}),
                 }),
             }),
           ),
