@@ -1,4 +1,4 @@
-import { ThreadId, type DeviceServiceState } from "@t3tools/contracts";
+import { ProviderSessionId, ThreadId, type DeviceServiceState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { selectedThreadDevicePreview, threadDevicePreviews } from "./threadDevicePreviews";
@@ -47,6 +47,10 @@ const state: DeviceServiceState = {
   ],
   sessions: [
     {
+      sessionId: "panel-local",
+      leaseId: "lease-local",
+      ownerKind: "panel",
+      observer: false,
       threadId,
       hostId: "local",
       deviceId: "emulator-5554",
@@ -54,6 +58,9 @@ const state: DeviceServiceState = {
       openedAt: "2026-09-18T00:00:00Z",
     },
     {
+      sessionId: "agent-remote",
+      leaseId: "lease-remote",
+      ownerKind: "agent",
       threadId,
       hostId: "remote",
       deviceId: "emulator-5554",
@@ -61,6 +68,10 @@ const state: DeviceServiceState = {
       openedAt: "2026-09-18T00:01:00Z",
     },
     {
+      sessionId: "panel-other-thread",
+      leaseId: "lease-other-thread",
+      ownerKind: "panel",
+      observer: false,
       threadId: ThreadId.make("another-thread"),
       hostId: "local",
       deviceId: "iphone",
@@ -92,11 +103,55 @@ describe("thread device previews", () => {
     expect(selectedThreadDevicePreview([], selectedKey)).toBeNull();
   });
 
+  it("uses one preview for a panel and agent session sharing a device lease", () => {
+    const agentSession = {
+      ...state.sessions[0]!,
+      sessionId: "agent-session",
+      leaseId: "shared-lease",
+      ownerKind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("provider-session"),
+    };
+    const panelSession = {
+      ...state.sessions[0]!,
+      sessionId: "panel-session",
+      leaseId: "shared-lease",
+      ownerKind: "panel" as const,
+    };
+    const previews = threadDevicePreviews(
+      { ...state, sessions: [agentSession, panelSession] },
+      threadId,
+    );
+
+    expect(previews).toHaveLength(1);
+    expect("ownerKind" in previews[0]!.session && previews[0]!.session.ownerKind).toBe("panel");
+  });
+
   it("can view an open session before device discovery metadata arrives", () => {
     const previews = threadDevicePreviews({ ...state, hosts: [], devices: [] }, threadId);
     expect(previews[0]?.name).toBe("Android Emulator");
     expect(previews[0]?.session.deviceId).toBe("emulator-5554");
     expect(previews[0]?.description).toBe("");
+  });
+
+  it("shows one preview per device and uses the panel's observer state", () => {
+    const agentSession = {
+      ...state.sessions[0]!,
+      sessionId: "agent-local",
+      leaseId: "lease-local",
+      ownerKind: "agent" as const,
+      observer: false,
+    };
+    const observerPanel = {
+      ...state.sessions[0]!,
+      observer: true,
+    };
+    const previews = threadDevicePreviews(
+      { ...state, sessions: [agentSession, observerPanel, state.sessions[1]!] },
+      threadId,
+    );
+    expect(previews).toHaveLength(2);
+    expect(previews[0]?.session.ownerKind).toBe("panel");
+    expect(previews[0]?.session.observer).toBe(true);
   });
 
   it("offers no devices before state arrives or in a thread without sessions", () => {

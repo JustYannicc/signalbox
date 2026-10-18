@@ -2193,7 +2193,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.latestRun,
     ],
   );
-  const setupAnchorIndex = presentedFeed.findIndex(
+  // The setup belongs to the latest message: a cloud thread prepares every run.
+  const setupAnchorIndex = presentedFeed.findLastIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
   // The empty↔filled key below remounts the list and resets its imperative

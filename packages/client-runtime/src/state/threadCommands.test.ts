@@ -1,3 +1,4 @@
+import "./tests/threadCommandTestSession.ts"; // signalbox: optimistic ledger
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -161,7 +162,7 @@ describe("remote thread lifecycle commands", () => {
           ],
         };
         h.registry.set(source, initial);
-        const result = h.commands[action].run(h.registry, {
+        const target = {
           environmentId: ENVIRONMENT_ID,
           input: {
             threadId: THREAD_ID,
@@ -172,7 +173,18 @@ describe("remote thread lifecycle commands", () => {
             snoozedUntil: "2099-01-01T00:00:00.000Z",
             ...input,
           },
-        });
+        } as const;
+        const result = {
+          settle: () => h.commands.settle.run(h.registry, target),
+          unsettle: () => h.commands.unsettle.run(h.registry, target),
+          snooze: () => h.commands.snooze.run(h.registry, target),
+          unsnooze: () => h.commands.unsnooze.run(h.registry, target),
+          pin: () => h.commands.pin.run(h.registry, target),
+          unpin: () => h.commands.unpin.run(h.registry, target),
+          setAutoSettle: () => h.commands.setAutoSettle.run(h.registry, target),
+          reorderPin: () => h.commands.reorderPin.run(h.registry, target),
+          reorderActive: () => h.commands.reorderActive.run(h.registry, target),
+        }[action]();
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         const request = yield* Queue.take(h.requests);
         expect(h.registry.get(source)).toBe(initial);

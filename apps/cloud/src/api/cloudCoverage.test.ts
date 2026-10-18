@@ -38,6 +38,15 @@ describe("cloud API coverage", () => {
     }
   });
 
+  it("serves queued edits and reorders through the cloud decider", () => {
+    for (const name of ["threads.queuedRun.edit", "threads.queuedRun.reorder"]) {
+      const operation = operations.find((candidate) => candidate.name === name);
+      if (operation === undefined) throw new Error(`Missing ${name}`);
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
   it("serves both keybinding edits rather than leaving the editor with unknown RPCs", () => {
     const keybindings = operations.filter((operation) => operation.name.startsWith("keybindings."));
     expect(keybindings.map((operation) => operation.name).sort()).toEqual([

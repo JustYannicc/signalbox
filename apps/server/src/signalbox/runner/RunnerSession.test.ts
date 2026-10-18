@@ -128,6 +128,11 @@ const makeFakeThread = Effect.gen(function* () {
 const makeFakeTurns = Effect.gen(function* () {
   const emitRef = yield* Deferred.make<(item: RunnerItem) => Effect.Effect<void>>();
   const startedTurns = yield* Ref.make<ReadonlyArray<RunId>>([]);
+  const preparationCommands = yield* Queue.unbounded<{
+    readonly type: string;
+    readonly runId: RunId;
+    readonly generation: number;
+  }>();
   const runtimeResponses = yield* Ref.make<
     ReadonlyArray<Extract<ThreadMessage, { type: "runtime-request.respond" }>>
   >([]);
@@ -140,6 +145,11 @@ const makeFakeTurns = Effect.gen(function* () {
     Effect.as(Deferred.succeed(emitRef, emit), {
       start: (next) => Ref.update(startedTurns, (all) => [...all, next.turn.runId]),
       interrupt: () => Effect.void,
+      cancelPreparation: (runId, generation) =>
+        Effect.asVoid(Queue.offer(preparationCommands, { type: "cancel", runId, generation })),
+      handoffPreparation: (runId, generation) =>
+        Effect.asVoid(Queue.offer(preparationCommands, { type: "handoff", runId, generation })),
+      preparationsTaken: Effect.succeed([]),
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
       respondRuntimeRequest: (response) =>
@@ -172,6 +182,7 @@ const makeFakeTurns = Effect.gen(function* () {
     make,
     emit,
     startedTurns,
+    preparationCommands,
     runtimeResponses,
     drains,
     unsaved,
@@ -250,16 +261,25 @@ describe("RunnerSession", () => {
     ),
   );
 
-  it.effect("advertises and forwards runtime responses to the live turn driver", () =>
+  it.effect("routes preparation controls and native answers to the live turn driver", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const thread = yield* makeFakeThread;
         const turns = yield* makeFakeTurns;
         yield* sessionOf(thread, turns);
-        yield* settle(
-          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
-          "hello",
-        );
+        yield* Deferred.await(thread.welcomed);
+        yield* thread.toCurrent({ type: "preparation.cancel", runId, preparationGeneration: 2 });
+        expect(yield* Queue.take(turns.preparationCommands)).toEqual({
+          type: "cancel",
+          runId,
+          generation: 2,
+        });
+        yield* thread.toCurrent({ type: "preparation.handoff", runId, preparationGeneration: 3 });
+        expect(yield* Queue.take(turns.preparationCommands)).toEqual({
+          type: "handoff",
+          runId,
+          generation: 3,
+        });
         const response = {
           type: "runtime-request.respond",
           runId,

@@ -278,7 +278,11 @@ const GrantRow = Schema.Struct({
 const ShellJson = Schema.fromJsonString(OrchestrationV2ThreadShellJson);
 const encodeShell = Schema.encodeSync(ShellJson);
 const decodeShell = Schema.decodeUnknownSync(ShellJson);
-const IndexRow = Schema.Struct({ context_id: SignalboxContextId, shell: ShellJson });
+const IndexRow = Schema.Struct({
+  context_id: SignalboxContextId,
+  revision: Schema.Number,
+  shell: ShellJson,
+});
 const decodeIndexRows = Schema.decodeUnknownSync(Schema.Array(IndexRow));
 const decodeMemberRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ thread_id: ThreadId })),
@@ -459,9 +463,12 @@ const make = Effect.gen(function* () {
     sequence: sql`SELECT sequence FROM thread_index_state WHERE id = 1`.pipe(
       Effect.map((rows) => decodeSequenceRows(rows)[0]?.sequence ?? 0),
     ),
-    threads: sql`SELECT context_id, shell FROM thread_index ORDER BY thread_id`.pipe(
+    threads: sql`SELECT context_id, revision, shell FROM thread_index ORDER BY thread_id`.pipe(
       Effect.map((rows) =>
-        decodeIndexRows(rows).map((row) => ({ contextId: row.context_id, shell: row.shell })),
+        decodeIndexRows(rows).map((row) => ({
+          contextId: row.context_id,
+          shell: { ...row.shell, summaryRevision: row.revision },
+        })),
       ),
     ),
   }).pipe(sql.withTransaction);

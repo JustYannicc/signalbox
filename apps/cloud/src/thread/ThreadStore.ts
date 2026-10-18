@@ -45,6 +45,7 @@ import type {
   RetainedCommandOutput,
 } from "./commandOutput/retainedOutput.ts";
 import * as Migrations from "../storage/migrations.ts";
+import { PreparationState } from "./preparation/preparationState.ts";
 import {
   migrateCurrentItemExpansion,
   migrateCurrentItemHistory,
@@ -56,7 +57,12 @@ import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { migratePulls } from "./PullState.ts";
-import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
+import {
+  type MachineRecord,
+  MachineRecords,
+  MachineStartupProblem,
+  NO_MACHINE_RECORD,
+} from "./runner/MachineBackend.ts";
 import {
   migrateSecretValues,
   readSecretValues,
@@ -134,6 +140,14 @@ export interface MachineLease {
   readonly requestedAt: number | null;
   /** When the backend confirmed the request; null until then. */
   readonly ensuredAt: number | null;
+  /** A bounded retry of the same idempotent request, before any Runner connected. */
+  readonly startup?:
+    | {
+        readonly retries: number;
+        readonly deadline: number;
+        readonly problem?: MachineStartupProblem | undefined;
+      }
+    | undefined;
   /** When the Runner's socket closed, while the lease still stands. */
   readonly disconnectedAt: number | null;
   /** When the machine last ran out of work. */
@@ -147,6 +161,7 @@ export interface MachineLease {
   readonly drains?: boolean | undefined;
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
   readonly steers?: boolean | undefined;
+  readonly preparations?: boolean | undefined;
   readonly workflowStops?: boolean | undefined;
   /** This generation's Runner can receive committed native answers. */
   readonly runtimeResponses?: boolean | undefined;
@@ -255,6 +270,7 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      readonly preparation?: PreparationState;
       readonly commandOutputSeeds?: ReadonlyArray<CommandOutputKey>;
       readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
       /** The instructions of the thread's chain, for the run these events start. */
@@ -309,6 +325,7 @@ export class ThreadStore extends Context.Service<
       readonly note: ThreadStatusNote;
       readonly summaryChanged: boolean;
     }) => Effect.Effect<void, SqlError>;
+    readonly preparation: Effect.Effect<PreparationState | null, SqlError>;
     readonly machine: Effect.Effect<MachineLease, SqlError>;
     readonly saveMachine: (machine: MachineLease) => Effect.Effect<void, SqlError>;
     /** The machine backend's record of the thread's machine (`MachineBackend.ts`). */
@@ -424,6 +441,10 @@ const migrations = Migrator.fromRecord({
   "0010_browsing": migrateBrowsing,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  "0012_preparation": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE preparation (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL)`;
+  }),
   "0012_workflow_scripts": migrateWorkflowScripts,
   "0012_command_output": migrateCommandOutput,
   "0012_git_pulls": migratePulls,
@@ -649,6 +670,13 @@ const MachineLeaseJson = Schema.fromJsonString(
     connection: Schema.optional(Schema.Number),
     requestedAt: Schema.NullOr(Schema.Number),
     ensuredAt: Schema.NullOr(Schema.Number),
+    startup: Schema.optional(
+      Schema.Struct({
+        retries: Schema.Number,
+        deadline: Schema.Number,
+        problem: Schema.optional(MachineStartupProblem),
+      }),
+    ),
     disconnectedAt: Schema.NullOr(Schema.Number),
     idleSince: Schema.NullOr(Schema.Number),
     ackedSequence: Schema.Number,
@@ -656,6 +684,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     movedUp: Schema.optional(Schema.Boolean),
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
+    preparations: Schema.optional(Schema.Boolean),
     workflowStops: Schema.optional(Schema.Boolean),
     runtimeResponses: Schema.optional(Schema.Boolean),
     runtimeResponsesUpgrade: Schema.optional(Schema.Boolean),
@@ -671,6 +700,11 @@ const MachineLeaseJson = Schema.fromJsonString(
       ]),
     ),
   }),
+);
+const PreparationJson = Schema.fromJsonString(PreparationState);
+const encodePreparation = Schema.encodeSync(PreparationJson);
+const decodePreparationRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ state: PreparationJson })),
 );
 const encodeMachine = Schema.encodeSync(MachineLeaseJson);
 const decodeMachineRows = Schema.decodeUnknownSync(
@@ -729,6 +763,11 @@ const make = Effect.gen(function* () {
           ? { _tag: "accepted", sequence: row.result_sequence ?? 0 }
           : { _tag: "rejected", message: row.message ?? "Rejected." };
       }),
+    );
+
+  const preparation: ThreadStore["Service"]["preparation"] =
+    sql`SELECT state FROM preparation WHERE id = 1`.pipe(
+      Effect.map((rows) => decodePreparationRows(rows)[0]?.state ?? null),
     );
 
   const machine: ThreadStore["Service"]["machine"] =
@@ -987,6 +1026,10 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
+    if (input.preparation) {
+      yield* sql`INSERT INTO preparation (id, state) VALUES (1, ${encodePreparation(input.preparation)})
+        ON CONFLICT (id) DO UPDATE SET state = excluded.state`;
+    }
     if (input.scripts)
       yield* retainWorkflowScripts(input.scripts).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
@@ -1587,6 +1630,7 @@ const make = Effect.gen(function* () {
     );
 
   return ThreadStore.of({
+    preparation,
     workflowScript: (subagentId, revision) =>
       readWorkflowScript(subagentId, revision).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),

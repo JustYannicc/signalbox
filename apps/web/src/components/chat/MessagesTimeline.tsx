@@ -243,6 +243,8 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { isThreadPreparation } from "@t3tools/client-runtime/worktree-setup";
+import type { WorktreeSetupActions } from "./useWorktreeSetup";
 import {
   ContextChipPopover as UserMessageContextPopover,
   ContextChipShell,
@@ -346,7 +348,7 @@ interface TimelineRowSharedState {
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
-  onCancelWorktreeSetup: (() => void) | null;
+  worktreeSetupActions: WorktreeSetupActions | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
@@ -361,6 +363,8 @@ interface TimelineRowActivityState {
   activeTurnInProgress: boolean;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
+  // Cloud prepares every thread, with or without a worktree.
+  preparingThread: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
 }
@@ -453,7 +457,7 @@ interface MessagesTimelineProps {
   activeTurnInProgress: boolean;
   activeTurnStartedAt?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
-  onCancelWorktreeSetup?: () => void;
+  worktreeSetupActions?: WorktreeSetupActions | null;
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
   onRetryWorkspacePreparation?: (runId: RunId) => void;
   onWorktreeSetupWorkLocally?: () => void;
@@ -558,7 +562,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   activeTurnStartedAt = null,
   worktreeSetup = null,
   footer = null,
-  onCancelWorktreeSetup,
+  worktreeSetupActions = null,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
   onWorktreeSetupWorkLocally,
@@ -1254,7 +1258,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleAttemptFold,
     onToggleWorkGroup,
     onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
-    onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
+    worktreeSetupActions,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
@@ -1270,6 +1274,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     latestRun?.startedAt != null
       ? worktreeSetup
       : null;
+  const preparingThread = worktreeSetup !== null && isThreadPreparation(worktreeSetup);
   const activityState: TimelineRowActivityState = {
     isWorking,
     isCompacting: compactionAwaitingRow,
@@ -1278,6 +1283,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     activeTurnInProgress,
     awaitingUser,
     isPreparingWorktree,
+    preparingThread,
     latestRunId: latestRun?.runId ?? null,
   };
   const listHeaderLeadingContent =
@@ -1997,9 +2003,14 @@ function WorktreeSetupTimelineRow({
     <WorktreeSetupCard
       snapshot={row.snapshot}
       embedded={row.embedded}
-      onCancel={row.embedded ? null : ctx.onCancelWorktreeSetup}
+      actions={row.embedded ? null : ctx.worktreeSetupActions}
       onWorkLocally={
-        !row.embedded && row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null
+        // Working locally cancels first, so it needs the same stop the card offers.
+        !row.embedded &&
+        row.snapshot.phase === "running" &&
+        ctx.worktreeSetupActions?.cancel === "available"
+          ? ctx.onWorktreeSetupWorkLocally
+          : null
       }
       onOpenTerminal={onOpenTerminal}
     />
@@ -3542,12 +3553,16 @@ function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boolean {
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
+  const { isCompacting, isPreparingWorktree, preparingThread, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   const isSettingUpMachine = use(SettingUpMachineContext); // signalbox
   const shimmer = isPreparingWorktree || isSettingUpMachine || isCompacting;
   const label = isPreparingWorktree ? (
-    "Setting up worktree…"
+    preparingThread ? (
+      "Preparing thread…"
+    ) : (
+      "Setting up worktree…"
+    )
   ) : isSettingUpMachine ? (
     "Setting up the machine…"
   ) : isCompacting ? (
@@ -3602,7 +3617,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
         <WorktreeSetupCard
           snapshot={snapshot}
           embedded
-          onCancel={null}
+          actions={null}
           onWorkLocally={null}
           onOpenTerminal={onOpenTerminal}
         />

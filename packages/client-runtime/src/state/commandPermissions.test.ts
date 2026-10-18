@@ -12,6 +12,7 @@ import {
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
   WS_METHODS,
   type AuthSessionState,
@@ -26,6 +27,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "@t3tools/contracts/signalboxAnalytics";
+import { PERSON_TIMEZONE_WS_METHODS } from "@t3tools/contracts/personTimezone";
 
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -60,6 +62,24 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination's orchestration grant to cancel preparation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cancel = createCommandPermissions(runtime, WS_METHODS.worktreeSetupCancel);
+        registry.set(sessions(other), AsyncResult.success(grant(true)));
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(cancel.permissionAtom(env))).toBe(false);
+        expect((yield* cancel.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+          AuthOrchestrationOperateScope,
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cancel.permissionAtom(env))).toBe(true);
+        yield* cancel.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect.each([WS_METHODS.serverUpsertKeybinding, WS_METHODS.serverRemoveKeybinding])(
     "requires the destination settings grant for %s",
     (method) =>
@@ -84,6 +104,34 @@ describe("command permissions", () => {
           yield* command.authorize(registry, env);
           registry.set(sessions(other), AsyncResult.success(grant(false)));
           expect(registry.get(command.permissionAtom(other))).toBe(false);
+        }),
+      ),
+  );
+
+  it.effect.each([PERSON_TIMEZONE_WS_METHODS.set, PERSON_TIMEZONE_WS_METHODS.report])(
+    "requires the destination settings grant for %s",
+    (method) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const timezone = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(timezone.permissionAtom(env))).toBe(false);
+          expect((yield* timezone.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(true),
+              scopes: [AuthSettingsWriteScope],
+              permissions: [AuthSettingsWriteScope],
+            }),
+          );
+          expect(registry.get(timezone.permissionAtom(env))).toBe(true);
+          yield* timezone.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(timezone.permissionAtom(other))).toBe(false);
         }),
       ),
   );
@@ -113,6 +161,35 @@ describe("command permissions", () => {
         yield* analytics.authorize(registry, env);
         registry.set(sessions(other), AsyncResult.success(grant(false)));
         expect(registry.get(analytics.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("guards dispatch commands with the target orchestration grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const dispatch = createCommandPermissions(
+          runtime,
+          ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+        );
+        expect(dispatch.requiredScopes()).toEqual([AuthOrchestrationOperateScope]);
+
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        const permissionChanges: boolean[] = [];
+        const unsubscribe = registry.subscribe(
+          dispatch.permissionAtom(env),
+          (allowed) => permissionChanges.push(allowed),
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        expect(permissionChanges).toEqual([true]);
+        yield* dispatch.authorize(registry, env);
+
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(permissionChanges).toEqual([true, false]);
+        const denied = yield* dispatch.authorize(registry, env).pipe(Effect.flip);
+        expect(denied._tag).toBe("EnvironmentAuthorizationError");
       }),
     ),
   );
@@ -164,6 +241,23 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("guards device-open cancellation with the destination operate grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cancelOpen = createCommandPermissions(runtime, WS_METHODS.deviceCancelOpen);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(cancelOpen.permissionAtom(env))).toBe(false);
+        expect((yield* cancelOpen.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cancelOpen.permissionAtom(env))).toBe(true);
+        yield* cancelOpen.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -179,6 +273,26 @@ describe("command permissions", () => {
       }),
     ),
   );
+  it.effect(
+    "uses the same refusal before and after authorization while allowing unknown grants to load",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          expect(permissions.check(registry, env)).toBeNull();
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          const known = permissions.check(registry, env);
+          const awaited = yield* permissions.authorize(registry, env).pipe(Effect.flip);
+          expect(known).not.toBeNull();
+          expect(known?.requiredScope).toBe(awaited.requiredScope);
+          expect(known?.requiredPermission).toBe(awaited.requiredPermission);
+          expect(known?.message).toBe(awaited.message);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(permissions.check(registry, env)).toBeNull();
+        }),
+      ),
+  );
+
   it.effect("waits for an initial grant", () =>
     Effect.scoped(
       Effect.gen(function* () {

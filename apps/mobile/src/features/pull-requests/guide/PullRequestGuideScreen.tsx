@@ -32,6 +32,7 @@ import { composerPullRequests } from "../../../state/pull-requests";
 import { usePullRequestPermissions } from "../usePullRequestPermissions";
 import { pullRequestTarget } from "../usePullRequestDiff";
 import { useReviewGuide } from "./useReviewGuide";
+import { useOneEnvironmentCopy } from "../../home/useOneEnvironmentCopy"; // signalbox: one-environment copy for review guides
 
 export type GuideStopParams = PullRequestParams & {
   readonly position: number;
@@ -50,11 +51,18 @@ const attentionLabels = {
 export function PullRequestGuideContent({ params }: { readonly params: PullRequestParams }) {
   const navigation = useNavigation();
   const state = useReviewGuide(params);
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox: one-environment copy for review guides
   const { guide, stale } = reviewGuideState(state.data);
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
-        <Text>Review guides are disabled for this server.</Text>
+        <Text>
+          {
+            environmentCopy(
+              "Review guides are disabled for this server.",
+            ) /* signalbox: one-environment copy for review guides */
+          }
+        </Text>
       ) : (
         <>
           <GuideNotice state={state} />
@@ -94,6 +102,7 @@ export function PullRequestGuideContent({ params }: { readonly params: PullReque
 export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideStopParams>) {
   const navigation = useNavigation();
   const state = useReviewGuide(route.params);
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox: one-environment copy for review guides
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(route.params)));
   const permissions = usePullRequestPermissions(route.params, detail.data);
   const canReview =
@@ -182,7 +191,13 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         >
           <View className="w-full max-w-[760px] self-center gap-5">
             {!state.enabled ? (
-              <Text>Review guides are disabled for this server.</Text>
+              <Text>
+                {
+                  environmentCopy(
+                    "Review guides are disabled for this server.",
+                  ) /* signalbox: one-environment copy for review guides */
+                }
+              </Text>
             ) : changedGuide ? (
               <Text>This guide was rewritten. Go back to start the new tour.</Text>
             ) : !stop ? (

@@ -1,5 +1,6 @@
 import {
   type OrchestrationV2Command,
+  type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
@@ -60,7 +61,7 @@ export class CloudThreadService extends Context.Service<
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
-    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CloudThreadError>;
     readonly launchThread: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,

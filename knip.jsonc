@@ -79,6 +79,7 @@
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
+        "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
       ],
       // `cloudflare:workers` is a Workers runtime module, not a package.
@@ -151,6 +152,10 @@
     "packages/*": {
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
+    },
+    "packages/client-runtime": {
+      // signalbox: retain upstream's lifecycle adapter so its patches merge cleanly.
+      "ignore": ["src/state/threadLifecycle.ts"],
     },
     "packages/sync": {
       "entry": [

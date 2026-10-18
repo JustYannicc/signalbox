@@ -1,3 +1,4 @@
+import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
   type ChatAttachment,
@@ -153,7 +154,10 @@ export const makeThreads = Effect.gen(function* () {
           )
         : null;
       const creation = placed(place, threadId, turn);
-      if (command.type !== "message.dispatch") {
+      if (
+        command.type !== "message.dispatch" &&
+        !(command.type === "queued-run.edit" && command.attachments !== undefined)
+      ) {
         return yield* directory.forThread(threadId).dispatch(actor, command, creation);
       }
       return yield* withClaimed(
@@ -162,12 +166,26 @@ export const makeThreads = Effect.gen(function* () {
           actor,
           threadId,
           command: { id: command.commandId, type: command.type },
-          attachments: command.attachments,
+          attachments: command.attachments ?? [],
         },
         (claimed) =>
-          directory
-            .forThread(threadId)
-            .dispatch(actor, { ...command, attachments: claimed }, creation),
+          directory.forThread(threadId).dispatch(
+            actor,
+            {
+              ...command,
+              attachments: claimed,
+              ...(command.type === "queued-run.edit" && command.context !== undefined
+                ? {
+                    context: remapComposerContextAttachments(
+                      command.context,
+                      command.attachments ?? [],
+                      claimed,
+                    ),
+                  }
+                : {}),
+            },
+            creation,
+          ),
       );
     });
 
@@ -310,6 +328,17 @@ export const makeThreads = Effect.gen(function* () {
     );
 
   return Threads.Threads.of({
+    subscribePreparation: (actor, threadId) =>
+      Stream.unwrap(
+        resuming({
+          operation: "subscribePreparation",
+          threadId,
+          open: directory.forThread(threadId).subscribePreparation(actor),
+          delivered: () => Effect.void,
+        }),
+      ),
+    cancelPreparation: (actor, input) =>
+      directory.forThread(input.threadId).cancelPreparation(actor, input),
     getWorkflowScript: (actor, input) =>
       directory.forThread(input.threadId).getWorkflowScript(actor, input),
     stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),

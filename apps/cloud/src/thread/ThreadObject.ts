@@ -129,10 +129,7 @@ const STEP_INTERVAL_MS = 120;
 /** Wait after the `failures`th failure in a row: 5 s, doubling, at most 5 min. */
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
 
-type MachineReport = Omit<
-  Parameters<TurnDiagnostics.TurnDiagnostics["Service"]["machineReported"]>[0],
-  "generation" | "runId" | "now"
->;
+type MachineReport = Omit<ThreadRunner.MachineReport, "generation" | "runId">;
 
 /**
  * Records into the turn's diagnostics under the thread's lock, so it never
@@ -157,16 +154,7 @@ const noteMachine = (
     readonly generation?: number | undefined;
     readonly runId: ThreadRunner.MachinePlan["runId"];
   },
-) =>
-  Effect.flatMap(ThreadStore.ThreadStore, (store) =>
-    recordUnderLock((diagnostics) =>
-      Effect.gen(function* () {
-        const generation = input.generation ?? (yield* Effect.orDie(store.machine)).generation;
-        const now = yield* Clock.currentTimeMillis;
-        yield* diagnostics.machineReported({ ...input, generation, now });
-      }),
-    ),
-  );
+) => ThreadRunner.ThreadRunner.use((runner) => runner.machineReported(input));
 
 /** Drives, when bound, and the owner's access to one and commit author, asked of their own object. */
 const layerThreadDrives = (env: ThreadObjectEnv) =>
@@ -497,6 +485,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   contextMatch(...args: Parameters<ThreadObjectApi["contextMatch"]>) {
     return this.api.contextMatch(...args);
+  }
+
+  subscribePreparation(...args: Parameters<ThreadObjectApi["subscribePreparation"]>) {
+    return this.api.subscribePreparation(...args);
+  }
+
+  cancelPreparation(...args: Parameters<ThreadObjectApi["cancelPreparation"]>) {
+    return this.api.cancelPreparation(...args);
   }
 
   contextTurns(...args: Parameters<ThreadObjectApi["contextTurns"]>) {
@@ -860,6 +856,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
                   noteMachine({
                     operation,
                     error: error.message,
+                    startupProblem: error.startupProblem,
                     generation: ensure?.generation,
                     runId: plan.runId,
                   }),
