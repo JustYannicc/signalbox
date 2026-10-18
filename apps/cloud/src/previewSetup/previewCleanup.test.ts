@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
 import {
   listPreviewPackNumbers,
@@ -81,40 +82,60 @@ const cleanupEnv = (bucket: ReturnType<typeof memoryBucket>) => ({
 });
 
 describe("preview drive pack cleanup", () => {
-  it("lists PR prefixes and deletes only the requested prefix", async () => {
-    const bucket = memoryBucket(
-      [
-        "pr-21/drive/packs/pack-a.idx",
-        "pr-21/drive/packs/pack-a.pack",
-        "pr-212/drive/packs/pack-b.pack",
-        "pr-212/drive/packs/pack-b.idx",
+  it.effect("lists PR prefixes and deletes only the requested prefix", () =>
+    Effect.gen(function* () {
+      const bucket = memoryBucket(
+        [
+          "pr-21/drive/packs/pack-a.idx",
+          "pr-21/drive/packs/pack-a.pack",
+          "pr-212/drive/packs/pack-b.pack",
+          "pr-212/drive/packs/pack-b.idx",
+          "drive/packs/pack-old.pack",
+        ],
+        1,
+      );
+      expect(yield* listPreviewPackNumbers(bucket)).toEqual([21, 212]);
+      expect(yield* removePreviewPackPrefix(bucket, "pr-21/")).toBe(2);
+      expect(bucket.keys()).toEqual([
         "drive/packs/pack-old.pack",
-      ],
-      1,
-    );
-    expect(await listPreviewPackNumbers(bucket)).toEqual([21, 212]);
-    expect(await removePreviewPackPrefix(bucket, "pr-21/")).toBe(2);
-    expect(bucket.keys()).toEqual([
-      "drive/packs/pack-old.pack",
-      "pr-212/drive/packs/pack-b.idx",
-      "pr-212/drive/packs/pack-b.pack",
-    ]);
-  });
+        "pr-212/drive/packs/pack-b.idx",
+        "pr-212/drive/packs/pack-b.pack",
+      ]);
+    }),
+  );
 
-  it("removes legacy unprefixed packs and preserves every PR namespace", async () => {
-    const bucket = memoryBucket(
-      [
-        "drive-a/packs/pack-old.pack",
+  it.effect("removes legacy unprefixed packs and preserves every PR namespace", () =>
+    Effect.gen(function* () {
+      const bucket = memoryBucket(
+        [
+          "drive-a/packs/pack-old.pack",
+          "pr-12/drive/packs/pack-a.pack",
+          "pr-213/drive/packs/pack-b.idx",
+        ],
+        1,
+      );
+      expect(yield* removeLegacyPreviewPacks(bucket)).toBe(1);
+      expect(bucket.keys()).toEqual([
         "pr-12/drive/packs/pack-a.pack",
         "pr-213/drive/packs/pack-b.idx",
-      ],
-      1,
-    );
-    expect(await removeLegacyPreviewPacks(bucket)).toBe(1);
-    expect(bucket.keys()).toEqual([
-      "pr-12/drive/packs/pack-a.pack",
-      "pr-213/drive/packs/pack-b.idx",
-    ]);
+      ]);
+    }),
+  );
+
+  it.effect("fails a truncated R2 page that has no cursor", () => {
+    let calls = 0;
+    const bucket = {
+      list: async () => {
+        calls += 1;
+        return { objects: [], truncated: true, cursor: "" };
+      },
+      delete: async () => {},
+    };
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(listPreviewPackNumbers(bucket));
+      expect(error._tag).toBe("PreviewPackCursorMissingError");
+      expect(calls).toBe(1);
+    });
   });
 
   it("is not found while production has no cleanup token", async () => {

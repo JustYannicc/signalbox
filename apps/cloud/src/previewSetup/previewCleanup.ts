@@ -1,4 +1,5 @@
 import { log } from "evlog";
+import * as Effect from "effect/Effect";
 
 import {
   runPreviewCleanup,
@@ -76,7 +77,7 @@ export const handlePreviewCleanup = async (
   try {
     const decoded = decodeCommand(await request.json());
     if ("error" in decoded) return Response.json({ error: decoded.error }, { status: 400 });
-    return Response.json(await runPreviewCleanup(decoded, env));
+    return Response.json(await Effect.runPromise(runPreviewCleanup(decoded, env)));
   } catch (cause) {
     log.error({
       action: "preview.cleanup",
