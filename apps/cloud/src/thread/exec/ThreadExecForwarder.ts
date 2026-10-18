@@ -1,4 +1,8 @@
-import type { ExecReport, ExecCommandMessage } from "@signalbox/runner-protocol/ExecProtocol";
+import {
+  EXEC_PROTOCOL_VERSION,
+  type ExecReport,
+  type ExecCommandMessage,
+} from "@signalbox/runner-protocol/ExecProtocol";
 import type { KernelCommand, KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
 import { KernelForwardingUnavailable } from "../../kernel/KernelCommandForwarder.ts";
 import { RunnerExecChild } from "./RunnerExecChild.ts";
@@ -64,10 +68,10 @@ export interface ThreadExecForwarderOptions {
 interface TrackedLeaseRelease {
   readonly release: () => Promise<void>;
   inFlight: Promise<void> | null;
+  attempted: boolean;
   lastFailure?: unknown;
 }
 
-const RUNNER_EXEC_PROTOCOL = 8;
 const DEFAULT_ACK_TIMEOUT_MS = 30_000;
 
 /** Uses only the current negotiated Runner connection and an existing lease. */
@@ -128,6 +132,15 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
     this.#failGeneration(generation, new Error("Runner connection closed"));
   }
 
+  /** A disconnected socket alone does not prove that its native processes stopped. */
+  generationEnded(generation: number) {
+    for (const child of this.#children.values()) {
+      if (child.generation === generation) {
+        child.generationEnded(new Error("Runner generation ended"));
+      }
+    }
+  }
+
   report(socket: WebSocket, generation: number, connection: number, report: ExecReport) {
     const current = this.#connection;
     if (
@@ -172,7 +185,7 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
         connection.value.generation !== lease.generation ||
         connection.value.connection !== lease.connection ||
         !connection.value.exec ||
-        connection.value.protocolVersion < RUNNER_EXEC_PROTOCOL
+        connection.value.protocolVersion < EXEC_PROTOCOL_VERSION
       ) {
         throw unavailable(
           "RUNNER_NOT_READY",
@@ -257,9 +270,11 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       ...inFlightReleases,
     ]);
     const releases = await Promise.allSettled(
-      [...this.#leaseReleases].map((release) => this.#releaseLease(release)),
+      [...this.#leaseReleases]
+        .filter((release) => release.attempted)
+        .map((release) => this.#releaseLease(release)),
     );
-    this.#connection = null;
+    if (this.#children.size === 0) this.#connection = null;
     const failures = [
       ...cleanup.flatMap((result) =>
         result.status === "rejected" && !this.#recoveredReleaseFailures.has(result.reason)
@@ -273,13 +288,14 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
   }
 
   #trackLeaseRelease(release: () => Promise<void>) {
-    const tracked: TrackedLeaseRelease = { release, inFlight: null };
+    const tracked: TrackedLeaseRelease = { release, inFlight: null, attempted: false };
     this.#leaseReleases.add(tracked);
     return tracked;
   }
 
   #releaseLease(tracked: TrackedLeaseRelease) {
     if (tracked.inFlight !== null) return tracked.inFlight;
+    tracked.attempted = true;
     let attempt!: Promise<void>;
     attempt = Promise.resolve()
       .then(tracked.release)

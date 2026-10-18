@@ -302,22 +302,13 @@ const makeFakeTerminals = Effect.gen(function* () {
 const makeFakeExec = Effect.gen(function* () {
   const commands = yield* Queue.unbounded<ExecCommandMessage>();
   const reports = yield* Queue.unbounded<ExecReport>();
-  const retained = yield* Ref.make<ReadonlyArray<ExecReport>>([]);
   const make = () =>
     Effect.succeed({
       handleCommand: (message: ExecCommandMessage) =>
         Queue.offer(commands, message).pipe(Effect.asVoid),
       reports: Stream.fromQueue(reports),
-      replayEvents: (emit) =>
-        Effect.flatMap(Ref.get(retained), (all) =>
-          Effect.forEach(all, (report) => emit({ type: "exec.report", report })),
-        ).pipe(Effect.asVoid),
     } satisfies RunnerExecHost);
-  const emit = (report: ExecReport) =>
-    Ref.update(retained, (all) => [...all, report]).pipe(
-      Effect.andThen(Queue.offer(reports, report)),
-      Effect.asVoid,
-    );
+  const emit = (report: ExecReport) => Effect.asVoid(Queue.offer(reports, report));
   return { make, commands: Queue.take(commands), emit };
 });
 
@@ -531,7 +522,7 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
   );
 
   it.effect(
-    "advertises exec, routes commands and replays sequenced process output after reconnect",
+    "advertises exec, routes commands and does not replay process output after reconnect",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -583,9 +574,9 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
           yield* session.dropConnection;
           yield* settle(
             Effect.map(Ref.get(thread.hellos), (all) => all.length === 2),
-            "exec reconnect",
+            "Runner reconnect",
           );
-          expect(yield* Ref.get(thread.execReports)).toEqual([report, report]);
+          expect(yield* Ref.get(thread.execReports)).toEqual([report]);
         }),
       ),
   );

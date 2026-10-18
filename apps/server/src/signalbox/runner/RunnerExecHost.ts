@@ -1,38 +1,35 @@
 // @effect-diagnostics nodeBuiltinImport:off - native process bytes, exit signals and stdio live at this Runner boundary.
 import * as NodeChildProcess from "node:child_process";
-import { Buffer } from "node:buffer";
+import * as NodeBuffer from "node:buffer";
 import * as NodeCrypto from "node:crypto";
-import * as NodeOs from "node:os";
-import type { Readable } from "node:stream";
+import * as NodeOS from "node:os";
+import type * as NodeStream from "node:stream";
 
 import type {
   ExecCommand,
   ExecCommandErrorCode,
   ExecCommandMessage,
   ExecReport,
-  ExecReportMessage,
 } from "@signalbox/runner-protocol/ExecProtocol";
 import type { ThreadId } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { RunnerExecMailbox } from "./RunnerExecMailbox.ts";
 import { makeRunnerExecProcessHost, type RunnerExecProcessHost } from "./RunnerExecProcessHost.ts";
-import type { RunnerConnectionError } from "./RunnerConnectionError.ts";
 
 const MAX_OUTPUT_CHUNK_BYTES = 16 * 1024;
-const MAX_RETAINED_OUTPUT_BYTES = 1024 * 1024;
-const MAX_RETAINED_OUTPUT_REPORTS = 50_000;
 const MAX_CONTROL_RECEIPTS = 65_536;
 const MAX_WRITE_RECEIPTS = 65_536;
 const MAX_PROCESSES = 4_096;
 const MAX_ACTIVE_PROCESSES = 32;
-const REPORT_HIGH_WATER = 256;
-const REPORT_LOW_WATER = 128;
 
 type SequencedReport = Extract<ExecReport, { readonly type: "output" | "exit" | "closed" }>;
 type RunnerGeneration = Extract<ExecCommand, { readonly type: "start" }>["generation"];
-type Pipe = Readable & { pause(): Readable; resume(): Readable };
+type Pipe = NodeStream.Readable & { pause(): NodeStream.Readable; resume(): NodeStream.Readable };
 type ProcessHandle = NodeChildProcess.ChildProcessWithoutNullStreams;
 
 /** Per-thread proof that this generation's drive owns the requested canonical cwd. */
@@ -60,78 +57,7 @@ interface Receipt {
   readonly result: Promise<ExecReport>;
 }
 
-/** A bounded in-memory replay of process output and its terminal events. */
-class ExecEventLog {
-  #events: Array<SequencedReport> = [];
-  #bytes = 0;
-
-  append(report: SequencedReport) {
-    this.#events.push(report);
-    this.#bytes += Buffer.byteLength(JSON.stringify(report));
-    while (
-      this.#events.length > MAX_RETAINED_OUTPUT_REPORTS ||
-      this.#bytes > MAX_RETAINED_OUTPUT_BYTES
-    ) {
-      const dropped = this.#events.shift();
-      if (dropped !== undefined) this.#bytes -= Buffer.byteLength(JSON.stringify(dropped));
-    }
-  }
-
-  snapshot(): ReadonlyArray<SequencedReport> {
-    return [...this.#events];
-  }
-}
-
-/** Keeps native output bounded when the Runner socket cannot drain it quickly enough. */
-class ReportMailbox implements AsyncIterable<ExecReport> {
-  #reports: Array<ExecReport> = [];
-  #waiters: Array<(result: IteratorResult<ExecReport>) => void> = [];
-  #paused = new Set<Pipe>();
-  #closed = false;
-
-  offer(report: ExecReport, pipe?: Pipe) {
-    if (this.#closed) return;
-    const waiter = this.#waiters.shift();
-    if (waiter !== undefined) {
-      waiter({ done: false, value: report });
-      return;
-    }
-    // Acks can be retried by stable ID. Process output is retained separately and replayed.
-    if (this.#reports.length >= REPORT_HIGH_WATER && pipe === undefined) return;
-    this.#reports.push(report);
-    if (pipe !== undefined && this.#reports.length >= REPORT_HIGH_WATER) {
-      pipe.pause();
-      this.#paused.add(pipe);
-    }
-  }
-
-  close() {
-    this.#closed = true;
-    for (const pipe of this.#paused) pipe.resume();
-    this.#paused.clear();
-    for (const waiter of this.#waiters.splice(0)) waiter({ done: true, value: undefined });
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<ExecReport> {
-    return {
-      next: () => {
-        const report = this.#reports.shift();
-        if (report !== undefined) {
-          if (this.#reports.length <= REPORT_LOW_WATER) {
-            for (const pipe of this.#paused) pipe.resume();
-            this.#paused.clear();
-          }
-          return Promise.resolve({ done: false, value: report });
-        }
-        if (this.#closed) return Promise.resolve({ done: true, value: undefined });
-        return new Promise((resolve) => this.#waiters.push(resolve));
-      },
-    };
-  }
-}
-
 const fingerprint = (command: ExecCommand) =>
-  // Reserve the ID synchronously before another socket frame can reuse it.
   NodeCrypto.createHash("sha256").update(JSON.stringify(command)).digest("hex");
 
 const ERROR_MESSAGES = {
@@ -156,12 +82,8 @@ const operationOf = (command: ExecCommand) => (command.type === "start" ? "start
 /** One Runner lease's non-PTY native process host. */
 export interface RunnerExecHost {
   readonly handleCommand: (message: ExecCommandMessage) => Effect.Effect<void>;
-  /** Newly produced reports; replayable output is retained separately. */
+  /** Process output and acknowledgements in arrival order. */
   readonly reports: Stream.Stream<ExecReport>;
-  /** Re-sends bounded output/exit/closed history after a Runner socket reconnects. */
-  readonly replayEvents: (
-    emit: (message: ExecReportMessage) => Effect.Effect<void, RunnerConnectionError>,
-  ) => Effect.Effect<void, RunnerConnectionError>;
 }
 
 export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (input: {
@@ -173,17 +95,16 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
   readonly processHost?: RunnerExecProcessHost;
 }): Effect.fn.Return<RunnerExecHost, never, Scope.Scope> {
   const processHost = input.processHost ?? makeRunnerExecProcessHost();
-  const mailbox = new ReportMailbox();
-  const eventLog = new ExecEventLog();
+  const reportQueue = yield* Queue.unbounded<ExecReport, Cause.Done>();
+  const mailbox = new RunnerExecMailbox(reportQueue);
   const processes = new Map<string, ProcessState>();
   const controlReceipts = new Map<string, Receipt>();
   const writeReceipts = new Map<string, Receipt>();
   const stopped = { value: false };
-  const knownSignals = new Set(Object.values(NodeOs.constants.signals));
+  const knownSignals = new Set(Object.values(NodeOS.constants.signals));
 
   const nextSequence = (state: ProcessState) => ++state.sequence;
   const appendEvent = (report: SequencedReport) => {
-    eventLog.append(report);
     mailbox.offer(report);
   };
   const ack = (
@@ -216,7 +137,7 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
       });
       return;
     }
-    const signalNumber = signal === null ? undefined : NodeOs.constants.signals[signal];
+    const signalNumber = signal === null ? undefined : NodeOS.constants.signals[signal];
     if (typeof signalNumber !== "number" || signalNumber <= 0) return;
     // Node exposes the terminating signal but not waitpid's core-dump bit.
     appendEvent({
@@ -241,7 +162,7 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
   const reportOutput = (
     state: ProcessState,
     stream: "stdout" | "stderr",
-    bytes: Buffer,
+    bytes: NodeBuffer.Buffer,
     pipe: Pipe,
   ) => {
     for (let offset = 0; offset < bytes.byteLength; offset += MAX_OUTPUT_CHUNK_BYTES) {
@@ -254,7 +175,6 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
         stream,
         dataBase64,
       };
-      eventLog.append(report);
       mailbox.offer(report, pipe);
     }
   };
@@ -314,12 +234,15 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
           resolve(failed(command, "process_error"));
         });
       });
-      child.stdout.on("data", (chunk: Buffer | Uint8Array) =>
-        reportOutput(process, "stdout", Buffer.from(chunk), child.stdout),
+      child.stdout.on("data", (chunk: NodeBuffer.Buffer | Uint8Array) =>
+        reportOutput(process, "stdout", NodeBuffer.Buffer.from(chunk), child.stdout),
       );
-      child.stderr.on("data", (chunk: Buffer | Uint8Array) =>
-        reportOutput(process, "stderr", Buffer.from(chunk), child.stderr),
+      child.stderr.on("data", (chunk: NodeBuffer.Buffer | Uint8Array) =>
+        reportOutput(process, "stderr", NodeBuffer.Buffer.from(chunk), child.stderr),
       );
+      child.stdin.on("error", () => {
+        process.stdinClosed = true;
+      });
       child.stdout.once("end", () => {
         process.stdoutEnded = true;
         finishIfClosed(process);
@@ -346,7 +269,7 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
       if (state.stdinClosed || state.child.stdin.destroyed || state.child.stdin.writableEnded) {
         return failed(command, "stdin_closed");
       }
-      const chunk = Buffer.from(command.dataBase64, "base64");
+      const chunk = NodeBuffer.Buffer.from(command.dataBase64, "base64");
       return new Promise((resolve) => {
         state.child.stdin.write(chunk, (error) =>
           resolve(error == null ? ack(command, true) : failed(command, "process_error")),
@@ -393,6 +316,7 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
           mailbox.offer(failed(command, "write_receipt_limit"));
           return;
         }
+        // Reserve the ID synchronously before another socket frame can reuse it.
         const result = apply(command);
         writeReceipts.set(command.writeId, { fingerprint: inputFingerprint, result });
         mailbox.offer(await result);
@@ -412,15 +336,11 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
         mailbox.offer(failed(command, "request_receipt_limit"));
         return;
       }
+      // Reserve the ID synchronously before another socket frame can reuse it.
       const result = apply(command);
       controlReceipts.set(command.requestId, { fingerprint: inputFingerprint, result });
       mailbox.offer(await result);
     });
-
-  const replayEvents: RunnerExecHost["replayEvents"] = (emit) =>
-    Effect.forEach(eventLog.snapshot(), (report) => emit({ type: "exec.report", report })).pipe(
-      Effect.asVoid,
-    );
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
@@ -460,8 +380,5 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
     }),
   );
 
-  const reports = Stream.fromAsyncIterable(mailbox, (cause): never => {
-    throw cause;
-  });
-  return { handleCommand, reports, replayEvents };
+  return { handleCommand, reports: mailbox.stream };
 });

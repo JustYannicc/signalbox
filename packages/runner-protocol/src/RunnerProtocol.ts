@@ -71,12 +71,12 @@ import { ExecCommandMessage, ExecReportMessage } from "./ExecProtocol.ts";
  *
  * A turn in a folder that names 1Password Environments also carries the
  * owner's service account token for them (`SecretsProtocol.ts`): the Runner
- * reads the values as a harness session starts, and masks them in every
- * frame it sends.
+ * reads the values as a harness session starts, and masks them in its
+ * text-bearing frames.
  */
 
 export const RUNNER_PROTOCOL_VERSION = 8;
-/** Versions 5 and 6 remain readable while existing machines finish their image rollout. */
+/** Versions 5 through 7 remain readable while existing machines finish their image rollout. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";

@@ -1,5 +1,8 @@
 import * as Schema from "effect/Schema";
 
+/** First Runner protocol version with non-PTY exec commands and reports. */
+export const EXEC_PROTOCOL_VERSION = 8;
+
 const Id = Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(128));
 const Text = Schema.String.check(Schema.isMaxLength(16_384));
 const Environment = Schema.Record(

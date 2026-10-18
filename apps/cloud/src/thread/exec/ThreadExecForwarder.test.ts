@@ -281,7 +281,7 @@ describe("ThreadExecForwarder", () => {
     expect(released).toHaveBeenCalledOnce();
   });
 
-  it("rejects stale reports after a connection replacement and releases the old lease", async () => {
+  it("retains a disconnected generation's lease until its owner confirms termination", async () => {
     const leaseReleased = deferred<void>();
     const released = vi.fn(async () => leaseReleased.resolve());
     const fixture = setup({
@@ -302,7 +302,7 @@ describe("ThreadExecForwarder", () => {
       send: () => undefined,
     });
     await expect(child.exited).rejects.toThrow("Runner connection was replaced");
-    await leaseReleased.promise;
+    expect(released).not.toHaveBeenCalled();
     fixture.report({
       type: "output",
       generation: 4,
@@ -311,6 +311,45 @@ describe("ThreadExecForwarder", () => {
       stream: "stdout",
       dataBase64: "QQ==",
     });
+    expect(released).not.toHaveBeenCalled();
+    fixture.forwarder.generationEnded(4);
+    await leaseReleased.promise;
+    expect(released).toHaveBeenCalledOnce();
+  });
+
+  it("retains the child and lease after rejected cancellation and retries cleanup", async () => {
+    const released = vi.fn(async () => undefined);
+    const fixture = setup({
+      lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
+      workspace: { canonicalCwd: async () => "/workspace" },
+      policy: { authorize: async () => undefined },
+    });
+    const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
+    const start = await fixture.startSent.promise;
+    fixture.acknowledge(start);
+    const child = await spawning;
+
+    const firstCancel = fixture.waitForCommand("cancel");
+    const firstDisposal = fixture.forwarder.dispose();
+    const rejected = expect(firstDisposal).rejects.toThrow("Runner process cleanup failed");
+    fixture.acknowledge(await firstCancel, false);
+    await rejected;
+    expect(released).not.toHaveBeenCalled();
+
+    const retryCancel = fixture.waitForCommand("cancel");
+    const retry = fixture.forwarder.dispose();
+    fixture.acknowledge(await retryCancel);
+    expect(released).not.toHaveBeenCalled();
+    fixture.report({
+      type: "exit",
+      generation: 4,
+      processId: start.processId,
+      sequence: 1,
+      exitCode: 0,
+    });
+    fixture.report({ type: "closed", generation: 4, processId: start.processId, sequence: 2 });
+    await retry;
+    await child.dispose();
     expect(released).toHaveBeenCalledOnce();
   });
 

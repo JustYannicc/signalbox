@@ -6,7 +6,7 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId } from "@t3tools/contracts";
 import type { FeedbackResponse } from "@signalbox/runner-protocol/FeedbackProtocol";
-import type { ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
+import { EXEC_PROTOCOL_VERSION, type ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
 import type * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 
@@ -402,7 +402,7 @@ export async function onRunnerMessage(
         ...(message.terminalProcessId === undefined
           ? {}
           : { terminalProcessId: message.terminalProcessId }),
-        exec: message.protocolVersion >= 8 && message.exec === true,
+        exec: message.protocolVersion >= EXEC_PROTOCOL_VERSION && message.exec === true,
         feedback: message.feedback === true,
         runtimeResponses: message.runtimeResponses === true,
       } satisfies Attachment);
@@ -410,7 +410,7 @@ export async function onRunnerMessage(
         generation: result.generation,
         connection: result.connection,
         protocolVersion: message.protocolVersion,
-        exec: message.protocolVersion >= 8 && message.exec === true,
+        exec: message.protocolVersion >= EXEC_PROTOCOL_VERSION && message.exec === true,
         send: (frame) => {
           if (socket.readyState !== WebSocket.OPEN) throw new Error("Runner socket is closed");
           socket.send(threadFrame.encode(frame));

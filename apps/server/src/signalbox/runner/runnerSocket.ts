@@ -116,7 +116,7 @@ export const webSocketTransport = (url: string): RunnerTransport => ({
   ),
 });
 
-/** `transport` with the folder's secrets masked in every frame it sends (`secretMask.ts`). */
+/** `transport` with secrets masked in text-bearing frames; exec bytes pass through unchanged. */
 export const maskingTransport = (
   transport: RunnerTransport,
   mask: SecretMask,

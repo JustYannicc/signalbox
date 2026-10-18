@@ -175,12 +175,8 @@ export class RunnerExecChild implements KernelCommandChild {
 
   readonly dispose = () => {
     if (this.#disposePromise !== null) return this.#disposePromise;
-    this.#disposePromise = (async () => {
+    const disposal = (async () => {
       if (this.#closedReceived) return this.#releaseLease();
-      if (this.#failed !== null) {
-        await this.#releaseLease();
-        throw this.#failed;
-      }
       try {
         if (!this.#exitReceived) await this.#cancel();
         await withTimeout(
@@ -188,14 +184,17 @@ export class RunnerExecChild implements KernelCommandChild {
           this.#options.acknowledgementTimeoutMs,
           "Timed out waiting for Runner process cleanup",
         );
-        if (this.#failed !== null) throw this.#failed;
         await this.#releaseLease();
       } catch (error) {
         this.fail(asError(error));
         throw error;
       }
     })();
-    return this.#disposePromise;
+    this.#disposePromise = disposal;
+    void disposal.catch(() => {
+      if (this.#disposePromise === disposal) this.#disposePromise = null;
+    });
+    return disposal;
   };
 
   report(report: ExecReport) {
@@ -259,8 +258,16 @@ export class RunnerExecChild implements KernelCommandChild {
     this.#output.stdout.error(error);
     this.#output.stderr.error(error);
     this.#rejectExit(error);
-    this.#resolveClosed();
     this.#acks.fail(error);
+    if (!this.#startSent) this.generationEnded(error);
+  }
+
+  /** Called only when the owner confirms this generation can no longer run processes. */
+  generationEnded(error: Error) {
+    this.fail(error);
+    if (this.#closedReceived) return;
+    this.#closedReceived = true;
+    this.#resolveClosed();
     this.#options.onDone(this.processId, this.#releaseLease());
   }
 
@@ -282,7 +289,7 @@ export class RunnerExecChild implements KernelCommandChild {
   }
 
   async #cancel() {
-    if (this.#closedReceived || this.#failed !== null) return;
+    if (this.#closedReceived) return;
     await this.#sendAwaitingAck({
       type: "cancel",
       generation: this.generation,

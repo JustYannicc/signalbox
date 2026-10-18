@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - integration tests need a real child process for byte streams.
-import { Buffer } from "node:buffer";
+import * as NodeBuffer from "node:buffer";
 import * as NodeChildProcess from "node:child_process";
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -89,7 +89,7 @@ const nextStdout = (reports: Queue.Queue<ExecReport>, seen: Ref.Ref<ReadonlyArra
       const report = yield* Queue.take(reports);
       yield* Ref.update(seen, (all) => [...all, report]);
       if (report.type === "output" && report.stream === "stdout") {
-        return Buffer.from(report.dataBase64, "base64").toString();
+        return NodeBuffer.Buffer.from(report.dataBase64, "base64").toString();
       }
     }
   });
@@ -158,7 +158,7 @@ it.effect("runs byte-exact non-PTY processes and deduplicates applied stdin writ
       generation: 1,
       processId: "bytes-1",
       writeId: "write-1",
-      dataBase64: Buffer.from(input).toString("base64"),
+      dataBase64: NodeBuffer.Buffer.from(input).toString("base64"),
     };
     const writeMessage: ExecCommandMessage = {
       type: "exec.command",
@@ -171,7 +171,7 @@ it.effect("runs byte-exact non-PTY processes and deduplicates applied stdin writ
 
     yield* host.handleCommand({
       type: "exec.command",
-      command: { ...write, dataBase64: Buffer.from("different").toString("base64") },
+      command: { ...write, dataBase64: NodeBuffer.Buffer.from("different").toString("base64") },
     });
     expect(yield* nextAck(reports, seen)).toMatchObject({
       writeId: "write-1",
@@ -196,20 +196,104 @@ it.effect("runs byte-exact non-PTY processes and deduplicates applied stdin writ
 
     const terminal = yield* nextClosed(reports, seen);
     const output = terminal.filter((report) => report.type === "output");
-    const stdout = Buffer.concat(
+    const stdout = NodeBuffer.Buffer.concat(
       output
         .filter((report) => report.type === "output" && report.stream === "stdout")
-        .map((report) => Buffer.from(report.dataBase64, "base64")),
+        .map((report) => NodeBuffer.Buffer.from(report.dataBase64, "base64")),
     );
-    const stderr = Buffer.concat(
+    const stderr = NodeBuffer.Buffer.concat(
       output
         .filter((report) => report.type === "output" && report.stream === "stderr")
-        .map((report) => Buffer.from(report.dataBase64, "base64")),
+        .map((report) => NodeBuffer.Buffer.from(report.dataBase64, "base64")),
     );
-    expect(stdout).toEqual(Buffer.concat([Buffer.from("readyprefix:"), Buffer.from(input)]));
-    expect(stderr).toEqual(Buffer.from([255, 0, 65]));
+    expect(stdout).toEqual(
+      NodeBuffer.Buffer.concat([
+        NodeBuffer.Buffer.from("readyprefix:"),
+        NodeBuffer.Buffer.from(input),
+      ]),
+    );
+    expect(stderr).toEqual(NodeBuffer.Buffer.from([255, 0, 65]));
     expect(terminal.find((report) => report.type === "exit")).toMatchObject({ exitCode: 7 });
     expect(terminal.at(-1)).toMatchObject({ type: "closed" });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps the Runner alive when a live child closes stdin", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "runner-exec-stdin-closed-" });
+    const host = yield* makeRunnerExecHost({
+      threadId,
+      generation: 1,
+      workspace: testWorkspace,
+      processHost: testProcessHost(cwd),
+    });
+    const reports = yield* Queue.unbounded<ExecReport>();
+    const seen = yield* Ref.make<ReadonlyArray<ExecReport>>([]);
+    yield* Stream.runForEach(host.reports, (report) => Queue.offer(reports, report)).pipe(
+      Effect.forkScoped,
+    );
+
+    const executable = process.execPath;
+    const script = [
+      "require('node:fs').closeSync(0)",
+      "process.stdout.write('stdin-closed')",
+      "setInterval(() => {}, 1000)",
+    ].join(";");
+    yield* host.handleCommand(
+      start({
+        processId: "stdin-closed-1",
+        requestId: "start-stdin-closed",
+        executable,
+        argv: [executable, "-e", script],
+      }),
+    );
+    expect(yield* nextAck(reports, seen)).toMatchObject({ applied: true });
+    expect(yield* nextStdout(reports, seen)).toBe("stdin-closed");
+
+    yield* host.handleCommand({
+      type: "exec.command",
+      command: {
+        type: "stdin.write",
+        generation: 1,
+        processId: "stdin-closed-1",
+        writeId: "write-stdin-closed",
+        dataBase64: NodeBuffer.Buffer.from("write after child closed fd 0").toString("base64"),
+      },
+    });
+    expect(yield* nextAck(reports, seen)).toMatchObject({
+      writeId: "write-stdin-closed",
+      applied: false,
+      error: { code: "process_error" },
+    });
+
+    yield* host.handleCommand({
+      type: "exec.command",
+      command: {
+        type: "signal",
+        generation: 1,
+        processId: "stdin-closed-1",
+        requestId: "probe-live-after-stdin-error",
+        signal: 0,
+      },
+    });
+    expect(yield* nextAck(reports, seen)).toMatchObject({
+      requestId: "probe-live-after-stdin-error",
+      applied: true,
+    });
+
+    yield* host.handleCommand({
+      type: "exec.command",
+      command: {
+        type: "signal",
+        generation: 1,
+        processId: "stdin-closed-1",
+        requestId: "stop-after-stdin-error",
+        signal: NodeOS.constants.signals.SIGTERM,
+      },
+    });
+    expect(yield* nextAck(reports, seen)).toMatchObject({ applied: true });
+    expect((yield* nextClosed(reports, seen)).at(-1)).toMatchObject({ type: "closed" });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -259,7 +343,7 @@ it.effect(
         error: { code: "invalid_signal" },
       });
 
-      const sigint = NodeOs.constants.signals.SIGINT;
+      const sigint = NodeOS.constants.signals.SIGINT;
       yield* host.handleCommand({
         type: "exec.command",
         command: {
@@ -273,10 +357,10 @@ it.effect(
       expect(yield* nextAck(reports, seen)).toMatchObject({ applied: true });
       const terminal = yield* nextClosed(reports, seen);
       expect(
-        Buffer.concat(
+        NodeBuffer.Buffer.concat(
           terminal.flatMap((report) =>
             report.type === "output" && report.stream === "stdout"
-              ? [Buffer.from(report.dataBase64, "base64")]
+              ? [NodeBuffer.Buffer.from(report.dataBase64, "base64")]
               : [],
           ),
         ).toString(),
@@ -377,7 +461,7 @@ it.effect("does not scrub opaque exec report bytes", () =>
         processId: "opaque-1",
         sequence: 1,
         stream: "stdout",
-        dataBase64: Buffer.from(secret).toString("base64"),
+        dataBase64: NodeBuffer.Buffer.from(secret).toString("base64"),
       },
     };
 
@@ -387,6 +471,6 @@ it.effect("does not scrub opaque exec report bytes", () =>
     if (sentReport?.type !== "exec.report" || sentReport.report.type !== "output") {
       throw new Error("Expected an opaque exec output report");
     }
-    expect(Buffer.from(sentReport.report.dataBase64, "base64").toString()).toBe(secret);
+    expect(NodeBuffer.Buffer.from(sentReport.report.dataBase64, "base64").toString()).toBe(secret);
   }),
 );
