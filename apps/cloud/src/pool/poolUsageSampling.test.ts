@@ -200,7 +200,7 @@ describe("pool usage sampling alarms", () => {
       const filename = path.join(directory, "pool.sqlite");
       const backend = makeFakeCliProxyApi();
       backend.accounts.set("claude.json", account());
-      const first = makeMemoryPoolObject(backend.serve, { filename });
+      const first = makeMemoryPoolObject(backend.serve, undefined, { filename });
       const engine = yield* engineOf(first);
       yield* TestClock.setTime(START);
       yield* engine.create(actor, { name: "Work", personal: false });
@@ -213,7 +213,7 @@ describe("pool usage sampling alarms", () => {
       expect(yield* engine.nextUsageSampleAt()).toBe(START + History.SAMPLE_EVERY_MS);
       yield* Effect.promise(() => first.runtime.dispose());
       yield* TestClock.setTime(START + History.SAMPLE_EVERY_MS - 1);
-      const second = makeMemoryPoolObject(backend.serve, { filename });
+      const second = makeMemoryPoolObject(backend.serve, undefined, { filename });
       const restarted = yield* engineOf(second);
       expect(yield* restarted.nextUsageSampleAt()).toBe(START + History.SAMPLE_EVERY_MS);
       yield* restarted.refreshUsageAtAlarm();
@@ -226,7 +226,7 @@ describe("pool usage sampling alarms", () => {
       expect(yield* restarted.nextUsageSampleAt()).toBe(next);
       yield* Effect.promise(() => second.runtime.dispose());
       yield* TestClock.setTime(next + 1);
-      const third = makeMemoryPoolObject(backend.serve, { filename });
+      const third = makeMemoryPoolObject(backend.serve, undefined, { filename });
       const overdue = yield* engineOf(third);
       expect(yield* overdue.nextUsageSampleAt()).toBe(next);
       yield* overdue.refreshUsageAtAlarm();

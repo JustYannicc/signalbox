@@ -4,7 +4,14 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
-import { fakeHttp, jsonResponse, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
+import {
+  PROJECT,
+  fakeHttp,
+  fakeTools,
+  jsonResponse,
+  saveOk,
+  withEngine,
+} from "./WorkflowEngine.testkit.ts";
 
 /** Counts calls per URL; `b.example` hangs the first time and answers after. */
 const routes = Effect.gen(function* () {
@@ -74,6 +81,83 @@ export default workflow(async (w) => { await w.ask("Hold", {}); });`,
       }),
     );
   }),
+);
+
+it.effect("a retry captures its own event cursor and reruns later successful reads", () =>
+  withEngine(
+    {},
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const tools = fakeTools({
+        pull_request_read: {
+          repository: "acme/app",
+          number: 12,
+          title: "Fix login",
+          state: "open",
+          headSha: "abc1234",
+          isDraft: false,
+          mergeability: "mergeable",
+          reviewDecision: null,
+          checks: [],
+          openThreads: 0,
+          files: [],
+        },
+      });
+      yield* engine.registerBuiltinTools(tools.handler);
+      const saved = yield* saveOk(`export const meta = { name: "Cursor retry" } as const;
+export default workflow(async (w) => {
+  await w.waitFor("Wait for the prior event", { on: "pr.opened" });
+  const after = await w.eventCursor("Capture before reading the PR");
+  const pr = await w.call("Read the pull request", "signalbox.pull_request_read", {
+    threadId: "thread-9",
+    url: "https://github.com/acme/app/pull/12",
+  });
+  const fresh = await w.waitFor("Wait for a fresh check", { on: "pr.checks.passed", after });
+  return { state: pr.state, eventId: fresh.id };
+});`);
+      const original = yield* engine.startRun({ automationId: saved.id, trigger: "manual" });
+      const deliver = (id: string, event: "pr.opened" | "pr.checks.passed") =>
+        engine.deliverEvent({
+          event,
+          id,
+          at: "2026-10-17T20:16:20.000Z",
+          projectId: PROJECT,
+          fields: Effect.succeed({ repository: "acme/app", number: 12 }),
+        });
+
+      yield* engine.drain;
+      yield* deliver("original-opened", "pr.opened");
+      yield* engine.drain;
+      const beforeRetry = yield* engine.getRun(original.id);
+      expect(beforeRetry.run.status).toBe("running");
+      expect(beforeRetry.steps.find((step) => step.verb === "eventCursor")?.result).toEqual({
+        runId: original.id,
+        sequence: 1,
+      });
+      expect(tools.calls.filter((call) => call.tool === "pull_request_read")).toHaveLength(1);
+
+      yield* engine.cancelRun(original.id);
+      yield* engine.drain;
+      const retry = yield* engine.retryRun({ runId: original.id });
+      yield* engine.drain;
+
+      const retried = yield* engine.getRun(retry.id);
+      expect(retried.run.error).toBeNull();
+      expect(retried.run.status).toBe("running");
+      expect(retried.steps.find((step) => step.verb === "eventCursor")?.result).toEqual({
+        runId: retry.id,
+        sequence: 0,
+      });
+      expect(tools.calls.filter((call) => call.tool === "pull_request_read")).toHaveLength(2);
+
+      yield* deliver("fresh-check", "pr.checks.passed");
+      yield* engine.drain;
+      expect(yield* engine.getRun(retry.id)).toMatchObject({
+        run: { status: "succeeded" },
+        output: { state: "open", eventId: "fresh-check" },
+      });
+    }),
+  ),
 );
 
 it.effect("a retry on the latest version reuses only the steps whose call sites still match", () =>

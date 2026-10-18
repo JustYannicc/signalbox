@@ -5,7 +5,6 @@
  * upstream rewords a string it falls back to upstream's copy rather than breaking. Mobile keeps
  * its own map (`apps/mobile/src/features/home/oneEnvironmentCopy.ts`).
  */
-import { useCallback } from "react";
 
 import { readShowsEnvironmentUi, useShowsEnvironmentUi } from "./environmentCapabilities";
 
@@ -47,10 +46,7 @@ export function oneEnvironmentCopy(text: string): string {
 /** Upstream's text while environments show (T3 Code, self-hosted); Signalbox's otherwise. */
 export function useOneEnvironmentCopy(): (text: string) => string {
   const showsEnvironments = useShowsEnvironmentUi();
-  return useCallback(
-    (text: string) => (showsEnvironments ? text : oneEnvironmentCopy(text)),
-    [showsEnvironments],
-  );
+  return (text: string) => (showsEnvironments ? text : oneEnvironmentCopy(text));
 }
 
 /** `useOneEnvironmentCopy` outside React: toasts and thrown errors. */

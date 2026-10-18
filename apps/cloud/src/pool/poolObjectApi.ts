@@ -63,10 +63,10 @@ export const makePoolObjectApi = (
       reply((engine) => done(engine.updateAccount(actor, name, action))),
     openLink: (actor, preview) => reply((engine) => engine.openLink(actor, preview)),
     linkFetch: (secret, request) => run(handleLinkRequest(secret, request)),
-    forwardModel: (actor, path, request, thread) =>
+    forwardModel: (actor, path, request, thread, trace) =>
       run(
         PoolEngine.PoolEngine.use((engine) =>
-          engine.forwardModel(actor, path, request, thread),
+          engine.forwardModel(actor, path, request, thread, trace),
         ).pipe(
           Effect.map(({ response, upstreamMs, accountMoved }): ModelForwardReply => ({
             _tag: "forwarded",

@@ -31,6 +31,7 @@ import type {
   ThreadRefs,
 } from "./DriveStore.ts";
 import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
 
 /**
  * How the Worker, thread and user objects reach drive objects. Every drive
@@ -68,6 +69,8 @@ export interface DriveObjectApi {
     writer: DriveWriter,
     updates: ReadonlyArray<{ readonly name: string; readonly old: Oid | null; readonly new: Oid }>,
   ) => Promise<RefWrite>;
+  readonly savePull: (writer: DriveWriter, request: PullSaveRequest) => Promise<PullResult>;
+  readonly pullReceipt: (writer: DriveWriter, id: string) => Promise<PullResult | null>;
   readonly reconcile: (
     writer: DriveWriter,
     request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
@@ -177,6 +180,8 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     promised: wrap("promised"),
     registerPack: wrap("registerPack"),
     updateRefs: wrap("updateRefs"),
+    savePull: wrap("savePull"),
+    pullReceipt: wrap("pullReceipt"),
     reconcile: wrap("reconcile"),
     setRemote: wrap("setRemote"),
     remote: wrap("remote"),

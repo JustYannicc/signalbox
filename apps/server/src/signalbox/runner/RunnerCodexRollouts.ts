@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -31,6 +32,9 @@ const POLL_MS = 250;
 /** Lets Codex's rollout writer flush the row for an event it just sent. */
 const WRITE_SETTLE_MS = 25;
 const NEWLINE = 0x0a;
+const JsonObject = Schema.Record(Schema.String, Schema.Unknown);
+const decodeJsonObject = Schema.decodeUnknownOption(JsonObject);
+const decodeJsonObjectString = Schema.decodeUnknownOption(Schema.fromJsonString(JsonObject));
 
 export interface CodexRollouts {
   readonly restore: Effect.Effect<void, SessionClientError | PlatformError.PlatformError>;
@@ -71,6 +75,8 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
   readonly codexHome: string;
   readonly client: SessionClient;
   readonly outbox: SessionOutbox;
+  /** Rewrites the old colon-bearing checkout path before Codex rebuilds its indexes. */
+  readonly cwdMigration?: { readonly from: string; readonly to: string };
 }): Effect.fn.Return<CodexRollouts, never, FileSystem.FileSystem | Path.Path | Scope.Scope> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -80,8 +86,45 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
   const cursors = new Map<string, number>();
   /** Streams the store held at the last restore; null until then, and nothing is tailed. */
   let listed: ReadonlySet<string> | null = null;
+  /** The local paths are migrated once before Codex resumes; remote rows still rebase per restore. */
+  let localCwdMigrationScanned = input.cwdMigration === undefined;
   let polling = false;
   const lock = yield* Semaphore.make(1);
+
+  const rebaseRow = (row: string) => {
+    const migration = input.cwdMigration;
+    if (
+      migration === undefined ||
+      !row.includes('"session_meta"') ||
+      !row.includes(JSON.stringify(migration.from))
+    ) {
+      return row;
+    }
+    const object = Option.getOrNull(decodeJsonObjectString(row));
+    if (object === null || object.type !== "session_meta") return row;
+    const payload = Option.getOrNull(decodeJsonObject(object.payload));
+    if (payload === null || payload.cwd !== migration.from) return row;
+    return JSON.stringify({
+      ...object,
+      payload: { ...payload, cwd: migration.to },
+    });
+  };
+
+  const rebaseRollout = (text: string) =>
+    input.cwdMigration === undefined ? text : text.split("\n").map(rebaseRow).join("\n");
+
+  /** Runs during restore, before Codex opens its rollout files. */
+  const rebaseFile = (file: string) =>
+    Effect.gen(function* () {
+      if (input.cwdMigration === undefined) return;
+      const bytes = yield* fs.readFile(file);
+      const original = new TextDecoder().decode(bytes);
+      const rebased = rebaseRollout(original);
+      if (rebased === original) return;
+      const staged = `${file}.signalbox-rebase`;
+      yield* fs.writeFile(staged, new TextEncoder().encode(rebased));
+      yield* fs.rename(staged, file);
+    });
 
   /** Starts a file's cursor after the rows the store already holds of it. */
   const startCursor = (stream: string, file: string) =>
@@ -89,7 +132,8 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
       // Born on this machine since the restore: the store holds none of it.
       if (listed !== null && !listed.has(stream)) yield* input.outbox.stored(stream, 0);
       const held = yield* input.outbox.count(stream);
-      const length = lengthOfLines(yield* fs.readFile(file), held);
+      const bytes = yield* fs.readFile(file);
+      const length = lengthOfLines(bytes, held);
       // The store holds more than this disk: only a restore puts that right.
       if (length === null) return false;
       cursors.set(stream, length);
@@ -141,6 +185,20 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
   const restore: CodexRollouts["restore"] = lock
     .withPermits(1)(
       Effect.gen(function* () {
+        if (!localCwdMigrationScanned) {
+          // The first restore runs before Codex resumes. Later restores may share a live writer.
+          if (yield* fs.exists(sessionsDir)) {
+            for (const relative of yield* fs.readDirectory(sessionsDir, { recursive: true })) {
+              if (
+                relative.endsWith(".jsonl") &&
+                relativePathOf(`${CODEX_STREAM_PREFIX}${relative}`)
+              ) {
+                yield* rebaseFile(path.join(sessionsDir, relative));
+              }
+            }
+          }
+          localCwdMigrationScanned = true;
+        }
         const stored = yield* input.client.streams(CODEX_STREAM_PREFIX);
         for (const { stream, count } of stored) {
           const relative = relativePathOf(stream);
@@ -152,7 +210,7 @@ export const makeCodexRollouts = Effect.fn("makeCodexRollouts")(function* (input
           yield* input.outbox.stored(stream, count);
           // This disk holds as much or more: the rest is queued from the cursor.
           if ((yield* fs.exists(file)) && (yield* startCursor(stream, file))) continue;
-          const rows = yield* input.client.rows(stream);
+          const rows = (yield* input.client.rows(stream)).map(rebaseRow);
           const body = new TextEncoder().encode(rows.map((row) => `${row}\n`).join(""));
           yield* fs.makeDirectory(path.dirname(file), { recursive: true });
           yield* fs.writeFile(`${file}.restore`, body);

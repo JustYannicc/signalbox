@@ -44,7 +44,12 @@ export function makeInheritance(original: ReadonlyArray<StepRow>, runId: string)
       const taken = reused.get(call.key);
       if (taken || !open) return taken;
       const prior = byKey.get(call.key);
-      if (prior?.status === "succeeded" && prior.verb === call.verb && prior.label === call.label) {
+      if (
+        prior?.status === "succeeded" &&
+        prior.verb !== "eventCursor" &&
+        prior.verb === call.verb &&
+        prior.label === call.label
+      ) {
         const copy: StepRow = { ...prior, run_id: runId };
         reused.set(call.key, copy);
         return copy;
