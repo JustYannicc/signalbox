@@ -1,4 +1,12 @@
 import {
+  applyTextSourceEdits,
+  composeTextSourceMaps,
+  identityTextSourceMap,
+  sliceTextSourceMap,
+  type TextSourceMap,
+  type TextSourceEdit,
+} from "./textSourceMap.ts";
+import {
   type ComposerContextId,
   ComposerContextRecord,
   type ElementContextRecord,
@@ -274,7 +282,7 @@ function stripTrailing(
 /** Review source can contain literal closing tags inside its dynamically sized code fence. */
 function replaceReviewBlocks(
   text: string,
-  replace: (whole: string, attributes: string, body: string) => string,
+  replace: (whole: string, attributes: string, body: string, start: number, end: number) => string,
 ): string {
   const parts: string[] = [];
   const openings = new RegExp(REVIEW_OR_CONTEXT_BLOCK);
@@ -298,6 +306,8 @@ function replaceReviewBlocks(
             text.slice(opening.index, consumed),
             opening[1]!,
             text.slice(bodyStart, boundary.index),
+            opening.index,
+            consumed,
           ),
         );
         openings.lastIndex = consumed;
@@ -311,7 +321,35 @@ function replaceReviewBlocks(
 }
 
 export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext {
-  if (!LEGACY_MARKERS.test(text)) return { text, records: [] };
+  const { sourceMap: _sourceMap, ...result } = upgradeLegacyContextMessageWithSourceMap(text);
+  return result;
+}
+
+// signalbox: retain edit positions before legacy context attachments disappear.
+export function upgradeLegacyContextMessageWithSourceMap(
+  text: string,
+): UpgradedLegacyContext & { sourceMap: TextSourceMap } {
+  let sourceMap = identityTextSourceMap(text);
+  const unchanged = () => ({ text, records: [], sourceMap: identityTextSourceMap(text) });
+  const apply = (edits: readonly TextSourceEdit[]) => {
+    sourceMap = composeTextSourceMaps(sourceMap, applyTextSourceEdits(sourceMap.text, edits));
+  };
+  const retainPrefix = (length: number) => {
+    sourceMap = sliceTextSourceMap(sourceMap, { start: 0, end: length });
+  };
+  const replaceMapped = (
+    pattern: RegExp,
+    replace: (whole: string, captures: readonly string[]) => string,
+  ) => {
+    const edits = [...sourceMap.text.matchAll(pattern)].map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length,
+      text: replace(match[0], match.slice(1)),
+    }));
+    apply(edits);
+    return sourceMap.text;
+  };
+  if (!LEGACY_MARKERS.test(text)) return unchanged();
 
   const terminalEntries: ParsedEntry[] = [];
   const elementEntries: ParsedEntry[] = [];
@@ -324,12 +362,16 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
   const reviewTokenPattern = new RegExp(`${reviewToken}(\\d+)${reviewToken}`, "g");
   const trailingReviewTokenPattern = new RegExp(`(?:\\s*${reviewToken}\\d+${reviewToken})+\\s*$`);
 
-  let rest = replaceReviewBlocks(text, (whole, attributes, rawBody) => {
+  const reviewEdits: TextSourceEdit[] = [];
+  let rest = replaceReviewBlocks(text, (whole, attributes, rawBody, start, end) => {
     const record = reviewRecord(attributes, rawBody, reviews.length + 1);
     if (!record || !isReviewCommentContextRecord(record)) return whole;
     reviews.push(record);
-    return `${reviewToken}${reviews.length - 1}${reviewToken}`;
+    const replacement = `${reviewToken}${reviews.length - 1}${reviewToken}`;
+    reviewEdits.push({ start, end, text: replacement });
+    return replacement;
   });
+  apply(reviewEdits);
 
   // Blocks were appended in send order (terminal, element, preview, review), so they peel
   // off the end in reverse. Each peel exposes the next block as trailing.
@@ -348,12 +390,14 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
         ...Array.from(tokens[0].matchAll(reviewTokenPattern), (m) => Number(m[1])),
       );
       rest = preceding;
+      retainPrefix(rest.length);
     }
   }
   for (;;) {
     const preview = stripTrailing(rest, TRAILING_PREVIEW);
     if (preview) {
       rest = preview.text;
+      retainPrefix(rest.length);
       previewBodies.unshift(preview.match[1] ?? "");
       continue;
     }
@@ -361,8 +405,9 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
     if (element) {
       const entries = parseEntries(element.match[1] ?? "");
       if (!entries?.length || entries.some((entry) => elementRecord(entry, 1) === null))
-        return { text, records: [] };
+        return unchanged();
       rest = element.text;
+      retainPrefix(rest.length);
       elementEntries.unshift(...entries);
       continue;
     }
@@ -370,8 +415,9 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
     if (terminal) {
       const entries = parseEntries(terminal.match[1] ?? "");
       if (!entries?.length || entries.some((entry) => terminalRecord(entry, 1) === null))
-        return { text, records: [] };
+        return unchanged();
       rest = terminal.text;
+      retainPrefix(rest.length);
       terminalEntries.unshift(...entries);
       continue;
     }
@@ -387,17 +433,17 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
   const previews: PreviewAnnotationContextRecord[] = [];
   for (const [index, previewBody] of previewBodies.entries()) {
     const record = previewRecord(previewBody, index + 1);
-    if (record === null) return { text, records: [] };
+    if (record === null) return unchanged();
     previews.push(record);
   }
   const appendedReviews = trailingReviewTokens.map((index) => reviews[index]!);
 
-  let body = rest.replace(reviewTokenPattern, (_whole, index: string) =>
-    formatComposerContextReference(reviews[Number(index)]!),
+  let body = replaceMapped(reviewTokenPattern, (_whole, captures) =>
+    formatComposerContextReference(reviews[Number(captures[0])]!),
   );
 
   let placeholderIndex = 0;
-  body = body.replace(new RegExp(PLACEHOLDER, "g"), () => {
+  body = replaceMapped(new RegExp(PLACEHOLDER, "g"), () => {
     const record = terminals[placeholderIndex];
     placeholderIndex += 1;
     return record ? formatComposerContextReference(record) : "";
@@ -416,10 +462,12 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
       at = body.indexOf(label, at + 1);
     }
     if (at === -1) continue;
-    body = `${body.slice(0, at)}${formatComposerContextReference(record)}${body.slice(at + label.length)}`;
+    apply([{ start: at, end: at + label.length, text: formatComposerContextReference(record) }]);
+    body = sourceMap.text;
     placedTerminals.add(record);
   }
   body = body.trimEnd();
+  retainPrefix(body.length);
 
   const appended = [
     ...terminals.filter((record) => !placedTerminals.has(record)),
@@ -436,9 +484,12 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
 
   const records = [...terminals, ...elements, ...previews, ...reviews];
   // Conversion is atomic: keep the source if any record would be dropped on the wire.
-  if (!isLegacyContextRecords(records)) return { text, records: [] };
+  if (!isLegacyContextRecords(records)) return unchanged();
+  if (upgradedText.length > body.length)
+    apply([{ start: body.length, end: body.length, text: upgradedText.slice(body.length) }]);
   return {
     text: upgradedText,
     records,
+    sourceMap,
   };
 }

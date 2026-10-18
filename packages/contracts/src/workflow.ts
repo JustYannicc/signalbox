@@ -159,6 +159,9 @@ export type WorkflowTrigger = typeof WorkflowTrigger.Type;
 export const WorkflowMeta = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(Schema.String),
+  /** Native Effect Schema representation documents compiled from the source file. */
+  input: Schema.optionalKey(Schema.Json),
+  output: Schema.optionalKey(Schema.Json),
   intent: Schema.optional(Schema.String).annotate({
     description: "What the user asked for when this automation was made, in their own words.",
   }),

@@ -21,6 +21,7 @@ import { serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
+import * as ClientActionTimings from "./observability/ClientActionTimings.ts";
 import type { KernelApi } from "./browser/KernelApi.ts";
 import type { KernelAuth } from "./browser/KernelAuth.ts";
 import * as PersonBrowsers from "./browser/PersonBrowsers.ts";
@@ -33,12 +34,15 @@ import * as CloudConfig from "./CloudConfig.ts";
 import { canWrite, myDriveId } from "./drive/driveAccess.ts";
 import * as DriveDirectory from "./drive/DriveDirectory.ts";
 import * as DriveFiles from "./drive/DriveFiles.ts";
+import * as DriveContentSearch from "./user/DriveContentSearch.ts";
 import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as NoteReader from "./notes/NoteReader.ts";
 import * as ModelCompletion from "./models/ModelCompletion.ts";
+import * as PullRequestGuideGeneration from "./github/PullRequestGuideGeneration.ts";
+import { PullRequestGuideAlarm } from "./github/PullRequestReviewGuides.ts";
 import * as UserNotes from "./notes/UserNotes.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
@@ -263,8 +267,13 @@ const makeUserRuntime = (
           GitHubBranches.layer,
           AgentPullRequests.layer,
           GitHubActions.layer,
-          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
+          CloudPullRequests.layer.pipe(
+            Layer.provideMerge(PullRequestRepository.layer),
+            Layer.provide(PullRequestGuideGeneration.layer.pipe(Layer.provide(modelCompletion))),
+            Layer.provide(Layer.succeed(PullRequestGuideAlarm, { armBy: () => Effect.void })),
+          ),
           UserPreviewSetup.layer,
+          DriveContentSearch.layer,
           CloudAssets.layer,
           LoginService.layer(logins),
           UserNotes.layer.pipe(Layer.provide(noteReader)),
@@ -353,7 +362,7 @@ const makeUserRuntime = (
               layerUserObjectTokens,
             ),
           ),
-          Layer.provideMerge(observe),
+          Layer.provideMerge(Layer.mergeAll(observe, ClientActionTimings.layerOff)),
         ),
       ),
       Layer.merge(automations),
