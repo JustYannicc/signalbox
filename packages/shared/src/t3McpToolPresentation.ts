@@ -1,82 +1,21 @@
-import { sectionMcpToolDefinitions, type SectionMcpToolSummaryAction } from "./sectionsMcpTools.ts";
+import { sectionMcpToolDefinitions } from "./sectionsMcpTools.ts";
 import { AUTOMATION_MCP_TOOLS } from "./automationMcpTools.ts"; // signalbox: automations
+import { SIGNALBOX_ASK_MCP_TOOLS } from "./signalboxAskMcpTools.ts"; // signalbox: expose durable ask tools
+import type {
+  T3McpToolDefinition,
+  T3McpToolLogo,
+  T3McpToolSummaryAction,
+} from "./t3McpToolTypes.ts";
 
-export type T3McpToolLogo = "t3-code";
+export type {
+  T3McpToolDefinition,
+  T3McpToolLogo,
+  T3McpToolSummaryAction,
+} from "./t3McpToolTypes.ts";
 
 export interface T3McpToolPresentation {
   readonly displayName: string;
   readonly logo: T3McpToolLogo;
-}
-
-export type T3McpToolSummaryAction =
-  | "capabilities"
-  | "delegate"
-  | "task-status"
-  | "task-cancel"
-  | "schedule-run"
-  | "schedule-create"
-  | "schedule-list"
-  | "schedule-update"
-  | "schedule-delete"
-  | "thread-create"
-  | "thread-list"
-  | "thread-read"
-  | "thread-send"
-  | "thread-wait"
-  | "thread-interrupt"
-  | "workflow-stop"
-  | "thread-configuration"
-  | "thread-configure"
-  | "thread-fork"
-  | "thread-merge"
-  | "thread-search"
-  | "thread-transfers"
-  | "thread-organize"
-  | "thread-update"
-  | "queue-list"
-  | "queue-read"
-  | "queue-edit"
-  | "queue-cancel"
-  | "queue-reorder"
-  | "queue-steer"
-  | "question-list"
-  | "question-read"
-  | "question-respond"
-  | "secret-request"
-  | "worktree-handoff"
-  | "worktree-list"
-  | "worktree-status"
-  | "project-list"
-  | "project-read"
-  | "project-create"
-  | "project-update"
-  | "project-delete"
-  | "project-clone"
-  | "environment-read"
-  | "environment-update"
-  | "pool-list" // signalbox
-  | SectionMcpToolSummaryAction
-  | "attachment-prepare"
-  | "attachment-discard"
-  | "attachment-send"
-  | "link-pr"
-  | "unlink-pr"
-  | "list-prs"
-  | "watch-pr"
-  | "unwatch-pr"
-  | "write-pr-guides"
-  | "read-pr-guide"
-  | "browser"
-  | "device"
-  | "html-preview"
-  | "html-render"
-  | "automation"; // signalbox: automations
-
-export interface T3McpToolDefinition {
-  readonly displayName: string;
-  readonly labels: readonly [action: string, running: string, completed: string, detail: string];
-  readonly icon: "t3-code" | "browser" | "device" | "pull-request";
-  readonly summaryAction: T3McpToolSummaryAction;
 }
 
 function tool(
@@ -343,6 +282,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   ...AUTOMATION_MCP_TOOLS, // signalbox: automations
+  ...SIGNALBOX_ASK_MCP_TOOLS, // signalbox: include durable ask tool presentations
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

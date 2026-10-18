@@ -6,7 +6,7 @@ import {
   isOpenDraftShortcut,
   rankByLabel,
   removeTriggerText,
-} from "./captureText";
+} from "@t3tools/client-runtime/capture/text";
 
 describe("findFolderTrigger", () => {
   it("finds the #query the caret is in, at the start or after whitespace", () => {
