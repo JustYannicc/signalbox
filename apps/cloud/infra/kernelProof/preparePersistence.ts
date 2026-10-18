@@ -26,6 +26,7 @@ export const prepareFilePersistenceProof = async (destination: string) => {
     "sqlite/SqliteDatabase",
     "sqlite/SqliteFileSystem",
     "sqlite/SqliteHydration",
+    "sqlite/SqlitePendingContentWait",
     "sqlite/SqliteInodes",
     "sqlite/SqliteChunks",
     "sqlite/SqliteCommitSnapshot",
