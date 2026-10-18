@@ -3,7 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Pressable } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -23,6 +23,11 @@ const PHOTO_ACTION = { id: "photos", title: "Photo Library", image: "photo" };
 const CAMERA_ACTION = { id: "camera", title: "Take Photo", image: "camera" };
 const FILE_ACTION = { id: "files", title: "Choose Files", image: "folder" };
 
+type AttachmentPickResult = {
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly error: string | null;
+};
+
 export function CaptureAttachmentButton(props: {
   readonly disabled: boolean;
   readonly existingCount: number;
@@ -33,6 +38,12 @@ export function CaptureAttachmentButton(props: {
   readonly onError: (message: string) => void;
 }) {
   const [isPicking, setIsPicking] = useState(false);
+  const onAddAttachmentsRef = useRef(props.onAddAttachments);
+  const onErrorRef = useRef(props.onError);
+  useLayoutEffect(() => {
+    onAddAttachmentsRef.current = props.onAddAttachments;
+    onErrorRef.current = props.onError;
+  }, [props.onAddAttachments, props.onError]);
   const actions: MenuAction[] = [
     PHOTO_ACTION,
     CAMERA_ACTION,
@@ -41,18 +52,25 @@ export function CaptureAttachmentButton(props: {
   const disabled =
     props.disabled || isPicking || props.existingCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
 
-  const runPicker = async (picker: () => Promise<ReadonlyArray<DraftComposerAttachment>>) => {
+  const runPicker = async (picker: () => Promise<AttachmentPickResult>) => {
     if (disabled) return;
     setIsPicking(true);
     try {
-      const attachments = await picker();
-      if (attachments.length === 0) return;
-      const rejected = props.onAddAttachments(attachments);
-      if (rejected > 0) {
-        props.onError(`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items.`);
+      const result = await picker();
+      let rejected = 0;
+      if (result.attachments.length > 0) {
+        rejected = onAddAttachmentsRef.current(result.attachments);
       }
+      const errors = [
+        result.error,
+        rejected > 0 ? `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items.` : null,
+      ].filter(
+        (message, index, all): message is string =>
+          message !== null && all.indexOf(message) === index,
+      );
+      if (errors.length > 0) onErrorRef.current(errors.join(" "));
     } catch (error) {
-      props.onError(error instanceof Error ? error.message : "Could not add that attachment.");
+      onErrorRef.current(error instanceof Error ? error.message : "Could not add that attachment.");
     } finally {
       setIsPicking(false);
     }
@@ -63,8 +81,7 @@ export function CaptureAttachmentButton(props: {
       existingCount: props.existingCount,
       ...(props.maxVideoBytes !== undefined ? { maxVideoBytes: props.maxVideoBytes } : {}),
     });
-    if (result.error) props.onError(result.error);
-    return result.attachments;
+    return { attachments: result.attachments, error: result.error };
   };
 
   const pickFiles = async () => {
@@ -72,8 +89,7 @@ export function CaptureAttachmentButton(props: {
       existingCount: props.existingCount,
       maxBytes: props.maxFileBytes,
     });
-    if (result.error) props.onError(result.error);
-    return result.files;
+    return { attachments: result.files, error: result.error };
   };
 
   const takePhoto = async () => {
@@ -95,7 +111,7 @@ export function CaptureAttachmentButton(props: {
     } finally {
       endHandoff();
     }
-    if (result.canceled) return [];
+    if (result.canceled) return { attachments: [], error: null };
 
     const converted = await convertPastedImagesToAttachments({
       uris: result.assets.map((asset) => asset.uri),
@@ -121,7 +137,7 @@ export function CaptureAttachmentButton(props: {
     if (result.assets.length > 0 && attachments.length === 0) {
       throw new Error("That photo could not be attached. Try another one.");
     }
-    return attachments;
+    return { attachments, error: null };
   };
 
   return (

@@ -579,6 +579,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitOverview",
   "PublishFolder", // signalbox: #810
   "NewTaskSheet",
+  "Capture", // signalbox: capture overlays the current workspace
   "SettingsLegal",
   "SettingsSheet",
   "ThreadAgents",
@@ -1034,10 +1035,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: "capture",
       options: {
         ...SHEET_GLASS_HEADER_OPTIONS,
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
         contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
         headerShown: Platform.OS !== "android",
-        sheetAllowedDetents: Platform.OS === "ios" ? "fitToContents" : undefined,
+        sheetAllowedDetents: Platform.OS === "ios" ? [0.55, 0.92] : undefined,
         sheetGrabberVisible: Platform.OS === "ios",
       },
     }),
