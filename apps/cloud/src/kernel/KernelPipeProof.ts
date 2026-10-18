@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies Node Buffer inputs against the portable pipe.
-import { Buffer } from "node:buffer";
+import * as NodeBuffer from "node:buffer";
 import { KernelPipe } from "./KernelPipe.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 
@@ -49,7 +49,7 @@ export async function runKernelPipeProof() {
     const pipe = new KernelPipe(wakes, 4096);
     try {
       pipe.tryWrite(new Uint8Array(4096));
-      const source = Buffer.alloc(10, 2);
+      const source = NodeBuffer.Buffer.alloc(10, 2);
       const waiting = pipe.write(source);
       source.fill(9);
       pipe.tryReadInto(new Uint8Array(4096));

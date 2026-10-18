@@ -1,4 +1,4 @@
-import { Buffer } from "node:buffer";
+import * as NodeBuffer from "node:buffer";
 import { describe, expect, it } from "vite-plus/test";
 import { KernelPipe } from "./KernelPipe.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
@@ -9,7 +9,7 @@ describe("KernelPipe", () => {
     const pipe = new KernelPipe(wakes, 4096);
     try {
       pipe.tryWrite(new Uint8Array(4096));
-      const source = Buffer.alloc(10, 2);
+      const source = NodeBuffer.Buffer.alloc(10, 2);
       const writing = pipe.write(source);
       source.fill(9);
       pipe.tryReadInto(new Uint8Array(4096));
