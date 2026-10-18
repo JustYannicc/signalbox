@@ -20,7 +20,6 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -64,7 +63,6 @@ import { automationShows, listShows, makeLiveFeed, runShows, type Change } from 
 import { automationNotice, failureNotice } from "./notices.ts";
 import { makeRestart } from "./restart.ts";
 import * as RunLinkStore from "./runLinkStore.ts";
-import { makeReplayDriver } from "./replayDriver.ts";
 import { makeRetryRun, type RetryRun } from "./retry.ts";
 import type { EngineInternals, RunDriver } from "./runDriver.ts";
 import { isTerminalRunStatus } from "./runs.ts";
@@ -133,7 +131,7 @@ export interface WorkflowEngineShape extends CatalogShape {
   }) => Effect.Effect<Automation, AutomationError | E>;
   /** Ends a run now: interrupts its agents, requests and processes, and cancels runs it started. */
   readonly cancelRun: (runId: string) => Effect.Effect<void, AutomationError>;
-  /** Starts a new run retrying a failed or cancelled one, reusing the steps that went well. */
+  /** Starts a new run linked to the failed or cancelled run it retries. */
   readonly retryRun: RetryRun;
   /** Answers a waiting `ask` step, checked against its options and fields. Only people answer; agents can't. */
   readonly answer: (
@@ -174,8 +172,7 @@ export interface WorkflowEngineShape extends CatalogShape {
    */
   readonly subscribeNotices: Effect.Effect<Stream.Stream<AutomationNotice>, never, Scope.Scope>;
   /**
-   * Due timed work (crons, and in the replay core timers, timeouts, retries
-   * and agent checks), plus hourly cleanup. One bad item never blocks the rest.
+   * Due crons and hourly cleanup. One bad item never blocks the rest.
    */
   readonly tick: Effect.Effect<void, AutomationError>;
   /** Waits until nothing the engine started is still working. Waiting steps don't count. */
@@ -915,9 +912,3 @@ export const makeEngine = <R>(
       ),
     } satisfies WorkflowEngineShape;
   });
-
-/**
- * The engine replaying runs in QuickJS, on the host services in host.ts; each
- * host provides them (the server's: serverHost.ts).
- */
-export const layer = Layer.effect(WorkflowEngine, makeEngine(makeReplayDriver));

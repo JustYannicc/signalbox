@@ -23,7 +23,8 @@ import * as PullRequestReadsModule from "../github/PullRequestReads.ts";
 import * as GitHubWebhooksModule from "../github/GitHubWebhooks.ts";
 import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import { projectOfDrive } from "../user/contextProjects.ts";
+import { contextOfProject, projectOfDrive } from "../user/contextProjects.ts";
+import { folderOfProject } from "../user/folderTree.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserFolders from "../user/UserFolders.ts";
 import * as UserStore from "../user/UserStore.ts";
@@ -372,6 +373,19 @@ const make = Effect.gen(function* () {
         }),
       );
     },
+    executorRunActive: (input) =>
+      Effect.gen(function* () {
+        const { run } = yield* engine.getRun(input.runId);
+        if (run.status !== "running") return false;
+        const { automation } = yield* engine.get(run.automationId);
+        const state = yield* folders.state;
+        const home = folderOfProject(state.tree, automation.projectId);
+        const ownerId =
+          (home === null
+            ? contextOfProject(state.contexts, automation.projectId)
+            : state.tree.folders.find((folder) => folder.id === home)?.ownerId) ?? null;
+        return ownerId === input.ownerId && (home ?? ownerId) === input.level;
+      }).pipe(Effect.orElseSucceed(() => false)),
     workerModule: (automationId, version) =>
       runs.workerModule(automationId, version).pipe(
         Effect.flatMap((module) =>

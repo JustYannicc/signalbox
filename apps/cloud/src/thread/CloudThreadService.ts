@@ -1,6 +1,7 @@
 import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import {
   type OrchestrationV2Command,
+  type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
@@ -27,6 +28,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import {
+  ProviderUploadFeedbackError,
+  type ProviderUploadFeedbackInput,
+  type ProviderUploadFeedbackResult,
+} from "@t3tools/contracts";
 
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
@@ -64,6 +70,13 @@ export class CloudThreadService extends Context.Service<
       caller: ThreadId,
       command: typeof SignalboxAskAnswerCommand.Type,
     ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    readonly uploadFeedback: (
+      actor: Actor,
+      input: ProviderUploadFeedbackInput,
+    ) => Effect.Effect<
+      ProviderUploadFeedbackResult,
+      ProviderUploadFeedbackError | ThreadNotFoundError | ThreadObjectError
+    >;
     readonly answerSecret: (
       actor: Actor,
       input: SecretRequestAnswerInput,
@@ -71,7 +84,7 @@ export class CloudThreadService extends Context.Service<
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
-    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CloudThreadError>;
     readonly launchThread: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,
@@ -285,6 +298,22 @@ const make = Effect.gen(function* () {
   return CloudThreadService.of({
     syncAutomationAsk: threads.syncAutomationAsk,
     answerAskAsAssistant: threads.answerAskAsAssistant,
+    uploadFeedback: (actor, input) =>
+      directory
+        .forThread(input.threadId)
+        .uploadFeedback(actor, input)
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome._tag === "uploaded"
+              ? Effect.succeed({ feedbackId: outcome.feedbackId })
+              : Effect.fail(
+                  new ProviderUploadFeedbackError({
+                    threadId: input.threadId,
+                    failure: outcome.failure,
+                  }),
+                ),
+          ),
+        ),
     answerSecret: (actor, input) =>
       directory
         .forThread(input.threadId)

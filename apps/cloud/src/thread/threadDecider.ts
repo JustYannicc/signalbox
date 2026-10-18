@@ -14,7 +14,13 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import {
+  beginPreparation,
+  type PreparationState,
+  retryPreparationEvents,
+} from "./preparation/preparationState.ts";
 import { decideLifecycleCommand } from "./lifecycleCommands.ts";
+import { decideQueuedRunCommand } from "./queuedRunCommands.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
   activeRun,
@@ -25,7 +31,7 @@ import {
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { canSteer, steerEvents, steerTarget } from "./steering.ts";
 import {
-  type Decision,
+  type Decision as ThreadEventDecision,
   type DecisionContext,
   ids,
   messageEvent,
@@ -42,6 +48,7 @@ import { applyEvents } from "./threadProjection.ts";
  * followed here rather than its code.
  */
 
+export type Decision = ThreadEventDecision & { readonly preparation?: PreparationState };
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",
   events,
@@ -69,8 +76,11 @@ const CLOUD_COMMAND_TYPES = [
   "runtime-request.respond",
   "message.dispatch",
   "run.interrupt",
+  "prepared-run.retry",
   "queue.resume",
   "queued-run.cancel",
+  "queued-run.edit",
+  "queued-run.reorder",
   "queued-message.promote-to-steer",
   "thread.visit",
   "thread.metadata.update",
@@ -210,7 +220,13 @@ function dispatchMessage(
   if (steered !== undefined) {
     return accept([...updates, ...steerEvents(projection, steered, message, "steer", ctx)]);
   }
-  const queuePosition = projection.runs.filter((run) => run.status === "queued").length + 1;
+  const queuePosition =
+    Math.max(
+      0,
+      ...projection.runs
+        .filter((run) => run.status === "queued")
+        .map((run) => run.queuePosition ?? run.ordinal),
+    ) + 1;
   const run: OrchestrationV2Run = {
     id: runId,
     threadId: thread.id,
@@ -259,14 +275,19 @@ export function decide(
   command: ThreadCommand,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
-  expected: { readonly idleSinceMs?: number; readonly personId?: string } = {},
+  expected: {
+    readonly idleSinceMs?: number;
+    readonly personId?: string;
+    readonly preparation?: PreparationState | null;
+  } = {},
 ): Decision {
   if (!isCloudCommand(command)) return reject(unsupported());
   if (command.type === "thread.create") {
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
   }
   if (projection === null) return reject("This thread does not exist.");
-  if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
+  if (projection.thread.deletedAt !== null && command.type !== "thread.ask.sync")
+    return reject("This thread was deleted.");
   switch (command.type) {
     case "thread.ask.raise":
     case "thread.ask.answer":
@@ -289,6 +310,33 @@ export function decide(
         kind: "person",
         personId: expected.personId ?? "thread-owner",
       });
+    case "prepared-run.retry": {
+      const current = expected.preparation;
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (
+        command.preparationGeneration === undefined ||
+        current == null ||
+        current.runId !== command.runId ||
+        current.generation !== command.preparationGeneration ||
+        (current.status !== "failed" && current.status !== "cancelled") ||
+        current.snapshot.turnStarted === true ||
+        run === undefined ||
+        run.startedAt !== null ||
+        (run.status !== "failed" && run.status !== "interrupted") ||
+        projection.thread.archivedAt !== null ||
+        activeRun(projection) !== undefined ||
+        projection.runs.some(
+          (candidate) => candidate.ordinal > run.ordinal && candidate.status !== "queued",
+        )
+      ) {
+        return reject("This preparation attempt is missing, out of date, or cannot be retried.");
+      }
+      return {
+        _tag: "accepted",
+        events: retryPreparationEvents(projection, run.id, ctx),
+        preparation: beginPreparation(projection, run.id, 0, current, ctx),
+      };
+    }
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -306,6 +354,9 @@ export function decide(
       }
       return accept(interruptRunEvents(projection, run, ctx, command.holdQueue === true));
     }
+    case "queued-run.edit":
+    case "queued-run.reorder":
+      return decideQueuedRunCommand(projection, command, ctx);
     case "queued-run.cancel": {
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
       if (run?.status !== "queued") return reject("That message is no longer queued.");

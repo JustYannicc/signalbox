@@ -61,6 +61,7 @@ export function CommandOutputPanel(props: {
         <div className="text-muted-foreground italic">Earlier output not shown</div>
       ) : null}
       <div
+        data-thread-find-text="tool-output"
         ref={scrollRef}
         onScroll={(event) => {
           const element = event.currentTarget;

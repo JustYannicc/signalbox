@@ -39,6 +39,10 @@
       "types": "./src/BranchProtocol.ts",
       "import": "./src/BranchProtocol.ts"
     },
+    "./PullRequestReviewTools": {
+      "types": "./src/PullRequestReviewTools.ts",
+      "import": "./src/PullRequestReviewTools.ts"
+    },
     "./AutomationProtocol": {
       "types": "./src/AutomationProtocol.ts",
       "import": "./src/AutomationProtocol.ts"
@@ -70,6 +74,10 @@
     "./SecretScrubber": {
       "types": "./src/SecretScrubber.ts",
       "import": "./src/SecretScrubber.ts"
+    },
+    "./FeedbackProtocol": {
+      "types": "./src/FeedbackProtocol.ts",
+      "import": "./src/FeedbackProtocol.ts"
     },
     "./PullRequestTools": {
       "types": "./src/PullRequestTools.ts",

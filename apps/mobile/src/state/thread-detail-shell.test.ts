@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "@t3tools/client-runtime/state/orchestration-v2-test-fixtures";
 import { resolveThreadListV2Status } from "../features/threads/threadListV2";
-import { threadDetailToShell } from "./thread-detail-shell";
+import { threadDetailToShell } from "@t3tools/client-runtime/state/thread-detail-shell";
 
 const environmentId = EnvironmentId.make("mobile-ask-environment");
 const now = "2026-10-17T12:00:00.000Z";

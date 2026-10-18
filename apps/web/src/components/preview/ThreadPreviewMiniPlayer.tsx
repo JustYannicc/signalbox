@@ -1,6 +1,10 @@
 "use client";
 
-import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  FILL_PREVIEW_VIEWPORT,
+  deviceSessionRequiresReadOnlyPanel,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -32,7 +36,7 @@ import {
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { useThreadPreviewState } from "~/previewStateStore";
 import {
   type PreviewMiniPlayerSize,
@@ -42,9 +46,14 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useDeviceState } from "~/state/device";
+import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { useAtomCommand } from "~/state/use-atom-command";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
+import { settleDeviceOpenForSurface } from "../device/deviceOpenSurfaceRequest";
+import { deferDeviceLeaseRelease, retainDeviceLeaseOwner } from "../device/deviceLeaseOwnership";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
@@ -256,23 +265,214 @@ function DeviceMiniPlayer({
   miniPlayer,
 }: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
+  const openDeviceLease = useAtomCommand(deviceEnvironment.open, { reportFailure: false });
+  const cancelDeviceOpen = useAtomCommand(deviceEnvironment.cancelOpen, { reportFailure: false });
+  const closeDeviceLease = useAtomCommand(deviceEnvironment.close, { reportFailure: false });
+  const preserveLease = useRef(false);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
   const sourceSize = resolveDeviceMiniPlayerSourceSize(source.platform, screen);
   const device = deviceState.devices.find(
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
   );
+  const sourceOwnerKey = `${source.sessionId ?? ""}\u0000${source.leaseId ?? ""}`;
+  const sourceOwner =
+    source.sessionId !== undefined && source.leaseId !== undefined
+      ? { sessionId: source.sessionId, leaseId: source.leaseId }
+      : null;
+  const [leaseOwnership, setLeaseOwnership] = useState(() => ({
+    key: sourceOwnerKey,
+    owner: sourceOwner,
+    verified: false,
+  }));
+  const leaseOwnershipRef = useRef(leaseOwnership);
+  const currentOwnership =
+    leaseOwnership.key === sourceOwnerKey
+      ? leaseOwnership
+      : { key: sourceOwnerKey, owner: sourceOwner, verified: false };
+  const activeOwner = currentOwnership.owner;
+  const leaseVerified = currentOwnership.verified;
+  const activePanelSession =
+    leaseVerified && activeOwner
+      ? deviceState.sessions.find(
+          (session) =>
+            session.threadId === threadRef.threadId &&
+            session.hostId === source.hostId &&
+            session.deviceId === source.deviceId &&
+            session.ownerKind === "panel" &&
+            session.sessionId === activeOwner.sessionId &&
+            session.leaseId === activeOwner.leaseId,
+        )
+      : undefined;
+  const canControl =
+    activePanelSession !== undefined && !deviceSessionRequiresReadOnlyPanel(activePanelSession);
   const hostLabel =
     deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
   const cornerRadius = (player: PreviewMiniPlayerSize) =>
     resolveDeviceMiniPlayerCornerRadius(source.platform, player);
 
+  useEffect(() => {
+    const walkRef = { environmentId: threadRef.environmentId, threadId: threadRef.threadId };
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let requestController: AbortController | null = null;
+    let owner =
+      source.sessionId !== undefined && source.leaseId !== undefined
+        ? { sessionId: source.sessionId, leaseId: source.leaseId }
+        : null;
+    const retainedOwner = owner;
+    if (owner !== null)
+      retainDeviceLeaseOwner({
+        environmentId: walkRef.environmentId,
+        threadId: walkRef.threadId,
+        hostId: source.hostId,
+        deviceId: source.deviceId,
+        ...owner,
+      });
+    leaseOwnershipRef.current = { key: sourceOwnerKey, owner, verified: false };
+    const heartbeat = async () => {
+      const controller = new AbortController();
+      const requestId = randomUUID();
+      requestController = controller;
+      useRightPanelStore.getState().beginDeviceOpen(walkRef, requestId, {
+        hostId: source.hostId,
+      });
+      const runHeartbeat = async () => {
+        const settlement = await settleDeviceOpenForSurface({
+          signal: controller.signal,
+          isCurrent: () => !cancelled,
+          requestId,
+          open: (signal, requestId) =>
+            openDeviceLease(
+              {
+                environmentId: walkRef.environmentId,
+                input: {
+                  threadId: walkRef.threadId,
+                  hostId: source.hostId,
+                  deviceId: source.deviceId,
+                  platform: source.platform,
+                  requestId,
+                  ...(owner === null ? {} : owner),
+                },
+              },
+              signal,
+            ),
+          cancel: (requestId) =>
+            cancelDeviceOpen({
+              environmentId: walkRef.environmentId,
+              input: {
+                threadId: walkRef.threadId,
+                hostId: source.hostId,
+                deviceId: source.deviceId,
+                requestId,
+              },
+            }),
+          release: (session) => {
+            if (
+              retainedOwner !== null &&
+              session.sessionId === retainedOwner.sessionId &&
+              session.leaseId === retainedOwner.leaseId
+            )
+              return Promise.resolve();
+            return closeDeviceLease({
+              environmentId: walkRef.environmentId,
+              input: {
+                threadId: walkRef.threadId,
+                hostId: session.hostId,
+                deviceId: session.deviceId,
+                sessionId: session.sessionId,
+                leaseId: session.leaseId,
+              },
+            });
+          },
+          accept: () => undefined,
+        });
+        if (settlement._tag === "Cancelled") return;
+        const result = settlement.result;
+        if (result._tag === "Success") {
+          owner = { sessionId: result.value.sessionId, leaseId: result.value.leaseId };
+          usePreviewMiniPlayerStore.getState().updateDeviceOwner(walkRef, source, result.value);
+          const verifiedOwnership = { key: sourceOwnerKey, owner, verified: true };
+          leaseOwnershipRef.current = verifiedOwnership;
+          setLeaseOwnership(verifiedOwnership);
+        } else {
+          const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
+          const staleSession =
+            typeof failure === "object" &&
+            failure !== null &&
+            "_tag" in failure &&
+            failure._tag === "DeviceOperationError" &&
+            "reason" in failure &&
+            failure.reason === "stale_session";
+          if (owner !== null && staleSession) {
+            owner = null;
+            const staleOwnership = { key: sourceOwnerKey, owner: null, verified: false };
+            leaseOwnershipRef.current = staleOwnership;
+            setLeaseOwnership(staleOwnership);
+            timer = setTimeout(() => void heartbeat(), 0);
+            return;
+          }
+        }
+        timer = setTimeout(() => void heartbeat(), 60_000);
+      };
+      await runHeartbeat().finally(() => {
+        if (requestController === controller) requestController = null;
+        useRightPanelStore.getState().endDeviceOpen(walkRef, requestId);
+      });
+    };
+    void heartbeat();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      requestController?.abort();
+      requestController = null;
+      const released = owner;
+      if (preserveLease.current) {
+        preserveLease.current = false;
+      } else if (released !== null) {
+        deferDeviceLeaseRelease(
+          {
+            environmentId: walkRef.environmentId,
+            threadId: walkRef.threadId,
+            hostId: source.hostId,
+            deviceId: source.deviceId,
+            ...released,
+          },
+          () =>
+            closeDeviceLease({
+              environmentId: walkRef.environmentId,
+              input: {
+                threadId: walkRef.threadId,
+                hostId: source.hostId,
+                deviceId: source.deviceId,
+                sessionId: released.sessionId,
+                leaseId: released.leaseId,
+              },
+            }),
+        );
+      }
+    };
+  }, [
+    cancelDeviceOpen,
+    closeDeviceLease,
+    openDeviceLease,
+    source,
+    sourceOwnerKey,
+    threadRef.environmentId,
+    threadRef.threadId,
+  ]);
+
   const openInPanel = () => {
+    const ownership =
+      leaseOwnershipRef.current.key === sourceOwnerKey ? leaseOwnershipRef.current : null;
+    const transferredOwner = ownership?.owner ?? null;
+    preserveLease.current = transferredOwner !== null;
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().openDevice(threadRef, {
       hostId: source.hostId,
       deviceId: source.deviceId,
       platform: source.platform,
       name: source.name,
+      ...(transferredOwner === null ? {} : transferredOwner),
     });
   };
 
@@ -298,6 +498,7 @@ function DeviceMiniPlayer({
             deviceName={device?.name ?? source.name}
             deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
             visible
+            readOnly={!canControl}
             onScreen={setScreen}
           />
         </div>

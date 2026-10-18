@@ -6,6 +6,7 @@ import { useAutomationPaletteItems } from "./automations/automationPaletteItems"
 import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
 import { useSidebarViewPaletteItems } from "./sidebar/sidebarViewCommands";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems"; // signalbox: notes
+import { useContentSearchPalette } from "./search/contentSearchPaletteItems"; // signalbox: thread search
 import { useThreadPinPaletteAction } from "./chat/threadPinPaletteAction"; // signalbox: cloud pin
 import { QUICK_CAPTURE_PALETTE_ITEM } from "./capture/capturePaletteItems"; // signalbox: quick capture
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
@@ -877,7 +878,18 @@ function OpenCommandPaletteDialog(props: {
     .filter((environment) => environment.connection.phase === "connected")
     .map((environment) => environment.environmentId);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
-  const threadSearch = useThreadSearch(environmentIds, threadSearchQuery);
+  // signalbox: Home's search reaches inside threads through the search service (#792).
+  const contentSearch = useContentSearchPalette({
+    query: threadSearchQuery,
+    environmentIds,
+    threads,
+    openThread: (thread) =>
+      navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+      }),
+  });
+  const threadSearch = useThreadSearch(contentSearch.legacyEnvironmentIds, threadSearchQuery);
   const threadContentMatchByKey = useThreadContentMatchByKey(threadSearch.matches);
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
@@ -2290,27 +2302,29 @@ function OpenCommandPaletteDialog(props: {
             ? changeAppearanceItem.groups
             : (currentView?.groups ?? rootGroups);
 
-  const filteredGroups = filterCommandPaletteGroups({
-    activeGroups,
-    query: deferredQuery,
-    isInSubmenu: currentView !== null,
-    projectSearchItems: projectSearchItems,
-    settingsSearchItems,
-    threadSearchItems:
-      linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
-        ? buildLinkedThreadActionItems({
-            ...linkedThreadSearch.linkedThreads,
-            query: linkedThreadSearch.query,
-            icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-            runThread: async (thread) => {
-              await navigate({
-                to: "/$environmentId/$threadId",
-                params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-              });
-            },
-          })
-        : allThreadItems,
-  });
+  const filteredGroups = contentSearch.applyToGroups(
+    filterCommandPaletteGroups({
+      activeGroups,
+      query: deferredQuery,
+      isInSubmenu: currentView !== null,
+      projectSearchItems: projectSearchItems,
+      settingsSearchItems,
+      threadSearchItems:
+        linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
+          ? buildLinkedThreadActionItems({
+              ...linkedThreadSearch.linkedThreads,
+              query: linkedThreadSearch.query,
+              icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+              runThread: async (thread) => {
+                await navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+                });
+              },
+            })
+          : allThreadItems,
+    }),
+  ); // signalbox: content search
 
   const handleAddProjectForEnvironment = async (input: {
     readonly environmentId: EnvironmentId;
@@ -3559,7 +3573,7 @@ function OpenCommandPaletteDialog(props: {
                 ? {
                     emptyStateMessage: "Press Enter to create this folder and add it as a project.",
                   }
-                : threadSearch.isPending
+                : threadSearch.isPending || contentSearch.isPending // signalbox: content search
                   ? { emptyStateMessage: "Searching thread messages…" }
                   : isOnAddProjectEnvironmentsView && addProjectAvailability === "connecting"
                     ? { emptyStateMessage: addProjectConnectingMessage }

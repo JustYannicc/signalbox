@@ -1,4 +1,5 @@
 import { clientAskCommand } from "@t3tools/shared/signalboxAsks";
+import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
   CommandId,
@@ -20,7 +21,12 @@ import { dispatchAutomationAskAnswer } from "../../automations/askAnswers.ts";
 
 import { CloudAttachments } from "../../attachments/CloudAttachments.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
-import { ThreadContexts, type ThreadPlace, type ThreadTurn } from "../../user/threadContexts.ts";
+import {
+  ThreadContexts,
+  type ThreadFolderTrashedError,
+  type ThreadPlace,
+  type ThreadTurn,
+} from "../../user/threadContexts.ts";
 import { commandThreadId, unsupported } from "../threadDecider.ts";
 import * as ThreadDirectory from "../ThreadDirectory.ts";
 import { ThreadKindTurns, withLevel } from "../ThreadKindTurns.ts";
@@ -109,6 +115,14 @@ const PICKS_A_POOL: ReadonlySet<ThreadCommand["type"]> = new Set([
 const messageOf = (command: ThreadCommand) =>
   command.type === "message.dispatch" ? { text: command.text, title: command.titleSeed } : null;
 
+const rejectTrashedFolder = <A>(
+  effect: Effect.Effect<A, ThreadFolderTrashedError>,
+  command: { readonly id: string; readonly type: string },
+) =>
+  effect.pipe(
+    Effect.mapError((error) => ThreadCommandRejectedError.forCommand(command, error.message)),
+  );
+
 export const makeThreads = Effect.gen(function* () {
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const crypto = yield* Crypto.Crypto;
@@ -121,11 +135,15 @@ export const makeThreads = Effect.gen(function* () {
     threadId: ThreadId,
     projectId: ProjectId | null,
     message: Parameters<ThreadKindTurns["Service"]["beforeTurn"]>[1],
+    command: { readonly id: string; readonly type: string },
   ) =>
     Effect.map(
       // A first message waits on its classifier; the chain resolves meanwhile.
       Effect.all(
-        [threadContexts.turn(threadId, projectId), kindTurns.beforeTurn(threadId, message)],
+        [
+          rejectTrashedFolder(threadContexts.turn(threadId, projectId), command),
+          kindTurns.beforeTurn(threadId, message),
+        ],
         { concurrency: 2 },
       ),
       ([turn, level]) => ({
@@ -154,7 +172,10 @@ export const makeThreads = Effect.gen(function* () {
       // thread object rejects a new thread without one, after replaying retries.
       const place =
         command.type === "thread.create"
-          ? yield* threadContexts.placeOfProject(command.projectId)
+          ? yield* rejectTrashedFolder(threadContexts.placeOfProject(command.projectId), {
+              id: command.commandId,
+              type: command.type,
+            })
           : null;
       // Resolved on every turn start, so a thread that moved runs on its new home's chain.
       const turn = PICKS_A_POOL.has(command.type)
@@ -162,10 +183,20 @@ export const makeThreads = Effect.gen(function* () {
             threadId,
             command.type === "thread.create" ? command.projectId : null,
             messageOf(command),
+            { id: command.commandId, type: command.type },
           )
         : null;
+      if (command.type === "prepared-run.retry") {
+        yield* rejectTrashedFolder(threadContexts.turn(threadId, null), {
+          id: command.commandId,
+          type: command.type,
+        });
+      }
       const creation = placed(place, threadId, turn);
-      if (command.type !== "message.dispatch") {
+      if (
+        command.type !== "message.dispatch" &&
+        !(command.type === "queued-run.edit" && command.attachments !== undefined)
+      ) {
         return yield* directory.forThread(threadId).dispatch(actor, command, creation);
       }
       return yield* withClaimed(
@@ -174,18 +205,35 @@ export const makeThreads = Effect.gen(function* () {
           actor,
           threadId,
           command: { id: command.commandId, type: command.type },
-          attachments: command.attachments,
+          attachments: command.attachments ?? [],
         },
         (claimed) =>
-          directory
-            .forThread(threadId)
-            .dispatch(actor, { ...command, attachments: claimed }, creation),
+          directory.forThread(threadId).dispatch(
+            actor,
+            {
+              ...command,
+              attachments: claimed,
+              ...(command.type === "queued-run.edit" && command.context !== undefined
+                ? {
+                    context: remapComposerContextAttachments(
+                      command.context,
+                      command.attachments ?? [],
+                      claimed,
+                    ),
+                  }
+                : {}),
+            },
+            creation,
+          ),
       );
     });
 
   const launchThread: Threads.Threads["Service"]["launch"] = (actor, input) =>
     Effect.gen(function* () {
-      const place = yield* threadContexts.placeOfProject(input.projectId);
+      const place = yield* rejectTrashedFolder(threadContexts.placeOfProject(input.projectId), {
+        id: input.commandId,
+        type: "thread.launch",
+      });
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
@@ -202,7 +250,10 @@ export const makeThreads = Effect.gen(function* () {
         input.modelSelection ??
         (input.reuseExistingThread === true
           ? (yield* directory.forThread(threadId).snapshot(actor)).projection.thread.modelSelection
-          : yield* threadContexts.initialModelSelection(input.projectId, threadId));
+          : yield* rejectTrashedFolder(
+              threadContexts.initialModelSelection(input.projectId, threadId),
+              { id: input.commandId, type: "thread.launch" },
+            ));
       if (modelSelection === null) {
         // A retry still returns the accepted thread after its default is cleared.
         modelSelection = yield* directory
@@ -227,6 +278,7 @@ export const makeThreads = Effect.gen(function* () {
           threadId,
           input.projectId,
           message === undefined ? null : { text: message.text, title: input.title },
+          { id: input.commandId, type: "thread.launch" },
         ),
       );
       return yield* withClaimed(
@@ -322,6 +374,17 @@ export const makeThreads = Effect.gen(function* () {
     );
 
   return Threads.Threads.of({
+    subscribePreparation: (actor, threadId) =>
+      Stream.unwrap(
+        resuming({
+          operation: "subscribePreparation",
+          threadId,
+          open: directory.forThread(threadId).subscribePreparation(actor),
+          delivered: () => Effect.void,
+        }),
+      ),
+    cancelPreparation: (actor, input) =>
+      directory.forThread(input.threadId).cancelPreparation(actor, input),
     getWorkflowScript: (actor, input) =>
       directory.forThread(input.threadId).getWorkflowScript(actor, input),
     stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),

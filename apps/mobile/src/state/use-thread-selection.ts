@@ -7,9 +7,9 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { threadDetailToShell } from "@t3tools/client-runtime/state/thread-detail-shell";
 import * as Option from "effect/Option";
 
-import { threadDetailToShell } from "./thread-detail-shell";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";

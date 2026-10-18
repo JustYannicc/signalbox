@@ -8,6 +8,7 @@ import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
   resolveActiveThreadRouteRef,
+  resolveThreadRouteDetailRef,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
@@ -73,6 +74,39 @@ describe("threadRoutes", () => {
       kind: "draft",
       draftId: "draft-1",
     });
+  });
+
+  it("loads detail for a shell-missing server route but never for a draft reservation", () => {
+    const serverTarget = resolveThreadRouteTarget({
+      environmentId: "env-1",
+      threadId: "thread-1",
+    });
+    const draftTarget = resolveThreadRouteTarget({ draftId: "draft-1" });
+
+    expect(
+      resolveThreadRouteDetailRef(serverTarget, {
+        serverThreadExists: false,
+        pendingDraftThreadExists: false,
+      }),
+    ).toEqual({ environmentId: "env-1", threadId: "thread-1" });
+    expect(
+      resolveThreadRouteDetailRef(serverTarget, {
+        serverThreadExists: true,
+        pendingDraftThreadExists: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveThreadRouteDetailRef(serverTarget, {
+        serverThreadExists: false,
+        pendingDraftThreadExists: true,
+      }),
+    ).toBeNull();
+    expect(
+      resolveThreadRouteDetailRef(draftTarget, {
+        serverThreadExists: false,
+        pendingDraftThreadExists: true,
+      }),
+    ).toBeNull();
   });
 
   it("resolves the backing thread while a draft route is being promoted", () => {
@@ -166,6 +200,76 @@ describe("threadRoutes", () => {
         serverThreadExists: false,
         serverThreadDeleted: false,
         draftThreadExists: false,
+      }),
+    ).toBe("loading");
+  });
+
+  it("renders an archived deep link only after its exact detail is live", () => {
+    const routeState = {
+      bootstrapComplete: true,
+      serverThreadExists: false,
+      serverThreadDeleted: false,
+      draftThreadExists: false,
+      detailStatus: "live" as const,
+      detailExists: true,
+    };
+
+    expect(resolveThreadRouteRenderState(routeState)).toBe("ready");
+  });
+
+  it.each(["empty", "cached", "synchronizing"] as const)(
+    "does not redirect a shell-missing route while exact detail is %s",
+    (detailStatus) => {
+      expect(
+        resolveThreadRouteRenderState({
+          bootstrapComplete: true,
+          serverThreadExists: false,
+          serverThreadDeleted: false,
+          draftThreadExists: false,
+          detailStatus,
+          detailExists: detailStatus === "cached" || detailStatus === "synchronizing",
+        }),
+      ).toBe("loading");
+    },
+  );
+
+  it("redirects a shell-missing route only after exact detail confirms deletion", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: false,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        draftThreadExists: false,
+        detailStatus: "deleted",
+        detailExists: false,
+      }),
+    ).toBe("missing");
+  });
+
+  it("shows exact-detail synchronization failures without treating them as missing", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: true,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        draftThreadExists: false,
+        detailStatus: "cached",
+        detailExists: true,
+        detailError: "Thread snapshot could not be synchronized.",
+      }),
+    ).toBe("error");
+  });
+
+  it("treats a live detail tombstone as missing", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: false,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        draftThreadExists: false,
+        detailStatus: "live",
+        detailExists: true,
+        detailDeleted: true,
       }),
     ).toBe("missing");
   });

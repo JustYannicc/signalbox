@@ -15,18 +15,20 @@ const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
   dropBusy: false,
   scopes: new Map<string, Set<string>>(),
+  cloudEnvironments: new Set<string>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
     action: string;
     environmentId: string;
     input: { threadId: string; orderKey?: string };
   }[],
-  dialogs: [] as { onConfirm: () => void }[],
+  dialogs: [] as { onConfirm: () => void; message?: string }[],
   alerts: [] as {
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  gate: undefined as Promise<void> | undefined,
 }));
 
 vi.mock("react", () => ({
@@ -46,8 +48,10 @@ vi.mock("expo-haptics", () => ({
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
     state.alerts.push({ title, buttons }),
-  confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
+  confirm: (dialog: { onConfirm: () => void; message?: string }) => state.dialogs.push(dialog),
 }));
+// signalbox: alert copy is the copy seam's concern; these cover the actions.
+vi.mock("./useOneEnvironmentCopy", () => ({ environmentCopy: (text: string) => text }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: () => {},
 }));
@@ -81,6 +85,7 @@ vi.mock("../../state/atom-registry", () => ({
                         threadPinning: true,
                         threadPinReorder: true,
                         threadTitleRegeneration: true,
+                        folders: state.cloudEnvironments.has(environmentId),
                       },
                     },
                   },
@@ -130,6 +135,7 @@ vi.mock("../../state/threads", () => ({
         input: { threadId: string; orderKey?: string };
       }) => {
         state.requests.push({ action, ...request });
+        await state.gate;
         if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
@@ -174,11 +180,13 @@ beforeEach(() => {
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
     [otherEnvironmentId, new Set<string>()],
   ]);
+  state.cloudEnvironments = new Set();
   state.requests = [];
   state.shells = [];
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.gate = undefined;
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -242,6 +250,16 @@ describe("thread list operation permissions", () => {
     expect(state.requests).toEqual([]);
   });
 
+  it("explains that cloud deletion is restorable from Trash", () => {
+    vi.stubEnv("EXPO_OS", "android");
+    state.cloudEnvironments.add(primaryEnvironmentId);
+
+    useThreadListActions().confirmDeleteThread(makeThread());
+
+    expect(state.dialogs[0]?.message).toContain("move to Trash");
+    expect(state.dialogs[0]?.message).toContain("30 days");
+  });
+
   it("unarchives with only task permission and blocks a later revoked callback", async () => {
     const actions = useArchivedThreadListActions(() => {});
     const thread = makeThread({ archivedAt: "2026-09-02T00:00:00.000Z" });
@@ -299,7 +317,7 @@ describe("pinned thread operation permissions", () => {
     ]);
   });
 
-  it("rechecks permission between materialization writes", async () => {
+  it("begins every key write before any settles and reports one failure", async () => {
     const moved = makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" });
     state.shells = [
       moved,
@@ -309,9 +327,19 @@ describe("pinned thread operation permissions", () => {
         createdAt: "2026-09-02T00:00:00.000Z",
       }),
     ];
-    state.afterRequest = () => state.scopes.get(primaryEnvironmentId)!.clear();
+    let release!: () => void;
+    state.gate = new Promise((resolve) => {
+      release = resolve;
+    });
 
-    expect(await useThreadListActions().moveThread(moved, "up")).toBe(false);
-    expect(state.requests).toHaveLength(1);
+    const moving = useThreadListActions().moveThread(moved, "up");
+    expect(state.requests.map(({ action }) => action)).toEqual(["reorderPin", "reorderPin"]);
+    expect(state.dropBusy).toBe(false);
+    expect(state.pendingOrder).toBeNull();
+
+    state.scopes.get(primaryEnvironmentId)!.clear();
+    release();
+    expect(await moving).toBe(false);
+    expect(state.alerts.map(({ title }) => title)).toEqual(["Could not move thread"]);
   });
 });

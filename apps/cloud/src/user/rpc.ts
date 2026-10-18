@@ -15,6 +15,8 @@ import {
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationSearchThreadsError,
+  OrchestrationV2SearchThreadError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
@@ -33,6 +35,7 @@ import {
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
+  WorktreeSetupError,
 } from "@t3tools/contracts";
 import {
   SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
@@ -44,11 +47,21 @@ import {
   SignalboxDrivesUnavailableError,
 } from "@t3tools/contracts/signalboxDrives";
 import {
+  FolderId,
   SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   SIGNALBOX_FOLDERS_WS_METHODS,
   SignalboxFolderError,
 } from "@t3tools/contracts/signalboxFolders";
+import {
+  SIGNALBOX_SEARCH_REQUIRED_SCOPES,
+  SIGNALBOX_SEARCH_WS_METHODS,
+} from "@t3tools/contracts/signalboxSearch";
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes";
+import {
+  SIGNALBOX_TRASH_REQUIRED_SCOPES,
+  SIGNALBOX_TRASH_WS_METHODS,
+} from "@t3tools/contracts/signalboxTrash";
 import {
   SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   SIGNALBOX_BROWSING_WS_METHODS,
@@ -109,6 +122,7 @@ import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
@@ -134,6 +148,8 @@ import {
   makeAnalyticsHandlers,
 } from "./analyticsRpc.ts";
 import { makeNotesHandlers, NOTES_METHODS } from "../notes/notesRpc.ts";
+import { makeTrashHandlers } from "../trash/trashRpc.ts";
+import { UserTrash } from "../trash/UserTrash.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -182,6 +198,9 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  WS_METHODS.providerUploadFeedback,
+  WS_METHODS.subscribeWorktreeSetup,
+  WS_METHODS.worktreeSetupCancel,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverUpdateSettings,
@@ -194,6 +213,10 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
+  ORCHESTRATION_V2_WS_METHODS.searchThreads,
+  ORCHESTRATION_V2_WS_METHODS.searchThread,
+  ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+  SIGNALBOX_SEARCH_WS_METHODS.query,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
@@ -201,6 +224,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
+  WS_METHODS.assetsPersistChatAttachments,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
   WS_METHODS.projectsListEntries,
@@ -238,6 +262,12 @@ const SERVED = [
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsComment,
+  WS_METHODS.pullRequestsUpdateComment,
+  WS_METHODS.pullRequestsSubmitReview,
+  WS_METHODS.pullRequestsSetReaction,
+  WS_METHODS.pullRequestsReplyToThread,
+  WS_METHODS.pullRequestsSetThreadResolution,
   WS_METHODS.pullRequestsDiffFileContents,
   WS_METHODS.pullRequestsInvalidate,
   WS_METHODS.pullRequestsSubscribeRefreshes,
@@ -247,6 +277,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   // Notes on each level's pad (`notes/`).
   ...NOTES_METHODS,
+  ...Object.values(SIGNALBOX_TRASH_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   // A thread's synced browser tabs (`thread/browsing/`), and the browser panel's own RPCs on them.
   ...Object.values(SIGNALBOX_BROWSING_WS_METHODS),
@@ -284,6 +315,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
+  [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
@@ -296,9 +328,15 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
+  [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
+  ...SIGNALBOX_SEARCH_REQUIRED_SCOPES,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
@@ -306,6 +344,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
+  [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
@@ -339,6 +378,12 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsUpdateComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSubmitReview]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSetReaction]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsReplyToThread]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSetThreadResolution]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
@@ -347,6 +392,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   ...SIGNALBOX_NOTES_REQUIRED_SCOPES,
+  ...SIGNALBOX_TRASH_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires for its browser panel.
@@ -506,6 +552,7 @@ export const layerHandlers = (input: {
     Effect.gen(function* () {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
+      const search = yield* ThreadSearch.ThreadSearch;
       const coreThreads = yield* Threads.Threads;
       const assets = yield* CloudAssets.CloudAssets;
       const contexts = yield* UserContexts.UserContexts;
@@ -587,18 +634,19 @@ export const layerHandlers = (input: {
       const pushes = yield* makePushHandlers(input.sid);
       const threadContexts = yield* ThreadContexts;
       const newThreadModel = (projectId?: ProjectId) =>
-        threadContexts
-          .initialModelSelection(projectId ?? null)
-          .pipe(
-            Effect.map(
-              (selection) => selection ?? (identity.scripted ? scriptedModelSelection : null),
-            ),
-          );
+        threadContexts.initialModelSelection(projectId ?? null).pipe(
+          Effect.catchTags({ ThreadFolderTrashedError: () => Effect.succeed(null) }),
+          Effect.map(
+            (selection) => selection ?? (identity.scripted ? scriptedModelSelection : null),
+          ),
+        );
       const automations = yield* makeAutomationHandlers({
         personReviews: input.via === "client",
         newThreadModel,
       });
       const notes = yield* makeNotesHandlers({ newThreadModel });
+      const trash = yield* makeTrashHandlers;
+      const userTrash = yield* UserTrash;
       const keys = yield* makeKeysHandlers({
         userId,
         scopes: input.scopes ?? CLOUD_CLIENT_SCOPES,
@@ -609,10 +657,20 @@ export const layerHandlers = (input: {
       const analytics = yield* makeAnalyticsHandlers;
       const timezone = yield* makeTimezoneHandlers;
       return {
+        [WS_METHODS.providerUploadFeedback]: (request) =>
+          Effect.flatMap(actorNow, (actor) => threads.uploadFeedback(actor, request)).pipe(
+            Effect.catchTags({
+              ThreadNotFoundError: (cause) =>
+                Effect.fail(new ProviderUploadFeedbackError({ threadId: request.threadId, cause })),
+              ThreadObjectError: (cause) =>
+                Effect.fail(new ProviderUploadFeedbackError({ threadId: request.threadId, cause })),
+            }),
+          ),
         ...pools.handlers,
         ...pushes,
         ...automations,
         ...notes,
+        ...trash,
         ...keys,
         ...signIn,
         ...keybindings,
@@ -695,6 +753,40 @@ export const layerHandlers = (input: {
                   cause,
                 }),
             ),
+          ),
+        [SIGNALBOX_SEARCH_WS_METHODS.query]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.query(actor, request)),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.search(actor, request)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationSearchThreadsError({
+                  message: "Could not search threads. Please retry.",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThread]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.searchOne(actor, request)).pipe(
+            Effect.mapError((cause) => new OrchestrationV2SearchThreadError({ cause })),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: (request) =>
+          Stream.fromEffect(
+            Effect.flatMap(actorNow, (actor) => search.searchOne(actor, request)),
+          ).pipe(Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
+        [WS_METHODS.subscribeWorktreeSetup]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) =>
+              coreThreads.subscribePreparation(actor, request.threadId),
+            ),
+          ).pipe(
+            Stream.interruptWhen(lostSight(request.threadId)),
+            Stream.mapError((error) => new WorktreeSetupError({ message: failureMessage(error) })),
+          ),
+        [WS_METHODS.worktreeSetupCancel]: (request) =>
+          threadCall(
+            Effect.flatMap(actorNow, (actor) => coreThreads.cancelPreparation(actor, request)),
+            (message) => new WorktreeSetupError({ message }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           threadCall(
@@ -789,6 +881,8 @@ export const layerHandlers = (input: {
           ),
         [WS_METHODS.assetsCreateUrl]: ({ resource }) =>
           Effect.flatMap(actorNow, (actor) => assets.createUrl(actor, resource)),
+        [WS_METHODS.assetsPersistChatAttachments]: (request) =>
+          Effect.flatMap(actorNow, (actor) => assets.persistChatAttachments(actor, request)),
         // Scratch is the Personal context's project, always in the shell.
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
@@ -841,7 +935,8 @@ export const layerHandlers = (input: {
           ),
         [WS_METHODS.vcsListRefs]: (request) =>
           Effect.flatMap(actorNow, (actor) => branches.listRefs(actor, request)),
-        [WS_METHODS.reviewGetDiffPreview]: (request) => drives.reviewPreview(request),
+        [WS_METHODS.reviewGetDiffPreview]: (request) =>
+          Effect.flatMap(actorNow, (actor) => branches.review(actor, request)),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (request) =>
           drives
             .turnDiff(request)
@@ -892,6 +987,13 @@ export const layerHandlers = (input: {
         [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
         [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
         [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
+        [WS_METHODS.pullRequestsComment]: (request) => pullRequests.comment(request),
+        [WS_METHODS.pullRequestsUpdateComment]: (request) => pullRequests.updateComment(request),
+        [WS_METHODS.pullRequestsSubmitReview]: (request) => pullRequests.submitReview(request),
+        [WS_METHODS.pullRequestsSetReaction]: (request) => pullRequests.setReaction(request),
+        [WS_METHODS.pullRequestsReplyToThread]: (request) => pullRequests.replyToThread(request),
+        [WS_METHODS.pullRequestsSetThreadResolution]: (request) =>
+          pullRequests.setThreadResolution(request),
         [WS_METHODS.pullRequestsDiffFileContents]: (request) =>
           pullRequests.diffFileContents(request),
         [WS_METHODS.pullRequestsInvalidate]: (request) => pullRequests.invalidate(request),
@@ -997,7 +1099,11 @@ export const layerHandlers = (input: {
         [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: (request) => folderStarts.startFrom(request),
         [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
-        [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) => folderCall(folders.delete(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) =>
+          userTrash.trashFolder({ folderId: request.id }).pipe(
+            Effect.andThen(folders.snapshot),
+            Effect.mapError((error) => new SignalboxFolderError({ message: error.message })),
+          ),
         [SIGNALBOX_FOLDERS_WS_METHODS.moveThread]: (request) =>
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
@@ -1042,7 +1148,12 @@ export const layerHandlers = (input: {
         [WS_METHODS.sectionsMove]: (request) =>
           sections.move(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
         [WS_METHODS.sectionsDelete]: (request) =>
-          sections.delete(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
+          userTrash.trashFolder({ folderId: FolderId.make(request.id) }).pipe(
+            Effect.andThen(sections.snapshot),
+            Effect.mapError(
+              (error) => new SectionsRpcError({ code: "storage-failed", detail: error.message }),
+            ),
+          ),
         [WS_METHODS.sectionsMoveProject]: (request) =>
           sections.moveProject(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
       };

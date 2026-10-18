@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./keywordSearch": {
+      "types": "./src/keywordSearch.ts",
+      "import": "./src/keywordSearch.ts"
+    },
     "./clientTraceSafety": {
       "types": "./src/clientTraceSafety.ts",
       "import": "./src/clientTraceSafety.ts"
@@ -527,6 +531,10 @@
     "./threadSearch": {
       "types": "./src/threadSearch.ts",
       "import": "./src/threadSearch.ts"
+    },
+    "./threadToolInput": {
+      "types": "./src/threadToolInput.ts",
+      "import": "./src/threadToolInput.ts"
     },
     "./markdownLinks": {
       "types": "./src/markdownLinks.ts",

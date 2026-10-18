@@ -8,7 +8,11 @@ import {
   RuntimeRequestId,
   TurnItemId,
 } from "@t3tools/contracts";
-import type { RunnerItem, ThreadMessage } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  RUNNER_PROTOCOL_VERSION,
+  type RunnerItem,
+  type ThreadMessage,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -48,6 +52,7 @@ const runningSocket = (
   engine: Parameters<typeof launch>[0],
   runner: ThreadRunner["Service"],
   acceptsRuntimeResponses: boolean,
+  protocolVersion = 6,
 ) =>
   Effect.gen(function* () {
     yield* launch(engine);
@@ -61,6 +66,7 @@ const runningSocket = (
     sockets.push(socket.socket);
     yield* say(host, socket, {
       ...hello(plan.ensure.generation, plan.ensure.token),
+      protocolVersion,
       takenRunIds: [],
       runtimeResponses: acceptsRuntimeResponses ? true : undefined,
     });
@@ -68,6 +74,25 @@ const runningSocket = (
     const start = socket.sent.find((message) => message.type === "turn.start");
     if (start?.type !== "turn.start") throw new Error("expected the turn start");
     const { turn } = start;
+    let sequence = 0;
+    if (turn.preparationGeneration !== undefined) {
+      yield* say(host, socket, {
+        type: "batch",
+        sequence: ++sequence,
+        items: [
+          {
+            kind: "preparation.ready",
+            runId: turn.runId,
+            preparationGeneration: turn.preparationGeneration,
+          },
+        ],
+      });
+      expect(socket.sent).toContainEqual({
+        type: "preparation.handoff",
+        runId: turn.runId,
+        preparationGeneration: turn.preparationGeneration,
+      });
+    }
     const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
     const providerTurnId = ProviderTurnId.make(`native-turn:${turn.runId}`);
     const providerTurn: RunnerItem = {
@@ -91,8 +116,11 @@ const runningSocket = (
     };
     yield* say(host, socket, {
       type: "batch",
-      sequence: 1,
-      items: [report.started, providerTurn],
+      sequence: ++sequence,
+      items: [
+        { ...report.started, preparationGeneration: turn.preparationGeneration },
+        providerTurn,
+      ],
     });
     socket.sent.length = 0;
 
@@ -105,6 +133,7 @@ const runningSocket = (
       providerTurnId,
       generation: plan.ensure.generation,
       token: plan.ensure.token,
+      lastAckedSequence: sequence,
     };
   });
 
@@ -112,9 +141,15 @@ const pendingQuestion = (
   engine: Parameters<typeof launch>[0],
   runner: ThreadRunner["Service"],
   acceptsRuntimeResponses: boolean,
+  protocolVersion = 6,
 ) =>
   Effect.gen(function* () {
-    const connected = yield* runningSocket(engine, runner, acceptsRuntimeResponses);
+    const connected = yield* runningSocket(
+      engine,
+      runner,
+      acceptsRuntimeResponses,
+      protocolVersion,
+    );
     const { projection } = yield* snapshot(engine);
     const root = projection.nodes.find((node) => node.id === connected.turn.rootNodeId);
     if (root === undefined) throw new Error("expected the run's root node");
@@ -165,7 +200,7 @@ const pendingQuestion = (
     };
     yield* say(connected.host, connected.socket, {
       type: "batch",
-      sequence: 2,
+      sequence: connected.lastAckedSequence + 1,
       items: [
         {
           kind: "provider",
@@ -196,7 +231,7 @@ const pendingQuestion = (
         },
       ],
     });
-    return { ...connected, requestId };
+    return { ...connected, requestId, lastAckedSequence: connected.lastAckedSequence + 1 };
   });
 
 const answer = (requestId: RuntimeRequestId, commandId: string) => ({
@@ -208,47 +243,64 @@ const answer = (requestId: RuntimeRequestId, commandId: string) => ({
 });
 
 describe("runtime response sockets", () => {
-  it.effect("sends committed responses once per connection and replays them after reconnect", () =>
-    withObject(freshDatabase(), (engine, runner) =>
-      Effect.gen(function* () {
-        const connected = yield* pendingQuestion(engine, runner, true);
-        yield* engine.dispatch(owner, answer(connected.requestId, "answer-1"), personal);
-        const committed = yield* snapshot(engine);
-        expect(committed.projection.runtimeRequests).toContainEqual(
-          expect.objectContaining({
-            id: connected.requestId,
-            status: "resolved",
-            answers: { choice: "Blue" },
-          }),
-        );
+  it.effect.each([
+    { protocolVersion: 6, dismiss: false },
+    { protocolVersion: 6, dismiss: true },
+    { protocolVersion: RUNNER_PROTOCOL_VERSION, dismiss: false },
+    { protocolVersion: RUNNER_PROTOCOL_VERSION, dismiss: true },
+  ])(
+    "sends committed responses once and replays after reconnect with protocol $protocolVersion, dismiss $dismiss",
+    ({ protocolVersion, dismiss }) =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          const connected = yield* pendingQuestion(engine, runner, true, protocolVersion);
+          const command = dismiss
+            ? {
+                type: "thread.user-input.dismiss" as const,
+                commandId: CommandId.make("dismiss-1"),
+                threadId,
+                requestId: connected.requestId,
+              }
+            : answer(connected.requestId, "answer-1");
+          yield* engine.dispatch(owner, command, personal);
+          const committed = yield* snapshot(engine);
+          expect(committed.projection.runtimeRequests).toContainEqual(
+            expect.objectContaining({
+              id: connected.requestId,
+              status: "resolved",
+              answers: dismiss ? {} : { choice: "Blue" },
+            }),
+          );
 
-        yield* Effect.promise(() => pushRunnerWork(connected.host));
-        yield* Effect.promise(() => pushRunnerWork(connected.host));
+          yield* Effect.promise(() => pushRunnerWork(connected.host));
+          yield* Effect.promise(() => pushRunnerWork(connected.host));
 
-        const expected = {
-          type: "runtime-request.respond",
-          runId: connected.turn.runId,
-          attemptId: connected.turn.attemptId,
-          providerSessionId: connected.report.started.providerSession.id,
-          requestId: connected.requestId,
-          answers: { choice: "Blue" },
-        };
-        expect(responseFrames(connected.socket)).toEqual([expected]);
+          const expected = {
+            type: "runtime-request.respond",
+            runId: connected.turn.runId,
+            attemptId: connected.turn.attemptId,
+            providerSessionId: connected.report.started.providerSession.id,
+            requestId: connected.requestId,
+            answers: dismiss ? {} : { choice: "Blue" },
+            ...(dismiss ? { decision: "cancel" } : {}),
+          };
+          expect(responseFrames(connected.socket)).toEqual([expected]);
 
-        connected.sockets.splice(connected.sockets.indexOf(connected.socket.socket), 1);
-        const reconnected = fakeSocket();
-        connected.sockets.push(reconnected.socket);
-        yield* say(connected.host, reconnected, {
-          ...hello(connected.generation, connected.token),
-          lastAckedSequence: 2,
-          takenRunIds: [connected.turn.runId],
-          runtimeResponses: true,
-        });
-        yield* Effect.promise(() => pushRunnerWork(connected.host));
+          connected.sockets.splice(connected.sockets.indexOf(connected.socket.socket), 1);
+          const reconnected = fakeSocket();
+          connected.sockets.push(reconnected.socket);
+          yield* say(connected.host, reconnected, {
+            ...hello(connected.generation, connected.token),
+            protocolVersion,
+            lastAckedSequence: connected.lastAckedSequence,
+            takenRunIds: [connected.turn.runId],
+            runtimeResponses: true,
+          });
+          yield* Effect.promise(() => pushRunnerWork(connected.host));
 
-        expect(responseFrames(reconnected)).toEqual([expected]);
-      }),
-    ),
+          expect(responseFrames(reconnected)).toEqual([expected]);
+        }),
+      ),
   );
 
   it.effect.each(["answer", "dismiss"] as const)(

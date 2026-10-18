@@ -190,16 +190,36 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
 
   const handle = (connection: RunnerConnection, message: ThreadMessage) => {
     switch (message.type) {
+      case "feedback.upload":
+        return (
+          turns.uploadFeedback?.(message) ??
+          Effect.succeed({ _tag: "failed", failure: "unsupported" } as const)
+        ).pipe(
+          Effect.flatMap((outcome) =>
+            connection.send({
+              type: "feedback.result",
+              requestId: message.requestId,
+              outcome,
+            }),
+          ),
+          Effect.ignore,
+          Effect.forkIn(scope),
+          Effect.asVoid,
+        );
       case "ack":
         return acknowledge(message.sequence);
       case "turn.start":
         return turns.start(message);
+      case "preparation.cancel":
+        return turns.cancelPreparation(message.runId, message.preparationGeneration);
+      case "preparation.handoff":
+        return turns.handoffPreparation(message.runId, message.preparationGeneration);
       case "workflow.stop":
         return message.generation === input.generation && turns.stopWorkflow !== undefined
           ? turns.stopWorkflow(message).pipe(Effect.forkIn(scope), Effect.asVoid)
           : Effect.void;
       case "interrupt":
-        return turns.interrupt(message.runId);
+        return turns.interrupt(message.runId, message.preparationGeneration);
       case "steer":
         return turns.steer(message.runId, message.message);
       case "runtime-request.respond":
@@ -240,11 +260,13 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         build: input.build,
         drains: true,
         steers: true,
+        feedback: turns.uploadFeedback !== undefined,
         workflowStops: turns.stopWorkflow !== undefined,
         runtimeResponses: true,
         pulls: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
+        takenPreparations: yield* turns.preparationsTaken,
       });
       const answer = yield* connection.receive;
       if (answer.type === "refused") {

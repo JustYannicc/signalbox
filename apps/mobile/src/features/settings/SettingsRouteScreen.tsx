@@ -26,6 +26,7 @@ import {
 } from "./signalboxSettingsTargets"; // signalbox: settings targets by capability
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
+import { TrashSettingsRow } from "../trash/TrashSettingsRow"; // signalbox: trash
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { useAtomValue } from "@effect/atom-react"; // signalbox: provider accounts gate
@@ -189,6 +190,14 @@ function SettingsIndexSections() {
     <>
       <SettingsSection title="Interface">
         <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        {targetsSupporting(selectedTargets, "personTimezone").length === 0 &&
+        !(noServerTargets && showsEnvironments) ? null : (
+          <SettingsRow
+            /* signalbox: person timezone */ icon="globe"
+            label="Time zone"
+            target="SettingsTimeZone"
+          />
+        )}
         {Platform.OS === "ios" ? (
           <>
             <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />
@@ -225,6 +234,8 @@ function SettingsIndexSections() {
         <SettingsRow icon="text.bubble" label="Thread behavior" target="SettingsThreads" />
         <SettingsRow icon="arrow.turn.left.up" label="Follow-ups" target="SettingsFollowUp" />
         <SettingsRow icon="archivebox" label="Archived Threads" target="SettingsArchive" />
+        {/* signalbox: trash */}
+        <TrashSettingsRow />
       </SettingsSection>
 
       {hidesServerSettings ? null : (

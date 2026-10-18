@@ -53,8 +53,8 @@ export const makeAsks = (deps: {
       const trigger = asRecord(fromJson(run.trigger_json));
       const id = trigger.originThreadId ?? input.threadId ?? asRecord(trigger.attach).threadId;
       if (typeof id === "string" && id.trim()) {
-        const thread = yield* threads.getThreadShell(ThreadId.make(id));
-        if (thread?.projectId === automation?.project_id && thread?.deletedAt === null) return id;
+        const thread = yield* threads.getThreadShell(ThreadId.make(id), { includeTrashed: true });
+        if (thread && thread.projectId === automation?.project_id) return id;
       }
       return run.parent_run_id ? yield* originatingThread(run.parent_run_id) : null;
     });
@@ -63,9 +63,10 @@ export const makeAsks = (deps: {
     Effect.gen(function* () {
       const threadId = yield* originatingThread(step.run_id);
       if (threadId && threads.syncAsk) {
-        const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
-        // Deleted threads cannot accept commands; the workflow journal remains the history.
-        if (shell && shell.deletedAt === null) yield* threads.syncAsk(ThreadId.make(threadId), ask);
+        const shell = yield* threads.getThreadShell(ThreadId.make(threadId), {
+          includeTrashed: true,
+        });
+        if (shell) yield* threads.syncAsk(ThreadId.make(threadId), ask);
       }
       yield* store.markAskSynced(step.run_id, step.step_key, encodeAsk(ask), yield* nowIso);
     });

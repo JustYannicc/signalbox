@@ -211,6 +211,25 @@ describe("ProviderSendTurnInput", () => {
 });
 
 describe("provider feedback", () => {
+  it("accepts a stable id for cloud upload retries", () => {
+    expect(
+      decodeProviderUploadFeedbackInput({ threadId: "thread-1", requestId: "feedback-1" }),
+    ).toEqual({ threadId: "thread-1", requestId: "feedback-1" });
+  });
+
+  it("reports unsupported and missing-session failures without exposing the cause", () => {
+    const unsupported = new ProviderUploadFeedbackError({
+      threadId: ThreadId.make("thread-1"),
+      failure: "unsupported",
+      cause: "private feedback",
+    });
+    expect(unsupported.message).toBe("This provider does not support feedback uploads.");
+    const missing = new ProviderUploadFeedbackError({
+      threadId: ThreadId.make("thread-1"),
+      failure: "session_unavailable",
+    });
+    expect(missing.message).toContain("Send a message first");
+  });
   it("accepts a thread and an optional feedback reason", () => {
     expect(
       decodeProviderUploadFeedbackInput({

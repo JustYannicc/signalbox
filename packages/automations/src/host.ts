@@ -32,8 +32,7 @@ import type { Envelope } from "./events/eventTriggers.ts";
 import type { WorkflowStore } from "./WorkflowStore.ts";
 
 /**
- * What the automation engine needs from the environment hosting it: a
- * self-hosted server (`serverHost.ts`) or a user's cloud object. The engine
+ * What the automation engine needs from its cloud object. The engine
  * reaches threads, the machine, compiling and its log sink only through
  * these, so each host decides how they work there.
  */
@@ -107,6 +106,7 @@ export interface AutomationThreadsShape {
   readonly askAnswerer?: Effect.Effect<SignalboxAskAnswerer, AutomationError>;
   readonly getThreadShell: (
     threadId: ThreadId,
+    options?: { readonly includeTrashed?: boolean },
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, AutomationError>;
   readonly getThreadRecords: <K extends ThreadRecordField>(
     threadId: ThreadId,
