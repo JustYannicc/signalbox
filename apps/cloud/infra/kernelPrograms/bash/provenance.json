@@ -1,0 +1,378 @@
+{
+  "program": "GNU Bash 5.2.37",
+  "programLicense": "GPL-3.0-or-later",
+  "shimRepository": "https://github.com/AshishKumar4/Nimbus",
+  "shimRevision": "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
+  "shimLicense": "MIT",
+  "patch": {
+    "path": "patches/fd-getfd.patch",
+    "sha256": "4ea7a980f9ae121ab1382064ceabf91ead51f0735218a2bdeb372547297fc388"
+  },
+  "recipeSha256": "393b416736cd7757fc175f611b03f6ec1691b4ae89a0b9bd4462aaff5f28f8ce",
+  "patchedShimSha256": "c2df62a6eab94c3e767c81a341e2b5b95f4066b07b226091a117b33733a61a83",
+  "image": "node@sha256:14078204b6bb268c107ceff6d3c43f45a888105e5c2b18b14c32b3409d93a1b0",
+  "inputs": {
+    "nimbus": "f7024781c3dc2be1325efa1279aa9682cd84a2cd48f7782eb87ccd90ff0f1c12",
+    "bash": "9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff",
+    "wasi-sdk": "47fccad8b2498f2239e05e1115c3ffc652bf37e7de2f88fb64b2d663c976ce2d",
+    "binaryen": "89c07ea56faf38d0fbecf36ca8ec0721756716185f265b568e133d427f299bf8"
+  },
+  "toolchain": {
+    "wasiSdk": "25.0 arm64 Linux",
+    "binaryen": "133 aarch64 Linux",
+    "jobs": 2
+  },
+  "output": {
+    "file": "bash.async.wasm",
+    "sha256": "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
+    "bytes": 3887571
+  },
+  "imports": [
+    {
+      "module": "env",
+      "name": "getuid",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "getgid",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "geteuid",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "getegid",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "setuid",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "setgid",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "gethostname",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "getpid",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "dlsym",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "dlclose",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "dlerror",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "dlopen",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "umask",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "startup_cwd",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "capture_cwd",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "fork",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "execve",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "waitpid",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "pipe",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "dup2",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "dup",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "fd_getfd",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "kill",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "getppid",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "setpgid",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "getpgid",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "tcgetpgrp",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "tcsetpgrp",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "stat_metadata",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "setjmp",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "longjmp",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_procenv",
+      "name": "full",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "tcgetattr",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "tcsetattr",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "account",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "args_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "args_sizes_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "environ_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "environ_sizes_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "clock_time_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_close",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_fdstat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_filestat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_prestat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_prestat_dir_name",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_read",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_readdir",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_seek",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_tell",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_write",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_filestat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_open",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_readlink",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_rename",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_unlink_file",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "poll_oneoff",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "proc_exit",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "random_get",
+      "kind": "function"
+    }
+  ],
+  "exports": [
+    {
+      "name": "memory",
+      "kind": "memory"
+    },
+    {
+      "name": "__stack_pointer",
+      "kind": "global"
+    },
+    {
+      "name": "_start",
+      "kind": "function"
+    },
+    {
+      "name": "nimbus_procenv_log",
+      "kind": "function"
+    },
+    {
+      "name": "__nimbus_signal_disposition",
+      "kind": "function"
+    },
+    {
+      "name": "__heap_base",
+      "kind": "global"
+    },
+    {
+      "name": "__data_end",
+      "kind": "global"
+    },
+    {
+      "name": "asyncify_start_unwind",
+      "kind": "function"
+    },
+    {
+      "name": "asyncify_stop_unwind",
+      "kind": "function"
+    },
+    {
+      "name": "asyncify_start_rewind",
+      "kind": "function"
+    },
+    {
+      "name": "asyncify_stop_rewind",
+      "kind": "function"
+    },
+    {
+      "name": "asyncify_get_state",
+      "kind": "function"
+    }
+  ],
+  "version": "5.2.37+nimbus.e9f019ab.fd-getfd.1",
+  "upstreamArtifact": {
+    "path": "packages/worker/wasm/bash/bash.async.wasm",
+    "sha256": "ddc86c1422556654f02edf083f70017275bbc52f53781d1b74ac538bc7d0b102",
+    "bytes": 3887678
+  }
+}
