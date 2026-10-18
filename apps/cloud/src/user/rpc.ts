@@ -137,6 +137,7 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
@@ -497,6 +498,7 @@ export const layerHandlers = (input: {
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
+      const folderStarts = yield* FolderStarts.FolderStarts;
       const kinds = yield* UserThreadKinds.UserThreadKinds;
       const statusNotes = yield* UserThreadStatus.UserThreadStatus;
       const userDrives = yield* UserDrives.UserDrives;
@@ -918,6 +920,7 @@ export const layerHandlers = (input: {
             ),
           ),
         [SIGNALBOX_FOLDERS_WS_METHODS.create]: (request) => folderCall(folders.create(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: (request) => folderStarts.startFrom(request),
         [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) => folderCall(folders.delete(request)),
