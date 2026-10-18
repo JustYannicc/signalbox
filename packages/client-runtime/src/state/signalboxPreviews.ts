@@ -1,5 +1,6 @@
 import {
   SIGNALBOX_PREVIEWS_WS_METHODS,
+  THREAD_FILES_PREVIEW_PORT,
   type SignalboxPreviewPort,
   type SignalboxThreadPreviews,
 } from "@t3tools/contracts/signalboxPreviews";
@@ -12,7 +13,7 @@ import {
 } from "./runtime.ts";
 
 /**
- * The dev servers a Signalbox Cloud thread's machine serves, and fresh links
+ * The files and dev servers a Signalbox Cloud thread serves, and fresh links
  * to open them. Only ask environments advertising
  * `capabilities.signalboxPreviews`; others fail with
  * `SignalboxPreviewsUnavailableError`.
@@ -49,7 +50,13 @@ export function previewPortsToOffer(
 }
 
 /** `:5173`. The port is the preview's identity; the process name is a hint. */
-export const previewPortLabel = (port: SignalboxPreviewPort) => `:${port.port}`;
+export const previewPortLabel = (port: SignalboxPreviewPort) =>
+  port.port === THREAD_FILES_PREVIEW_PORT ? "Files" : `:${port.port}`;
+
+export const previewPortDescription = (port: SignalboxPreviewPort) =>
+  port.port === THREAD_FILES_PREVIEW_PORT
+    ? "thread files"
+    : `${port.processName ?? "the dev server"} on port ${port.port}`;
 
 /** What failed opening a preview, for a toast or alert. */
 export function previewOpenFailureMessage(error: unknown): string {

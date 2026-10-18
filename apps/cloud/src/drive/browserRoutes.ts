@@ -1,5 +1,7 @@
 import { BROWSER_PATHS, browserJson } from "@signalbox/runner-protocol/BrowserProtocol";
 import * as Effect from "effect/Effect";
+import { ThreadId } from "@t3tools/contracts";
+import { ThreadDirectory } from "../thread/ThreadDirectory.ts";
 
 import { UserDirectory } from "../user/UserDirectory.ts";
 import { decodeBody, json, text } from "./routeResponses.ts";
@@ -15,7 +17,8 @@ import { decodeBody, json, text } from "./routeResponses.ts";
 export const isBrowserApiPath = (pathname: string) =>
   pathname === BROWSER_PATHS.session ||
   pathname === BROWSER_PATHS.end ||
-  pathname === BROWSER_PATHS.signIn;
+  pathname === BROWSER_PATHS.signIn ||
+  pathname === BROWSER_PATHS.previewUrl;
 
 /** One person's browser request from the thread's machine, for the thread `auth` names. */
 export const serveBrowserRequest = (
@@ -31,6 +34,32 @@ export const serveBrowserRequest = (
   Effect.gen(function* () {
     const users = yield* UserDirectory;
     const owner = users.forUser(auth.userId);
+    if (pathname === BROWSER_PATHS.previewUrl) {
+      const request = decodeBody(browserJson.previewUrlRequest.decode, body);
+      if (request === null) return text("Unreadable request.", 400);
+      if (!auth.live)
+        return json(
+          browserJson.previewUrl.encode({
+            _tag: "refused",
+            message: "Only a running turn opens a preview.",
+          }),
+        );
+      const contextIds = yield* owner.contextIds();
+      const threads = yield* ThreadDirectory;
+      const answer = yield* threads
+        .forThread(ThreadId.make(auth.threadId))
+        .previewLink({ userId: auth.userId, contextIds }, request.port, true, {
+          path: request.path,
+          agent: true,
+        });
+      return json(
+        browserJson.previewUrl.encode(
+          answer._tag === "ok"
+            ? { _tag: "ready", url: answer.url }
+            : { _tag: "refused", message: answer.message },
+        ),
+      );
+    }
     if (pathname === BROWSER_PATHS.end) {
       const request = decodeBody(browserJson.endRequest.decode, body);
       if (request === null) return text("Unreadable request.", 400);
@@ -78,6 +107,10 @@ export const serveBrowserRequest = (
     }),
     // The owner's object didn't answer; the machine retries.
     Effect.catchTags({
+      ThreadObjectError: (error) =>
+        Effect.logWarning("a preview request failed", { cause: error.cause }).pipe(
+          Effect.as(text("The preview is unavailable right now.", 503)),
+        ),
       UserObjectError: (error) =>
         Effect.logWarning("a person's browser request failed", { cause: error.cause }).pipe(
           Effect.as(text("The thread's owner is unavailable right now.", 503)),

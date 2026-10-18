@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - serves the page a real Chromium opens.
 import * as NodeHttp from "node:http";
+import { pathToFileURL } from "node:url";
 
 import type { AgentBrowserStep, AgentBrowserUpdate } from "@t3tools/contracts/signalboxPreviews";
 import { type Browser, chromium } from "playwright-core";
@@ -37,14 +38,23 @@ let chrome: Browser;
 
 beforeAll(async () => {
   server = NodeHttp.createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    if (url.pathname === "/__signalbox/preview") {
+      response.writeHead(302, { location: url.searchParams.get("path") ?? "/" });
+      response.end();
+      return;
+    }
     response.setHeader("content-type", "text/html");
     response.end(
-      request.url === "/canvas" ? CANVAS_PAGE : request.url === "/targets" ? TARGETS_PAGE : PAGE,
+      url.pathname === "/canvas" ? CANVAS_PAGE : url.pathname === "/targets" ? TARGETS_PAGE : PAGE,
     );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  chrome = await chromium.launch({ headless: true });
+  chrome = await chromium.launch({
+    headless: true,
+    args: ["--host-resolver-rules=MAP preview.example.test 127.0.0.1"],
+  });
 }, 60_000);
 
 afterAll(async () => {
@@ -118,6 +128,98 @@ const MOUSE_INTERACTION = 2;
 const CLICK = 2;
 
 describe("the agent's browser, mirrored", () => {
+  it("opens workspace ports and files through this thread's preview, reminting each navigation", async () => {
+    const port = Number(new URL(origin).port);
+    const requests: Array<{ readonly port: number; readonly path?: string }> = [];
+    const targets = [
+      { port, host: "preview.example.test" },
+      { port: 80, host: "preview.example.test" },
+    ];
+    let minted = 0;
+    let personBrowserCalls = 0;
+    const browser = makeRunnerBrowser(
+      {
+        machine: await machineTabs(),
+        person: {
+          newPage: async () => {
+            personBrowserCalls += 1;
+            throw new Error("preview navigation must not open a personal browser");
+          },
+          close: async () => {},
+        },
+      },
+      {
+        workspaceRoot: process.cwd(),
+        allowHttpPreviewUrl: true,
+        previewTargets: async () => targets,
+        previewUrl: async (request) => {
+          requests.push(request);
+          minted += 1;
+          return {
+            _tag: "ready",
+            url: `http://${targets.find((target) => target.port === request.port)!.host}:${port}/__signalbox/preview?ticket=secret&path=${encodeURIComponent(request.path ?? "/")}`,
+          };
+        },
+      },
+    );
+    const updates = collect<AgentBrowserUpdate>();
+    const viewer = browser.mirror!.watch({
+      viewerId: "preview-viewer",
+      tabId: null,
+      send: (line) => updates.push(JSON.parse(decoder.decode(line)) as AgentBrowserUpdate),
+      end: () => {},
+    });
+    try {
+      const opened = await browser.navigate({
+        target: { kind: "environment-port", port, path: "/first?tab=one#top" },
+      });
+      expect(opened.url).toBe(`http://preview.example.test:${port}/first?tab=one#top`);
+      expect(requests[0]).toEqual({ port, path: "/first?tab=one#top" });
+      const state = await updates.next(
+        (update) =>
+          update._tag === "state" && update.tabs.some((tab) => tab.tabId === opened.tabId),
+      );
+      expect(state).toMatchObject({
+        _tag: "state",
+        tabs: [{ tabId: opened.tabId, browser: "preview" }],
+      });
+
+      await browser.navigate({ url: opened.url! });
+      expect(requests[1]).toEqual({ port, path: "/first?tab=one#top" });
+      expect(minted).toBe(2);
+
+      await browser.navigate({
+        url: `${pathToFileURL(`${process.cwd()}/README.md`).href}?source=workspace#intro`,
+      });
+      expect(requests[2]).toEqual({ port: 80, path: "/README.md?source=workspace#intro" });
+      expect(minted).toBe(3);
+      expect(personBrowserCalls).toBe(0);
+      const snapshot = await browser.snapshot({});
+      expect(snapshot.networkEntries.every((entry) => !entry.url.includes("ticket="))).toBe(true);
+    } finally {
+      viewer.close();
+      await browser.close();
+    }
+  }, 60_000);
+
+  it("rejects a preview URL that does not use HTTPS outside local Workerd", async () => {
+    const port = Number(new URL(origin).port);
+    const browser = makeRunnerBrowser(
+      { machine: await machineTabs(), person: null },
+      {
+        previewTargets: async () => [{ port, host: "preview.example.test" }],
+        previewUrl: async () => ({ _tag: "ready", url: `http://preview.example.test:${port}/` }),
+      },
+    );
+    try {
+      await expect(browser.navigate({ url: `http://localhost:${port}/` })).rejects.toThrow(
+        "different port",
+      );
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
+
   it("shows a viewer the page and its changes, and lets them type into it", async () => {
     const timers = manualTimers();
     const browser = makeRunnerBrowser(
@@ -139,7 +241,7 @@ describe("the agent's browser, mirrored", () => {
         _tag: "state",
         viewerId: "viewer-1",
         tabId: opened.tabId,
-        tabs: [{ tabId: opened.tabId, url: `${origin}/`, browser: "machine" }],
+        tabs: [{ tabId: opened.tabId, url: `${origin}/`, browser: "preview" }],
         control: "agent",
         resting: false,
         problem: null,

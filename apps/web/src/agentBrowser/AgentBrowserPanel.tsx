@@ -13,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AuthPreviewOperateScope, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import type { AgentBrowserInput, AgentBrowserTab } from "@t3tools/contracts/signalboxPreviews";
-import { GlobeIcon, ServerIcon, TriangleAlertIcon } from "lucide-react";
+import { GlobeIcon, AppWindowIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { openOwnCopy } from "~/browsing/openOwnCopy";
@@ -185,12 +185,15 @@ export function AgentBrowserPanel(props: {
                   />
                 }
               >
-                {tab.browser === "person" ? <GlobeIcon aria-hidden /> : <ServerIcon aria-hidden />}
+                {tab.browser === "person" ? (
+                  <GlobeIcon aria-hidden />
+                ) : (
+                  <AppWindowIcon aria-hidden />
+                )}
                 <span className="max-w-40 truncate">{tabLabel(tab)}</span>
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                {tab.browser === "person" ? "Your cloud browser" : "The machine's browser"} ·{" "}
-                {tab.url}
+                {tab.browser === "person" ? "Your cloud browser" : "Thread preview"} · {tab.url}
               </TooltipPopup>
             </Tooltip>
           ))}

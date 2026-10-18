@@ -203,7 +203,7 @@ export const makeBrowserMirror = (
       tabId: info.tabId,
       url: info.page?.url() ?? hub?.url ?? "",
       title: hub?.title ?? "",
-      browser: info.route,
+      browser: info.route === "person" ? "person" : "preview",
     };
   };
 

@@ -234,7 +234,7 @@ function AgentBrowserScreen({
                 items: view.tabs.map((tab) => ({
                   id: tab.tabId,
                   title: tabLabel(tab),
-                  subtitle: `${tab.browser === "person" ? "Your cloud browser" : "The machine's browser"} · ${tab.url}`,
+                  subtitle: `${tab.browser === "person" ? "Your cloud browser" : "Thread preview"} · ${tab.url}`,
                   selected: pinnedTabId === tab.tabId,
                   onPress: () => setPinnedTabId(tab.tabId),
                 })),

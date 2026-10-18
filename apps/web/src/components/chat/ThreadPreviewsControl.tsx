@@ -1,6 +1,7 @@
 import {
   previewOpenFailureMessage,
   previewPortLabel,
+  previewPortDescription,
 } from "@t3tools/client-runtime/state/signalboxPreviews";
 import {
   isAtomCommandInterrupted,
@@ -34,7 +35,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const OPENS_IN = isElectron ? "in your browser" : "in a new tab";
 
 function previewTitle(port: SignalboxPreviewPort) {
-  return `Open ${port.processName ?? "the dev server"} on port ${port.port} ${OPENS_IN}`;
+  return `Open ${previewPortDescription(port)} ${OPENS_IN}`;
 }
 
 /**

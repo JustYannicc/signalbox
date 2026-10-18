@@ -13,11 +13,12 @@ import {
   type TunnelThreadMessage,
 } from "@signalbox/runner-protocol/PreviewTunnel";
 
+import type { RunnerPreviewFiles } from "./RunnerPreviewFiles.ts";
+
 /**
- * The machine end of the PreviewGateway's streams: one HTTP request or one
- * WebSocket to a dev server on `localhost`, driven by the thread's frames and
- * answering through `emit`. Plain Node callbacks, so frames go out in the
- * order the dev server produced them.
+ * The machine end of the PreviewGateway's streams: HTTP requests and WebSockets
+ * to local dev servers, plus static workspace files, driven by the thread's
+ * frames and answered through `emit`.
  *
  * No backpressure beyond the 64 KiB data frames: a fast dev server can buffer
  * a response in the tunnel's outbox, and a large upload buffers in the
@@ -140,6 +141,43 @@ export const proxyHttp = (request: RequestMessage, input: ProxyStreamInput): Pro
       state.finish();
       outgoing.destroy();
     },
+  };
+};
+
+/** Serves a bounded workspace file through the same ordered tunnel frames as a dev server. */
+export const proxyRunnerPreviewFile = (
+  request: RequestMessage,
+  files: RunnerPreviewFiles,
+  input: ProxyStreamInput,
+): ProxyStream => {
+  const { stream } = request;
+  const state = finisher(input);
+  void files.read(request.method, request.path).then(
+    (response) => {
+      if (state.finished) return;
+      input.emit({
+        type: "head",
+        stream,
+        status: response.status,
+        headers: endToEnd(Object.entries(response.headers)),
+      });
+      if (request.method !== "HEAD" && response.body !== null) {
+        sendData(input.emit, stream, DATA_KIND.body, response.body);
+      }
+      state.finish({ type: "end", stream });
+    },
+    () =>
+      state.finish({
+        type: "fail",
+        stream,
+        message: "The workspace preview could not be read.",
+      }),
+  );
+  return {
+    data: () => {},
+    end: () => {},
+    close: () => {},
+    abort: () => state.finish(),
   };
 };
 

@@ -35,7 +35,7 @@ import {
 } from "@t3tools/contracts";
 
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
-import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
+import type { PreviewLinkOptions, PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import type { BrowserReply } from "./threadWire.ts";
 import * as Threads from "./Threads.ts";
@@ -162,6 +162,7 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
       port: number,
       handoff?: boolean,
+      options?: PreviewLinkOptions,
     ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
     /**
      * The agent's browser, mirrored, while the stream is read (see
@@ -274,7 +275,8 @@ const make = Effect.gen(function* () {
     threadId,
     port,
     handoff,
-  ) => directory.forThread(threadId).previewLink(actor, port, handoff);
+    options,
+  ) => directory.forThread(threadId).previewLink(actor, port, handoff, options);
 
   const canSee: CloudThreadService["Service"]["canSee"] = (actor, threadId) =>
     directory

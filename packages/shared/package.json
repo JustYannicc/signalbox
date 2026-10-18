@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./previewPorts": {
+      "types": "./src/previewPorts.ts",
+      "import": "./src/previewPorts.ts"
+    },
+    "./previewFiles": {
+      "types": "./src/previewFiles.ts",
+      "import": "./src/previewFiles.ts"
+    },
     "./waitingCost": {
       "types": "./src/waitingCost.ts",
       "import": "./src/waitingCost.ts"

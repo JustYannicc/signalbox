@@ -22,6 +22,9 @@ const PreviewClaims = Schema.Struct({
   p: PortSchema,
   /** Expiry, epoch ms. */
   exp: Schema.Number,
+  /** Agent sessions cannot outlive the ticket that opened them. */
+  agent: Schema.optionalKey(Schema.Boolean),
+  path: Schema.optionalKey(Schema.String),
 });
 export type PreviewClaims = typeof PreviewClaims.Type;
 
@@ -65,9 +68,3 @@ export async function verifyPreviewToken(
   const expected = await mac(key, parts.payload);
   return equalInConstantTime(parts.signature, expected) ? parts.claims : null;
 }
-
-/** Routing hints only. An expired or forged token never authorizes access. */
-export const previewTokenTarget = (token: string) => {
-  const claims = split(token)?.claims;
-  return claims === undefined ? null : { threadId: claims.t, port: claims.p };
-};

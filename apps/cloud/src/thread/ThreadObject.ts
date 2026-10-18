@@ -19,8 +19,11 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
+import { remoteDriveReader } from "../drive/remoteFiles.ts";
+import { MAIN_REF, threadRef, wipRef } from "../drive/DriveStore.ts";
 import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
 import {
+  DriveDirectory,
   type DriveObjectNamespace,
   layerDurableObjects as layerDriveDirectory,
 } from "../drive/DriveDirectory.ts";
@@ -30,7 +33,11 @@ import {
   serveRunnerAttachments,
 } from "../attachments/runnerAttachments.ts";
 import * as GitHub from "../github/GitHub.ts";
-import type { PackBucket } from "../drive/DrivePacks.ts";
+import {
+  DrivePacks,
+  layerBucket as layerDrivePacks,
+  type PackBucket,
+} from "../drive/DrivePacks.ts";
 import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
@@ -38,6 +45,7 @@ import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
+import { makePreviewFiles } from "./preview/PreviewFiles.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
@@ -210,14 +218,19 @@ const makeRuntime = (
         Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
         Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
         Layer.provideMerge(
-          env.DRIVES === undefined
-            ? Layer.empty
-            : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+          Layer.mergeAll(
+            env.DRIVES === undefined
+              ? Layer.empty
+              : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+            env.DRIVE_PACKS === undefined
+              ? Layer.empty
+              : layerDrivePacks(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
+          ),
         ),
         // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
         Layer.provideMerge(
           PullRequestSync.layer.pipe(
-            Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env))),
+            Layer.provideMerge(GitHub.layer(null, GitHub.gitHubEndpoints(env))),
           ),
         ),
         // The thread's browser tabs (#585), beside its conversation.
@@ -321,6 +334,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         ),
       drive: () =>
         this.runtime.runPromise(ThreadRunner.ThreadRunner.use((runner) => runner.previewDrive)),
+      files: (request) => this.previewFiles(request),
       leaseToken: (generation, token) =>
         this.runtime.runPromise(
           ThreadRunner.ThreadRunner.use((runner) => runner.leaseToken(generation, token)),
@@ -659,8 +673,50 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.gateway.subscribe(actor.userId);
   }
 
-  previewLink(...[actor, port, handoff]: Parameters<ThreadObjectApi["previewLink"]>) {
-    return this.gateway.link(actor.userId, port, handoff);
+  previewLink(...[actor, port, handoff, options]: Parameters<ThreadObjectApi["previewLink"]>) {
+    return this.gateway.link(actor.userId, port, handoff, options);
+  }
+
+  private previewFiles(request: Request) {
+    return this.runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ThreadStore.ThreadStore;
+        if ((yield* store.machine).status !== "none") return null;
+        const owner = yield* store.owner;
+        const projection = yield* ThreadEngine.ThreadEngine.use((engine) => engine.projection);
+        if (owner === null || projection === null)
+          return new Response("Preview not found.", { status: 404 });
+        const drives = yield* Effect.serviceOption(DriveDirectory);
+        const packs = yield* Effect.serviceOption(DrivePacks);
+        if (drives._tag === "None" || packs._tag === "None")
+          return new Response("Preview unavailable.", { status: 503 });
+        const user = (yield* UserDirectory.UserDirectory).forUser(owner.userId);
+        const reader = yield* remoteDriveReader(
+          owner.driveId ?? myDriveId(owner.contextId, owner.userId),
+          user.githubAccessToken(),
+        ).pipe(
+          Effect.provideService(DriveDirectory, drives.value),
+          Effect.provideService(DrivePacks, packs.value),
+        );
+        const response = yield* makePreviewFiles(reader, [
+          wipRef(projection.thread.id),
+          threadRef(projection.thread.id),
+          MAIN_REF,
+        ])(request);
+        return (yield* store.machine).status === "none" ? response : null;
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("preview files unavailable", Cause.pretty(cause)).pipe(
+            Effect.as(
+              new Response("Preview unavailable.", {
+                status: 503,
+                headers: { "cache-control": "no-store" },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   browserWatch(...[actor, tabId]: Parameters<ThreadObjectApi["browserWatch"]>) {

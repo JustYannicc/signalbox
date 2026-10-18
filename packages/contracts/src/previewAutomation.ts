@@ -16,7 +16,7 @@ const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
   .check(Schema.isMaxLength(2048));
 const URL_GUIDANCE =
-  "Absolute http(s) URL or a schemeless host such as t3.chat or localhost:5173. Schemeless public hosts use https; loopback hosts use http.";
+  "Absolute http(s) URL or a schemeless public host such as t3.chat. Use an environment-port target for an app running in this thread.";
 const PROFILE_GUIDANCE =
   "Browser profile for a new tab, by id or name (case-insensitive) from preview_status profiles. Omit to use the user's default profile. A tab keeps the profile it opened with.";
 const OptionalTimeoutMs = Schema.optional(
@@ -232,11 +232,11 @@ export const BrowserNavigationTarget = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal("environment-port").annotate({
-      description: "Selects a dev-server port relative to the current execution environment.",
+      description: "Selects a dev-server port in this thread's workspace.",
     }),
     port: Schema.Int.check(Schema.isGreaterThan(0))
       .check(Schema.isLessThan(65_536))
-      .annotate({ description: "Dev-server TCP port inside the current environment." }),
+      .annotate({ description: "Dev-server TCP port in this thread's workspace." }),
     protocol: Schema.optional(
       Schema.Literals(["http", "https"]).annotate({
         description: "Dev-server protocol. Defaults to http.",
@@ -259,11 +259,11 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
   target: Schema.optional(
     BrowserNavigationTarget.annotate({
       description:
-        "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment.",
+        "Thread-relative target. Prefer {kind:'environment-port',port:5173} for an app running in this thread.",
     }),
   ).annotate({
     description:
-      "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment.",
+      "Thread-relative target. Prefer {kind:'environment-port',port:5173} for an app running in this thread.",
   }),
   readiness: Schema.optional(
     Schema.Literals(["load", "domContentLoaded", "none"]).annotate({
