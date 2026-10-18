@@ -4,6 +4,8 @@ import type {
   GitResolvePullRequestResult,
   PullRequestActivity,
   PullRequestChecks,
+  PullRequestCommentInput,
+  PullRequestCommentUpdateInput,
   PullRequestDetail,
   PullRequestDiffFileContentsInput,
   PullRequestDiffFileContentsResult,
@@ -18,11 +20,13 @@ import type {
   PullRequestOperationError,
   PullRequestPreview,
   PullRequestRef,
+  PullRequestReactionInput,
   PullRequestRoutingIdentityInput,
   PullRequestRoutingIdentityResult,
   PullRequestRoutingResult,
   PullRequestStack,
   PullRequestSummary,
+  PullRequestSubmitReviewInput,
   PullRequestThreadReplyInput,
   PullRequestThreadResolutionInput,
   PullRequestThreadCommentsInput,
@@ -82,6 +86,16 @@ export class CloudPullRequests extends Context.Service<
     ) => Effect.Effect<PullRequestRoutingIdentityResult, PullRequestReadError>;
     readonly replyToThread: (
       input: PullRequestThreadReplyInput,
+    ) => Effect.Effect<void, PullRequestReadError>;
+    readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestReadError>;
+    readonly updateComment: (
+      input: PullRequestCommentUpdateInput,
+    ) => Effect.Effect<void, PullRequestReadError>;
+    readonly submitReview: (
+      input: PullRequestSubmitReviewInput,
+    ) => Effect.Effect<void, PullRequestReadError>;
+    readonly setReaction: (
+      input: PullRequestReactionInput,
     ) => Effect.Effect<void, PullRequestReadError>;
     readonly setThreadResolution: (
       input: PullRequestThreadResolutionInput,

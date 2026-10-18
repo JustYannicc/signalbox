@@ -1,4 +1,4 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { PersistChatAttachmentsResult, ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -13,6 +13,8 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import { TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
 
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
@@ -28,6 +30,9 @@ import { Threads } from "../thread/Threads.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
 import { handleMcpRequest, protectedResourceMetadata } from "./mcpRoutes.ts";
+
+const decodeFolders = Schema.decodeUnknownSync(Schema.fromJsonString(SignalboxFoldersSnapshot));
+const decodeTrash = Schema.decodeUnknownSync(Schema.fromJsonString(TrashSnapshot));
 
 const userId = "user_1";
 const repos: Array<ReturnType<typeof makeRepo>> = [];
@@ -49,6 +54,9 @@ const SearchAnswer = Schema.Struct({
 });
 const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(JsonRpcAnswer));
 const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
+const decodeAttachments = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(PersistChatAttachmentsResult),
+);
 const decodeToolList = Schema.decodeUnknownEffect(ToolList);
 const decodeSearch = Schema.decodeUnknownEffect(Schema.fromJsonString(SearchAnswer));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -115,6 +123,94 @@ const connect = Effect.gen(function* () {
 });
 
 describe("Signalbox's MCP", () => {
+  it.effect(
+    "lets an agent explicitly request provider feedback and reports unsupported harnesses",
+    () =>
+      Effect.gen(function* () {
+        const { tool } = yield* connect;
+        const created = yield* tool("signalbox_call", {
+          operation: "threads.create",
+          input: {
+            commandId: "mcp-feedback-create",
+            threadId: "mcp-feedback",
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            title: "Feedback",
+            modelSelection: scriptedModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+            initialMessage: { messageId: "mcp-feedback-message", text: "Hello", attachments: [] },
+          },
+        });
+        expect(created.isError ?? false).toBe(false);
+        const result = yield* tool("signalbox_call", {
+          operation: "provider.uploadFeedback",
+          input: {
+            threadId: "mcp-feedback",
+            requestId: "mcp-feedback-1",
+            reason: "private MCP canary",
+          },
+        });
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+          error: { error: { _tag: "ProviderUploadFeedbackError", failure: "unsupported" } },
+        });
+        expect(JSON.stringify(result)).not.toContain("private MCP canary");
+      }),
+  );
+
+  it.effect("persists legacy image metadata before the thread exists and claims it on launch", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connect;
+      const input = {
+        threadId: "mcp-image-thread",
+        messageId: "mcp-image-message",
+        attachments: [
+          {
+            type: "image",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,AQID",
+          },
+        ],
+      };
+      const saved = yield* tool("signalbox_call", {
+        operation: "assets.persistChatAttachments",
+        input,
+      });
+      expect(saved.isError ?? false).toBe(false);
+      const parsed = yield* decodeAttachments(saved.content[0]!.text);
+      expect(parsed.attachments[0]?.id).toMatch(/^pending-/);
+      expect(saved.content[0]!.text).not.toContain("data:image/");
+      const launched = yield* tool("signalbox_call", {
+        operation: "threads.create",
+        input: {
+          commandId: "mcp-image-launch",
+          threadId: input.threadId,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Image via MCP",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: {
+            messageId: input.messageId,
+            text: "Look",
+            attachments: parsed.attachments,
+          },
+        },
+      });
+      expect(launched.isError ?? false).toBe(false);
+      expect(launched.content[0]!.text).toContain("mcp-image-thread-");
+      const repeated = yield* tool("signalbox_call", {
+        operation: "assets.persistChatAttachments",
+        input,
+      });
+      expect(yield* decodeAttachments(repeated.content[0]!.text)).toEqual(parsed);
+    }),
+  );
+
   it.effect("reads a bounded command output snapshot without waiting for its live stream", () =>
     Effect.gen(function* () {
       const { tool, cloud } = yield* connect;
@@ -191,6 +287,7 @@ describe("Signalbox's MCP", () => {
       expect(missing.content[0]!.text).not.toContain("final line");
     }),
   );
+
   it.effect(
     "runs cloud lifecycle actions and reversals through the generated API with receipts",
     () =>
@@ -412,6 +509,34 @@ describe("Signalbox's MCP", () => {
         expect(answer.isError).toBe(true);
         expect(answer.content[0]?.text).toContain(`No operation ${operation} you can call`);
       }
+    }),
+  );
+
+  it.effect("offers recoverable Trash but keeps permanent cleanup out of agent tools", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connect;
+      const call = (operation: string, input: object = {}) =>
+        tool("signalbox_call", { operation, input });
+      const found = yield* tool("signalbox_search", { query: "empty trash", limit: 3 });
+      expect(
+        (yield* decodeSearch(found.content[0]!.text)).operations.map((row) => row.name),
+      ).not.toContain("trash.empty");
+      const created = yield* call("folders.create", { name: "MCP trash", parentId: null });
+      const folder = decodeFolders(created.content[0]!.text).folders[0]!;
+      const moved = yield* call("trash.folder", { folderId: folder.id });
+      expect(moved.isError ?? false).toBe(false);
+      const entry = decodeTrash(moved.content[0]!.text).entries[0]!;
+      expect((yield* call("trash.restore", { id: entry.id })).isError ?? false).toBe(false);
+      const movedAgain = yield* call("trash.folder", { folderId: folder.id });
+      const next = decodeTrash(movedAgain.content[0]!.text).entries.find(
+        (row) => row.status === "trashed",
+      )!;
+      const emptied = yield* call("trash.empty", { ids: [next.id] });
+      expect(emptied.isError).toBe(true);
+      const listed = yield* call("trash.list");
+      expect(
+        decodeTrash(listed.content[0]!.text).entries.find((row) => row.id === next.id)?.status,
+      ).toBe("trashed");
     }),
   );
 });

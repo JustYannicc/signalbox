@@ -1171,7 +1171,7 @@
       "name": "provider.uploadFeedback",
       "rpc": "provider.uploadFeedback",
       "access": "write",
-      "input": "d0c0d40f",
+      "input": "46ba7a16",
       "output": "597e8af2"
     },
     {
@@ -1192,7 +1192,7 @@
       "name": "pullRequests.comment",
       "rpc": "pullRequests.comment",
       "access": "write",
-      "input": "fa46166d",
+      "input": "a9574c96",
       "output": "794c92c1"
     },
     {
@@ -1353,7 +1353,7 @@
       "name": "pullRequests.submitReview",
       "rpc": "pullRequests.submitReview",
       "access": "write",
-      "input": "69ff938f",
+      "input": "366b3a10",
       "output": "794c92c1"
     },
     {
@@ -2224,6 +2224,46 @@
       "access": "write",
       "input": "a63efefe",
       "output": "aaa9ffaf"
+    },
+    {
+      "name": "trash.empty",
+      "rpc": "signalbox.trash.empty",
+      "access": "write",
+      "destructive": true,
+      "input": "6b3c9036",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.folder",
+      "rpc": "signalbox.trash.folder",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "fc93b206",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.list",
+      "rpc": "signalbox.trash.list",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.restore",
+      "rpc": "signalbox.trash.restore",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.thread",
+      "rpc": "signalbox.trash.thread",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "1236b61d",
+      "output": "7b32ad46"
     },
     {
       "name": "usage.refreshRates",

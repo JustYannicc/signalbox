@@ -13,7 +13,8 @@ import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
-import type { ThreadObjectApi } from "./ThreadDirectory.ts";
+import * as ThreadFeedback from "./ThreadFeedback.ts";
+import type { ThreadLifecycleReceipt, ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import { encodeBatchLine, jsonLine, type ThreadObjectReply, wire } from "./threadWire.ts";
@@ -41,6 +42,7 @@ export const makeThreadObjectApi = (
       | ThreadSecretRequests
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
       | ThreadRunner.ThreadRunner
     >,
   ) => Promise<A>,
@@ -58,6 +60,7 @@ export const makeThreadObjectApi = (
       | ThreadBrowsing
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -77,6 +80,37 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    uploadFeedback: (actor, input) =>
+      reply(ThreadFeedback.ThreadFeedback.use((service) => service.upload(actor, input))),
+    trash: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          Effect.map(service.trash(actor, input), (receipt): ThreadLifecycleReceipt => ({
+            trashId: receipt.trashId,
+            deletedAt: receipt.deletedAt,
+            purgeAfter: receipt.purgeAfter,
+            state: receipt.state,
+          })),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    restore: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          Effect.map(service.restoreTrash(actor, input.trashId), (receipt) => ({
+            trashId: receipt.trashId,
+            deletedAt: receipt.deletedAt,
+            purgeAfter: receipt.purgeAfter,
+            state: receipt.state,
+          })),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    purge: (actor, input) => reply(engine.use((service) => service.purgeTrash(actor, input))),
     subscribePreparation: (actor) =>
       run(
         engine.use((service) =>

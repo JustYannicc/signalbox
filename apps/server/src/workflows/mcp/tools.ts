@@ -4,11 +4,7 @@ import { AUTOMATION_TOOLS } from "@signalbox/automations/tools/declarations";
 import { tool } from "./tool.ts";
 import { ListWaitsTool, MergePullRequestTool, StopWaitingTool, WaitForTool } from "./waitTools.ts";
 
-/**
- * Agent tools for automations, declared in the package
- * (`@signalbox/automations/tools/declarations`). Each handler calls one
- * engine method (see handlers.ts); what they return is in summaries.ts.
- */
+/** Shared agent tool declarations; self-hosted handlers direct users to Cloud. */
 
 const AutomationReferenceTool = tool("automation_reference", AUTOMATION_TOOLS.automation_reference);
 const AutomationValidateTool = tool("automation_validate", AUTOMATION_TOOLS.automation_validate);

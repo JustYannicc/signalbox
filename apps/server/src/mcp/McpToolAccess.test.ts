@@ -117,10 +117,6 @@ const ProbeToolkit = Toolkit.make(
     ...probe,
     parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   }),
-  Tool.make("reads_or_writes_threads", {
-    ...probe,
-    parameters: Schema.Struct({ action: Schema.String, threadId: Schema.optional(ThreadId) }),
-  }),
   Tool.make("starts_threads", {
     ...probe,
     parameters: Schema.Struct({
@@ -138,11 +134,6 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   writes: McpToolAccess.writes(() => ran),
   writes_with_capability: McpToolAccess.writesWithCapability(() => ran),
   writes_threads: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
-    () => ran,
-  ),
-  reads_or_writes_threads: McpToolAccess.readsOrWritesThreads(
-    (input) => input.action === "read",
     (input) => [input.threadId],
     () => ran,
   ),
@@ -188,7 +179,6 @@ export const refusedAtCompileTime = () => {
       writes: unchecked,
       writes_with_capability: unchecked,
       writes_threads: unchecked,
-      reads_or_writes_threads: unchecked,
       starts_threads: unchecked,
       writes_environment: unchecked,
     }),
@@ -247,18 +237,6 @@ it.effect.each([
 
   ["writes", readOnlyClient, {}, "capability_denied"],
   ["writes_threads", readOnlyClient, { threadId: supervisedThreadId }, "capability_denied"],
-  [
-    "reads_or_writes_threads",
-    readOnlyClient,
-    { action: "read", threadId: supervisedThreadId },
-    "ran",
-  ],
-  [
-    "reads_or_writes_threads",
-    readOnlyClient,
-    { action: "propose", threadId: supervisedThreadId },
-    "capability_denied",
-  ],
   ["starts_threads", readOnlyClient, {}, "capability_denied"],
   ["writes_environment", readOnlyClient, {}, "capability_denied"],
 
@@ -296,12 +274,6 @@ it.effect.each([
   ["writes_threads", plan, { threadId: supervisedThreadId }, "interaction_mode_escalation_denied"],
   ["writes_threads", fullAccess, { threadId: supervisedThreadId }, "ran"],
   ["writes_threads", ended, { threadId: supervisedThreadId }, "parent_not_active"],
-  [
-    "reads_or_writes_threads",
-    ended,
-    { action: "read", threadId: supervisedThreadId },
-    "parent_not_active",
-  ],
   ["writes_threads", supervisedClient, { threadId: supervisedThreadId }, "ran"],
   [
     "writes_threads",

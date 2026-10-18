@@ -34,6 +34,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import { stopAttachedAutomations } from "../automations/attached.ts"; // signalbox: Stop cancels attached automation runs
+import { SIGNALBOX_TRASH_WS_METHODS } from "@t3tools/contracts/signalboxTrash";
 import { getInitialServerConfig, request, requestGuarded } from "../rpc/client.ts"; // signalbox: optimistic ledger
 
 interface CommandMetadata {
@@ -423,6 +424,16 @@ export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(functi
   input: DeleteThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.delete", input);
+});
+
+export const trashThread = Effect.fn("EnvironmentCommands.trashThread")(function* (
+  input: DeleteThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  return yield* requestGuarded(SIGNALBOX_TRASH_WS_METHODS.thread, {
+    threadId: input.threadId,
+    commandId,
+  });
 });
 
 export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (

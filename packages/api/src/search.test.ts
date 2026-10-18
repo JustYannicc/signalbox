@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { Operation } from "./catalog.ts";
 import { searchOperations } from "./search.ts";
 
-const forAgents = (operation: Operation) => !operation.humanOnly && !operation.destructive;
+const forAgents = (operation: Operation) => operation.agentCallable;
 const top = (query: string, limit = 3) =>
   searchOperations(query, { limit, include: forAgents }).map((operation) => operation.name);
 
@@ -26,6 +26,7 @@ describe("operation search", () => {
   it("leaves out what the caller may not use", () => {
     expect(top("delete a folder", 20)).not.toContain("folders.delete");
     expect(top("respond to an approval", 20)).not.toContain("threads.respond");
+    expect(top("empty trash", 20)).not.toContain("trash.empty");
   });
 
   it("finds nothing for nothing", () => {
