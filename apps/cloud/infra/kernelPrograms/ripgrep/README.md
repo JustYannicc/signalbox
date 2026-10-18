@@ -8,7 +8,19 @@ To rebuild it from the pinned upstream sources, install wasi-sdk 24 and set `WAS
 WASI_SDK_ROOT=/path/to/wasi-sdk apps/cloud/infra/kernelPrograms/ripgrep/build-rg-stock-std.sh
 ```
 
-The script uses isolated Rustup and Cargo homes under its ignored `.build/` directory. It fetches the ripgrep crate by its recorded checksum, checks out the pinned wasi-libc commit, fetches and checks the AgentOS patches, builds the patched libc archives, installs the pinned Rust nightly into the isolated Rustup home, and builds with stock Rust standard libraries plus the wasi-libc archives. The final WASM must match the current artifact pin before it is staged in `bin/`.
+The script uses isolated Rustup and Cargo homes under its ignored `.build/` directory. It fetches the ripgrep crate by its recorded checksum, overlays the separately pinned `Cargo.lock`, checks out the pinned wasi-libc commit, fetches and checks the AgentOS patches, builds the patched libc archives, installs the pinned Rust nightly into the isolated Rustup home, and builds with stock Rust standard libraries plus the wasi-libc archives. Rust source paths under the per-run directory map to `/signalbox/ripgrep-build`; Git discovery stops there, so a containing Signalbox worktree cannot supply a version hash.
+
+Normal rebuilds must match the checked artifact pin before they replace `bin/rg.wasm`. To produce an unpinned candidate without touching that file, pass both an external output path and `RIPGREP_EXPECT_ARTIFACT_SHA=discover`:
+
+```sh
+WASI_SDK_ROOT=/path/to/wasi-sdk \
+RIPGREP_BUILD_ROOT=/path/to/fresh/build-root \
+RIPGREP_ARTIFACT_OUTPUT=/path/to/candidate/rg.wasm \
+RIPGREP_EXPECT_ARTIFACT_SHA=discover \
+apps/cloud/infra/kernelPrograms/ripgrep/build-rg-stock-std.sh
+```
+
+That mode writes a sibling artifact manifest with the actual hash. Repeat it from a different fresh `RIPGREP_BUILD_ROOT`, this time setting `RIPGREP_EXPECT_ARTIFACT_SHA` and `RIPGREP_EXPECT_ARTIFACT_BYTES` to the first build's values. A noncurrent pin also requires an explicit external `RIPGREP_ARTIFACT_OUTPUT`, so candidate builds cannot replace the packaged artifact. Only update the packaged artifact pin after the two output hashes match and the candidate proof passes.
 
 Prepare a facet package after the build with:
 

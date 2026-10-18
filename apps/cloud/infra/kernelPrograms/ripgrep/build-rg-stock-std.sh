@@ -73,6 +73,7 @@ download() {
 
 RIPGREP_VERSION="$(pin source version)"
 RIPGREP_ARCHIVE_SHA="$(pin source archiveSha256)"
+CARGO_LOCK_SHA="$(pin source cargoLockFile sha256)"
 WASI_LIBC_COMMIT="$(pin wasiLibc baseCommit)"
 AGENTOS_COMMIT="$(pin toolchain agentOsCommit)"
 RUST_TOOLCHAIN="$(pin toolchain rustChannel)"
@@ -83,6 +84,25 @@ CLANG_RELEASE="$(pin toolchain wasiSdk clang)"
 LLVM_COMMIT="$(pin toolchain wasiSdk llvmCommit)"
 EXPECTED_ARTIFACT_BYTES="$(pin artifact bytes)"
 EXPECTED_ARTIFACT_SHA="$(pin artifact sha256)"
+DEFAULT_ARTIFACT_OUTPUT="$SCRIPT_DIR/bin/rg.wasm"
+ARTIFACT_OUTPUT="${RIPGREP_ARTIFACT_OUTPUT:-$DEFAULT_ARTIFACT_OUTPUT}"
+ARTIFACT_OUTPUT_DIR="$(dirname -- "$ARTIFACT_OUTPUT")"
+mkdir -p "$ARTIFACT_OUTPUT_DIR"
+ARTIFACT_OUTPUT_DIR="$(cd -- "$ARTIFACT_OUTPUT_DIR" && pwd -P)"
+ARTIFACT_OUTPUT="$ARTIFACT_OUTPUT_DIR/$(basename -- "$ARTIFACT_OUTPUT")"
+DISCOVER_ARTIFACT=false
+if [[ "${RIPGREP_EXPECT_ARTIFACT_SHA:-}" == "discover" ]]; then
+  [[ -n "${RIPGREP_ARTIFACT_OUTPUT:-}" ]] || fail "hash discovery requires an explicit RIPGREP_ARTIFACT_OUTPUT"
+  [[ "$ARTIFACT_OUTPUT" != "$DEFAULT_ARTIFACT_OUTPUT" ]] || fail "hash discovery cannot overwrite the packaged artifact"
+  DISCOVER_ARTIFACT=true
+elif [[ -n "${RIPGREP_EXPECT_ARTIFACT_SHA:-}" ]]; then
+  EXPECTED_ARTIFACT_SHA="$RIPGREP_EXPECT_ARTIFACT_SHA"
+  EXPECTED_ARTIFACT_BYTES="${RIPGREP_EXPECT_ARTIFACT_BYTES:-$EXPECTED_ARTIFACT_BYTES}"
+  if [[ "$EXPECTED_ARTIFACT_SHA" != "$(pin artifact sha256)" ]]; then
+    [[ -n "${RIPGREP_ARTIFACT_OUTPUT:-}" ]] || fail "a noncurrent artifact pin requires an explicit candidate output path"
+    [[ "$ARTIFACT_OUTPUT" != "$DEFAULT_ARTIFACT_OUTPUT" ]] || fail "a noncurrent artifact pin cannot replace the packaged artifact"
+  fi
+fi
 
 CLANG_VERSION="$($CLANG --version)"
 case "$CLANG_VERSION" in
@@ -112,6 +132,8 @@ apply_agentos_patches() {
 
 apply_agentos_patches wasiLibc.appliedAgentOsPatches "$WASI_LIBC_SOURCE"
 apply_agentos_patches source.appliedAgentOsPatches "$RIPGREP_SOURCE"
+cp "$SCRIPT_DIR/Cargo.lock" "$RIPGREP_SOURCE/Cargo.lock"
+assert_sha256 "$RIPGREP_SOURCE/Cargo.lock" "$CARGO_LOCK_SHA"
 
 export RUSTUP_HOME CARGO_HOME="$CRATE_CACHE"
 RUSTUP_BIN="$(command -v rustup)"
@@ -140,14 +162,28 @@ while IFS="$(printf '\t')" read -r relative expected; do
   assert_sha256 "$RUST_SYSROOT/$relative" "$expected"
 done < <(artifact_records toolchain.rustlibArchives)
 
-make -C "$WASI_LIBC_SOURCE" finish \
+# The pinned cwd patches add symbols absent from wasi-libc's upstream expected
+# symbol list, so build the required inputs without the stale check-symbols gate.
+if ! make -C "$WASI_LIBC_SOURCE" \
+  "$WASI_LIBC_OBJ/copy-startup-files.stamp" \
+  libc \
+  "$SYSROOT/lib/wasm32-wasi/libm.a" \
+  "$SYSROOT/lib/wasm32-wasi/librt.a" \
+  "$SYSROOT/lib/wasm32-wasi/libpthread.a" \
+  "$SYSROOT/lib/wasm32-wasi/libcrypt.a" \
+  "$SYSROOT/lib/wasm32-wasi/libutil.a" \
+  "$SYSROOT/lib/wasm32-wasi/libxnet.a" \
+  "$SYSROOT/lib/wasm32-wasi/libresolv.a" \
   "CC=$CLANG" \
   "AR=$LLVM_AR" \
   "NM=$LLVM_NM" \
   "SYSROOT=$SYSROOT" \
   "OBJDIR=$WASI_LIBC_OBJ" \
   EXTRA_CFLAGS="-O2 -DNDEBUG" \
-  THREAD_MODEL=single
+  THREAD_MODEL=single > "$RUN_ROOT/wasi-libc-build.log" 2>&1; then
+  tail -n 60 "$RUN_ROOT/wasi-libc-build.log" >&2
+  fail "wasi-libc required target build failed"
+fi
 
 while IFS="$(printf '\t')" read -r relative expected; do
   [[ -n "$relative" ]] || continue
@@ -160,9 +196,19 @@ export CARGO_TARGET_DIR="$TARGET_DIR"
 export CC_wasm32_wasip1="$CLANG"
 export AR_wasm32_wasip1="$LLVM_AR"
 export CFLAGS_wasm32_wasip1="--sysroot=$SYSROOT"
-export RUSTFLAGS="-C link-self-contained=no -C link-arg=$SYSROOT/lib/wasm32-wasi/crt1-command.o -C link-arg=$SYSROOT/lib/wasm32-wasi/libc.a -C link-arg=$SYSROOT/lib/wasm32-wasi/libwasi-emulated-pthread.a -C link-arg=-L$SYSROOT/lib/wasm32-wasi -C metadata=agentos-libc-${LIBC_SHA:0:16} --cfg tokio_unstable"
+export RUSTFLAGS="-C link-self-contained=no -C link-arg=$SYSROOT/lib/wasm32-wasi/crt1-command.o -C link-arg=$SYSROOT/lib/wasm32-wasi/libc.a -C link-arg=$SYSROOT/lib/wasm32-wasi/libwasi-emulated-pthread.a -C link-arg=-L$SYSROOT/lib/wasm32-wasi -C metadata=agentos-libc-${LIBC_SHA:0:16} --cfg tokio_unstable --remap-path-prefix=$RUN_ROOT=/signalbox/ripgrep-build --remap-path-prefix=$WASI_SDK_ROOT=/signalbox/wasi-sdk"
+export SOURCE_DATE_EPOCH=0
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE || true
+export GIT_CEILING_DIRECTORIES="$RUN_ROOT"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
+: > "$GIT_CONFIG_GLOBAL"
 
-"$CARGO" build \
+if git -C "$RIPGREP_SOURCE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  fail "ripgrep source unexpectedly resolves to a Git worktree"
+fi
+
+if ! "$CARGO" build \
   --manifest-path "$RIPGREP_SOURCE/Cargo.toml" \
   --target-dir "$TARGET_DIR" \
   --target wasm32-wasip1 \
@@ -170,12 +216,23 @@ export RUSTFLAGS="-C link-self-contained=no -C link-arg=$SYSROOT/lib/wasm32-wasi
   --no-default-features \
   --bin rg \
   --locked \
-  --jobs 2
+  --jobs 2 > "$RUN_ROOT/ripgrep-build.log" 2>&1; then
+  tail -n 60 "$RUN_ROOT/ripgrep-build.log" >&2
+  fail "ripgrep cargo build failed"
+fi
 
 BUILT_ARTIFACT="$TARGET_DIR/wasm32-wasip1/release/rg.wasm"
-assert_sha256 "$BUILT_ARTIFACT" "$EXPECTED_ARTIFACT_SHA"
-[[ "$(wc -c < "$BUILT_ARTIFACT" | tr -d '[:space:]')" == "$EXPECTED_ARTIFACT_BYTES" ]] || fail "built artifact byte size changed"
-mkdir -p "$SCRIPT_DIR/bin"
-cp "$BUILT_ARTIFACT" "$SCRIPT_DIR/bin/rg.wasm"
-echo "ripgrep $RIPGREP_VERSION rebuilt and staged at $SCRIPT_DIR/bin/rg.wasm"
-echo "sha256: $EXPECTED_ARTIFACT_SHA"
+BUILT_BYTES="$(wc -c < "$BUILT_ARTIFACT" | tr -d '[:space:]')"
+BUILT_SHA="$(sha256 "$BUILT_ARTIFACT")"
+if [[ "$DISCOVER_ARTIFACT" != true ]]; then
+  [[ "$BUILT_SHA" == "$EXPECTED_ARTIFACT_SHA" ]] || fail "built artifact hash changed: expected $EXPECTED_ARTIFACT_SHA, got $BUILT_SHA"
+  [[ "$BUILT_BYTES" == "$EXPECTED_ARTIFACT_BYTES" ]] || fail "built artifact byte size changed: expected $EXPECTED_ARTIFACT_BYTES, got $BUILT_BYTES"
+fi
+cp "$BUILT_ARTIFACT" "$ARTIFACT_OUTPUT"
+ARTIFACT_MANIFEST="${RIPGREP_ARTIFACT_MANIFEST:-$ARTIFACT_OUTPUT.manifest.json}"
+RECIPE_SHA="$(sha256 "$SCRIPT_DIR/build-rg-stock-std.sh")"
+node -e 'const fs = require("node:fs"); const path = require("node:path"); const [manifestPath, version, archiveSha256, cargoLockSha256, wasiLibcCommit, agentOsCommit, rustToolchain, rustcCommit, clang, llvmCommit, artifactPath, artifactBytes, artifactSha256, recipeSha256, mode] = process.argv.slice(1); const manifest = { schemaVersion: 1, program: "ripgrep", version, source: { archiveSha256, cargoLockSha256, wasiLibcCommit, agentOsCommit }, toolchain: { rustToolchain, rustcCommit, clang, llvmCommit }, build: { script: "build-rg-stock-std.sh", scriptSha256: recipeSha256, canonicalBuildRoot: "/signalbox/ripgrep-build", gitRevision: null, sourceDateEpoch: 0 }, artifact: { path: path.basename(artifactPath), bytes: Number(artifactBytes), sha256: artifactSha256 }, verificationMode: mode }; fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);' \
+  "$ARTIFACT_MANIFEST" "$RIPGREP_VERSION" "$RIPGREP_ARCHIVE_SHA" "$CARGO_LOCK_SHA" "$WASI_LIBC_COMMIT" "$AGENTOS_COMMIT" "$RUST_TOOLCHAIN" "$RUSTC_COMMIT" "$CLANG_RELEASE" "$LLVM_COMMIT" "$ARTIFACT_OUTPUT" "$BUILT_BYTES" "$BUILT_SHA" "$RECIPE_SHA" "$([[ "$DISCOVER_ARTIFACT" == true ]] && echo hash-discovery || echo pinned)"
+echo "ripgrep $RIPGREP_VERSION rebuilt at $ARTIFACT_OUTPUT"
+echo "sha256: $BUILT_SHA"
+echo "manifest: $ARTIFACT_MANIFEST"

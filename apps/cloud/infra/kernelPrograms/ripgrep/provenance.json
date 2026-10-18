@@ -19,6 +19,10 @@
     "archive": "ripgrep-15.1.0.crate",
     "archiveSha256": "f388c4955f85477c28a8667355819844a06614b083c23517f0e86bd1d6d82b73",
     "cargoLockChecksum": "f388c4955f85477c28a8667355819844a06614b083c23517f0e86bd1d6d82b73",
+    "cargoLockFile": {
+      "path": "Cargo.lock",
+      "sha256": "2a3dbce9bd47b85d3f27aaf5e300420c0f4117f1c5f3a77e0ef657f247ac1224"
+    },
     "appliedAgentOsPatches": [
       {
         "file": "toolchain/std-patches/crates/ripgrep/0001-bin-only-workspace.patch",
@@ -122,10 +126,13 @@
   },
   "rebuildRecipe": {
     "script": "build-rg-stock-std.sh",
-    "scriptSha256": "c5b7e93416a58b0de3386e51241e9e1f3d9e7d7b604697fb4280ae8457fa0bf6",
+    "scriptSha256": "db81f524399c9071afce099a3d2be0da33ddb736e809ece38b166369934596ac",
     "invocation": "WASI_SDK_ROOT=/path/to/wasi-sdk apps/cloud/infra/kernelPrograms/ripgrep/build-rg-stock-std.sh",
     "buildRoot": "RIPGREP_BUILD_ROOT, defaulting to the package-local ignored .build directory",
     "artifactDestination": "bin/rg.wasm, ignored by Git",
+    "cargoLockSha256": "2a3dbce9bd47b85d3f27aaf5e300420c0f4117f1c5f3a77e0ef657f247ac1224",
+    "canonicalBuildRoot": "/signalbox/ripgrep-build",
+    "gitRevision": "Disabled by GIT_CEILING_DIRECTORIES at the fresh run root",
     "preservesBuiltArtifactSha256": true
   },
   "imports": [
