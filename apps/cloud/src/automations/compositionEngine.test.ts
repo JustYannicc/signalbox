@@ -1,160 +1,32 @@
-import { workflowNodeIdForStepKey, type RuntimeMode } from "@t3tools/contracts";
+import { workflowNodeIdForStepKey } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
-import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { HostedRuns, type HostStepRequest } from "@signalbox/automations/runner/hostedDriver";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Stream from "effect/Stream";
 
-import * as Environment from "../environment.ts";
-import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
-import * as UserDriveIndex from "../user/UserDriveIndex.ts";
-import * as UserFolders from "../user/UserFolders.ts";
 import { projectIdForContext, projectIdForDrive } from "../user/contextProjects.ts";
-import * as CloudCompiler from "./cloudCompiler.ts";
+import {
+  ANCESTOR_DRIVE,
+  COMPOSITION_TEST_USER,
+  CURRENT_DRIVE,
+  PARENT_DRIVE,
+  makeCompositionHarness,
+  source,
+} from "./compositionHarness.ts";
 
-const USER = "automation_composition_test";
-const CURRENT_DRIVE = "folder/personal/composition-current";
-const PARENT_DRIVE = "folder/personal/composition-parent";
-const ANCESTOR_DRIVE = "folder/personal/composition-ancestor";
 const WAITING_PARENT_SOURCE = `export const meta = { name: "Retry holder" } as const;
 export default workflow(async (w) => {
   await w.sleep("Hold the run", { days: 1 });
   return null;
 });`;
 
-const source = (name: string, body: string, metaFields = "") =>
-  `export const meta = { name: ${JSON.stringify(name)}${metaFields ? `, ${metaFields}` : ""} } as const;
-export default workflow(async (w, input) => {
-  ${body}
-});`;
-
-const makeHarness = () =>
-  Effect.gen(function* () {
-    const cloud = makeMemoryCloud();
-    yield* cloud.userDirectory
-      .forUser(USER)
-      .recordSignIn({ id: USER, email: "composition@example.test" });
-
-    const save = (
-      workflowSource: string,
-      runtimeMode: RuntimeMode = "full-access",
-      projectId = Environment.SCRATCH_PROJECT_ID,
-    ) =>
-      cloud.inUser(
-        USER,
-        Effect.gen(function* () {
-          const compiled = compileForCloud(workflowSource);
-          if (!compiled.ok) return yield* Effect.die(compiled.diagnostics);
-          const compiler = yield* CloudCompiler.CloudCompiler;
-          const engine = yield* WorkflowEngine.WorkflowEngine;
-          const result = yield* compiler.withStaged(
-            workflowSource,
-            compiled.compiled,
-            engine.save({
-              source: workflowSource,
-              projectId,
-              defaults: {
-                modelSelection: scriptedModelSelection,
-                runtimeMode,
-                interactionMode: "default",
-              },
-            }),
-          );
-          if (!result.ok) return yield* Effect.die(result.diagnostics);
-          return result.automation;
-        }),
-      );
-
-    const start = (automationId: string, input?: unknown) =>
-      cloud.inUser(
-        USER,
-        WorkflowEngine.WorkflowEngine.use((engine) =>
-          engine.startRun({ automationId, input, trigger: "manual" }),
-        ),
-      );
-
-    const waitForTerminal = (runId: string) =>
-      cloud.inUser(
-        USER,
-        WorkflowEngine.WorkflowEngine.use((engine) =>
-          engine.subscribeRun(runId).pipe(
-            Stream.filter(({ run }) => run.status !== "running"),
-            Stream.take(1),
-            Stream.runHead,
-            Effect.map(Option.getOrThrow),
-          ),
-        ),
-      );
-
-    const startAndWait = (automationId: string, input?: unknown) =>
-      Effect.gen(function* () {
-        const run = yield* start(automationId, input);
-        return yield* waitForTerminal(run.id);
-      });
-
-    const getRun = (runId: string) =>
-      cloud.inUser(
-        USER,
-        WorkflowEngine.WorkflowEngine.use((engine) => engine.getRun(runId)),
-      );
-
-    const childLinks = (parentRunId: string) =>
-      cloud.inUser(
-        USER,
-        SqlClient.SqlClient.use(
-          (sql) =>
-            sql<{ readonly child_run_id: string; readonly wait: number }>`
-            SELECT child_run_id, wait FROM signalbox_automation_children
-            WHERE parent_run_id = ${parentRunId}
-          `,
-        ).pipe(Effect.provide(cloud.userObject(USER))),
-      );
-
-    const arrangePersonalFolderChain = () =>
-      cloud.inUser(
-        USER,
-        Effect.gen(function* () {
-          const drives = yield* UserDriveIndex.UserDriveIndex;
-          const folders = yield* UserFolders.UserFolders;
-          for (const [driveId, name] of [
-            [CURRENT_DRIVE, "Composition current"],
-            [PARENT_DRIVE, "Composition parent"],
-            [ANCESTOR_DRIVE, "Composition ancestor"],
-          ] as const) {
-            yield* drives.record({ driveId, name, role: "editor", sharedBy: null, revision: 1 });
-          }
-          const state = yield* folders.state;
-          const folderId = (driveId: string) => {
-            const folder = state.tree.folders.find((candidate) => candidate.driveId === driveId);
-            if (!folder) throw new Error(`Missing folder for ${driveId}`);
-            return folder.id;
-          };
-          yield* folders.move({ id: folderId(PARENT_DRIVE), parentId: folderId(ANCESTOR_DRIVE) });
-          yield* folders.move({ id: folderId(CURRENT_DRIVE), parentId: folderId(PARENT_DRIVE) });
-        }).pipe(Effect.provide(cloud.userObject(USER))),
-      );
-
-    return {
-      cloud,
-      save,
-      start,
-      startAndWait,
-      waitForTerminal,
-      getRun,
-      childLinks,
-      arrangePersonalFolderChain,
-    };
-  });
-
 describe("composed automation runs", () => {
   it.effect("waits for the child and returns its validated output", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       const child = yield* harness.save(
         source(
           "Echo child",
@@ -189,7 +61,7 @@ describe("composed automation runs", () => {
 
   it.effect("fails the parent with a link when its awaited child fails", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       yield* harness.save(source("Broken child", `throw new Error("child exploded");`));
       const parent = yield* harness.save(
         source("Failure parent", `return await w.start("Broken child", {});`),
@@ -214,7 +86,7 @@ describe("composed automation runs", () => {
 
   it.effect("returns a child run id immediately when wait is false", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       yield* harness.save(
         source(
           "Long child",
@@ -242,7 +114,7 @@ describe("composed automation runs", () => {
       expect(childRun.run.status).toBe("running");
       expect(childRun.input).toEqual({ task: "later" });
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.cancelRun(childRunId)),
       );
     }),
@@ -250,7 +122,7 @@ describe("composed automation runs", () => {
 
   it.effect("keeps one child when the backend delivers the same running start step twice", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       const child = yield* harness.save(source("Raced child", `return input;`));
       const parent = yield* harness.save(WAITING_PARENT_SOURCE);
       const parentRun = yield* harness.start(parent.id);
@@ -263,7 +135,7 @@ describe("composed automation runs", () => {
         args: ["Raced child", { value: 7 }, { wait: false }],
       };
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         SqlClient.SqlClient.use(
           (sql) =>
             sql`
@@ -275,11 +147,11 @@ describe("composed automation runs", () => {
               '2026-10-18T12:00:00.000Z'
             )
           `,
-        ).pipe(Effect.provide(harness.cloud.userObject(USER))),
+        ).pipe(Effect.provide(harness.cloud.userObject(COMPOSITION_TEST_USER))),
       );
 
       const answers = yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         HostedRuns.use((hosted) =>
           Effect.all(
             [hosted.step(parentRun.id, request, []), hosted.step(parentRun.id, request, [])],
@@ -295,14 +167,14 @@ describe("composed automation runs", () => {
       });
       const links = yield* harness.childLinks(parentRun.id);
       const childRuns = yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         SqlClient.SqlClient.use(
           (sql) =>
             sql<{ readonly run_id: string; readonly automation_id: string }>`
             SELECT run_id, automation_id FROM signalbox_automation_runs
             WHERE parent_run_id = ${parentRun.id}
           `,
-        ).pipe(Effect.provide(harness.cloud.userObject(USER))),
+        ).pipe(Effect.provide(harness.cloud.userObject(COMPOSITION_TEST_USER))),
       );
 
       expect(runIds[0]).toBeTruthy();
@@ -314,7 +186,7 @@ describe("composed automation runs", () => {
           ?.childRun,
       ).toEqual({ runId: runIds[0], automationId: child.id });
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.cancelRun(parentRun.id)),
       );
     }),
@@ -322,10 +194,10 @@ describe("composed automation runs", () => {
 
   it.effect("preserves the enabled and access checks when starting a child", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       const paused = yield* harness.save(source("Paused child", `return null;`));
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.setEnabled(paused.id, false)),
       );
       const pausedParent = yield* harness.save(
@@ -350,7 +222,7 @@ describe("composed automation runs", () => {
 
   it.effect("stops a nested start at the configured depth", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       const names = ["Depth A", "Depth B", "Depth C", "Depth D", "Depth E", "Depth F", "Depth G"];
       let firstId: string | undefined;
       for (let index = 0; index < names.length; index++) {
@@ -371,7 +243,7 @@ describe("composed automation runs", () => {
 
   it.effect("waits through a child restart and returns the final output", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       yield* harness.save(
         source(
           "Restarting child",
@@ -387,14 +259,14 @@ describe("composed automation runs", () => {
       const links = yield* harness.childLinks(detail.run.id);
       const childRun = yield* harness.getRun(links[0]!.child_run_id);
       const chain = yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         SqlClient.SqlClient.use(
           (sql) =>
             sql<{ readonly run_id: string; readonly output_json: string | null }>`
             SELECT run_id, output_json FROM signalbox_automation_runs
             WHERE parent_run_id = ${detail.run.id}
           `,
-        ).pipe(Effect.provide(harness.cloud.userObject(USER))),
+        ).pipe(Effect.provide(harness.cloud.userObject(COMPOSITION_TEST_USER))),
       );
       const linkedRun = chain.find((candidate) => candidate.run_id === links[0]?.child_run_id);
       const intermediate = chain.find((candidate) => candidate.run_id !== links[0]?.child_run_id);
@@ -413,7 +285,7 @@ describe("composed automation runs", () => {
 
   it.effect("rejects child input and output that violate their contracts", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       const contractImport = 'import * as Schema from "effect/Schema";\n';
       const inputChild = yield* harness.save(
         contractImport +
@@ -425,7 +297,7 @@ describe("composed automation runs", () => {
       );
       const invalidTopLevelStart = yield* Effect.exit(harness.start(inputChild.id, { value: 42 }));
       const topLevelDetails = yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.get(inputChild.id)),
       );
       expect(invalidTopLevelStart._tag).toBe("Failure");
@@ -461,7 +333,7 @@ describe("composed automation runs", () => {
     "validates child output against the version it started when a newer version is saved",
     () =>
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
+        const harness = yield* makeCompositionHarness();
         const contractImport = 'import * as Schema from "effect/Schema";\n';
         const childSource = (body: string, output: string) =>
           contractImport + source("Versioned child", body, `output: ${output}`);
@@ -486,7 +358,7 @@ describe("composed automation runs", () => {
 
         yield* harness.save(childSource(`return 2;`, "Schema.Number"));
         yield* harness.cloud.inUser(
-          USER,
+          COMPOSITION_TEST_USER,
           WorkflowEngine.WorkflowEngine.use((engine) =>
             engine.emit({ event: "composition.release" }),
           ),
@@ -495,7 +367,7 @@ describe("composed automation runs", () => {
         const done = yield* harness.waitForTerminal(parentRun.id);
         const finishedChild = yield* harness.getRun(childRunId);
         const liveChild = yield* harness.cloud.inUser(
-          USER,
+          COMPOSITION_TEST_USER,
           WorkflowEngine.WorkflowEngine.use((engine) => engine.get(child.id)),
         );
 
@@ -509,7 +381,7 @@ describe("composed automation runs", () => {
 
   it.effect("resolves local, nearest parent, ancestor, and owner blocks before built-ins", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       yield* harness.arrangePersonalFolderChain();
       const currentProject = projectIdForDrive(CURRENT_DRIVE);
       const parentProject = projectIdForDrive(PARENT_DRIVE);
@@ -548,27 +420,27 @@ describe("composed automation runs", () => {
         });
       yield* expectTarget("current");
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.remove(current.id)),
       );
       yield* expectTarget("parent");
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.remove(nearest.id)),
       );
       yield* expectTarget("ancestor");
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.remove(ancestor.id)),
       );
       yield* expectTarget("owner");
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.remove(owner.id)),
       );
 
       const builtinRun = yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) =>
           engine.startRun({
             automationId: "builtin:wait-for",
@@ -592,14 +464,14 @@ describe("composed automation runs", () => {
       const builtinHost = yield* harness.getRun(builtinRun.id);
       const builtinId = builtinHost.run.automationId;
       const builtinDetails = yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.get(builtinId)),
       );
       expect(builtinHost.run.status).toBe("running");
       expect(builtinHost.steps.find((step) => step.verb === "waitFor")?.status).toBe("waiting");
       expect(builtinDetails.automation.builtIn).toBe(true);
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.cancelRun(builtinRun.id)),
       );
 
@@ -628,7 +500,7 @@ describe("composed automation runs", () => {
       expect(inheritedChild.output).toBe("inherited wait block");
       expect(inheritedChild.run.automationId).toBe(inheritedWait.id);
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.remove(inheritedWait.id)),
       );
 
@@ -639,7 +511,7 @@ describe("composed automation runs", () => {
       expect(fallbackChild.run.status).toBe("running");
       expect(fallbackChild.run.automationId).toBe(builtinId);
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.cancelRun(fallbackChildId)),
       );
     }),
@@ -647,7 +519,7 @@ describe("composed automation runs", () => {
 
   it.effect("rejects invalid input from restart before creating a continuation", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       const sourceWithInput =
         'import * as Schema from "effect/Schema";\n' +
         source(
@@ -660,7 +532,7 @@ describe("composed automation runs", () => {
 
       const detail = yield* harness.startAndWait(automation.id, { pass: 0 });
       const saved = yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.get(automation.id)),
       );
 
@@ -672,7 +544,7 @@ describe("composed automation runs", () => {
 
   it.effect("cancels an awaited child when its parent is cancelled", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeCompositionHarness();
       yield* harness.save(
         source(
           "Cancellable child",
@@ -695,7 +567,7 @@ describe("composed automation runs", () => {
       expect(waitingChild.steps[0]?.status).toBe("waiting");
 
       yield* harness.cloud.inUser(
-        USER,
+        COMPOSITION_TEST_USER,
         WorkflowEngine.WorkflowEngine.use((engine) => engine.cancelRun(started.id)),
       );
       const cancelledParent = yield* harness.getRun(started.id);

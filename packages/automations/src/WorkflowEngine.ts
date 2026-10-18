@@ -471,19 +471,26 @@ export const makeEngine = <R>(
         if (!step || step.attempt !== link.attempt) return;
         const child = yield* store.getRun(runId);
         const outcome = child ? childSettlement(child) : undefined;
-        if (!outcome || (yield* complete(link.parent_run_id, link.step_key, outcome))) return;
+        if (!outcome || link.parent_notified === 1) return;
+        if (yield* complete(link.parent_run_id, link.step_key, outcome)) {
+          yield* children.notified(link);
+          return;
+        }
         const settled = yield* store.getStep(link.parent_run_id, link.step_key);
-        if (settled?.status === "succeeded")
+        if (settled?.status === "succeeded") {
           yield* theDriver().settled(link.parent_run_id, link.step_key, {
             ok: true,
             value: fromJson(settled.result_json),
           });
-        else if (settled?.status === "failed")
+          yield* children.notified(link);
+        } else if (settled?.status === "failed") {
           yield* theDriver().settled(link.parent_run_id, link.step_key, {
             ok: false,
             error: settled.error ?? "The step failed.",
             detail: errorDetailOf(settled.error_detail_json),
           });
+          yield* children.notified(link);
+        }
       });
     const recoverChildren = Effect.gen(function* () {
       for (const link of yield* children.pending()) yield* settleChild(link.child_run_id);
@@ -506,7 +513,7 @@ export const makeEngine = <R>(
      * False when it had already ended. The run's `logs_json` is what its event
      * records, so a replay passes the lines it just saved.
      */
-    const endRun: EndRun = (run, candidate) =>
+    const endRun: EndRun = (run, candidate, continuation) =>
       Effect.gen(function* () {
         let outcome = candidate;
         if (outcome.status === "succeeded" && outcome.restartedAs === undefined) {
@@ -539,8 +546,11 @@ export const makeEngine = <R>(
               },
               nowText,
             );
-            if (ended && outcome.status === "succeeded" && outcome.restartedAs)
-              yield* children.follow(run.run_id, outcome.restartedAs);
+            if (ended) {
+              if (continuation) yield* continuation;
+              if (outcome.status === "succeeded" && outcome.restartedAs)
+                yield* children.follow(run.run_id, outcome.restartedAs);
+            }
             return ended;
           }),
         );
@@ -703,7 +713,21 @@ export const makeEngine = <R>(
               : Effect.void,
           ),
         );
-        if (launch.claim) {
+        if (launch.continues) {
+          const ended = yield* endRun(
+            launch.continues,
+            { status: "succeeded", output: { restartedAs: row.run_id }, restartedAs: row.run_id },
+            insert.pipe(Effect.asVoid),
+          );
+          if (!ended) {
+            const previous = yield* store.getRun(launch.continues.run_id);
+            const restartedAs = asRecord(fromJson(previous?.output_json ?? null)).restartedAs;
+            const existing =
+              typeof restartedAs === "string" ? yield* store.getRun(restartedAs) : undefined;
+            if (!existing) return yield* fail("The run already ended.");
+            return { run: runSummary(existing), duplicate: true };
+          }
+        } else if (launch.claim) {
           const claim = launch.claim;
           const prior = yield* store.withTransaction(
             Effect.gen(function* () {

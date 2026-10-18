@@ -36,8 +36,6 @@ import type { RunLinkStore } from "./runLinkStore.ts";
  * happens outside the sandbox. The engine records what comes back.
  */
 
-export { MAX_START_DEPTH } from "./startChild.ts";
-
 /** What a step may do instead of finishing: try again later, e.g. after a 503. */
 export type StepOutcome =
   | StepStart

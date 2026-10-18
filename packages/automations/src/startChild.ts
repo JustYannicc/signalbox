@@ -6,10 +6,9 @@ import { childSettlement } from "./childRuns.ts";
 import { automationDefaults } from "./columns.ts";
 import { fail } from "./errors.ts";
 import { explained } from "./runLog.ts";
+import { MAX_START_DEPTH } from "./runLimits.ts";
 import type { StepStart } from "./steps.ts";
 import type { AutomationRow, RunRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
-
-export const MAX_START_DEPTH = 5;
 
 export interface ChildStartDependencies {
   readonly store: WorkflowStore;

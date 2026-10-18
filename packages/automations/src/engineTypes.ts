@@ -24,6 +24,8 @@ export interface Launch {
   /** The run whose `w.start` started this one. */
   readonly parent?: RunRow;
   readonly runId?: string;
+  /** Atomically replaces this run with its continuation. */
+  readonly continues?: RunRow;
   /** A webhook request's method, headers, query and raw body, for the run's trigger. */
   readonly webhook?: Readonly<Record<string, unknown>>;
   /** What an event trigger fired on, for the run's trigger. */
@@ -64,7 +66,12 @@ export type RunOutcome =
   | { readonly status: "cancelled" };
 
 /** Ends a running run once; false when it had already ended. */
-export type EndRun = (run: RunRow, outcome: RunOutcome) => Effect.Effect<boolean, AutomationError>;
+export type EndRun = (
+  run: RunRow,
+  outcome: RunOutcome,
+  /** The continuation's records, inserted in the terminal outcome's transaction. */
+  continuation?: Effect.Effect<void, AutomationError>,
+) => Effect.Effect<boolean, AutomationError>;
 
 /** How a step settles; failures carry the why/fix when the engine knows them. */
 export type Settlement =

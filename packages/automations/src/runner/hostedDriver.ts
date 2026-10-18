@@ -321,7 +321,10 @@ export const makeHostedDriver = (core: EngineInternals) =>
       Effect.gen(function* () {
         const run = yield* store.getRun(runId);
         if (!run) return;
-        if (run.status !== "running") return yield* core.settleChild(runId);
+        if (run.status !== "running") {
+          yield* recover;
+          return yield* core.settleChild(runId);
+        }
         const current = (yield* saveMarks(run, marks))
           ? ((yield* store.getRun(runId)) ?? run)
           : run;
@@ -403,6 +406,19 @@ export const makeHostedDriver = (core: EngineInternals) =>
         );
       });
 
+    const recover = store.runsWithoutInstance().pipe(
+      Effect.flatMap((runIds) =>
+        Effect.forEach(runIds, (runId) =>
+          launch(runId).pipe(
+            Effect.catch((error) =>
+              core.endRunById(runId, { status: "failed", error: error.message }),
+            ),
+          ),
+        ),
+      ),
+      Effect.asVoid,
+    );
+
     const runs: HostedRunsShape = {
       step,
       settled: (runId, key) => settleInline(runId, key, { ok: true, value: null }),
@@ -424,18 +440,7 @@ export const makeHostedDriver = (core: EngineInternals) =>
               run ? { automationId: run.automation_id, version: run.version } : undefined,
             ),
           ),
-      recover: store.runsWithoutInstance().pipe(
-        Effect.flatMap((runIds) =>
-          Effect.forEach(runIds, (runId) =>
-            launch(runId).pipe(
-              Effect.catch((error) =>
-                core.endRunById(runId, { status: "failed", error: error.message }),
-              ),
-            ),
-          ),
-        ),
-        Effect.asVoid,
-      ),
+      recover,
       workerModule: store.getVersionWorkerModule,
     };
 

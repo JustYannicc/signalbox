@@ -13,6 +13,7 @@ export interface ChildRunLink {
   readonly attempt: number;
   readonly child_run_id: string;
   readonly wait: number;
+  readonly parent_notified: number;
 }
 
 /** A start step keeps its child across backend retries and object eviction. */
@@ -30,7 +31,7 @@ export const makeChildRuns = Effect.gen(function* () {
         SELECT * FROM signalbox_automation_children
         WHERE parent_run_id = ${parentRunId} AND step_key = ${stepKey} AND attempt = ${attempt}
       `).pipe(Effect.map((rows) => rows[0])),
-    claim: (link: ChildRunLink) =>
+    claim: (link: Omit<ChildRunLink, "parent_notified">) =>
       query(sql`
         INSERT INTO signalbox_automation_children (parent_run_id, step_key, attempt, child_run_id, wait)
         VALUES (${link.parent_run_id}, ${link.step_key}, ${link.attempt}, ${link.child_run_id}, ${link.wait})
@@ -45,13 +46,20 @@ export const makeChildRuns = Effect.gen(function* () {
         UPDATE signalbox_automation_children SET child_run_id = ${toRunId}
         WHERE child_run_id = ${fromRunId}
       `),
+    notified: (link: ChildRunLink) =>
+      query(sql`
+        UPDATE signalbox_automation_children SET parent_notified = 1
+        WHERE parent_run_id = ${link.parent_run_id} AND step_key = ${link.step_key}
+          AND attempt = ${link.attempt} AND child_run_id = ${link.child_run_id}
+      `),
     pending: () =>
       query(sql<ChildRunLink>`
         SELECT c.* FROM signalbox_automation_children c
         JOIN signalbox_automation_runs r ON r.run_id = c.child_run_id
         JOIN signalbox_automation_steps s ON s.run_id = c.parent_run_id AND s.step_key = c.step_key
-        WHERE c.wait = 1 AND r.status != 'running' AND s.status = 'waiting'
-          AND s.verb = 'start' AND s.attempt = c.attempt
+        JOIN signalbox_automation_runs p ON p.run_id = c.parent_run_id
+        WHERE c.wait = 1 AND c.parent_notified = 0 AND r.status != 'running'
+          AND p.status = 'running' AND s.verb = 'start' AND s.attempt = c.attempt
       `),
     forParent: (runId: string) =>
       query(sql<ChildRunLink & { readonly automation_id: string }>`

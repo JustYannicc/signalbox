@@ -261,7 +261,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "3998d94e"
+      "output": "346366aa"
     },
     {
       "name": "automations.runs.retry",

@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
 import type { EndRun, LaunchRun } from "./engineTypes.ts";
-import { logFailure } from "./errors.ts";
 import type { RunLinkStore } from "./runLinkStore.ts";
 import { isoAt } from "./time.ts";
 import type { AutomationRow, RunRow, WorkflowStore } from "./WorkflowStore.ts";
@@ -63,28 +62,21 @@ export const makeRestart =
         return;
       }
       const runId = yield* deps.newId("run");
-      const ended = yield* deps.endRun(run, {
-        status: "succeeded",
-        output: { restartedAs: runId },
-        restartedAs: runId,
-      });
-      if (!ended) return;
       const parent = run.parent_run_id ? yield* deps.store.getRun(run.parent_run_id) : undefined;
-      yield* deps
-        .launchRun({
-          automation,
-          input: validated.success,
-          trigger: run.trigger,
-          runId,
-          ...(parent ? { parent } : { depth: run.depth }),
-          ...(run.trigger_json === null ? {} : { triggerJson: run.trigger_json }),
-          link: {
-            thread_id: link?.thread_id ?? null,
-            attach_key: link?.attach_key ?? null,
-            label: link?.label ?? null,
-            restart_of_run_id: run.run_id,
-            lineage_id: lineage,
-          },
-        })
-        .pipe(logFailure("Automation restart couldn't start the next run", { runId: run.run_id }));
+      yield* deps.launchRun({
+        automation,
+        input: validated.success,
+        trigger: run.trigger,
+        runId,
+        continues: run,
+        ...(parent ? { parent } : { depth: run.depth }),
+        ...(run.trigger_json === null ? {} : { triggerJson: run.trigger_json }),
+        link: {
+          thread_id: link?.thread_id ?? null,
+          attach_key: link?.attach_key ?? null,
+          label: link?.label ?? null,
+          restart_of_run_id: run.run_id,
+          lineage_id: lineage,
+        },
+      });
     });
