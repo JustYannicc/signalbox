@@ -878,7 +878,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       await this.runtime.runPromise(
         ThreadTerminals.ThreadTerminals.use((terminals) => terminals.lost(plan.release!)),
       );
-      endRunners(this.ctx, plan.release, "This machine is no longer needed.");
+      endRunners(this.ctx, plan.release, "This machine is no longer needed.", this.runnerHost.exec);
       await this.gateway.release(plan.release);
     }
     let wakeAt = plan.wakeAt;

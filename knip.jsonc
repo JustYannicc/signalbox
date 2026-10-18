@@ -35,6 +35,9 @@
         "boundaries/tests.mjs", // signalbox: module boundaries
         "deploy-workflow-policy.tests.mjs", // Node runs these directly in Signalbox CI.
         "deploy-plan.tests.mjs",
+        // signalbox: the canary reads facet source and spawns its comparator by filename.
+        "claude-bunfs/proof-worker.mts!",
+        "claude-bunfs/prove.ts",
       ],
       // The `t3` npm package's files: copied into the package, never imported.
       "ignore": [
@@ -82,14 +85,24 @@
         "infra/check-plan.ts",
         "infra/nodeProof/*.ts",
         "infra/kernelProof/*.ts",
+        "src/kernel/KernelPipeProof.ts", // Loaded by the static pipe fixture's generated entry.
+        "src/kernel/KernelRuntimeProof.ts", // Loaded by the static runtime fixture's generated entry.
+        "src/kernel/KernelWasi.ts", // Public integration entry for executable personalities.
+        "src/kernel/Wasi.ts", // Public preview1 carry API.
         "infra/codexExecProof/prepare.ts",
+        "infra/codexExecProof/prepareExecution.ts",
+        "infra/codexExecProof/prepareFileSystem.ts",
         "src/kernel/CodexExecProtocolProof.ts",
+        "src/kernel/CodexExecExecutionProof.ts",
+        "src/kernel/CodexExecFileSystemProof.ts",
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
         "infra/isolateProbe/alchemy.run.ts!",
         "infra/isolateProbe/worker.ts!",
         "infra/syncProbe/lunora/identity.ts",
       ],
+      // Prepared by the VM builder from pinned source paths rather than runtime imports.
+      "ignore": ["src/isolate/node/vm/vendor/**"],
       // `cloudflare:workers` is a Workers runtime module, not a package.
       "ignoreDependencies": ["cloudflare", "wrangler"], // Wrangler runs through the process cleanup wrapper.
     },

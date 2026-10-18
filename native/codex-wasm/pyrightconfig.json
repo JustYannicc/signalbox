@@ -1,0 +1,6 @@
+{
+  "pythonVersion": "3.11",
+  "reportImplicitRelativeImport": false,
+  "reportUninitializedInstanceVariable": false,
+  "typeCheckingMode": "standard"
+}
