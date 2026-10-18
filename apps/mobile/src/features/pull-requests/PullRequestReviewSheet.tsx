@@ -3,7 +3,8 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { preparePullRequestWriteAttempt } from "@t3tools/client-runtime/pull-request-write-attempt";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { PullRequestReviewVerdict } from "@t3tools/contracts";
+import { PullRequestOperationError, type PullRequestReviewVerdict } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useCallback, useRef, useState } from "react";
 import { uuidv4 } from "../../lib/uuid";
 import { useFocusEffect } from "@react-navigation/native";
@@ -57,6 +58,8 @@ function useActionSubmission(params: PullRequestParams) {
   return { busy, error, submit };
 }
 
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
 const VERDICTS = [
   { value: "comment", title: "Comment" },
   { value: "approve", title: "Approve" },
@@ -72,6 +75,7 @@ export function PullRequestReviewSheet({
   const params = route.params;
   const target = pullRequestTarget(params);
   const result = useEnvironmentQuery(composerPullRequests.detail(target));
+  const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const readDetail = useAtomQueryRunner(composerPullRequests.detail, {
     refresh: true,
     reportFailure: false,
@@ -122,13 +126,18 @@ export function PullRequestReviewSheet({
       };
     }, [params, readDetail, reviewHeadEntryKey]),
   );
-  const reviewedHeadSha =
-    reviewing && reviewHeadPin.entryKey === reviewHeadEntryKey && reviewHeadPin.captured
-      ? reviewHeadPin.headSha
-      : undefined;
+  const headPinned =
+    reviewing && reviewHeadPin.entryKey === reviewHeadEntryKey && reviewHeadPin.captured;
+  const reviewedHeadSha = headPinned ? reviewHeadPin.headSha : undefined;
+  // Only a known newer head blocks the pin; hosts also report same-head rejections as conflicts.
+  const currentHeadSha = result.data?.headSha;
+  const headMoved =
+    reviewedHeadSha !== undefined &&
+    currentHeadSha !== undefined &&
+    currentHeadSha !== reviewedHeadSha;
   const canSubmit =
     store.ready &&
-    (!reviewing || (reviewedHeadSha !== undefined && !stale && canSubmitComments)) &&
+    (!reviewing || (reviewedHeadSha !== undefined && !headMoved && !stale && canSubmitComments)) &&
     (reviewing
       ? verdict !== undefined &&
         (summaryRequired
@@ -164,7 +173,13 @@ export function PullRequestReviewSheet({
         if (!(await store.flush()))
           throw new Error("Could not save the review before submitting. Try again.");
         const response = await review({ ...target, input: attempt.input });
-        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+        if (response._tag === "Failure") {
+          const failure = squashAtomCommandFailure(response);
+          // Reveal a real head move; the pin changes only when the sheet is reopened.
+          if (isPullRequestOperationError(failure) && failure.reason === "conflict")
+            refreshDetail();
+          throw failure;
+        }
         store.update((current) => clearSubmittedReview(current, submitted));
       } else {
         const attempt = preparePullRequestWriteAttempt(
@@ -295,10 +310,16 @@ export function PullRequestReviewSheet({
           ))}
         </View>
       ) : null}
-      {reviewing && store.ready && result.data && reviewedHeadSha === undefined ? (
+      {headPinned && reviewedHeadSha === undefined ? (
         <Text className="text-sm text-foreground-muted">
-          This pull request&apos;s current version hasn&apos;t loaded, so the review can&apos;t be
-          submitted yet. Reopen the review once it has.
+          The provider didn&apos;t say which version of this pull request is current, so this review
+          can&apos;t be submitted.
+        </Text>
+      ) : null}
+      {headMoved ? (
+        <Text className="text-sm text-danger-foreground">
+          This pull request changed since you opened the review. Close and reopen it to review the
+          new version. Your summary and comments are kept.
         </Text>
       ) : null}
       {reviewing && stale ? (

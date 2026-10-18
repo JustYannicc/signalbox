@@ -59,6 +59,8 @@ export function PullRequestReviewForm({
   environmentId,
   reference,
   reviewedHeadSha,
+  currentHeadSha,
+  headStatus,
   verdicts,
   requestChangesSummaryRequired,
   textareaRef,
@@ -69,6 +71,8 @@ export function PullRequestReviewForm({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   reviewedHeadSha: string | undefined;
+  currentHeadSha: string | undefined;
+  headStatus: "loading" | "failed" | "pinned" | undefined;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -94,15 +98,11 @@ export function PullRequestReviewForm({
     pullRequestEnvironment.detail({ environmentId, input: reference }),
   );
   const attemptKey = pullRequestWriteAttemptKey(reference, "review", environmentId);
-  // The host refused this review because the branch moved past its pinned head. Reopening the
-  // review pins the new head, which clears this; until then resubmitting would only fail again.
-  const [movedHead, setMovedHead] = useState<
-    { readonly key: string; readonly headSha: string } | undefined
-  >(undefined);
+  // Only a known newer head blocks the pin; hosts also report same-head rejections as conflicts.
   const headMoved =
     reviewedHeadSha !== undefined &&
-    movedHead?.key === attemptKey &&
-    movedHead.headSha === reviewedHeadSha;
+    currentHeadSha !== undefined &&
+    currentHeadSha !== reviewedHeadSha;
 
   const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value));
   const selectedVerdict =
@@ -134,18 +134,13 @@ export function PullRequestReviewForm({
     onPendingChange(false);
     if (result._tag === "Failure") {
       const failure = squashAtomCommandFailure(result);
-      if (
-        reviewedHeadSha !== undefined &&
-        isPullRequestOperationError(failure) &&
-        failure.reason === "conflict"
-      ) {
-        // Fetch the new head now, so reopening pins it instead of the cached one.
+      if (isPullRequestOperationError(failure) && failure.reason === "conflict") {
+        // Reveals a real head move below; the pin changes only on the next review entry.
         refreshDetail();
-        setMovedHead({ key: attemptKey, headSha: reviewedHeadSha });
         toastManager.add({
           type: "error",
-          title: "This pull request changed",
-          description: "Close and reopen the review to review the new version.",
+          title: "The provider rejected this review",
+          description: "Your summary and comments are kept. Check them and submit again.",
         });
         return;
       }
@@ -188,10 +183,19 @@ export function PullRequestReviewForm({
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
-      {reviewedHeadSha === undefined ? (
+      {headStatus === "loading" ? (
         <p className="mt-2 text-xs text-muted-foreground">
-          This pull request&apos;s current version hasn&apos;t loaded, so the review can&apos;t be
-          submitted yet. Reopen the review once it has.
+          Checking this pull request&apos;s current version…
+        </p>
+      ) : headStatus === "failed" ? (
+        <p className="mt-2 text-xs text-destructive">
+          Couldn&apos;t load this pull request&apos;s current version. Close and reopen the review
+          to try again.
+        </p>
+      ) : headStatus === "pinned" && reviewedHeadSha === undefined ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          The provider didn&apos;t say which version of this pull request is current, so this review
+          can&apos;t be submitted.
         </p>
       ) : headMoved ? (
         <p className="mt-2 text-xs text-destructive">
