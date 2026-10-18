@@ -59,8 +59,8 @@ import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
-import { outgrownBy } from "./RunnerMachineClass.ts";
 import type { RunnerSecretRequests } from "./RunnerSecretTools.ts";
+import { type OutgrownCommandDecision, outgrownCommandDecision } from "./RunnerMachineClass.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
@@ -409,24 +409,32 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const outgrown = new Set<RunId>();
   /** Classified commands and dev-server tools, by item and phase. */
   const classified = new Set<string>();
-  /** Checks commands once at start/end and a declared dev server once when it starts. */
-  const outgrownByOnce = (event: ProviderAdapterV2Event) => {
+  /** Moves eligible current-session commands or tools once in each execution phase. */
+  const outgrownByOnce = (
+    event: ProviderAdapterV2Event,
+    runId: RunId | null,
+    runtime: ProviderAdapterV2SessionRuntime,
+    decision: OutgrownCommandDecision,
+  ) => {
     if (event.type !== "turn_item.updated") return null;
     const item = event.turnItem;
-    if (item.type === "dynamic_tool") {
-      const reason = outgrownBy(event);
-      if (reason === null) return null;
-      const key = `${item.id}:start`;
-      if (classified.has(key)) return null;
-      classified.add(key);
-      return reason;
+    if (item.type !== "command_execution" && item.type !== "dynamic_tool") return null;
+    if (
+      input.machineClass !== "light" ||
+      decision.reason === null ||
+      runId === null ||
+      runId !== latestRunId ||
+      runId !== runningRunId
+    ) {
+      return null;
     }
-    if (item.type !== "command_execution") return null;
+    const owner = turns.get(runId);
+    if (owner === undefined || owner.status !== "running" || owner.session !== runtime) return null;
     const { id, status } = item;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
-    return outgrownBy(event);
+    return { runId, reason: decision.reason };
   };
 
   /**
@@ -903,12 +911,17 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
     );
     /** Sends `event` as `runId`'s; a held end goes out under its own run, whatever runs since. */
-    const deliver = (event: ProviderAdapterV2Event, runId: RunId | null = latestRunId) =>
+    const deliver = (
+      event: ProviderAdapterV2Event,
+      runId: RunId | null = latestRunId,
+      suppressTranscript = false,
+    ) =>
       Effect.gen(function* () {
         const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
         if (delivered === null || runId === null) return;
         // Complete only once the rows behind it would survive this machine.
         if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
+        if (suppressTranscript) return;
         const stored =
           delivered.type === "turn_item.updated"
             ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
@@ -931,26 +944,19 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     return runtime.events.pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
-          const originatingRunId = eventRunId(event);
-          if (originatingRunId !== null && outgrown.has(originatingRunId)) {
+          const runIdBeforeDriveHold = eventRunId(event);
+          if (runIdBeforeDriveHold !== null && outgrown.has(runIdBeforeDriveHold)) {
             // Its terminal still releases the next run's wait for this provider.
-            yield* track(event);
+            yield* track(event, runtime);
             return;
           }
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
+          const originatingRunId = eventRunId(event);
+          const commandDecision = outgrownCommandDecision(event);
           yield* track(event, runtime);
-          yield* deliver(event);
-          const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
-          const owner = originatingRunId === null ? undefined : turns.get(originatingRunId);
-          if (
-            reason !== null &&
-            originatingRunId !== null &&
-            originatingRunId === latestRunId &&
-            owner?.status === "running" &&
-            owner.session === runtime
-          ) {
-            yield* moveUp(originatingRunId, reason);
-          }
+          yield* deliver(event, originatingRunId, commandDecision.suppressTranscript);
+          const upgrade = outgrownByOnce(event, originatingRunId, runtime, commandDecision);
+          if (upgrade !== null) yield* moveUp(upgrade.runId, upgrade.reason);
         }),
       ),
       Effect.catchCause((cause) =>
@@ -1180,6 +1186,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         cwd: input.cwd,
       };
       latestRunId = turn.runId;
+      classified.clear();
       latestTraceId = turn.traceId;
       // `/drives` and the context tool read one version of everything for the whole
       // turn; the view is taken while the checkout and session load.

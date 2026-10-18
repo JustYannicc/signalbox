@@ -5,8 +5,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  runnerFrame,
   RUNNER_PROTOCOL_VERSION,
   type RunnerItem,
+  type RunnerMessage,
   type ThreadMessage,
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
@@ -18,6 +20,7 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ThreadProjection,
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
   ProjectId,
@@ -33,6 +36,7 @@ import {
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, expect } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -41,7 +45,8 @@ import * as Schema from "effect/Schema";
 import { layerThreadObject } from "../testing.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
-import type { RunnerSocketHost } from "./runner/runnerSockets.ts";
+import * as TurnReports from "./diagnostics/TurnReports.ts";
+import { onRunnerMessage, type RunnerSocketHost } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 
 /** A Claude thread's object with its Runner, and what a Runner reports, for tests. */
@@ -175,6 +180,12 @@ export const saveSession = (context: Context.Context<SessionRows.SessionRows>, n
     offset: 0,
     rows: [JSON.stringify({ type: "user", uuid: "row-1" })],
   });
+
+export const readTurnReport = (
+  context: Context.Context<TurnReports.TurnReports>,
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+) => Context.get(context, TurnReports.TurnReports).turn(projection, runId);
 
 export const hello = (generation: number, token: string) => ({
   type: "hello" as const,
@@ -395,6 +406,10 @@ export interface FakeSocket {
   readonly sent: Array<ThreadMessage>;
 }
 
+export interface FakeRunnerSocketHost extends RunnerSocketHost {
+  readonly recordAutoResponse: (socket: WebSocket, at: number) => void;
+}
+
 export const fakeSocket = (): FakeSocket => {
   const sent: Array<ThreadMessage> = [];
   let attachment: unknown = null;
@@ -414,19 +429,33 @@ export const hostFor = (
   runner: ThreadRunner.ThreadRunner["Service"],
   sockets: Array<WebSocket>,
   holds: () => boolean = () => false,
-) =>
-  Effect.map(Effect.context<never>(), (context): RunnerSocketHost => ({
-    ctx: {
-      getWebSockets: () => sockets,
-      getTags: () => ["runner"],
-    } as unknown as DurableObjectState,
-    run: (effect) =>
-      Effect.runPromiseWith(context)(
-        Effect.provideService(effect, ThreadRunner.ThreadRunner, runner),
-      ),
-    holdsTurn: () => Promise.resolve(holds()),
-    afterChange: () => Promise.resolve(),
-  }));
+): Effect.Effect<FakeRunnerSocketHost> =>
+  Effect.map(Effect.context<never>(), (context) => {
+    const autoResponses = new WeakMap<WebSocket, Date>();
+    return {
+      ctx: {
+        getWebSockets: () => sockets,
+        getTags: () => ["runner"],
+        getWebSocketAutoResponseTimestamp: (socket: WebSocket) => autoResponses.get(socket) ?? null,
+      } as unknown as DurableObjectState,
+      now: () => Effect.runPromiseWith(context)(Clock.currentTimeMillis),
+      run: (effect) =>
+        Effect.runPromiseWith(context)(
+          Effect.provideService(effect, ThreadRunner.ThreadRunner, runner),
+        ),
+      holdsTurn: () => Promise.resolve(holds()),
+      afterChange: () => Promise.resolve(),
+      recordAutoResponse: (socket, at) =>
+        autoResponses.set(socket, DateTime.toDate(DateTime.makeUnsafe(at))),
+    };
+  });
+
+/** Sends a frame through the same socket handler used by the Durable Object. */
+export const sendRunnerFrame = (
+  host: RunnerSocketHost,
+  socket: FakeSocket,
+  message: RunnerMessage,
+) => Effect.promise(() => onRunnerMessage(host, socket.socket, runnerFrame.encode(message)));
 
 export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner/runnerSockets.ts";
 export { ThreadRunner } from "./runner/ThreadRunner.ts";

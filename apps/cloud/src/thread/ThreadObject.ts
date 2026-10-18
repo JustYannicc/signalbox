@@ -43,7 +43,8 @@ import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
-import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
+import { layerFromEnv as layerMachineBackend, machineSettings } from "./runner/machineBackends.ts";
+import * as BoatRecoveryControl from "./RecoveryDrillBoat.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import {
   acceptRunnerSocket,
@@ -63,6 +64,7 @@ import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirect
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadSecretRequests from "./secrets/ThreadSecretRequests.ts";
+import * as RunnerLiveness from "./RunnerLiveness.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -74,11 +76,8 @@ import { noteView } from "./statusLine/statusNotePolicy.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
 import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
-import {
-  makeRecoveryDrill,
-  type RecoveryDrillEnv,
-  type RecoveryDrillState,
-} from "./RecoveryDrill.ts";
+import { makeRecoveryDrill } from "./RecoveryDrill.ts";
+import type { RecoveryDrillEnv, RecoveryDrillState } from "./RecoveryDrillProtocol.ts";
 import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 
 /**
@@ -198,8 +197,9 @@ const makeRuntime = (
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
   secretChanged: () => Promise<void>,
-) =>
-  ManagedRuntime.make(
+) => {
+  const settings = machineSettings(env);
+  return ManagedRuntime.make(
     ThreadRunner.layer.pipe(
       Layer.provide(
         Layer.succeed(ThreadRunner.PreviewHold, {
@@ -248,6 +248,7 @@ const makeRuntime = (
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),
+      Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
       Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
       Layer.provideMerge(
@@ -272,6 +273,7 @@ const makeRuntime = (
       Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
     ),
   );
+};
 
 export class ThreadObject extends DurableObject<ThreadObjectEnv> implements ThreadObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
@@ -330,6 +332,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
     this.runnerHost = {
       ctx,
+      now: () => this.now(),
       run: (effect) => this.runtime.runPromise(effect),
       holdsTurn: () =>
         this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),
@@ -363,6 +366,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             ),
           ),
         ),
+      boatControl: async () => {
+        const control = await this.runtime.runPromise(
+          Effect.map(BoatRecoveryControl.BoatRecoveryControl, (service) => service),
+        );
+        return control === null
+          ? null
+          : {
+              inspect: (machineId) => this.runtime.runPromise(control.inspect(machineId)),
+              remove: (machineId) => this.runtime.runPromise(control.remove(machineId)),
+            };
+      },
       rearm: async () => {
         const deferred = this.deferredAlarmAt;
         this.deferredAlarmAt = null;
@@ -672,6 +686,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
+    const now = await this.now();
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
     const hasWork = await this.runtime.runPromise(
       Effect.gen(function* () {
         const engine = yield* ThreadEngine.ThreadEngine;
@@ -699,13 +715,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         );
       }),
     );
-    if (hasWork) return this.setAlarmNoLaterThan(await this.now());
+    if (hasWork) return this.setAlarmNoLaterThan(now);
+    if (runnerWakeAt !== null) await this.setAlarmNoLaterThan(runnerWakeAt);
     // An alarm that fires now sets the next pull request read and share end itself.
     const pullRequestsAt = await this.runtime.runPromise(
       PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
     );
     if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
-    const now = await this.now();
     const statusNoteAt = await this.runtime.runPromise(
       ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.dueAt(now)),
     );
@@ -949,8 +965,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(Evlog.provideLogger(effect, log));
   }
 
+  private tendRunnerLiveness(now: number) {
+    return RunnerLiveness.tend(this.runnerHost, now, now + retryDelay(1), async (cause) => {
+      await this.runtime
+        .runPromise(Effect.logError("Runner liveness check failed; retrying", String(cause)))
+        .catch(() => undefined);
+    });
+  }
+
   private async tick(log: Evlog.UnitLog) {
     const now = await this.now();
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
     const step = await this.run(
       log,
       ThreadEngine.ThreadEngine.use((engine) => engine.step).pipe(
@@ -1042,6 +1067,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       summaryAt,
       eventsAt,
       machineWakeAt,
+      runnerWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,
       sharingWakeAt,

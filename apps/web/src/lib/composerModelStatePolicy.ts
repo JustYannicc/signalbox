@@ -3,7 +3,6 @@ import type {
   ProviderInstanceId,
   ProviderOptionSelection,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 export interface EffectiveComposerModelState {
   readonly selectedModel: string;
@@ -33,40 +32,4 @@ export function deriveSignalboxComposerModelState(input: {
         ? { [selection.instanceId]: selection.options }
         : null,
   };
-}
-
-export function useSignalboxEffectiveComposerModelState(input: {
-  legacyState: EffectiveComposerModelState;
-  composerDraft: { readonly modelSelectionExplicit?: boolean };
-  isNewThreadDraft: boolean;
-  initialModelSelection: ModelSelection | null | undefined;
-  selectedInstanceId: ProviderInstanceId | null | undefined;
-}): EffectiveComposerModelState {
-  const {
-    legacyState,
-    composerDraft,
-    isNewThreadDraft,
-    initialModelSelection,
-    selectedInstanceId,
-  } = input;
-
-  const modelSelectionExplicit = composerDraft.modelSelectionExplicit;
-
-  return useMemo(
-    () =>
-      deriveSignalboxComposerModelState({
-        legacyState,
-        composerDraft: modelSelectionExplicit === undefined ? {} : { modelSelectionExplicit },
-        isNewThreadDraft,
-        initialModelSelection,
-        selectedInstanceId,
-      }),
-    [
-      modelSelectionExplicit,
-      initialModelSelection,
-      isNewThreadDraft,
-      legacyState,
-      selectedInstanceId,
-    ],
-  );
 }

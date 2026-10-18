@@ -16,14 +16,14 @@ import { systemNoticeEvents } from "./runnerEvents.ts";
 import { failRunEvents, unknownFailure } from "./runnerTurn.ts";
 
 /**
- * What a thread does when the machine running its turn is lost (#112, #132):
- * the cut run ends interrupted, with whatever was still streaming or running
- * shown as aborted, and a continuation run picks the work up on a new
- * machine. That machine restores the harness's session at its latest durable
- * row and the worktree at its latest auto-save, then resumes natively, so the
- * model redoes only what never became durable. A tool that was running is
- * reported as interrupted and never run again by the thread; the harness
- * sees it unfinished in its own session.
+ * What a thread does when the machine running its turn is lost (#112, #132)
+ * or outgrown: the cut run ends interrupted, with whatever was still
+ * streaming or running shown as aborted, and a continuation run picks the work
+ * up on a new machine. That machine restores the harness's session at its
+ * latest durable row and the worktree at its latest auto-save, then resumes
+ * natively, so the model redoes only what never became durable. A tool that
+ * was running is reported as interrupted and never run again by the thread;
+ * the harness sees it unfinished in its own session.
  *
  * The continuation follows upstream's restart continuation: a new run with
  * `restartContinuationOfRunId`, prompted "Continue where you left off." where
@@ -108,8 +108,8 @@ export function recoverRunEvents(
   projection: Projection,
   run: Run,
   ctx: DecisionContext,
-  /** Why the run moves on, when that is not a lost machine: it outgrew a light one (#134). */
-  move?: { readonly reason: string },
+  /** The move reason stays in machine diagnostics, so it doesn't need a transcript notice. */
+  outgrown = false,
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   if (!isLiveRun(run)) return [];
   const aborted = abortedEvents(projection, run, ctx);
@@ -122,22 +122,18 @@ export function recoverRunEvents(
     queue: "keep",
     leading: [
       ...aborted,
-      ...systemNoticeEvents(
-        projection,
-        run,
-        move === undefined
-          ? {
+      ...(!outgrown
+        ? systemNoticeEvents(
+            projection,
+            run,
+            {
               id: TurnItemId.make(`turn-item:${run.id}:machine-lost`),
               title: "Machine",
               message: "The machine running this turn went away. It picks up on a new one.",
-            }
-          : {
-              id: TurnItemId.make(`turn-item:${run.id}:machine-outgrown`),
-              title: "Machine",
-              message: `${move.reason} This turn picks up on a bigger machine.`,
             },
-        ctx,
-      ),
+            ctx,
+          )
+        : []),
     ],
   });
   const afterEnd = applyEvents(projection, ended) ?? projection;
@@ -169,7 +165,8 @@ export function recoverRunEvents(
     threadId,
     runId: continuation.id,
     nodeId: null,
-    role: "user",
+    // The provider still gets its exact continuation prompt; it is internal to an outgrown move.
+    role: outgrown ? "system" : "user",
     text: CONTINUE_PROMPT,
     attachments: [],
     streaming: false,

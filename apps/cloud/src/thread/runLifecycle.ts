@@ -183,7 +183,10 @@ export function startRunEvents(
       completedAt: null,
     }),
     ...(message === undefined ? [] : [messageEvent(ctx, { ...message, nodeId: rootNodeId })]),
-    turnItemEvent(ctx, userItem),
+    // The system prompt for a machine continuation is provider input, not a transcript row.
+    ...(run.restartContinuationOfRunId !== undefined && message?.role === "system"
+      ? []
+      : [turnItemEvent(ctx, userItem)]),
   ];
 }
 

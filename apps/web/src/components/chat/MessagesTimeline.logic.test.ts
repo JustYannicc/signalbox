@@ -23,6 +23,7 @@ import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
+import { deriveRunContinuations } from "@t3tools/client-runtime/state/thread-execution";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   computeStableMessagesTimelineRows,
@@ -1730,6 +1731,238 @@ describe("deriveMessagesTimelineRows", () => {
         expanded: false,
       }),
     ]);
+  });
+
+  it("folds linked continuation runs together with the terminal status and inherited duration", () => {
+    const rootRunId = RunId.make("continuation-root");
+    const continuationRunId = RunId.make("continuation-resume");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: rootRunId,
+        ordinal: 1,
+        restartContinuationOfRunId: undefined,
+        status: "interrupted",
+        requestedAt: at("2026-01-01T00:00:00Z"),
+        startedAt: at("2026-01-01T00:00:01Z"),
+        workStartedAt: at("2026-01-01T00:00:00Z"),
+        completedAt: at("2026-01-01T00:00:30Z"),
+      },
+      {
+        id: continuationRunId,
+        ordinal: 2,
+        restartContinuationOfRunId: rootRunId,
+        status: "completed",
+        requestedAt: at("2026-01-01T00:00:31Z"),
+        startedAt: at("2026-01-01T00:00:35Z"),
+        workStartedAt: at("2026-01-01T00:00:00Z"),
+        completedAt: at("2026-01-01T00:01:24Z"),
+      },
+    ]);
+    const assistant = (id: string, runId: RunId, createdAt: string) => ({
+      id,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: MessageId.make(id),
+        role: "assistant" as const,
+        text: id,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    });
+    const continuationPromptId = MessageId.make("machine-lost-continuation");
+    const input: Parameters<typeof deriveMessagesTimelineRows>[0] = {
+      timelineEntries: [
+        {
+          id: "continuation-prompt",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: MessageId.make("continuation-prompt"),
+            role: "user",
+            text: "Run checks",
+            runId: rootRunId,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        assistant("root-reply", rootRunId, "2026-01-01T00:00:10Z"),
+        {
+          id: "root-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:20Z",
+          entry: {
+            id: "root-work",
+            createdAt: "2026-01-01T00:00:20Z",
+            runId: rootRunId,
+            label: "First command",
+            tone: "tool",
+          },
+        },
+        {
+          id: "machine-lost-continuation",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:45Z",
+          message: {
+            id: continuationPromptId,
+            role: "user",
+            text: "Continue where you left off.",
+            runId: continuationRunId,
+            createdAt: "2026-01-01T00:00:45Z",
+            updatedAt: "2026-01-01T00:00:45Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "continuation-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:50Z",
+          entry: {
+            id: "continuation-work",
+            createdAt: "2026-01-01T00:00:50Z",
+            runId: continuationRunId,
+            label: "Resumed command",
+            tone: "tool",
+          },
+        },
+        assistant("continuation-final", continuationRunId, "2026-01-01T00:01:24Z"),
+      ],
+      latestRun: {
+        runId: continuationRunId,
+        status: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:01:24Z",
+        runContinuations,
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const rows = deriveMessagesTimelineRows(input);
+
+    const folds = rows.filter((row) => row.kind === "turn-fold");
+    expect(folds).toHaveLength(1);
+    expect(folds[0]).toMatchObject({
+      runId: rootRunId,
+      label: "Worked for 1m 24s",
+    });
+    const continuationPromptIndex = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === continuationPromptId,
+    );
+    expect(rows[continuationPromptIndex]).toMatchObject({
+      kind: "message",
+      message: { role: "user", text: "Continue where you left off." },
+    });
+    expect(continuationPromptIndex).toBeLessThan(rows.indexOf(folds[0]!));
+
+    const expanded = deriveMessagesTimelineRows({
+      ...input,
+      expandedRunIds: new Set([continuationRunId]),
+    });
+    expect(expanded.find((row) => row.kind === "turn-fold")).toMatchObject({ expanded: true });
+    expect(
+      expanded
+        .filter((row) => row.kind === "work")
+        .flatMap((row) => row.groupedEntries.map((entry) => entry.runId)),
+    ).toEqual(expect.arrayContaining([rootRunId, continuationRunId]));
+  });
+
+  it("consumes a visible continuation boundary before a later unrelated run", () => {
+    const rootRunId = RunId.make("boundary-root");
+    const continuationRunId = RunId.make("boundary-continuation");
+    const unrelatedRunId = RunId.make("boundary-unrelated");
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const runContinuations = deriveRunContinuations([
+      {
+        id: rootRunId,
+        ordinal: 1,
+        restartContinuationOfRunId: undefined,
+        status: "interrupted",
+        requestedAt: at("2026-01-01T00:00:00Z"),
+        startedAt: at("2026-01-01T00:00:01Z"),
+        workStartedAt: at("2026-01-01T00:00:00Z"),
+        completedAt: at("2026-01-01T00:00:30Z"),
+      },
+      {
+        id: continuationRunId,
+        ordinal: 2,
+        restartContinuationOfRunId: rootRunId,
+        status: "completed",
+        requestedAt: at("2026-01-01T00:00:31Z"),
+        startedAt: at("2026-01-01T00:00:35Z"),
+        workStartedAt: at("2026-01-01T00:00:00Z"),
+        completedAt: at("2026-01-01T00:01:24Z"),
+      },
+    ]);
+    const work = (id: string, runId: RunId, createdAt: string) => ({
+      id,
+      kind: "work" as const,
+      createdAt,
+      entry: { id, createdAt, runId, label: id, tone: "tool" as const },
+    });
+    const continuationPromptId = MessageId.make("boundary-continuation-prompt");
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "boundary-root-prompt",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: MessageId.make("boundary-root-prompt"),
+            role: "user",
+            text: "Start",
+            runId: rootRunId,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        work("boundary-root-work", rootRunId, "2026-01-01T00:00:10Z"),
+        {
+          id: "boundary-continuation-prompt",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:40Z",
+          message: {
+            id: continuationPromptId,
+            role: "user",
+            text: "Continue where you left off.",
+            runId: continuationRunId,
+            createdAt: "2026-01-01T00:00:40Z",
+            updatedAt: "2026-01-01T00:00:40Z",
+            streaming: false,
+          },
+        },
+        work("boundary-continuation-work", continuationRunId, "2026-01-01T00:00:45Z"),
+        work("boundary-unrelated-work", unrelatedRunId, "2026-01-01T00:02:00Z"),
+      ],
+      latestRun: {
+        runId: continuationRunId,
+        status: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:01:24Z",
+        runContinuations,
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    const folds = rows.filter((row) => row.kind === "turn-fold");
+    expect(folds.map((fold) => fold.runId)).toEqual([rootRunId, unrelatedRunId]);
+    expect(folds.map((fold) => fold.createdAt)).toEqual([
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:02:00Z",
+    ]);
+    const continuationPromptIndex = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === continuationPromptId,
+    );
+    expect(continuationPromptIndex).toBeLessThan(rows.indexOf(folds[0]!));
   });
 
   // signalbox: a newer turn must not rewrite how an older one ended (sweep G, 2026-10-17)
