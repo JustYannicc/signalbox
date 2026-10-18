@@ -1,5 +1,6 @@
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 
 import { resolveUndoLastTurnTarget } from "./undo-last-turn-target";
 
@@ -13,6 +14,9 @@ function run(ordinal: number, status: Status = "completed") {
     userMessageId: `message-${ordinal}`,
     providerInstanceId: "codex",
     checkpointId: `checkpoint-${ordinal}`,
+    requestedAt: DateTime.makeUnsafe("2026-10-18T10:00:00Z"),
+    startedAt: null,
+    completedAt: null,
   };
 }
 
@@ -39,7 +43,9 @@ const baseline = {
 };
 
 function projection(input: {
-  readonly runs: ReadonlyArray<ReturnType<typeof run>>;
+  readonly runs: ReadonlyArray<
+    ReturnType<typeof run> & { readonly restartContinuationOfRunId?: string }
+  >;
   readonly checkpoints: ReadonlyArray<unknown>;
 }) {
   return {
@@ -102,6 +108,65 @@ describe("resolveUndoLastTurnTarget", () => {
         ),
       ).toBeNull();
     }
+  });
+
+  it("undoes a heavy continuation through its original user turn", () => {
+    expect(
+      resolveUndoLastTurnTarget(
+        projection({
+          runs: [run(1), run(2, "interrupted"), { ...run(3), restartContinuationOfRunId: "run-2" }],
+          checkpoints: [baseline, checkpoint(1), checkpoint(2, [{ path: "a.ts" }]), checkpoint(3)],
+        }),
+      ),
+    ).toMatchObject({
+      userMessageId: "message-2",
+      checkpointId: "checkpoint-1",
+      changedFiles: true,
+    });
+  });
+
+  it("undoes chained continuations of the first turn to the baseline", () => {
+    expect(
+      resolveUndoLastTurnTarget(
+        projection({
+          runs: [
+            run(1, "interrupted"),
+            { ...run(2, "interrupted"), restartContinuationOfRunId: "run-1" },
+            { ...run(3), restartContinuationOfRunId: "run-2" },
+          ],
+          checkpoints: [baseline, checkpoint(1), checkpoint(2), checkpoint(3)],
+        }),
+      ),
+    ).toMatchObject({
+      userMessageId: "message-1",
+      checkpointId: "checkpoint-baseline",
+      changedFiles: false,
+    });
+  });
+
+  it("offers nothing when the continuation's root is missing", () => {
+    expect(
+      resolveUndoLastTurnTarget(
+        projection({
+          runs: [run(1), { ...run(3), restartContinuationOfRunId: "run-2" }],
+          checkpoints: [baseline, checkpoint(1), checkpoint(3)],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("offers nothing for cyclic continuation links", () => {
+    expect(
+      resolveUndoLastTurnTarget(
+        projection({
+          runs: [
+            { ...run(1), restartContinuationOfRunId: "run-2" },
+            { ...run(2), restartContinuationOfRunId: "run-1" },
+          ],
+          checkpoints: [baseline, checkpoint(1), checkpoint(2)],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("offers nothing when paged history hides the turn before", () => {

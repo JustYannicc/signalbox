@@ -1,3 +1,4 @@
+import { deriveRunContinuations } from "@t3tools/client-runtime/state/thread-execution";
 import type {
   CheckpointId,
   CheckpointScopeId,
@@ -43,15 +44,25 @@ export function resolveUndoLastTurnTarget(projection: Projection): UndoLastTurnT
     null,
   );
   if (last === null) return null;
-  const target = checkpointBefore(projection, last.ordinal);
+  const history = projection.runs.filter((run) => run.status !== "rolled_back");
+  const continuations = deriveRunContinuations(history);
+  const rootId = continuations.get(last.id)?.rootRunId;
+  const root = history.find((run) => run.id === rootId);
+  // A missing continuation ancestor leaves both the user row and undo boundary unknown.
+  if (root === undefined || root.restartContinuationOfRunId !== undefined) return null;
+  const target = checkpointBefore(projection, root.ordinal);
   if (target === null) return null;
-  const own = projection.checkpoints.find((checkpoint) => checkpoint.id === last.checkpointId);
+  const changedFiles = history.some((run) => {
+    if (continuations.get(run.id)?.rootRunId !== root.id) return false;
+    const own = projection.checkpoints.find((checkpoint) => checkpoint.id === run.checkpointId);
+    return own?.status !== "ready" || own.files.length > 0;
+  });
   return {
-    userMessageId: last.userMessageId,
+    userMessageId: root.userMessageId,
     providerInstanceId: last.providerInstanceId,
     scopeId: target.scopeId,
     checkpointId: target.id,
-    changedFiles: own?.status !== "ready" || own.files.length > 0,
+    changedFiles,
   };
 }
 
