@@ -10,14 +10,22 @@ import type { KernelDescriptorResource } from "../KernelDescriptors.ts";
 import { KernelDescriptors } from "../KernelDescriptors.ts";
 import { KernelFileSystem } from "../KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
-import { KernelWebSocketResource } from "./KernelWebSocketResource.ts";
-import {
-  encodeWebSocketHandshake,
-  MAX_HANDSHAKE_BODY_BYTES,
-  MAX_HEADER_BLOCK_BYTES,
-  MAX_REQUEST_BYTES,
-  WS_ERRNO,
-} from "./KernelWebSocketWire.ts";
+
+// Keep expected ABI values independent of the private encoder and resource implementation.
+const WS_ERRNO = {
+  EAGAIN: 6,
+  EBADF: 8,
+  EINVAL: 28,
+  EIO: 29,
+  EMSGSIZE: 35,
+  ENOBUFS: 42,
+  EPIPE: 64,
+  ENOTSUP: 58,
+  EFAULT: 21,
+};
+const MAX_HANDSHAKE_BODY_BYTES = 1024 * 1024;
+const MAX_HEADER_BLOCK_BYTES = 64 * 1024;
+const MAX_REQUEST_BYTES = 16 + 8 * 1024 + MAX_HEADER_BLOCK_BYTES;
 
 describe("KernelWebSocketHost", () => {
   it("routes only validated loopback requests and preserves a non-upgrade response", async () => {
@@ -210,20 +218,32 @@ describe("KernelWebSocketHost", () => {
   it("counts the header-count field in the 64 KiB request and response header limits", async () => {
     const valueLength = MAX_HEADER_BLOCK_BYTES - 4 - 8 - 1;
     const value = "v".repeat(valueLength);
-    const exactResponse = encodeWebSocketHandshake({
-      status: 200,
-      headers: [["x", value]],
-      body: new Uint8Array(),
-    });
-    expect(exactResponse).toBeInstanceOf(Uint8Array);
-    expect(exactResponse).toHaveLength(8 + MAX_HEADER_BLOCK_BYTES);
-    expect(
-      encodeWebSocketHandshake({
+    const responseHandshake = async (headerValue: string) => {
+      const memory = new WebAssembly.Memory({ initial: 2 });
+      const descriptors = new FakeDescriptors();
+      const host = makeHost(memory, descriptors, () => ({
         status: 200,
-        headers: [["x", `${value}v`]],
+        headers: [["x", headerValue]],
         body: new Uint8Array(),
-      }),
-    ).toBe(WS_ERRNO.EMSGSIZE);
+      }));
+      writeRequest(memory, 64, "ws://localhost/exec", []);
+      expect(host.imports.ws_open(64, requestLength(memory), 16)).toBe(0);
+      const fd = readU32(memory, 16);
+      try {
+        await waitForResourceRead(descriptors.resource(fd));
+        return {
+          errno: host.imports.ws_handshake(fd, 512, 8 + MAX_HEADER_BLOCK_BYTES, 32),
+          length: readU32(memory, 32),
+        };
+      } finally {
+        host.imports.ws_drop(fd);
+      }
+    };
+    expect(await responseHandshake(value)).toEqual({
+      errno: 0,
+      length: 8 + MAX_HEADER_BLOCK_BYTES,
+    });
+    expect(await responseHandshake(`${value}v`)).toMatchObject({ errno: WS_ERRNO.EMSGSIZE });
 
     const memory = new WebAssembly.Memory({ initial: 2 });
     const descriptors = new FakeDescriptors();
@@ -561,9 +581,9 @@ describe("KernelWebSocketHost", () => {
     expect(routed?.signal.aborted).toBe(false);
 
     expect(host.imports.ws_drop(fd)).toBe(0);
-    expect(first.disposed).toBe(false);
+    expect(socket.closeCalls).toBe(0);
+    expect(routed?.signal.aborted).toBe(false);
     expect(host.imports.ws_drop(alias)).toBe(0);
-    expect(first.disposed).toBe(true);
     expect(routed?.signal.aborted).toBe(true);
     expect(socket.closeCalls).toBe(1);
   });
@@ -590,17 +610,18 @@ describe("KernelWebSocketHost", () => {
       const alias = descriptors.duplicate(fd);
       ownedFds.push(alias);
       const resource = descriptors.resource(fd);
-      if (!(resource instanceof KernelWebSocketResource))
-        throw new Error("Unexpected descriptor resource");
       expect(fd).toBe(3);
       expect(table.get(fd).kind).toBe("stdio");
       await waitForResourceRead(resource);
 
       expect(host.imports.ws_drop(fd)).toBe(0);
-      expect(resource.disposed).toBe(false);
+      expect(descriptors.resource(alias)).toBe(resource);
+      expect(socket.closeCalls).toBe(0);
       expect(host.imports.ws_drop(alias)).toBe(0);
       await socket.closeCompleted.promise;
-      expect(resource.disposed).toBe(true);
+      expect(socket.closeCalls).toBe(1);
+      expect(table.has(fd)).toBe(false);
+      expect(table.has(alias)).toBe(false);
       expect(wakes.size).toBe(0);
     } finally {
       for (const fd of ownedFds) {
@@ -744,7 +765,7 @@ function decodeLatin1(bytes: Uint8Array): string {
   return result;
 }
 
-async function waitForResourceRead(resource: KernelWebSocketResource): Promise<void> {
+async function waitForResourceRead(resource: KernelDescriptorResource): Promise<void> {
   if (resource.ready("read") !== undefined) return;
   await new Promise<void>((resolve) => {
     let unsubscribe = () => {};
@@ -768,7 +789,7 @@ function deferred<T>() {
 class FakeDescriptors {
   readonly #entries = new Map<
     number,
-    { readonly resource: KernelWebSocketResource; references: number }
+    { readonly resource: KernelDescriptorResource; references: number }
   >();
   #nextFd = 3;
 
@@ -777,13 +798,12 @@ class FakeDescriptors {
   }
 
   register(resource: KernelDescriptorResource): number {
-    if (!(resource instanceof KernelWebSocketResource)) throw new Error("unexpected resource type");
     const fd = this.#nextFd++;
     this.#entries.set(fd, { resource, references: 1 });
     return fd;
   }
 
-  resource(fd: number): KernelWebSocketResource {
+  resource(fd: number): KernelDescriptorResource {
     const entry = this.#entries.get(fd);
     if (entry === undefined) throw Object.assign(new Error("bad fd"), { code: "EBADF" });
     return entry.resource;
