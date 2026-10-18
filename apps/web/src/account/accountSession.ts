@@ -1,10 +1,11 @@
 import {
   buildAccountAuthorizeUrl,
   fetchAccountSessionState,
+  isAccountHttpStatusError,
+  signOutAccountSession,
 } from "@t3tools/client-runtime/account";
 import {
   ACCOUNT_SIGN_IN_ROUTE,
-  ACCOUNT_SIGN_OUT_PATH,
   type AccountProvider,
   type AccountSessionState,
 } from "@t3tools/contracts/account";
@@ -18,7 +19,12 @@ import {
   readPendingEnvironmentSignIn,
 } from "./desktopAccount";
 
-export { AccountFlowError, isDesktop } from "./accountPlatform";
+export {
+  AccountFlowError,
+  accountFlowError,
+  isAccountFlowError,
+  isDesktop,
+} from "./accountPlatform";
 export {
   cancelNativeSignIn,
   completeEnvironmentSignIn,
@@ -85,16 +91,17 @@ async function fetchPrimaryAccountSession(): Promise<AccountSessionState | null>
     return null;
   }
   const { credentials, headers } = accountRequestInit();
-  const session = await fetchAccountSessionState(origin, {
-    credentials,
-    ...(headers ? { headers } : {}),
-    fetch: async (input, init) => {
-      const response = await fetch(input, init);
-      // Servers without accounts don't have the route; stop asking this page.
-      if (response.status === 404) unsupported = true;
-      return response;
-    },
-  });
+  let session: AccountSessionState;
+  try {
+    session = await fetchAccountSessionState(origin, {
+      credentials,
+      ...(headers ? { headers } : {}),
+    });
+  } catch (error) {
+    // Servers without accounts don't have the route; stop asking this page.
+    if (isAccountHttpStatusError(error) && error.status === 404) unsupported = true;
+    throw error;
+  }
   // A stale or revoked desktop account token reads as signed out: drop it.
   if (isDesktop() && session.enabled && session.account === null && readDesktopAccountToken()) {
     clearDesktopAccountToken();
@@ -156,17 +163,18 @@ export function startAccountSignIn(input: StartAccountSignInInput): void {
 export async function signOutAccount(): Promise<void> {
   const origin = requirePrimaryOrigin();
   const { credentials, headers } = accountRequestInit();
-  const response = await fetch(`${origin}${ACCOUNT_SIGN_OUT_PATH}`, {
-    method: "POST",
-    credentials,
-    ...(headers ? { headers } : {}),
-  }).catch(() => null);
+  try {
+    await signOutAccountSession(origin, {
+      credentials,
+      ...(headers ? { headers } : {}),
+    });
+  } catch (error) {
+    if (!isDesktop()) throw error;
+  }
   if (isDesktop()) {
     // The desktop identity is the token we hold; dropping it signs this app out
     // even if the server is unreachable.
     clearDesktopAccountToken();
-  } else if (!response?.ok) {
-    throw new Error("Couldn't sign out. Check your connection and try again.");
   }
   reloadAt(`${ACCOUNT_SIGN_IN_ROUTE}?selectAccount=1`);
 }

@@ -1,28 +1,34 @@
 import {
   fetchAccountSessionState,
+  isAccountHttpStatusError,
+  isAccountResponseDecodeError,
+  signOutAccountSession,
   startGitHubNativeConnect,
 } from "@t3tools/client-runtime/account";
-import {
-  ACCOUNT_SIGN_OUT_PATH,
-  type AccountProfile,
-  type AccountSessionState,
-} from "@t3tools/contracts/account";
+import type { AccountProfile, AccountSessionState } from "@t3tools/contracts/account";
+import * as Schema from "effect/Schema";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-/** fetch with a deadline; RN's fetch never gives up on a silent host. */
-function fetchWithTimeout(status: { current: number | null }, timeoutMs: number): typeof fetch {
-  return async (input, init) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(input, { ...init, signal: controller.signal });
-      status.current = response.status;
-      return response;
-    } finally {
-      clearTimeout(timeout);
+const GitHubConnectFailure = Schema.Literals(["unreachable", "rejected", "invalid-link"]);
+
+class AccountGitHubConnectError extends Schema.TaggedError<AccountGitHubConnectError>()(
+  "AccountGitHubConnectError",
+  {
+    reason: GitHubConnectFailure,
+    status: Schema.optionalKey(Schema.Number),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "unreachable":
+        return "Couldn’t reach Signalbox to connect GitHub. Try again.";
+      case "rejected":
+        return `Couldn’t start connecting GitHub (${this.status}).`;
+      case "invalid-link":
+        return "Signalbox sent a connect link this app can’t open.";
     }
-  };
+  }
 }
 
 export type ServerAccountCheck =
@@ -32,18 +38,15 @@ export type ServerAccountCheck =
 
 /** Asks a server whether it signs people in with accounts. Throws when unreachable. */
 export async function checkServerAccounts(serverUrl: string): Promise<ServerAccountCheck> {
-  const status = { current: null as number | null };
   try {
-    const session = await fetchAccountSessionState(serverUrl, {
-      fetch: fetchWithTimeout(status, REQUEST_TIMEOUT_MS),
-    });
+    const session = await fetchAccountSessionState(serverUrl, { timeoutMs: REQUEST_TIMEOUT_MS });
     // A server with accounts on but no sign-in option configured can still pair.
     return session.enabled && session.providers.length > 0
       ? { _tag: "accounts", session }
       : { _tag: "pairing" };
   } catch (error) {
     // A Signalbox or T3 Code server without the account routes answers 404.
-    if (status.current === 404) return { _tag: "pairing" };
+    if (isAccountHttpStatusError(error) && error.status === 404) return { _tag: "pairing" };
     throw error;
   }
 }
@@ -59,18 +62,17 @@ export async function fetchEnvironmentAccount(
 ): Promise<AccountProfile | null> {
   const session = await fetchAccountSessionState(httpBaseUrl, {
     headers: bearerHeaders(token),
-    fetch: fetchWithTimeout({ current: null }, REQUEST_TIMEOUT_MS),
+    timeoutMs: REQUEST_TIMEOUT_MS,
   });
   return session.enabled ? session.account : null;
 }
 
 /** `POST /api/account/sign-out` with the environment's own bearer session. */
 export async function signOutAccount(httpBaseUrl: string, token: string): Promise<void> {
-  const response = await fetchWithTimeout({ current: null }, REQUEST_TIMEOUT_MS)(
-    `${httpBaseUrl.replace(/\/+$/, "")}${ACCOUNT_SIGN_OUT_PATH}`,
-    { method: "POST", headers: bearerHeaders(token) },
-  );
-  if (!response.ok) throw new Error(`Sign-out failed (${response.status}).`);
+  await signOutAccountSession(httpBaseUrl, {
+    headers: bearerHeaders(token),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  });
 }
 
 function parseUrl(value: string): URL | null {
@@ -90,25 +92,24 @@ export async function startGitHubConnect(
   token: string,
   returnUrl: string,
 ): Promise<string> {
-  const status = { current: null as number | null };
   let link: string;
   try {
     link = await startGitHubNativeConnect(httpBaseUrl, token, returnUrl, {
-      fetch: fetchWithTimeout(status, REQUEST_TIMEOUT_MS),
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
-  } catch {
-    if (status.current === null) {
-      throw new Error("Couldn’t reach Signalbox to connect GitHub. Try again.");
+  } catch (error) {
+    if (isAccountHttpStatusError(error)) {
+      throw new AccountGitHubConnectError({ reason: "rejected", status: error.status });
     }
-    if (status.current < 200 || status.current >= 300) {
-      throw new Error(`Couldn’t start connecting GitHub (${status.current}).`);
+    if (isAccountResponseDecodeError(error)) {
+      link = "";
+    } else {
+      throw new AccountGitHubConnectError({ reason: "unreachable" });
     }
-    // A 2xx the shared helper couldn’t decode: no link to open.
-    link = "";
   }
   const url = parseUrl(link);
   if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) {
-    throw new Error("Signalbox sent a connect link this app can’t open.");
+    throw new AccountGitHubConnectError({ reason: "invalid-link" });
   }
   return url.toString();
 }
