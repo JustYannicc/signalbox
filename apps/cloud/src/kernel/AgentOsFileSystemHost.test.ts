@@ -14,25 +14,42 @@ function fixture(
   agentOsPreopens = false,
   posix = true,
   credentials = { uid: 1000, gid: 1000, euid: 1000, egid: 1000, groups: [2000] },
+  readOnly = false,
 ) {
   const database = sqliteFixture();
   const storage = createFacetSqliteStorage(database.storage, now);
   if (posix) storage.posix.initialize(storage.root, { mode: 0o755, uid: 1000, gid: 1000 });
-  const fileSystem = new KernelFileSystem({
+  const policy = posix ? { posix: { credentials, umask: 0o022 } } : {};
+  let fileSystem = new KernelFileSystem({
     mounts: [{ path: "/", storage }],
-    ...(posix ? { posix: { credentials, umask: 0o022 } } : {}),
+    ...policy,
   });
-  const memory = new WebAssembly.Memory({ initial: 1 });
-  const host = new AgentOsFileSystemHost({ memory: () => memory, fileSystem, agentOsPreopens });
-
   fileSystem.mkdir("/work");
+  const seededFile = fileSystem.open(
+    "/work/file",
+    KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR,
+    0o644,
+  );
+  fileSystem.write(seededFile, encoder.encode("hello"), 0n);
+  fileSystem.close(seededFile);
+  fileSystem.symlink("file", "/work/link");
+  if (readOnly) {
+    fileSystem.dispose();
+    fileSystem = new KernelFileSystem({
+      mounts: [{ path: "/", storage, readOnly: true }],
+      ...policy,
+    });
+  }
   const directoryFd = fileSystem.open(
     "/work",
     KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_DIRECTORY,
   );
-  const fileFd = fileSystem.open("/work/file", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR);
-  fileSystem.write(fileFd, encoder.encode("hello"), 0n);
-  fileSystem.symlink("file", "/work/link");
+  const fileFd = fileSystem.open(
+    "/work/file",
+    readOnly ? KernelOpenFlags.O_RDONLY : KernelOpenFlags.O_RDWR,
+  );
+  const memory = new WebAssembly.Memory({ initial: 1 });
+  const host = new AgentOsFileSystemHost({ memory: () => memory, fileSystem, agentOsPreopens });
 
   const writePath = (pointer: number, path: string) => {
     const bytes = encoder.encode(path);
@@ -228,6 +245,39 @@ describe("AgentOS host_fs imports", () => {
       } finally {
         root.close();
       }
+    } finally {
+      test.close();
+    }
+  });
+
+  it("requires search permission on traversed directories, including symlink targets", () => {
+    const test = fixture();
+    try {
+      test.fileSystem.mkdir("/work/blocked", 0o700);
+      const blockedFile = test.fileSystem.open(
+        "/work/blocked/file",
+        KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR,
+        0o600,
+      );
+      test.fileSystem.close(blockedFile);
+      test.fileSystem.symlink("/work/blocked/file", "/work/door");
+      test.fileSystem.chmod("/work/blocked", 0);
+
+      const blockedPathLength = test.writePath(64, "blocked/file");
+      const symlinkPathLength = test.writePath(96, "door");
+      expect(test.host.imports.path_access(test.directoryFd, 64, blockedPathLength, 0, 0)).toBe(2);
+      expect(test.host.imports.path_access(test.directoryFd, 64, blockedPathLength, 4, 0)).toBe(2);
+      expect(test.host.imports.path_access(test.directoryFd, 96, symlinkPathLength, 0, 0)).toBe(2);
+    } finally {
+      test.close();
+    }
+  });
+
+  it("does not grant write access through a read-only mount, even to root", () => {
+    const test = fixture(false, true, { uid: 0, gid: 0, euid: 0, egid: 0, groups: [] }, true);
+    try {
+      const filePathLength = test.writePath(64, "file");
+      expect(test.host.imports.path_access(test.directoryFd, 64, filePathLength, 2, 1)).toBe(69);
     } finally {
       test.close();
     }

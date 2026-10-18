@@ -6,6 +6,7 @@ import {
   type WasiMountedStorage,
   type WasiPathAnchor,
   type WasiPathLookup,
+  type WasiPathSearchCheck,
   type WasiResolvedParent,
   type WasiResolvedPath,
   WasiPathResolver,
@@ -121,6 +122,25 @@ export class KernelPathResolver {
     const context = this.#context(path, options.cwd);
     const resolved = this.#run(
       this.#resolver.resolve(context.anchor, context.relative, options.followFinal ?? true),
+    );
+    this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
+    return resolved;
+  }
+
+  /** Keep search checks on the traversed path, including symlink target rewrites. */
+  resolveForAccess(
+    path: string,
+    checkSearch: WasiPathSearchCheck,
+    options: ResolveOptions = {},
+  ): WasiResolvedPath {
+    const context = this.#context(path, options.cwd);
+    const resolved = this.#run(
+      this.#resolver.resolve(
+        context.anchor,
+        context.relative,
+        options.followFinal ?? true,
+        checkSearch,
+      ),
     );
     this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
     return resolved;

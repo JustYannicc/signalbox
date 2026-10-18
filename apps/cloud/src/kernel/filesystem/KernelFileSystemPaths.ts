@@ -187,6 +187,28 @@ export class KernelFileSystemPaths {
     });
   }
 
+  access(path: string, mode: number, effectiveIds = false): void {
+    if (!Number.isInteger(mode) || mode < 0 || (mode & ~7) !== 0) {
+      throw kernelError("EINVAL");
+    }
+    const requested = mode;
+    const checkSearch = (mount: WasiResolvedPath["mount"], directory: Inode): void => {
+      this.#posix.checkAccess(mount.storage, directory, "directory", 1, effectiveIds);
+    };
+    const resolved = this.resolver.resolveForAccess(path, checkSearch);
+
+    if ((requested & 2) !== 0 && resolved.mount.readOnly) throw kernelError("EROFS");
+    if (requested !== 0) {
+      this.#posix.checkAccess(
+        resolved.mount.storage,
+        resolved.inode,
+        resolved.stat.type,
+        requested,
+        effectiveIds,
+      );
+    }
+  }
+
   mkdir(path: string, mode = 0o777): void {
     withKernelErrors(() => {
       const parent = this.resolveParent(path);

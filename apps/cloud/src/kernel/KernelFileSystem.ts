@@ -233,6 +233,12 @@ export class KernelFileSystem {
     this.#paths.fchown(fd, uid, gid);
   }
 
+  /** Checks pathname access using the process's real or effective credentials. */
+  access(path: string, mode: number, effectiveIds = false): void {
+    this.#assertOpen();
+    this.#paths.access(path, mode, effectiveIds);
+  }
+
   close(fd: number): void {
     this.#assertOpen();
     this.#open.close(fd);

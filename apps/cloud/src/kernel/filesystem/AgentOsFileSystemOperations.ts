@@ -311,28 +311,9 @@ export class AgentOsFileSystemOperations {
       if (effectiveIds !== 0 && effectiveIds !== 1) return EINVAL;
       const path = this.#readPath(this.#memory(), pathPointer, pathLength);
       const requested = mode >>> 0;
-      this.#withPath(dirFd, path, (fileSystem) => {
-        const stat = fileSystem.stat(path);
-        if (requested === 0) return;
-
-        const credentials = fileSystem.posixCredentials;
-        if (credentials === undefined) throw kernelError("ENOTSUP");
-        const metadata = fileSystem.getPosixMetadata(path, true);
-        const uid = effectiveIds === 1 ? credentials.euid : credentials.uid;
-        const gid = effectiveIds === 1 ? credentials.egid : credentials.gid;
-        const groups = credentials.groups ?? [];
-        const shift =
-          uid === metadata.uid ? 6 : gid === metadata.gid || groups.includes(metadata.gid) ? 3 : 0;
-        const allowed = (metadata.mode >>> shift) & 7;
-
-        if (uid === 0) {
-          if ((requested & 1) !== 0 && stat.type !== "directory" && (metadata.mode & 0o111) === 0) {
-            throw kernelError("EACCES");
-          }
-          return;
-        }
-        if ((requested & allowed) !== requested) throw kernelError("EACCES");
-      });
+      this.#withPath(dirFd, path, (fileSystem) =>
+        fileSystem.access(path, requested, effectiveIds === 1),
+      );
       return 0;
     } catch (error) {
       return this.#toErrno(error);

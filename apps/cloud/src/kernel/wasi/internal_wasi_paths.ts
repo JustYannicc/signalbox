@@ -38,6 +38,8 @@ export interface WasiPathAnchor {
   readonly pathComponents: readonly string[];
 }
 
+export type WasiPathSearchCheck = (mount: WasiMountedStorage, directory: Inode) => void;
+
 export interface WasiResolvedPath {
   readonly mount: WasiMountedStorage;
   readonly inode: Inode;
@@ -137,8 +139,9 @@ export class WasiPathResolver {
     base: WasiPathAnchor,
     path: string,
     followFinalSymlink: boolean,
+    checkSearch?: WasiPathSearchCheck,
   ): WasiCall<WasiResolvedPath> {
-    const result = yield* this.resolveOrCreate(base, path, followFinalSymlink);
+    const result = yield* this.resolveOrCreate(base, path, followFinalSymlink, checkSearch);
     if (result.kind === "missing") throw new WasiError(ENOENT);
     return result.path;
   }
@@ -148,6 +151,7 @@ export class WasiPathResolver {
     base: WasiPathAnchor,
     path: string,
     followFinalSymlink: boolean,
+    checkSearch?: WasiPathSearchCheck,
   ): WasiCall<WasiPathLookup> {
     const pending = parseRelativePath(path);
     let requireDirectory = pathRequiresDirectory(path);
@@ -162,9 +166,17 @@ export class WasiPathResolver {
 
     while (index < pending.length) {
       const name = pending[index++];
-      if (name === undefined || name === "") continue;
-      if (name === ".") continue;
+      if (name === undefined) continue;
+      if (name === "") {
+        if (requireDirectory && index === pending.length) checkSearch?.(base.mount, current);
+        continue;
+      }
+      if (name === ".") {
+        checkSearch?.(base.mount, current);
+        continue;
+      }
       if (name === "..") {
+        checkSearch?.(base.mount, current);
         if (pathComponents.length === 0 || ancestors.length <= 1) {
           throw new WasiError(ENOTCAPABLE);
         }
@@ -184,6 +196,7 @@ export class WasiPathResolver {
 
       const parentStat = yield* this.#complete(base.mount.storage.stat(current));
       if (parentStat.type !== "directory") throw new WasiError(ENOTDIR);
+      checkSearch?.(base.mount, current);
 
       const isLast = index === pending.length;
       this.#checkPath?.(base.mount, [...pathComponents, name]);

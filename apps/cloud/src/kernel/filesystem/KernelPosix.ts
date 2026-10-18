@@ -2,7 +2,11 @@ import type { PosixMetadata, PosixStorage } from "../PosixStorage.ts";
 import type { CreateOptions, Inode, Storage } from "../storage.ts";
 import type { WasiMountedStorage } from "../wasi/internal_wasi_paths.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
-import type { KernelPosixCredentials, KernelPosixOptions } from "./KernelFileSystemTypes.ts";
+import type {
+  KernelPosixCredentials,
+  KernelPosixOptions,
+  KernelStat,
+} from "./KernelFileSystemTypes.ts";
 
 const MAX_ID = 0xffff_fffe;
 const MODE_MASK = 0o7777;
@@ -90,6 +94,33 @@ export class KernelPosix {
 
   getMetadata(storage: WasiMountedStorage["storage"], inode: Inode): PosixMetadata {
     return withKernelErrors(() => runKernelSync(requirePosixStorage(storage).get(inode)));
+  }
+
+  checkAccess(
+    storage: WasiMountedStorage["storage"],
+    inode: Inode,
+    type: KernelStat["type"],
+    requested: number,
+    effectiveIds: boolean,
+  ): void {
+    const credentials = this.#requireCredentials();
+    const metadata = this.getMetadata(storage, inode);
+    const uid = effectiveIds ? credentials.euid : credentials.uid;
+    const gid = effectiveIds ? credentials.egid : credentials.gid;
+
+    if (uid === 0) {
+      // Linux root may traverse directories but still needs an execute bit on files.
+      if (type !== "directory" && (requested & 1) !== 0 && (metadata.mode & 0o111) === 0) {
+        throw kernelError("EACCES");
+      }
+      return;
+    }
+
+    const groups = credentials.groups ?? [];
+    const shift =
+      uid === metadata.uid ? 6 : gid === metadata.gid || groups.includes(metadata.gid) ? 3 : 0;
+    const allowed = (metadata.mode >>> shift) & 7;
+    if ((allowed & requested) !== requested) throw kernelError("EACCES");
   }
 
   chmod(storage: WasiMountedStorage, inode: Inode, mode: number): void {
