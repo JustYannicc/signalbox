@@ -40,6 +40,7 @@ import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
 import type { ModelUsage } from "../models/ModelRecords.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type { SignInCheck } from "../signIn/SignInGrants.ts";
+import type { ExecutorTokenBinding } from "../executor/ExecutorTokenBindings.ts";
 import type {
   PreviewSetupApplied,
   PreviewSetupRedemption,
@@ -289,6 +290,11 @@ export interface UserObjectApi {
     readonly source: SignInSource;
     readonly origin: string;
   }) => Promise<SignInCheck>;
+  /** Rechecks a JTI's source grant and current role authority for Executor. */
+  readonly authorizeExecutorToken: (
+    claims: unknown,
+    binding: ExecutorTokenBinding,
+  ) => Promise<boolean>;
   /** Ends the thread's session in the person's browser, which saves its profile. */
   readonly endBrowser: (input: {
     readonly threadId: string;
@@ -396,6 +402,7 @@ const METHODS = Object.keys({
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,
+  authorizeExecutorToken: true,
   endBrowser: true,
   automationHost: true,
   automationWorkerModule: true,

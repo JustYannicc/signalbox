@@ -156,6 +156,11 @@ export interface ThreadObjectApi {
   ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /** Whether the exact live run still holds the requested Runner generation. */
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Promise<boolean>;
   /** Reads a linked pull request now, when `actor` can see the thread and link. */
   readonly requestPullRequestSync: (actor: Actor, key: string) => Promise<ThreadObjectReply<void>>;
   /**
@@ -295,6 +300,10 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Effect.Effect<boolean, ThreadObjectError>;
   readonly commandOutput: (
     actor: Actor,
     input: OrchestrationV2SubscribeCommandOutputInput,
@@ -638,6 +647,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
             : decodeIn("summary", () => wire.summary.decode(value)),
         ),
       ),
+    authorizeExecutorTurn: (actor, input) =>
+      call("authorizeExecutorTurn", () => api.authorizeExecutorTurn(actor, input)),
   };
 }
 

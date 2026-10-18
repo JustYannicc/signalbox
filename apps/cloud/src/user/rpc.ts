@@ -245,6 +245,8 @@ const SERVED = [
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsReplyToThread,
+  WS_METHODS.pullRequestsSetThreadResolution,
   WS_METHODS.pullRequestsDiffFileContents,
   WS_METHODS.pullRequestsInvalidate,
   WS_METHODS.pullRequestsSubscribeRefreshes,
@@ -347,6 +349,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsReplyToThread]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSetThreadResolution]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
@@ -903,6 +907,9 @@ export const layerHandlers = (input: {
         [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
         [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
         [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
+        [WS_METHODS.pullRequestsReplyToThread]: (request) => pullRequests.replyToThread(request),
+        [WS_METHODS.pullRequestsSetThreadResolution]: (request) =>
+          pullRequests.setThreadResolution(request),
         [WS_METHODS.pullRequestsDiffFileContents]: (request) =>
           pullRequests.diffFileContents(request),
         [WS_METHODS.pullRequestsInvalidate]: (request) => pullRequests.invalidate(request),

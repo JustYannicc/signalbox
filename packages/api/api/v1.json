@@ -1247,7 +1247,7 @@
       "name": "pullRequests.replyToThread",
       "rpc": "pullRequests.replyToThread",
       "access": "write",
-      "input": "af197e6e",
+      "input": "b2b62b0d",
       "output": "794c92c1"
     },
     {

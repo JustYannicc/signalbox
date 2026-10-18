@@ -105,6 +105,14 @@ describe("cloud API coverage", () => {
     expect(silent).toEqual([]);
   });
 
+  it("serves review replies and resolution through the public API", () => {
+    for (const name of ["pullRequests.replyToThread", "pullRequests.setThreadResolution"]) {
+      const operation = operations.find((entry) => entry.name === name)!;
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
   it("serves starting a folder from another folder through the cloud RPC", () => {
     const operation = operations.find((candidate) => candidate.name === "folders.startFrom");
     expect(operation).toBeDefined();

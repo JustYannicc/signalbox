@@ -89,6 +89,7 @@ const makeOwner = () => {
     flush: Effect.void,
     start: Effect.void,
     host: () => Effect.die("not used"),
+    executorRunActive: () => Effect.succeed(false),
     workerModule: () => Effect.die("not used"),
   });
   const cloud = makeMemoryCloud({
