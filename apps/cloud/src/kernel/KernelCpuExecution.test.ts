@@ -7,7 +7,6 @@ import {
   runCurrentKernelCpuSystemImport,
 } from "./KernelCpuExecution.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
-import { runAsync } from "./wasi/internal_wasi_calls.ts";
 
 const makeClock = () => {
   let now = 0n;
@@ -108,14 +107,11 @@ describe("KernelCpuExecution", () => {
 
     const result = root.run(() => {
       const leaveUser = root.enterUser();
-      return runCurrentKernelCpuAsyncSystemImport((runSystem) => {
-        const call = (function* (): Generator<unknown, number, unknown> {
-          runSystem(() => clock.advance(3n));
-          yield io;
-          runSystem(() => clock.advance(5n));
-          return 42;
-        })();
-        return runAsync(call, runSystem);
+      return runCurrentKernelCpuAsyncSystemImport(async (runSystem) => {
+        runSystem(() => clock.advance(3n));
+        await io;
+        runSystem(() => clock.advance(5n));
+        return 42;
       })
         .then((value) => {
           expect(value).toBe(42);

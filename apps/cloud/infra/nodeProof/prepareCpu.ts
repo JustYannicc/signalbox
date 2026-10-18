@@ -57,10 +57,11 @@ export function read(previous) {
           build.onResolve({ filter: /.*/ }, (args) =>
             args.path in layer ? { path: args.path, namespace: "bridge" } : undefined,
           );
-          build.onLoad({ filter: /.*/, namespace: "bridge" }, (args) => ({
-            contents: layer[args.path],
-            loader: "js",
-          }));
+          build.onLoad({ filter: /.*/, namespace: "bridge" }, (args) => {
+            const contents = layer[args.path];
+            if (contents === undefined) throw new Error("Unknown CPU proof bridge module");
+            return { contents, loader: "js" };
+          });
         },
       },
     ],
