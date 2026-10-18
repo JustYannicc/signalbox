@@ -186,6 +186,19 @@ describe("cloud secret requests", () => {
             if (result.status !== "saved") throw new Error("Expected saved ref");
             expect(JSON.stringify(yield* engine.snapshot(owner))).not.toContain(value);
             expect(JSON.stringify(result)).not.toContain(value);
+            const deliveries = [];
+            for (
+              let delivery = yield* engine.pendingSearchDelivery;
+              delivery !== null;
+              delivery = yield* engine.pendingSearchDelivery
+            ) {
+              deliveries.push(delivery);
+              yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+            }
+            const indexed = JSON.stringify(deliveries);
+            expect(deliveries.length).toBeGreaterThan(0);
+            for (const privateText of [value, requestId, request.input.label, request.input.reason])
+              expect(indexed).not.toContain(privateText);
             const retry = yield* secrets.request(generation, request);
             expect(retry).toEqual(result);
             const duplicate = yield* secrets

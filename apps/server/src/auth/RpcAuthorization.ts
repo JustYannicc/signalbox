@@ -41,6 +41,7 @@ import { SIGNALBOX_CONTEXTS_REQUIRED_SCOPES } from "@t3tools/contracts/signalbox
 import { SIGNALBOX_DRIVES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxFolders"; // signalbox: folders
 import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes"; // signalbox: notes
+import { SIGNALBOX_SEARCH_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxSearch"; // signalbox: thread search
 import { SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxThreadKinds"; // signalbox: thread kinds
 import { SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxStatusLine"; // signalbox: status lines
 import { SIGNALBOX_PREVIEWS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
@@ -64,6 +65,7 @@ export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES, // signalbox: folders
   ...SIGNALBOX_NOTES_REQUIRED_SCOPES, // signalbox: notes
+  ...SIGNALBOX_SEARCH_REQUIRED_SCOPES, // signalbox: thread search
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES, // signalbox: thread kinds
   ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES, // signalbox: status lines
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES, // signalbox: previews

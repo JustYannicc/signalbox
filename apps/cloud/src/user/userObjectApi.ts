@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { learnerTool } from "./learnerTool.ts";
 import * as UserLearner from "./UserLearner.ts";
 import { automationTool } from "../automations/automationTool.ts";
@@ -60,6 +61,7 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | ThreadSearch.ThreadSearch
       | UserLearner.UserLearner
       | UserStore.UserStore
       | UserShell.UserShell
@@ -106,6 +108,10 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    searchThreads: (actor, input) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.query(actor, input))),
+    readSearchItem: (actor, threadId, itemId) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.readItem(actor, threadId, itemId))),
     receiveHook: (request) =>
       run(withAutomations((automations) => automations.receiveHook(request))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
