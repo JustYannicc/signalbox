@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Evlog from "../observability/Evlog.ts";
+import * as ClientActionTimings from "../observability/ClientActionTimings.ts";
 import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
 import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
@@ -64,6 +65,7 @@ import * as SearchBackfillLive from "../search/SearchBackfillLive.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
+import * as CloudTerminalsLayer from "../thread/CloudTerminalsLayer.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../models/ModelManifest.ts";
 import * as ModelCatalog from "../models/ModelCatalog.ts";
@@ -102,6 +104,7 @@ import * as TrashResourcesLive from "../trash/trashResourcesLive.ts";
 import { TrashAlarm, layerPreview as layerTrashPreview } from "../trash/TrashWorkflow.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserTerminals from "./UserTerminals.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
 import * as UserKeybindings from "./UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
@@ -288,6 +291,8 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer.pipe(Layer.provide(searchBackfill)),
               UserThreadStatus.layer,
+              UserTerminals.layer,
+              CloudTerminalsLayer.layer,
               ThreadInbox.layer.pipe(
                 Layer.provideMerge(
                   CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
@@ -409,7 +414,11 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
-          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+          Layer.provideMerge(
+            ClientActionTimings.layer(env, (promise) => ctx.waitUntil(promise)).pipe(
+              Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+            ),
+          ),
         ),
       ),
     );
@@ -450,6 +459,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
+      drives: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
       searchDisabled: searchSettings(env).disabled,
     };
     this.runtime = makeRuntime(ctx, env);
@@ -563,6 +573,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.copyThreadHome(input);
   }
 
+  recordTerminalEvents(encoded: unknown) {
+    return this.api.recordTerminalEvents(encoded);
+  }
+
   rebuildThreadIndex() {
     return this.api.rebuildThreadIndex();
   }
@@ -573,6 +587,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   completeGitHubConnect(grantId: string) {
     return this.api.completeGitHubConnect(grantId);
+  }
+
+  cancelGitHubConnect(grantId: string) {
+    return this.api.cancelGitHubConnect(grantId);
   }
 
   abortGitHubConnect(grantId: string) {

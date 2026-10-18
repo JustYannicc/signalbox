@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./waitingCost": {
+      "types": "./src/waitingCost.ts",
+      "import": "./src/waitingCost.ts"
+    },
     "./keywordSearch": {
       "types": "./src/keywordSearch.ts",
       "import": "./src/keywordSearch.ts"
@@ -15,6 +19,18 @@
       "types": "./src/pnpmVirtualStore.ts",
       "import": "./src/pnpmVirtualStore.ts",
       "require": "./src/pnpmVirtualStore.ts"
+    },
+    "./signalboxAsks": {
+      "types": "./src/signalboxAsks.ts",
+      "import": "./src/signalboxAsks.ts"
+    },
+    "./signalboxNativeAsks": {
+      "types": "./src/signalboxNativeAsks.ts",
+      "import": "./src/signalboxNativeAsks.ts"
+    },
+    "./nativeElicitation": {
+      "types": "./src/nativeElicitation.ts",
+      "import": "./src/nativeElicitation.ts"
     },
     "./agentProcesses": {
       "types": "./src/agentProcesses/registry.ts",
@@ -575,6 +591,14 @@
     "./agentProcessEnvironment": {
       "types": "./src/agentProcesses/environment.ts",
       "import": "./src/agentProcesses/environment.ts"
+    },
+    "./poolAdvice": {
+      "types": "./src/poolAdvice.ts",
+      "import": "./src/poolAdvice.ts"
+    },
+    "./poolUsageRecording": {
+      "types": "./src/poolUsageRecording.ts",
+      "import": "./src/poolUsageRecording.ts"
     },
     "./providerChildTasks": {
       "types": "./src/providerChildTasks.ts",

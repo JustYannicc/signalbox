@@ -1,3 +1,7 @@
+import { type ThreadCommand } from "./threadCommands.ts";
+import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
+import { compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import type { RetainedWorkflowScript } from "@signalbox/runner-protocol/RunnerProtocol";
 import { workflowEvent, stoppedWorkflowEvents } from "./workflowControl.ts";
 import {
@@ -41,6 +45,7 @@ import type {
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
+import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -109,7 +114,12 @@ import {
   documentsForItems,
   documentsForProjection,
 } from "./searchDocuments.ts";
-import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
+import type {
+  ThreadMonitor,
+  ThreadSnapshotWire,
+  ThreadSummaryWire,
+  ThreadWorkspace,
+} from "./threadWire.ts";
 
 /**
  * One thread's orchestration, inside its Durable Object. Commands and provider
@@ -135,7 +145,7 @@ export interface ThreadCreation {
   /** Internal delivery can require the run observed before crossing objects. */
   readonly expectedRun?: Pick<OrchestrationV2Run, "id" | "status"> | null;
   readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
-  /** The branch and worktree a new thread gets, when its drive has threads work on their own branch. */
+  /** Server-resolved workspace, including an existing local thread adopting its drive's remote. */
   readonly worktree?: ThreadWorktree | null;
   /**
    * What the owner's tree resolves each project to (`turnPool.ts`), for a
@@ -212,7 +222,7 @@ export class ThreadEngine extends Context.Service<
   {
     readonly dispatch: (
       actor: Actor,
-      command: OrchestrationV2Command,
+      command: ThreadCommand,
       creation: ThreadCreation,
     ) => Effect.Effect<
       OrchestrationV2DispatchCommandResult,
@@ -276,6 +286,7 @@ export class ThreadEngine extends Context.Service<
       OrchestrationV2CommandOutputError | ThreadNotFoundError
     >;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
+    readonly workspace: (actor: Actor) => Effect.Effect<ThreadWorkspace, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
      * the completion marker when asked for, then live batches as they commit.
@@ -570,7 +581,18 @@ const make = Effect.gen(function* () {
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
-    const decidedEvents = yield* stamp(input.events);
+    const decidedEvents = yield* stamp(
+      current.thread === null
+        ? input.events
+        : compactAskEvents(
+            current.thread.projection.thread.id,
+            current.thread.projection.thread.asks,
+            mirrorNativeAskEvents(
+              current.thread.projection,
+              expireRuntimeRequests(current.thread.projection, input.events),
+            ),
+          ),
+    );
     const candidate = applyEvents(current.thread?.projection ?? null, decidedEvents);
     if (owner === undefined || candidate === null) {
       return yield* Effect.die("A thread's first commit must create it.");
@@ -812,7 +834,11 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
         }
-        if (current.thread !== null && current.thread.projection.thread.deletedAt !== null) {
+        if (
+          current.thread !== null &&
+          current.thread.projection.thread.deletedAt !== null &&
+          command.type !== "thread.ask.sync"
+        ) {
           return yield* ThreadCommandRejectedError.forCommand(command, "This thread is in Trash.");
         }
         const { place } = creation;
@@ -824,12 +850,48 @@ const make = Effect.gen(function* () {
           creation.pools === null || projectId === undefined
             ? undefined
             : forThread(creation.pools, projectId);
-        const decision = decideWith(
-          current.thread?.projection ?? null,
-          yield* context,
-          pool,
-          current.preparation,
-        );
+        const ctx = yield* context;
+        let projection = current.thread?.projection ?? null;
+        const adoption: Array<OrchestrationV2DomainEvent> = [];
+        if (
+          current.thread !== null &&
+          projection !== null &&
+          projection.thread.branch === null &&
+          projection.thread.worktreePath === null &&
+          creation.worktree != null
+        ) {
+          const driveId = current.thread.owner.driveId;
+          if (driveId === null) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              "This thread has no drive.",
+            );
+          }
+          const expected = remoteThreadWorktree(driveId, projection.thread.id);
+          if (
+            creation.worktree.branch !== expected.branch ||
+            creation.worktree.path !== expected.path
+          ) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              "Invalid remote workspace.",
+            );
+          }
+          adoption.push(
+            threadEvent(ctx, "thread.metadata-updated", {
+              ...projection.thread,
+              branch: expected.branch,
+              worktreePath: expected.path,
+              updatedAt: ctx.now,
+            }),
+          );
+          projection = applyEvents(projection, adoption);
+        }
+        const decided = decideWith(projection, ctx, pool, current.preparation);
+        const decision =
+          decided._tag === "accepted"
+            ? { ...decided, events: [...adoption, ...decided.events] }
+            : decided;
         const refuse = (
           message: string,
           options: { readonly record: boolean; readonly code?: "run_changed" },
@@ -959,20 +1021,23 @@ const make = Effect.gen(function* () {
           };
         }
         const onItsPool =
-          typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
+          typeof pool === "string" && command.type !== "thread.ask.sync"
+            ? commandOnPool(command, projection, pool)
+            : command;
         return decide(
           projection,
-          onItsPool.type === "thread.create" && creation.worktree
+          onItsPool.type === "thread.create"
             ? {
                 ...onItsPool,
-                branch: creation.worktree.branch,
-                worktreePath: creation.worktree.path,
+                branch: creation.worktree?.branch ?? null,
+                worktreePath: creation.worktree?.path ?? null,
               }
             : onItsPool,
           ctx,
           {
             ...(creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs }),
             ...(creation.expectedRun === undefined ? {} : { run: creation.expectedRun }),
+            personId: actor.userId,
             preparation,
           },
         );
@@ -1296,6 +1361,13 @@ const make = Effect.gen(function* () {
 
   const snapshot: ThreadEngine["Service"]["snapshot"] = (actor) =>
     Effect.map(readable(actor), ({ head, projection }) => ({ snapshotSequence: head, projection }));
+
+  const workspace: ThreadEngine["Service"]["workspace"] = (actor) =>
+    Effect.map(readable(actor), ({ projection: { thread } }) => ({
+      projectId: thread.projectId,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+    }));
 
   const subscribe: ThreadEngine["Service"]["subscribe"] = (actor, input) =>
     serialized(
@@ -1721,6 +1793,7 @@ const make = Effect.gen(function* () {
     restoreTrash,
     purgeTrash,
     snapshot,
+    workspace,
     commandOutput,
     subscribe,
     apply,

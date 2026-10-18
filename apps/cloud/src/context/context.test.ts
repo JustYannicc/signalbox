@@ -31,6 +31,7 @@ import { MAIN_REF, threadRef, wipRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import { makeMemoryCloud } from "../testing.ts";
+import { pauseTaskDone } from "../automations/taskLifecycleTesting.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { ThreadDirectory } from "../thread/ThreadDirectory.ts";
 import * as CloudRpc from "../user/rpc.ts";
@@ -287,6 +288,9 @@ const world = Effect.gen(function* () {
     role: "contributor",
   });
 
+  yield* pauseTaskDone(cloud, "user_alice", billing.projectId);
+  yield* pauseTaskDone(cloud, "user_bob", billing.projectId);
+  yield* pauseTaskDone(cloud, "user_alice", "scratch");
   // Alice's thread in Billing built the toggle; its files landed on `main`.
   const toggleThread = ThreadId.make("thread-dark-mode");
   yield* launch(alice, toggleThread, billing.projectId, "Add a dark mode toggle to the settings");

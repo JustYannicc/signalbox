@@ -68,6 +68,7 @@ const setup = (
     Effect.gen(function* () {
       const folders = yield* UserFolders.UserFolders;
       return CloudThreadService.CloudThreadService.of({
+        uploadFeedback: () => Effect.die("not used by notes"),
         answerSecret: () => Effect.die("not used by notes"),
         launchThread: (_actor, input) =>
           Effect.gen(function* () {
@@ -82,6 +83,8 @@ const setup = (
             };
           }),
         dispatchCommand: unused,
+        answerAskAsAssistant: unused,
+        syncAutomationAsk: unused,
         threadSnapshot: unused,
         getTurnItem: () => Effect.succeed(null),
         threadHistoryPage: unused,

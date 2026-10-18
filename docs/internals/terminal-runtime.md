@@ -1,9 +1,14 @@
 # Terminal runtime
 
-The environment server owns PTYs, session lifetime, and retained output. Every
+The environment owns PTYs, session lifetime, and retained output. Every
 client, including the desktop renderer, attaches through the environment connection.
 This lets clients reconnect or share a running session. Renderer choices stay local
 to each client and do not change terminal contracts.
+
+In cloud, the thread owns durable session state and a 128 KiB output tail; the runner
+owns the PTY. A replacement machine cannot restore a process. Lease, connection,
+and terminal generations fence reports so a retired process cannot mutate its
+replacement, and input receipts prevent reconnects from typing twice.
 
 ## Output and retention
 
@@ -15,7 +20,7 @@ Persistence queues the mutable history buffer and reads its latest value when th
 write runs. Clear, restart, and close must drain writes before completing their
 lifecycle boundary.
 
-Server history is capped at 5,000 lines and 8 MiB of UTF-8 text per terminal, so a
+Self-hosted server history is capped at 5,000 lines and 8 MiB of UTF-8 text per terminal, so a
 long unterminated line cannot bypass retention. Eviction removes the oldest output
 without splitting Unicode code points; live output is not truncated. Release
 discarded chunk references immediately, even if array compaction happens later.

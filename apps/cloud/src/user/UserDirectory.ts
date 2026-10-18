@@ -167,6 +167,8 @@ export interface UserObjectApi {
     readonly projectId: ProjectId;
     readonly ownerId: SignalboxContextId;
   }) => Promise<void>;
+  /** A thread object's terminal outbox delivery, in `terminalSync.wire.delivery` encoding. */
+  readonly recordTerminalEvents: (encoded: unknown) => Promise<void>;
   /**
    * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
    * user's thread's next domain events with their sequence, in order and in
@@ -194,6 +196,7 @@ export interface UserObjectApi {
     readonly returnTo: string;
   }) => Promise<ConnectStart>;
   readonly completeGitHubConnect: (grantId: string) => Promise<ConnectResult>;
+  readonly cancelGitHubConnect: (grantId: string) => Promise<boolean>;
   /** Ends a connect attempt that came back in another browser, and what it connected. */
   readonly abortGitHubConnect: (grantId: string) => Promise<void>;
   readonly disconnectGitHub: () => Promise<void>;
@@ -386,12 +389,14 @@ const METHODS = Object.keys({
   shellSnapshot: true,
   recordThreadSummary: true,
   copyThreadHome: true,
+  recordTerminalEvents: true,
   threadEvents: true,
   driveEvents: true,
   receiveHook: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,
+  cancelGitHubConnect: true,
   abortGitHubConnect: true,
   disconnectGitHub: true,
   githubAccessToken: true,

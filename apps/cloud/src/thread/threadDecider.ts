@@ -1,9 +1,11 @@
+import { type ThreadCommand } from "./threadCommands.ts";
+import { decideAsk } from "./threadAsks.ts";
+import { runtimeResponseEvents } from "./runtimeResponses.ts";
 import {
   type ModelSelection,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2AppThreadLineage,
-  type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -18,10 +20,9 @@ import {
   type PreparationState,
   retryPreparationEvents,
 } from "./preparation/preparationState.ts";
-import { decideLifecycleCommand } from "./lifecycleCommands.ts";
 import { decideQueuedRunCommand } from "./queuedRunCommands.ts";
-import { respondToRuntimeRequest } from "./runtimeRequests.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
+import * as threadLifecycle from "./threadLifecycle.ts";
 import {
   activeRun,
   cancelQueuedEvents,
@@ -60,10 +61,7 @@ const reject = (message: string, record = true): Decision => ({
 });
 
 type Projection = OrchestrationV2ThreadProjection;
-type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
-  OrchestrationV2Command,
-  { readonly type: T }
->;
+type CommandOf<T extends ThreadCommand["type"]> = Extract<ThreadCommand, { readonly type: T }>;
 
 /** A thread's own branch, and the path clients address its working tree by. */
 export interface ThreadWorktree {
@@ -76,6 +74,11 @@ export const unsupported = () => "This action isn't available in the cloud yet."
 
 const CLOUD_COMMAND_TYPES = [
   "thread.create",
+  "thread.ask.raise",
+  "thread.ask.answer",
+  "thread.ask.withdraw",
+  "thread.ask.sync",
+  "runtime-request.respond",
   "message.dispatch",
   "run.interrupt",
   "prepared-run.retry",
@@ -94,7 +97,6 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request-link.sync",
   "thread.archive",
   "thread.unarchive",
-  "runtime-request.respond",
   "thread.user-input.dismiss",
   "thread.settle",
   "thread.auto-settle",
@@ -103,22 +105,20 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pin",
   "thread.unpin",
   "thread.pin.reorder",
-] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
+] as const satisfies ReadonlyArray<ThreadCommand["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
 /**
  * The commands `decide` serves; its switch is exhaustive over them. The public
  * API lists the rest as gaps (`api/cloudCoverage.ts`).
  */
-export const CLOUD_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set(
-  CLOUD_COMMAND_TYPES,
-);
+export const CLOUD_COMMANDS: ReadonlySet<ThreadCommand["type"]> = new Set(CLOUD_COMMAND_TYPES);
 
-const isCloudCommand = (command: OrchestrationV2Command): command is CloudCommand =>
+const isCloudCommand = (command: ThreadCommand): command is CloudCommand =>
   CLOUD_COMMANDS.has(command.type);
 
 /** The thread a command addresses. Commands without a single target thread are not served. */
-export function commandThreadId(command: OrchestrationV2Command) {
+export function commandThreadId(command: ThreadCommand) {
   return "threadId" in command ? command.threadId : null;
 }
 
@@ -166,22 +166,13 @@ function dispatchMessage(
   const { thread } = projection;
   const updates: Array<OrchestrationV2DomainEvent> = [];
   let current = thread;
-  if (current.archivedAt !== null) {
-    current = { ...current, archivedAt: null, updatedAt: ctx.now };
-    updates.push(threadEvent(ctx, "thread.unarchived", current));
-  }
-  if (current.settledOverride !== null || current.settledAt !== null) {
-    current = {
-      ...current,
-      settledOverride: null,
-      settledAt: null,
-      unsettledAt: current.settledOverride === "active" ? current.unsettledAt : ctx.now,
-      updatedAt: ctx.now,
-    };
-    updates.push(threadEvent(ctx, "thread.unsettled", current));
+  const reopened = threadLifecycle.reopenForMessage(thread, ctx);
+  if (reopened !== null) {
+    current = reopened.thread;
+    updates.push(reopened.event);
   }
   const firstMessage = !projection.messages.some((message) => message.role === "user");
-  if (command.titleSeed !== undefined && firstMessage && command.titleSeed !== thread.title) {
+  if (command.titleSeed !== undefined && firstMessage && command.titleSeed !== current.title) {
     current = { ...current, title: command.titleSeed, updatedAt: ctx.now };
     updates.push(threadEvent(ctx, "thread.metadata-updated", current));
   }
@@ -223,14 +214,15 @@ function dispatchMessage(
     createdAt: ctx.now,
     updatedAt: ctx.now,
   };
-  const steered = steerTarget(projection, command);
+  const updatedProjection = applyEvents(projection, updates) ?? projection;
+  const steered = steerTarget(updatedProjection, command);
   if (steered !== undefined) {
-    return accept([...updates, ...steerEvents(projection, steered, message, "steer", ctx)]);
+    return accept([...updates, ...steerEvents(updatedProjection, steered, message, "steer", ctx)]);
   }
   const queuePosition =
     Math.max(
       0,
-      ...projection.runs
+      ...updatedProjection.runs
         .filter((run) => run.status === "queued")
         .map((run) => run.queuePosition ?? run.ordinal),
     ) + 1;
@@ -260,7 +252,7 @@ function dispatchMessage(
   if (live !== undefined) {
     return accept([...updates, recorded, runEvent(ctx, "run.created", run)]);
   }
-  const withMessage = applyEvents(projection, [...updates, recorded]) ?? projection;
+  const withMessage = applyEvents(updatedProjection, [recorded]) ?? updatedProjection;
   return accept([...updates, recorded, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
 }
 
@@ -273,18 +265,22 @@ function updateThread(
   return accept([threadEvent(ctx, type, { ...projection.thread, ...patch, updatedAt: ctx.now })]);
 }
 
+const lifecycleDecision = (decision: threadLifecycle.LifecycleDecision): Decision =>
+  decision._tag === "accepted" ? accept(decision.events) : reject(decision.message);
+
 /**
  * The commands a cloud thread serves today. Anything else is rejected with a
  * message the client shows, never silently dropped.
  */
 export function decide(
   projection: Projection | null,
-  command: OrchestrationV2Command,
+  command: ThreadCommand,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
   expected: {
     readonly idleSinceMs?: number;
     readonly run?: Pick<OrchestrationV2Run, "id" | "status"> | null;
+    readonly personId?: string;
     readonly preparation?: PreparationState | null;
   } = {},
 ): Decision {
@@ -293,7 +289,8 @@ export function decide(
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
   }
   if (projection === null) return reject("This thread does not exist.");
-  if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
+  if (projection.thread.deletedAt !== null && command.type !== "thread.ask.sync")
+    return reject("This thread was deleted.");
   if (expected.run !== undefined) {
     const latest = projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
     if (latest?.id !== expected.run?.id || latest?.status !== expected.run?.status)
@@ -305,6 +302,27 @@ export function decide(
       };
   }
   switch (command.type) {
+    case "thread.ask.raise":
+    case "thread.ask.answer":
+    case "thread.ask.withdraw":
+    case "thread.ask.sync":
+      return decideAsk(projection, command, ctx, dispatchMessage, (state, response, at) =>
+        runtimeResponseEvents(
+          state,
+          response,
+          at,
+          dispatchMessage,
+          command.type === "thread.ask.answer"
+            ? command.answeredBy
+            : { kind: "person", personId: expected.personId ?? "thread-owner" },
+        ),
+      );
+    case "runtime-request.respond":
+    case "thread.user-input.dismiss":
+      return runtimeResponseEvents(projection, command, ctx, dispatchMessage, {
+        kind: "person",
+        personId: expected.personId ?? "thread-owner",
+      });
     case "prepared-run.retry": {
       const current = expected.preparation;
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
@@ -338,8 +356,10 @@ export function decide(
     case "thread.auto-settle.set":
     case "thread.pin":
     case "thread.unpin":
-    case "thread.pin.reorder":
-      return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported());
+    case "thread.pin.reorder": {
+      const decision = threadLifecycle.decide(projection, command, ctx);
+      return decision === undefined ? reject(unsupported()) : lifecycleDecision(decision);
+    }
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {
@@ -429,56 +449,12 @@ export function decide(
         return reject("This thread changed since it went idle.");
       }
       return updateThread(projection, "thread.archived", { archivedAt: ctx.now }, ctx);
-    case "thread.unarchive":
+    case "thread.unarchive": {
+      // Unarchiving a settled task reopens it.
+      const reopened = threadLifecycle.decide(projection, command, ctx);
+      if (reopened !== undefined) return lifecycleDecision(reopened);
       if (projection.thread.archivedAt === null) return reject("This thread is not archived.");
       return updateThread(projection, "thread.unarchived", { archivedAt: null }, ctx);
-    case "runtime-request.respond":
-    case "thread.user-input.dismiss": {
-      const resolved = respondToRuntimeRequest(projection, command, ctx);
-      if (
-        resolved._tag === "rejected" ||
-        command.type === "thread.user-input.dismiss" ||
-        command.decision === "cancel" ||
-        command.decision === "decline"
-      )
-        return resolved;
-      const request = projection.runtimeRequests.find(
-        (candidate) => candidate.id === command.requestId,
-      );
-      if (request?.responseCapability.type !== "message") return resolved;
-      const item = projection.turnItems.find(
-        (candidate) =>
-          candidate.type === "user_input_request" && candidate.requestId === command.requestId,
-      );
-      if (item?.type !== "user_input_request")
-        return reject("The question for this request was not found.");
-      const replies = item.questions.flatMap((question) => {
-        const answer = command.answers?.[question.id];
-        return typeof answer === "string" && answer.trim().length > 0
-          ? [`${question.question}\n${answer.trim()}`]
-          : [];
-      });
-      const live = activeRun(projection);
-      const answered = applyEvents(projection, resolved.events) ?? projection;
-      const sent = dispatchMessage(
-        answered,
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: MessageId.make(`async-answer:${command.requestId}`),
-          text: replies.join("\n\n"),
-          attachments: [],
-          createdBy: "user",
-          creationSource: "server",
-          dispatchMode:
-            live !== undefined && canSteer(projection, live)
-              ? { type: "steer_active", targetRunId: live.id }
-              : { type: "queue_after_active" },
-        },
-        ctx,
-      );
-      return sent._tag === "rejected" ? sent : accept([...resolved.events, ...sent.events]);
     }
     case "thread.model-selection.set":
       return updateThread(

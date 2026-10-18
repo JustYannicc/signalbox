@@ -25,6 +25,7 @@ import * as DateTime from "effect/DateTime";
 import * as TestClock from "effect/testing/TestClock";
 
 import { layerThreadObject } from "../testing.ts";
+import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import { scriptedModelSelection, scriptedReply } from "./scriptedProvider.ts";
 import { applyEvents } from "./threadProjection.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -131,6 +132,104 @@ const replayFrom = (engine: ThreadEngine.ThreadEngine["Service"], afterSequence:
   );
 
 describe("ThreadEngine", () => {
+  it.effect(
+    "persists remote adoption across eviction without replacing a stopped thread's history or session",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const worktree = remoteThreadWorktree(personal.place.driveId, threadId);
+        const previous = yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            const launched = yield* launch(engine);
+            yield* engine.step;
+            yield* engine.dispatch(
+              owner,
+              {
+                type: "run.interrupt",
+                commandId: CommandId.make("stop-for-publication"),
+                threadId,
+                runId: launched.projection.runs[0]!.id,
+                holdQueue: true,
+              },
+              personal,
+            );
+            return yield* engine.snapshot(owner);
+          }),
+        );
+        yield* withObject(filename, (engine, store) =>
+          Effect.gen(function* () {
+            const command = {
+              type: "thread.metadata.update" as const,
+              commandId: CommandId.make("adopt-remote"),
+              threadId,
+            };
+            const before = yield* engine.snapshot(owner);
+            const result = yield* engine.dispatch(owner, command, {
+              ...personal,
+              place: null,
+              worktree,
+            });
+            expect(
+              yield* engine.dispatch(owner, command, { ...personal, place: null, worktree }),
+            ).toMatchObject({ sequence: result.sequence });
+            const after = yield* engine.snapshot(owner);
+            expect(after.snapshotSequence).toBe(before.snapshotSequence + 1);
+            expect(after.projection.thread).toMatchObject({
+              branch: worktree.branch,
+              worktreePath: worktree.path,
+            });
+            expect(after.projection.runs).toEqual(previous.projection.runs);
+            expect(after.projection.messages).toEqual(previous.projection.messages);
+            expect(after.projection.providerThreads).toEqual(previous.projection.providerThreads);
+            expect(after.projection.providerSessions).toEqual(previous.projection.providerSessions);
+            expect((yield* store.owner)?.driveId).toBe(personal.place.driveId);
+          }),
+        );
+        yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            expect((yield* engine.snapshot(owner)).projection.thread).toMatchObject({
+              branch: worktree.branch,
+              worktreePath: worktree.path,
+            });
+            yield* engine.dispatch(
+              owner,
+              send("continue-published", "Continue after publication"),
+              personal,
+            );
+            yield* runToIdle(engine);
+            const after = yield* engine.snapshot(owner);
+            expect(after.projection.runs.map((run) => run.status)).toEqual([
+              "interrupted",
+              "completed",
+            ]);
+            expect(after.projection.thread.branch).toBe(worktree.branch);
+          }),
+        );
+      }),
+  );
+
+  it.effect("refuses a trusted adoption aimed at another drive or a host directory", () =>
+    withObject(freshDatabase(), (engine) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const before = yield* engine.snapshot(owner);
+        const error = yield* Effect.flip(
+          engine.dispatch(
+            owner,
+            {
+              type: "thread.metadata.update",
+              commandId: CommandId.make("wrong-home"),
+              threadId,
+            },
+            { ...personal, place: null, worktree: { branch: "main", path: "/tmp/host" } },
+          ),
+        );
+        expect(error._tag).toBe("ThreadCommandRejectedError");
+        expect(yield* engine.snapshot(owner)).toEqual(before);
+      }),
+    ),
+  );
+
   it.effect("folds streaming into the final search row and keeps its Find anchor", () =>
     withObject(freshDatabase(), (engine, store) =>
       Effect.gen(function* () {

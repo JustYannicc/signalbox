@@ -10,6 +10,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -25,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import { createSignalboxAskCommand } from "./signalboxAsks.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "@t3tools/contracts/signalboxAnalytics";
 import { PERSON_TIMEZONE_WS_METHODS } from "@t3tools/contracts/personTimezone";
@@ -85,6 +87,79 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("requires an operate grant to answer durable asks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const asks = createCommandPermissions(runtime, ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+        const input = { type: "thread.ask.answer" };
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(createSignalboxAskCommand(runtime).permissionAtom(env))).toBe(false);
+        expect(registry.get(asks.permissionAtom(env, { type: "thread.snooze" }))).toBe(false);
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(false);
+        expect((yield* asks.authorize(registry, env, input).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(true);
+        yield* asks.authorize(registry, env, input);
+      }),
+    ),
+  );
+  it.effect("requires a terminal grant on the destination for terminal mutations", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        const tags = [
+          WS_METHODS.terminalOpen,
+          WS_METHODS.terminalWrite,
+          WS_METHODS.terminalResize,
+          WS_METHODS.terminalClear,
+          WS_METHODS.terminalRestart,
+          WS_METHODS.terminalClose,
+        ] as const;
+        for (const tag of tags) {
+          const terminal = createCommandPermissions(runtime, tag);
+          expect(registry.get(terminal.permissionAtom(env))).toBe(false);
+          expect(
+            (yield* terminal.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthTerminalOperateScope);
+        }
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthTerminalOperateScope],
+            permissions: [AuthTerminalOperateScope],
+          }),
+        );
+        for (const tag of tags) {
+          const terminal = createCommandPermissions(runtime, tag);
+          expect(registry.get(terminal.permissionAtom(env))).toBe(true);
+          yield* terminal.authorize(registry, env);
+          expect(registry.get(terminal.permissionAtom(other))).toBe(false);
+        }
+      }),
+    ),
+  );
+
+  it.effect("requires the current destination operate grant for provider feedback", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const feedback = createCommandPermissions(runtime, WS_METHODS.providerUploadFeedback);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(feedback.permissionAtom(env))).toBe(true);
+        yield* feedback.authorize(registry, env);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(feedback.permissionAtom(env))).toBe(false);
+        expect((yield* feedback.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
   it.effect("requires the destination's orchestration grant to cancel preparation", () =>
     Effect.scoped(
       Effect.gen(function* () {

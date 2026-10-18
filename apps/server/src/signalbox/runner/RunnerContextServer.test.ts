@@ -379,6 +379,8 @@ describe("context server (#141)", () => {
         "t3_thread_read",
         "t3_thread_wait",
         "task_status",
+        "t3_ask_list",
+        "t3_ask_read",
         "read_pr",
       ]);
 
@@ -607,6 +609,9 @@ describe("context server (#141)", () => {
         "t3_thread_interrupt",
         "push",
         "create_pr",
+        "t3_ask_raise",
+        "t3_ask_answer",
+        "t3_ask_withdraw",
         "edit_pr",
         "comment_pr",
         "reply_to_pr_review",

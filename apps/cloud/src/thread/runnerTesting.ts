@@ -41,12 +41,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { layerThreadObject } from "../testing.ts";
+import { layerThreadObject } from "./TerminalTesting.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
 import { onRunnerMessage, type RunnerSocketHost } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import * as ThreadTerminals from "./terminal/ThreadTerminals.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { PullRequestSync } from "./pullRequests/PullRequestSync.ts";
 
@@ -204,6 +205,7 @@ export const hello = (generation: number, token: string) => ({
   generation,
   token,
   lastAckedSequence: 0,
+  terminalProcessId: "test-terminal-process",
   drains: true,
   runtimeResponses: true,
   pulls: true,
@@ -437,6 +439,7 @@ export const hostFor = (
   runner: ThreadRunner.ThreadRunner["Service"],
   sockets: Array<WebSocket>,
   holds: () => boolean = () => false,
+  terminals?: ThreadTerminals.ThreadTerminals["Service"],
 ): Effect.Effect<FakeRunnerSocketHost> =>
   Effect.map(Effect.context<never>(), (context) => {
     const autoResponses = new WeakMap<WebSocket, Date>();
@@ -451,6 +454,13 @@ export const hostFor = (
         Effect.runPromiseWith(context)(
           Effect.provideService(effect, ThreadRunner.ThreadRunner, runner),
         ),
+      terminals:
+        terminals === undefined
+          ? undefined
+          : (effect) =>
+              Effect.runPromiseWith(context)(
+                Effect.provideService(effect, ThreadTerminals.ThreadTerminals, terminals),
+              ),
       holdsTurn: () => Promise.resolve(holds()),
       afterChange: () => Promise.resolve(),
       recordAutoResponse: (socket, at) =>
@@ -470,6 +480,7 @@ export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner
 export { ThreadRunner } from "./runner/ThreadRunner.ts";
 export { recoverRunEvents } from "./runner/runRecovery.ts";
 export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+
 /** The Durable Object's Promise boundary over the same scoped engine as the test. */
 export const threadObjectApiFor = (
   context: Context.Context<Layer.Success<ReturnType<typeof layerThreadObject>>>,

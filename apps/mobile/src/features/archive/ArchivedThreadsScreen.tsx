@@ -199,6 +199,8 @@ function ArchivedThreadRow(props: {
     AuthOrchestrationOperateScope,
   );
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
+  const isSettledTask =
+    props.thread.settledAt !== null || props.thread.settledOverride === "settled";
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
@@ -266,9 +268,9 @@ function ArchivedThreadRow(props: {
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={{
-        accessibilityLabel: `Unarchive ${props.thread.title}`,
+        accessibilityLabel: `${isSettledTask ? "Reopen" : "Unarchive"} ${props.thread.title}`,
         icon: "arrow.uturn.backward",
-        label: "Unarchive",
+        label: isSettledTask ? "Reopen" : "Unarchive",
         onPress: props.onUnarchive,
       }}
       simultaneousWith={props.simultaneousSwipeGesture}

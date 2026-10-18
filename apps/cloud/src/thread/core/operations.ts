@@ -1,8 +1,9 @@
+import { clientAskCommand } from "@t3tools/shared/signalboxAsks";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
+  CommandId,
   type ChatAttachment,
-  type OrchestrationV2Command,
   OrchestrationV2CommandOutputError,
   type OrchestrationV2ThreadStreamItem,
   type ProjectId,
@@ -14,6 +15,9 @@ import * as Hex from "effect/encoding/Hex";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+
+import type { ThreadCommand } from "../threadCommands.ts";
+import { dispatchAutomationAskAnswer } from "../../automations/askAnswers.ts";
 
 import { CloudAttachments } from "../../attachments/CloudAttachments.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
@@ -31,6 +35,7 @@ import { type Actor, ThreadCommandRejectedError, ThreadNotFoundError } from "../
 import type { ThreadCreation } from "../ThreadEngine.ts";
 import * as Threads from "../Threads.ts";
 import { resuming } from "./resuming.ts";
+import { makeWorkspaceRefresh } from "./remoteWorkspace.ts";
 
 type Batch = ReadonlyArray<OrchestrationV2ThreadStreamItem>;
 
@@ -99,15 +104,16 @@ const isNotFound = Schema.is(ThreadNotFoundError);
 const isRefusal = (error: unknown) => isRejected(error) || isNotFound(error);
 
 /** Commands that can start a turn or pick a model: they carry the resolved pools, instructions and secrets. */
-const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
+const PICKS_A_POOL: ReadonlySet<ThreadCommand["type"]> = new Set([
   "thread.create",
   "message.dispatch",
-  "thread.model-selection.set",
+  "thread.ask.answer",
   "runtime-request.respond",
+  "thread.model-selection.set",
 ]);
 
 /** What a command sends, for the thread's kind (`ThreadKindTurns`). */
-const messageOf = (command: OrchestrationV2Command) =>
+const messageOf = (command: ThreadCommand) =>
   command.type === "message.dispatch" ? { text: command.text, title: command.titleSeed } : null;
 
 const rejectTrashedFolder = <A>(
@@ -124,6 +130,13 @@ export const makeThreads = Effect.gen(function* () {
   const threadContexts = yield* ThreadContexts;
   const attachments = yield* CloudAttachments;
   const kindTurns = yield* ThreadKindTurns;
+
+  const refreshWorkspace = makeWorkspaceRefresh({ directory, threadContexts, crypto });
+
+  const refreshRemoteWorkspace: Threads.Threads["Service"]["refreshRemoteWorkspace"] = (
+    actor,
+    threadId,
+  ) => Effect.asVoid(refreshWorkspace(actor, threadId));
 
   /** The thread's turn from its home's chain, with its kind's level and the status line's last on it. */
   const turnOf = (
@@ -147,8 +160,19 @@ export const makeThreads = Effect.gen(function* () {
       }),
     );
 
-  const dispatchCommand: Threads.Threads["Service"]["dispatch"] = (actor, command, expectedRun) =>
+  const dispatchCommand = (
+    actor: Actor,
+    command: ThreadCommand,
+    expectedRun?: ThreadCreation["expectedRun"],
+  ) =>
     Effect.gen(function* () {
+      const automationAnswer =
+        command.type === "thread.ask.sync"
+          ? null
+          : yield* dispatchAutomationAskAnswer(actor, command, {
+              threadSnapshot: (who, id) => threadSnapshot(who, id),
+            });
+      if (automationAnswer !== null) return automationAnswer;
       const threadId = commandThreadId(command);
       if (threadId === null) {
         return yield* ThreadCommandRejectedError.forCommand(
@@ -179,6 +203,12 @@ export const makeThreads = Effect.gen(function* () {
           id: command.commandId,
           type: command.type,
         });
+      }
+      if (
+        command.type !== "thread.create" &&
+        (PICKS_A_POOL.has(command.type) || command.type === "queue.resume")
+      ) {
+        yield* refreshRemoteWorkspace(actor, threadId);
       }
       const creation = {
         ...placed(place, threadId, turn),
@@ -225,6 +255,11 @@ export const makeThreads = Effect.gen(function* () {
         id: input.commandId,
         type: "thread.launch",
       });
+      if (input.reuseExistingThread === true && input.threadId !== undefined) {
+        yield* refreshRemoteWorkspace(actor, input.threadId).pipe(
+          Effect.catchTags({ ThreadNotFoundError: () => Effect.void }),
+        );
+      }
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
@@ -298,7 +333,12 @@ export const makeThreads = Effect.gen(function* () {
 
   const threadSnapshot: Threads.Threads["Service"]["snapshot"] = (actor, threadId) =>
     Effect.map(
-      directory.forThread(threadId).snapshot(actor),
+      Effect.gen(function* () {
+        const handle = directory.forThread(threadId);
+        const snapshot = yield* handle.snapshot(actor);
+        const adopted = yield* refreshWorkspace(actor, threadId, snapshot.projection.thread);
+        return adopted ? yield* handle.snapshot(actor) : snapshot;
+      }).pipe(Effect.catchTags({ ThreadCommandRejectedError: Effect.die })),
       ({ snapshotSequence, projection }) => ({
         snapshotSequence,
         projection,
@@ -322,6 +362,9 @@ export const makeThreads = Effect.gen(function* () {
   const subscribeThread: Threads.Threads["Service"]["subscribe"] = (actor, input) =>
     Stream.unwrap(
       Effect.gen(function* () {
+        yield* refreshRemoteWorkspace(actor, input.threadId).pipe(
+          Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
+        );
         const handle = directory.forThread(input.threadId);
         const cursor = yield* Ref.make(input.afterSequence);
         yield* traceSynchronization("connecting", {
@@ -380,7 +423,23 @@ export const makeThreads = Effect.gen(function* () {
       directory.forThread(input.threadId).getWorkflowScript(actor, input),
     stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),
     launch: launchThread,
-    dispatch: dispatchCommand,
+    dispatch: (actor, command, expectedRun) =>
+      dispatchCommand(actor, clientAskCommand(command, actor.userId), expectedRun),
+    answerAskAsAssistant: (actor, caller, command) =>
+      dispatchCommand(actor, {
+        ...command,
+        answeredBy: { kind: "assistant", personId: actor.userId, assistantThreadId: caller },
+      }),
+    syncAutomationAsk: (actor, threadId, ask) =>
+      dispatchCommand(actor, {
+        type: "thread.ask.sync",
+        commandId: CommandId.make(
+          `automation-ask:${ask.id}:${ask.updatedAt}:${ask.status}:${ask.rounds.length}`,
+        ),
+        threadId,
+        ask,
+      }),
+    refreshRemoteWorkspace,
     snapshot: threadSnapshot,
     history: threadHistoryPage,
     subscribe: subscribeThread,

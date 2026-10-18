@@ -1,6 +1,11 @@
 import {
+  PullRequestCommentInput,
+  PullRequestCommentUpdateInput,
   PullRequestOperationId,
+  PullRequestReactionInput,
   PullRequestRef,
+  PullRequestReviewHeadSha,
+  PullRequestSubmitReviewInput,
   PullRequestThreadReplyInput,
   PullRequestThreadResolutionInput,
 } from "@t3tools/contracts";
@@ -24,6 +29,35 @@ export const Request = Schema.Union([
     ...target,
     threadId: PullRequestThreadResolutionInput.fields.threadId,
     resolved: PullRequestThreadResolutionInput.fields.resolved,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("comment"),
+    ...target,
+    body: PullRequestCommentInput.fields.body,
+    operationId: PullRequestOperationId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("updateComment"),
+    ...target,
+    commentId: PullRequestCommentUpdateInput.fields.commentId,
+    kind: PullRequestCommentUpdateInput.fields.kind,
+    body: PullRequestCommentUpdateInput.fields.body,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("submitReview"),
+    ...target,
+    operationId: PullRequestOperationId,
+    headSha: PullRequestReviewHeadSha,
+    verdict: PullRequestSubmitReviewInput.fields.verdict,
+    body: PullRequestSubmitReviewInput.fields.body,
+    comments: PullRequestSubmitReviewInput.fields.comments,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("setReaction"),
+    ...target,
+    subjectId: PullRequestReactionInput.fields.subjectId,
+    content: PullRequestReactionInput.fields.content,
+    reacted: PullRequestReactionInput.fields.reacted,
   }),
 ]);
 export type Request = typeof Request.Type;

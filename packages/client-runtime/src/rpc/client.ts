@@ -1,3 +1,4 @@
+import { withTerminalCommandId } from "./terminalCommandId.ts";
 import { clientThreadAttributes } from "@t3tools/shared/clientTraceSafety";
 import {
   EnvironmentAuthorizationError,
@@ -217,7 +218,7 @@ const authorizeRequest = Effect.fn("EnvironmentRpc.authorize")(function* (
   yield* guard.authorize(supervisor.target.environmentId, method, input);
 });
 
-export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
+const sendRequest = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(tag: TTag, input: EnvironmentRpcInput<TTag>) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
@@ -238,6 +239,11 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
+
+export const requestGuarded = <TTag extends EnvironmentUnaryRpcTag>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+) => withTerminalCommandId(tag, input, (keyed) => sendRequest(tag, keyed));
 
 export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
   tag: TTag,

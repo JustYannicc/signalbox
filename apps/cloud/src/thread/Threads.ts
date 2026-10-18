@@ -1,3 +1,4 @@
+import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import type {
   OrchestrationV2Command,
   OrchestrationV2AppThreadLineage,
@@ -38,6 +39,16 @@ type ThreadError = ThreadReadError | ThreadCommandRejectedError;
 export class Threads extends Context.Service<
   Threads,
   {
+    readonly syncAutomationAsk: (
+      actor: Actor,
+      threadId: ThreadId,
+      ask: SignalboxAsk,
+    ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    readonly answerAskAsAssistant: (
+      actor: Actor,
+      caller: ThreadId,
+      command: typeof SignalboxAskAnswerCommand.Type,
+    ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
     /** A missing thread id is derived from actor + command id, so retrying a launch cannot duplicate it. */
     readonly subscribePreparation: (
       actor: Actor,
@@ -58,6 +69,11 @@ export class Threads extends Context.Service<
       command: OrchestrationV2Command,
       expectedRun?: Pick<OrchestrationV2Run, "id" | "status"> | null,
     ) => Effect.Effect<OrchestrationV2DispatchCommandResult, ThreadError>;
+    /** Adopts a newly published drive's own thread branch, using the current authoritative home. */
+    readonly refreshRemoteWorkspace: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ThreadError>;
     readonly getWorkflowScript: (
       actor: Actor,
       input: OrchestrationV2GetWorkflowScriptInput,

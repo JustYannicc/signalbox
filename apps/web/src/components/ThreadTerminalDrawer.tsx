@@ -60,6 +60,7 @@ import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isTerminalUrl } from "../terminal-links";
+import { useSignalboxTerminalLinks } from "../signalbox/terminal/cloudTerminalLinks";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -450,9 +451,22 @@ function TerminalSessionViewport({
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const canActivateTerminalLink = useEffectEvent(
-    (text: string) =>
-      isTerminalUrl(text) || readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+  // signalbox: paths on a filesystem the user can't reach open in the Files panel.
+  const signalboxTerminalLinks = useSignalboxTerminalLinks({
+    environmentId,
+    threadRef,
+    cwd,
+    workspaceRoot: worktreePath ?? cwd,
+  });
+  const canActivateTerminalLink = useEffectEvent((text: string) => {
+    if (isTerminalUrl(text)) return true;
+    return (
+      signalboxTerminalLinks.canActivatePathLink(text) ??
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    );
+  });
+  const handleTerminalPathLink = useEffectEvent((text: string) =>
+    signalboxTerminalLinks.handlePathLink(text),
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -513,7 +527,7 @@ function TerminalSessionViewport({
   const writeTerminal = useEffectEvent((data: string) =>
     runTerminalWrite({
       environmentId,
-      input: { threadId, terminalId, data },
+      input: { threadId, terminalId, data, generation: terminalSession.generation },
     }),
   );
   const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
@@ -939,6 +953,7 @@ function TerminalSessionViewport({
           );
           return;
         }
+        if (handleTerminalPathLink(text)) return;
         const target = resolvePathLinkTarget(text, cwd);
         void (async () => {
           const result = await openTerminalPath(target);

@@ -20,12 +20,12 @@ import {
   type RunnerRefusal,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ProviderFailure,
-  OrchestrationV2ThreadProjection,
+import {
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ThreadProjection,
   RunId,
-  ThreadId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { TurnItemId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -176,6 +176,12 @@ export const NativeChildRelay = Context.Reference<NativeChildRelayService>(
   },
 );
 
+/** A terminal holds the machine independently of a provider turn or preview socket. */
+export const TerminalHold = Context.Reference<{ readonly held: Effect.Effect<boolean> }>(
+  "@signalbox/cloud/thread/runner/ThreadRunner/TerminalHold",
+  { defaultValue: () => ({ held: Effect.succeed(false) }) },
+);
+
 /**
  * Whether this cloud stores drives, and whether a thread's owner may still
  * change files in its drive: asked of their own object on every drive call,
@@ -313,6 +319,8 @@ export class ThreadRunner extends Context.Service<
     readonly reconcile: Effect.Effect<MachinePlan>;
     /** The preview tunnel can connect before the main Runner socket, using the same lease. */
     readonly previewDrive: Effect.Effect<DriveAccess | null>;
+    /** A held terminal can prepare the thread's drive even without a provider turn. */
+    readonly terminalDrive: Effect.Effect<DriveAccess | null>;
     /** The pool moved the thread off its account during `runId` (`pool/threadAccounts.ts`). */
     readonly accountMoved: (runId: RunId, message: string) => Effect.Effect<void>;
     /** Whether the ModelGateway may serve `token` for `provider` right now. */
@@ -428,6 +436,7 @@ const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
   const nativeChildRelay = yield* NativeChildRelay;
+  const terminals = yield* TerminalHold;
   const previewState = yield* PreviewState.PreviewState;
   const store = yield* ThreadStore.ThreadStore;
   const pullState = yield* PullState.PullState;
@@ -449,6 +458,7 @@ const make = Effect.gen(function* () {
   );
 
   const lease = Effect.orDie(store.machine);
+  const terminalRemoteRun = (generation: number) => RunId.make(`terminal:lease:${generation}`);
 
   const ownerId = Effect.map(Effect.orDie(store.owner), (owner) => owner?.userId ?? null);
 
@@ -573,6 +583,7 @@ const make = Effect.gen(function* () {
             steers: hello.steers === true,
             preparations: hello.protocolVersion >= 7,
             pulls: hello.pulls === true,
+            terminals: hello.terminalProcessId !== undefined,
             workflowStops: hello.workflowStops === true,
             runtimeResponses: hello.runtimeResponses === true,
             runtimeResponsesUpgrade:
@@ -1116,10 +1127,11 @@ const make = Effect.gen(function* () {
           needsUpkeep(
             lease,
             run !== undefined || pending !== null,
-            projection?.thread.archivedAt != null ||
+            (yield* terminals.held) ||
+              (projection?.thread.archivedAt != null ||
               projection?.thread.settledOverride === "settled"
-              ? false
-              : yield* previews.held,
+                ? false
+                : yield* previews.held),
           ),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
@@ -1181,8 +1193,24 @@ const make = Effect.gen(function* () {
     return {
       driveId,
       token: yield* driveToken(current.token, projection.thread.id, current.generation),
-      // Remotes are authenticated for a live turn only.
       remoteToken: null,
+    } satisfies DriveAccess;
+  });
+
+  const terminalDrive: ThreadRunner["Service"]["terminalDrive"] = Effect.gen(function* () {
+    if (!(yield* terminals.held)) return null;
+    const access = yield* previewDrive;
+    if (access === null) return null;
+    const projection = yield* engine.projection;
+    const current = yield* lease;
+    if (projection === null || current.token === null || current.status === "none") return null;
+    return {
+      ...access,
+      remoteToken: yield* remoteToken(
+        current.token,
+        projection.thread.id,
+        terminalRemoteRun(current.generation),
+      ),
     } satisfies DriveAccess;
   });
 
@@ -1314,22 +1342,31 @@ const make = Effect.gen(function* () {
       if (!drivesEnabled) return deny("This cloud stores no drives.");
       const projection = yield* engine.projection;
       const run = projection === null ? undefined : harnessRun(projection);
-      const current = projection === null ? null : yield* lease;
-      const leaseToken = current?.token ?? null;
-      if (projection === null || leaseToken === null || current?.status === "none") {
+      const current = yield* lease;
+      if (projection === null || current.status === "none" || current.token === null) {
         return deny("This thread has no machine.");
       }
       const pending = yield* Effect.orDie(pullState.pending);
-      if (run === undefined && pending === null) return deny("No turn is running on this thread.");
+      if (run === undefined && pending === null && !(yield* terminals.held)) {
+        return deny("This token is not for a live turn or terminal on this machine.");
+      }
       const threadId = projection.thread.id;
-      const forTurn =
-        run !== undefined && (yield* isRemoteToken(token, leaseToken, threadId, run.id));
-      const forPull =
+      const runGranted =
+        run !== undefined && (yield* isRemoteToken(token, current.token, threadId, run.id));
+      const terminalGranted =
+        (yield* terminals.held) &&
+        (yield* isRemoteToken(
+          token,
+          current.token,
+          threadId,
+          terminalRemoteRun(current.generation),
+        ));
+      const pullGranted =
         pending !== null &&
-        pending.generation === current?.generation &&
-        (yield* isRemoteOperationToken(token, leaseToken, threadId, pending.id));
-      if (!forTurn && !forPull) {
-        return deny("This token is not for the running turn or pull.");
+        pending.generation === current.generation &&
+        (yield* isRemoteOperationToken(token, current.token, threadId, pending.id));
+      if (!runGranted && !terminalGranted && !pullGranted) {
+        return deny("This token is not for a live turn or terminal on this machine.");
       }
       const owner = yield* Effect.orDie(store.owner);
       if (owner === null) return deny("This thread has no drive.");
@@ -1337,7 +1374,7 @@ const make = Effect.gen(function* () {
       // Fetching acts with the owner's GitHub connection, so it needs their access to the drive.
       if (drives._tag === "Some") {
         if (
-          forPull &&
+          pullGranted &&
           pending !== null &&
           !(yield* drives.value
             .writes(pending.actor_id, driveId)
@@ -1619,7 +1656,7 @@ const make = Effect.gen(function* () {
           });
         }
         if (lease.status === "none") {
-          const previewHeld = !closing && (yield* previews.held);
+          const previewHeld = (!closing && (yield* previews.held)) || (yield* terminals.held);
           if ((run === undefined && pending === null && !previewHeld) || projection === null) {
             return keep(UNNEEDED);
           }
@@ -1667,7 +1704,7 @@ const make = Effect.gen(function* () {
             });
           }
           // A preview can keep the request alive without a run to fail.
-          const previewHeld = !closing && (yield* previews.held);
+          const previewHeld = (!closing && (yield* previews.held)) || (yield* terminals.held);
           if (run === undefined && pending === null && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
@@ -1750,7 +1787,12 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        if (run !== undefined || pending !== null || (!closing && (yield* previews.held))) {
+        if (
+          run !== undefined ||
+          pending !== null ||
+          (!closing && (yield* previews.held)) ||
+          (yield* terminals.held)
+        ) {
           const busy = { ...BUSY, runId, wakeAt: pending?.retry_at ?? null };
           // Needed again: a drain under way no longer leads anywhere.
           return lease.idleSince === null && lease.drain === undefined
@@ -1872,6 +1914,7 @@ const make = Effect.gen(function* () {
     work,
     reconcile,
     previewDrive,
+    terminalDrive,
     accountMoved,
     authorizeModel,
     authorizeExecutorTurn,

@@ -14,6 +14,7 @@ import {
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
+import type { FeedbackOutcome, FeedbackRequest } from "@signalbox/runner-protocol/FeedbackProtocol";
 import type { PullOperation } from "@signalbox/runner-protocol/PullProtocol";
 import {
   MessageId,
@@ -73,6 +74,7 @@ import {
 } from "./RunnerTurnDrive.ts";
 import { SAVED_AGAIN_NOTICE, watchChanges } from "./RunnerDriveWatch.ts";
 import { isUnmeasured } from "./RunnerUsage.ts";
+import { makeRunnerFeedback } from "./RunnerFeedback.ts";
 
 /**
  * Drives one thread's turns through the provider adapters, the way the
@@ -122,6 +124,7 @@ export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("Runn
 }) {}
 
 export interface RunnerTurns {
+  readonly uploadFeedback?: (request: FeedbackRequest) => Effect.Effect<FeedbackOutcome>;
   readonly stopWorkflow?: (request: WorkflowStopRequest) => Effect.Effect<void>;
   /**
    * Starts a turn, as `turn.start` hands it over. A run already started is
@@ -157,6 +160,11 @@ export interface RunnerTurns {
   }) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
+  /** Keeps the shared drive watcher active for work started outside a turn, such as a terminal. */
+  readonly watchDrive: (
+    drive: RunnerDrive,
+    onSavedAgain?: Effect.Effect<void>,
+  ) => Effect.Effect<void>;
   /**
    * Saves everything the machine wrote, for a machine about to go (#493): the
    * drive, then each harness's session rows. Answers what couldn't be saved,
@@ -321,6 +329,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
+  const feedback = makeRunnerFeedback(
+    input.threadId,
+    (instanceId) => sessions.get(instanceId)?.runtime,
+  );
   const workflows = makeRunnerWorkflows(input.emit, undefined, input.claudeConfigDir);
   const workflowThreads = new Map<RunId, OrchestrationV2ProviderThread>();
   const turns = new Map<RunId, Turn>();
@@ -423,7 +435,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** The drive, opened by the first turn that names it; one per machine generation. */
   let drive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
   /** The drive whose changes stream in. */
-  let watching: RunnerDrive | null = null;
+  let watching: {
+    readonly drive: RunnerDrive;
+    readonly savedAgain: Set<Effect.Effect<void>>;
+  } | null = null;
   /**
    * Runs whose end is held until their files land, or whose start waits for a
    * conflict to be resolved, and the agent turn awaited for it. `stopped`: the
@@ -480,6 +495,31 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         return Effect.logWarning(message);
       }),
     );
+
+  const watchDrive: RunnerTurns["watchDrive"] = (opened, onSavedAgain) =>
+    Effect.suspend(() => {
+      if (watching?.drive === opened) {
+        if (onSavedAgain !== undefined) watching.savedAgain.add(onSavedAgain);
+        return Effect.void;
+      }
+      const savedAgain = new Set<Effect.Effect<void>>();
+      if (onSavedAgain !== undefined) savedAgain.add(onSavedAgain);
+      watching = { drive: opened, savedAgain };
+      return Effect.asVoid(
+        Effect.forkIn(
+          watchChanges({
+            interval: WATCH_INTERVAL,
+            changed: opened.changed,
+            save: opened.saveNow.pipe(Effect.mapError(saveFailureReason)),
+            notice: driveNotice,
+            onSavedAgain: Effect.gen(function* () {
+              for (const recover of savedAgain) yield* recover;
+            }),
+          }),
+          scope,
+        ),
+      );
+    });
 
   /** Installs only on a machine that can keep the turn; a light machine moves up on demand. */
   const prepareDependencies = (runId: RunId, preparation?: Turn) => {
@@ -1295,15 +1335,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
             yield* opened.restoreDependencyEdits;
           }
           // From the first turn on, changes stream into the drive as they happen (#493).
-          if (opened !== null && watching !== opened) {
-            watching = opened;
-            yield* watchChanges({
-              interval: WATCH_INTERVAL,
-              changed: opened.changed,
-              save: opened.saveNow.pipe(Effect.mapError(saveFailureReason)),
-              notice: driveNotice,
-            }).pipe(Effect.forkIn(scope));
-          }
+          if (opened !== null) yield* watchDrive(opened);
           const secrets =
             input.secrets === undefined
               ? 0
@@ -1370,6 +1402,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         turn,
         runtimePolicy,
       );
+      feedback.remember(session, providerThread);
       if (pinning !== null) yield* Fiber.join(pinning);
       if (attachments !== null) yield* Fiber.join(attachments);
       const started = yield* ordered.withPermits(1)(
@@ -1652,6 +1685,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   ).pipe(Effect.forkIn(scope));
 
   return {
+    uploadFeedback: feedback.upload,
     stopWorkflow: workflows.stop,
     start,
     cancelPreparation: preparations.cancel,
@@ -1662,6 +1696,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     respondRuntimeRequest,
     pull,
     keepOnly,
+    watchDrive,
     drain,
     taken: Effect.sync(() => [...taken]),
   } satisfies RunnerTurns;

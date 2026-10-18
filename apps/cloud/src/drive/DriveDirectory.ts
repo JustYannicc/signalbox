@@ -33,6 +33,13 @@ import type {
 import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
 
+import type {
+  DrivePublicationRequest,
+  DrivePublicationResult,
+  RecordPublicationCreatedRequest,
+  BindPublicationRequest,
+} from "./DrivePublicationTypes.ts";
+
 /**
  * How the Worker, thread and user objects reach drive objects. Every drive
  * has exactly one, named by its drive id (`driveAccess.ts`) and always
@@ -45,6 +52,24 @@ export const DRIVE_OBJECT_JURISDICTION = "eu";
 
 /** What a drive object answers. `DriveObject` implements it method for method. */
 export interface DriveObjectApi {
+  readonly beginPublication: (
+    userId: string,
+    request: DrivePublicationRequest,
+  ) => Promise<DrivePublicationResult>;
+  readonly markPublicationCreating: (userId: string, id: string) => Promise<DrivePublicationResult>;
+  readonly releasePublicationCreating: (
+    userId: string,
+    id: string,
+  ) => Promise<DrivePublicationResult>;
+  readonly recordPublicationCreated: (
+    userId: string,
+    request: RecordPublicationCreatedRequest,
+  ) => Promise<DrivePublicationResult>;
+  readonly bindPublication: (
+    userId: string,
+    request: BindPublicationRequest,
+  ) => Promise<DrivePublicationResult>;
+  readonly finishPublication: (userId: string, id: string) => Promise<DrivePublicationResult>;
   readonly packStorage: (name: string) => Promise<string | null>;
   readonly history: (userId: string) => Promise<HistoryResult>;
   readonly historyOrigin: (userId: string) => Promise<HistoryOrigin | null>;
@@ -169,6 +194,12 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
         catch: (cause) => new DriveObjectError({ operation, cause }),
       });
   return {
+    beginPublication: wrap("beginPublication"),
+    markPublicationCreating: wrap("markPublicationCreating"),
+    releasePublicationCreating: wrap("releasePublicationCreating"),
+    recordPublicationCreated: wrap("recordPublicationCreated"),
+    bindPublication: wrap("bindPublication"),
+    finishPublication: wrap("finishPublication"),
     packStorage: wrap("packStorage"),
     history: wrap("history"),
     historyOrigin: wrap("historyOrigin"),

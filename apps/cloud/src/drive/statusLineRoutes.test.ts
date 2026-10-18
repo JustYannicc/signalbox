@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import * as Environment from "../environment.ts";
+import { pauseTaskDone } from "../automations/taskLifecycleTesting.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { DriveAuthorization } from "../thread/ThreadAuthorization.ts";
@@ -97,6 +98,7 @@ const post = (threadId: ThreadId, path: string, body: unknown) =>
 
 const setup = Effect.gen(function* () {
   yield* cloud.userDirectory.forUser(OWNER).recordSignIn({ id: OWNER, email: "a@b.c" });
+  yield* pauseTaskDone(cloud, OWNER, Environment.SCRATCH_PROJECT_ID);
   const { threads, folders } = yield* Effect.all({
     threads: CloudThreadService.CloudThreadService,
     folders: UserFolders.UserFolders,

@@ -12,6 +12,8 @@ import {
   AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
+  AUTOMATION_WS_METHODS,
+  clientRpcRequiredScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -123,12 +125,15 @@ import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import { makeRepositoryPublication } from "../github/GitHubRepositoryPublication.ts";
 import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
+import { makeTerminalHandlers, TERMINAL_METHODS, TERMINAL_SCOPES } from "./terminalRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
@@ -203,6 +208,8 @@ const SECTION_METHODS = [
 
 const SERVED = [
   ...SIGNALBOX_COLLABORATION_RPCS.map((rpc) => rpc._tag),
+  ...TERMINAL_METHODS,
+  WS_METHODS.providerUploadFeedback,
   WS_METHODS.subscribeWorktreeSetup,
   WS_METHODS.worktreeSetupCancel,
   WS_METHODS.subscribeServerConfig,
@@ -229,6 +236,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
+  WS_METHODS.assetsPersistChatAttachments,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
   WS_METHODS.projectsListEntries,
@@ -245,6 +253,7 @@ const SERVED = [
   // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
   WS_METHODS.serverDiscoverSourceControl,
   WS_METHODS.sourceControlLookupRepository,
+  WS_METHODS.sourceControlPublishRepository,
   WS_METHODS.projectCloneStart,
   WS_METHODS.projectCloneCancel,
   WS_METHODS.projectCloneRetry,
@@ -266,6 +275,10 @@ const SERVED = [
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsComment,
+  WS_METHODS.pullRequestsUpdateComment,
+  WS_METHODS.pullRequestsSubmitReview,
+  WS_METHODS.pullRequestsSetReaction,
   WS_METHODS.pullRequestsReplyToThread,
   WS_METHODS.pullRequestsSetThreadResolution,
   WS_METHODS.pullRequestsDiffFileContents,
@@ -316,6 +329,8 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
   ...SIGNALBOX_COLLABORATION_SCOPES,
+  ...TERMINAL_SCOPES,
+  [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
@@ -345,6 +360,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
+  [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
@@ -358,6 +374,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
@@ -378,6 +395,10 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsUpdateComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSubmitReview]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSetReaction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsReplyToThread]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetThreadResolution]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
@@ -423,9 +444,13 @@ const REQUIRED_SCOPES = {
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layerScopeAuthorization = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
-    const requiredScope = REQUIRED_SCOPES[rpc._tag as ServedTag];
-    return scopes.includes(requiredScope)
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    // Task lifecycle reads need only read scope; its writes operate, as on a self-hosted server.
+    const requiredScope =
+      rpc._tag === AUTOMATION_WS_METHODS.automationsTaskLifecycle
+        ? clientRpcRequiredScopes(rpc._tag, payload).find((scope) => !scopes.includes(scope))
+        : REQUIRED_SCOPES[rpc._tag as ServedTag];
+    return requiredScope === undefined || scopes.includes(requiredScope)
       ? effect
       : Effect.fail(
           new EnvironmentAuthorizationError({
@@ -568,6 +593,7 @@ export const layerHandlers = (input: {
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
       const githubImport = yield* makeGitHubImport();
+      const publishRepository = yield* makeRepositoryPublication(userDrives.access);
       const browsing = yield* makeBrowsingHandlers({
         actorNow,
         you: yield* deviceMember(userId, input.sid),
@@ -602,6 +628,7 @@ export const layerHandlers = (input: {
             Stream.runHead,
           );
         }).pipe(Effect.andThen(Effect.fail(new ThreadNotFoundError())));
+      const terminals = yield* makeTerminalHandlers(actorNow, lostSight);
       /** Calls a drive service, which only a cloud that stores drives has. */
       const withDrives =
         <S>(service: Option.Option<S>) =>
@@ -651,9 +678,19 @@ export const layerHandlers = (input: {
       const signIn = yield* makeSignInHandlers({ userId });
       const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
-      const analytics = yield* makeAnalyticsHandlers;
+      const analytics = yield* makeAnalyticsHandlers({ userId: input.userId });
       const timezone = yield* makeTimezoneHandlers;
       return {
+        ...terminals,
+        [WS_METHODS.providerUploadFeedback]: (request) =>
+          Effect.flatMap(actorNow, (actor) => threads.uploadFeedback(actor, request)).pipe(
+            Effect.catchTags({
+              ThreadNotFoundError: (cause) =>
+                Effect.fail(new ProviderUploadFeedbackError({ threadId: request.threadId, cause })),
+              ThreadObjectError: (cause) =>
+                Effect.fail(new ProviderUploadFeedbackError({ threadId: request.threadId, cause })),
+            }),
+          ),
         ...pools.handlers,
         ...pushes,
         ...automations,
@@ -881,6 +918,8 @@ export const layerHandlers = (input: {
           ),
         [WS_METHODS.assetsCreateUrl]: ({ resource }) =>
           Effect.flatMap(actorNow, (actor) => assets.createUrl(actor, resource)),
+        [WS_METHODS.assetsPersistChatAttachments]: (request) =>
+          Effect.flatMap(actorNow, (actor) => assets.persistChatAttachments(actor, request)),
         // Scratch is the Personal context's project, always in the shell.
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
@@ -950,6 +989,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.attachmentsDelete]: (request) =>
           attachments.deletePending(userId, request.attachmentId),
         [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
+        [WS_METHODS.sourceControlPublishRepository]: (request) =>
+          Effect.flatMap(actorNow, (actor) => publishRepository(actor, request)),
         [WS_METHODS.sourceControlLookupRepository]: (request) =>
           githubImport.lookup(request.repository),
         [SIGNALBOX_REPOSITORIES_WS_METHODS.list]: (request) => githubImport.list(request.provider),
@@ -985,6 +1026,10 @@ export const layerHandlers = (input: {
         [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
         [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
         [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
+        [WS_METHODS.pullRequestsComment]: (request) => pullRequests.comment(request),
+        [WS_METHODS.pullRequestsUpdateComment]: (request) => pullRequests.updateComment(request),
+        [WS_METHODS.pullRequestsSubmitReview]: (request) => pullRequests.submitReview(request),
+        [WS_METHODS.pullRequestsSetReaction]: (request) => pullRequests.setReaction(request),
         [WS_METHODS.pullRequestsReplyToThread]: (request) => pullRequests.replyToThread(request),
         [WS_METHODS.pullRequestsSetThreadResolution]: (request) =>
           pullRequests.setThreadResolution(request),

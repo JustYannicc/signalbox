@@ -8,6 +8,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { preparePullRequestWriteAttempt } from "@t3tools/client-runtime/pull-request-write-attempt";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
@@ -76,7 +77,7 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { useProjects, useServerConfigs } from "~/state/entities";
@@ -134,6 +135,7 @@ import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestComposer } from "./PullRequestComposer";
+import { pullRequestWriteAttemptKey, usePullRequestReviewStore } from "./pullRequestReviewStore";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -988,15 +990,27 @@ export function PullRequestDetailPanel({
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
     if (!canWriteSourceControl || pendingAction !== null) return { commentPosted: false };
     setPendingAction(action);
+    const attemptKey = pullRequestWriteAttemptKey(reference, "comment", environmentId);
+    const commentAttempt = preparePullRequestWriteAttempt(
+      usePullRequestReviewStore.getState().writeAttempts[attemptKey],
+      { ...reference, body },
+      undefined,
+      randomUUID,
+      environmentId,
+    );
+    usePullRequestReviewStore.getState().setWriteAttempt(attemptKey, commentAttempt.attempt);
     const commentResult = await postComment({
       environmentId,
-      input: { ...reference, body },
+      input: commentAttempt.input,
     });
     if (commentResult._tag === "Failure") {
       setPendingAction(null);
       toastManager.add({ type: "error", title: "Could not post the comment" });
       return { commentPosted: false };
     }
+    usePullRequestReviewStore
+      .getState()
+      .clearWriteAttempt(attemptKey, commentAttempt.attempt.operationId);
     const actionSucceeded = await finishAction(action);
     // The comment is durable even if the state change was refused, so make it visible while the
     // shared action failure explains why the pull request stayed where it was.

@@ -1,3 +1,4 @@
+import { ThreadCommand } from "./threadCommands.ts";
 import {
   ModelSelection,
   NonNegativeInt,
@@ -7,7 +8,6 @@ import {
   OrchestrationV2StopWorkflowInput,
   OrchestrationV2StopWorkflowError,
   SecretRequestAnswerInput,
-  OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DomainEventJson,
@@ -81,6 +81,14 @@ export const ThreadSnapshotWire = Schema.Struct({
   projection: OrchestrationV2ThreadProjection,
 });
 
+/** Constant-size metadata for remote adoption; never serializes the thread's work history. */
+export const ThreadWorkspaceWire = Schema.Struct({
+  projectId: OrchestrationV2ThreadShell.fields.projectId,
+  branch: OrchestrationV2ThreadShell.fields.branch,
+  worktreePath: OrchestrationV2ThreadShell.fields.worktreePath,
+});
+export type ThreadWorkspace = typeof ThreadWorkspaceWire.Type;
+
 /**
  * An automation run attached to the thread, listed among its background tasks
  * as a monitor while it runs, so the thread stays in Working.
@@ -117,10 +125,11 @@ export const wire = {
   ),
   secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
-  command: jsonCodec(OrchestrationV2Command),
+  command: jsonCodec(ThreadCommand),
   launchInput: jsonCodec(LaunchInputWire),
   launchResult: jsonCodec(OrchestrationV2ThreadLaunchResult),
   snapshot: jsonCodec(ThreadSnapshotWire),
+  workspace: jsonCodec(ThreadWorkspaceWire),
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
   findInput: jsonCodec(OrchestrationV2SearchThreadInput),
   findResult: jsonCodec(OrchestrationV2SearchThreadResult),
