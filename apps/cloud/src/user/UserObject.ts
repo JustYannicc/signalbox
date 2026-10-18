@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Evlog from "../observability/Evlog.ts";
+import * as ClientActionTimings from "../observability/ClientActionTimings.ts";
 import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
 import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
@@ -27,6 +28,7 @@ import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
+import * as DriveContentSearch from "./DriveContentSearch.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
@@ -269,6 +271,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           GitHubActions.layer,
           CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
+          DriveContentSearch.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
           LoginService.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -406,7 +409,11 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
-          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+          Layer.provideMerge(
+            ClientActionTimings.layer(env, (promise) => ctx.waitUntil(promise)).pipe(
+              Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+            ),
+          ),
         ),
       ),
     );
