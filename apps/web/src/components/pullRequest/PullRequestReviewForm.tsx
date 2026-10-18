@@ -1,7 +1,15 @@
+import { useAtomRefresh } from "@effect/atom-react";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { preparePullRequestWriteAttempt } from "@t3tools/client-runtime/pull-request-write-attempt";
-import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  PullRequestOperationError,
+  type EnvironmentId,
+  type PullRequestRef,
+  type PullRequestReviewVerdict,
+} from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useState, type ReactNode, type RefObject } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -45,6 +53,8 @@ const VERDICTS: ReadonlyArray<{
   },
 ];
 
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
 export function PullRequestReviewForm({
   environmentId,
   reference,
@@ -80,6 +90,19 @@ export function PullRequestReviewForm({
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
   });
+  const refreshDetail = useAtomRefresh(
+    pullRequestEnvironment.detail({ environmentId, input: reference }),
+  );
+  const attemptKey = pullRequestWriteAttemptKey(reference, "review", environmentId);
+  // The host refused this review because the branch moved past its pinned head. Reopening the
+  // review pins the new head, which clears this; until then resubmitting would only fail again.
+  const [movedHead, setMovedHead] = useState<
+    { readonly key: string; readonly headSha: string } | undefined
+  >(undefined);
+  const headMoved =
+    reviewedHeadSha !== undefined &&
+    movedHead?.key === attemptKey &&
+    movedHead.headSha === reviewedHeadSha;
 
   const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value));
   const selectedVerdict =
@@ -90,7 +113,6 @@ export function PullRequestReviewForm({
     const submittedBody = body;
     const submittedCommentIds = comments.map((comment) => comment.id);
     const submittedComments = comments.map(({ id: _id, headSha: _headSha, ...comment }) => comment);
-    const attemptKey = pullRequestWriteAttemptKey(reference, "review", environmentId);
     const prepared = preparePullRequestWriteAttempt(
       usePullRequestReviewStore.getState().writeAttempts[attemptKey],
       {
@@ -111,6 +133,22 @@ export function PullRequestReviewForm({
     });
     onPendingChange(false);
     if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      if (
+        reviewedHeadSha !== undefined &&
+        isPullRequestOperationError(failure) &&
+        failure.reason === "conflict"
+      ) {
+        // Fetch the new head now, so reopening pins it instead of the cached one.
+        refreshDetail();
+        setMovedHead({ key: attemptKey, headSha: reviewedHeadSha });
+        toastManager.add({
+          type: "error",
+          title: "This pull request changed",
+          description: "Close and reopen the review to review the new version.",
+        });
+        return;
+      }
       toastManager.add({ type: "error", title: "The review could not be submitted" });
       return;
     }
@@ -128,6 +166,7 @@ export function PullRequestReviewForm({
   // Forgejo requires a summary when requesting changes, even with inline comments.
   const canSubmit = (verdict: PullRequestReviewVerdict, summary: string) =>
     reviewedHeadSha !== undefined &&
+    !headMoved &&
     !commentsHaveStaleHead &&
     (verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
@@ -149,9 +188,20 @@ export function PullRequestReviewForm({
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
-      {commentsHaveStaleHead ? (
-        <p className="mt-2 text-xs text-danger-foreground">
-          The branch changed since you wrote a comment. Choose its current line before submitting.
+      {reviewedHeadSha === undefined ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          This pull request&apos;s current version hasn&apos;t loaded, so the review can&apos;t be
+          submitted yet. Reopen the review once it has.
+        </p>
+      ) : headMoved ? (
+        <p className="mt-2 text-xs text-destructive">
+          This pull request changed since you opened the review. Close and reopen it to review the
+          new version. Your summary and comments are kept.
+        </p>
+      ) : commentsHaveStaleHead ? (
+        <p className="mt-2 text-xs text-destructive">
+          Some comments are on a different version than this review. Reopen the review to use the
+          latest version, or remove those comments.
         </p>
       ) : null}
       <div className="mt-2 flex justify-end gap-2">

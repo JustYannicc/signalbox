@@ -31,13 +31,12 @@ describe("mobile review draft recovery", () => {
     const attempt = { requestKey: "request", operationId: "operation-1", headSha: "head-a" };
     const withAttempts: ReviewDraft = {
       ...draft,
-      reviewedHeadSha: "head-a",
       reviewWriteAttempt: attempt,
       commentWriteAttempt: { ...attempt, operationId: "operation-2" },
     };
     const restored = decodeDocument(
       JSON.parse(JSON.stringify({ version: 1, drafts: { key: withAttempts } })),
-    ).drafts.key;
+    ).drafts.key!;
 
     expect(restored).toEqual(withAttempts);
     expect(clearSubmittedReview(restored, draft).reviewWriteAttempt).toBeUndefined();

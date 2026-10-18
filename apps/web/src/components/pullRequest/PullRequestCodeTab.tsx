@@ -957,9 +957,10 @@ function PullRequestCodeTab({
             setSelectedLines(null);
           }}
           onComment={(body) => {
+            const headSha = displayedRevision?.headSha ?? detail.headSha;
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
-              headSha: displayedRevision?.headSha ?? detail.headSha,
+              ...(headSha === undefined ? {} : { headSha }),
               path: draft.path,
               ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
               position: draft.position,

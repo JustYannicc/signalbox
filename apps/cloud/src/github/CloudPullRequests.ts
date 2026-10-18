@@ -11,7 +11,6 @@ import {
   type PullRequestRef,
   type PullRequestThreadCommentsInput,
 } from "@t3tools/contracts";
-import { canWriteDrive } from "@t3tools/contracts/signalboxDrives";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   legacyThreadPullRequestKey,
@@ -27,12 +26,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
-import {
-  driveOfProject,
-  driveOfRoot,
-  projectOfDrive,
-  threadWorktreeAt,
-} from "../user/contextProjects.ts";
+import { driveOfRoot, projectOfDrive, threadWorktreeAt } from "../user/contextProjects.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 import { UserShell } from "../user/UserShell.ts";
 import { GitHub } from "./GitHub.ts";
@@ -46,6 +40,7 @@ import {
 import { makeListingReads } from "./cloudPullRequestListing.ts";
 import { makePullRequestCollaboration } from "./PullRequestCollaboration.ts";
 import { makePullRequestDiscussion } from "./PullRequestDiscussion.ts";
+import { folderCanWritePullRequests } from "./pullRequestCollaborationSupport.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
 
 export { CloudPullRequests };
@@ -163,11 +158,7 @@ const make = Effect.gen(function* () {
       const core = yield* readCore(input, target).pipe(
         Effect.flatMap((value) => requireData("detail", value)),
       );
-      const userId = yield* drives.userId.pipe(Effect.orElseSucceed(() => null));
-      const driveId = userId === null ? null : driveOfProject(input.projectId, userId);
-      const writable =
-        driveId !== null &&
-        canWriteDrive(yield* drives.access(driveId).pipe(Effect.orElseSucceed(() => null)));
+      const writable = yield* folderCanWritePullRequests(drives, input.projectId);
       return {
         ...core,
         headSha: core.headSha ?? undefined,

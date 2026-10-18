@@ -49,7 +49,7 @@ export function PullRequestComposer({
   const reviewKey = pullRequestReviewKey(reference);
   const writeAttemptKey = pullRequestWriteAttemptKey(reference, "review", environmentId);
   const [reviewedHeadState, setReviewedHeadState] = useState<
-    { readonly key: string; readonly headSha: string } | undefined
+    { readonly key: string; readonly headSha: string | undefined } | undefined
   >(() => {
     const store = usePullRequestReviewStore.getState();
     const headSha =
@@ -58,7 +58,7 @@ export function PullRequestComposer({
   });
   const reviewedHeadSha =
     reviewedHeadState?.key === writeAttemptKey ? reviewedHeadState.headSha : undefined;
-  const captureReviewedHead = (headSha: string) =>
+  const captureReviewedHead = (headSha: string | undefined) =>
     setReviewedHeadState({ key: writeAttemptKey, headSha });
   const setReviewedHead = usePullRequestReviewStore((store) => store.setReviewedHead);
   useEffect(() => {

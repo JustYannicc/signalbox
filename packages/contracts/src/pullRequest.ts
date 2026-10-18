@@ -795,7 +795,12 @@ export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft
 export const PullRequestSubmitReviewInput = Schema.Struct({
   operationId: Schema.optional(PullRequestOperationId),
   ...PullRequestRef.fields,
-  headSha: Schema.optional(PullRequestReviewHeadSha),
+  headSha: Schema.optional(
+    PullRequestReviewHeadSha.annotate({
+      description:
+        "Required by Cloud. The head SHA of the version reviewed, from pullRequests.detail.",
+    }),
+  ),
   verdict: PullRequestReviewVerdict,
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),

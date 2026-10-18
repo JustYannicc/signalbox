@@ -1,7 +1,7 @@
 export type PullRequestWriteAttemptRecord = {
   readonly requestKey: string;
   readonly operationId: string;
-  readonly headSha?: string;
+  readonly headSha?: string | undefined;
 };
 
 function canonicalize(value: unknown): unknown {

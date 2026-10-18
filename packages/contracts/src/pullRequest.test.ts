@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "./sourceControl.ts";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -14,7 +14,7 @@ import {
   PullRequestSubmitReviewInput,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
-} from "./pullRequest.ts";
+} from "@t3tools/contracts";
 
 const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);

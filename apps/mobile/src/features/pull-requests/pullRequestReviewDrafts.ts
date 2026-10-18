@@ -13,9 +13,8 @@ export type ReviewDraft = {
   readonly summary: string;
   readonly comment: string;
   readonly comments: readonly PendingReviewComment[];
-  readonly reviewedHeadSha?: string;
-  readonly reviewWriteAttempt?: PullRequestWriteAttemptRecord;
-  readonly commentWriteAttempt?: PullRequestWriteAttemptRecord;
+  readonly reviewWriteAttempt?: PullRequestWriteAttemptRecord | undefined;
+  readonly commentWriteAttempt?: PullRequestWriteAttemptRecord | undefined;
 };
 export const EMPTY_REVIEW_DRAFT: ReviewDraft = { summary: "", comment: "", comments: [] };
 export function pullRequestReviewKey(params: PullRequestParams) {
@@ -42,7 +41,6 @@ export const ReviewDraftDocument = Schema.Struct({
           code: Schema.String,
         }),
       ),
-      reviewedHeadSha: Schema.optional(Schema.String),
       reviewWriteAttempt: Schema.optional(
         Schema.Struct({
           requestKey: Schema.String,
@@ -78,11 +76,6 @@ export function clearSubmittedReview(current: ReviewDraft, submitted: ReviewDraf
             samePosition(saved.position, comment.position),
         ),
     ),
-    ...(current.summary === submitted.summary
-      ? { reviewedHeadSha: undefined }
-      : current.reviewedHeadSha === undefined
-        ? {}
-        : { reviewedHeadSha: current.reviewedHeadSha }),
   };
 }
 

@@ -4,11 +4,15 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { preparePullRequestWriteAttempt } from "@t3tools/client-runtime/pull-request-write-attempt";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { uuidv4 } from "../../lib/uuid";
 import { useFocusEffect } from "@react-navigation/native";
 import { Platform, Pressable, View } from "react-native";
-import { clearCommentWriteAttempt, clearSubmittedReview } from "./pullRequestReviewDrafts";
+import {
+  clearCommentWriteAttempt,
+  clearSubmittedReview,
+  pullRequestReviewKey,
+} from "./pullRequestReviewDrafts";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -17,6 +21,7 @@ import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { PullRequestSheetContent as SheetContent } from "./PullRequestSheetContent";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
@@ -67,8 +72,10 @@ export function PullRequestReviewSheet({
   const params = route.params;
   const target = pullRequestTarget(params);
   const result = useEnvironmentQuery(composerPullRequests.detail(target));
-  const { refresh: refreshDetail } = result;
-  useFocusEffect(useCallback(() => refreshDetail(), [refreshDetail]));
+  const readDetail = useAtomQueryRunner(composerPullRequests.detail, {
+    refresh: true,
+    reportFailure: false,
+  });
   const permissions = usePullRequestPermissions(params, result.data);
   const submission = useActionSubmission(params);
   const review = useAtomCommand(composerPullRequests.submitReview, { reportFailure: false });
@@ -92,14 +99,33 @@ export function PullRequestReviewSheet({
     verdict !== undefined && result.data
       ? sourceControlClients.get(result.data.provider).reviewSummaryRequired(verdict.value)
       : false;
-  const [reviewedHeadSha, setReviewedHeadSha] = useState<string | undefined>();
-  useEffect(() => {
-    if (!reviewing || reviewedHeadSha !== undefined || !store.ready || !result.data?.headSha)
-      return;
-    const headSha = result.data.headSha;
-    setReviewedHeadSha(headSha);
-    store.update((current) => ({ ...current, reviewedHeadSha: headSha }));
-  }, [reviewedHeadSha, result.data?.headSha, reviewing, store.ready, store.update]);
+  const reviewHeadEntryKey = pullRequestReviewKey(params);
+  const [reviewHeadPin, setReviewHeadPin] = useState<{
+    readonly entryKey: string;
+    readonly captured: boolean;
+    readonly headSha: string | undefined;
+  }>({ entryKey: reviewHeadEntryKey, captured: false, headSha: undefined });
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      // Reopening must pin the refreshed version, never the cached head from the last sheet.
+      void readDetail(pullRequestTarget(params)).then((response) => {
+        if (!active || response._tag === "Failure") return;
+        setReviewHeadPin({
+          entryKey: reviewHeadEntryKey,
+          captured: true,
+          headSha: response.value.headSha,
+        });
+      });
+      return () => {
+        active = false;
+      };
+    }, [params, readDetail, reviewHeadEntryKey]),
+  );
+  const reviewedHeadSha =
+    reviewing && reviewHeadPin.entryKey === reviewHeadEntryKey && reviewHeadPin.captured
+      ? reviewHeadPin.headSha
+      : undefined;
   const canSubmit =
     store.ready &&
     (!reviewing || (reviewedHeadSha !== undefined && !stale && canSubmitComments)) &&
@@ -133,7 +159,6 @@ export function PullRequestReviewSheet({
         );
         store.update((current) => ({
           ...current,
-          reviewedHeadSha,
           reviewWriteAttempt: attempt.attempt,
         }));
         if (!(await store.flush()))
@@ -269,6 +294,12 @@ export function PullRequestReviewSheet({
             </Pressable>
           ))}
         </View>
+      ) : null}
+      {reviewing && store.ready && result.data && reviewedHeadSha === undefined ? (
+        <Text className="text-sm text-foreground-muted">
+          This pull request&apos;s current version hasn&apos;t loaded, so the review can&apos;t be
+          submitted yet. Reopen the review once it has.
+        </Text>
       ) : null}
       {reviewing && stale ? (
         <Text className="text-sm text-danger-foreground">

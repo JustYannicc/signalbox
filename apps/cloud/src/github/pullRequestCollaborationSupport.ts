@@ -1,4 +1,4 @@
-import { PullRequestOperationError, type PullRequestRef } from "@t3tools/contracts";
+import { PullRequestOperationError, type ProjectId, type PullRequestRef } from "@t3tools/contracts";
 import { canWriteDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -44,6 +44,13 @@ export const collaborationError = (operation: string) => (error: AgentPullReques
                   : error.category,
   });
 
+export const folderCanWritePullRequests = (drives: UserDrives["Service"], projectId: ProjectId) =>
+  Effect.gen(function* () {
+    const userId = yield* drives.userId;
+    const driveId = userId === null ? null : driveOfProject(projectId, userId);
+    return driveId !== null && canWriteDrive(yield* drives.access(driveId));
+  }).pipe(Effect.orElseSucceed(() => false));
+
 /** Folder authority is checked anew even when a durable receipt can answer the retry. */
 export const makePullRequestWriteAccess = Effect.gen(function* () {
   const repositories = yield* PullRequestRepository;
@@ -51,11 +58,8 @@ export const makePullRequestWriteAccess = Effect.gen(function* () {
   return (input: PullRequestRef) =>
     Effect.gen(function* () {
       const target = yield* repositories.resolve(input);
-      const userId = yield* drives.userId.pipe(Effect.mapError(() => refuse("permission")));
-      const driveId = userId === null ? null : driveOfProject(input.projectId, userId);
-      if (driveId === null) return yield* refuse("permission");
-      const role = yield* drives.access(driveId).pipe(Effect.mapError(() => refuse("permission")));
-      if (!canWriteDrive(role)) return yield* refuse("permission");
+      if (!(yield* folderCanWritePullRequests(drives, input.projectId)))
+        return yield* refuse("permission");
       return target;
     });
 });
