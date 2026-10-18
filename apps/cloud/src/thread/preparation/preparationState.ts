@@ -10,7 +10,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { finishRunEvents, isLiveRun } from "../runLifecycle.ts";
+import { finishRunEvents } from "../runLifecycle.ts";
+import { isLiveRun } from "../runState.ts";
 import {
   attemptEvent,
   type DecisionContext,

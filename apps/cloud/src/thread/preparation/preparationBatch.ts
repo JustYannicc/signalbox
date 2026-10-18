@@ -6,7 +6,7 @@ import type {
 import * as DateTime from "effect/DateTime";
 
 import type { DecisionContext } from "../threadEvents.ts";
-import { isLiveRun } from "../runLifecycle.ts";
+import { isLiveRun } from "../runState.ts";
 import { applyEvents } from "../threadProjection.ts";
 import { failRunEvents, unknownFailure } from "../runner/runnerTurn.ts";
 import {
