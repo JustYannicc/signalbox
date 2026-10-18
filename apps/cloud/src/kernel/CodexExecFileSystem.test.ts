@@ -153,6 +153,40 @@ describe("Codex exec-server filesystem", () => {
     }
   });
 
+  it("rejects virtual descriptor links without following them", async () => {
+    const test = await fixture();
+    const original = "keep the descriptor target";
+    let descriptor: number | undefined;
+    try {
+      await test.request("fs/writeFile", {
+        path: "file:///descriptor-target.txt",
+        dataBase64: base64(original),
+      });
+      descriptor = test.filesystem.open("/descriptor-target.txt", KernelOpenFlags.O_RDWR);
+      expect(() => test.filesystem.lstat("/proc")).toThrow(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+      const path = `file:///proc/self/fd/${descriptor}`;
+      expect(await test.request("fs/readFile", { path })).toMatchObject({
+        result: { dataBase64: base64(original) },
+      });
+      for (const method of ["fs/readFile", "fs/writeFile", "fs/getMetadata"]) {
+        expect(
+          await test.request(method, {
+            path,
+            followSymlinks: false,
+            dataBase64: base64("must not replace the target"),
+          }),
+          method,
+        ).toMatchObject({ error: { code: -32600 } });
+      }
+      expect(readKernelFile(test.filesystem, "/descriptor-target.txt")).toBe(original);
+    } finally {
+      if (descriptor !== undefined) test.filesystem.close(descriptor);
+      await test.close();
+    }
+  });
+
   it("rejects malformed file URIs, sandbox requests, and invalid base64 before changing data", async () => {
     const test = await fixture();
     const path = "file:///keep.txt";

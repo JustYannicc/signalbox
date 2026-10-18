@@ -136,6 +136,14 @@ export class CodexExecFileSystem implements ExecSessionHandler {
   }
 
   #rejectSymlinks(path: string) {
+    // Descriptor aliases exist even when their virtual parent directories do not.
+    try {
+      if (this.#filesystem.lstat(path).type === "symlink") {
+        throw new RpcError(-32600, "Path contains a symbolic link");
+      }
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") throw error;
+    }
     let current = "";
     for (const part of path.split("/").filter(Boolean)) {
       current += `/${part}`;
