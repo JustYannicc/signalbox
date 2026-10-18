@@ -346,10 +346,17 @@
       "output": "4c49c647"
     },
     {
+      "name": "device.cancelOpen",
+      "rpc": "device.cancelOpen",
+      "access": "write",
+      "input": "9d58c5db",
+      "output": "794c92c1"
+    },
+    {
       "name": "device.close",
       "rpc": "device.close",
       "access": "write",
-      "input": "44168bda",
+      "input": "90597b64",
       "output": "794c92c1"
     },
     {
@@ -357,7 +364,7 @@
       "rpc": "device.configure",
       "access": "write",
       "input": "bb51696d",
-      "output": "edac0f53"
+      "output": "c9e9c55f"
     },
     {
       "name": "device.detail",
@@ -371,14 +378,14 @@
       "rpc": "device.list",
       "access": "read",
       "input": "661d6123",
-      "output": "edac0f53"
+      "output": "c9e9c55f"
     },
     {
       "name": "device.open",
       "rpc": "device.open",
       "access": "write",
-      "input": "b98404fd",
-      "output": "c11f5e73"
+      "input": "a383e5b8",
+      "output": "b3d10422"
     },
     {
       "name": "device.shutdown",
@@ -395,12 +402,20 @@
       "output": "383ed6ee"
     },
     {
+      "name": "deviceAgentDiagnostics.subscribe",
+      "rpc": "subscribeDeviceAgentDiagnostics",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "3173b4e0"
+    },
+    {
       "name": "deviceState.subscribe",
       "rpc": "subscribeDeviceState",
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "edac0f53"
+      "output": "c9e9c55f"
     },
     {
       "name": "diagnostics.checkOtlpEndpoint",

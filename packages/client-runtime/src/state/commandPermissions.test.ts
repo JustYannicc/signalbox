@@ -223,6 +223,23 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("guards device-open cancellation with the destination operate grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cancelOpen = createCommandPermissions(runtime, WS_METHODS.deviceCancelOpen);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(cancelOpen.permissionAtom(env))).toBe(false);
+        expect((yield* cancelOpen.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cancelOpen.permissionAtom(env))).toBe(true);
+        yield* cancelOpen.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
