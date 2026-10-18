@@ -246,8 +246,7 @@ const makeRuntime = (
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),
       Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
-      Layer.provideMerge(DiagnosticsStore.layer),
-      Layer.provideMerge(ThreadStore.layerMachineRecords),
+      Layer.provideMerge(Layer.mergeAll(DiagnosticsStore.layer, ThreadStore.layerMachineRecords)),
       Layer.provideMerge(
         Layer.mergeAll(
           ThreadStore.layer,
@@ -453,6 +452,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   subscribe(...args: Parameters<ThreadObjectApi["subscribe"]>) {
     return this.api.subscribe(...args);
+  }
+
+  commandOutput(...args: Parameters<ThreadObjectApi["commandOutput"]>) {
+    return this.api.commandOutput(...args);
   }
 
   summary(...args: Parameters<ThreadObjectApi["summary"]>) {

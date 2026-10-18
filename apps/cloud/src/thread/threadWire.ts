@@ -2,6 +2,8 @@ import {
   ModelSelection,
   NonNegativeInt,
   OrchestrationV2Command,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DomainEventJson,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchInput,
@@ -95,6 +97,8 @@ export const wire = {
   launchResult: jsonCodec(OrchestrationV2ThreadLaunchResult),
   snapshot: jsonCodec(ThreadSnapshotWire),
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
+  commandOutputInput: jsonCodec(OrchestrationV2SubscribeCommandOutputInput),
+  commandOutputFrame: jsonCodec(OrchestrationV2CommandOutputFrame),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
   /** `SignalboxThreadPreviews` without its thread id, which the stream's caller knows. */
   previews: jsonCodec(
