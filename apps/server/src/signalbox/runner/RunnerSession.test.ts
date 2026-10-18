@@ -5,7 +5,13 @@ import type {
   RunnerTurn,
   ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import {
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -38,6 +44,7 @@ const makeFakeThread = Effect.gen(function* () {
   const connected = yield* Deferred.make<void>();
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   /** The runs each `hello` said its process holds. */
   const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
@@ -62,6 +69,10 @@ const makeFakeThread = Effect.gen(function* () {
             case "hello":
               yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(runtimeResponseCapabilities, (all) => [
+                ...all,
+                message.runtimeResponses,
+              ]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
@@ -100,6 +111,7 @@ const makeFakeThread = Effect.gen(function* () {
     committed,
     acked,
     hellos,
+    runtimeResponseCapabilities,
     helloPulls,
     helloRuns,
     dropAfterCommit,
@@ -117,6 +129,9 @@ const makeFakeTurns = Effect.gen(function* () {
     readonly runId: RunId;
     readonly generation: number;
   }>();
+  const runtimeResponses = yield* Ref.make<
+    ReadonlyArray<Extract<ThreadMessage, { type: "runtime-request.respond" }>>
+  >([]);
   /** How often everything was saved for a drain, and what each drain says it couldn't save. */
   const drains = yield* Ref.make(0);
   const unsaved = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -133,6 +148,8 @@ const makeFakeTurns = Effect.gen(function* () {
       preparationsTaken: Effect.succeed([]),
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
+      respondRuntimeRequest: (response) =>
+        Ref.update(runtimeResponses, (all) => [...all, response]),
       pull: ({ operation }) =>
         Deferred.succeed(pullEntered, operation.id).pipe(
           Effect.andThen(Deferred.await(finishPull)),
@@ -161,9 +178,10 @@ const makeFakeTurns = Effect.gen(function* () {
     make,
     emit,
     startedTurns,
+    preparationCommands,
+    runtimeResponses,
     drains,
     unsaved,
-    preparationCommands,
     pullEntered,
     finishPull,
   };
@@ -196,7 +214,7 @@ const sessionOf = (
   });
 
 describe("RunnerSession", () => {
-  it.effect("routes addressed preparation cancellation and handoff to the turn driver", () =>
+  it.effect("routes preparation controls and native answers to the live turn driver", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const thread = yield* makeFakeThread;
@@ -215,6 +233,23 @@ describe("RunnerSession", () => {
           runId,
           generation: 3,
         });
+        const response = {
+          type: "runtime-request.respond",
+          runId,
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId: ProviderSessionId.make("provider-session-1"),
+          requestId: RuntimeRequestId.make("request-1"),
+          answers: { "question-1": "answer" },
+        } as const;
+
+        yield* thread.toCurrent(response);
+        yield* settle(
+          Effect.map(Ref.get(turns.runtimeResponses), (all) => all.length === 1),
+          "runtime response",
+        );
+
+        expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(turns.runtimeResponses)).toEqual([response]);
       }),
     ),
   );

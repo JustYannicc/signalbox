@@ -201,8 +201,12 @@ console.log(JSON.stringify({ cwd: process.cwd(), pwd: process.env.PWD, home: pro
         "t3-code": "http://127.0.0.1:41234/browser",
       });
       const config = NodeFS.readFileSync(NodePath.join(layout.codexHome, "config.toml"), "utf8");
-      expect(config).toContain('[mcp_servers."signalbox"]\nurl = "http://127.0.0.1:41234/mcp"');
-      expect(config).toContain('[mcp_servers."t3-code"]\nurl = "http://127.0.0.1:41234/browser"');
+      expect(config).toContain(
+        '[mcp_servers."signalbox"]\nurl = "http://127.0.0.1:41234/mcp"\ntool_timeout_sec = 3605',
+      );
+      expect(config).toContain(
+        '[mcp_servers."t3-code"]\nurl = "http://127.0.0.1:41234/browser"\ntool_timeout_sec = 300',
+      );
       NodeFS.rmSync(root, { recursive: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

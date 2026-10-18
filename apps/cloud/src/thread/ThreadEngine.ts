@@ -1,5 +1,9 @@
 import {
   type CommandId,
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2CommandOutputError,
+  type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2SubscribeCommandOutputInput,
   EventId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
@@ -13,6 +17,7 @@ import {
   type WorktreeSetupSnapshot,
   type WorktreeSetupCancelInput,
   WorktreeSetupError,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type {
@@ -34,6 +39,7 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { isHarnessInstance } from "../models/ModelRouting.ts";
 import {
@@ -43,11 +49,20 @@ import {
   settleStoppedPreparation,
   type PreparationState,
 } from "./preparation/preparationState.ts";
-
+import {
+  commandFor,
+  commandOutputFrame,
+  type CommandOutputDelta,
+} from "./commandOutput/retainedOutput.ts";
+import { commandOutputStream } from "./commandOutput/outputStream.ts";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import { decide, decideLaunch, type Decision, type ThreadWorktree } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
+import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
+import { activeRun } from "./runLifecycle.ts";
+import * as ThreadSecretStore from "./secrets/ThreadSecretStore.ts";
+import { settleSecretRequests } from "./secrets/secretLifecycle.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
@@ -128,6 +143,7 @@ export interface EngineDecision<A> {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly machine?: ThreadStore.MachineLease;
   readonly preparation?: PreparationState;
+  readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
   readonly result: A;
 }
 
@@ -168,6 +184,13 @@ export class ThreadEngine extends Context.Service<
       input: WorktreeSetupCancelInput,
       afterRequest?: Effect.Effect<void>,
     ) => Effect.Effect<{ readonly cancelled: boolean }, ThreadNotFoundError | WorktreeSetupError>;
+    readonly commandOutput: (
+      actor: Actor,
+      input: OrchestrationV2SubscribeCommandOutputInput,
+    ) => Effect.Effect<
+      Stream.Stream<OrchestrationV2CommandOutputFrame>,
+      OrchestrationV2CommandOutputError | ThreadNotFoundError
+    >;
     readonly snapshot: (actor: Actor) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError>;
     /**
      * `subscribeThread`: a snapshot or the events after the client's cursor,
@@ -288,6 +311,8 @@ const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStr
 
 const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
+  const secrets = yield* ThreadSecretStore.ThreadSecretStore;
+  const sql = yield* SqlClient.SqlClient;
   const pullState = yield* PullState.PullState;
   const crypto = yield* Crypto.Crypto;
   const turnModels = yield* TurnModels.TurnModels;
@@ -328,6 +353,7 @@ const make = Effect.gen(function* () {
     summaryKey: summaryKey(initialProjection, initial.monitors, initial.statusNote),
   });
 
+  const outputInvalidations = yield* PubSub.sliding<void>(1);
   const serialized = lock.withPermits(1);
 
   const context = Effect.map(DateTime.now, (now): DecisionContext => ({ now }));
@@ -349,6 +375,7 @@ const make = Effect.gen(function* () {
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
     readonly preparation?: PreparationState;
+    readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
     /** The chain's instructions for the run this commit starts. */
     readonly instructions?: {
       readonly runId: string;
@@ -356,44 +383,109 @@ const make = Effect.gen(function* () {
     };
     /** The chain's secrets, as of the run this commit starts. */
     readonly secrets?: ReadonlyArray<OnePasswordEnvironmentId>;
+    /** No HTTP waiter survives an object restart. */
+    readonly retireOrphanedSecrets?: boolean;
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
-    const events = yield* stamp(input.events);
-    const projection = applyEvents(current.thread?.projection ?? null, events);
-    if (owner === undefined || projection === null) {
+    const decidedEvents = yield* stamp(input.events);
+    const candidate = applyEvents(current.thread?.projection ?? null, decidedEvents);
+    if (owner === undefined || candidate === null) {
       return yield* Effect.die("A thread's first commit must create it.");
     }
     // The thread's first commit creates its storage.
     if (current.thread === null) yield* Effect.orDie(store.initialize);
-    const nextKey = summaryKey(projection, current.monitors, current.statusNote);
-    const startingRun = projection.runs.find(
-      (run) =>
-        (run.status === "starting" || run.status === "preparing") &&
-        isHarnessInstance(run.providerInstanceId),
-    );
     const ctx = yield* context;
-    const previous = input.preparation ?? current.preparation;
-    const settled =
-      previous === null
-        ? null
-        : settleStoppedPreparation(
-            previous,
-            projection,
-            input.machine ?? (yield* Effect.orDie(store.machine)),
-            ctx,
-          );
-    const preparation =
-      input.preparation === undefined &&
-      settled === previous &&
-      startingRun !== undefined &&
-      settled?.runId !== startingRun.id &&
-      settled?.status !== "preparing" &&
-      settled?.status !== "cancelling"
-        ? beginPreparation(projection, startingRun.id, 0, settled, ctx)
-        : settled;
-    const head = yield* Effect.orDie(
-      store.commit({
+    const { head, events, projection, nextKey, preparation } = yield* Effect.gen(function* () {
+      const reconcile =
+        input.machine !== undefined ||
+        input.retireOrphanedSecrets === true ||
+        input.events.some(
+          (event) =>
+            event.type === "run.updated" ||
+            event.type === "run.created" ||
+            (event.type === "turn-item.updated" && event.payload.type === "secret_request"),
+        );
+      const repairs = reconcile
+        ? yield* Effect.gen(function* () {
+            const machine = input.machine ?? (yield* store.machine);
+            const run = activeRun(candidate);
+            const binding =
+              run?.activeAttemptId == null || machine.status === "none"
+                ? null
+                : {
+                    runId: run.id,
+                    attemptId: run.activeAttemptId,
+                    generation: machine.generation,
+                  };
+            const terminalBefore = new Set(
+              current.thread?.projection.turnItems.flatMap((item) =>
+                item.type === "secret_request" && item.secretStatus !== "pending" ? [item.id] : [],
+              ),
+            );
+            // Other runs' custody is erased by the binding check. Historical terminals stay retired.
+            const retired =
+              binding === null
+                ? []
+                : candidate.turnItems.flatMap((item) =>
+                    item.type === "secret_request" &&
+                    item.runId === binding.runId &&
+                    ((input.retireOrphanedSecrets === true && item.secretStatus === "pending") ||
+                      ((item.secretStatus === "cancelled" || item.secretStatus === "declined") &&
+                        !terminalBefore.has(item.id)))
+                      ? [item.id]
+                      : [],
+                  );
+            const usable = yield* secrets.reconcile(binding, retired);
+            return settleSecretRequests(current.thread?.projection ?? null, candidate, usable, ctx);
+          })
+        : [];
+      const repairEvents = yield* stamp(repairs);
+      const events = [...decidedEvents, ...repairEvents];
+      const projection = applyEvents(candidate, repairEvents);
+      if (projection === null) return yield* Effect.die("A thread's first commit must create it.");
+      const nextKey = summaryKey(projection, current.monitors, current.statusNote);
+      const startingRun = projection.runs.find(
+        (run) =>
+          (run.status === "starting" || run.status === "preparing") &&
+          isHarnessInstance(run.providerInstanceId),
+      );
+      const previous = input.preparation ?? current.preparation;
+      const settled =
+        previous === null
+          ? null
+          : settleStoppedPreparation(
+              previous,
+              projection,
+              input.machine ?? (yield* Effect.orDie(store.machine)),
+              ctx,
+            );
+      const preparation =
+        input.preparation === undefined &&
+        settled === previous &&
+        startingRun !== undefined &&
+        settled?.runId !== startingRun.id &&
+        settled?.status !== "preparing" &&
+        settled?.status !== "cancelling"
+          ? beginPreparation(projection, startingRun.id, 0, settled, ctx)
+          : settled;
+      const itemUpdates = events.filter((event) => event.type === "turn-item.updated");
+      const seenItems =
+        itemUpdates.length > 0
+          ? new Set(current.thread?.projection.turnItems.map((item) => item.id))
+          : new Set<TurnItemId>();
+      const commandOutputSeeds = itemUpdates.flatMap(({ payload: item }) => {
+        const existed = seenItems.has(item.id);
+        seenItems.add(item.id);
+        return !existed &&
+          item.type === "command_execution" &&
+          item.runId !== null &&
+          isOrchestrationV2WorkActive(item.status) &&
+          item.threadId === projection.thread.id
+          ? [{ itemId: item.id, runId: item.runId }]
+          : [];
+      });
+      const head = yield* store.commit({
         head: current.head,
         events,
         ...(input.command ? { command: input.command } : {}),
@@ -402,9 +494,12 @@ const make = Effect.gen(function* () {
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
         ...(preparation === current.preparation || preparation === null ? {} : { preparation }),
+        commandOutputSeeds,
+        ...(input.commandOutput === undefined ? {} : { commandOutput: input.commandOutput }),
         summaryChanged: nextKey !== current.summaryKey,
-      }),
-    );
+      });
+      return { head, events, projection, nextKey, preparation };
+    }).pipe(sql.withTransaction, Effect.orDie);
     yield* Ref.set(state, {
       ...current,
       head,
@@ -420,8 +515,16 @@ const make = Effect.gen(function* () {
         events.map((event, index) => ({ sequence: current.head + index + 1, event })),
       );
     }
+    if (events.length > 0 || (input.commandOutput?.length ?? 0) > 0) {
+      yield* PubSub.publish(outputInvalidations, undefined);
+    }
     return head;
   });
+
+  if (initial.owner !== null && initialProjection !== null) {
+    const events = expireEndedRuntimeRequests(initialProjection, yield* context);
+    yield* commit({ events, retireOrphanedSecrets: true });
+  }
 
   /**
    * The thread as `actor` may see it: only its owner, while they're in its
@@ -509,6 +612,24 @@ const make = Effect.gen(function* () {
           Effect.flatMap(poolErrorMessage(error), (message) => refuse(message, { record: false }));
         if (decision._tag === "rejected") {
           return yield* refuse(decision.message, { record: true });
+        }
+        const answersNativeRequest = decision.events.some(
+          (event) =>
+            event.type === "runtime-request.updated" &&
+            event.payload.status === "resolved" &&
+            event.payload.responseCapability.type === "live",
+        );
+        if (answersNativeRequest) {
+          const machine = yield* Effect.orDie(store.machine);
+          // Replacing a legacy callback cannot deliver an answer committed during its drain.
+          if (machine.status === "connected" && machine.runtimeResponses !== true) {
+            return yield* refuse(
+              machine.runtimeResponsesUpgrade === true
+                ? "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying."
+                : "This machine is updating. Try your answer again shortly.",
+              { record: false },
+            );
+          }
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
@@ -782,14 +903,48 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const commandOutput: ThreadEngine["Service"]["commandOutput"] = (actor, input) =>
+    serialized(
+      Effect.gen(function* () {
+        const { projection } = yield* readable(actor);
+        const target = commandFor(projection, input);
+        if ("_tag" in target) return yield* target;
+        const read = Effect.gen(function* () {
+          const current = yield* Ref.get(state);
+          const visible = visibleTo(current, actor);
+          const next = visible === null ? null : commandFor(visible.projection, input);
+          if (next === null || "_tag" in next) {
+            return { kind: "replace", text: "", truncated: true, running: false } as const;
+          }
+          const retained = yield* Effect.orDie(
+            store.commandOutput({ itemId: next.item.id, runId: next.run.id }),
+          );
+          return commandOutputFrame(
+            next,
+            retained,
+            yield* Effect.orDie(store.commandOutputSequence),
+          );
+        });
+        return yield* commandOutputStream(yield* read, outputInvalidations, serialized(read));
+      }),
+    );
+
   const apply: ThreadEngine["Service"]["apply"] = (decideWith) =>
     serialized(
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
-        if (decision.events.length > 0 || decision.preparation !== undefined) {
+        if (
+          decision.events.length > 0 ||
+          decision.preparation !== undefined ||
+          (decision.commandOutput?.length ?? 0) > 0 ||
+          (decision.machine !== undefined && current.thread !== null)
+        ) {
           yield* commit({
             events: decision.events,
+            ...(decision.commandOutput === undefined
+              ? {}
+              : { commandOutput: decision.commandOutput }),
             ...(decision.machine ? { machine: decision.machine } : {}),
             ...(decision.preparation === undefined ? {} : { preparation: decision.preparation }),
           });
@@ -946,6 +1101,7 @@ const make = Effect.gen(function* () {
     dispatch,
     launch,
     snapshot,
+    commandOutput,
     subscribe,
     apply,
     projection,
@@ -964,4 +1120,6 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ThreadEngine, make);
+export const layer = Layer.effect(ThreadEngine, make).pipe(
+  Layer.provideMerge(ThreadSecretStore.layer),
+);

@@ -165,7 +165,9 @@ function startedEvents(
   item: Extract<RunnerItem, { readonly kind: "turn.started" }>,
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
-  if (!awaitsHandoff(run)) return [];
+  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
+  if (!awaitsHandoff(run) && !(run.status === "waiting" && attempt?.status === "pending"))
+    return [];
   const threadId = projection.thread.id;
   const current = providerThreadFor(projection, run, "active", ctx);
   // The harness's native state, under the thread's own identity for the record.
@@ -185,13 +187,16 @@ function startedEvents(
     createdAt: current.createdAt,
     updatedAt: ctx.now,
   };
-  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
   return [
     providerSessionEvent(ctx, threadId, item.providerSession),
     providerThreadEvent(ctx, threadId, providerThread),
-    runEvent(ctx, "run.updated", { ...run, status: "running", startedAt: ctx.now }),
+    runEvent(ctx, "run.updated", {
+      ...run,
+      status: run.status === "waiting" ? "waiting" : "running",
+      startedAt: ctx.now,
+    }),
     ...(attempt === undefined
       ? []
       : [
