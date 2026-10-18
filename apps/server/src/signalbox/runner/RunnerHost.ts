@@ -60,6 +60,7 @@ import { makeRunnerAttachments } from "./RunnerAttachments.ts";
 import type { SecretMask } from "./secretMask.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 import { makeRunnerTerminalHost } from "./RunnerTerminalHost.ts";
+import { makeRunnerExecHost } from "./RunnerExecHost.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import { makePreviewServices } from "./RunnerPreviewServices.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
@@ -331,6 +332,12 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               mask,
             ),
             makeTerminals,
+            // Drive-backed `/workspace` attestation is not wired yet, so exec stays unavailable.
+            makeExec: () =>
+              makeRunnerExecHost({
+                threadId: request.threadId,
+                generation: request.generation,
+              }),
             makeTurns: (emit) =>
               makeRunnerTurns({
                 threadId: request.threadId,

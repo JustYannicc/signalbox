@@ -23,6 +23,10 @@
       "types": "./src/TerminalProtocol.ts",
       "import": "./src/TerminalProtocol.ts"
     },
+    "./ExecProtocol": {
+      "types": "./src/ExecProtocol.ts",
+      "import": "./src/ExecProtocol.ts"
+    },
     "./DriveProtocol": {
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"

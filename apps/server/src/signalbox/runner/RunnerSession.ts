@@ -6,6 +6,7 @@ import {
   type ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { TerminalReport } from "@signalbox/runner-protocol/TerminalProtocol";
+import type { ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -16,11 +17,13 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import { RunnerConnectionError } from "./RunnerConnectionError.ts";
 import { runnerLog } from "./runnerLog.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerTerminals } from "./RunnerTerminals.ts";
+import type { RunnerExecHost } from "./RunnerExecHost.ts";
 
 export { RunnerConnectionError };
 
@@ -72,6 +75,8 @@ export interface RunnerSessionInput {
     emit: (report: TerminalReport) => Effect.Effect<void, RunnerConnectionError>,
     watchDrive: RunnerTurns["watchDrive"],
   ) => Effect.Effect<RunnerTerminals, never, Scope.Scope | Crypto.Crypto>;
+  /** Builds the non-PTY process host for this Runner generation. */
+  readonly makeExec?: () => Effect.Effect<RunnerExecHost, never, Scope.Scope>;
 }
 
 export interface RunnerSession {
@@ -113,6 +118,8 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
     readonly pending: ReadonlyArray<Batch>;
   }>({ acked: 0, next: 1, pending: [] });
   const current = yield* Ref.make<RunnerConnection | null>(null);
+  const execWire = yield* Semaphore.make(1);
+  const execLastSent = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const crypto = yield* Crypto.Crypto;
   const terminalProcessId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   /** Whether the latest connection got as far as `welcome`. */
@@ -136,6 +143,39 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       ),
     turns.watchDrive,
   );
+  const exec = input.makeExec === undefined ? null : yield* input.makeExec();
+  const sendExecReport = (connection: RunnerConnection, report: ExecReport, replay = false) =>
+    Effect.gen(function* () {
+      const sequence = report.type === "ack" ? null : report.sequence;
+      const key = report.type === "ack" ? null : `${report.generation}\0${report.processId}`;
+      if (key !== null && sequence !== null && !replay) {
+        const last = (yield* Ref.get(execLastSent)).get(key) ?? 0;
+        if (sequence <= last) return;
+      }
+      yield* connection.send({ type: "exec.report", report });
+      if (key !== null && sequence !== null) {
+        yield* Ref.update(execLastSent, (sent) => {
+          const next = new Map(sent);
+          next.set(key, Math.max(next.get(key) ?? 0, sequence));
+          return next;
+        });
+      }
+    });
+  if (exec !== null) {
+    yield* Stream.runForEach(exec.reports, (report) =>
+      execWire.withPermits(1)(
+        Effect.gen(function* () {
+          const connection = yield* Ref.get(current);
+          if (connection !== null) {
+            yield* sendExecReport(connection, report).pipe(Effect.catchCause(() => Effect.void));
+          }
+        }),
+      ),
+    ).pipe(
+      Effect.catchCause(() => Effect.void),
+      Effect.forkScoped,
+    );
+  }
   const drainAll = Effect.gen(function* () {
     const terminalUnsaved = yield* terminals.drain;
     const turnUnsaved = yield* turns.drain;
@@ -231,6 +271,10 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return turns.start(message);
       case "terminal.command":
         return terminals.handleCommand(message);
+      case "exec.command":
+        return exec === null
+          ? Effect.void
+          : Effect.asVoid(Effect.forkIn(exec.handleCommand(message), scope));
       case "preparation.cancel":
         return turns.cancelPreparation(message.runId, message.preparationGeneration);
       case "preparation.handoff":
@@ -289,6 +333,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         workflowStops: turns.stopWorkflow !== undefined,
         runtimeResponses: true,
         pulls: true,
+        exec: exec !== null,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
         takenPreparations: yield* turns.preparationsTaken,
@@ -325,13 +370,21 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       });
       // Turns the thread stopped while this machine was away.
       yield* turns.keepOnly(answer.activeRunId);
-      yield* terminals.replayEvents(
-        wire.withPermits(1)(
-          Effect.gen(function* () {
-            yield* Ref.set(current, connection);
-            for (const batch of (yield* Ref.get(outbox)).pending) yield* sendNow(connection, batch);
-          }),
-        ),
+      yield* execWire.withPermits(1)(
+        Effect.gen(function* () {
+          yield* terminals.replayEvents(
+            wire.withPermits(1)(
+              Effect.gen(function* () {
+                yield* Ref.set(current, connection);
+                for (const batch of (yield* Ref.get(outbox)).pending)
+                  yield* sendNow(connection, batch);
+              }),
+            ),
+          );
+          if (exec !== null) {
+            yield* exec.replayEvents(({ report }) => sendExecReport(connection, report, true));
+          }
+        }),
       );
       while (true) yield* handle(connection, yield* connection.receive);
     }),
