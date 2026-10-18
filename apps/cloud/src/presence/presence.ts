@@ -7,10 +7,10 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as PresenceAccess from "./PresenceAccess.ts";
+import * as PresenceAccess from "./presence-access.ts";
 
 export type PresenceFrame =
-  | { readonly _tag: "Snapshot" | "Update"; readonly people: ReadonlyArray<string> }
+  | { readonly _tag: "Snapshot" | "Update"; readonly people: readonly string[] }
   | { readonly _tag: "Reset" | "Revoked" };
 
 export class Presence extends Context.Service<
@@ -27,38 +27,55 @@ export class Presence extends Context.Service<
       connectionKey: string,
     ) => Effect.Effect<void, PresenceAccess.PresenceError, Scope.Scope>;
   }
->()("@signalbox/cloud/presence/Presence") {}
+>()("@signalbox/cloud/presence/presence") {}
 
 const encodeConnection = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String])),
 );
 
-const make = Effect.gen(function* () {
+const make = Effect.gen(function* makePresence() {
   const access = yield* PresenceAccess.PresenceAccess;
-  type Join = {
+
+  interface Join {
     readonly userId: string;
     readonly guard: PresenceAccess.PresenceGuard;
     failure?: PresenceAccess.PresenceError;
-  };
+  }
+
   const targets = new Map<string, Map<string, Set<Join>>>();
   const observers = new Map<string, Set<() => void>>();
+
   const notify = (target: string) => {
-    for (const changed of observers.get(target) ?? []) changed();
+    for (const changed of observers.get(target) ?? []) {
+      changed();
+    }
   };
+
   const remove = (target: string, key: string, entry: Join) => {
     const connections = targets.get(target);
     const joins = connections?.get(key);
-    if (!joins?.delete(entry)) return;
-    if (joins.size === 0) connections?.delete(key);
-    if (connections?.size === 0) targets.delete(target);
+
+    if (joins === undefined || !joins.delete(entry)) {
+      return;
+    }
+
+    if (joins.size === 0) {
+      connections?.delete(key);
+    }
+
+    if (connections?.size === 0) {
+      targets.delete(target);
+    }
+
     notify(target);
   };
 
   const join: Presence["Service"]["join"] = (actor, target, connectionKey) =>
-    Effect.gen(function* () {
+    Effect.gen(function* addPresenceJoin() {
       const guard = yield* access.open(actor, target, "publish");
       const key = encodeConnection([actor.userId, connectionKey]);
-      const entry: Join = { userId: actor.userId, guard };
+      const entry: Join = { guard, userId: actor.userId };
+
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           guard.onInvalidate((result) => {
@@ -86,17 +103,24 @@ const make = Effect.gen(function* () {
             }),
           ),
         ),
-        () => Effect.sync(() => remove(guard.target, key, entry)),
+        () =>
+          Effect.sync(() => {
+            remove(guard.target, key, entry);
+          }),
       );
     });
 
   const view: Presence["Service"]["view"] = (actor, target) =>
     Stream.unwrap(
-      Effect.gen(function* () {
+      Effect.gen(function* openPresenceView() {
         const guard = yield* access.open(actor, target, "observe");
         // Queue dirtiness, never rosters: every pull computes under current publisher and reader fences.
-        const dirty = yield* Queue.sliding<void>(1);
-        const changed = () => void Queue.offerUnsafe(dirty, undefined);
+        const dirty = yield* Queue.sliding<true>(1);
+
+        const changed = () => {
+          Queue.offerUnsafe(dirty, true);
+        };
+
         yield* Effect.acquireRelease(
           Effect.sync(() => {
             const listeners = observers.get(guard.target) ?? new Set<() => void>();
@@ -107,10 +131,15 @@ const make = Effect.gen(function* () {
             Effect.sync(() => {
               const listeners = observers.get(guard.target);
               listeners?.delete(changed);
-              if (listeners?.size === 0) observers.delete(guard.target);
+
+              if (listeners?.size === 0) {
+                observers.delete(guard.target);
+              }
+
               Queue.shutdownUnsafe(dirty);
             }),
         );
+
         let terminal: Result.Result<"Reset" | "Revoked", PresenceAccess.PresenceError> | undefined;
         yield* Effect.acquireRelease(
           Effect.sync(() =>
@@ -121,36 +150,53 @@ const make = Effect.gen(function* () {
           ),
           (unsubscribe) => Effect.sync(unsubscribe),
         );
+
         changed();
         let first = true;
+
         return Stream.fromEffectRepeat(
-          Effect.gen(function* () {
+          Effect.gen(function* readPresenceFrame() {
             yield* Queue.take(dirty);
+
             if (terminal !== undefined) {
               return { _tag: yield* Effect.fromResult(terminal) } satisfies PresenceFrame;
             }
+
             const collected = guard.withCurrent(() => {
               const people = new Set<string>();
+
               for (const joins of targets.get(guard.target)?.values() ?? []) {
                 for (const entry of joins) {
-                  if (entry.failure !== undefined) return Result.fail(entry.failure);
+                  if (entry.failure !== undefined) {
+                    return Result.fail(entry.failure);
+                  }
+
                   const current = entry.guard.withCurrent(() => entry.userId);
+
                   if (Result.isFailure(current)) {
-                    if (current.failure._tag === "PresenceUnavailable")
+                    if (current.failure._tag === "PresenceUnavailable") {
                       return Result.fail(current.failure);
-                  } else people.add(current.success);
+                    }
+                  } else {
+                    people.add(current.success);
+                  }
                 }
               }
-              return Result.succeed([...people].sort());
+
+              return Result.succeed([...people].toSorted());
             });
+
             if (Result.isFailure(collected) && collected.failure._tag === "PresenceDenied") {
               return { _tag: "Revoked" } satisfies PresenceFrame;
             }
+
             const people = yield* Effect.fromResult(collected).pipe(
               Effect.flatMap(Effect.fromResult),
             );
+
             const frame: PresenceFrame = { _tag: first ? "Snapshot" : "Update", people };
             first = false;
+
             return frame;
           }),
         ).pipe(Stream.takeUntil((frame) => frame._tag === "Reset" || frame._tag === "Revoked"));

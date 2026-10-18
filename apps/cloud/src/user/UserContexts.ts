@@ -15,6 +15,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { contextProjectIds, projectIdForContext } from "./contextProjects.ts";
+import * as OrganizationMembershipOutbox from "./organizationMembershipOutbox.ts";
+import * as OrganizationRefresh from "./organizationRefresh.ts";
+import { encodeRoleSlugs, normalRoleSlugs, RoleSlugs } from "./organizationRoles.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 
 /**
@@ -26,6 +29,12 @@ import * as UserDriveIndex from "./UserDriveIndex.ts";
  *
  * Each membership keeps the member's WorkOS role slugs for organization
  * authority. They stay out of `SignalboxContext`: clients have no use for them.
+ *
+ * Memberships are read from WorkOS outside this object, so writes are ordered
+ * by refresh reservations (`organizationRefresh`): only the latest may land.
+ * Every accepted one also feeds the membership outbox
+ * (`organizationMembershipOutbox`) in the same transaction, so what
+ * organizations are told never drifts from what this object holds.
  */
 
 type ContextRecord = Omit<SignalboxContext, "projectIds">;
@@ -69,10 +78,36 @@ export interface OrganizationMembershipRead {
 export class UserContexts extends Context.Service<
   UserContexts,
   {
-    /** Replaces the organization contexts with the user's current memberships. */
+    /**
+     * Replaces the organization contexts with memberships the caller already
+     * trusts, as one reservation applied at once, so it retires older refreshes.
+     */
     readonly syncOrganizations: (
       organizations: ReadonlyArray<WorkOSOrganization>,
-    ) => Effect.Effect<void, SqlError>;
+    ) => Effect.Effect<
+      void,
+      | SqlError
+      | OrganizationRefresh.OrganizationRefreshExhaustedError
+      | OrganizationMembershipOutbox.OrganizationMembershipSnapshotError
+    >;
+    /** Reserves a refresh before reading WorkOS; it retires every earlier reservation. */
+    readonly reserveOrganizationRefresh: Effect.Effect<
+      number,
+      SqlError | OrganizationRefresh.OrganizationRefreshExhaustedError
+    >;
+    /**
+     * Applies what reservation `sequence` read, if it's still the latest.
+     * False means a newer one exists and nothing was written. True includes
+     * an unchanged snapshot, which still reaches the outbox. A refused
+     * snapshot writes nothing.
+     */
+    readonly completeOrganizationRefresh: (
+      sequence: number,
+      organizations: ReadonlyArray<WorkOSOrganization>,
+    ) => Effect.Effect<
+      boolean,
+      SqlError | OrganizationMembershipOutbox.OrganizationMembershipSnapshotError
+    >;
     /** The user's active membership in `organizationId`, null when they are not a member. */
     readonly membership: (
       organizationId: SignalboxContextId,
@@ -111,8 +146,6 @@ export const addRoleSlugs = Effect.gen(function* () {
   yield* sql`ALTER TABLE organizations ADD COLUMN role_slugs TEXT NOT NULL DEFAULT '[]'`;
 });
 
-const RoleSlugs = Schema.fromJsonString(Schema.Array(Schema.String));
-const encodeRoleSlugs = Schema.encodeSync(RoleSlugs);
 const OrganizationRow = Schema.Struct({
   id: SignalboxContextId,
   name: Schema.String,
@@ -122,12 +155,6 @@ const decodeOrganizationRows = Schema.decodeUnknownSync(Schema.Array(Organizatio
 const decodeMembershipRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ role_slugs: Schema.NullOr(RoleSlugs), revision: Schema.Number })),
 );
-
-/** One spelling per set of slugs, so comparing them is comparing strings. */
-const normalRoleSlugs = (organization: WorkOSOrganization) =>
-  encodeRoleSlugs(
-    [...new Set(organization.roleSlugs ?? [])].filter((slug) => slug.length > 0).toSorted(),
-  );
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -179,7 +206,8 @@ const make = Effect.gen(function* () {
     ([[row], drives]) => (row?.revision ?? 0) + drives,
   );
 
-  const syncOrganizations: UserContexts["Service"]["syncOrganizations"] = (orgs) =>
+  /** Writes `orgs` unless they're what's stored. Run inside the transaction that ordered it. */
+  const replaceOrganizations = (orgs: ReadonlyArray<WorkOSOrganization>) =>
     Effect.gen(function* () {
       const current = yield* organizations;
       const unchanged =
@@ -193,25 +221,70 @@ const make = Effect.gen(function* () {
           ),
         );
       // Most sign-ins change nothing; skip the writes and the pushes to every client.
-      if (unchanged) return;
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          // A former member holds no roles; rejoining brings the current ones.
-          yield* sql`UPDATE organizations SET member = 0, role_slugs = '[]'`;
-          yield* Effect.forEach(
-            orgs,
-            (org) =>
-              sql`INSERT INTO organizations (id, name, member, role_slugs)
-                VALUES (${org.id}, ${org.name}, 1, ${normalRoleSlugs(org)})
-                ON CONFLICT (id) DO UPDATE SET name = excluded.name, member = 1,
-                  role_slugs = excluded.role_slugs`,
-            { discard: true },
-          );
-          yield* sql`UPDATE contexts_state SET revision = revision + 1 WHERE id = 1`;
-        }),
+      if (unchanged) return false;
+      // A former member holds no roles; rejoining brings the current ones.
+      yield* sql`UPDATE organizations SET member = 0, role_slugs = '[]'`;
+      yield* Effect.forEach(
+        orgs,
+        (org) =>
+          sql`INSERT INTO organizations (id, name, member, role_slugs)
+            VALUES (${org.id}, ${org.name}, 1, ${normalRoleSlugs(org)})
+            ON CONFLICT (id) DO UPDATE SET name = excluded.name, member = 1,
+              role_slugs = excluded.role_slugs`,
+        { discard: true },
       );
-      yield* PubSub.publish(changed, undefined);
-    }).pipe(Effect.withSpan("UserContexts.syncOrganizations"));
+      yield* sql`UPDATE contexts_state SET revision = revision + 1 WHERE id = 1`;
+      return true;
+    });
+
+  const publishIf = (changedContexts: boolean) =>
+    changedContexts ? PubSub.publish(changed, undefined) : Effect.void;
+
+  const reserve = OrganizationRefresh.reserve.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+
+  /**
+   * Lands accepted reservation `sequence`. The outbox runs even when the
+   * memberships are unchanged: it may never have seen them. Run inside the
+   * transaction that ordered it, so a refused snapshot undoes both.
+   */
+  const acceptOrganizations = (sequence: number, orgs: ReadonlyArray<WorkOSOrganization>) =>
+    Effect.gen(function* () {
+      const changedContexts = yield* replaceOrganizations(orgs);
+      yield* OrganizationMembershipOutbox.syncSnapshot(sequence, orgs).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
+      return changedContexts;
+    });
+
+  const syncOrganizations: UserContexts["Service"]["syncOrganizations"] = (orgs) =>
+    sql
+      .withTransaction(Effect.flatMap(reserve, (sequence) => acceptOrganizations(sequence, orgs)))
+      .pipe(Effect.flatMap(publishIf), Effect.withSpan("UserContexts.syncOrganizations"));
+
+  const reserveOrganizationRefresh: UserContexts["Service"]["reserveOrganizationRefresh"] =
+    reserve.pipe(Effect.withSpan("UserContexts.reserveOrganizationRefresh"));
+
+  // The check and the writes share one transaction, so no newer reservation lands between them.
+  const completeOrganizationRefresh: UserContexts["Service"]["completeOrganizationRefresh"] = (
+    sequence,
+    orgs,
+  ) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const latest = yield* OrganizationRefresh.isLatest(sequence).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
+          if (!latest) return null;
+          return yield* acceptOrganizations(sequence, orgs);
+        }),
+      )
+      .pipe(
+        Effect.flatMap((result) =>
+          result === null ? Effect.succeed(false) : Effect.as(publishIf(result), true),
+        ),
+        Effect.withSpan("UserContexts.completeOrganizationRefresh", { attributes: { sequence } }),
+      );
 
   yield* driveIndex.changed.pipe(
     Stream.runForEach(() => PubSub.publish(changed, undefined)),
@@ -232,6 +305,8 @@ const make = Effect.gen(function* () {
 
   return UserContexts.of({
     syncOrganizations,
+    reserveOrganizationRefresh,
+    completeOrganizationRefresh,
     membership,
     contexts,
     contextIds,
