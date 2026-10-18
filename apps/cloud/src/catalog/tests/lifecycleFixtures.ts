@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import type { CatalogHome } from "../catalogHome.ts";
 import { catalogRootTables } from "../catalogHomeTables.ts";
 import type { CatalogOrganizationWriteContext } from "../catalogOrganizationPolicy.ts";
-import type { CatalogPolicyWriteContext } from "../catalogPolicy.ts";
+import type { CatalogPersonalWriteContext } from "../catalogOrganizationReferences.ts";
 import { organizationContext } from "./organizationContext.ts";
 import { policyContext } from "./policyContext.ts";
 
@@ -72,14 +72,14 @@ export const organizationLifecycle = (seeds: Parameters<typeof organizationConte
 /** A personal root owned by `owner`, shared by every actor that `as` returns. */
 export const personalLifecycle = (seeds: Parameters<typeof policyContext>[1] = {}) => {
   const context = policyContext("owner", seeds);
-  const ctx: CatalogPolicyWriteContext = {
+  const ctx: CatalogPersonalWriteContext = {
     ...context.ctx,
     tables: {
       ...context.ctx.tables,
       folders: storageOrderedFolders(context.ctx.tables.folders, context.folders.rows),
     },
   };
-  const as = (userId: string): CatalogPolicyWriteContext => ({ ...ctx, actor: { userId } });
+  const as = (userId: string): CatalogPersonalWriteContext => ({ ...ctx, actor: { userId } });
   return { ...context, as };
 };
 

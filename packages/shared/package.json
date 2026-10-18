@@ -7,6 +7,14 @@
       "types": "./src/waitingCost.ts",
       "import": "./src/waitingCost.ts"
     },
+    "./askKit": {
+      "types": "./src/askKit.ts",
+      "import": "./src/askKit.ts"
+    },
+    "./askKitAnswer": {
+      "types": "./src/askKitAnswer.ts",
+      "import": "./src/askKitAnswer.ts"
+    },
     "./keywordSearch": {
       "types": "./src/keywordSearch.ts",
       "import": "./src/keywordSearch.ts"
@@ -532,6 +540,10 @@
       "types": "./src/threadFindText.ts",
       "import": "./src/threadFindText.ts"
     },
+    "./threadFindMatchEvidence": {
+      "types": "./src/threadFindMatchEvidence.ts",
+      "import": "./src/threadFindMatchEvidence.ts"
+    },
     "./threadSearch": {
       "types": "./src/threadSearch.ts",
       "import": "./src/threadSearch.ts"
@@ -599,6 +611,18 @@
     "./poolUsageRecording": {
       "types": "./src/poolUsageRecording.ts",
       "import": "./src/poolUsageRecording.ts"
+    },
+    "./textSourceMap": {
+      "types": "./src/textSourceMap.ts",
+      "import": "./src/textSourceMap.ts"
+    },
+    "./threadFindProvenance": {
+      "types": "./src/threadFindProvenance.ts",
+      "import": "./src/threadFindProvenance.ts"
+    },
+    "./markdownTextSourceMap": {
+      "types": "./src/markdownTextSourceMap.ts",
+      "import": "./src/markdownTextSourceMap.ts"
     }
   },
   "scripts": {

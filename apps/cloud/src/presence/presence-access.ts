@@ -1,23 +1,14 @@
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
+import type * as Effect from "effect/Effect";
+import type * as Result from "effect/Result";
 import type * as Scope from "effect/Scope";
 
-export class PresenceDenied extends Schema.TaggedError<PresenceDenied>()("PresenceDenied", {}) {
-  override get message() {
-    return "Presence is unavailable.";
-  }
-}
+import type { PresenceDenied } from "./presence-denied.ts";
+import type { PresenceUnavailable } from "./presence-unavailable.ts";
 
-export class PresenceUnavailable extends Schema.TaggedError<PresenceUnavailable>()(
-  "PresenceUnavailable",
-  {},
-) {
-  override get message() {
-    return "Presence is unavailable.";
-  }
-}
+export { PresenceDenied } from "./presence-denied.ts";
+
+export { PresenceUnavailable } from "./presence-unavailable.ts";
 
 export type PresenceError = PresenceDenied | PresenceUnavailable;
 
@@ -31,8 +22,9 @@ export type PresenceTarget = string;
 type DeferredWork =
   | PromiseLike<unknown>
   | Effect.Effect<unknown, unknown, unknown>
-  | ((...args: never[]) => unknown);
-type Synchronous<A> = [Extract<A, DeferredWork>] extends [never] ? unknown : never;
+  | ((...args: never[]) => void);
+
+type Synchronous<A> = [Extract<A, DeferredWork>] extends [never] ? A : never;
 
 export interface PresenceGuard {
   readonly target: PresenceTarget;
@@ -55,4 +47,4 @@ export class PresenceAccess extends Context.Service<
       intent: "observe" | "publish",
     ) => Effect.Effect<PresenceGuard, PresenceError, Scope.Scope>;
   }
->()("@signalbox/cloud/presence/PresenceAccess") {}
+>()("@signalbox/cloud/presence/presence-access/PresenceAccess") {}
