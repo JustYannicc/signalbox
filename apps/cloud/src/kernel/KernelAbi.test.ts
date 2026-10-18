@@ -11,6 +11,7 @@ import {
   kernelOk,
   negotiateAbiVersion,
   type KernelBackend,
+  type KernelCapability,
   type KernelResult,
   type RegisteredProgram,
   type ResolvedProgram,
@@ -35,7 +36,7 @@ describe("kernel host extension ABI", () => {
   it("runs the portable proof cases", async () => {
     const proof = await runKernelAbiProof();
     expect(proof.ok, JSON.stringify(proof.checks)).toBe(true);
-    expect(proof.checks).toHaveLength(4);
+    expect(proof.checks).toHaveLength(5);
   });
 
   it("negotiates only defined versions, including when a future version is offered first", () => {
@@ -72,42 +73,84 @@ describe("kernel host extension ABI", () => {
   it("bounds resource allocation without invalidating live capabilities", () => {
     const resources = new KernelResourceTable(1);
     const handle = ok(resources.allocate("secret", "opaque-reference"));
-    expect(resources.allocate("resource", {})).toMatchObject({
+    expect(resources.allocate("socket", {})).toMatchObject({
       status: "error",
       error: { code: "RESOURCE_LIMIT" },
     });
     expect(ok(resources.take(handle, "secret"))).toBe("opaque-reference");
-    expect(resources.allocate("resource", {})).toMatchObject({ status: "ok" });
+    expect(resources.allocate("socket", {})).toMatchObject({ status: "ok" });
   });
 
-  it("preserves synchronous calls and asynchronously suspended process results", async () => {
+  it("transfers resources for request-exit cleanup and invalidates their handles", () => {
+    const resources = new KernelResourceTable();
+    const close = vi.fn();
+    const child = { close };
+    const handle = ok(resources.allocate("process", child));
+    ok(resources.allocate("secret", "reference"));
+    const entries = resources.drain();
+    expect(entries).toEqual([
+      { kind: "process", value: child },
+      { kind: "secret", value: "reference" },
+    ]);
+    expect(resources.size).toBe(0);
+    expect(resources.get(handle, "process")).toMatchObject({
+      status: "error",
+      error: { code: "INVALID_HANDLE" },
+    });
+    expect(resources.drain()).toEqual([]);
+    expect(close).not.toHaveBeenCalled();
+    child.close();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns process.wait WOULD_BLOCK synchronously, then retries after its wake", async () => {
+    const wakes = new KernelWakeRegistry();
     const processHandle = { kind: "process", id: "test-child" } as const;
+    let exited = false;
+    let notify = () => {};
+    const detach = vi.fn();
     const backend: KernelBackend = {
       escalate: () => kernelOk({ requestId: "request-1" }),
-      "process.wait": async () => kernelOk({ exitCode: 7 }),
+      "process.wait": () =>
+        attemptKernelOperation(
+          wakes,
+          (wake) => {
+            notify = wake;
+            return detach;
+          },
+          () => (exited ? kernelOk({ exitCode: 7 }) : { status: "would_block" }),
+        ),
     };
-    expect(
-      callKernel(backend, "escalate", { reason: "native binary", capability: "machine" }),
-    ).toEqual(kernelOk({ requestId: "request-1" }));
-    await expect(callKernel(backend, "process.wait", { handle: processHandle })).resolves.toEqual(
-      kernelOk({ exitCode: 7 }),
-    );
+    try {
+      expect(
+        callKernel(backend, "escalate", { reason: "native binary", capability: "machine" }),
+      ).toEqual(kernelOk({ requestId: "request-1" }));
+      const result = callKernel(backend, "process.wait", { handle: processHandle });
+      expect(result.status).toBe("would_block");
+      if (result.status !== "would_block") throw new Error("Expected a wake token");
+      exited = true;
+      notify();
+      await expect(wakes.wait(result.wakeToken)).resolves.toEqual(kernelOk(undefined));
+      expect(callKernel(backend, "process.wait", { handle: processHandle })).toEqual(
+        kernelOk({ exitCode: 7 }),
+      );
+      expect(wakes.size).toBe(0);
+      expect(detach).toHaveBeenCalledTimes(2);
+    } finally {
+      wakes.dispose();
+    }
   });
 
-  it("turns thrown and rejected backend failures into explicit errors", async () => {
+  it("turns thrown backend failures into explicit errors", () => {
     const backend: KernelBackend = {
       escalate: () => {
         throw new Error("private backend detail");
       },
-      "process.wait": () => Promise.reject(new Error("private backend detail")),
     };
     expect(callKernel(backend, "escalate", { reason: "test", capability: "test" })).toMatchObject({
       status: "error",
       error: { code: "IO_ERROR" },
     });
-    await expect(
-      callKernel(backend, "process.wait", { handle: { kind: "process", id: "child" } }),
-    ).resolves.toMatchObject({ status: "error", error: { code: "IO_ERROR" } });
   });
 
   it("pins versions, snapshots registration, and rejects duplicates and unsupported ABIs", () => {
@@ -139,7 +182,7 @@ describe("kernel host extension ABI", () => {
     });
   });
 
-  it("requires registry resolution before spawning and rechecks capabilities at execution", async () => {
+  it("requires registry resolution before spawning and rechecks capabilities at execution", () => {
     const programs = new KernelProgramRegistry();
     ok(programs.register(program));
     const spawn = vi.fn(() => kernelOk({ kind: "process", id: "child" } as const));
@@ -153,7 +196,7 @@ describe("kernel host extension ABI", () => {
       callKernel(backend, "process.spawn", { ...input, program: program as ResolvedProgram }),
     ).toMatchObject({ status: "error", error: { code: "INVALID_ARGUMENT" } });
     const resolved = ok(programs.resolve(program.name, program.version, [ABI_VERSION], backend));
-    expect(await callKernel(backend, "process.spawn", { ...input, program: resolved })).toEqual(
+    expect(callKernel(backend, "process.spawn", { ...input, program: resolved })).toEqual(
       kernelOk({ kind: "process", id: "child" }),
     );
     expect(
@@ -169,6 +212,155 @@ describe("kernel host extension ABI", () => {
       status: "error",
       error: { code: "RESOURCE_LIMIT" },
     });
+  });
+
+  it("validates and stores one manifest snapshot even when ABI getters change", () => {
+    const programs = new KernelProgramRegistry();
+    let reads = 0;
+    ok(
+      programs.register({
+        ...program,
+        get abiVersion() {
+          return reads++ === 0 ? ABI_VERSION : 0;
+        },
+      }),
+    );
+    const resolved = ok(
+      programs.resolve(program.name, program.version, [ABI_VERSION], {
+        "process.wait": () => kernelOk({ exitCode: 0 }),
+      }),
+    );
+    expect(reads).toBe(1);
+    expect(resolved.abiVersion).toBe(ABI_VERSION);
+    expect(programs.resolve(program.name, program.version, [0], {})).toMatchObject({
+      status: "error",
+      error: { code: "ABI_MISMATCH" },
+    });
+  });
+
+  it("checks capacity and duplicates after a capabilities iterator reenters registration", () => {
+    for (const duplicate of [false, true]) {
+      const programs = new KernelProgramRegistry(1);
+      const requirements: KernelCapability[] = [];
+      const iterate = requirements[Symbol.iterator].bind(requirements);
+      requirements[Symbol.iterator] = () => {
+        ok(programs.register({ ...program, name: duplicate ? program.name : "inner" }));
+        return iterate();
+      };
+      expect(programs.register({ ...program, requiredCapabilities: requirements })).toMatchObject({
+        status: "error",
+        error: { code: duplicate ? "ALREADY_EXISTS" : "RESOURCE_LIMIT" },
+      });
+      expect(
+        programs.resolve(duplicate ? program.name : "inner", program.version, [ABI_VERSION], {
+          "process.wait": () => kernelOk({ exitCode: 0 }),
+        }).status,
+      ).toBe("ok");
+      expect(programs.register({ ...program, name: "third" })).toMatchObject({
+        status: "error",
+        error: { code: "RESOURCE_LIMIT" },
+      });
+    }
+  });
+
+  it("dispatches one frozen spawn snapshot despite getters and caller mutation", () => {
+    const programs = new KernelProgramRegistry();
+    ok(programs.register(program));
+    const resolved = ok(
+      programs.resolve(program.name, program.version, [ABI_VERSION], {
+        "process.wait": () => kernelOk({ exitCode: 0 }),
+      }),
+    );
+    const forged = { ...resolved, entrypoint: "untrusted" };
+    const secret = { id: "secret", kind: "secret" } as const;
+    const args = ["original"];
+    const env = { KEY: "original", SECRET: secret };
+    let reads = 0;
+    const input = {
+      get program() {
+        return reads++ === 0 ? resolved : forged;
+      },
+      args,
+      env,
+    };
+    const spawn = vi.fn((snapshot: Parameters<NonNullable<KernelBackend["process.spawn"]>>[0]) => {
+      expect(snapshot.program).toBe(resolved);
+      expect(snapshot.args).toEqual(["original"]);
+      expect(snapshot.env.KEY).toBe("original");
+      expect(snapshot.env.SECRET).toEqual({ id: "secret", kind: "secret" });
+      expect(snapshot.env.SECRET).not.toBe(secret);
+      for (const value of [snapshot, snapshot.args, snapshot.env, snapshot.env.SECRET]) {
+        expect(Object.isFrozen(value)).toBe(true);
+      }
+      return kernelOk({ id: "child", kind: "process" } as const);
+    });
+    const backend: KernelBackend = {
+      get "process.wait"() {
+        args[0] = "changed";
+        env.KEY = "changed";
+        Object.defineProperty(input, "program", { value: forged });
+        return () => kernelOk({ exitCode: 0 });
+      },
+      "process.spawn": spawn,
+    };
+    expect(callKernel(backend, "process.spawn", input).status).toBe("ok");
+    expect(reads).toBe(1);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unknown operations and inherited backend capabilities", () => {
+    const programs = new KernelProgramRegistry();
+    for (const capability of ["constructor", "toString", "unknown"] as KernelCapability[]) {
+      expect(programs.register({ ...program, requiredCapabilities: [capability] })).toMatchObject({
+        status: "error",
+        error: { code: "UNSUPPORTED" },
+      });
+      expect(callKernel({}, capability, { reason: "test", capability: "test" })).toMatchObject({
+        status: "error",
+        error: { code: "UNSUPPORTED" },
+      });
+      const backend: KernelBackend = {};
+      const unknown = vi.fn(() => kernelOk({ requestId: "unknown" }));
+      Object.defineProperty(backend, capability, { value: unknown });
+      expect(callKernel(backend, capability, { reason: "test", capability: "test" })).toMatchObject(
+        {
+          status: "error",
+          error: { code: "UNSUPPORTED" },
+        },
+      );
+      expect(unknown).not.toHaveBeenCalled();
+    }
+    const inherited: KernelBackend = Object.create({
+      "process.wait": () => kernelOk({ exitCode: 0 }),
+      escalate: () => kernelOk({ requestId: "inherited" }),
+    });
+    ok(programs.register(program));
+    expect(programs.resolve(program.name, program.version, [ABI_VERSION], inherited)).toMatchObject(
+      {
+        status: "error",
+        error: { code: "UNSUPPORTED" },
+      },
+    );
+    expect(callKernel(inherited, "escalate", { reason: "test", capability: "test" })).toMatchObject(
+      {
+        status: "error",
+        error: { code: "UNSUPPORTED" },
+      },
+    );
+    const resolved = ok(
+      programs.resolve(program.name, program.version, [ABI_VERSION], {
+        "process.wait": () => kernelOk({ exitCode: 0 }),
+      }),
+    );
+    const spawn = vi.fn(() => kernelOk({ kind: "process", id: "child" } as const));
+    Object.defineProperty(inherited, "process.spawn", { value: spawn });
+    expect(
+      callKernel(inherited, "process.spawn", { program: resolved, args: [], env: {} }),
+    ).toMatchObject({
+      status: "error",
+      error: { code: "UNSUPPORTED" },
+    });
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
 
@@ -333,6 +525,45 @@ describe("one-shot wake tokens", () => {
       }),
     ).toMatchObject({ status: "error", error: { code: "CANCELLED" } });
     expect(detach).toHaveBeenCalledTimes(1);
+    expect(wakes.size).toBe(0);
+  });
+
+  it("returns cancellation when the I/O attempt disposes its wake registration", () => {
+    const wakes = registry();
+    const detach = vi.fn();
+    expect(
+      attemptKernelOperation(
+        wakes,
+        () => detach,
+        () => {
+          wakes.dispose();
+          return { status: "would_block" };
+        },
+      ),
+    ).toMatchObject({ status: "error", error: { code: "CANCELLED" } });
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(wakes.size).toBe(0);
+  });
+
+  it("reserves an already-aborted wait before cleanup can reenter and consume it", async () => {
+    const wakes = registry();
+    const aborted = new AbortController();
+    aborted.abort();
+    let reentered: ReturnType<KernelWakeRegistry["wait"]> | undefined;
+    const token = ok(
+      wakes.register(() => () => {
+        reentered = wakes.wait(token);
+      }),
+    );
+    await expect(wakes.wait(token, aborted.signal)).resolves.toMatchObject({
+      status: "error",
+      error: { code: "CANCELLED" },
+    });
+    expect(reentered).toBeDefined();
+    await expect(reentered).resolves.toMatchObject({
+      status: "error",
+      error: { code: "INVALID_HANDLE" },
+    });
     expect(wakes.size).toBe(0);
   });
 });

@@ -28,7 +28,7 @@ export type KernelResult<T> =
       readonly error: { readonly code: KernelErrorCode; readonly message: string };
     }
   | { readonly status: "would_block"; readonly wakeToken: WakeToken };
-export type KernelCall<T> = KernelResult<T> | Promise<KernelResult<T>>;
+export type KernelCall<T> = KernelResult<T>;
 export const kernelOk = <T>(value: T) => ({ status: "ok", value }) as const;
 export const kernelError = (code: KernelErrorCode, message: string) =>
   ({ status: "error", error: { code, message } }) as const;
@@ -40,11 +40,14 @@ export function negotiateAbiVersion(offered: readonly number[]): KernelResult<nu
     : kernelOk(version);
 }
 
-export type KernelHandleKind = "process" | "resource" | "secret" | "pipe" | "pty" | "socket";
+export type KernelHandleKind = "process" | "secret" | "pipe" | "pty" | "socket";
 export interface KernelHandle<K extends KernelHandleKind = KernelHandleKind> {
   readonly id: string;
   readonly kind: K;
 }
+export type KernelResourceEntry<Resources extends Record<KernelHandleKind, unknown>> = {
+  [K in KernelHandleKind]: { readonly kind: K; readonly value: Resources[K] };
+}[KernelHandleKind];
 
 /** Opaque resource capabilities, not WASI descriptors. Removed identities are never reused. */
 export class KernelResourceTable<
@@ -89,6 +92,13 @@ export class KernelResourceTable<
     if (result.status === "ok") this.#entries.delete(handle.id);
     return result;
   }
+
+  /** Transfer all resources to the request owner for backend cleanup on exit. */
+  drain(): KernelResourceEntry<Resources>[] {
+    const entries = [...this.#entries.values()] as KernelResourceEntry<Resources>[];
+    this.#entries.clear();
+    return entries;
+  }
 }
 
 type Operation<Input, Output> = { readonly input: Input; readonly output: Output };
@@ -109,35 +119,58 @@ export interface KernelOperations {
   escalate: Operation<{ reason: string; capability: string }, { requestId: string }>;
 }
 export type KernelCapability = keyof KernelOperations;
+export const KERNEL_CAPABILITIES = Object.freeze([
+  "process.spawn",
+  "process.wait",
+  "process.signal",
+  "escalate",
+] as const satisfies readonly KernelCapability[]);
+const knownCapabilities = new Set<string>(KERNEL_CAPABILITIES);
 export type KernelBackend = {
   readonly [K in KernelCapability]?: (
     input: KernelOperations[K]["input"],
-  ) => KernelCall<KernelOperations[K]["output"]>;
+  ) => KernelResult<KernelOperations[K]["output"]>;
 };
 
-/** Synchronous host calls stay synchronous; process operations can return promises or WOULD_BLOCK. */
+/** Async work returns WOULD_BLOCK; a JSPI owner can suspend on the wake registry outside the ABI. */
 export function callKernel<K extends KernelCapability>(
   backend: KernelBackend,
   operation: K,
   input: KernelOperations[K]["input"],
-): KernelCall<KernelOperations[K]["output"]> {
-  const handler = backend[operation];
-  if (typeof handler !== "function")
-    return kernelError("UNSUPPORTED", `Kernel operation is unavailable: ${operation}`);
-  if (operation === "process.spawn") {
-    const { program } = input as KernelOperations["process.spawn"]["input"];
-    if (!resolvedPrograms.has(program))
-      return kernelError("INVALID_ARGUMENT", "Spawn requires a registry-resolved program");
-    for (const capability of program.requiredCapabilities) {
-      if (typeof backend[capability] !== "function")
-        return kernelError("UNSUPPORTED", `Program requires unavailable operation: ${capability}`);
-    }
-  }
+): KernelResult<KernelOperations[K]["output"]> {
   try {
-    const result = handler(input);
-    return result instanceof Promise
-      ? result.catch(() => kernelError("IO_ERROR", `Kernel operation failed: ${operation}`))
-      : result;
+    let dispatchInput = input;
+    if (operation === "process.spawn") {
+      const spawn = input as KernelOperations["process.spawn"]["input"];
+      const snapshot = Object.freeze({
+        program: spawn.program,
+        args: Object.freeze([...spawn.args]),
+        env: Object.freeze(
+          Object.fromEntries(
+            Object.entries(spawn.env).map(([name, value]) => [
+              name,
+              typeof value === "string" ? value : Object.freeze({ id: value.id, kind: value.kind }),
+            ]),
+          ),
+        ),
+      });
+      if (!resolvedPrograms.has(snapshot.program))
+        return kernelError("INVALID_ARGUMENT", "Spawn requires a registry-resolved program");
+      for (const capability of snapshot.program.requiredCapabilities) {
+        if (!Object.hasOwn(backend, capability) || typeof backend[capability] !== "function")
+          return kernelError(
+            "UNSUPPORTED",
+            `Program requires unavailable operation: ${capability}`,
+          );
+      }
+      dispatchInput = snapshot as KernelOperations[K]["input"];
+    }
+    if (!knownCapabilities.has(operation) || !Object.hasOwn(backend, operation))
+      return kernelError("UNSUPPORTED", `Kernel operation is unavailable: ${operation}`);
+    const handler = backend[operation];
+    if (typeof handler !== "function")
+      return kernelError("UNSUPPORTED", `Kernel operation is unavailable: ${operation}`);
+    return handler(dispatchInput);
   } catch {
     return kernelError("IO_ERROR", `Kernel operation failed: ${operation}`);
   }
@@ -154,7 +187,11 @@ export function attemptKernelOperation<T>(
   const token = registration.value;
   try {
     const result = attempt();
-    if (result.status === "would_block") return { status: "would_block", wakeToken: token };
+    if (result.status === "would_block") {
+      return wakes.has(token)
+        ? { status: "would_block", wakeToken: token }
+        : kernelError("CANCELLED", "Wake registration was released during the operation");
+    }
     wakes.release(token);
     return result;
   } catch {
@@ -189,24 +226,29 @@ export class KernelProgramRegistry {
   }
 
   register(program: RegisteredProgram): KernelResult<void> {
-    if (!program.name.trim() || !program.version.trim() || !program.entrypoint.trim()) {
+    const registered = Object.freeze({
+      name: program.name,
+      version: program.version,
+      abiVersion: program.abiVersion,
+      entrypoint: program.entrypoint,
+      requiredCapabilities: Object.freeze([...program.requiredCapabilities]),
+    });
+    if (!registered.name.trim() || !registered.version.trim() || !registered.entrypoint.trim()) {
       return kernelError("INVALID_ARGUMENT", "Program name, version and entrypoint are required");
     }
-    if (negotiateAbiVersion([program.abiVersion]).status !== "ok") {
+    if (negotiateAbiVersion([registered.abiVersion]).status !== "ok") {
       return kernelError("ABI_MISMATCH", "Program requires an unsupported kernel ABI");
     }
-    const versions = this.#programs.get(program.name);
-    if (versions?.has(program.version))
+    if (registered.requiredCapabilities.some((capability) => !knownCapabilities.has(capability)))
+      return kernelError("UNSUPPORTED", "Program requires an unknown kernel operation");
+    const versions = this.#programs.get(registered.name);
+    if (versions?.has(registered.version))
       return kernelError("ALREADY_EXISTS", "Program version is already registered");
     if (this.#size >= this.#maxPrograms)
       return kernelError("RESOURCE_LIMIT", "Too many registered programs");
-    const registered = Object.freeze({
-      ...program,
-      requiredCapabilities: Object.freeze([...program.requiredCapabilities]),
-    });
     const target = versions ?? new Map<string, RegisteredProgram>();
-    target.set(program.version, registered);
-    this.#programs.set(program.name, target);
+    target.set(registered.version, registered);
+    this.#programs.set(registered.name, target);
     this.#size++;
     return kernelOk(undefined);
   }
@@ -222,7 +264,7 @@ export class KernelProgramRegistry {
     if (!offeredAbiVersions.includes(program.abiVersion))
       return kernelError("ABI_MISMATCH", "Caller does not support the program ABI");
     for (const capability of program.requiredCapabilities) {
-      if (typeof backend[capability] !== "function")
+      if (!Object.hasOwn(backend, capability) || typeof backend[capability] !== "function")
         return kernelError("UNSUPPORTED", `Program requires unavailable operation: ${capability}`);
     }
     resolvedPrograms.add(program);

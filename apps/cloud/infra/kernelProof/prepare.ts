@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const prepareKernelProof = async (destination: string) => {
   await NodeFSP.mkdir(destination, { recursive: true });
@@ -38,7 +39,7 @@ export class KernelProofFacet extends DurableObject {
         entrypoint: "KernelProofFacet",
         mode: "facet",
         modules,
-        paths: ["/proof", "/proof"],
+        paths: ["/proof", "/proof-again"],
       },
       null,
       2,
@@ -46,7 +47,7 @@ export class KernelProofFacet extends DurableObject {
   );
 };
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const destination = process.argv[2];
   if (!destination) throw new Error("Pass a fixture output directory");
   await prepareKernelProof(NodePath.resolve(destination));

@@ -51,6 +51,10 @@ export class KernelWakeRegistry {
     return this.#entries.size;
   }
 
+  has(token: WakeToken) {
+    return this.#entries.has(token.id);
+  }
+
   /** Install the subscription before attempting I/O, including when it wakes synchronously. */
   register(subscribe: WakeSubscription): WakeResult<WakeToken> {
     if (this.#closed) return failure("CANCELLED", "Wake registry is closed");
@@ -94,11 +98,6 @@ export class KernelWakeRegistry {
     const entry = this.#entries.get(token.id);
     if (!entry) return Promise.resolve(failure("INVALID_HANDLE", "Unknown or consumed wake token"));
     if (entry.waiter) return Promise.resolve(failure("ALREADY_WAITING", "Wake token has a waiter"));
-    if (signal?.aborted) this.cancel(token);
-    if (entry.completion) {
-      this.release(token);
-      return Promise.resolve(entry.completion);
-    }
     return new Promise((resolve) => {
       const abort = () => this.cancel(token);
       entry.waiter = (result) => {
@@ -106,6 +105,8 @@ export class KernelWakeRegistry {
         resolve(result);
       };
       signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) this.cancel(token);
+      if (entry.completion) this.release(token);
     });
   }
 

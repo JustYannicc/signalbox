@@ -131,9 +131,42 @@ export async function runKernelAbiProof() {
       capability: "native-process",
     });
     assert(
-      !(call instanceof Promise) && call.status === "error" && call.error.code === "UNSUPPORTED",
+      call.status === "error" && call.error.code === "UNSUPPORTED",
       "Missing operation pretended to succeed",
     );
+  });
+
+  await run("process.wait suspends through a wake token", async () => {
+    const wakes = new KernelWakeRegistry();
+    let exited = false;
+    let notify = () => {};
+    let detached = 0;
+    const backend = {
+      "process.wait": () =>
+        attemptKernelOperation(
+          wakes,
+          (wake) => {
+            notify = wake;
+            return () => {
+              detached++;
+            };
+          },
+          () => (exited ? kernelOk({ exitCode: 7 }) : { status: "would_block" }),
+        ),
+    };
+    const input = { handle: { id: "proof-child", kind: "process" } } as const;
+    try {
+      const result = callKernel(backend, "process.wait", input);
+      assert(result.status === "would_block", "Process wait did not return a wake token");
+      exited = true;
+      notify();
+      assert((await wakes.wait(result.wakeToken)).status === "ok", "Process wake was lost");
+      const retried = callKernel(backend, "process.wait", input);
+      assert(retried.status === "ok" && retried.value.exitCode === 7, "Retry lost process exit");
+      assert(wakes.size === 0 && detached === 2, "Process wait leaked subscriptions");
+    } finally {
+      wakes.dispose();
+    }
   });
 
   return { ok: checks.every((check) => check.ok), checks };
