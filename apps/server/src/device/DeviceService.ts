@@ -64,6 +64,7 @@ import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  canonicalDeviceId,
   DEVICE_CLEANUP_INTERVAL,
   DEVICE_LEASE_WAIT_TIMEOUT_MS,
   DEVICE_LEASE_WAIT_INTERVAL,
@@ -593,6 +594,23 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       ),
     );
 
+  const leaseTarget = (device: DeviceSummary): DeviceLeaseTarget => ({
+    hostId: device.hostId,
+    platform: device.platform,
+    id: device.id,
+    name: device.name,
+    booted: device.booted,
+    physical: device.physical,
+  });
+
+  const findCanonicalDevice = (target: DeviceLeaseTarget, devices: ReadonlyArray<DeviceSummary>) =>
+    devices.find(
+      (candidate) =>
+        candidate.hostId === target.hostId &&
+        candidate.platform === target.platform &&
+        deviceAliases(leaseTarget(candidate)).includes(canonicalDeviceId(target)),
+    );
+
   const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
     const list = yield* hubJson(
       HttpClientRequest.get(`${ready.hub.origin}/api/devices`),
@@ -640,20 +658,23 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return { devices, detail: list.errors?.map((error) => error.message).join("\n") || undefined };
   });
 
+  const discoverTarget = (target: DeviceLeaseTarget) =>
+    readiness(target.hostId).pipe(
+      Effect.flatMap((ready) =>
+        fetchDevices(ready).pipe(
+          Effect.map((discovery) => ({
+            ready,
+            ...discovery,
+            device: findCanonicalDevice(target, discovery.devices),
+          })),
+        ),
+      ),
+    );
+
   const deviceJanitor = makeDeviceLeaseJanitor(leaseAccess, {
     reconcileDevice: (target) =>
-      readiness(target.hostId).pipe(
-        Effect.flatMap(fetchDevices),
-        Effect.map(({ devices }) => {
-          const device = devices.find(
-            (candidate) =>
-              candidate.hostId === target.hostId &&
-              deviceAliases(leaseTarget(candidate)).some((alias) =>
-                deviceAliases(target).includes(alias),
-              ),
-          );
-          return device?.booted;
-        }),
+      discoverTarget(target).pipe(
+        Effect.map(({ detail, device }) => (detail === undefined ? device?.booted : undefined)),
         Effect.catch(() => Effect.succeed(undefined)),
       ),
   });
@@ -814,15 +835,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     deviceId: DeviceId,
   ): DeviceSummary | undefined =>
     state.devices.find((device) => device.hostId === hostId && device.id === deviceId);
-
-  const leaseTarget = (device: DeviceSummary): DeviceLeaseTarget => ({
-    hostId: device.hostId,
-    platform: device.platform,
-    id: device.id,
-    name: device.name,
-    booted: device.booted,
-    physical: device.physical,
-  });
 
   const ensurePlatform = Effect.fn("DeviceService.ensurePlatform")(function* (
     host: DeviceHost.DeviceHost["Service"],
@@ -1310,6 +1322,30 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  const publishShutdownComplete = (ready: DeviceReadiness, deviceId: DeviceId) =>
+    publish((state) => ({
+      ...state,
+      devices: state.devices.map((device) =>
+        device.hostId === ready.hostId && device.id === deviceId
+          ? { ...device, booted: false }
+          : device,
+      ),
+      sessions: state.sessions.filter(
+        (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
+      ),
+    })).pipe(
+      Effect.asVoid,
+      Effect.andThen(
+        // Discovery can stall while an emulator saves its snapshot. A failed
+        // refresh must not turn an accepted shutdown into an action failure.
+        refresh(ready).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
+          ),
+        ),
+      ),
+    );
+
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
     hostId: DeviceHostId,
     deviceId: DeviceId,
@@ -1356,30 +1392,33 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ),
         )
       : postShutdown("/api/devices/shutdown", { platform, id: deviceId });
-    yield* publish((state) => ({
-      ...state,
-      devices: state.devices.map((device) =>
-        device.hostId === ready.hostId && device.id === deviceId
-          ? { ...device, booted: false }
-          : device,
-      ),
-      sessions: state.sessions.filter(
-        (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
-      ),
-    }));
-    // Discovery can stall while an emulator saves its snapshot. A failed
-    // refresh must not turn an accepted shutdown into an action failure.
-    yield* refresh(ready).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
-      ),
-    );
+    yield* publishShutdownComplete(ready, deviceId);
   });
 
-  const runShutdownClaim = (claim: DeviceLeaseShutdownClaim) =>
-    shutdownDevice(claim.target.hostId, claim.target.id as DeviceId, claim.target.platform).pipe(
+  const runShutdownClaim = (claim: DeviceLeaseShutdownClaim) => {
+    const recoverAndroidAlreadyOff = (cause: DeviceError) =>
+      claim.target.platform === "android"
+        ? discoverTarget(claim.target).pipe(
+            Effect.catch(() => Effect.succeed(undefined)),
+            Effect.flatMap((discovery) =>
+              discovery !== undefined &&
+              discovery.detail === undefined &&
+              discovery.device?.booted === false
+                ? publishShutdownComplete(discovery.ready, claim.target.id as DeviceId)
+                : Effect.fail(cause),
+            ),
+          )
+        : Effect.fail(cause);
+
+    return shutdownDevice(
+      claim.target.hostId,
+      claim.target.id as DeviceId,
+      claim.target.platform,
+    ).pipe(
+      Effect.catch(recoverAndroidAlreadyOff),
       Effect.onExit((exit) => leases.finishShutdown(claim, Exit.isSuccess(exit))),
     );
+  };
 
   const withShutdownClaims = <A, E>(
     claims: ReadonlyArray<DeviceLeaseShutdownClaim>,

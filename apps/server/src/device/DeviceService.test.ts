@@ -112,6 +112,7 @@ const makeFixture = Effect.fn("fixture")(function* (
   onShutdown: Effect.Effect<void> = Effect.void,
   onDeviceHostReady: Effect.Effect<void> = Effect.void,
   httpServer: HttpServer.HttpServer["Service"] = fixtureHttpServer,
+  shutdownOutcome: "success" | "reject_off" | "reject_still_on" | "reject_missing" = "success",
 ) {
   const agentDeviceProxyRegistry = yield* AgentDeviceProxyRegistry.AgentDeviceProxyRegistry;
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -125,7 +126,12 @@ const makeFixture = Effect.fn("fixture")(function* (
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
-    run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
+    run: () =>
+      Effect.succeed({
+        code: 0,
+        stdout: shutDown && shutdownOutcome === "reject_missing" ? "" : "Pixel_API_35\n",
+        stderr: "",
+      }),
   };
   const host: DeviceHost.DeviceHost["Service"] = {
     ...(inspectError
@@ -202,8 +208,15 @@ const makeFixture = Effect.fn("fixture")(function* (
       if (request.url.endsWith("/shutdown")) {
         yield* onShutdown;
         shutDown = true;
-        booted = false;
-        return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+        booted = shutdownOutcome === "reject_still_on";
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            shutdownOutcome === "success"
+              ? { ok: true }
+              : { ok: false, error: "The emulator is already shut down." },
+          ),
+        );
       }
       if (shutDown && failListAfterShutdown) {
         return HttpClientResponse.fromWeb(request, new Response("Discovery busy", { status: 503 }));
@@ -2059,6 +2072,75 @@ it.effect("refuses unowned shutdown while a device lease is active", () =>
     expect((yield* service.state).sessions).toHaveLength(1);
     expect(requests.some((url) => url.endsWith("/api/devices/shutdown"))).toBe(false);
   }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  { outcome: "reject_off", succeeds: true },
+  { outcome: "reject_still_on", succeeds: false },
+  { outcome: "reject_missing", succeeds: false },
+] as const)(
+  "recovers rejected Android shutdown only when fresh canonical AVD discovery confirms it is off ($outcome)",
+  ({ outcome, succeeds }) =>
+    Effect.gen(function* () {
+      const store = yield* makeMemoryDeviceLeaseStore;
+      const { service } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        { store, automaticCleanup: false },
+        true,
+        undefined,
+        undefined,
+        Effect.void,
+        Effect.void,
+        undefined,
+        outcome,
+      );
+      yield* service.configure({ enabled: true });
+      const threadId = ThreadId.make(`shutdown-recovery-${outcome}`);
+      const session = yield* service.open({
+        threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: "emulator-5554",
+        platform: "android",
+      });
+      expect(session.deviceId).toBe("emulator-5554");
+      expect((yield* store.list)[0]?.lease?.deviceId).toBe("emulator-5554");
+      const shutdown = service.close({
+        threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: session.deviceId,
+        sessionId: session.sessionId,
+        leaseId: session.leaseId,
+        shutdown: true,
+      });
+      if (succeeds) {
+        yield* shutdown;
+        expect(yield* store.list).toEqual([]);
+        expect(
+          (yield* service.state).devices.find((device) => device.name === "Pixel_API_35")?.booted,
+        ).toBe(false);
+      } else {
+        const failure = yield* Effect.flip(shutdown);
+        expect(failure).toMatchObject({
+          _tag: "DeviceOperationError",
+          operation: "shutdown",
+          reason: "hub_rejected",
+        });
+        expect((yield* store.list)[0]?.lease).toMatchObject({
+          state: "ready",
+          owners: [],
+          deviceBooted: true,
+        });
+        expect(
+          (yield* service.state).devices.find((device) => device.id === session.deviceId)?.booted,
+        ).toBe(true);
+      }
+      expect((yield* service.state).sessions).toEqual([]);
+    }).pipe(Effect.scoped),
 );
 
 it.effect.each([
