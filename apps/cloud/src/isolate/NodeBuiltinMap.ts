@@ -44,4 +44,3 @@ export function canonicalNodeBuiltin(specifier: string): NodeBuiltinName | undef
   const name = specifier.startsWith("node:") ? specifier.slice(5) : specifier;
   return Object.hasOwn(NODE_BUILTIN_ROUTES, name) ? (name as NodeBuiltinName) : undefined;
 }
-
