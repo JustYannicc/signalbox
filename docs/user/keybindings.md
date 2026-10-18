@@ -135,6 +135,9 @@ update an older server to enable it. Select **Retry** if a search fails. It defa
 `mod+f` outside terminals and previews. Press **Enter** or **Shift+Enter** to move between matches,
 and **Escape** to close find.
 
+In Signalbox Cloud, Find also searches summaries and short tool excerpts. On mobile,
+use the search action in the thread header, or **Cmd+F** with an iOS keyboard.
+
 ## Precedence
 
 The last rule whose key and condition both match wins, even if it belongs to a

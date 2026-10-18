@@ -25,7 +25,7 @@ export const current = remoteThreadWorktree(driveId, threadId);
 export const actor = { userId: "user-one", contextIds: [PERSONAL_CONTEXT_ID] };
 
 const now = DateTime.makeUnsafe(0);
-const snapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadBoundedSnapshot)({
+export const snapshot = Schema.decodeUnknownSync(OrchestrationV2ThreadBoundedSnapshot)({
   snapshotSequence: 1,
   historyCursor: null,
   hasMoreHistory: false,

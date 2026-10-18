@@ -38,6 +38,7 @@ import {
   type ResolvedPullRequestRepository,
 } from "./PullRequestRepository.ts";
 import { makeListingReads } from "./cloudPullRequestListing.ts";
+import { makePullRequestCollaboration } from "./PullRequestCollaboration.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
 
 export { CloudPullRequests };
@@ -391,7 +392,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const collaboration = yield* makePullRequestCollaboration(invalidate);
+
   return {
+    ...collaboration,
     ...listings,
     summary,
     detail,

@@ -12,6 +12,7 @@ import { WS_METHODS } from "./rpc.ts";
 import { SIGNALBOX_DRIVES_WS_METHODS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_WS_METHODS } from "./signalboxFolders.ts"; // signalbox: folders
 import { SIGNALBOX_NOTES_WS_METHODS } from "./signalboxNotes.ts"; // signalbox: notes
+import { SIGNALBOX_TRASH_WS_METHODS } from "./signalboxTrash.ts"; // signalbox: trash
 import { SIGNALBOX_SIGN_IN_WS_METHODS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
 import { SIGNALBOX_BROWSING_WS_METHODS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import {
@@ -26,6 +27,7 @@ import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope, // signalbox: feedback uploads require the destination's operate grant
+  [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [SIGNALBOX_ANALYTICS_WS_METHODS.setEnabled]: AuthSettingsWriteScope,
@@ -59,12 +61,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
+  [WS_METHODS.deviceCancelOpen]: AuthOrchestrationOperateScope,
 
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope, // signalbox: optimistic ledger
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   [SIGNALBOX_DRIVES_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_DRIVES_WS_METHODS.share]: AuthOrchestrationOperateScope, // signalbox: drives
@@ -94,6 +98,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_NOTES_WS_METHODS.readAgain]: AuthOrchestrationOperateScope, // signalbox: notes
   [SIGNALBOX_NOTES_WS_METHODS.dismissReading]: AuthOrchestrationOperateScope, // signalbox: notes
   [SIGNALBOX_NOTES_WS_METHODS.accept]: AuthOrchestrationOperateScope, // signalbox: notes
+  [SIGNALBOX_TRASH_WS_METHODS.restore]: AuthOrchestrationOperateScope, // signalbox: trash
+  [SIGNALBOX_TRASH_WS_METHODS.empty]: AuthOrchestrationOperateScope, // signalbox: trash
+  [SIGNALBOX_TRASH_WS_METHODS.thread]: AuthOrchestrationOperateScope, // signalbox: trash
+  [SIGNALBOX_TRASH_WS_METHODS.folder]: AuthOrchestrationOperateScope, // signalbox: trash
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: AuthPreviewOperateScope,

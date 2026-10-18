@@ -2,7 +2,7 @@
 
 An automation is work Signalbox does for you on a schedule, when a webhook arrives, when
 something happens in your threads, or when you run it. It can hand tasks to agents, call web services, and stop to ask you before it does
-something you want to approve.
+something you want to approve. Automations run in Signalbox Cloud. Connect to Signalbox Cloud to create or run them.
 
 ## Create one
 
@@ -30,9 +30,9 @@ them without opening anything. Opening an automation shows its runs beside the d
 that need you on top. To jump to any automation, choose **Open automation…** in the command
 palette (`mod+alt+w`).
 
-## In Signalbox Cloud
+## Run with every app closed
 
-Automations in your cloud folders run in Signalbox Cloud, so they fire on schedules, thread events, file changes
+Automations fire on schedules, thread events, file changes
 and pull request news with every app closed, and their questions reach your phone. Ask an agent in
 a cloud thread to write one. When an agent there schedules recurring work for itself ("every 5
 minutes, post the time"), that's an automation in the thread's folder too: pause or delete it like
@@ -46,7 +46,7 @@ Published releases on upstream repositories can be checked every five minutes wh
 An agent can check the connection status and explain missing permissions. Pull requests already linked to
 threads keep their existing watcher.
 
-Calls to connected services and local `w.run` functions still need a self-hosted server.
+Calls to connected services, watching connected services for changes, and functions running directly on the automation host are not available yet.
 Steps on GitHub Actions are available as described below.
 
 ### Steps on GitHub Actions
@@ -68,21 +68,16 @@ the automation run cancels the GitHub run.
 
 ## Connect your services
 
-Automations reach your accounts, like Gmail, GitHub or Linear, through
-[Executor](https://executor.sh). Connect your accounts in Executor, then open **Settings →
-Integrations → Connected services** (on mobile, **Settings → Connected services**), paste
-Executor's URL and an API key, and choose **Connect**. Signalbox checks the key before saving it
-and lists every account it found. With several accounts for one service, an automation picks one
-by its name in Executor.
+GitHub connects through Settings. Other connected services are not available in cloud automations yet.
 
 ## Triggers
 
-- **On a schedule**: the automation's page shows when it runs next.
+- **On a schedule**: the automation's page shows when it runs next. Scheduled times use your time
+  zone in **Settings → General → Time zone** (on mobile, **Settings → Time zone**). New schedules
+  use the current time zone; existing schedules keep the zone they were created with.
 - **When a webhook arrives**: copy the URL from the automation's **⋯** menu (on mobile, from its
   page). Anyone with the URL can start a run, so treat it like a password; **New webhook URL**
-  replaces it. With [Signalbox Connect](remote-access.md) the URL is public and, with **Hold
-  webhooks while offline**, requests wait while your server is down, as for
-  [webhook tasks](project-settings.md#webhook-automations). To accept only requests signed by the
+  replaces it. The URL works with every app closed. To accept only requests signed by the
   sender, such as GitHub, ask the agent to require a signature: it asks you for the secret in a
   private card and never sees it. The automation's agent can tell you which requests were turned
   away and why.
@@ -96,12 +91,6 @@ by its name in Executor.
   before landing it, for a check before anything merges. Ask for it in your own words ("when a new
   file lands in this folder, summarize it"). The run gets which files were added, changed or
   removed, and the commits that changed them.
-- **When something changes in a connected service**: a new GitHub Actions run, an invoice paid, a
-  row added to a sheet. Ask for it in your own words ("when a new issue is filed in Linear, triage
-  it"). Signalbox checks the service every few minutes, once for every automation and agent watching
-  the same thing, and reacts only to what's new after the automation starts. The automation's page
-  shows what it watches and when it last checked. If the service keeps failing, Signalbox stops
-  checking and tells you; save the automation again to retry.
 - **Run now** starts a run by hand. An automation only a webhook or events start offers **Replay this run**
   instead, which runs again with the shown run's payload; **Run now without input** stays in its
   **⋯** menu.
@@ -116,15 +105,14 @@ started, one message per step with how long it took and what it returned, loop p
 together, and how it ended. Questions are answered right there. **Show on diagram** draws the same
 run over the diagram. On mobile, a run opens as its chat; switch to **Diagram** at the top.
 
-A failed or cancelled run can be retried with **Retry**. The new run reuses what the steps that
-went well returned and runs the failed step and everything after it again, so nothing that already
-happened happens twice. After fixing the automation, retry on the latest version to run the fix
-from where the run stopped. Steps whose code moved or changed run again too.
+A failed or cancelled run can be retried with **Retry**. It starts a new run with the original
+input. After fixing the automation, retry on the latest version to use the fix. Steps can run
+again, so check for effects that should not be repeated before retrying.
 
 ## When an agent waits
 
-Ask an agent to wait for something, like CI on its pull request, another thread finishing, an
-invoice being paid in a connected service, or tomorrow morning, and it ends its turn instead of sitting there polling. The thread stays in
+Ask an agent to wait for something, like CI on its pull request, another thread finishing, a
+webhook callback, or tomorrow morning, and it ends its turn instead of sitting there polling. The thread stays in
 **Working**, and the agent wakes with one message when it happens. A pull request it watches
 keeps waking it on failed checks, other people's comments and reviews, and conflicts until it
 merges.

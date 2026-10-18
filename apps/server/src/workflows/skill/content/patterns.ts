@@ -5,10 +5,10 @@ Shapes that work. Each has a complete version in \`examples/\`.
 
 ## Supervise agents with code
 
-For processes where agents do the work and something has to decide order, quality and completion: build → check → fix → review → land.
+For processes where agents do the work and something has to decide order, quality and completion: build → check → fix → review → land. Code steps use GitHub Actions after the setup in \`github-actions.md\`. For \`gh\`, provision a repository \`GH_TOKEN\` secret with the target-repository permissions the commands need, and pass \`secrets: ["GH_TOKEN"]\` on each step. Lending GitHub authenticates dispatch, not the CLI inside the job.
 
 - One \`w.agent\` per unit of work, on its own branch: \`worktree: { base: "main", branch: \\\`tickets/\${n}\\\` }\`.
-- Read where the work lives from the result (\`branch\`, \`pullRequest\`), or look it up deterministically with \`gh\` in \`w.run\`. Don't parse the agent's prose.
+- Read where the work lives from the result (\`branch\`, \`pullRequest\`), or look it up deterministically with \`gh\` in \`w.run(label, { on: "github-actions", secrets: ["GH_TOKEN"] }, fn, ...args)\`. Don't parse the agent's prose.
 - Send problems back to the same agent with \`thread: built.threadId\`; it keeps its context and worktree.
 - Gate on facts, not on the agent saying it's done: CI status from \`gh pr checks\`, an independent reviewer agent (a different model is a good second opinion), and a \`w.judge\` over the reviewer's verdict.
 - Confirm every side effect from the source of truth before acting on it: a merge counts when the API says \`merged: true\`, not when a command printed something. Treat a CLI's non-zero exit as failure unless you've checked that command's exit codes (\`gh pr checks\` exits non-zero while checks are pending).
@@ -19,7 +19,7 @@ For processes where agents do the work and something has to decide order, qualit
 
 ## Wait for something, as an agent
 
-An agent that needs to wait for one thing (CI, another thread, a reply, a payment, tomorrow) calls the \`wait_for\` tool and ends its turn, instead of polling, sleeping or writing its own automation: \`wait_for({ until: "checks on #12 to finish", on: ["pr.checks.passed", "pr.checks.failed"], where: { number: 12 } })\`. It runs the built-in "Wait for" (\`examples/wait-for.ts\`) attached to the thread, which sends one message when it happens. \`watch\` waits for a change in anything a connection lists, with an optional \`condition\` in words each change is judged against (\`wait_for({ until: "the invoice to be paid", watch: { operation: "stripe.invoices.list", key: "id" }, on: "source.item.changed", condition: "its status is paid" })\`); \`callback: true\` returns a link to hand out; \`at\` waits for a time. \`list_waits\` and \`stop_waiting\` manage them. For a pull request the agent owns, \`watch_pull_request\` runs "Watch pull request" instead, which keeps waking it on every check, comment and review until it merges.
+An agent that needs to wait for one thing (CI, another thread, a reply, a payment, tomorrow) calls the \`wait_for\` tool and ends its turn, instead of polling, sleeping or writing its own automation: \`wait_for({ until: "checks on #12 to finish", on: ["pr.checks.passed", "pr.checks.failed"], where: { number: 12 } })\`. It runs the built-in "Wait for" (\`examples/wait-for.ts\`) attached to the thread, which sends one message when it happens. \`callback: true\` returns a link to hand out; \`at\` waits for a time. \`list_waits\` and \`stop_waiting\` manage them. For a pull request the agent owns, \`watch_pull_request\` runs "Watch pull request" instead, which keeps waking it on every check, comment and review until it merges.
 
 ## Merge through the folder's gate
 
@@ -42,12 +42,11 @@ The built-in "Watch pull request" (\`builtin:watch-pull-request\`, \`examples/wa
 
 ## Wait for something slow outside
 
-\`w.run\` can block for up to 15 minutes, so poll inside it and loop around it:
+For an external system without an event or webhook, a GitHub Actions step can poll it with a bounded function. GitHub Actions setup is required. This \`gh\` helper also needs a repository \`GH_TOKEN\` secret with permission to read the target repository's checks:
 
 \`\`\`ts
 const ci = await w.repeat("Wait for CI", { max: 24 }, async (w) => {
-  const status = await w.run("Check CI", checkPullRequest, repo, pr.number, 14); // polls for up to 14 minutes
-  // Settled?
+  const status = await w.run("Check CI", { on: "github-actions", secrets: ["GH_TOKEN"] }, checkPullRequest, repo, pr.number, 14);
   if (status.state !== "pending") return w.done(status);
 });
 \`\`\`
@@ -56,7 +55,7 @@ Don't sleep between checks: a loop that sleeps is rejected, because every pass i
 
 ## Only handle what's new
 
-When the items come from a connected service, watch the list instead: a \`source.item.added\` trigger with \`watch\` (\`triggers.md\`) starts one run per new item, and Signalbox keeps track of what it has seen. Otherwise keep a cursor or the handled ids in memory:
+Read items through \`w.http\` or an agent step, then keep a cursor or the handled ids in memory:
 
 \`\`\`ts
 const seen: string[] = (await w.recall("Handled items", "seen")) ?? [];
@@ -68,18 +67,20 @@ await w.remember("Save handled items", "seen", [...seen, ...fresh.map((item) => 
 ## Let the user edit before it's used
 
 \`\`\`ts
-const answer = await w.ask("Send this reply?", {
+const answer = await w.ask("Keep this reply?", {
   fields: { reply: { type: "longText", default: draft, required: true } },
-  options: ["send", "skip"],
+  options: ["keep", "skip"],
 });
-if (answer.choice === "send") await w.call("Send it", "gmail.users.messages.send", { … answer.values.reply … });
+if (answer.choice === "keep") {
+  await w.notify("Reply ready to send", \`To: \${email.from}\\n\${answer.values.reply}\`);
+}
 \`\`\`
 
 ## Use any package, API or command-line tool
 
-Anything code can do goes in a \`w.run\` function: npm packages (imported at the top of the file), \`node:child_process\` for CLIs such as \`gh\`, \`git\`, \`ffmpeg\` or \`yt-dlp\` installed on the machine, files on disk. Return small JSON; for big data (a downloaded video), write it to a folder and return the path for the next \`w.run\`.
+Run npm packages, Node APIs and command-line tools with \`w.run(label, { on: "github-actions" }, fn, ...args)\`. Set up the repository workflow and lend a GitHub account first (\`github-actions.md\`). Each step runs in its own GitHub job, so local file paths are not shared between steps. Return small JSON.
 
-For HTTP APIs, prefer \`w.call\` when the service is connected in Signalbox (credentials stay on the server), else \`w.http\`.
+Use \`w.http\` for HTTP APIs. Connected services other than the GitHub integration are not available in cloud automations yet. External-service \`w.call\` and connected-service watches are unavailable; \`w.call\` supports Signalbox tools.
 
 ## React to what happens in Signalbox
 

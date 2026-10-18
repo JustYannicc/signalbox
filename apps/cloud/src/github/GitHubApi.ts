@@ -135,6 +135,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isGraphQlRateLimit = (body: unknown) =>
   isRecord(body) &&
+  // Partial mutation data can mean a write committed; keep it for the caller to reconcile.
+  !(isRecord(body.data) && Object.values(body.data).some((value) => value != null)) &&
   Array.isArray(body.errors) &&
   body.errors.some((error) => {
     if (!isRecord(error)) return false;

@@ -1,0 +1,8 @@
+{
+  "name": "@signalbox/cloud-sync-probe",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "lunorash": "1.0.0-alpha.398"
+  }
+}

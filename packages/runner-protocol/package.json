@@ -7,6 +7,10 @@
       "types": "./src/RunnerProtocol.ts",
       "import": "./src/RunnerProtocol.ts"
     },
+    "./RunAttemptIdentity": {
+      "types": "./src/RunAttemptIdentity.ts",
+      "import": "./src/RunAttemptIdentity.ts"
+    },
     "./PreviewTunnel": {
       "types": "./src/PreviewTunnel.ts",
       "import": "./src/PreviewTunnel.ts"
@@ -35,6 +39,10 @@
       "types": "./src/BranchProtocol.ts",
       "import": "./src/BranchProtocol.ts"
     },
+    "./PullRequestReviewTools": {
+      "types": "./src/PullRequestReviewTools.ts",
+      "import": "./src/PullRequestReviewTools.ts"
+    },
     "./AutomationProtocol": {
       "types": "./src/AutomationProtocol.ts",
       "import": "./src/AutomationProtocol.ts"
@@ -54,6 +62,10 @@
     "./SecretsProtocol": {
       "types": "./src/SecretsProtocol.ts",
       "import": "./src/SecretsProtocol.ts"
+    },
+    "./SecretRequestProtocol": {
+      "types": "./src/SecretRequestProtocol.ts",
+      "import": "./src/SecretRequestProtocol.ts"
     },
     "./BrowserProtocol": {
       "types": "./src/BrowserProtocol.ts",

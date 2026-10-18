@@ -44,6 +44,12 @@ import {
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
+import { useContentSearchEnvironmentIds } from "../../state/signalboxSearch"; // signalbox: thread search
+import {
+  HomeContentSearchSection,
+  homeContentSearchHolds,
+  useHomeContentSearch,
+} from "./HomeContentSearchSection"; // signalbox: thread search
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
@@ -293,7 +299,14 @@ export function HomeScreen(props: HomeScreenProps) {
           : [],
     [props.environments, props.selectedEnvironmentId],
   );
-  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  // signalbox: environments the search service answers for search inside threads there (#792).
+  const contentSearchEnvironmentIds = useContentSearchEnvironmentIds();
+  const legacySearchEnvironmentIds = useMemo(
+    () => searchEnvironmentIds.filter((id) => !contentSearchEnvironmentIds.includes(id)),
+    [contentSearchEnvironmentIds, searchEnvironmentIds],
+  );
+  const contentSearch = useHomeContentSearch(props.searchQuery);
+  const threadSearch = useThreadSearch(legacySearchEnvironmentIds, props.searchQuery);
   const threadSearchMatchByKey = useMemo(() => {
     const matches = new Map<string, EnvironmentThreadSearchMatch>();
     for (const match of threadSearch.matches) {
@@ -676,6 +689,18 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
+  // signalbox: thread search lists only what these rows don't already show.
+  const listedSearchThreadKeys = useMemo(
+    () =>
+      new Set(
+        threadListV2Items.flatMap((item) =>
+          item.type === "v2-thread"
+            ? [scopedThreadKey(item.item.thread.environmentId, item.item.thread.id)]
+            : [],
+        ),
+      ),
+    [threadListV2Items],
+  );
   useThreadJumpShortcuts(threadListV2Items, props.onSelectThread);
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -970,8 +995,10 @@ export function HomeScreen(props: HomeScreenProps) {
     </>,
   );
 
+  const contentSearchHolds = homeContentSearchHolds(contentSearch, props.searchQuery); // signalbox
   const v2ListEmpty =
-    hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
+    hasSearchQuery &&
+    (threadSearch.isPending || contentSearchHolds) ? undefined : hasSearchQuery ? (
       <EmptyState
         title="No results"
         detail={`No threads matching "${props.searchQuery}".`}
@@ -999,7 +1026,12 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0 && !props.sectionsOpen) {
+  if (
+    Platform.OS === "android" &&
+    threadListV2Items.length === 0 &&
+    !props.sectionsOpen &&
+    !contentSearchHolds // signalbox: thread search
+  ) {
     return (
       <View className="flex-1 bg-header">
         <View
@@ -1041,7 +1073,14 @@ export function HomeScreen(props: HomeScreenProps) {
               extraData={v2ExtraData}
               ListHeaderComponent={v2ListHeader}
               ListFooterComponent={
-                settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                hasSearchQuery ? ( // signalbox: thread search
+                  <HomeContentSearchSection
+                    search={contentSearch}
+                    query={props.searchQuery}
+                    threads={props.threads}
+                    listedThreadKeys={listedSearchThreadKeys}
+                  />
+                ) : settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                   <ThreadListV2ShowMoreRow
                     hiddenCount={threadListV2Layout.hiddenSettledCount}
                     onPress={showMoreSettled}
