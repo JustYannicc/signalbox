@@ -14,6 +14,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { SIGNALBOX_TRASH_WS_METHODS, type TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -241,18 +242,23 @@ describe("remote thread lifecycle commands", () => {
           ],
         };
         h.registry.set(source, initial);
-        const result = h.commands[action].run(h.registry, {
+        const target = {
           environmentId: ENVIRONMENT_ID,
           input: {
             threadId: THREAD_ID,
             commandId: CommandId.make(action),
-            reason: "user",
+            reason: "user" as const,
             enabled: false,
             orderKey: "a",
             snoozedUntil: "2099-01-01T00:00:00.000Z",
             ...input,
           },
-        });
+        };
+        const run: (
+          registry: typeof h.registry,
+          targetInput: typeof target,
+        ) => Promise<AtomCommandResult<unknown, unknown>> = h.commands[action].run;
+        const result = run(h.registry, target);
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         const request = yield* Queue.take(h.requests);
         expect(h.registry.get(source)).toBe(initial);
