@@ -2,6 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { AsyncLeafRunner } from "./operations.ts";
 import { callFs, unsupportedFs } from "./errors.ts";
 import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from "./files.ts";
 import {
@@ -116,7 +117,7 @@ export function fchownUnsupported(_fd: number, _uid: number, _gid: number): neve
   throw unsupportedFs("fchown");
 }
 
-export function createSyncApi(kernelFs: KernelFileSystem) {
+export function createSyncApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
   function statApi(path: PathLike, options: { bigint: true }): BigIntStats;
   function statApi(path: PathLike, options?: { bigint?: false }): NodeStats;
   function statApi(path: PathLike, options?: StatOptions): NodeStatsLike;
@@ -209,10 +210,10 @@ export function createSyncApi(kernelFs: KernelFileSystem) {
     createReadStream: (
       path: PathLike | undefined,
       options?: Parameters<typeof createReadStream>[2],
-    ) => createReadStream(kernelFs, path, options),
+    ) => createReadStream(kernelFs, path, options, runLeaf),
     createWriteStream: (
       path: PathLike | undefined,
       options?: Parameters<typeof createWriteStream>[2],
-    ) => createWriteStream(kernelFs, path, options),
+    ) => createWriteStream(kernelFs, path, options, runLeaf),
   };
 }

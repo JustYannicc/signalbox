@@ -2,6 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { AsyncLeafRunner } from "./operations.ts";
 import { createCallbackApi } from "./callbacks.ts";
 import { createFsConstants, fsConstants, type NativeFsConstants } from "./constants.ts";
 import { unsupportedFs } from "./errors.ts";
@@ -42,20 +43,25 @@ function defineDefault<T extends object>(module: T): T & { default: T } {
 export function createNodeFs(
   kernelFs: KernelFileSystem,
   nativeConstants?: NativeFsConstants,
+  runLeaf?: AsyncLeafRunner,
 ): NodeFsModules {
   const constants =
     nativeConstants === undefined ? fsConstants : createFsConstants(nativeConstants);
   const promiseModule = defineDefault(
-    Object.assign(Object.create(null) as Record<string, unknown>, createPromisesApi(kernelFs), {
-      constants,
-    }),
+    Object.assign(
+      Object.create(null) as Record<string, unknown>,
+      createPromisesApi(kernelFs, runLeaf),
+      {
+        constants,
+      },
+    ),
   ) as unknown as NodeFsPromisesModule;
 
   const fsModule = defineDefault(
     Object.assign(
       Object.create(null) as Record<string, unknown>,
-      createSyncApi(kernelFs),
-      createCallbackApi(kernelFs),
+      createSyncApi(kernelFs, runLeaf),
+      createCallbackApi(kernelFs, runLeaf),
       {
         constants,
         promises: promiseModule,

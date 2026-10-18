@@ -2,10 +2,12 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { appendFileSync, readFileSync, writeFileSync } from "./files.ts";
-import { closeFd } from "./io.ts";
-import { ioOptions, readSync, writeBufferSync, writeStringSync, type IoOptions } from "./fd-ops.ts";
-import { fstatSync, ftruncateSync, fsyncSync, futimesSync, type TimeLike } from "./metadata-ops.ts";
+import { DescriptorLifetime } from "./descriptor-lifetime.ts";
+import { createAsyncOperations } from "./async-operations.ts";
+import type { AsyncLeafRunner } from "./operations.ts";
+import type { ReadFileOptions, WriteFileOptions } from "./files.ts";
+import { ioOptions, type IoOptions } from "./fd-ops.ts";
+import type { TimeLike } from "./metadata-ops.ts";
 import type { ReadStreamOptions, WriteStreamOptions } from "./streams.ts";
 import { createReadStream, createWriteStream } from "./streams.ts";
 
@@ -13,42 +15,45 @@ export class NodeFileHandle {
   readonly fd: number;
   readonly path: string | undefined;
   readonly #kernelFs: KernelFileSystem;
-  #closed = false;
+  readonly #operations: ReturnType<typeof createAsyncOperations>;
+  readonly #runLeaf: AsyncLeafRunner | undefined;
+  readonly #lifetime: DescriptorLifetime;
 
-  constructor(kernelFs: KernelFileSystem, fd: number, path?: string) {
+  constructor(kernelFs: KernelFileSystem, fd: number, path?: string, runLeaf?: AsyncLeafRunner) {
     this.#kernelFs = kernelFs;
+    this.#runLeaf = runLeaf;
+    this.#operations = createAsyncOperations(kernelFs, runLeaf);
+    this.#lifetime = new DescriptorLifetime(kernelFs, fd);
     this.fd = fd;
     this.path = path;
   }
 
   get closed() {
-    return this.#closed;
+    return this.#lifetime.closed;
   }
 
   async close(): Promise<void> {
-    if (this.#closed) return;
-    closeFd(this.#kernelFs, this.fd);
-    this.#closed = true;
+    await this.#lifetime.close();
   }
 
   async stat(options?: { bigint?: boolean }) {
-    return fstatSync(this.#kernelFs, this.fd, options);
+    return await this.#lifetime.run(() => this.#operations.fstat(this.fd, options));
   }
 
   async truncate(length = 0): Promise<void> {
-    ftruncateSync(this.#kernelFs, this.fd, length);
+    await this.#lifetime.run(() => this.#operations.ftruncate(this.fd, length));
   }
 
   async sync(): Promise<void> {
-    fsyncSync(this.#kernelFs, this.fd, false);
+    await this.#lifetime.run(() => this.#operations.fsync(this.fd, false));
   }
 
   async datasync(): Promise<void> {
-    fsyncSync(this.#kernelFs, this.fd, true);
+    await this.#lifetime.run(() => this.#operations.fsync(this.fd, true));
   }
 
   async utimes(atime: TimeLike, mtime: TimeLike): Promise<void> {
-    futimesSync(this.#kernelFs, this.fd, atime, mtime);
+    await this.#lifetime.run(() => this.#operations.futimes(this.fd, atime, mtime));
   }
 
   async read(
@@ -57,7 +62,9 @@ export class NodeFileHandle {
     length?: number,
     position?: number | null,
   ): Promise<{ bytesRead: number; buffer: ArrayBufferView }> {
-    const bytesRead = readSync(this.#kernelFs, this.fd, buffer, offsetOrOptions, length, position);
+    const bytesRead = await this.#lifetime.run(() =>
+      this.#operations.read(this.fd, buffer, offsetOrOptions, length, position),
+    );
     return { bytesRead, buffer };
   }
 
@@ -70,7 +77,9 @@ export class NodeFileHandle {
     if (typeof data === "string") {
       const textPosition = typeof offsetOrOptions === "number" ? offsetOrOptions : undefined;
       const encoding = typeof lengthOrEncoding === "string" ? lengthOrEncoding : "utf8";
-      const bytesWritten = writeStringSync(this.#kernelFs, this.fd, data, textPosition, encoding);
+      const bytesWritten = await this.#lifetime.run(() =>
+        this.#operations.writeString(this.fd, data, textPosition, encoding),
+      );
       return { bytesWritten, buffer: data };
     }
     const offset = typeof offsetOrOptions === "number" ? offsetOrOptions : 0;
@@ -88,53 +97,56 @@ export class NodeFileHandle {
       typeof offsetOrOptions === "object" && offsetOrOptions !== null
         ? offsetOrOptions.length
         : length;
-    const bytesWritten = writeBufferSync(
-      this.#kernelFs,
-      this.fd,
-      data,
-      ioOptions(byteOffset, byteLength, bytePosition),
+    const bytesWritten = await this.#lifetime.run(() =>
+      this.#operations.writeBuffer(this.fd, data, ioOptions(byteOffset, byteLength, bytePosition)),
     );
     return { bytesWritten, buffer: data };
   }
 
-  async readFile(options?: BufferEncoding | { encoding?: BufferEncoding | "buffer" | null }) {
-    return readFileSync(this.#kernelFs, this.fd, options);
+  async readFile(options?: BufferEncoding | ReadFileOptions) {
+    return await this.#lifetime.run(() => this.#operations.readFile(this.fd, options));
   }
 
   async writeFile(
     data: string | ArrayBuffer | ArrayBufferView,
-    options?: BufferEncoding | { encoding?: BufferEncoding; flush?: boolean },
+    options?: BufferEncoding | WriteFileOptions,
   ): Promise<void> {
-    writeFileSync(this.#kernelFs, this.fd, data, options);
+    await this.#lifetime.run(() => this.#operations.writeFile(this.fd, data, options));
   }
 
   async appendFile(
     data: string | ArrayBuffer | ArrayBufferView,
-    options?: BufferEncoding | { encoding?: BufferEncoding; flush?: boolean },
+    options?: BufferEncoding | WriteFileOptions,
   ): Promise<void> {
-    appendFileSync(this.#kernelFs, this.fd, data, options);
+    await this.#lifetime.run(() => this.#operations.appendFile(this.fd, data, options));
   }
 
   createReadStream(options: ReadStreamOptions = {}) {
-    return createReadStream(this.#kernelFs, this.path, {
-      ...options,
-      fd: this.fd,
-      autoClose: options.autoClose ?? true,
-      onClose: () => {
-        this.#closed = true;
+    return createReadStream(
+      this.#kernelFs,
+      this.path,
+      {
+        ...options,
+        fd: this.fd,
+        autoClose: options.autoClose ?? true,
       },
-    });
+      this.#runLeaf,
+      this.#lifetime,
+    );
   }
 
   createWriteStream(options: WriteStreamOptions = {}) {
-    return createWriteStream(this.#kernelFs, this.path, {
-      ...options,
-      fd: this.fd,
-      autoClose: options.autoClose ?? true,
-      onClose: () => {
-        this.#closed = true;
+    return createWriteStream(
+      this.#kernelFs,
+      this.path,
+      {
+        ...options,
+        fd: this.fd,
+        autoClose: options.autoClose ?? true,
       },
-    });
+      this.#runLeaf,
+      this.#lifetime,
+    );
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
