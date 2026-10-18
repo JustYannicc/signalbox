@@ -458,5 +458,6 @@ export const sendRunnerFrame = (
 ) => Effect.promise(() => onRunnerMessage(host, socket.socket, runnerFrame.encode(message)));
 
 export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner/runnerSockets.ts";
-export type { ThreadRunner } from "./runner/ThreadRunner.ts";
+export { ThreadRunner } from "./runner/ThreadRunner.ts";
+export { recoverRunEvents } from "./runner/runRecovery.ts";
 export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";

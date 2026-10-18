@@ -528,7 +528,9 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
-    yield* advanceCommandOutputSequence.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    if (input.events.length > 0 || (input.commandOutput?.length ?? 0) > 0) {
+      yield* advanceCommandOutputSequence.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    }
     yield* writeCommandOutput(input.commandOutputSeeds ?? [], input.commandOutput ?? []).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     );
