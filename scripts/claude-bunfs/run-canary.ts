@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - prepares official release inputs for the shared isolate-probe host.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalFetch:off - standalone Node CLI prepares official release inputs for the shared probe host.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";

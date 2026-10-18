@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - verifies extracted bytes in temporary Node filesystem fixtures.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";

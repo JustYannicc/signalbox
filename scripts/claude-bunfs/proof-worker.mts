@@ -1,3 +1,4 @@
+// @effect-diagnostics globalFetch:off - the native facet uses the Workers HTTP API without an Effect runtime.
 import { DurableObject } from "cloudflare:workers";
 import { readBunGraph } from "./bun-graph.ts";
 import { httpReader } from "./range-reader.ts";

@@ -110,6 +110,7 @@ jobs:
           ) {
             throw new Error("Alchemy returned a URL outside the isolated probe Worker.");
           }
+          console.log(`::add-mask::${url.toString()}`);
           appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${url.toString()}\n`);
           NODE
 

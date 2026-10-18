@@ -1,6 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - hashes normalized module keys for path-free proof evidence.
 import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
+import {
+  compareFixtureInventories,
+  validateFixtureInventory,
+  type FixtureInventory,
+} from "./prove-inventory.ts";
 
 const GRAPH_FIELDS = [
   "container",
@@ -35,6 +40,11 @@ type ProofResult = {
   modules: ProofModule[];
 };
 
+type ProofObservation = {
+  result: ProofResult;
+  inventory: FixtureInventory | undefined;
+};
+
 export type ProofManifest = {
   binary: { bytes: number; sha256?: string };
   serializedGraph: { sha256: string };
@@ -64,6 +74,8 @@ type ProofSummary = {
   }[];
 };
 
+type MeasurementSummary = ProofSummary & { inventory: FixtureInventory | null };
+
 export type ComparisonEvidence = {
   schemaVersion: 1;
   status: "passed" | "failed";
@@ -72,8 +84,8 @@ export type ComparisonEvidence = {
     version: string;
     platform: string;
     manifest: ProofSummary;
-    local?: ProofSummary;
-    deployed?: ProofSummary;
+    local?: MeasurementSummary;
+    deployed?: MeasurementSummary;
     mismatches: string[];
   }[];
   mismatches: string[];
@@ -195,7 +207,7 @@ function proofResult(
   item: ProofCase,
   environment: "local" | "deployed",
   mismatches: string[],
-): ProofResult | undefined {
+): ProofObservation | undefined {
   const label = `${environment} ${item.version}/${item.platform}`;
   if (!isRecord(measurement) || !Array.isArray(measurement.rows)) {
     mismatches.push(`${label}: measurement has no rows.`);
@@ -233,11 +245,16 @@ function proofResult(
     mismatches.push(`${label}: facet response status was not 200.`);
     return undefined;
   }
+  if (row.response.target !== "facet") {
+    mismatches.push(`${label}: response target was not a facet.`);
+  }
+  const inventory = validateFixtureInventory(row.inventory, label);
+  mismatches.push(...inventory.mismatches);
   if (!isProofResult(row.response.result)) {
     mismatches.push(`${label}: facet result does not match the proof contract.`);
     return undefined;
   }
-  return row.response.result;
+  return { result: row.response.result, inventory: inventory.inventory };
 }
 
 function compareResult(item: ProofCase, result: ProofResult, label: string, mismatches: string[]) {
@@ -278,30 +295,25 @@ function hashNormalizedKey(key: string) {
   return NodeCrypto.createHash("sha256").update(key, "utf8").digest("hex");
 }
 
-function resultSummary(result: ProofResult): ProofSummary {
+function proofSummary(
+  binaryBytes: number,
+  serializedGraphSha256: string,
+  graph: Record<string, unknown>,
+  modules: {
+    index: number;
+    name: string;
+    key: string;
+    encoding: number;
+    loader: number;
+    format: number;
+    side: number;
+    contentsSha256: string;
+  }[],
+): ProofSummary {
   return {
-    binaryBytes: result.binaryBytes,
-    serializedGraphSha256: result.serializedGraphSha256,
-    graph: Object.fromEntries(GRAPH_FIELDS.map((field) => [field, result.graph[field]])),
-    modules: result.modules.map((module) => ({
-      index: module.index,
-      name: module.name,
-      normalizedKeySha256: hashNormalizedKey(module.key),
-      encoding: module.encoding,
-      loader: module.loader,
-      format: module.format,
-      side: module.side,
-      contentsSha256: module.contentsSha256,
-    })),
-  };
-}
-
-function manifestSummary(item: ProofCase): ProofSummary {
-  const modules = expectedModules(item);
-  return {
-    binaryBytes: item.manifest.binary.bytes,
-    serializedGraphSha256: item.manifest.serializedGraph.sha256,
-    graph: Object.fromEntries(GRAPH_FIELDS.map((field) => [field, item.manifest.graph[field]])),
+    binaryBytes,
+    serializedGraphSha256,
+    graph: Object.fromEntries(GRAPH_FIELDS.map((field) => [field, graph[field]])),
     modules: modules.map((module) => ({
       index: module.index,
       name: module.name,
@@ -315,6 +327,24 @@ function manifestSummary(item: ProofCase): ProofSummary {
   };
 }
 
+function resultSummary(observation: ProofObservation): MeasurementSummary {
+  const result = observation.result;
+  return {
+    ...proofSummary(result.binaryBytes, result.serializedGraphSha256, result.graph, result.modules),
+    inventory: observation.inventory ?? null,
+  };
+}
+
+function manifestSummary(item: ProofCase): ProofSummary {
+  const modules = expectedModules(item);
+  return proofSummary(
+    item.manifest.binary.bytes,
+    item.manifest.serializedGraph.sha256,
+    item.manifest.graph,
+    modules,
+  );
+}
+
 export function compareMeasurements(
   local: unknown,
   deployed: unknown,
@@ -325,16 +355,37 @@ export function compareMeasurements(
     ...item,
     manifest: validateManifest(item.manifest, `Manifest for ${item.version}/${item.platform}`),
   }));
+  let inventoryReference: FixtureInventory | undefined;
   const comparedCases = validatedCases.map((item) => {
     const caseMismatches: string[] = [];
-    const localResult = proofResult(local, item, "local", caseMismatches);
-    const deployedResult = proofResult(deployed, item, "deployed", caseMismatches);
-    if (localResult)
-      compareResult(item, localResult, `local ${item.version}/${item.platform}`, caseMismatches);
-    if (deployedResult)
+    const localObservation = proofResult(local, item, "local", caseMismatches);
+    const deployedObservation = proofResult(deployed, item, "deployed", caseMismatches);
+    for (const [environment, observation] of [
+      ["local", localObservation],
+      ["deployed", deployedObservation],
+    ] as const) {
+      if (!observation?.inventory) continue;
+      if (!inventoryReference) inventoryReference = observation.inventory;
+      else {
+        compareFixtureInventories(
+          inventoryReference,
+          observation.inventory,
+          `${environment} ${item.version}/${item.platform}`,
+          caseMismatches,
+        );
+      }
+    }
+    if (localObservation)
       compareResult(
         item,
-        deployedResult,
+        localObservation.result,
+        `local ${item.version}/${item.platform}`,
+        caseMismatches,
+      );
+    if (deployedObservation)
+      compareResult(
+        item,
+        deployedObservation.result,
         `deployed ${item.version}/${item.platform}`,
         caseMismatches,
       );
@@ -343,8 +394,8 @@ export function compareMeasurements(
       version: item.version,
       platform: item.platform,
       manifest: manifestSummary(item),
-      ...(localResult ? { local: resultSummary(localResult) } : {}),
-      ...(deployedResult ? { deployed: resultSummary(deployedResult) } : {}),
+      ...(localObservation ? { local: resultSummary(localObservation) } : {}),
+      ...(deployedObservation ? { deployed: resultSummary(deployedObservation) } : {}),
       mismatches: caseMismatches,
     };
   });

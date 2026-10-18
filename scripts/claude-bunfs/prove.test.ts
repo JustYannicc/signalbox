@@ -15,9 +15,9 @@ const serializedGraphSha256 = "a".repeat(64);
 const contentsSha256 = "b".repeat(64);
 const key = "__signalbox_probe__/entry.js";
 
-function testCase(): ProofCase {
+function testCase(version = "2.1.302"): ProofCase {
   return {
-    version: "2.1.302",
+    version,
     platform: "linux-x64",
     manifest: {
       binary: { bytes: 1024, sha256: "c".repeat(64) },
@@ -39,40 +39,72 @@ function testCase(): ProofCase {
   };
 }
 
-function measurement(environment: "local-workerd" | "deployed") {
+function fixtureInventory() {
+  return [
+    {
+      name: "main.js",
+      type: "js",
+      bytes: 104,
+      sha256: "1".repeat(64),
+      path: "/tmp/fixture/main.js",
+    },
+    {
+      name: "bun-container.js",
+      type: "js",
+      bytes: 208,
+      sha256: "2".repeat(64),
+      path: "/tmp/fixture/bun-container.js",
+    },
+    {
+      name: "bun-graph.js",
+      type: "js",
+      bytes: 312,
+      sha256: "3".repeat(64),
+      path: "/tmp/fixture/bun-graph.js",
+    },
+    {
+      name: "range-reader.js",
+      type: "js",
+      bytes: 416,
+      sha256: "4".repeat(64),
+      path: "/tmp/fixture/range-reader.js",
+    },
+  ];
+}
+
+function measurement(environment: "local-workerd" | "deployed", versions = ["2.1.302"]) {
   return {
     environment,
     verificationErrors: [],
-    rows: [
-      {
-        path: "/proof?version=2.1.302&platform=linux-x64",
-        response: {
-          id: "run-claude-extractor",
-          target: "facet",
-          status: 200,
-          result: {
-            version: "2.1.302",
-            platform: "linux-x64",
-            binaryUrl: "https://private-preview.workers.dev/proof",
-            binaryBytes: 1024,
-            serializedGraphSha256,
-            graph: structuredClone(graph),
-            modules: [
-              {
-                index: 0,
-                name: "entry.js",
-                key,
-                encoding: 0,
-                loader: 1,
-                format: 0,
-                side: 0,
-                contentsSha256,
-              },
-            ],
-          },
+    rows: versions.map((version) => ({
+      path: `/proof?version=${version}&platform=linux-x64`,
+      inventory: fixtureInventory(),
+      response: {
+        id: "run-claude-extractor",
+        target: "facet",
+        status: 200,
+        result: {
+          version,
+          platform: "linux-x64",
+          binaryUrl: "https://private-preview.workers.dev/proof",
+          binaryBytes: 1024,
+          serializedGraphSha256,
+          graph: structuredClone(graph),
+          modules: [
+            {
+              index: 0,
+              name: "entry.js",
+              key,
+              encoding: 0,
+              loader: 1,
+              format: 0,
+              side: 0,
+              contentsSha256,
+            },
+          ],
         },
       },
-    ],
+    })),
   };
 }
 
@@ -85,9 +117,96 @@ describe("compareMeasurements", () => {
 
     expect(evidence.status).toBe("passed");
     expect(evidence.cases[0]?.local?.modules[0]?.normalizedKeySha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(evidence.cases[0]?.local?.inventory).toEqual(
+      fixtureInventory().map(({ name, type, bytes, sha256 }) => ({ name, type, bytes, sha256 })),
+    );
     expect(serialized).not.toContain("private-preview.workers.dev");
-    expect(serialized).not.toContain("/Users/");
-    expect(serialized).not.toContain("/tmp/");
+    expect(serialized).not.toContain("/tmp/fixture/");
+  });
+
+  it("rejects a worker response target in either environment", () => {
+    for (const environment of ["local-workerd", "deployed"] as const) {
+      const local = measurement("local-workerd");
+      const deployed = measurement("deployed");
+      const input = environment === "local-workerd" ? local : deployed;
+      input.rows[0]!.response.target = "worker";
+
+      const evidence = compareMeasurements(local, deployed, [testCase()]);
+
+      expect(evidence.status).toBe("failed");
+      expect(evidence.mismatches).toContain(
+        `${environment === "local-workerd" ? "local" : "deployed"} 2.1.302/linux-x64: response target was not a facet.`,
+      );
+    }
+  });
+
+  it("rejects fixture inventory hash drift across every release row", () => {
+    const versions = ["2.1.302", "2.1.303"];
+    const local = measurement("local-workerd", versions);
+    const deployed = measurement("deployed", versions);
+    deployed.rows[1]!.inventory[2]!.sha256 = "d".repeat(64);
+
+    const evidence = compareMeasurements(local, deployed, versions.map(testCase));
+
+    expect(evidence.status).toBe("failed");
+    expect(evidence.mismatches).toContain(
+      "deployed 2.1.303/linux-x64: inventory bun-graph.js SHA-256 differs across proof rows.",
+    );
+    expect(evidence.cases[1]?.deployed?.inventory?.[2]?.sha256).toBe("d".repeat(64));
+  });
+
+  it("rejects missing, duplicate, and extra fixture inventory entries", () => {
+    const local = measurement("local-workerd");
+    const deployed = measurement("deployed");
+    local.rows[0]!.inventory.splice(2, 1);
+    deployed.rows[0]!.inventory.push({
+      name: "bun-graph.js",
+      type: "js",
+      bytes: 312,
+      sha256: "3".repeat(64),
+      path: "/tmp/fixture/bun-graph-copy.js",
+    });
+    deployed.rows[0]!.inventory.push({
+      name: "/tmp/fixture/unexpected.js",
+      type: "js",
+      bytes: 1,
+      sha256: "5".repeat(64),
+      path: "/tmp/fixture/unexpected.js",
+    });
+
+    const evidence = compareMeasurements(local, deployed, [testCase()]);
+
+    expect(evidence.status).toBe("failed");
+    expect(evidence.mismatches).toContain(
+      "local 2.1.302/linux-x64: inventory is missing module bun-graph.js.",
+    );
+    expect(evidence.mismatches).toContain(
+      "deployed 2.1.302/linux-x64: inventory contains duplicate module bun-graph.js.",
+    );
+    expect(evidence.mismatches).toContain(
+      "deployed 2.1.302/linux-x64: inventory contains an unexpected module at entry 5.",
+    );
+    expect(JSON.stringify(evidence)).not.toContain("/tmp/fixture/");
+  });
+
+  it("rejects invalid fixture types, byte lengths, and SHA-256 values", () => {
+    const local = measurement("local-workerd");
+    local.rows[0]!.inventory[0]!.type = "ts";
+    local.rows[0]!.inventory[1]!.bytes = Number.MAX_SAFE_INTEGER + 1;
+    local.rows[0]!.inventory[2]!.sha256 = "not-a-hash";
+
+    const evidence = compareMeasurements(local, measurement("deployed"), [testCase()]);
+
+    expect(evidence.status).toBe("failed");
+    expect(evidence.mismatches).toContain(
+      "local 2.1.302/linux-x64: inventory main.js is not type js.",
+    );
+    expect(evidence.mismatches).toContain(
+      "local 2.1.302/linux-x64: inventory bun-container.js has an invalid byte length.",
+    );
+    expect(evidence.mismatches).toContain(
+      "local 2.1.302/linux-x64: inventory bun-graph.js has an invalid SHA-256.",
+    );
   });
 
   it("rejects parser drift in graph bytes, normalized keys, and module contents", () => {
