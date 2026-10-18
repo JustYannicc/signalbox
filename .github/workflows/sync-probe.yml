@@ -1,0 +1,130 @@
+# Exercises the Effect-backed Lunora home on a disposable Alchemy preview stack.
+name: Lunora sync probe
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/sync-probe.yml
+      - apps/cloud/package.json
+      - apps/cloud/infra/syncBindings.ts
+      - apps/cloud/infra/syncBindings.test.ts
+      - apps/cloud/infra/syncProbe/**
+      - packages/sync/**
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - patches/alchemy@*.patch
+      - patches/@lunora__*.patch
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+  NO_COLOR: "1"
+
+jobs:
+  sync-probe:
+    if: >-
+      github.event.pull_request.user.login == 'JustYannicc' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: cloud-preview
+    concurrency:
+      group: sync-probe-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    env:
+      STAGE: pr-${{ github.event.pull_request.number }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        id: setup
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+
+      - name: Make a short-lived probe credential
+        shell: bash
+        run: |
+          secret="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
+          echo "::add-mask::$secret"
+          echo "PROBE_SECRET=$secret" >> "$GITHUB_ENV"
+
+      - name: Emit Effect home schema and Lunora code
+        working-directory: apps/cloud/infra/syncProbe
+        run: |
+          node --experimental-strip-types generate-schema.ts
+          ../../node_modules/.bin/vp fmt lunora/schema.ts lunora/counter.ts
+          ../../node_modules/.bin/lunora info --bindings --format json --out binding-manifest.json
+          node prepare.mjs
+          git diff --exit-code -- lunora/schema.ts lunora/counter.ts
+
+      - name: Test the Alchemy binding adapter
+        working-directory: apps/cloud
+        run: ../../node_modules/.bin/vp test run --config ../../vite.config.ts infra/syncBindings.test.ts --maxWorkers=2
+
+      - name: Typecheck the generated probe
+        working-directory: apps/cloud
+        run: ./node_modules/.bin/tsc --noEmit -p infra/syncProbe/tsconfig.json
+
+      - name: Deploy isolated sync probe
+        id: deploy
+        working-directory: apps/cloud
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/alchemy deploy infra/syncProbe/alchemy.run.ts --stage "$STAGE" --yes --no-input | tee "$RUNNER_TEMP/sync-probe-deploy.log"
+          node --input-type=module - "$RUNNER_TEMP/sync-probe-deploy.log" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const log = readFileSync(process.argv[2], "utf8");
+          const urls = [...log.matchAll(/\burl:\s*(['"])(https:\/\/[^'"\s]+)\1/gu)];
+          const workerUrl = urls.at(-1)?.[2];
+          if (workerUrl === undefined) throw new Error("Alchemy output did not contain the probe Worker URL.");
+          const url = new URL(workerUrl);
+          if (
+            url.protocol !== "https:" ||
+            !url.hostname.endsWith(".workers.dev") ||
+            url.hostname.split(".")[0] !== `signalbox-sync-probe-${process.env.STAGE}`
+          ) {
+            throw new Error("Alchemy returned a URL outside the isolated probe Worker.");
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${url.toString()}\n`);
+          NODE
+
+      - name: Measure deployed clients, delivery, isolation, reconnect, and idle behavior
+        working-directory: apps/cloud/infra/syncProbe
+        env:
+          SYNC_PROBE_URL: ${{ steps.deploy.outputs.worker_url }}
+          SYNC_PROBE_IDLE_MS: "15000"
+        run: node --experimental-strip-types measure.ts
+
+      - name: Destroy isolated sync probe stack
+        if: always() && steps.setup.outcome == 'success'
+        working-directory: apps/cloud
+        shell: bash
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            ./node_modules/.bin/alchemy destroy infra/syncProbe/alchemy.run.ts --stage "$STAGE" --yes --no-input
+            status=$?
+            if [ "$status" -eq 0 ]; then exit 0; fi
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 2)); fi
+          done
+          exit "$status"

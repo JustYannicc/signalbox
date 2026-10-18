@@ -47,12 +47,14 @@ import {
 import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
-import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
+import { mcpToolTimeoutSec, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 import { layerPreviewServiceTools } from "./RunnerPreviewServiceTools.ts";
 import * as RunnerPreviewServiceCommands from "./RunnerPreviewServiceCommands.ts";
 import * as RunnerPreviewServices from "./RunnerPreviewServices.ts";
+import { layerPullRequestReviewTools } from "./RunnerPullRequestReviewTools.ts";
 import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
+import { layerSecretTools, type RunnerSecretRequests } from "./RunnerSecretTools.ts";
 import type { RunnerConnectionError } from "./RunnerSession.ts";
 
 /**
@@ -63,9 +65,10 @@ import type { RunnerConnectionError } from "./RunnerSession.ts";
  * replaces at every turn start along with the view of the drives. The MCP
  * server also publishes the thread's branch, saving it through the drive
  * `attachDrive` gives it, and serves the automation tools, which run in the
- * cloud (`RunnerAutomationTools.ts`), with upstream's scheduled-task tools as
- * automations (`RunnerScheduledTaskTools.ts`), and the thread's status line
- * (`RunnerStatusLineTools.ts`). `/browser` serves the thread's browser
+ * cloud (`RunnerAutomationTools.ts`), pull request review tools through the
+ * same route (`RunnerPullRequestReviewTools.ts`), upstream's scheduled-task
+ * tools as automations (`RunnerScheduledTaskTools.ts`), and the thread's
+ * status line (`RunnerStatusLineTools.ts`). `/browser` serves the thread's browser
  * (#402, #574) as its own MCP server, under the name agents know it by locally:
  * the machine's headless Chromium for its dev servers, and the person's
  * browser for real sites, which the turn's client opens in the cloud. It hands
@@ -124,6 +127,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
   readonly threadId?: string;
+  readonly secretRequests?: RunnerSecretRequests;
 }) {
   const view = makeDrivesView();
   let drive: BranchDrive | null = null;
@@ -196,6 +200,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerContextTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
+    layerPullRequestReviewTools(view),
     layerRunnerPullRequestTools(view).pipe(
       Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
     ),
@@ -203,6 +208,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerScheduledTaskTools(view, input.threadId ?? null),
     previewServiceTools,
     layerStatusLineTools(view),
+    input.secretRequests === undefined ? Layer.empty : layerSecretTools(input.secretRequests),
   ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({
@@ -294,8 +300,7 @@ export const withContextServer = (
           ...Object.fromEntries(
             Object.entries(mcpServers).map(
               ([name, url]) =>
-                // Claude gives an HTTP server's request 60 seconds; a sign-in (#576) can take minutes.
-                [name, { type: "http", url, timeout: MCP_TOOL_TIMEOUT_SEC * 1000 }] as const,
+                [name, { type: "http", url, timeout: mcpToolTimeoutSec(name) * 1000 }] as const,
             ),
           ),
         },

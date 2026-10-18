@@ -7,6 +7,7 @@ import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { ThreadPreviewsScreenHeader } from "./ThreadPreviewsScreenHeader"; // signalbox: previews
 import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { useThreadFindAppBarActions } from "./find/thread-find-header"; // signalbox: thread find
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -25,6 +26,7 @@ export function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  const findActions = useThreadFindAppBarActions(props.environmentId, props.threadId); // signalbox: thread find
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
     const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
@@ -62,8 +64,10 @@ export function ThreadHeader(
         onPress: onMergeBack,
       });
     }
+    actions.push(...findActions); // signalbox: thread find
     return actions;
   }, [
+    findActions,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,

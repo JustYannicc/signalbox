@@ -68,6 +68,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -206,7 +210,8 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -1915,10 +1920,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     if (clicked !== "delete") return;
 
     if (appSettingsConfirmThreadDelete) {
+      const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
+      const cloud = selectedThreadEntries.some(({ threadRef }) =>
+        serverConfigSupportsSignalboxTrash(serverConfigs.get(threadRef.environmentId)),
+      );
+      const other = selectedThreadEntries.some(
+        ({ threadRef }) =>
+          !serverConfigSupportsSignalboxTrash(serverConfigs.get(threadRef.environmentId)),
+      );
       const confirmed = await api.dialogs.confirm(
         [
           `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-          "This permanently clears conversation history for these threads.",
+          threadDeleteConfirmationMessage({ cloud, other, scope: "threads" }),
         ].join("\n"),
         { variant: "destructive" },
       );
@@ -2274,10 +2287,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (clicked !== "delete") return;
       if (!checkTaskPermission(threadRef.environmentId)) return;
       if (appSettingsConfirmThreadDelete) {
+        const cloud = serverConfigSupportsSignalboxTrash(
+          appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId),
+        );
         const confirmed = await api.dialogs.confirm(
           [
             `Delete thread "${thread.title}"?`,
-            "This permanently clears conversation history for this thread.",
+            threadDeleteConfirmationMessage({ cloud, other: !cloud, scope: "thread" }),
           ].join("\n"),
           { variant: "destructive" },
         );

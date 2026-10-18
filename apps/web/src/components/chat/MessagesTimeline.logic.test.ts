@@ -5261,6 +5261,33 @@ it("keeps the working header in place across worktree setup handoff", () => {
     "thinking",
   ]);
 
+  // A cloud thread prepares every run, so a retained failed attempt belongs
+  // to the latest message, not the first.
+  const laterUser = {
+    ...userEntry,
+    id: "user-entry-2",
+    createdAt: "2026-01-01T00:01:00Z",
+    message: { ...userEntry.message, id: "user-2" as never, createdAt: "2026-01-01T00:01:00Z" },
+  } as const;
+  const laterAttempt = deriveMessagesTimelineRows({
+    timelineEntries: [
+      userEntry,
+      { ...assistantEntry, message: { ...assistantEntry.message, streaming: false } },
+      laterUser,
+    ],
+    isWorking: false,
+    activeTurnStartedAt: null,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+    worktreeSetup: { ...snapshot, phase: "failed" },
+  });
+  expect(laterAttempt.map((row) => [row.kind, row.id])).toEqual([
+    ["message", "user-entry"],
+    ["message", "assistant-entry"],
+    ["message", "user-entry-2"],
+    ["worktree-setup", "worktree-setup-row"],
+  ]);
+
   const stage = (id: "agent" | "setup-script", status: "done" | "running") =>
     ({
       id,

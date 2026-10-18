@@ -13,9 +13,8 @@ import { explained } from "./runLog.ts";
 import { TransientFailure } from "./stepPolicy.ts";
 
 /**
- * `w.call` reaches the services the user connected in Executor. The server
- * holds the Executor URL and API key (see executorSettings.ts); automation code
- * never sees them. Users connect Executor in Settings → Connected services.
+ * Executor credentials come from ExecutorSettingsStore, never automation code.
+ * Cloud currently leaves that store unconfigured.
  */
 
 const SEGMENT = /^[A-Za-z0-9_$-]+$/;
@@ -206,9 +205,9 @@ export const makeConnections = Effect.gen(function* () {
       if (Option.isNone(settings)) {
         return yield* Effect.fail(
           explained(
-            "Connected services aren't set up on this server. Connect Executor in Settings → Connected services, or use w.http.",
+            "Connected services aren't available in cloud automations yet. Use w.http for an HTTP API.",
             {
-              fix: "Connect Executor in Settings → Connected services, or call the API with w.http.",
+              fix: "Use w.http for an HTTP API.",
             },
           ),
         );
