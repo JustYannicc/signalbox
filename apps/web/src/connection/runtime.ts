@@ -5,6 +5,7 @@ import {
   ThreadHistoryController,
 } from "@t3tools/client-runtime/state/threads";
 import { PullRequestDiffLoader } from "@t3tools/client-runtime/state/pull-requests";
+import { createSignalboxTrashAtoms } from "@t3tools/client-runtime/state/signalboxTrash";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/reactivity";
 
@@ -54,3 +55,5 @@ export const connectionAtomRuntime: Atom.AtomRuntime<
   Layer.Success<ConnectionLayerSource>,
   Layer.Error<ConnectionLayerSource>
 > = Atom.runtime(layerConnection);
+
+export const signalboxTrash = createSignalboxTrashAtoms(connectionAtomRuntime);

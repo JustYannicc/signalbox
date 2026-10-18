@@ -2499,6 +2499,7 @@ const make = Effect.gen(function* () {
           .listProjectThreads({
             projectId,
             includeSubagents: input.includeSubagents !== false,
+            includeArchived: input.settled === true,
           })
           .pipe(
             Effect.mapError((error) =>

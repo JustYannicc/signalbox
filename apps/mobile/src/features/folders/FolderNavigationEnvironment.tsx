@@ -12,6 +12,7 @@ import { Pressable, View } from "react-native";
 import { AppText } from "../../components/ui/AppText";
 import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFolders";
 import { useEnvironmentHasNotes } from "../../state/signalboxNotes";
+import { useEnvironmentDrives } from "../../state/signalboxDrives";
 import { NotesSheet } from "../notes/NotesSheet";
 import { useOpenThread } from "../threads/use-open-thread";
 import { folderCountsAtom, folderPoolChoicesAtom, folderStatusSummariesAtom } from "./folder-atoms";
@@ -21,6 +22,7 @@ import { FolderInstructionsSheet } from "./FolderInstructionsSheet";
 import { FolderPhasesSheet } from "./FolderPhasesSheet";
 import { FolderNodeRow, OwnerTopLevelRow } from "./FolderNavigationRows";
 import { useFolderActions } from "./use-folder-actions";
+import { publishableDrive } from "./usePublishableFolder";
 
 const PERSONAL_TOP_ACTIONS = topLevelMenuActions({ personal: true });
 const PERSONAL_TOP_ACTIONS_WITH_NOTES = topLevelMenuActions({ personal: true, notes: true });
@@ -49,6 +51,7 @@ export function FolderNavigationEnvironment(props: {
     owners: owners?.contexts ?? NO_OWNERS,
   });
   const hasNotes = useEnvironmentHasNotes(environmentId);
+  const drives = useEnvironmentDrives(environmentId);
   const openThread = useOpenThread();
   const openNoteThread = useCallback(
     (threadId: ThreadId) => openThread(environmentId, threadId),
@@ -81,10 +84,20 @@ export function FolderNavigationEnvironment(props: {
       new Map<FolderId, MenuAction[]>(
         (snapshot?.folders ?? []).map((folder) => [
           folder.id,
-          snapshot ? folderMenuActions({ snapshot, folder, pools, notes: hasNotes }) : [],
+          snapshot
+            ? folderMenuActions({
+                snapshot,
+                folder,
+                pools,
+                notes: hasNotes,
+                publishable:
+                  folder.files !== undefined &&
+                  publishableDrive(drives, folder.files.projectId) !== null,
+              })
+            : [],
         ]),
       ),
-    [hasNotes, pools, snapshot],
+    [drives, hasNotes, pools, snapshot],
   );
   // Your top level first at depth 0; member levels sit inside it, one step in.
   const levels = useMemo(() => {

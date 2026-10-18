@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -46,6 +47,7 @@ import {
 } from "./RunnerPreviewTunnel.ts";
 import { onePasswordSdk, type OnePassword } from "./RunnerOnePassword.ts";
 import { makeRunnerSecrets, makeSecretsRegistrar } from "./RunnerSecrets.ts";
+import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 import { makeRunnerSession, RunnerConnectionError, type RunnerSession } from "./RunnerSession.ts";
 import { makeRunnerSessions } from "./RunnerSessions.ts";
 import {
@@ -57,6 +59,7 @@ import {
 import { makeRunnerAttachments } from "./RunnerAttachments.ts";
 import type { SecretMask } from "./secretMask.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { makeRunnerTerminalHost } from "./RunnerTerminalHost.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import { makePreviewServices } from "./RunnerPreviewServices.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
@@ -160,6 +163,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               : { codexCwdMigration: { from: paths.legacyCwd, to: cwd } }),
             mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
+          // Every drive the user can read, for the harnesses (#141).
+          // Native HTTP has no fetch headers timeout while a person answers the card.
+          const secretRequests = yield* makeRunnerSecretRequests(cloudUrl).pipe(
+            Effect.provide(NodeHttpClient.layerNodeHttp),
+          );
           // What the harness environment sets itself; known once the adapters are made.
           let harnessVariables: ReadonlySet<string> = new Set();
           const secrets = makeRunnerSecrets({
@@ -191,6 +199,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
             threadId: request.threadId,
+            secretRequests,
             previewServices,
             persistPreviewServices,
             previewServicesReady: Deferred.await(previewServicesPublisher).pipe(
@@ -214,7 +223,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             sessionEnvironment: secrets.environment,
             mask: mask.text,
           });
-          const { adapters, layout, stderr, attachmentsDir } = made;
+          const { adapters, layout, stderr, environment, attachmentsDir } = made;
           harnessVariables = made.harnessVariables;
           const dependencies = yield* makeRunnerDependencies({
             cwd,
@@ -225,7 +234,9 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const openingDrive = yield* Semaphore.make(1);
           let filesPrepared = false;
           let openedDrive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
-          const openDrive = (access: DriveAccess) =>
+          const openDrive = (
+            access: DriveAccess,
+          ): Effect.Effect<RunnerDrive, Effect.Error<ReturnType<typeof makeRunnerDrive>>> =>
             openingDrive.withPermits(1)(
               Effect.gen(function* () {
                 if (openedDrive?.driveId === access.driveId) return openedDrive.drive;
@@ -289,6 +300,17 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 }
               }),
             );
+          const makeTerminals = yield* makeRunnerTerminalHost({
+            threadId: request.threadId,
+            leaseGeneration: request.generation,
+            cwd,
+            logsDir: path.join(root, "terminal-logs"),
+            environment,
+            preparing,
+            filesPrepared: () => filesPrepared,
+            openDrive,
+            prepareDependencies: dependencies.prepare(() => Effect.void),
+          });
           const attachments = yield* makeRunnerAttachments({ cloudUrl, attachmentsDir }).pipe(
             Effect.provide(FetchHttpClient.layer),
             Effect.provide(driveServices),
@@ -308,12 +330,14 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               webSocketTransport(runnerConnectUrl(cloudUrl, request.threadId)),
               mask,
             ),
+            makeTerminals,
             makeTurns: (emit) =>
               makeRunnerTurns({
                 threadId: request.threadId,
                 adapters,
                 stderr,
                 cwd,
+                claudeConfigDir: layout.claudeHome,
                 useModelToken: (token) =>
                   writeModelToken(layout, token).pipe(
                     Effect.provideService(FileSystem.FileSystem, fs),
@@ -325,6 +349,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 previewDrive: () => openedDrive?.drive ?? null,
                 secrets,
                 registerSecrets,
+                secretRequests,
                 openDrive,
                 sessions,
                 attachments,

@@ -5,6 +5,7 @@ import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
+import * as TerminalOutbox from "./terminal/TerminalOutbox.ts";
 
 /** Work that must resume immediately when an object wakes or rehydrates. */
 export const hasImmediateWork = (work?: ThreadRunner.RunnerWork) =>
@@ -16,7 +17,9 @@ export const hasImmediateWork = (work?: ThreadRunner.RunnerWork) =>
     if (
       runner.needsUpkeep ||
       (yield* engine.hasPendingSummary) ||
+      (yield* engine.hasPendingSearch) ||
       (yield* engine.hasPendingEvents) ||
+      (yield* Effect.orDie((yield* TerminalOutbox.TerminalOutbox).hasPending)) ||
       (yield* Effect.forEach(
         MachineBackend.distinctBackends(yield* MachineBackend.MachineBackend),
         (backend) => backend.pending,

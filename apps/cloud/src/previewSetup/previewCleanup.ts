@@ -1,15 +1,19 @@
 import { log } from "evlog";
+import * as Effect from "effect/Effect";
 
 import {
-  runPreviewCleanup,
-  type PreviewCleanupBindings,
+  layer as previewCleanupLayer,
+  PreviewCleanupService,
+  type PreviewCleanupDependencies,
   type PreviewCleanupCommand,
 } from "./PreviewCleanupService.ts";
 
 export const PREVIEW_CLEANUP_PATH = "/api/internal/preview-cleanup";
 
-export interface PreviewCleanupEnv extends PreviewCleanupBindings {
+export interface PreviewCleanupEnv {
   readonly PREVIEW_CLEANUP_TOKEN?: string;
+  readonly PREVIEW_DRIVE_PACKS?: PreviewCleanupDependencies["drivePacks"];
+  readonly PREVIEW_LINKS: PreviewCleanupDependencies["links"];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -76,7 +80,20 @@ export const handlePreviewCleanup = async (
   try {
     const decoded = decodeCommand(await request.json());
     if ("error" in decoded) return Response.json({ error: decoded.error }, { status: 400 });
-    return Response.json(await runPreviewCleanup(decoded, env));
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const cleanup = yield* PreviewCleanupService;
+        return yield* cleanup.cleanup(decoded);
+      }).pipe(
+        Effect.provide(
+          previewCleanupLayer({
+            drivePacks: env.PREVIEW_DRIVE_PACKS,
+            links: env.PREVIEW_LINKS,
+          }),
+        ),
+      ),
+    );
+    return Response.json(result);
   } catch (cause) {
     log.error({
       action: "preview.cleanup",

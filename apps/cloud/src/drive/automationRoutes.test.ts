@@ -31,6 +31,7 @@ const cloud = makeMemoryCloud({
   automations: Layer.succeed(
     CloudAutomations,
     CloudAutomations.of({
+      answerAsk: () => Effect.die("not in these tests"),
       save: () => Effect.die("not in these tests"),
       receiveHook: () => Effect.die("not in these tests"),
       threadEvents: () => Effect.void,
@@ -39,6 +40,7 @@ const cloud = makeMemoryCloud({
       flush: Effect.void,
       start: Effect.void,
       host: () => Effect.die("not in these tests"),
+      executorRunActive: () => Effect.succeed(false),
       workerModule: () => Effect.die("not in these tests"),
       tool: (caller, name, input) =>
         Effect.gen(function* () {

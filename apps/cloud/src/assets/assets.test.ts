@@ -4,6 +4,9 @@ import {
   type OrchestrationV2TurnItem,
   ThreadId,
   TurnItemId,
+  MessageId,
+  PersistChatAttachmentsResult,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +16,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpRouter } from "effect/http";
@@ -68,6 +72,8 @@ const unused = () => Effect.die("not used by assets");
 
 /** Only `owner` sees the thread, which has the one screenshot. */
 const threads = CloudThreadService.CloudThreadService.of({
+  uploadFeedback: unused,
+  answerSecret: unused,
   threadSnapshot: (actor, id) =>
     actor.userId === owner && id === threadId
       ? Effect.succeed({
@@ -79,6 +85,8 @@ const threads = CloudThreadService.CloudThreadService.of({
           latestLocalTurnOrdinal: 0,
         })
       : Effect.fail(new ThreadNotFoundError()),
+  answerAskAsAssistant: unused,
+  syncAutomationAsk: unused,
   dispatchCommand: unused,
   launchThread: unused,
   threadHistoryPage: unused,
@@ -117,6 +125,114 @@ const layer = CloudAssets.layer.pipe(
 const resource = (index = 0) => ({ _tag: "tool-output-image" as const, threadId, itemId, index });
 
 const actor = (userId: string) => ({ userId, contextIds: [] });
+
+const legacyInput = {
+  threadId,
+  messageId: MessageId.make("legacy-message"),
+  attachments: [
+    {
+      type: "image" as const,
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: png.length,
+      dataUrl: `data:image/png;base64,${Base64.encode(png)}`,
+    },
+  ],
+};
+const isPersisted = Schema.is(PersistChatAttachmentsResult);
+
+describe("legacy image persistence", () => {
+  it.effect(
+    "returns standard metadata, reuses ids and reads durable bytes after rebuilding services",
+    () =>
+      Effect.gen(function* () {
+        const assets = yield* CloudAssets.CloudAssets;
+        const result = yield* assets.persistChatAttachments(actor(owner), legacyInput);
+        expect(isPersisted(result)).toBe(true);
+        expect(result.attachments[0]?.id).toMatch(/^pending-/);
+        const again = yield* assets.persistChatAttachments(actor(owner), legacyInput);
+        expect(again).toEqual(result);
+        const fresh = yield* CloudAssets.CloudAssets.pipe(Effect.provide(layer));
+        const file = yield* fresh.openAttachment(actor(owner), {
+          _tag: "attachment",
+          attachmentId: result.attachments[0]!.id,
+        });
+        expect(file).not.toBeNull();
+        expect(
+          new Uint8Array(yield* Effect.promise(() => new Response(file!.body).arrayBuffer())),
+        ).toEqual(png);
+        const changed = yield* assets.persistChatAttachments(actor(owner), {
+          ...legacyInput,
+          messageId: MessageId.make("another-message"),
+        });
+        expect(changed.attachments[0]?.id).not.toBe(result.attachments[0]?.id);
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps staged images private to their uploader", () =>
+    Effect.gen(function* () {
+      const assets = yield* CloudAssets.CloudAssets;
+      const own = yield* assets.persistChatAttachments(actor(owner), legacyInput);
+      const other = yield* assets.persistChatAttachments(actor(stranger), legacyInput);
+      expect(other.attachments[0]?.id).not.toBe(own.attachments[0]?.id);
+      expect(
+        yield* assets.openAttachment(actor(stranger), {
+          _tag: "attachment",
+          attachmentId: own.attachments[0]!.id,
+        }),
+      ).toBeNull();
+      expect(
+        yield* assets.openAttachment(actor(owner), {
+          _tag: "attachment",
+          attachmentId: other.attachments[0]!.id,
+        }),
+      ).toBeNull();
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("rejects invalid payloads", () =>
+    Effect.gen(function* () {
+      const assets = yield* CloudAssets.CloudAssets;
+      for (const patch of [
+        { dataUrl: "data:image/png;base64,!!!!" },
+        { dataUrl: "data:image/png;base64,AAAA=AAA" },
+        { dataUrl: "data:image/jpeg;base64,AAAA" },
+        { sizeBytes: png.length + 1 },
+        { sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1 },
+        { mimeType: "image/svg+xml", dataUrl: "data:image/svg+xml;base64,AAAA" },
+        { dataUrl: `data:image/png;base64,${"A".repeat(14_000_000)}` },
+      ]) {
+        expect(
+          (yield* Effect.flip(
+            assets.persistChatAttachments(actor(owner), {
+              ...legacyInput,
+              attachments: [{ ...legacyInput.attachments[0]!, ...patch }],
+            }),
+          ))._tag,
+        ).toBe("PersistChatAttachmentsError");
+      }
+      expect(
+        (yield* Effect.flip(
+          assets.persistChatAttachments(actor(owner), {
+            ...legacyInput,
+            attachments: Array.from({ length: 101 }, () => legacyInput.attachments[0]!),
+          }),
+        ))._tag,
+      ).toBe("PersistChatAttachmentsError");
+      expect(
+        (yield* Effect.flip(
+          assets.persistChatAttachments(actor(owner), {
+            ...legacyInput,
+            attachments: Array.from({ length: 9 }, () => ({
+              ...legacyInput.attachments[0]!,
+              sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+            })),
+          }),
+        ))._tag,
+      ).toBe("PersistChatAttachmentsError");
+    }).pipe(Effect.provide(layer)),
+  );
+});
 
 /** The token in a URL `createUrl` returned. */
 const tokenOf = (relativeUrl: string) => relativeUrl.split("/")[3] ?? "";

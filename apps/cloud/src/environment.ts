@@ -75,6 +75,8 @@ export interface CloudEnvironmentIdentity {
   readonly scripted?: boolean;
   /** Whether threads take pasted screenshots and files (`attachments/`): the cloud has a bucket. */
   readonly attachments?: boolean;
+  readonly drives?: boolean;
+  readonly searchDisabled?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -97,6 +99,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Folders live in each user's object (`user/UserFolders.ts`); older clients read them as sections.
     sections: true,
     folders: true,
+    threadContentSearch: identity.searchDisabled !== true,
     // Notes on each level's pad, read by its assistant or agent (`notes/UserNotes.ts`).
     notes: true,
     // Standing sign-in grants, in each user's object (`signIn/SignInGrants.ts`).
@@ -111,11 +114,12 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     threadAutoSettleOptOut: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    commandOutputStreaming: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
     usageHistory: false,
     // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
-    poolFeatures: CLOUD_POOL_KINDS,
+    poolFeatures: [...CLOUD_POOL_KINDS, "advice"],
     signalboxPreviews: identity.previews === true,
     threadBrowsing: true,
     // Uploaded to R2 and claimed into the thread on send (`attachments/CloudAttachments.ts`).
@@ -132,8 +136,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     pullRequests: true,
     pullRequestChecks: true,
     threadPullRequests: true,
-    // Threads run on machines nobody operates, and the user never runs this server.
-    terminal: false,
+    terminal: identity.drives === true,
     worktrees: false,
     serverSettingsWrite: false,
     modelSettingsWrite: true,
@@ -206,6 +209,7 @@ export const serverConfig = (
     },
     shellResumeCompletionMarker: true,
     threadResumeCompletionMarker: true,
+    threadFind: true,
     scratchWorkspaceRoot: SCRATCH_ROOT,
   };
 };
@@ -227,6 +231,10 @@ export const shellSnapshot = (input: {
   schemaVersion: SHELL_SCHEMA_VERSION,
   snapshotSequence: input.sequence,
   projects: input.projects,
-  threads: input.threads.filter((thread) => thread.archivedAt === null),
-  archivedThreads: input.threads.filter((thread) => thread.archivedAt !== null),
+  threads: input.threads.filter(
+    (thread) => thread.deletedAt === null && thread.archivedAt === null,
+  ),
+  archivedThreads: input.threads.filter(
+    (thread) => thread.deletedAt === null && thread.archivedAt !== null,
+  ),
 });

@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -24,6 +25,7 @@ import * as DateTime from "effect/DateTime";
 import * as TestClock from "effect/testing/TestClock";
 
 import { layerThreadObject } from "../testing.ts";
+import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import { scriptedModelSelection, scriptedReply } from "./scriptedProvider.ts";
 import { applyEvents } from "./threadProjection.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -130,6 +132,140 @@ const replayFrom = (engine: ThreadEngine.ThreadEngine["Service"], afterSequence:
   );
 
 describe("ThreadEngine", () => {
+  it.effect(
+    "persists remote adoption across eviction without replacing a stopped thread's history or session",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const worktree = remoteThreadWorktree(personal.place.driveId, threadId);
+        const previous = yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            const launched = yield* launch(engine);
+            yield* engine.step;
+            yield* engine.dispatch(
+              owner,
+              {
+                type: "run.interrupt",
+                commandId: CommandId.make("stop-for-publication"),
+                threadId,
+                runId: launched.projection.runs[0]!.id,
+                holdQueue: true,
+              },
+              personal,
+            );
+            return yield* engine.snapshot(owner);
+          }),
+        );
+        yield* withObject(filename, (engine, store) =>
+          Effect.gen(function* () {
+            const command = {
+              type: "thread.metadata.update" as const,
+              commandId: CommandId.make("adopt-remote"),
+              threadId,
+            };
+            const before = yield* engine.snapshot(owner);
+            const result = yield* engine.dispatch(owner, command, {
+              ...personal,
+              place: null,
+              worktree,
+            });
+            expect(
+              yield* engine.dispatch(owner, command, { ...personal, place: null, worktree }),
+            ).toMatchObject({ sequence: result.sequence });
+            const after = yield* engine.snapshot(owner);
+            expect(after.snapshotSequence).toBe(before.snapshotSequence + 1);
+            expect(after.projection.thread).toMatchObject({
+              branch: worktree.branch,
+              worktreePath: worktree.path,
+            });
+            expect(after.projection.runs).toEqual(previous.projection.runs);
+            expect(after.projection.messages).toEqual(previous.projection.messages);
+            expect(after.projection.providerThreads).toEqual(previous.projection.providerThreads);
+            expect(after.projection.providerSessions).toEqual(previous.projection.providerSessions);
+            expect((yield* store.owner)?.driveId).toBe(personal.place.driveId);
+          }),
+        );
+        yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            expect((yield* engine.snapshot(owner)).projection.thread).toMatchObject({
+              branch: worktree.branch,
+              worktreePath: worktree.path,
+            });
+            yield* engine.dispatch(
+              owner,
+              send("continue-published", "Continue after publication"),
+              personal,
+            );
+            yield* runToIdle(engine);
+            const after = yield* engine.snapshot(owner);
+            expect(after.projection.runs.map((run) => run.status)).toEqual([
+              "interrupted",
+              "completed",
+            ]);
+            expect(after.projection.thread.branch).toBe(worktree.branch);
+          }),
+        );
+      }),
+  );
+
+  it.effect("refuses a trusted adoption aimed at another drive or a host directory", () =>
+    withObject(freshDatabase(), (engine) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const before = yield* engine.snapshot(owner);
+        const error = yield* Effect.flip(
+          engine.dispatch(
+            owner,
+            {
+              type: "thread.metadata.update",
+              commandId: CommandId.make("wrong-home"),
+              threadId,
+            },
+            { ...personal, place: null, worktree: { branch: "main", path: "/tmp/host" } },
+          ),
+        );
+        expect(error._tag).toBe("ThreadCommandRejectedError");
+        expect(yield* engine.snapshot(owner)).toEqual(before);
+      }),
+    ),
+  );
+
+  it.effect("folds streaming into the final search row and keeps its Find anchor", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* engine.step;
+        const beforeChunk = (yield* store.searchOutbox).revision;
+        yield* engine.step;
+        expect((yield* store.searchOutbox).revision).toBe(beforeChunk);
+        yield* runToIdle(engine);
+        const documents = [];
+        const parts = [];
+        for (
+          let delivery = yield* engine.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* engine.pendingSearchDelivery
+        ) {
+          documents.push(...delivery.documents.filter((item) => item.kind === "assistant"));
+          parts.push(...(delivery.parts ?? []).filter((item) => item.kind === "assistant"));
+          yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
+        expect(documents.length).toBe(0);
+        expect(parts.map((item) => item.text).join("")).toBe(scriptedReply("Hello cloud"));
+        const found = yield* engine.find(owner, { threadId, query: "Hello cloud" });
+        expect(found.totalMatches).toBeGreaterThanOrEqual(2);
+        expect(found.match?.entryId).toBe("message-1");
+        const exact = yield* engine.searchDocuments(owner, [parts[0]!.itemId]);
+        expect(exact?.documents).toHaveLength(1);
+        expect(exact?.documents[0]).toMatchObject({
+          itemId: parts[0]!.itemId,
+          entryId: parts[0]!.entryId,
+          text: scriptedReply("Hello cloud"),
+        });
+      }),
+    ),
+  );
+
   it.effect("launches a thread whose scripted reply streams in chunks and completes", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {
@@ -213,6 +349,112 @@ describe("ThreadEngine", () => {
         const { projection } = yield* engine.snapshot(owner);
         expect(projection.runs).toHaveLength(2);
         expect(projection.messages.filter((message) => message.role === "user")).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.effect("hides a trashed thread and restores its conversation", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        const original = yield* launch(engine);
+        yield* engine.step;
+        yield* engine.dispatch(owner, send("send-queued", "Next"), personal);
+        const beforeTrash = yield* engine.snapshot(owner);
+        expect(beforeTrash.projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
+        for (
+          let delivery = yield* engine.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* engine.pendingSearchDelivery
+        ) {
+          yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
+        const deletedAt = yield* Clock.currentTimeMillis;
+        const input = {
+          trashId: "trash-1",
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        };
+
+        const trashed = yield* engine.trash(owner, input);
+        expect(trashed).toMatchObject({ trashId: input.trashId, state: "trashed" });
+        const searchTombstone = yield* engine.pendingSearchDelivery;
+        expect(searchTombstone?.thread.deleted).toBe(true);
+        if (searchTombstone === null) throw new Error("Trash must reach the search outbox.");
+        yield* engine.acknowledgeSearchDelivery(
+          searchTombstone.revision,
+          searchTombstone.deliveryId,
+        );
+        expect(yield* engine.searchDocuments(owner, [])).toBeNull();
+        expect(yield* engine.canSee(owner)).toBe(false);
+        expect((yield* Effect.flip(engine.snapshot(owner)))._tag).toBe("ThreadNotFoundError");
+        const refused = yield* Effect.flip(
+          engine.dispatch(owner, send("send-hidden", "No"), personal),
+        );
+        expect(refused).toMatchObject({
+          _tag: "ThreadCommandRejectedError",
+          reason: "This thread is in Trash.",
+        });
+        expect(yield* engine.hasTurnWork).toBe(false);
+
+        const eventCount = (yield* store.events(0)).length;
+        expect(yield* engine.trash(owner, input)).toEqual(trashed);
+        expect((yield* store.events(0)).length).toBe(eventCount);
+
+        const restoredReceipt = yield* engine.restoreTrash(owner, input.trashId);
+        expect(restoredReceipt.state).toBe("restored");
+        expect((yield* engine.pendingSearchDelivery)?.thread.deleted).toBe(false);
+        const searchable = yield* engine.searchDocuments(
+          owner,
+          beforeTrash.projection.visibleTurnItems.map((row) => String(row.item.id)),
+        );
+        expect(searchable?.deleted).toBe(false);
+        expect(searchable?.documents.some((item) => item.text === "Hello cloud")).toBe(true);
+        expect(yield* engine.canSee(owner)).toBe(true);
+        const restored = yield* engine.snapshot(owner);
+        expect(restored.projection.thread.deletedAt).toBeNull();
+        expect(
+          restored.projection.messages.some(
+            (message) => message.role === "user" && message.text === "Next",
+          ),
+        ).toBe(true);
+        expect(restored.projection.runs.map((run) => run.status)).toEqual([
+          "interrupted",
+          "queued",
+        ]);
+        expect(
+          restored.projection.messages.some(
+            (message) => message.id === original.projection.messages[0]?.id,
+          ),
+        ).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("refuses permanent cleanup and preserves the trashed conversation", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        const original = yield* launch(engine);
+        const deletedAt = yield* Clock.currentTimeMillis;
+        const input = {
+          trashId: "trash-purge-disabled",
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        };
+        yield* engine.trash(owner, input);
+        const before = yield* store.currentTrash;
+        const refusal = yield* Effect.flip(
+          engine.purgeTrash(owner, { trashId: input.trashId, empty: true }),
+        );
+        expect(refusal).toMatchObject({
+          _tag: "ThreadCommandRejectedError",
+          reason: "Permanent thread cleanup is not enabled yet.",
+        });
+        expect(yield* store.currentTrash).toEqual(before);
+
+        yield* engine.restoreTrash(owner, input.trashId);
+        const restored = yield* engine.snapshot(owner);
+        expect(restored.projection.messages).toEqual(original.projection.messages);
+        expect(restored.projection.thread.deletedAt).toBeNull();
       }),
     ),
   );
@@ -547,6 +789,144 @@ describe("ThreadEngine", () => {
           ),
         );
         expect(rejected._tag).toBe("ThreadCommandRejectedError");
+      }),
+    ),
+  );
+});
+
+describe("queue edit/reorder persistence", () => {
+  it.effect(
+    "commits once, survives eviction, replays to clients and starts the edited queue head",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const commands = yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            yield* engine.dispatch(owner, send("second", "Second"), personal);
+            yield* engine.dispatch(owner, send("third", "Third"), personal);
+            const before = yield* engine.snapshot(owner);
+            const second = before.projection.runs[1]!;
+            const third = before.projection.runs[2]!;
+            const edit = {
+              type: "queued-run.edit" as const,
+              commandId: CommandId.make("edit-second"),
+              threadId,
+              runId: second.id,
+              text: "Edited second",
+            };
+            const reorder = {
+              type: "queued-run.reorder" as const,
+              commandId: CommandId.make("third-first"),
+              threadId,
+              runId: third.id,
+              beforeRunId: second.id,
+            };
+            const edited = yield* engine.dispatch(owner, edit, personal);
+            const reordered = yield* engine.dispatch(owner, reorder, personal);
+            expect(yield* engine.dispatch(owner, edit, personal)).toEqual(edited);
+            expect(yield* engine.dispatch(owner, reorder, personal)).toEqual(reordered);
+            const after = yield* engine.snapshot(owner);
+            const replay = yield* replayFrom(engine, before.snapshotSequence);
+            const events = replay.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+            expect(events.filter((event) => event.type === "message.updated")).toHaveLength(1);
+            expect(applyEvents(before.projection, events)).toEqual(after.projection);
+            for (const command of [edit, reorder]) {
+              const refused = yield* engine
+                .dispatch(
+                  stranger,
+                  { ...command, commandId: CommandId.make(`stranger-${command.type}`) },
+                  personal,
+                )
+                .pipe(Effect.flip);
+              expect(refused._tag).toBe("ThreadNotFoundError");
+            }
+            expect((yield* engine.snapshot(owner)).snapshotSequence).toBe(after.snapshotSequence);
+            return { edit, reorder, edited, reordered };
+          }),
+        );
+        yield* withObject(filename, (engine) =>
+          Effect.gen(function* () {
+            expect(yield* engine.dispatch(owner, commands.edit, personal)).toEqual(commands.edited);
+            expect(yield* engine.dispatch(owner, commands.reorder, personal)).toEqual(
+              commands.reordered,
+            );
+            yield* runToIdle(engine);
+            expect(yield* assistantTexts(engine)).toEqual([
+              scriptedReply("Hello cloud"),
+              scriptedReply("Third"),
+              scriptedReply("Edited second"),
+            ]);
+            const snapshot = yield* engine.snapshot(owner);
+            expect(
+              snapshot.projection.messages
+                .filter((message) => message.role === "user")
+                .map((message) => message.text),
+            ).toEqual(["Hello cloud", "Edited second", "Third"]);
+          }),
+        );
+      }),
+  );
+
+  it.effect("records stale edit/reorder refusals and keeps messages after cancel and start", () =>
+    withObject(freshDatabase(), (engine) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        for (const action of ["cancel", "start"] as const) {
+          yield* engine.dispatch(owner, send(action, action), personal);
+          const before = yield* engine.snapshot(owner);
+          const queued = before.projection.runs.at(-1)!;
+          if (action === "cancel") {
+            yield* engine.dispatch(
+              owner,
+              {
+                type: "queued-run.cancel",
+                commandId: CommandId.make("cancel-queued"),
+                threadId,
+                runId: queued.id,
+              },
+              personal,
+            );
+          } else {
+            // Finish the live run and let the queued run start under the engine's lock.
+            for (let steps = 0; steps < 200; steps++) {
+              const current = yield* engine.snapshot(owner);
+              if (current.projection.runs.find((run) => run.id === queued.id)?.status !== "queued")
+                break;
+              yield* engine.step;
+            }
+          }
+          const changed = yield* engine.snapshot(owner);
+          const edit = {
+            type: "queued-run.edit" as const,
+            commandId: CommandId.make(`stale-edit-${action}`),
+            threadId,
+            runId: queued.id,
+            text: "Must not land",
+          };
+          const reorder = {
+            type: "queued-run.reorder" as const,
+            commandId: CommandId.make(`stale-reorder-${action}`),
+            threadId,
+            runId: queued.id,
+            beforeRunId: null,
+          };
+          for (const command of [edit, reorder]) {
+            const rejected = yield* engine.dispatch(owner, command, personal).pipe(Effect.flip);
+            expect(rejected).toMatchObject({
+              _tag: "ThreadCommandRejectedError",
+              commandId: command.commandId,
+              commandType: command.type,
+            });
+            expect(yield* engine.dispatch(owner, command, personal).pipe(Effect.flip)).toEqual(
+              rejected,
+            );
+          }
+          expect((yield* engine.snapshot(owner)).projection.messages).toEqual(
+            changed.projection.messages,
+          );
+          expect((yield* engine.snapshot(owner)).snapshotSequence).toBe(changed.snapshotSequence);
+        }
       }),
     ),
   );

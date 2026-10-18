@@ -42,6 +42,14 @@ export function createSignalboxThreadKindsAtoms<R, E>(
   };
 }
 
+/** Threads on servers without kind support use the task default; a missing config or snapshot stays unknown. */
+export function threadKindWithCapabilityFallback(
+  supportsKinds: boolean | undefined,
+  kind: ThreadKind | null,
+): ThreadKind | null {
+  return kind ?? (supportsKinds === false ? "task" : null);
+}
+
 const lookupCache = new WeakMap<
   SignalboxThreadKindsSnapshot,
   (threadId: ThreadId) => ThreadKindRecord | undefined

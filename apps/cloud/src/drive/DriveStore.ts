@@ -30,6 +30,7 @@ import * as DriveMembers from "./DriveMembers.ts";
 import * as DrivePullStore from "./DrivePullStore.ts";
 import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveRevisionStore from "./DriveRevisionStore.ts";
+import * as DriveRepositoryPublication from "./DriveRepositoryPublication.ts";
 import * as DriveHistory from "./DriveHistory.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
@@ -152,7 +153,7 @@ export interface ObjectLocation {
 
 export class DriveStore extends Context.Service<
   DriveStore,
-  {
+  DriveRepositoryPublication.PublicationOperations & {
     readonly initialize: Effect.Effect<void, SqlError | Migrator.MigrationError>;
     /** A thread's view of the drive. Creates its branch at `main` and pins its base the first time. */
     readonly open: (writer: DriveWriter) => Effect.Effect<RefWrite, SqlError>;
@@ -442,9 +443,11 @@ const migrations = Migrator.fromRecord({
   // Undo snapshots for restores already tracked by 0007.
   "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
   "0009_ref_deletions": DriveEvents.allowDeletedRefs,
+  "0010_drive_repository_publication": DriveRepositoryPublication.createTables,
   "0010_drive_pull_receipts": DrivePullStore.createTables,
   "0010_restore_requesters": DriveRevisions.addOperationRequester,
   "0010_shared_history_packs": DriveHistory.createTables,
+  "0011_drive_publication_creation_attempts": DriveRepositoryPublication.addCreationAttempts,
   "0011_shared_history_transfers": DriveHistory.createTransferTables,
 });
 
@@ -1134,6 +1137,14 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
       );
     });
 
+  const publicationOperations = DriveRepositoryPublication.makeOperations({
+    sql,
+    role: members.role,
+    main: ref(MAIN_REF),
+    remote,
+    setRemote,
+  });
+
   const historyOperations = DriveHistory.makeOperations({
     driveId,
     sql,
@@ -1173,6 +1184,7 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
     removeShortcut,
     unreconciled,
     ...revisionOperations,
+    ...publicationOperations,
     ...pullOperations,
   });
 });

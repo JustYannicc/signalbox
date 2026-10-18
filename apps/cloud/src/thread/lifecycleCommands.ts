@@ -6,7 +6,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { cancelQueuedEvents, isLiveRun } from "./runLifecycle.ts";
+import { cancelQueuedEvents } from "./runLifecycle.ts";
+import { isLiveRun } from "./runState.ts";
 import { type DecisionContext, nodeEvent, threadEvent, unstampedEventId } from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
@@ -28,12 +29,24 @@ export type LifecycleDecision =
   | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
   | { readonly _tag: "rejected"; readonly message: string };
 
-const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): LifecycleDecision => ({
+export const accept = (
+  events: ReadonlyArray<OrchestrationV2DomainEvent> = [],
+): LifecycleDecision => ({
   _tag: "accepted",
   events,
 });
 
-const reject = (message: string): LifecycleDecision => ({ _tag: "rejected", message });
+export const reject = (message: string): LifecycleDecision => ({ _tag: "rejected", message });
+
+/**
+ * signalbox: how a person settling a task (#671) differs. `archive` archives it too,
+ * and may settle an already archived thread in place. `stopped` follows an early
+ * stop: open questions are cancelled and messages it held stay queued for a reopen.
+ */
+export interface TaskSettleOptions {
+  readonly archive?: boolean;
+  readonly stopped?: boolean;
+}
 
 const isLifecycleCommand = (
   command: OrchestrationV2Command | OrchestrationV2ServerCommand,
@@ -88,11 +101,15 @@ export function decideLifecycleCommand(
   projection: OrchestrationV2ThreadProjection,
   command: OrchestrationV2Command | OrchestrationV2ServerCommand,
   ctx: DecisionContext,
+  task: TaskSettleOptions = {},
 ): LifecycleDecision | undefined {
   if (!isLifecycleCommand(command) || command.threadId !== projection.thread.id) return undefined;
 
   const { thread } = projection;
-  if (thread.archivedAt !== null) return reject(`Thread ${command.threadId} is archived.`);
+  const archiveInPlace = task.archive === true && command.type === "thread.settle";
+  if (thread.archivedAt !== null && !archiveInPlace) {
+    return reject(`Thread ${command.threadId} is archived.`);
+  }
 
   if (command.type === "thread.auto-settle") {
     if (
@@ -106,14 +123,17 @@ export function decideLifecycleCommand(
   if (command.type === "thread.settle" || command.type === "thread.auto-settle") {
     const automaticIds = automaticMessageIds(projection);
     const queuedRuns = projection.runs.filter((run) => run.status === "queued");
-    const queuedMessages = queuedRuns.filter((run) => !automaticIds.has(run.userMessageId));
+    const queuedMessages = queuedRuns.filter(
+      (run) =>
+        !automaticIds.has(run.userMessageId) && !(task.stopped === true && run.queueHeld === true),
+    );
     const pendingRequests = projection.runtimeRequests.filter(
       (request) => request.status === "pending",
     );
     const blockingRequest = pendingRequests.find(
       (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
     );
-    if (blockingRequest !== undefined) {
+    if (blockingRequest !== undefined && task.stopped !== true) {
       return reject(
         `Thread ${command.threadId} is waiting on an approval or question. Answer it before settling.`,
       );
@@ -150,16 +170,20 @@ export function decideLifecycleCommand(
     const latest = current.thread;
     const wasPinned = latest.pinnedAt != null;
     const alreadySettled =
-      latest.settledOverride === "settled" && latest.settledAt !== null && !wasPinned;
+      latest.settledOverride === "settled" &&
+      latest.settledAt !== null &&
+      (archiveInPlace ? latest.archivedAt !== null : !wasPinned);
+    const settledAt = alreadySettled ? latest.settledAt : (command.settledAt ?? ctx.now);
     const settled = {
       ...latest,
       settledOverride: "settled" as const,
-      settledAt: alreadySettled ? latest.settledAt : (command.settledAt ?? ctx.now),
+      settledAt,
       pullRequests: latest.pullRequests?.map(({ watch: _watch, ...link }) => link),
       unsettledAt: null,
-      pinnedAt: null,
-      pinOrderKey: null,
-      activeOrderKey: null,
+      // An archived task keeps its pin and place for when it reopens, as on the server.
+      ...(archiveInPlace
+        ? { archivedAt: latest.archivedAt ?? settledAt }
+        : { pinnedAt: null, pinOrderKey: null, activeOrderKey: null }),
       updatedAt: alreadySettled ? latest.updatedAt : ctx.now,
     };
     return accept([...events, threadEvent(ctx, "thread.settled", settled)]);

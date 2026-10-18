@@ -1,5 +1,7 @@
+import "./tests/threadCommandTestSession.ts"; // signalbox: optimistic ledger
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
   CommandId,
   RuntimeRequestId,
   EnvironmentId,
@@ -9,7 +11,10 @@ import {
   ThreadId,
   type OrchestrationV2Command,
   type OrchestrationV2ShellSnapshot,
+  type AuthSessionState,
 } from "@t3tools/contracts";
+import { SIGNALBOX_TRASH_WS_METHODS, type TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -18,17 +23,38 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { vi } from "vite-plus/test";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { createSignalboxTrashAtoms } from "./signalboxTrash.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
+
+const sessions = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(AsyncResult.initial()),
+);
+
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
+}));
 
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
 const NOW = DateTime.makeUnsafe("2026-09-12T10:00:00.000Z");
 const FUTURE = DateTime.makeUnsafe("2099-01-01T00:00:00.000Z");
+const grant: AuthSessionState = {
+  authenticated: true,
+  auth: {
+    policy: "remote-reachable",
+    bootstrapMethods: [],
+    sessionMethods: [],
+    sessionCookieName: "test",
+  },
+  scopes: [AuthOrchestrationOperateScope],
+  permissions: [AuthOrchestrationOperateScope],
+};
 const APPROVAL = {
   id: RuntimeRequestId.make("approval"),
   kind: "command" as const,
@@ -80,10 +106,16 @@ const SNAPSHOT: OrchestrationV2ShellSnapshot = {
   ],
 };
 
-const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
+const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (
+  supportsSignalboxTrash = false,
+) {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
     reply: Deferred.Deferred<{ sequence: number }, Error>;
+  }>();
+  const trashRequests = yield* Queue.unbounded<{
+    input: { threadId: ThreadId; commandId?: CommandId };
+    reply: Deferred.Deferred<TrashSnapshot, Error>;
   }>();
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
@@ -94,6 +126,15 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
             Effect.gen(function* () {
               const reply = yield* Deferred.make<{ sequence: number }, Error>();
               yield* Queue.offer(requests, { command, reply });
+              return yield* Deferred.await(reply);
+            }),
+          [SIGNALBOX_TRASH_WS_METHODS.thread]: (input: {
+            threadId: ThreadId;
+            commandId?: CommandId;
+          }) =>
+            Effect.gen(function* () {
+              const reply = yield* Deferred.make<TrashSnapshot, Error>();
+              yield* Queue.offer(trashRequests, { input, reply });
               return yield* Deferred.await(reply);
             }),
         },
@@ -116,15 +157,55 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
     ),
   );
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) => Atom.make(SNAPSHOT));
-  const commands = createThreadEnvironmentAtoms(runtime, snapshotAtom);
+  const trash = createSignalboxTrashAtoms(runtime);
+  const commands = createThreadEnvironmentAtoms(
+    runtime,
+    snapshotAtom,
+    () => supportsSignalboxTrash,
+    trash.thread,
+  );
   const registry = AtomRegistry.make();
+  registry.mount(sessions(ENVIRONMENT_ID));
+  registry.set(sessions(ENVIRONMENT_ID), AsyncResult.success(grant));
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   const visibleAtom = commands.snapshotAtom(ENVIRONMENT_ID);
   registry.mount(visibleAtom);
-  return { registry, commands, snapshotAtom, visibleAtom, requests };
+  return { registry, commands, snapshotAtom, visibleAtom, requests, trashRequests };
 });
 
 describe("remote thread lifecycle commands", () => {
+  it.effect("uses Trash for cloud deletion and returns a server rejection", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness(true);
+      const result = h.commands.delete.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      const request = yield* Queue.take(h.trashRequests);
+      expect(request.input.threadId).toBe(THREAD_ID);
+      expect(request.input.commandId).toBeDefined();
+      expect(yield* Queue.size(h.requests)).toBe(0);
+      yield* Deferred.fail(request.reply, new Error("Trash rejected the thread"));
+      expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
+      expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
+    }),
+  );
+
+  it.effect("keeps local deletion on orchestration dispatch", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const result = h.commands.delete.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      const request = yield* Queue.take(h.requests);
+      expect(request.command.type).toBe("thread.delete");
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+      expect(yield* Queue.size(h.trashRequests)).toBe(0);
+    }),
+  );
+
   const actions = [
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],
@@ -161,24 +242,54 @@ describe("remote thread lifecycle commands", () => {
           ],
         };
         h.registry.set(source, initial);
-        const result = h.commands[action].run(h.registry, {
+        const target = {
           environmentId: ENVIRONMENT_ID,
           input: {
             threadId: THREAD_ID,
             commandId: CommandId.make(action),
-            reason: "user",
+            reason: "user" as const,
             enabled: false,
             orderKey: "a",
             snoozedUntil: "2099-01-01T00:00:00.000Z",
             ...input,
           },
-        });
+        };
+        const run: (
+          registry: typeof h.registry,
+          targetInput: typeof target,
+        ) => Promise<AtomCommandResult<unknown, unknown>> = h.commands[action].run;
+        const result = run(h.registry, target);
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         const request = yield* Queue.take(h.requests);
         expect(h.registry.get(source)).toBe(initial);
         yield* Deferred.fail(request.reply, new Error("Remote rejected the action"));
         expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
+      }),
+  );
+
+  it.effect(
+    "ends a settle preview once the task leaves the live shell, so a cloud reopen shows as active",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const result = h.commands.settle.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID },
+        });
+        const request = yield* Queue.take(h.requests);
+        // Cloud commands answer with the thread's own sequence, far above the shell's.
+        yield* Deferred.succeed(request.reply, { sequence: 1_000 });
+        expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.settledOverride).toBe("settled");
+        // Settling archives the task, so it leaves the live shell; reopening brings it back.
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), { ...SNAPSHOT, threads: [] });
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+          ...SNAPSHOT,
+          snapshotSequence: 2,
+          threads: [{ ...SNAPSHOT.threads[0]!, settledOverride: "active" as const }],
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.settledOverride).toBe("active");
       }),
   );
 

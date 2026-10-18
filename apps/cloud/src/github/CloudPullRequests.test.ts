@@ -8,7 +8,11 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import type { GitHubPullRequestSummary } from "@t3tools/source-control-github/server/gitHubPullRequestJson";
+import type {
+  GitHubPullRequestCore,
+  GitHubPullRequestSummary,
+} from "@t3tools/source-control-github/server/gitHubPullRequestJson";
+import type { SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -18,6 +22,8 @@ import * as Stream from "effect/Stream";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Platform from "../platform.ts";
 
 import * as Environment from "../environment.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
@@ -135,6 +141,7 @@ const threadShell = (
 const makeFixture = () => {
   const state = {
     userId: "owner",
+    role: "owner" as SignalboxDriveRole | null,
     token: "token-A",
     accountId: "account-A",
     repository: "Acme/Web",
@@ -202,7 +209,7 @@ const makeFixture = () => {
     drives: Effect.succeed([]),
     changes: Stream.empty,
     changed: Stream.empty,
-    access: () => Effect.succeed("owner"),
+    access: () => Effect.sync(() => state.role),
   });
   const canSee: CloudThreadService["Service"]["canSee"] = (actor, id) =>
     Effect.sync(() => {
@@ -216,8 +223,11 @@ const makeFixture = () => {
         state.syncCalls.push({ userId: actor.userId, threadId });
       }),
   });
-  const api = { host: "github.com" } as GitHubApi;
+  const graphql = vi.fn<GitHubApi["graphql"]>();
+  const api = { host: "github.com", graphql } as unknown as GitHubApi;
   const dependencies = Layer.mergeAll(
+    NodeSqliteClient.layer({ filename: ":memory:" }),
+    Platform.layerCrypto,
     Layer.succeed(GitHub, GitHub.of({ pipesForUser: () => Effect.succeed(null), api })),
     Layer.succeed(PullRequestRepository.PullRequestRepository, repository),
     Layer.succeed(UserShell.UserShell, userShell),
@@ -226,6 +236,7 @@ const makeFixture = () => {
   );
   return {
     state,
+    graphql,
     layer: CloudPullRequests.layer.pipe(Layer.provide(dependencies)),
   };
 };
@@ -257,6 +268,67 @@ describe("CloudPullRequests", () => {
         }),
       );
   });
+
+  it.effect(
+    "offers collaboration controls only with current folder authority and keeps author reviews honest",
+    () => {
+      const fixture = makeFixture();
+      const { stack: _stack, ...summary } = summaryValue("Review me");
+      const core: GitHubPullRequestCore = {
+        ...summary,
+        authorId: "actor-1",
+        createdAt: "2026-10-17T10:00:00.000Z",
+        updatedAt: "2026-10-17T10:00:00.000Z",
+        reviewRequestLogins: [],
+        hasTeamReviewRequest: false,
+        reviewRequestTeams: [],
+        labels: [],
+        headRepositoryOwner: "acme",
+        headSha: "a".repeat(40),
+        body: "A change.",
+        checks: [],
+        comparison: null,
+        checksTruncated: false,
+        viewerAccess: {
+          canWrite: false,
+          canTriage: false,
+          canUpdate: true,
+          didAuthor: true,
+          mergeCapabilities: { merge: false, squash: false, rebase: false },
+        },
+      };
+      vi.mocked(Review.pullRequestDetail).mockReturnValue(Effect.succeed(core));
+      return Effect.gen(function* () {
+        const service = yield* CloudPullRequests.CloudPullRequests;
+        const authored = yield* service.detail(reference());
+        expect(authored.capabilities).toMatchObject({
+          comment: true,
+          reactions: true,
+          edit: { comment: true },
+          review: { inlineComment: true, reply: true, resolve: true },
+        });
+        expect(authored.viewerPermissions).toMatchObject({
+          comment: true,
+          resolve: true,
+          verdicts: ["comment"],
+        });
+        fixture.state.role = "viewer";
+        const readonly = yield* service.detail(reference());
+        expect(readonly.capabilities).toMatchObject({
+          comment: false,
+          reactions: false,
+          edit: { comment: false },
+          review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+        });
+        expect(readonly.viewerPermissions).toMatchObject({
+          comment: false,
+          resolve: false,
+          verdicts: [],
+        });
+        expect(Review.pullRequestDetail).toHaveBeenCalledTimes(1);
+      }).pipe(Effect.provide(fixture.layer));
+    },
+  );
 
   it.effect(
     "filters linked threads through current access and includes visible archived threads",
@@ -367,6 +439,50 @@ describe("CloudPullRequests", () => {
       }).pipe(Effect.provide(fixture.layer));
     },
   );
+
+  it.effect("a reply invalidates cached reads and publishes the refreshed repository", () => {
+    const fixture = makeFixture();
+    let providerReads = 0;
+    vi.mocked(Review.pullRequestSummary).mockImplementation(() => {
+      providerReads += 1;
+      return Effect.succeed(summaryValue(`read-${providerReads}`));
+    });
+    fixture.graphql.mockImplementation((_operation, _token, document) =>
+      Effect.succeed(
+        JSON.stringify({
+          data: document.startsWith("query")
+            ? {
+                node: {
+                  id: "PRRT_1",
+                  isResolved: false,
+                  viewerCanReply: true,
+                  viewerCanResolve: true,
+                  viewerCanUnresolve: true,
+                  pullRequest: { number: 12, repository: { nameWithOwner: "acme/web" } },
+                },
+              }
+            : { addPullRequestReviewThreadReply: { comment: { id: "PRRC_1" } } },
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const pullRequests = yield* CloudPullRequests.CloudPullRequests;
+      expect((yield* pullRequests.summary(reference())).title).toBe("read-1");
+      const refresh = yield* Effect.forkChild(Stream.runHead(pullRequests.subscribeRefreshes));
+      yield* Effect.yieldNow;
+      yield* pullRequests.replyToThread({
+        ...reference(),
+        threadId: "PRRT_1",
+        body: "Fixed.",
+        operationId: "reply-1",
+      });
+      expect((yield* pullRequests.summary(reference())).title).toBe("read-2");
+      expect(Option.getOrNull(yield* Fiber.join(refresh))).toBe(1);
+      expect(fixture.state.syncCalls.map((call) => call.threadId)).toContain(
+        ThreadId.make("visible"),
+      );
+    }).pipe(Effect.provide(fixture.layer));
+  });
 
   it.effect("reports missing summary and detail data as provider errors", () => {
     const fixture = makeFixture();

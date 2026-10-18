@@ -1,6 +1,7 @@
 import {
   type AccountHubConnection,
   type AccountPool,
+  type AccountPoolAdvice,
   AccountHubRpcError,
   type AccountPoolCreateInput,
   type AccountPoolDeleteInput,
@@ -28,7 +29,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import type { PoolAccounts, PoolActor, PoolRejectedError } from "../pool/PoolEngine.ts";
-import { ACCOUNTS_FRESH_MS } from "../pool/PoolEngine.ts";
+import { ACCOUNTS_FRESH_MS, ACCOUNTS_READ_TIMEOUT_MESSAGE } from "../pool/PoolEngine.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { encodeLinkToken } from "../pool/poolLink.ts";
 import * as UserFolders from "./UserFolders.ts";
@@ -63,6 +64,8 @@ interface PoolSnapshot {
   readonly state: PoolsState;
   readonly checkedAt: number;
   readonly readId: number;
+  readonly refreshAt: number;
+  readonly retryDelayMs: number;
 }
 
 /** One pool object gets this long to answer its part of a user snapshot. */
@@ -73,6 +76,38 @@ export const POOL_SNAPSHOT_TIMEOUT_MS = 1_500;
 
 const POOL_READ_TIMEOUT_MESSAGE = "This pool is taking too long to respond. Try again shortly.";
 
+const STARTUP_RETRY_MS = 1_000;
+
+const snapshot = (
+  state: PoolsState,
+  checkedAt: number,
+  readId: number,
+  previous: Option.Option<PoolSnapshot>,
+): PoolSnapshot => {
+  // A cold timeout has no catalog to display. Retry it sooner than a usable snapshot.
+  const coldTimeout = state.some(
+    (entry) =>
+      entry.models.length === 0 &&
+      (entry.source.error === POOL_READ_TIMEOUT_MESSAGE ||
+        entry.source.error === ACCOUNTS_READ_TIMEOUT_MESSAGE),
+  );
+  const retryDelayMs = coldTimeout
+    ? Math.min(
+        Option.isSome(previous) && previous.value.retryDelayMs > 0
+          ? previous.value.retryDelayMs * 2
+          : STARTUP_RETRY_MS,
+        ACCOUNTS_FRESH_MS,
+      )
+    : 0;
+  return {
+    state,
+    checkedAt,
+    readId,
+    refreshAt: checkedAt + (retryDelayMs || ACCOUNTS_FRESH_MS),
+    retryDelayMs,
+  };
+};
+
 export class UserPools extends Context.Service<
   UserPools,
   {
@@ -80,6 +115,9 @@ export class UserPools extends Context.Service<
     readonly state: (actor: PoolActor) => Effect.Effect<PoolsState, AccountHubRpcError>;
     /** The pools now, then again after every change to them or their accounts. */
     readonly changes: (actor: PoolActor) => Stream.Stream<PoolsState, AccountHubRpcError>;
+    readonly advice: (
+      actor: PoolActor,
+    ) => Stream.Stream<ReadonlyArray<AccountPoolAdvice>, AccountHubRpcError>;
     /** Reads every pool's accounts again, e.g. after a sign-in, and tells every subscriber. */
     readonly refresh: (actor: PoolActor) => Effect.Effect<PoolsState, AccountHubRpcError>;
     readonly create: (
@@ -302,7 +340,7 @@ const make = Effect.gen(function* () {
       return yield* SubscriptionRef.modify(current, (known) =>
         known !== observed && Option.isSome(known) && known.value.readId >= minimumRead
           ? [known.value.state, known]
-          : [state, Option.some({ state, checkedAt: now, readId })],
+          : [state, Option.some(snapshot(state, now, readId, known))],
       );
     });
 
@@ -354,7 +392,11 @@ const make = Effect.gen(function* () {
             yield* Effect.forEach(state, (entry) => withSql(PoolSnapshotCache.store(entry, now)), {
               discard: true,
             });
-            yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now, readId }));
+            const completedAt = yield* Clock.currentTimeMillis;
+            yield* SubscriptionRef.set(
+              current,
+              Option.some(snapshot(state, completedAt, readId, latest)),
+            );
             return state;
           }),
         )
@@ -372,22 +414,26 @@ const make = Effect.gen(function* () {
       const known = yield* SubscriptionRef.get(current);
       const now = yield* Clock.currentTimeMillis;
       // Pool alarms update their own catalog; a reconnect must not reuse this index forever.
-      if (
-        Option.isSome(known) &&
-        now >= known.value.checkedAt &&
-        now - known.value.checkedAt < ACCOUNTS_FRESH_MS
-      ) {
+      if (Option.isSome(known) && now >= known.value.checkedAt && now < known.value.refreshAt) {
         return known.value.state;
       }
       return yield* refresh(actor, true);
     });
 
-  // Pool alarms update their own objects, so reread at the shared cache TTL to
-  // carry those changes into user config streams with no new user-side command.
+  // Reschedule when a mutation or timeout changes the shared snapshot's deadline.
   const changes: UserPools["Service"]["changes"] = (actor) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const poll = Stream.fromSchedule(Schedule.spaced(ACCOUNTS_FRESH_MS)).pipe(
+        const poll = SubscriptionRef.changes(current).pipe(
+          Stream.filter(Option.isSome),
+          Stream.switchMap((known) =>
+            Stream.fromEffect(
+              Effect.gen(function* () {
+                const now = yield* Clock.currentTimeMillis;
+                yield* Effect.sleep(Math.max(0, known.value.refreshAt - now));
+              }),
+            ).pipe(Stream.repeat(Schedule.spaced(ACCOUNTS_FRESH_MS))),
+          ),
           Stream.mapEffect(() =>
             state(actor).pipe(
               Effect.catchTags({
@@ -412,6 +458,36 @@ const make = Effect.gen(function* () {
   /** A pool object call, failing the way pool RPCs fail. */
   const call = <A>(effect: Effect.Effect<A, PoolDirectory.PoolObjectError | PoolRejectedError>) =>
     effect.pipe(Effect.catchTags({ PoolRejectedError: poolFailure, PoolObjectError: poolFailure }));
+
+  const advice: UserPools["Service"]["advice"] = (actor) =>
+    changes(actor).pipe(
+      Stream.mapEffect((state) =>
+        Effect.forEach(
+          state,
+          ({ pool }) =>
+            directory
+              .forPool(pool.objectName)
+              .advice(actor)
+              .pipe(
+                Effect.timeoutOrElse({
+                  duration: POOL_ACCOUNT_READ_TIMEOUT_MS,
+                  orElse: () => Effect.succeed(null),
+                }),
+                Effect.catchTags({
+                  PoolRejectedError: () => Effect.succeed(null),
+                  PoolObjectError: (cause) =>
+                    Effect.logWarning("pool advice unavailable", { cause }).pipe(Effect.as(null)),
+                }),
+                Effect.map((providers): ReadonlyArray<AccountPoolAdvice> =>
+                  providers === null ? [] : [{ poolId: pool.id, providers }],
+                ),
+              ),
+          { concurrency: 4 },
+        ),
+      ),
+      Stream.map((advice) => advice.flat()),
+      Stream.changesWith<ReadonlyArray<AccountPoolAdvice>>(Equal.equals),
+    );
 
   const createPool = (actor: PoolActor, name: string, poolId?: string) =>
     Effect.gen(function* () {
@@ -548,6 +624,7 @@ const make = Effect.gen(function* () {
   return UserPools.of({
     state,
     changes,
+    advice,
     refresh,
     create,
     rename,

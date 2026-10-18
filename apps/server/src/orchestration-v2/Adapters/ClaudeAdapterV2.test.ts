@@ -303,7 +303,13 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           {
             header: "Approach",
             question: "Which approach?",
-            options: [{ label: "Simple", description: "Use fewer moving parts" }],
+            options: [
+              {
+                label: "Simple",
+                description: "Use fewer moving parts",
+                preview: "## Simple\n\nA small implementation.",
+              },
+            ],
             multiSelect: true,
           },
         ],
@@ -313,7 +319,13 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           id: "Which approach?",
           header: "Approach",
           question: "Which approach?",
-          options: [{ label: "Simple", description: "Use fewer moving parts" }],
+          options: [
+            {
+              label: "Simple",
+              description: "Use fewer moving parts",
+              preview: "## Simple\n\nA small implementation.",
+            },
+          ],
           multiSelect: true,
         },
       ],
@@ -2378,6 +2390,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
         >();
+      const commandOutputReceipts =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "command_output.delta" }>
+        >();
       const subagentReceipts =
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
@@ -2493,6 +2509,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             if (event.type === "turn.terminal") {
               yield* Queue.offer(terminalReceipts, event);
             }
+            if (event.type === "command_output.delta") {
+              yield* Queue.offer(commandOutputReceipts, event);
+            }
             if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
               yield* Queue.offer(systemNoticeReceipts, event);
             }
@@ -2530,6 +2549,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         continuationReceipts,
         events,
         terminalReceipts,
+        commandOutputReceipts,
         subagentReceipts,
         systemNoticeReceipts,
         getOpenedOptions: () => openedOptions,
@@ -5703,91 +5723,229 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("stores a Bash result's stdout and stderr as command output", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const attemptId = RunAttemptId.make("attempt-claude-bash-output");
-        const bashToolUseId = "toolu_01BashOutput";
+  it.effect.each([undefined, "", "/tmp/claude/tool-results/bash-output.txt"])(
+    "stores Bash stdout and stderr with explicit clipping metadata for path %s",
+    (persistedOutputPath) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          const attemptId = RunAttemptId.make("attempt-claude-bash-output");
+          const bashToolUseId = "toolu_01BashOutput";
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId,
-            text: "Run it.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
-            type: "assistant",
-            message: {
-              model: "claude-sonnet-4-6",
-              id: "msg_bash_output",
-              type: "message",
-              role: "assistant",
-              content: [
-                {
-                  type: "tool_use",
-                  id: bashToolUseId,
-                  name: "Bash",
-                  input: { command: "git status" },
-                },
-              ],
-            },
-            parent_tool_use_id: null,
-            uuid: "00000000-0000-4000-8000-000000000790",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
-            type: "user",
-            message: {
-              role: "user",
-              content: [
-                { type: "tool_result", tool_use_id: bashToolUseId, content: "On branch main" },
-              ],
-            },
-            parent_tool_use_id: null,
-            uuid: "00000000-0000-4000-8000-000000000791",
-            session_id: WAKE_NATIVE_SESSION,
-            tool_use_result: {
-              stdout: "On branch main",
-              stderr: "warning: dirty",
-              interrupted: false,
-              isImage: false,
-            },
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000792", result: "Done." }),
-        );
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId,
+              text: "Run it.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: "msg_bash_output",
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: bashToolUseId,
+                    name: "Bash",
+                    input: { command: "git status" },
+                  },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000000790",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  { type: "tool_result", tool_use_id: bashToolUseId, content: "On branch main" },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000000791",
+              session_id: WAKE_NATIVE_SESSION,
+              tool_use_result: {
+                stdout: "On branch main",
+                stderr: "warning: dirty",
+                interrupted: false,
+                isImage: false,
+                ...(persistedOutputPath === undefined
+                  ? {}
+                  : { persistedOutputPath, persistedOutputSize: 75_023 }),
+              },
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000792", result: "Done." }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
 
-        const bash = harness.events.findLast(
-          (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.nativeItemRef?.nativeId === bashToolUseId,
-        );
-        assert.equal(
-          bash?.type === "turn_item.updated" && bash.turnItem.type === "command_execution"
-            ? bash.turnItem.output
-            : undefined,
-          "On branch main\nwarning: dirty",
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          const bash = harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === bashToolUseId,
+          );
+          assert.equal(
+            bash?.type === "turn_item.updated" && bash.turnItem.type === "command_execution"
+              ? bash.turnItem.output
+              : undefined,
+            "On branch main\nwarning: dirty",
+          );
+          assert.deepEqual(
+            bash?.type === "turn_item.updated" && bash.turnItem.type === "command_execution"
+              ? Reflect.get(bash.turnItem, "outputTruncated")
+              : undefined,
+            persistedOutputPath ? true : undefined,
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
+  );
+
+  it.effect.each(["foreground", "without-task", "missing-file"])(
+    "recovers persisted Bash output at the tool result boundary: %s",
+    (mode) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "sb802-spill-" });
+          const persistedOutputPath = path.join(root, "persisted-full-output.txt");
+          const prefix = "SB802_FRESH_LIVE\n";
+          const output = `${prefix}${"x".repeat(75_000)}\nSB802_FRESH_TAIL\n`;
+          const taskId = "bash-output-spilled";
+          const toolUseId = "toolu_spilled_bash";
+          const harness = yield* makeWakeHarnessWithOptions({
+            environment: { CLAUDE_CODE_TMPDIR: root },
+          });
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-spilled-bash"),
+              text: "Run it.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                role: "assistant",
+                content: [
+                  { type: "tool_use", id: toolUseId, name: "Bash", input: { command: "run" } },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000000793",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          if (mode !== "without-task") {
+            const tasks = path.join(
+              root,
+              `claude-${process.getuid?.()}`,
+              "project",
+              WAKE_NATIVE_SESSION,
+              "tasks",
+            );
+            yield* fileSystem.makeDirectory(tasks, { recursive: true });
+            yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), prefix);
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "system",
+                subtype: "task_started",
+                task_id: taskId,
+                tool_use_id: toolUseId,
+                task_type: "local_bash",
+                is_backgrounded: false,
+                description: "Spilled Bash output",
+                session_id: WAKE_NATIVE_SESSION,
+                uuid: "00000000-0000-4000-8000-000000000794",
+              }),
+            );
+            assert.equal((yield* Queue.take(harness.commandOutputReceipts)).chunk, prefix);
+          }
+          if (mode !== "missing-file")
+            yield* fileSystem.writeFileString(persistedOutputPath, output);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  { type: "tool_result", tool_use_id: toolUseId, content: output.slice(0, 30_000) },
+                ],
+              },
+              tool_use_result: {
+                stdout: output.slice(0, 30_000),
+                stderr: "",
+                interrupted: false,
+                persistedOutputPath,
+                persistedOutputSize: new TextEncoder().encode(output).length,
+              },
+              parent_tool_use_id: null,
+              session_id: WAKE_NATIVE_SESSION,
+              uuid: "00000000-0000-4000-8000-000000000795",
+            }),
+          );
+          // Recovery must finish in this turn, before ephemeral files can disappear.
+          yield* fileSystem.remove(persistedOutputPath).pipe(Effect.orElseSucceed(() => undefined));
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000796",
+              result: "Done.",
+            }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          const chunks = harness.events.filter((event) => event.type === "command_output.delta");
+          assert.isTrue(
+            chunks.map((event) => event.chunk).join("") ===
+              (mode === "missing-file" ? prefix : output),
+          );
+          const completedIndex = harness.events.findIndex(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === toolUseId &&
+              event.turnItem.status === "completed",
+          );
+          assert.isTrue(
+            harness.events.findLastIndex((event) => event.type === "command_output.delta") <
+              completedIndex,
+          );
+          const final = harness.events[completedIndex];
+          assert.isTrue(
+            final?.type === "turn_item.updated" &&
+              final.turnItem.type === "command_execution" &&
+              final.turnItem.outputTruncated === true,
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
   );
 
   it.effect("answers an approval a held wake turn raises without waiting for the echo", () =>

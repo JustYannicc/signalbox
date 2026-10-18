@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./capture/text": {
+      "types": "./src/capture/text.ts",
+      "default": "./src/capture/text.ts"
+    },
+    "./capture/destinations": {
+      "types": "./src/capture/destinations.ts",
+      "default": "./src/capture/destinations.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -143,6 +151,10 @@
       "types": "./src/signalboxCloudActivity.ts",
       "default": "./src/signalboxCloudActivity.ts"
     },
+    "./personTimezone": {
+      "types": "./src/personTimezone.ts",
+      "default": "./src/personTimezone.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
@@ -219,6 +231,10 @@
       "types": "./src/state/automations.ts",
       "default": "./src/state/automations.ts"
     },
+    "./state/personTimezone": {
+      "types": "./src/state/personTimezone.ts",
+      "default": "./src/state/personTimezone.ts"
+    },
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
@@ -279,6 +295,14 @@
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
     },
+    "./state/orchestration-v2-test-fixtures": {
+      "types": "./src/state/orchestrationV2TestFixtures.ts",
+      "default": "./src/state/orchestrationV2TestFixtures.ts"
+    },
+    "./state/optimistic-ledger": {
+      "types": "./src/state/optimisticLedger.ts",
+      "default": "./src/state/optimisticLedger.ts"
+    },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
@@ -307,6 +331,10 @@
       "types": "./src/state/foldersModel.ts",
       "default": "./src/state/foldersModel.ts"
     },
+    "./state/signalboxSearchModel": {
+      "types": "./src/state/signalboxSearchModel.ts",
+      "default": "./src/state/signalboxSearchModel.ts"
+    },
     "./state/signalboxNotes": {
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"
@@ -322,6 +350,10 @@
     "./state/signalboxPersonBrowser": {
       "types": "./src/state/signalboxPersonBrowser.ts",
       "default": "./src/state/signalboxPersonBrowser.ts"
+    },
+    "./state/signalboxTrash": {
+      "types": "./src/state/signalboxTrash.ts",
+      "default": "./src/state/signalboxTrash.ts"
     },
     "./state/signalboxPreviews": {
       "types": "./src/state/signalboxPreviews.ts",
@@ -350,6 +382,10 @@
     "./state/threadStatusLine": {
       "types": "./src/state/threadStatusLine.ts",
       "default": "./src/state/threadStatusLine.ts"
+    },
+    "./state/signalboxAsks": {
+      "types": "./src/state/signalboxAsks.ts",
+      "default": "./src/state/signalboxAsks.ts"
     },
     "./state/signalboxThreadKinds": {
       "types": "./src/state/signalboxThreadKinds.ts",
@@ -474,6 +510,14 @@
     "./state/thread-execution": {
       "types": "./src/state/threadExecution.ts",
       "default": "./src/state/threadExecution.ts"
+    },
+    "./state/thread-detail-shell": {
+      "types": "./src/state/threadDetailShell.ts",
+      "default": "./src/state/threadDetailShell.ts"
+    },
+    "./testing/orchestration-v2": {
+      "types": "./src/state/orchestrationV2TestFixtures.ts",
+      "default": "./src/state/orchestrationV2TestFixtures.ts"
     },
     "./state/thread-fold-expansion": {
       "types": "./src/state/threadFoldExpansion.ts",
@@ -610,6 +654,18 @@
     "./pull-request-diff-revision": {
       "types": "./src/pullRequestDiffRevision.ts",
       "default": "./src/pullRequestDiffRevision.ts"
+    },
+    "./pull-request-write-attempt": {
+      "types": "./src/pullRequestWriteAttempt.ts",
+      "default": "./src/pullRequestWriteAttempt.ts"
+    },
+    "./observability/action-timing": {
+      "types": "./src/observability/actionTiming.ts",
+      "default": "./src/observability/actionTiming.ts"
+    },
+    "./observability/action-timing-queue": {
+      "types": "./src/observability/actionTimingQueue.ts",
+      "default": "./src/observability/actionTimingQueue.ts"
     }
   },
   "scripts": {

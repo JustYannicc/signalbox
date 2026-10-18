@@ -81,7 +81,13 @@ export function createOptimisticThreadLifecycle(
             update.sequence = result.value.sequence;
             registry.update(pending, (current) => [...current]);
             const reconcile = (snapshot: OrchestrationV2ShellSnapshot | null) => {
-              if (snapshot === null || snapshot.snapshotSequence >= result.value.sequence) {
+              if (
+                snapshot === null ||
+                snapshot.snapshotSequence >= result.value.sequence ||
+                // signalbox: a cloud command answers with the thread's sequence, not the shell's.
+                // A settled task leaves the live shell (it archives), which ends its preview there.
+                !snapshot.threads.some((thread) => thread.id === target.input.threadId)
+              ) {
                 remove();
                 unsubscribe();
               }

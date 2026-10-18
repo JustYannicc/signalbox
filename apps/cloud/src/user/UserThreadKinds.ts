@@ -5,6 +5,7 @@ import {
   effectiveThreadKind,
   overrideFor,
   type SignalboxThreadKindsSnapshot,
+  type ThreadKind,
   type ThreadKindRecord,
   type ThreadKindSetInput,
 } from "@t3tools/contracts/signalboxThreadKinds";
@@ -43,7 +44,7 @@ import * as UserContexts from "./UserContexts.ts";
 export class UserThreadKinds extends Context.Service<
   UserThreadKinds,
   {
-    /** Kinds of the threads clients list: in the user's contexts, not archived or deleted. */
+    /** Kinds of visible threads and retained settled archives, in the user's contexts. */
     readonly snapshot: Effect.Effect<SignalboxThreadKindsSnapshot, SqlError>;
     /** The snapshot now, then again after every change. */
     readonly changes: Stream.Stream<SignalboxThreadKindsSnapshot, SqlError>;
@@ -53,6 +54,8 @@ export class UserThreadKinds extends Context.Service<
     readonly setArchiveChatsAfterDays: (
       days: ArchiveChatsAfterDays,
     ) => Effect.Effect<SignalboxThreadKindsSnapshot, SqlError>;
+    /** The effective kind for an automation; threads without a record are tasks. */
+    readonly kindOf: (threadId: ThreadId) => Effect.Effect<ThreadKind, SqlError>;
     /** See `ThreadKindTurns.beforeTurn`. */
     readonly beforeTurn: ThreadKindTurns["Service"]["beforeTurn"];
     /**
@@ -122,6 +125,12 @@ const make = Effect.gen(function* () {
   const listedClause = sql`json_extract(i.shell, '$.archivedAt') IS NULL
     AND json_extract(i.shell, '$.deletedAt') IS NULL`;
 
+  /** Retain settled archives so clients can still show their actual kind. */
+  const snapshotClause = sql`json_extract(i.shell, '$.deletedAt') IS NULL
+    AND (json_extract(i.shell, '$.archivedAt') IS NULL
+      OR json_extract(i.shell, '$.settledAt') IS NOT NULL
+      OR json_extract(i.shell, '$.settledOverride') = 'settled')`;
+
   const isListed = (threadId: ThreadId) =>
     Effect.map(
       sql`SELECT 1 AS listed FROM thread_index i WHERE i.thread_id = ${threadId} AND ${listedClause}`,
@@ -132,7 +141,7 @@ const make = Effect.gen(function* () {
     const rows = decodeListed(
       yield* sql`SELECT k.thread_id, k.classified, k.override, k.work_started_at, i.context_id
         FROM thread_kinds k JOIN thread_index i ON i.thread_id = k.thread_id
-        WHERE ${listedClause} ORDER BY k.thread_id`,
+        WHERE ${snapshotClause} ORDER BY k.thread_id`,
     );
     const ids = rows.length === 0 ? [] : yield* contexts.contextIds;
     return {
@@ -241,6 +250,9 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const kindOf: UserThreadKinds["Service"]["kindOf"] = (threadId) =>
+    Effect.map(recordOf(threadId), (record) => effectiveThreadKind(record).kind);
+
   const recordSummary: UserThreadKinds["Service"]["recordSummary"] = (summary, index) =>
     Effect.gen(function* () {
       const record = yield* recordOf(summary.threadId);
@@ -269,6 +281,7 @@ const make = Effect.gen(function* () {
     changes,
     setKind,
     setArchiveChatsAfterDays,
+    kindOf,
     beforeTurn,
     recordSummary,
     sweep: (nowMs) => sweep(nowMs).pipe(traced("signalbox.thread_kind.sweep", {})),

@@ -32,11 +32,6 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
 
-  // Waiting on you: approvals, questions and secret requests.
-  "threads.respond": gap("#410"),
-  "threads.dismissQuestion": gap("#410"),
-  "secrets.answer": gap("#410"),
-
   // The rest of a thread's lifecycle.
   "threads.delete": gap("#439"),
   "threads.snooze": gap("#439"),
@@ -45,17 +40,9 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.markUnread": gap("#439"),
   "threads.fork": gap("#439"),
   "threads.mergeBack": gap("#439"),
-  "threads.queuedRun.edit": gap("#439"),
-  "threads.queuedRun.reorder": gap("#439"),
   "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
-  "threads.retryPreparation": gap("#439"),
-  "threads.commandOutput": gap("#439"),
   "threads.getTurnItem": gap("#439"),
-  "threads.getWorkflowScript": gap("#439"),
-  "threads.stopWorkflow": gap("#439"),
-  "threads.search": gap("#334"),
-  "threads.searchOne": gap("#334"),
 
   // Pull-request reads are served by `github/CloudPullRequests.ts` (#814).
   // The later slices own writes and personal review state.
@@ -63,12 +50,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "pullRequests.generateReviewGuide": gap("#815"),
   "pullRequests.filesViewed": gap("#815"),
   "pullRequests.setFilesViewed": gap("#815"),
-  "pullRequests.comment": gap("#816"),
-  "pullRequests.updateComment": gap("#816"),
-  "pullRequests.submitReview": gap("#816"),
-  "pullRequests.replyToThread": gap("#816"),
-  "pullRequests.setThreadResolution": gap("#816"),
-  "pullRequests.setReaction": gap("#816"),
   "pullRequests.runAction": gap("#817"),
   "pullRequests.update": gap("#817"),
   "pullRequests.reviewerCandidates": gap("#817"),
@@ -80,17 +61,14 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Git beyond the thread's own branch.
   "sourceControl.cloneRepository": githubImports,
-  "sourceControl.publishRepository": gap("#810"),
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),
   "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
-  "assets.persistChatAttachments": gap("#813"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "pools.advice": gap("#819"),
   "provider.auth.respond": gap("#205"),
   "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
@@ -99,7 +77,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   ),
   "provider.consumeResetCredit": gap("#820"),
   "provider.install.*": poolHarnesses,
-  "provider.uploadFeedback": gap("#822"),
   "server.updateProvider": poolHarnesses,
 
   "acpRegistry.*": exempt("ACP agents install on a host; cloud threads run on pool harnesses."),
@@ -108,6 +85,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "backgroundPolicy.subscribe": noHost,
   "device.*": noHost,
   "deviceState.subscribe": noHost,
+  "deviceAgentDiagnostics.subscribe": noHost,
   "diagnostics.*": noHost,
   "discoveredLocalServers.subscribe": noHost,
   "filesystem.*": noHost,
@@ -119,16 +97,12 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "server.updateServer": selfDeploying,
   "server.updateServerWithProgress": selfDeploying,
   "storage.*": noHost,
-  "terminal.*": gap("#744"),
-  "terminalEvents.subscribe": gap("#744"),
-  "terminalMetadata.subscribe": gap("#744"),
   "usage.*": gap("#786"),
   "vcs.createRef": ownBranch,
   "vcs.switchRef": ownBranch,
   "vcs.createWorktree": ownBranch,
   "vcs.removeWorktree": ownBranch,
   "vcs.init": githubImports,
-  "worktreeSetup.*": ownBranch,
 };
 
 /** Whether `name` falls under `key`, an operation name or a `prefix.*`. */

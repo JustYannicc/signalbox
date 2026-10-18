@@ -116,7 +116,7 @@ Most Signalbox contributions come from Signalbox itself, often controlled remote
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
-2. **Writing to the live install.** `~/.signalbox/userdata` is the developer's real Signalbox database, in use while you work. `~/.t3/userdata` is T3 Code's, if it is installed alongside; treat it the same way. Reading it and copying from it are fine, and a good way to get real test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
+2. **Writing to the live install.** `~/.signalbox/userdata` is the developer's real Signalbox database, in use while you work. `~/.t3/userdata` is T3 Code's, if it is installed alongside; treat it the same way. Never hold a long read or long-running scan on the live database: it blocks WAL checkpoints and can fill the disk. Use a copy for test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
 ## Hit every surface
@@ -148,6 +148,7 @@ The most common defect in this repo is a change that works on the path you teste
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
 - Run `vp run migrate-dev-db` with your dev server stopped. It rebuilds `<worktree>/.t3/userdata/statev2.sqlite` from a read-only snapshot of `~/.signalbox/userdata/statev2.sqlite`, the developer's real data. It keeps recent projects and their stopped threads, and drops scheduled tasks, pending work, and auth sessions, so your dev server never runs the developer's agents. Raise `--projects` and `--threads-per-project` for more data. Point `--source` at another database file (`~/.signalbox/dev/userdata/statev2.sqlite`, or T3 Code's `~/.t3/userdata/statev2.sqlite`, which uses the same format) when you need it.
+- Alternatively, make a quick file-level copy of the `.sqlite` file plus its `-wal`, then do all scans and fixture building on the copy.
 - Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.

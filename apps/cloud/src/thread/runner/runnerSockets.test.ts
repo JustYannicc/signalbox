@@ -1,8 +1,24 @@
-import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ProviderSessionId,
+  ProviderTurnId,
+  RuntimeRequestId,
+  type OrchestrationV2RuntimeRequest,
+  type RunId,
+} from "@t3tools/contracts";
+import {
+  MIN_RUNNER_PROTOCOL_VERSION,
+  RUNNER_PROTOCOL_VERSION,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { requestCancellation } from "../preparationTesting.ts";
 
 import type * as ThreadRunner from "./ThreadRunner.ts";
+import { terminalTestServices } from "../TerminalTesting.ts";
 import {
   capabilities,
   claudeDriver,
@@ -24,6 +40,7 @@ import {
   withObject,
 } from "../runnerTesting.ts";
 import { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runnerSockets.ts";
+import { unstampedEventId } from "../threadEvents.ts";
 
 /**
  * The thread object's end of its Runner's socket, on in-memory sockets: what
@@ -47,6 +64,7 @@ const runningTurn = (
   engine: Parameters<Parameters<typeof withObject>[1]>[0],
   runner: ThreadRunner.ThreadRunner["Service"],
   steers: boolean,
+  runtimeResponses = false,
 ) =>
   Effect.gen(function* () {
     yield* launch(engine);
@@ -61,6 +79,7 @@ const runningTurn = (
       ...hello(plan.ensure.generation, plan.ensure.token),
       takenRunIds: [],
       ...(steers ? { steers: true } : {}),
+      runtimeResponses,
     });
     const start = socket.sent.find((message) => message.type === "turn.start");
     if (start?.type !== "turn.start") throw new Error("expected the turn");
@@ -100,6 +119,7 @@ const runningTurn = (
     socket.sent.length = 0;
     return {
       host,
+      sockets,
       socket,
       turn,
       report,
@@ -121,6 +141,328 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect("replays committed native answers after socket reconnect and object restart", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      const saved = yield* withObject(filename, (engine, runner) =>
+        Effect.gen(function* () {
+          const live = yield* runningTurn(engine, runner, false, true);
+          const request: OrchestrationV2RuntimeRequest = {
+            id: RuntimeRequestId.make("native-question"),
+            nodeId: live.turn.rootNodeId,
+            providerTurnId: ProviderTurnId.make(`claude-turn:${live.turn.runId}`),
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "resolved",
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make("session-1"),
+            },
+            createdAt: DateTime.makeUnsafe(0),
+            resolvedAt: DateTime.makeUnsafe(1),
+            answers: { destination: "Zurich" },
+          };
+          // A committed decision, with no transport call: this also covers answering while disconnected.
+          yield* engine.apply((_projection, ctx) =>
+            Effect.succeed({
+              events: [
+                {
+                  id: unstampedEventId,
+                  threadId,
+                  type: "runtime-request.updated",
+                  occurredAt: ctx.now,
+                  payload: request,
+                },
+              ],
+              result: undefined,
+            }),
+          );
+          const response = {
+            runId: live.turn.runId,
+            requestId: request.id,
+            providerSessionId: ProviderSessionId.make("session-1"),
+            attemptId: live.turn.attemptId,
+            answers: request.answers,
+          };
+          yield* Effect.promise(() => pushRunnerWork(live.host));
+          expect(live.socket.sent).toEqual([{ type: "runtime-request.respond", ...response }]);
+          yield* Effect.promise(() => pushRunnerWork(live.host));
+          expect(live.socket.sent).toHaveLength(1);
+          // Hibernation attachments store ids, never answer values.
+          expect(JSON.stringify(live.socket.socket.deserializeAttachment())).not.toContain(
+            "Zurich",
+          );
+          const again = fakeSocket();
+          live.sockets.splice(0, live.sockets.length, again.socket);
+          yield* say(live.host, again, {
+            ...hello(live.generation, live.token),
+            takenRunIds: [live.turn.runId],
+            runtimeResponses: true,
+          });
+          expect(
+            again.sent.filter((message) => message.type === "runtime-request.respond"),
+          ).toEqual([{ type: "runtime-request.respond", ...response }]);
+          return { generation: live.generation, token: live.token, response };
+        }),
+      );
+      // A new object has only persisted projection + lease, no delivery state in memory.
+      yield* withObject(filename, (_engine, runner) =>
+        Effect.gen(function* () {
+          const socket = fakeSocket();
+          const host = yield* hostFor(runner, [socket.socket]);
+          yield* say(host, socket, {
+            ...hello(saved.generation, saved.token),
+            takenRunIds: [saved.response.runId],
+            runtimeResponses: true,
+          });
+          expect(
+            socket.sent.filter((message) => message.type === "runtime-request.respond"),
+          ).toEqual([{ type: "runtime-request.respond", ...saved.response }]);
+        }),
+      );
+    }),
+  );
+
+  it.effect("keeps the additive response frame away from older v5 Runners", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { host, socket, turn } = yield* runningTurn(engine, runner, false);
+        yield* engine.apply((_projection, ctx) =>
+          Effect.succeed({
+            events: [
+              {
+                id: unstampedEventId,
+                threadId,
+                type: "runtime-request.updated",
+                occurredAt: ctx.now,
+                payload: {
+                  id: RuntimeRequestId.make("approval"),
+                  nodeId: turn.rootNodeId,
+                  providerTurnId: ProviderTurnId.make(`claude-turn:${turn.runId}`),
+                  nativeRequestRef: null,
+                  kind: "command",
+                  status: "resolved",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: ProviderSessionId.make("session-1"),
+                  },
+                  createdAt: ctx.now,
+                  resolvedAt: ctx.now,
+                  decision: "accept",
+                },
+              },
+            ],
+            result: undefined,
+          }),
+        );
+        expect((yield* runner.work).runtimeResponses).toHaveLength(1);
+        yield* Effect.promise(() => pushRunnerWork(host));
+        expect(socket.sent).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("never delivers pending, expired, message-only or stale-session native requests", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { host, socket, turn } = yield* runningTurn(engine, runner, false, true);
+        yield* engine.apply((_projection, ctx) => {
+          const resolved: OrchestrationV2RuntimeRequest = {
+            id: RuntimeRequestId.make("resolved"),
+            nodeId: turn.rootNodeId,
+            providerTurnId: ProviderTurnId.make(`claude-turn:${turn.runId}`),
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "resolved",
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make("session-1"),
+            },
+            createdAt: ctx.now,
+            resolvedAt: ctx.now,
+            answers: { answer: "continue" },
+          };
+          const requests: ReadonlyArray<OrchestrationV2RuntimeRequest> = [
+            { ...resolved, id: RuntimeRequestId.make("pending"), status: "pending" },
+            { ...resolved, id: RuntimeRequestId.make("expired"), status: "expired" },
+            {
+              ...resolved,
+              id: RuntimeRequestId.make("message"),
+              responseCapability: { type: "message" },
+            },
+            {
+              ...resolved,
+              id: RuntimeRequestId.make("old-session"),
+              responseCapability: {
+                type: "live",
+                providerSessionId: ProviderSessionId.make("old-session"),
+              },
+            },
+            {
+              ...resolved,
+              id: RuntimeRequestId.make("old-turn"),
+              providerTurnId: ProviderTurnId.make("old-turn"),
+            },
+            resolved,
+          ];
+          return Effect.succeed({
+            events: requests.map((payload) => ({
+              id: unstampedEventId,
+              threadId,
+              type: "runtime-request.updated" as const,
+              occurredAt: ctx.now,
+              payload,
+            })),
+            result: undefined,
+          });
+        });
+        yield* Effect.promise(() => pushRunnerWork(host));
+        expect(
+          socket.sent
+            .filter((message) => message.type === "runtime-request.respond")
+            .map((message) => message.requestId),
+        ).toEqual(["resolved"]);
+      }),
+    ),
+  );
+  it.effect.each([MIN_RUNNER_PROTOCOL_VERSION, RUNNER_PROTOCOL_VERSION])(
+    "does not hold an unsupported terminal on a protocol %s runner",
+    (protocolVersion) =>
+      withObject(
+        freshDatabase(),
+        (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const plan = yield* runner.reconcile;
+            if (plan.ensure === null) throw new Error("expected a machine request");
+            const { terminals, store: records } = terminalTestServices(context);
+            yield* terminals.open(owner, { threadId, terminalId: "before-hello", cwd: "/scratch" });
+            const socket = fakeSocket();
+            const host = yield* hostFor(runner, [socket.socket], undefined, terminals);
+            const { terminalProcessId: _processId, ...request } = hello(
+              plan.ensure.generation,
+              plan.ensure.token,
+            );
+            yield* say(host, socket, { ...request, protocolVersion });
+            expect(yield* records.get("before-hello")).toMatchObject({ status: "error" });
+            yield* terminals.close(owner, { threadId, terminalId: "before-hello" });
+            yield* terminals.open(owner, { threadId, terminalId: "after-hello", cwd: "/scratch" });
+            yield* Effect.promise(() => pushRunnerWork(host));
+            expect(yield* records.get("after-hello")).toMatchObject({ status: "error" });
+            yield* terminals.close(owner, { threadId, terminalId: "after-hello" });
+            expect(yield* records.get("after-hello")).toMatchObject({ status: "closed" });
+            expect(yield* terminals.held).toBe(false);
+            expect(socket.sent.some((message) => message.type === "terminal.command")).toBe(false);
+          }),
+        { drives: true },
+      ),
+  );
+  it.effect("ignores retirement from a socket replaced by a reconnect", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { host, socket, generation, token, turn } = yield* runningTurn(engine, runner, false);
+        const replacement = fakeSocket();
+        host.ctx.getWebSockets("runner").push(replacement.socket);
+        yield* say(host, replacement, {
+          ...hello(generation, token),
+          takenRunIds: [turn.runId],
+        });
+        yield* say(host, socket, { type: "end", reason: "old connection stopped" });
+        expect((yield* runner.work).activeRunId).toBe(turn.runId);
+        expect((yield* runner.reconcile).release).toBeNull();
+      }),
+    ),
+  );
+  it.effect(
+    "sends addressed cancellation and a fresh same-run generation, granting handoff only after ready",
+    () =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const plan = yield* runner.reconcile;
+          if (plan.ensure === null) throw new Error("No machine request");
+          const sockets: Array<WebSocket> = [];
+          const host = yield* hostFor(runner, sockets);
+          const socket = fakeSocket();
+          sockets.push(socket.socket);
+          yield* say(host, socket, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: RUNNER_PROTOCOL_VERSION,
+            takenRunIds: [],
+          });
+          const start = socket.sent.find((frame) => frame.type === "turn.start");
+          if (start?.type !== "turn.start" || start.turn.preparationGeneration === undefined)
+            throw new Error("No addressed start");
+          const target = {
+            threadId,
+            runId: start.turn.runId,
+            preparationGeneration: start.turn.preparationGeneration,
+          };
+          socket.sent.length = 0;
+          const cancelled = yield* requestCancellation(engine, target);
+          yield* Effect.promise(() => pushRunnerWork(host));
+          expect(socket.sent).toEqual([
+            {
+              type: "preparation.cancel",
+              runId: target.runId,
+              preparationGeneration: target.preparationGeneration,
+            },
+          ]);
+          socket.sent.length = 0;
+          yield* say(host, socket, {
+            type: "batch",
+            sequence: 1,
+            items: [{ kind: "preparation.cancelled", ...target }],
+          });
+          expect(yield* Fiber.join(cancelled)).toEqual({ cancelled: true });
+          expect(
+            socket.sent.some((frame) => frame.type === "interrupt" || frame.type === "end"),
+          ).toBe(false);
+          yield* engine.dispatch(
+            owner,
+            {
+              type: "prepared-run.retry",
+              commandId: CommandId.make("retry-preparation"),
+              ...target,
+            },
+            personal,
+          );
+          yield* Effect.promise(() => pushRunnerWork(host));
+          const retry = socket.sent.find((frame) => frame.type === "turn.start");
+          if (retry?.type !== "turn.start") throw new Error("No retry start");
+          expect(retry.turn.runId).toBe(target.runId);
+          expect(retry.turn.message).toEqual(start.turn.message);
+          expect(retry.turn.preparationGeneration).toBe(target.preparationGeneration + 1);
+          expect(socket.sent.some((frame) => frame.type === "preparation.handoff")).toBe(false);
+          socket.sent.length = 0;
+          yield* say(host, socket, {
+            type: "batch",
+            sequence: 2,
+            items: [
+              {
+                kind: "preparation.ready",
+                ...target,
+                preparationGeneration: retry.turn.preparationGeneration,
+              },
+            ],
+          });
+          expect(socket.sent).toContainEqual({
+            type: "preparation.handoff",
+            runId: target.runId,
+            preparationGeneration: retry.turn.preparationGeneration,
+          });
+          expect(
+            yield* engine
+              .cancelPreparation(owner, {
+                ...target,
+                preparationGeneration: target.preparationGeneration + 1,
+              })
+              .pipe(Effect.flip),
+          ).toMatchObject({ _tag: "WorktreeSetupError" });
+        }),
+      ),
+  );
+
   it.effect("holds a waiting turn back while its pull requests are being read (#495)", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
@@ -459,5 +801,151 @@ describe("runnerSockets", () => {
         expect(turn.freshSessionText).toBeUndefined();
       }),
     ),
+  );
+});
+
+describe("queue edits delivered to the Runner", () => {
+  it.effect(
+    "hands over the edited reordered head once and keeps cancellation in the same order",
+    () =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          const { host, socket, report } = yield* runningTurn(engine, runner, false);
+          for (const n of [2, 3, 4]) yield* send(engine, n, `Queued ${n}`);
+          const before = yield* snapshot(engine);
+          const second = before.projection.runs[1]!;
+          const third = before.projection.runs[2]!;
+          const fourth = before.projection.runs[3]!;
+          const edit = {
+            type: "queued-run.edit" as const,
+            commandId: CommandId.make("edit-fourth"),
+            threadId,
+            runId: fourth.id,
+            text: "Edited fourth",
+          };
+          const reorder = {
+            type: "queued-run.reorder" as const,
+            commandId: CommandId.make("fourth-first"),
+            threadId,
+            runId: fourth.id,
+            beforeRunId: second.id,
+          };
+          for (const change of [edit, reorder])
+            yield* dispatched(host, engine.dispatch(owner, change, personal));
+          yield* dispatched(
+            host,
+            engine.dispatch(
+              owner,
+              {
+                type: "queued-run.cancel",
+                commandId: CommandId.make("cancel-third"),
+                threadId,
+                runId: third.id,
+              },
+              personal,
+            ),
+          );
+          expect(socket.sent.filter((message) => message.type === "turn.start")).toHaveLength(0);
+          yield* say(host, socket, {
+            type: "batch",
+            sequence: 2,
+            items: [report.full, report.terminal],
+          });
+          const starts = socket.sent.filter((message) => message.type === "turn.start");
+          expect(starts).toHaveLength(1);
+          expect(starts[0]?.turn).toMatchObject({
+            runId: fourth.id,
+            message: { text: expect.stringContaining("User message:\nEdited fourth") },
+          });
+          yield* dispatched(host, engine.dispatch(owner, edit, personal));
+          yield* dispatched(host, engine.dispatch(owner, reorder, personal));
+          expect(socket.sent.filter((message) => message.type === "turn.start")).toHaveLength(1);
+          const head = yield* snapshot(engine);
+          expect(
+            head.projection.runs.map((run) => [run.ordinal, run.status, run.queuePosition]),
+          ).toEqual([
+            [1, "completed", null],
+            [2, "queued", 1],
+            [3, "cancelled", null],
+            [4, "starting", null],
+          ]);
+          for (const change of [edit, reorder]) {
+            const stale = yield* engine
+              .dispatch(
+                owner,
+                { ...change, commandId: CommandId.make(`stale-${change.type}`) },
+                personal,
+              )
+              .pipe(Effect.flip);
+            expect(stale._tag).toBe("ThreadCommandRejectedError");
+          }
+          expect((yield* snapshot(engine)).projection.messages).toEqual(head.projection.messages);
+        }),
+      ),
+  );
+
+  it.effect(
+    "rejects edits and reorders after promotion while preserving the delivered message",
+    () =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          const { host, socket, turn } = yield* runningTurn(engine, runner, true);
+          yield* engine.dispatch(
+            owner,
+            {
+              type: "message.dispatch",
+              commandId: CommandId.make("queue-promotion"),
+              createdBy: "user",
+              creationSource: "web",
+              threadId,
+              messageId: MessageId.make("promoted-message"),
+              text: "Keep this message",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+            },
+            personal,
+          );
+          const queued = (yield* snapshot(engine)).projection.runs[1]!;
+          yield* dispatched(
+            host,
+            engine.dispatch(
+              owner,
+              {
+                type: "queued-message.promote-to-steer",
+                commandId: CommandId.make("promote-queued"),
+                threadId,
+                queuedRunId: queued.id,
+                targetRunId: turn.runId,
+              },
+              personal,
+            ),
+          );
+          const promoted = yield* snapshot(engine);
+          for (const change of [
+            {
+              type: "queued-run.edit" as const,
+              commandId: CommandId.make("edit-promoted"),
+              threadId,
+              runId: queued.id,
+              text: "Stale edit",
+            },
+            {
+              type: "queued-run.reorder" as const,
+              commandId: CommandId.make("reorder-promoted"),
+              threadId,
+              runId: queued.id,
+              beforeRunId: null,
+            },
+          ]) {
+            expect((yield* engine.dispatch(owner, change, personal).pipe(Effect.flip))._tag).toBe(
+              "ThreadCommandRejectedError",
+            );
+          }
+          expect((yield* snapshot(engine)).projection).toEqual(promoted.projection);
+          expect(socket.sent.filter((message) => message.type === "steer")).toMatchObject([
+            { message: { messageId: "promoted-message", text: "Keep this message" } },
+          ]);
+        }),
+      ),
   );
 });

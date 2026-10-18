@@ -9,6 +9,7 @@ import {
   type RelayAgentAwarenessPreferences,
 } from "@t3tools/contracts/relay";
 import { type AgentAwarenessPhase, projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import { blockingAsk } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 
 /**
@@ -61,6 +62,13 @@ const awareness = (environmentId: EnvironmentId, thread: OrchestrationV2ThreadSh
 const millis = (value: DateTime.Utc | null | undefined) =>
   value === null || value === undefined ? null : DateTime.toEpochMillis(value);
 
+function inputRequestKey(thread: OrchestrationV2ThreadShell): string | undefined {
+  const ask = blockingAsk(thread.asks ?? []);
+  return ask === undefined
+    ? thread.pendingRuntimeRequest?.id
+    : `ask:${ask.id}:${ask.rounds[ask.rounds.length - 1]!.number}`;
+}
+
 /** The push `next` earns over `previous`, or null. */
 export function pushFor(input: {
   readonly environmentId: EnvironmentId;
@@ -87,8 +95,7 @@ export function pushFor(input: {
     case "waiting_for_approval":
     case "waiting_for_input":
       // Each new request counts, even when a summary skipped the answer to the last one.
-      return before === state.phase &&
-        previous.pendingRuntimeRequest?.id === next.pendingRuntimeRequest?.id
+      return before === state.phase && inputRequestKey(previous) === inputRequestKey(next)
         ? null
         : message(state.phase);
     case "failed":

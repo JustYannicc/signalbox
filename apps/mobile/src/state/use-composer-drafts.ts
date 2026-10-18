@@ -1030,7 +1030,7 @@ export function ensureComposerDraftsLoaded(): void {
     if (loadPromise === loading) loadPromise = null;
     console.warn(
       "[composer-drafts] failed to hydrate drafts",
-      cause instanceof ComposerDraftPersistenceError
+      Schema.is(ComposerDraftPersistenceError)(cause)
         ? cause
         : new ComposerDraftPersistenceError({
             operation: "hydrate",

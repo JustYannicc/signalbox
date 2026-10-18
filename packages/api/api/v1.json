@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "db56df35"
+      "output": "67ac3dcf"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -217,7 +217,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "25c7d51b"
+      "output": "562f2b59"
     },
     {
       "name": "automations.notices",
@@ -232,14 +232,14 @@
       "rpc": "automations.publish",
       "access": "write",
       "input": "b3f469e7",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.run",
@@ -261,7 +261,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "3998d94e"
+      "output": "7060883e"
     },
     {
       "name": "automations.runs.retry",
@@ -276,21 +276,21 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "07cb0ccd"
+      "output": "50e3cd77"
     },
     {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "c1cd1923"
+      "output": "01a21b35"
     },
     {
       "name": "automations.stopAttached",
@@ -298,6 +298,13 @@
       "access": "write",
       "input": "1276a316",
       "output": "78961bd6"
+    },
+    {
+      "name": "automations.taskLifecycle",
+      "rpc": "automations.taskLifecycle",
+      "access": "write",
+      "input": "3213177c",
+      "output": "f42daea9"
     },
     {
       "name": "automations.validate",
@@ -346,10 +353,17 @@
       "output": "4c49c647"
     },
     {
+      "name": "device.cancelOpen",
+      "rpc": "device.cancelOpen",
+      "access": "write",
+      "input": "9d58c5db",
+      "output": "794c92c1"
+    },
+    {
       "name": "device.close",
       "rpc": "device.close",
       "access": "write",
-      "input": "44168bda",
+      "input": "90597b64",
       "output": "794c92c1"
     },
     {
@@ -357,7 +371,7 @@
       "rpc": "device.configure",
       "access": "write",
       "input": "bb51696d",
-      "output": "edac0f53"
+      "output": "c9e9c55f"
     },
     {
       "name": "device.detail",
@@ -371,14 +385,14 @@
       "rpc": "device.list",
       "access": "read",
       "input": "661d6123",
-      "output": "edac0f53"
+      "output": "c9e9c55f"
     },
     {
       "name": "device.open",
       "rpc": "device.open",
       "access": "write",
-      "input": "b98404fd",
-      "output": "c11f5e73"
+      "input": "a383e5b8",
+      "output": "b3d10422"
     },
     {
       "name": "device.shutdown",
@@ -395,12 +409,20 @@
       "output": "383ed6ee"
     },
     {
+      "name": "deviceAgentDiagnostics.subscribe",
+      "rpc": "subscribeDeviceAgentDiagnostics",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "3173b4e0"
+    },
+    {
       "name": "deviceState.subscribe",
       "rpc": "subscribeDeviceState",
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "edac0f53"
+      "output": "c9e9c55f"
     },
     {
       "name": "diagnostics.checkOtlpEndpoint",
@@ -1149,7 +1171,7 @@
       "name": "provider.uploadFeedback",
       "rpc": "provider.uploadFeedback",
       "access": "write",
-      "input": "d0c0d40f",
+      "input": "46ba7a16",
       "output": "597e8af2"
     },
     {
@@ -1170,7 +1192,7 @@
       "name": "pullRequests.comment",
       "rpc": "pullRequests.comment",
       "access": "write",
-      "input": "fa46166d",
+      "input": "a9574c96",
       "output": "794c92c1"
     },
     {
@@ -1247,7 +1269,7 @@
       "name": "pullRequests.replyToThread",
       "rpc": "pullRequests.replyToThread",
       "access": "write",
-      "input": "af197e6e",
+      "input": "b2b62b0d",
       "output": "794c92c1"
     },
     {
@@ -1331,7 +1353,7 @@
       "name": "pullRequests.submitReview",
       "rpc": "pullRequests.submitReview",
       "access": "write",
-      "input": "69ff938f",
+      "input": "366b3a10",
       "output": "794c92c1"
     },
     {
@@ -1411,8 +1433,8 @@
       "name": "review.getDiffPreview",
       "rpc": "review.getDiffPreview",
       "access": "read",
-      "input": "53905c8b",
-      "output": "3ca555b6"
+      "input": "27e6a0df",
+      "output": "a3323df6"
     },
     {
       "name": "scheduledTasks.delete",
@@ -1550,7 +1572,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "47e8e074"
+      "output": "16f25035"
     },
     {
       "name": "server.refreshProviders",
@@ -1587,7 +1609,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "274f0093"
+      "output": "181c6a5a"
     },
     {
       "name": "settings.get",
@@ -1705,14 +1727,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "0640135d",
-      "output": "5e95f168"
+      "output": "919dd194"
     },
     {
       "name": "terminal.open",
       "rpc": "terminal.open",
       "access": "write",
       "input": "95f54c5d",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.resize",
@@ -1726,13 +1748,13 @@
       "rpc": "terminal.restart",
       "access": "write",
       "input": "5a677a5f",
-      "output": "b1e6c6f1"
+      "output": "788cc60f"
     },
     {
       "name": "terminal.write",
       "rpc": "terminal.write",
       "access": "write",
-      "input": "db19ce54",
+      "input": "7554b8ff",
       "output": "794c92c1"
     },
     {
@@ -1741,7 +1763,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "b6f8ae30"
+      "output": "af17df5c"
     },
     {
       "name": "terminalMetadata.subscribe",
@@ -1749,7 +1771,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "fd689900"
+      "output": "dd899e48"
     },
     {
       "name": "threadKinds.list",
@@ -1772,7 +1794,7 @@
       "command": "thread.active.reorder",
       "access": "write",
       "input": "75326e0c",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.archive",
@@ -1780,7 +1802,31 @@
       "command": "thread.archive",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
+    },
+    {
+      "name": "threads.asks.answer",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.answer",
+      "access": "write",
+      "input": "fda7ede6",
+      "output": "c5e5cd7a"
+    },
+    {
+      "name": "threads.asks.raise",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.raise",
+      "access": "write",
+      "input": "f65558db",
+      "output": "c5e5cd7a"
+    },
+    {
+      "name": "threads.asks.withdraw",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.ask.withdraw",
+      "access": "write",
+      "input": "d4a9a92a",
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.autoSettle.set",
@@ -1788,7 +1834,7 @@
       "command": "thread.auto-settle.set",
       "access": "write",
       "input": "dc0204b5",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.commandOutput",
@@ -1796,14 +1842,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "0d4296e3",
-      "output": "1c4ef6b6"
+      "output": "c93f5a6f"
     },
     {
       "name": "threads.create",
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "d5a4dd19",
-      "output": "c719de80"
+      "output": "8123cd29"
     },
     {
       "name": "threads.delete",
@@ -1812,7 +1858,7 @@
       "access": "write",
       "destructive": true,
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.dismissQuestion",
@@ -1821,7 +1867,7 @@
       "access": "write",
       "humanOnly": true,
       "input": "8acbe7aa",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.fork",
@@ -1829,14 +1875,14 @@
       "command": "thread.fork",
       "access": "write",
       "input": "20c2ed70",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.get",
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "0425f088"
+      "output": "9cb42a8b"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1857,14 +1903,14 @@
       "rpc": "orchestration.getTurnItem",
       "access": "read",
       "input": "049d9a37",
-      "output": "150d0e5e"
+      "output": "bc7f8c58"
     },
     {
       "name": "threads.getWorkflowScript",
       "rpc": "orchestration.getWorkflowScript",
       "access": "read",
-      "input": "81c8125b",
-      "output": "6ac5e7bf"
+      "input": "5e5c20a0",
+      "output": "eb77b4fc"
     },
     {
       "name": "threads.interactionMode.set",
@@ -1872,7 +1918,7 @@
       "command": "thread.interaction-mode.set",
       "access": "write",
       "input": "2a6a79b3",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.interrupt",
@@ -1880,7 +1926,7 @@
       "command": "run.interrupt",
       "access": "write",
       "input": "9f6fd019",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.list",
@@ -1888,14 +1934,14 @@
       "access": "read",
       "stream": "snapshot",
       "input": "9b1960e6",
-      "output": "bbbd32e7"
+      "output": "aa0bc515"
     },
     {
       "name": "threads.listArchived",
       "rpc": "orchestration.getArchivedShellSnapshot",
       "access": "read",
       "input": "03c2b661",
-      "output": "afaf884a"
+      "output": "74bd1b36"
     },
     {
       "name": "threads.markRead",
@@ -1903,7 +1949,7 @@
       "command": "thread.visit",
       "access": "write",
       "input": "0c4c5ada",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.markUnread",
@@ -1911,7 +1957,7 @@
       "command": "thread.mark-unread",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.mergeBack",
@@ -1919,7 +1965,7 @@
       "command": "thread.merge_back",
       "access": "write",
       "input": "5db1e3d1",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.modelSelection.set",
@@ -1927,7 +1973,7 @@
       "command": "thread.model-selection.set",
       "access": "write",
       "input": "13cdbe93",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.move",
@@ -1942,7 +1988,7 @@
       "command": "thread.pin",
       "access": "write",
       "input": "55fea70d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pin.reorder",
@@ -1950,7 +1996,7 @@
       "command": "thread.pin.reorder",
       "access": "write",
       "input": "75326e0c",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pullRequest.link",
@@ -1958,7 +2004,7 @@
       "command": "thread.pull-request.link",
       "access": "write",
       "input": "9de6b4c4",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pullRequest.unlink",
@@ -1966,7 +2012,7 @@
       "command": "thread.pull-request.unlink",
       "access": "write",
       "input": "f885b0e6",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.pullRequest.watch",
@@ -1974,7 +2020,14 @@
       "command": "thread.pull-request.watch",
       "access": "write",
       "input": "ff5d14ef",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
+    },
+    {
+      "name": "threads.query",
+      "rpc": "signalbox.search.query",
+      "access": "read",
+      "input": "81f449d7",
+      "output": "fdcbbe22"
     },
     {
       "name": "threads.queue.resume",
@@ -1982,7 +2035,7 @@
       "command": "queue.resume",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedMessage.promoteToSteer",
@@ -1990,7 +2043,7 @@
       "command": "queued-message.promote-to-steer",
       "access": "write",
       "input": "02259395",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedRun.cancel",
@@ -1998,7 +2051,7 @@
       "command": "queued-run.cancel",
       "access": "write",
       "input": "4bef536a",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedRun.edit",
@@ -2006,7 +2059,7 @@
       "command": "queued-run.edit",
       "access": "write",
       "input": "102c04b4",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.queuedRun.reorder",
@@ -2014,7 +2067,7 @@
       "command": "queued-run.reorder",
       "access": "write",
       "input": "03c0b5f9",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.respond",
@@ -2023,15 +2076,15 @@
       "access": "write",
       "humanOnly": true,
       "input": "3bc54e36",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.retryPreparation",
       "rpc": "orchestration.dispatchCommand",
       "command": "prepared-run.retry",
       "access": "write",
-      "input": "4bef536a",
-      "output": "aebf4e45"
+      "input": "ab97a76c",
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.rollback",
@@ -2040,7 +2093,7 @@
       "access": "write",
       "destructive": true,
       "input": "8f3a9b28",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.runtimeMode.set",
@@ -2048,14 +2101,14 @@
       "command": "thread.runtime-mode.set",
       "access": "write",
       "input": "2f2f6a9d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.search",
       "rpc": "orchestration.searchThreads",
       "access": "read",
       "input": "4851e18f",
-      "output": "7e3c74cc"
+      "output": "655a6572"
     },
     {
       "name": "threads.searchOne",
@@ -2070,7 +2123,7 @@
       "command": "message.dispatch",
       "access": "write",
       "input": "1fac6d00",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.setKind",
@@ -2084,8 +2137,8 @@
       "rpc": "orchestration.dispatchCommand",
       "command": "thread.settle",
       "access": "write",
-      "input": "b1be93e6",
-      "output": "aebf4e45"
+      "input": "b3fd246d",
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.snooze",
@@ -2093,7 +2146,7 @@
       "command": "thread.snooze",
       "access": "write",
       "input": "33a37ef6",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.stopSubagent",
@@ -2101,7 +2154,7 @@
       "command": "subagent.stop",
       "access": "write",
       "input": "f6964201",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.stopWorkflow",
@@ -2116,7 +2169,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "b9fc6dec"
+      "output": "24cd235c"
     },
     {
       "name": "threads.subscribeArchived",
@@ -2124,7 +2177,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "f9b5e74e"
+      "output": "cde7f5de"
     },
     {
       "name": "threads.switchProvider",
@@ -2132,7 +2185,7 @@
       "command": "provider.switch",
       "access": "write",
       "input": "13cdbe93",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unarchive",
@@ -2140,7 +2193,7 @@
       "command": "thread.unarchive",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unpin",
@@ -2148,7 +2201,7 @@
       "command": "thread.unpin",
       "access": "write",
       "input": "1236b61d",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unsettle",
@@ -2156,7 +2209,7 @@
       "command": "thread.unsettle",
       "access": "write",
       "input": "693f5db2",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.unsnooze",
@@ -2164,7 +2217,7 @@
       "command": "thread.unsnooze",
       "access": "write",
       "input": "693f5db2",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threads.update",
@@ -2172,7 +2225,7 @@
       "command": "thread.metadata.update",
       "access": "write",
       "input": "7068e784",
-      "output": "aebf4e45"
+      "output": "c5e5cd7a"
     },
     {
       "name": "threadStatus.list",
@@ -2195,6 +2248,46 @@
       "access": "write",
       "input": "a63efefe",
       "output": "aaa9ffaf"
+    },
+    {
+      "name": "trash.empty",
+      "rpc": "signalbox.trash.empty",
+      "access": "write",
+      "destructive": true,
+      "input": "6b3c9036",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.folder",
+      "rpc": "signalbox.trash.folder",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "fc93b206",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.list",
+      "rpc": "signalbox.trash.list",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.restore",
+      "rpc": "signalbox.trash.restore",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "7b32ad46"
+    },
+    {
+      "name": "trash.thread",
+      "rpc": "signalbox.trash.thread",
+      "access": "write",
+      "destructive": true,
+      "agentCallable": true,
+      "input": "1236b61d",
+      "output": "7b32ad46"
     },
     {
       "name": "usage.refreshRates",
@@ -2250,7 +2343,7 @@
       "rpc": "vcs.refreshStatus",
       "access": "read",
       "input": "34e2f6b6",
-      "output": "16557745"
+      "output": "34a4dd49"
     },
     {
       "name": "vcs.removeWorktree",
@@ -2273,13 +2366,13 @@
       "access": "read",
       "stream": "snapshot",
       "input": "de09b502",
-      "output": "da0fd203"
+      "output": "0bb9b6e9"
     },
     {
       "name": "worktreeSetup.cancel",
       "rpc": "worktreeSetup.cancel",
       "access": "write",
-      "input": "1276a316",
+      "input": "5e336207",
       "output": "178978ad"
     },
     {
@@ -2288,7 +2381,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "1276a316",
-      "output": "80548c84"
+      "output": "2b1ff2d8"
     }
   ],
   "exemptions": [

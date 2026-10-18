@@ -16,7 +16,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as AccountPools from "./AccountPools.ts";
 import * as PoolUsageHistory from "./PoolUsageHistory.ts";
-import { HOUR_MS } from "./poolUsageRecording.ts";
+import { HOUR_MS } from "@t3tools/shared/poolUsageRecording";
 
 const NOW = Date.parse("2026-10-05T08:00:00.000Z");
 const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));

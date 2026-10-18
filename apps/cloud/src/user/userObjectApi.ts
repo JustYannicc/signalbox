@@ -1,9 +1,13 @@
+import { askTool, isAskTool } from "../thread/askTools.ts";
+import type * as Crypto from "effect/Crypto";
+import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
 import { AutomationError, ThreadId, type PullRequestDiffInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { learnerTool } from "./learnerTool.ts";
 import * as UserLearner from "./UserLearner.ts";
 import { automationTool } from "../automations/automationTool.ts";
@@ -19,12 +23,16 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
+import { authorizeExecutorToken as authorizeExecutorTokenNow } from "../executor/ExecutorTokenAuthority.ts";
+import type { ExecutorTokenBinding } from "../executor/ExecutorTokenBindings.ts";
+import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import {
   authorizeLocalModel,
   localKeysView,
   recordLocalModelRequest,
 } from "../localKeys/localModelAccess.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
+import { wire as terminalWire } from "../thread/terminalSync.ts";
 import { wire } from "../thread/threadWire.ts";
 import {
   shellSnapshotWire,
@@ -32,6 +40,8 @@ import {
   type UserObjectApi,
 } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserFolders from "./UserFolders.ts";
+import * as DrivePeople from "./DrivePeople.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -40,7 +50,8 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
-import * as UserFolders from "./UserFolders.ts";
+import * as UserTerminals from "./UserTerminals.ts";
+import { UserTrash } from "../trash/UserTrash.ts";
 import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
@@ -56,6 +67,9 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | Crypto.Crypto
+      | CloudThreadService.CloudThreadService
+      | ThreadSearch.ThreadSearch
       | UserLearner.UserLearner
       | UserStore.UserStore
       | UserShell.UserShell
@@ -69,6 +83,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserTerminals.UserTerminals
       | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
@@ -76,6 +91,10 @@ export const makeUserObjectApi = (
       | PersonBrowsers.PersonBrowsers
       | SignInGrants.SignInGrants
       | LoginService.LoginService
+      | UserTrash
+      | ThreadDirectory.ThreadDirectory
+      | DrivePeople.DrivePeople
+      | CloudAutomations.CloudAutomations
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -98,6 +117,11 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    trashProgress: (id) => run(UserTrash.use((trash) => trash.progress(id))),
+    searchThreads: (actor, input) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.query(actor, input))),
+    readSearchItem: (actor, threadId, itemId) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.readItem(actor, threadId, itemId))),
     receiveHook: (request) =>
       run(withAutomations((automations) => automations.receiveHook(request))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
@@ -126,6 +150,10 @@ export const makeUserObjectApi = (
         ),
       );
     },
+    recordTerminalEvents: (encoded) => {
+      const delivery = terminalWire.delivery.decode(encoded);
+      return run(UserTerminals.UserTerminals.use((terminals) => terminals.record(delivery)));
+    },
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(
@@ -152,6 +180,7 @@ export const makeUserObjectApi = (
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
+    cancelGitHubConnect: (grantId) => github((service) => service.cancel(grantId)),
     abortGitHubConnect: (grantId) => github((service) => service.abort(grantId)),
     disconnectGitHub: () => github((service) => service.disconnect),
     githubAccessToken: () => github((service) => service.accessToken),
@@ -192,7 +221,7 @@ export const makeUserObjectApi = (
                   _tag: "operation-error",
                   operation: error.operation,
                   detail: error.detail,
-                  ...(error.reason === undefined ? {} : { reason: error.reason }),
+                  ...(error.reason === "not-found" ? { reason: error.reason } : {}),
                 }),
             }),
           ),
@@ -215,7 +244,8 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
-    automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    automationTool: (threadId, name, input) =>
+      run(isAskTool(name) ? askTool(threadId, name, input) : automationTool(threadId, name, input)),
     folderStatus: (threadId) =>
       run(
         UserThreadStatus.UserThreadStatus.use((status) =>
@@ -227,6 +257,8 @@ export const makeUserObjectApi = (
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),
     checkSignIn: (input) => run(SignInGrants.SignInGrants.use((grants) => grants.check(input))),
+    authorizeExecutorToken: (claims, binding: ExecutorTokenBinding) =>
+      run(authorizeExecutorTokenNow(claims, binding)),
     endBrowser: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.end(input))),
     automationHost: (call) => run(withAutomations((automations) => automations.host(call))),

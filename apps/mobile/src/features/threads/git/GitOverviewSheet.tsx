@@ -47,6 +47,7 @@ import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigat
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 import { useEnvironmentSupports } from "../../../state/environmentCapabilities"; // signalbox
 import { ownBranchMenuItems } from "@t3tools/client-runtime/state/signalboxOwnBranch"; // signalbox
+import { usePublishableFolder } from "../../folders/usePublishableFolder"; // signalbox: #810
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -116,6 +117,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const isRepo = gitStatus.data?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
+  const publishableFolder = usePublishableFolder(environmentId, threadId); // signalbox: #810
 
   const menuItems = useMemo(() => {
     const items = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
@@ -293,6 +295,25 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           isInspector ? "ios:rounded-2xl ios:px-3 ios:py-1" : "ios:rounded-[22px] ios:px-4 ios:py-1"
         }`}
       >
+        {publishableFolder !== null && !isRepo ? ( // signalbox: #810
+          <SheetListRow
+            icon="arrow.up.circle"
+            title="Publish to GitHub"
+            subtitle={
+              canWriteSourceControl
+                ? "Create a repository from this folder’s files"
+                : "This connection cannot change source control."
+            }
+            disabled={!canWriteSourceControl}
+            onPress={() =>
+              navigation.navigate("PublishFolder", {
+                environmentId: String(environmentId),
+                projectId: String(publishableFolder.drive.projectId),
+                threadId: String(threadId),
+              })
+            }
+          />
+        ) : null}
         {sheetMenuItems.map(({ item, disabledReason }, index) => (
           <View key={`${item.id}-${item.label}`}>
             {index > 0 && Platform.OS !== "android" ? (
