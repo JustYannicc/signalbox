@@ -200,11 +200,13 @@ export const UPSTREAM_RPC_REACH = {
   "device.list": read(),
   "device.testHost": write(),
   "device.open": write(),
+  "device.cancelOpen": write(),
   "device.close": write(),
   "device.shutdown": write(),
   "device.detail": read(),
   "device.action": write(),
   subscribeDeviceState: read(),
+  subscribeDeviceAgentDiagnostics: read(),
 
   subscribeServerConfig: read(),
   subscribeServerLifecycle: exempt("internal", "The connection handshake: welcome, then ready."),
@@ -213,8 +215,14 @@ export const UPSTREAM_RPC_REACH = {
   subscribeResourceTelemetry: read(),
 
   "orchestration.dispatchCommand": perCommand,
-  "orchestration.getWorkflowScript": read(),
-  "orchestration.stopWorkflow": write(),
+  "orchestration.getWorkflowScript": read({
+    summary:
+      "Read the script revision retained for a thread workflow. Use its coordinator subagent ID when multiple workflows share a path.",
+  }),
+  "orchestration.stopWorkflow": write({
+    summary:
+      "Stop one workflow coordinator and its children without stopping its parent thread or sibling workflows.",
+  }),
   "orchestration.getTurnItem": read(),
   "orchestration.getTurnDiff": read(),
   "orchestration.getFullThreadDiff": read(),

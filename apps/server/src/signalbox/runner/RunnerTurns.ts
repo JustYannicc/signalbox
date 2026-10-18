@@ -1,3 +1,5 @@
+import { makeRunnerWorkflows } from "./RunnerWorkflows.ts";
+import type { WorkflowStopRequest } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { CheckpointViews, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import {
   type MachineClass,
@@ -56,6 +58,7 @@ import type { MainConflict, RunnerDrive, RunnerDriveError } from "./RunnerDrive.
 import { DriveClientError, DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
+import { makeRunnerPreparations, type RunnerPreparationState } from "./RunnerPreparations.ts";
 import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
@@ -119,6 +122,7 @@ export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("Runn
 }) {}
 
 export interface RunnerTurns {
+  readonly stopWorkflow?: (request: WorkflowStopRequest) => Effect.Effect<void>;
   /**
    * Starts a turn, as `turn.start` hands it over. A run already started is
    * ignored, so the thread can repeat itself.
@@ -131,7 +135,12 @@ export interface RunnerTurns {
     readonly secrets?: SecretsAccess;
   }) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
-  readonly interrupt: (runId: RunId) => Effect.Effect<void>;
+  readonly interrupt: (runId: RunId, preparationGeneration?: number) => Effect.Effect<void>;
+  readonly cancelPreparation: (runId: RunId, generation: number) => Effect.Effect<void>;
+  readonly handoffPreparation: (runId: RunId, generation: number) => Effect.Effect<void>;
+  readonly preparationsTaken: Effect.Effect<
+    ReadonlyArray<{ readonly runId: RunId; readonly preparationGeneration: number }>
+  >;
   /**
    * Hands `message` to `runId`'s turn on the harness (#562), once the harness
    * has named it. Each message is taken once, so the thread can repeat itself.
@@ -184,10 +193,9 @@ interface Held {
 }
 
 /** A run this machine was handed, until the harness ends its turn. */
-interface Turn {
+interface Turn extends RunnerPreparationState {
   readonly turn: RunnerTurn;
   readonly attemptId: RunAttemptId;
-  status: "loading" | "running" | "stopped";
   session: ProviderAdapterV2SessionRuntime | null;
   providerThread: OrchestrationV2ProviderThread | null;
   providerTurnId: ProviderTurnId | null;
@@ -205,6 +213,8 @@ interface Turn {
   /** The view this run pinned while its checkout and session loaded. */
   pinnedContext: Fiber.Fiber<CheckpointViews["context"], never> | null;
 }
+
+const isStopped = (turn: Turn) => turn.status === "stopped";
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
 
@@ -278,6 +288,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly adapters: ReadonlyMap<ProviderInstanceId, ProviderAdapterV2["Service"]>;
   /** The thread's working directory on this machine. */
   readonly cwd: string;
+  /** CLAUDE_CONFIG_DIR used by this machine's Claude adapter. Absent: ~/.claude. */
+  readonly claudeConfigDir?: string;
   /** Makes `token` the one the harnesses present to the ModelGateway. */
   readonly useModelToken: (token: string) => Effect.Effect<void, PlatformError.PlatformError>;
   /** The machine's usage so far (`RunnerUsage.ts`). */
@@ -314,6 +326,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
+  const workflows = makeRunnerWorkflows(input.emit, undefined, input.claudeConfigDir);
+  const workflowThreads = new Map<RunId, OrchestrationV2ProviderThread>();
   const turns = new Map<RunId, Turn>();
   const pendingRuntimeRequests = new Map<
     RuntimeRequestId,
@@ -359,6 +373,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     clearRuntimeRequests(runId, turn.attemptId);
     Deferred.doneUnsafe(turn.ended, Exit.void);
   };
+  const preparations = makeRunnerPreparations({
+    find: (runId) => turns.get(runId),
+    forget,
+    taken,
+    emit: input.emit,
+    scope,
+  });
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
       for (const turn of turns.values()) {
@@ -385,6 +406,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     const head = text.length > CAUSE_CHARS ? `${text.slice(0, CAUSE_CHARS)}…` : text;
     return `${what}: ${head}\nThe CLI's stderr:\n${tail}`;
   };
+  const preparationFailureText = (text: string) =>
+    makeProviderFailure({
+      message: mask(text).replace(
+        /(^|[\s("'`:=])(?:[A-Za-z]:[\\/]|\/(?!\/))[^\s"'`<>]+/gu,
+        "$1[host path]",
+      ),
+    }).message;
   /** The run on the harness, from its `turn.started` until its end is reported. */
   let runningRunId: RunId | null = null;
   // A run's usage and the items it brackets go out under one lock, so a
@@ -487,11 +515,23 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     });
 
   /** Installs only on a machine that can keep the turn; a light machine moves up on demand. */
-  const prepareDependencies = (runId: RunId) => {
+  const prepareDependencies = (runId: RunId, preparation?: Turn) => {
     if (input.dependencies === undefined || input.machineClass === "light") return Effect.void;
     return input.dependencies.prepare(
       () => Effect.void,
-      (update) => input.emit({ kind: "dependencies.progress", runId, ...update }),
+      (update) =>
+        Effect.suspend(() =>
+          preparation?.status === "stopped"
+            ? Effect.void
+            : input.emit({
+                kind: "dependencies.progress",
+                runId,
+                ...update,
+                ...(preparation?.turn.preparationGeneration === undefined
+                  ? {}
+                  : { preparationGeneration: preparation.turn.preparationGeneration }),
+              }),
+        ),
     );
   };
 
@@ -946,7 +986,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     /** Sends `event` as `runId`'s; a held end goes out under its own run, whatever runs since. */
     const deliver = (
       event: ProviderAdapterV2Event,
-      runId: RunId | null = latestRunId,
+      runId: RunId | null = event.type === "subagent.updated"
+        ? (event.subagent.runId ?? latestRunId)
+        : latestRunId,
       suppressTranscript = false,
     ) =>
       Effect.gen(function* () {
@@ -955,16 +997,31 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         // Complete only once the rows behind it would survive this machine.
         if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
         if (suppressTranscript) return;
+        const observed = yield* workflows.observe(
+          delivered,
+          runtime,
+          turns.get(runId)?.providerThread ?? workflowThreads.get(runId) ?? null,
+          runId,
+        );
         const stored =
           delivered.type === "turn_item.updated"
             ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
-            : delivered;
+            : observed.event;
         const item: RunnerItem = {
           kind: "provider",
           runId,
           event: encodeAdapterEvent(stored) as Record<string, unknown>,
         };
-        if (delivered.type !== "turn.terminal") return yield* input.emit(item);
+        if (delivered.type !== "turn.terminal") {
+          yield* input.emit(item);
+          if (observed.script !== null)
+            yield* input.emit({
+              kind: "provider",
+              runId,
+              event: { type: "workflow.script", ...observed.script },
+            });
+          return;
+        }
         // The run's end as reported: its last usage sample follows it.
         yield* ordered.withPermits(1)(
           Effect.gen(function* () {
@@ -1207,6 +1264,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     const stderrMark = input.stderr?.mark() ?? 0;
     latestStderr = stderrMark;
     return Effect.gen(function* () {
+      if (isStopped(state)) return yield* Effect.interrupt;
       const adapter = input.adapters.get(turn.modelSelection.instanceId);
       if (adapter === undefined) {
         return yield* new RunnerTurnError({
@@ -1232,6 +1290,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const opened = access === null ? null : yield* driveFor(access);
       const prepared = yield* preparing.withPermits(1)(
         Effect.gen(function* () {
+          if (isStopped(state)) return yield* Effect.interrupt;
           const drive =
             opened !== null && access !== null
               ? yield* opened
@@ -1243,6 +1302,18 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                     turn.restartContinuationOfRunId === undefined
                       ? (turn.appThread.pullRequests ?? [])
                       : [],
+                    (stage, status) =>
+                      Effect.suspend(() =>
+                        state.status === "stopped" || turn.preparationGeneration === undefined
+                          ? Effect.void
+                          : input.emit({
+                              kind: "preparation.progress",
+                              runId: turn.runId,
+                              preparationGeneration: turn.preparationGeneration,
+                              stage,
+                              status,
+                            }),
+                      ),
                   )
                   .pipe(
                     Effect.mapError((error) =>
@@ -1250,7 +1321,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                     ),
                   )
               : null;
-          yield* prepareDependencies(turn.runId);
+          if (isStopped(state)) return yield* Effect.interrupt;
+          yield* prepareDependencies(turn.runId, state);
           // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
           if (opened !== null && input.machineClass !== "light") {
             yield* opened.restoreDependencyEdits;
@@ -1285,6 +1357,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           return { drive, secrets };
         }),
       );
+      if (isStopped(state)) return yield* Effect.interrupt;
       yield* input.useModelToken(modelToken).pipe(Effect.mapError(machineStateError));
       // The harness loads its session as last saved: on a new machine, from the store.
       if (input.sessions !== undefined && sessionAccess !== null) {
@@ -1302,8 +1375,17 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 // Its message says why, naming the turn's own files when they're the reason.
                 .pipe(Effect.mapError((error) => new RunnerTurnError({ message: error.message }))),
             );
+      if (turn.preparationGeneration !== undefined) {
+        yield* input.emit({
+          kind: "preparation.ready",
+          runId: turn.runId,
+          preparationGeneration: turn.preparationGeneration,
+        });
+        yield* Deferred.await(state.handoff);
+      }
+      if (isStopped(state)) return yield* Effect.interrupt;
       // A turn already stopped never waits on, or restarts, the session the next one runs on.
-      if (state.status !== "stopped") yield* windDown(adapter.instanceId, turn.runId);
+      yield* windDown(adapter.instanceId, turn.runId);
       const session = yield* sessionFor(adapter, turn, runtimePolicy, {
         instructions: prepared.drive?.instructions ?? "",
         secrets: prepared.secrets,
@@ -1325,11 +1407,15 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           state.status = "running";
           state.session = session;
           state.providerThread = providerThread;
+          workflowThreads.set(turn.runId, providerThread);
           runningRunId = turn.runId;
           yield* reportUsage(turn.runId);
           yield* input.emit({
             kind: "turn.started",
             runId: turn.runId,
+            ...(turn.preparationGeneration === undefined
+              ? {}
+              : { preparationGeneration: turn.preparationGeneration }),
             providerSession: session.providerSession,
             providerThread,
           });
@@ -1366,17 +1452,39 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       Effect.catchCause((cause) =>
         ordered.withPermits(1)(
           Effect.gen(function* () {
+            if (state.status === "stopped") {
+              forget(turn.runId, state);
+              return;
+            }
             yield* Effect.logError("turn failed to start", Cause.pretty(cause));
             forget(turn.runId, state);
             if (runningRunId === turn.runId) runningRunId = null;
             yield* input.emit(
-              log(turn.runId, "error", failureLine("turn failed to start", cause, stderrMark)),
+              log(
+                turn.runId,
+                "error",
+                turn.preparationGeneration !== undefined && !state.handedOff
+                  ? preparationFailureText(failureLine("turn failed to start", cause, stderrMark))
+                  : failureLine("turn failed to start", cause, stderrMark),
+              ),
             );
-            yield* input.emit({
-              kind: "turn.failed",
-              runId: turn.runId,
-              message: failureMessage(cause),
-            });
+            if (turn.preparationGeneration !== undefined && !state.handedOff) {
+              yield* input.emit({
+                kind: "preparation.failed",
+                runId: turn.runId,
+                preparationGeneration: turn.preparationGeneration,
+                message: preparationFailureText(failureMessage(cause)),
+              });
+            } else {
+              yield* input.emit({
+                kind: "turn.failed",
+                runId: turn.runId,
+                message: failureMessage(cause),
+                ...(turn.preparationGeneration === undefined
+                  ? {}
+                  : { preparationGeneration: turn.preparationGeneration }),
+              });
+            }
           }),
         ),
       ),
@@ -1392,12 +1500,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     secrets: secretsAccess = null,
   }) =>
     Effect.suspend(() => {
-      if (taken.has(turn.runId)) return Effect.void;
-      taken.add(turn.runId);
+      if (!preparations.take(turn)) return Effect.void;
       const state: Turn = {
         turn,
         attemptId: turn.attemptId,
         status: "loading",
+        preparationFiber: null,
+        handoff: Deferred.makeUnsafe<void>(),
+        handedOff: turn.preparationGeneration === undefined,
         session: null,
         providerThread: null,
         providerTurnId: null,
@@ -1414,22 +1524,29 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       return keepOnly(turn.runId).pipe(
         Effect.andThen(Effect.sync(() => turns.set(turn.runId, state))),
         Effect.andThen(
-          run(turn, modelToken, access, sessionAccess, secretsAccess, state).pipe(
-            Effect.forkIn(scope),
+          preparations.launch(
+            state,
+            run(turn, modelToken, access, sessionAccess, secretsAccess, state),
           ),
         ),
         Effect.asVoid,
       );
     });
 
-  const interrupt: RunnerTurns["interrupt"] = (runId) =>
+  const interrupt: RunnerTurns["interrupt"] = (runId, preparationGeneration) =>
     Effect.suspend(() => {
+      const turn = turns.get(runId);
+      if (
+        preparationGeneration !== undefined &&
+        !preparations.isCurrent(runId, preparationGeneration)
+      )
+        return Effect.void;
       // A merge the agent was resolving ends with the run; its files stay saved.
       const held = finishing.get(runId);
       if (held !== undefined) held.stopped = true;
       if (held?.waiting != null) Deferred.doneUnsafe(held.waiting, Effect.succeed(false));
-      const turn = turns.get(runId);
       if (turn === undefined || turn.status === "stopped") return Effect.void;
+      if (turn.status === "loading" && !turn.handedOff) return preparations.interrupt(turn);
       const wasRunning = turn.status === "running";
       turn.status = "stopped";
       clearRuntimeRequests(runId, turn.attemptId);
@@ -1516,7 +1633,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const keepOnly: RunnerTurns["keepOnly"] = (runId) =>
     Effect.forEach(
       [...turns.keys()].filter((candidate) => candidate !== runId),
-      interrupt,
+      (candidate) => interrupt(candidate),
       {
         discard: true,
       },
@@ -1560,7 +1677,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   ).pipe(Effect.forkIn(scope));
 
   return {
+    stopWorkflow: workflows.stop,
     start,
+    cancelPreparation: preparations.cancel,
+    handoffPreparation: preparations.handoff,
+    preparationsTaken: preparations.taken,
     interrupt,
     steer,
     respondRuntimeRequest,

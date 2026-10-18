@@ -33,6 +33,7 @@ import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
+import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
@@ -64,6 +65,7 @@ import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
+import { deliverPendingSearch } from "./searchOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -107,6 +109,7 @@ import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 export interface ThreadObjectEnv
   extends
     MachineBackend.MachineBackendEnv,
+    CloudflareSearchIndex.SearchIndexEnv,
     CloudAnalytics.CloudAnalyticsEnv,
     PreviewEnv,
     RecoveryDrillEnv,
@@ -130,10 +133,7 @@ const STEP_INTERVAL_MS = 120;
 /** Wait after the `failures`th failure in a row: 5 s, doubling, at most 5 min. */
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
 
-type MachineReport = Omit<
-  Parameters<TurnDiagnostics.TurnDiagnostics["Service"]["machineReported"]>[0],
-  "generation" | "runId" | "now"
->;
+type MachineReport = Omit<ThreadRunner.MachineReport, "generation" | "runId">;
 
 /**
  * Records into the turn's diagnostics under the thread's lock, so it never
@@ -158,16 +158,7 @@ const noteMachine = (
     readonly generation?: number | undefined;
     readonly runId: ThreadRunner.MachinePlan["runId"];
   },
-) =>
-  Effect.flatMap(ThreadStore.ThreadStore, (store) =>
-    recordUnderLock((diagnostics) =>
-      Effect.gen(function* () {
-        const generation = input.generation ?? (yield* Effect.orDie(store.machine)).generation;
-        const now = yield* Clock.currentTimeMillis;
-        yield* diagnostics.machineReported({ ...input, generation, now });
-      }),
-    ),
-  );
+) => ThreadRunner.ThreadRunner.use((runner) => runner.machineReported(input));
 
 /** Drives, when bound, and the owner's access to one and commit author, asked of their own object. */
 const layerThreadDrives = (env: ThreadObjectEnv) =>
@@ -204,85 +195,92 @@ const makeRuntime = (
 ) => {
   const settings = machineSettings(env);
   return ManagedRuntime.make(
-    ThreadTerminals.layer.pipe(
-      Layer.provideMerge(ThreadRunner.layer.pipe(Layer.provide(ThreadTerminals.holdLayer))),
-      Layer.provide(
-        Layer.succeed(ThreadRunner.PreviewHold, {
-          held: Effect.sync(() => previews.held),
-          lastActiveAt: Effect.sync(() => previews.lastActiveAt),
-        }),
-      ),
-      Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
-      Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
-      Layer.provideMerge(
-        env.DRIVES === undefined
-          ? Layer.empty
-          : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-      ),
-      // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
-      Layer.provideMerge(
-        PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
-      ),
-      // The thread's browser tabs (#585), beside its conversation.
-      Layer.provideMerge(ThreadBrowsing.layer),
-      // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
-      Layer.provideMerge(
-        ThreadStatusNotes.layer.pipe(
-          Layer.provide(
-            StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+    ThreadTerminals.layer
+      .pipe(
+        Layer.provideMerge(ThreadRunner.layer.pipe(Layer.provide(ThreadTerminals.holdLayer))),
+        Layer.provide(
+          Layer.succeed(ThreadRunner.PreviewHold, {
+            held: Effect.sync(() => previews.held),
+            lastActiveAt: Effect.sync(() => previews.lastActiveAt),
+          }),
+        ),
+        Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+        Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+        Layer.provideMerge(
+          env.DRIVES === undefined
+            ? Layer.empty
+            : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+        ),
+        // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
+        Layer.provideMerge(
+          PullRequestSync.layer.pipe(
+            Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env))),
           ),
         ),
-      ),
-      Layer.provideMerge(
-        ThreadSecretRequests.layer.pipe(
-          Layer.provide(
-            Layer.succeed(ThreadSecretRequests.SecretRequestChanged, Effect.promise(secretChanged)),
+        // The thread's browser tabs (#585), beside its conversation.
+        Layer.provideMerge(ThreadBrowsing.layer),
+        // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
+        Layer.provideMerge(
+          ThreadStatusNotes.layer.pipe(
+            Layer.provide(
+              StatusNoteModel.layerPools(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+            ),
           ),
         ),
-      ),
-      Layer.provideMerge(ThreadEngine.layer),
-      Layer.provideMerge(
-        TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
-          Layer.provide(
-            PoolDirectory.layerDurableObjects(env.POOLS, {
-              localWorkerd: env.LOCAL_WORKERD === "1",
-            }),
+        Layer.provideMerge(
+          ThreadSecretRequests.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                ThreadSecretRequests.SecretRequestChanged,
+                Effect.promise(secretChanged),
+              ),
+            ),
           ),
         ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
-      Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
-      Layer.provideMerge(layerMachineBackend(env, machine)),
-      Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          TerminalStore.layer,
-          TerminalOutbox.layer,
-          DiagnosticsStore.layer,
-          ThreadStore.layerMachineRecords,
+        Layer.provideMerge(ThreadEngine.layer),
+        Layer.provideMerge(CloudflareSearchIndex.layerFromEnv(env)),
+        Layer.provideMerge(
+          TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
+            Layer.provide(
+              PoolDirectory.layerDurableObjects(env.POOLS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+            ),
+          ),
         ),
-      ),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadStore.layer,
-          PullState.layer,
-          SessionRows.layer,
-          PreviewState.layer,
-          BrowserTrail.layer(attachmentStorage(env), threadId),
+        Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
+        Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
+        Layer.provideMerge(layerMachineBackend(env, machine)),
+        Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
+        Layer.provideMerge(
+          Layer.mergeAll(
+            TerminalStore.layer,
+            TerminalOutbox.layer,
+            DiagnosticsStore.layer,
+            ThreadStore.layerMachineRecords,
+          ),
         ),
-      ),
-      Layer.provideMerge(
-        UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-      ),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          SqliteClient.layer({ storage }),
-          Platform.layerCrypto,
-          FetchHttpClient.layer,
+        Layer.provideMerge(
+          Layer.mergeAll(
+            ThreadStore.layer,
+            PullState.layer,
+            SessionRows.layer,
+            PreviewState.layer,
+            BrowserTrail.layer(attachmentStorage(env), threadId),
+          ),
         ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
-    ),
+        Layer.provideMerge(
+          UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+        ),
+        Layer.provideMerge(
+          Layer.mergeAll(
+            SqliteClient.layer({ storage }),
+            Platform.layerCrypto,
+            FetchHttpClient.layer,
+          ),
+        ),
+      )
+      .pipe(Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil })))),
   );
 };
 
@@ -405,7 +403,35 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     void ctx.blockConcurrencyWhile(() => this.armAlarm());
   }
 
+  getWorkflowScript(...args: Parameters<ThreadObjectApi["getWorkflowScript"]>) {
+    return this.api.getWorkflowScript(...args);
+  }
+
+  stopWorkflow(...args: Parameters<ThreadObjectApi["stopWorkflow"]>) {
+    return this.api.stopWorkflow(...args);
+  }
+
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  async trash(...args: Parameters<ThreadObjectApi["trash"]>) {
+    const reply = await this.api.trash(...args);
+    if (
+      reply._tag === "ok" &&
+      reply.value.state === "trashed" &&
+      reply.value.trashId === args[1].trashId
+    ) {
+      await this.gateway.closeForThreadTrash();
+    }
+    return reply;
+  }
+
+  restore(...args: Parameters<ThreadObjectApi["restore"]>) {
+    return this.api.restore(...args);
+  }
+
+  purge(...args: Parameters<ThreadObjectApi["purge"]>) {
+    return this.api.purge(...args);
+  }
+
   answerSecret(...args: Parameters<ThreadObjectApi["answerSecret"]>) {
     return this.api.answerSecret(...args);
   }
@@ -481,6 +507,22 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.summary(...args);
   }
 
+  backfill(...args: Parameters<ThreadObjectApi["backfill"]>) {
+    return this.api.backfill(...args);
+  }
+
+  searchDocuments(...args: Parameters<ThreadObjectApi["searchDocuments"]>) {
+    return this.api.searchDocuments(...args);
+  }
+
+  find(...args: Parameters<ThreadObjectApi["find"]>) {
+    return this.api.find(...args);
+  }
+
+  authorizeExecutorTurn(...args: Parameters<ThreadObjectApi["authorizeExecutorTurn"]>) {
+    return this.api.authorizeExecutorTurn(...args);
+  }
+
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
     return this.api.diagnostics(...args);
   }
@@ -506,6 +548,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   contextMatch(...args: Parameters<ThreadObjectApi["contextMatch"]>) {
     return this.api.contextMatch(...args);
+  }
+
+  subscribePreparation(...args: Parameters<ThreadObjectApi["subscribePreparation"]>) {
+    return this.api.subscribePreparation(...args);
+  }
+
+  cancelPreparation(...args: Parameters<ThreadObjectApi["cancelPreparation"]>) {
+    return this.api.cancelPreparation(...args);
   }
 
   contextTurns(...args: Parameters<ThreadObjectApi["contextTurns"]>) {
@@ -708,6 +758,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private nextTerminalsAt = 0;
   private eventFailures = 0;
   private nextEventsAt = 0;
+  private searchFailures = 0;
+  private nextSearchAt = 0;
   private machineFailures = 0;
   private analyticsFailures = 0;
   private sharingFailures = 0;
@@ -748,6 +800,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           runner.needsUpkeep ||
           (yield* engine.hasTurnWork) ||
           (yield* engine.hasPendingSummary) ||
+          (yield* engine.hasPendingSearch) ||
           (yield* engine.hasPendingEvents) ||
           (yield* Effect.orDie((yield* TerminalOutbox.TerminalOutbox).hasPending)) ||
           (yield* Effect.forEach(
@@ -879,6 +932,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
                   noteMachine({
                     operation,
                     error: error.message,
+                    startupProblem: error.startupProblem,
                     generation: ensure?.generation,
                     runId: plan.runId,
                   }),
@@ -1086,6 +1140,21 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.nextTerminalsAt = delivered ? 0 : now + retryDelay(this.terminalFailures);
     }
     await this.deliverEvents(log, now);
+    if (now >= this.nextSearchAt) {
+      const delivered = await this.run(
+        log,
+        deliverPendingSearch.pipe(
+          Effect.map(() => true),
+          Effect.catchCause((cause) =>
+            Effect.logError("thread search delivery failed", Cause.pretty(cause)).pipe(
+              Effect.as(false),
+            ),
+          ),
+        ),
+      );
+      this.searchFailures = delivered ? 0 : this.searchFailures + 1;
+      this.nextSearchAt = delivered ? 0 : now + retryDelay(this.searchFailures);
+    }
     const machineWakeAt = await this.tendMachine(log, now).catch(async (cause: unknown) => {
       await this.run(log, Effect.logError("machine upkeep failed", String(cause)));
       return now + retryDelay(1);
@@ -1147,6 +1216,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       summaryAt,
       terminalsAt,
       eventsAt,
+      this.nextSearchAt > 0
+        ? this.nextSearchAt
+        : (await this.runtime.runPromise(
+              ThreadEngine.ThreadEngine.use((engine) => engine.hasPendingSearch),
+            ))
+          ? now + STEP_INTERVAL_MS
+          : null,
       machineWakeAt,
       runnerWakeAt,
       diagnosticsWakeAt,

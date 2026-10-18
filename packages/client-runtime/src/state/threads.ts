@@ -235,6 +235,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
+  const confirmedMissing = yield* Ref.make(false);
   const applyLock = yield* Semaphore.make(1);
   // Save only completed data/cursor updates. A canceled scope must not cache
   // a cursor whose event has not reached the data yet.
@@ -812,13 +813,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* Ref.set(attemptSession, Option.some(session));
         yield* Ref.set(resumedAttempt, false);
         let current = yield* SubscriptionRef.get(state);
-        // A prior definitive miss (or delete event) already cleared this thread.
-        // Park the subscription attempt without opening the socket so we do not
-        // retry forever against a known-missing id.
-        if (current.status === "deleted") {
+        if (current.status === "deleted" && (yield* Ref.get(confirmedMissing))) {
           return yield* Effect.never;
         }
-
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.threadResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
@@ -874,6 +871,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
+              yield* Ref.set(confirmedMissing, true);
               yield* setDeleted();
               return yield* Effect.never;
             }
@@ -882,6 +880,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }
           }
         }
+
+        // Deleted detail state ignores later events. Recheck its tombstone on
+        // reopen; park it again when the server cannot prove the thread exists.
+        if (current.status === "deleted") return yield* Effect.never;
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
         const retrySnapshot = yield* Ref.getAndSet(resumeFailed, false);

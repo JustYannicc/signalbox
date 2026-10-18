@@ -65,22 +65,17 @@ Any HTTP API. JSON bodies are sent and parsed automatically. Any status is a res
 
 ### \`w.call(label, "integration.operation", args?, { connection?, retry? })\` → the API's data
 
-A service the user connected in Signalbox through Executor: \`"gmail.users.messages.list"\`, \`"github.get_file_contents"\`, \`"todoist_com.find_tasks"\`. Credentials stay on the server. With several accounts for one service, name one: \`{ connection: "work" }\`. Discover operations with the user's Executor tools. If nothing is connected, the call fails and says where to connect.
+External-service calls are unavailable in Signalbox Cloud. Use \`w.http\` for an HTTP API. Connected services other than the GitHub integration are not available in cloud automations yet.
 
 \`"signalbox.<tool>"\` calls Signalbox's own tools, the ones you have as MCP tools, with the same arguments and results: \`w.call("Wake the agent", "signalbox.t3_thread_send", { threadId, message, mode: "queue" })\`, \`"signalbox.list_thread_pull_requests"\`, \`"signalbox.t3_thread_read"\`. The automation calls without a thread of its own, so pass \`threadId\` where a tool would default to "this thread", and it can't do more than its runtime mode allows. Tools that need a person or a thread's own session (preview, device, \`delegate_task\`, \`request_secret\`, worktree handoff, the automation tools) aren't available; use the steps instead. A \`clientRequestId\` is filled in per step, so a retried step doesn't send twice.
 
 ### \`w.run(label, fn, ...args)\` → \`fn\`'s result
 
-Runs a top-level function from this file in Node, in the project's folder: anything code can do — parse files, scrape, crunch data, run CLIs (\`git\`, \`gh\`, \`ffmpeg\`) with \`node:child_process\`. Packages the file imports are installed for it. Helpers that only \`w.run\` functions call can use packages too.
-
-- The function gets plain arguments and returns JSON. Keep results small; write big things to disk and return the path.
-- 15 minutes per call. Poll longer work across calls (see \`patterns.md\`).
-- A minimal environment: no provider keys or server secrets.
-- Only for automations saved from a full-access thread.
+Direct host execution is unavailable. Use the GitHub Actions form below.
 
 ### \`w.run(label, { on: "github-actions", ref?, secrets?, environment?, timeout? }, fn, ...args)\` → \`fn\`'s result
 
-Runs the function on a GitHub Actions runner of the folder's repository instead, in a checkout of \`ref\` (default branch by default): CI capacity, the repo's secrets and environments, the same function and result. The step shows the run's jobs and steps live, with their log tails and a link to GitHub.
+Runs a top-level function from this file in Node on a GitHub Actions runner of the folder's repository, in a checkout of \`ref\` (default branch by default): CI capacity, the repo's secrets and environments, the same function and result. The step shows the run's jobs and steps live, with their log tails and a link to GitHub.
 
 - Signalbox Cloud only, in a folder added from GitHub. The repo needs Signalbox's step workflow on its default branch: \`references/github-actions.md\` has the file; add it in a pull request for a person to merge.
 - Steps run as the GitHub account its owner lent to the folder (folder ⋯ → Lend my GitHub to CI steps). Without a lend the step fails saying so; ask the person to lend it, you can't.
@@ -93,8 +88,8 @@ Runs the function on a GitHub Actions runner of the folder's repository instead,
 | Step | Returns | Use it to |
 |---|---|---|
 | \`w.sleep(label, duration \\| { until: iso })\` | null | Wait minutes or days, once; costs nothing while waiting. Not in a loop or \`w.repeat\`: repeats are a cron trigger. |
-| \`w.eventCursor(label)\` | \`{ runId, sequence }\` | Capture this run's event inbox boundary before a read. Pass it as \`after\` to \`w.waitFor\` with a literal \`on\`, or a literal \`watch\` without \`on\`, to skip earlier buffered events while keeping events that arrive after capture. |
-| \`w.waitFor(label, { on?, watch?, where?, after?, timeout? })\` | the event (envelope and fields, as a trigger gets it), or null on timeout | Wait for something to happen in Signalbox: \`{ on: ["pr.checks.failed", "pr.merged"], where: { number: pr.number } }\`. \`on\` and \`where\` work like event triggers (\`triggers.md\`). With a literal \`on\`, events are kept from the run's start, so one that happens between steps isn't missed; a computed \`on\` (\`on: input.event\`) collects only once its step waits. Each event goes to one waiting step. Use \`after\` only for a literal \`on\` or a literal \`watch\` without \`on\` to ignore inbox events at or before the cursor sequence; without it, waits keep their existing buffering behavior. With \`watch\` (same shape as on a trigger, \`triggers.md\`), it waits for a change in a connected source; \`on\` defaults to \`source.item.*\`. |
+| \`w.eventCursor(label)\` | \`{ runId, sequence }\` | Capture this run's event inbox boundary before a read. Pass it as \`after\` to \`w.waitFor\` with a literal \`on\` to skip earlier buffered events while keeping events that arrive after capture. |
+| \`w.waitFor(label, { on, where?, after?, timeout? })\` | the event (envelope and fields, as a trigger gets it), or null on timeout | Wait for something to happen in Signalbox: \`{ on: ["pr.checks.failed", "pr.merged"], where: { number: pr.number } }\`. \`on\` and \`where\` work like event triggers (\`triggers.md\`). With a literal \`on\`, events are kept from the run's start, so one that happens between steps isn't missed; a computed \`on\` (\`on: input.event\`) collects only once its step waits. Each event goes to one waiting step. Use \`after\` only with a literal \`on\` to ignore inbox events at or before the cursor sequence. Connected-service \`watch\` waits are unavailable in cloud automations; use \`w.hook\` and \`w.waitFor\` for service webhooks. |
 | \`w.waitFor(label, { event, timeout? })\` | the event's payload, or null on timeout | Wait for a named event, e.g. \`\` \`reply:\${ticket.id}\` \`\`. Agents raise events with the \`automation_emit\` tool. |
 | \`w.hook(label)\` | \`{ hookId, url, path }\` | A callback link to hand to someone else (a payment provider's "notify me" URL, a form). A request to it is a \`hook.called\` event: \`w.waitFor("Wait for the payment", { on: "hook.called", where: { hookId: link.hookId } })\` gets its \`body\`, \`method\` and \`query\`. \`url\` is null until the server has a public address; \`path\` is relative to it. It stops answering when the run ends. |
 | \`w.recall(label, key)\` | the stored value or null | Memory across runs: cursors, already-handled ids. |

@@ -42,7 +42,11 @@ export const ToolResult = Schema.Union([
   /** What the tool returns, as the self-hosted server's tool returns it. */
   Schema.Struct({ _tag: Schema.Literal("ok"), result: Schema.Unknown }),
   /** Why the engine refused, in words for the agent. */
-  Schema.Struct({ _tag: Schema.Literal("failed"), message: Schema.String }),
+  Schema.Struct({
+    _tag: Schema.Literal("failed"),
+    message: Schema.String,
+    error: Schema.optional(Schema.Unknown),
+  }),
 ]);
 export type ToolResult = typeof ToolResult.Type;
 

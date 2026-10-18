@@ -1,3 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off - workflow capture uses an isolated machine config.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as PlatformNodePath from "@effect/platform-node/NodePath";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { machineLayout } from "./RunnerModelAccess.ts";
 import {
   REQUEST_HEAVY_MACHINE_COMMAND,
   REQUEST_HEAVY_MACHINE_REASON,
@@ -11,6 +20,7 @@ import {
   MessageId,
   NodeId,
   OrchestrationV2TurnItem,
+  OrchestrationV2Subagent,
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -52,6 +62,9 @@ import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 
+const decodeWorkflowSubagent = Schema.decodeUnknownSync(
+  Schema.toCodecJson(OrchestrationV2Subagent),
+);
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
@@ -183,6 +196,7 @@ const makeFakeAdapterFor = (selection: {
     const loaded = yield* Deferred.make<void>();
     const failNextResponse = yield* Ref.make(false);
     const secondStarted = yield* Deferred.make<void>();
+    const firstStarted = yield* Deferred.make<void>();
     const interrupted = yield* Deferred.make<void>();
     const calls: Array<string> = [];
     const responses: Array<{ readonly requestId: string; readonly decision?: string }> = [];
@@ -218,6 +232,7 @@ const makeFakeAdapterFor = (selection: {
               ? `start ${input.runId}`
               : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
           );
+          yield* Deferred.succeed(firstStarted, undefined);
           yield* Queue.offer(startedRuns, input.runId);
           if (input.runId === "run-2") yield* Deferred.succeed(secondStarted, undefined);
         }),
@@ -257,9 +272,11 @@ const makeFakeAdapterFor = (selection: {
       started,
       startedRuns,
       opened,
+      session,
       responses,
       failNextResponse,
       secondStarted,
+      firstStarted,
       interrupted,
     };
   });
@@ -548,6 +565,111 @@ describe("RunnerTurns", () => {
         expect(reported.map(label)).toContain("git.pull.result " + operation.id);
       }),
     ),
+  );
+
+  it.effect(
+    "captures workflow scripts from the machine's Claude config through the turn driver",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const home = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-workflow-config-")),
+            ),
+            (directory) =>
+              Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+          );
+          const layout = machineLayout(yield* Path.Path, NodePath.join(home, "machine"));
+          const directory = NodePath.join(layout.claudeHome, "projects", "test");
+          const scriptPath = NodePath.join(directory, "review.js");
+          NodeFS.mkdirSync(directory, { recursive: true });
+          NodeFS.mkdirSync(NodePath.join(home, ".claude", "projects"), { recursive: true });
+          NodeFS.writeFileSync(scriptPath, "await machineWorkflow();\n");
+          expect(layout.claudeHome).not.toBe(NodePath.join(home, ".claude"));
+          const fake = yield* makeFakeAdapter;
+          const claudeDriver = ProviderDriverKind.make("claudeAgent");
+          const claudeInstance = ProviderInstanceId.make("claudeAgent");
+          const thread = {
+            ...providerThread,
+            driver: claudeDriver,
+            providerInstanceId: claudeInstance,
+            appThreadId: threadId,
+          };
+          const adapter = {
+            ...fake.adapter,
+            instanceId: claudeInstance,
+            driver: claudeDriver,
+            openSession: () =>
+              Effect.succeed({ ...fake.session, ensureThread: () => Effect.succeed(thread) }),
+          };
+          const reported: Array<RunnerItem> = [];
+          const started = yield* Deferred.make<void>();
+          const forwarded = yield* Deferred.make<void>();
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[claudeInstance, adapter]]),
+            cwd: home,
+            claudeConfigDir: layout.claudeHome,
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) =>
+              Effect.gen(function* () {
+                reported.push(item);
+                if (item.kind === "turn.started") yield* Deferred.succeed(started, undefined);
+                if (item.kind === "provider" && item.event.type === "provider_turn.updated")
+                  yield* Deferred.succeed(forwarded, undefined);
+              }),
+          }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+          const turn = {
+            ...turnFor(1, thread),
+            modelSelection: { instanceId: claudeInstance, model: "m" },
+          };
+          yield* turns.start({ turn, modelToken: "token" });
+          yield* Deferred.await(started);
+          const subagent = decodeWorkflowSubagent({
+            id: "workflow",
+            threadId,
+            runId: turn.runId,
+            parentNodeId: "parent",
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: claudeDriver,
+            providerInstanceId: claudeInstance,
+            providerThreadId: thread.id,
+            childThreadId: null,
+            nativeTaskRef: { driver: claudeDriver, nativeId: "workflow", strength: "strong" },
+            prompt: "Review",
+            title: null,
+            model: null,
+            status: "running",
+            result: null,
+            startedAt: null,
+            completedAt: null,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            workflow: { phases: [], agents: [], runHandles: { scriptPath } },
+          });
+          yield* Queue.offer(fake.events, {
+            type: "subagent.updated",
+            driver: claudeDriver,
+            subagent,
+          });
+          yield* Queue.offer(fake.events, { ...providerTurnStarted(1), driver: claudeDriver });
+          yield* Deferred.await(forwarded);
+          expect(reported).toContainEqual({
+            kind: "provider",
+            runId: turn.runId,
+            event: {
+              type: "workflow.script",
+              subagentId: subagent.id,
+              runId: turn.runId,
+              scriptPath,
+              revision: expect.stringMatching(/^[a-f0-9]{64}$/),
+              contents: "await machineWorkflow();\n",
+              truncated: false,
+            },
+          });
+        }).pipe(Effect.provide(PlatformNodePath.layer)),
+      ),
   );
 
   it.effect(
@@ -3318,4 +3440,491 @@ describe("RunnerTurns", () => {
       );
     });
   });
+});
+
+const preparationDrive = (prepare: RunnerDrive["prepare"]): RunnerDrive => ({
+  prepare,
+  autosave: Effect.void,
+  flush: Effect.void,
+  saveNow: Effect.void,
+  changed: Effect.succeed(false),
+  restoreDependencyEdits: Effect.void,
+  checkpointViews: (context) => ({ shortcuts: [], context }),
+  recordCheckpoint: () => Effect.die("Unexpected checkpoint"),
+  captureCheckpoint: Effect.die("Unexpected checkpoint"),
+  finishTurn: () => Effect.die("Unexpected finish"),
+  continueAfterResolution: Effect.die("Unexpected merge"),
+  takeInMain: Effect.die("Unexpected merge"),
+  abandonMerge: Effect.die("Unexpected merge"),
+  saveBranch: () => Effect.die("Unexpected branch write"),
+  published: () => Effect.die("Unexpected publish"),
+  pull: () => Effect.die("Unexpected pull"),
+});
+
+describe("addressed runner preparation", () => {
+  it.effect.each([1, 99])(
+    "guards interrupt generation %s while a completed run's files are landing",
+    (generation) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const ready = yield* Deferred.make<void>();
+          const landing = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const resolved = yield* Deferred.make<boolean>();
+          const session = yield* fake.adapter.openSession({} as never);
+          const start = session.startTurn;
+          let starts = 0;
+          Object.assign(session, {
+            startTurn: (input: Parameters<typeof start>[0]) =>
+              start(input).pipe(
+                Effect.tap(() => (++starts > 1 ? Deferred.succeed(resolved, false) : Effect.void)),
+              ),
+          });
+          const drive: RunnerDrive = {
+            ...preparationDrive(() => Effect.succeed({ instructions: "", notices: [] })),
+            finishTurn: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(landing, undefined);
+                yield* Deferred.await(release);
+                return { checkpoint: null, outcome: { _tag: "conflict", files: ["notes.md"] } };
+              }),
+            abandonMerge: Deferred.succeed(resolved, true).pipe(
+              Effect.as({ _tag: "not_landed", reason: "stopped" }),
+            ),
+          };
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            adapters: new Map([[instanceId, fake.adapter]]),
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            openDrive: () => Effect.succeed(drive),
+            emit: (item) =>
+              item.kind === "preparation.ready"
+                ? Effect.asVoid(Deferred.succeed(ready, undefined))
+                : Effect.void,
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* turns.start({
+            turn: {
+              ...turnFor(1),
+              preparationGeneration: 1,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              message: {
+                messageId: MessageId.make("finish-v7"),
+                text: "Write notes",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+              },
+            },
+            modelToken: "token",
+            drive: { driveId: "saved-drive", token: "drive-token", remoteToken: null },
+          });
+          yield* Deferred.await(ready);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+          yield* Deferred.await(fake.firstStarted);
+          yield* Queue.offer(fake.events, providerTurnStarted(1));
+          yield* Queue.offer(fake.events, turnEnded(1));
+          yield* Deferred.await(landing);
+          yield* turns.interrupt(RunId.make("run-1"), generation);
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Deferred.await(resolved)).toBe(generation === 1);
+          expect(starts).toBe(generation === 1 ? 1 : 2);
+        }),
+      ),
+  );
+
+  it.effect(
+    "waits for an in-flight checkout to stop, drops its late progress, and starts a new attempt once",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const checkoutEntered = yield* Deferred.make<void>();
+          const releaseCheckout = yield* Deferred.make<void>();
+          const cancelled = yield* Deferred.make<void>();
+          const ready = yield* Deferred.make<void>();
+          const emitted: Array<RunnerItem> = [];
+          let checkouts = 0;
+          const drive = preparationDrive((_remote, _author, _folders, _pullRequests, progress) =>
+            Effect.gen(function* () {
+              checkouts += 1;
+              if (progress !== undefined) yield* progress("checkout", "running");
+              if (checkouts === 1) {
+                yield* Deferred.succeed(checkoutEntered, undefined);
+                yield* Deferred.await(releaseCheckout).pipe(Effect.uninterruptible);
+              }
+              if (progress !== undefined) yield* progress("checkout", "done");
+              return { instructions: "", notices: [] };
+            }),
+          );
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            adapters: new Map([[instanceId, fake.adapter]]),
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            openDrive: () => Effect.succeed(drive),
+            emit: (item) =>
+              Effect.gen(function* () {
+                emitted.push(item);
+                if (item.kind === "preparation.cancelled" && item.runId === "run-1")
+                  yield* Deferred.succeed(cancelled, undefined);
+                if (item.kind === "preparation.ready") yield* Deferred.succeed(ready, undefined);
+              }),
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          const start = (preparationGeneration: number) =>
+            turns.start({
+              turn: { ...turnFor(1), preparationGeneration },
+              modelToken: "token",
+              drive: { driveId: "same-saved-drive", token: "drive-token", remoteToken: null },
+            });
+          yield* start(1);
+          yield* Deferred.await(checkoutEntered);
+          yield* turns.cancelPreparation(RunId.make("other-run"), 1);
+          yield* turns.cancelPreparation(RunId.make("run-1"), 99);
+          expect(yield* Deferred.isDone(cancelled)).toBe(false);
+          yield* turns.cancelPreparation(RunId.make("run-1"), 1);
+          expect(yield* Deferred.isDone(cancelled)).toBe(false);
+          yield* Deferred.succeed(releaseCheckout, undefined);
+          yield* Deferred.await(cancelled);
+          expect(fake.opened.count).toBe(0);
+          expect(fake.calls).toEqual([]);
+          expect(emitted.filter((item) => item.kind === "preparation.progress")).toMatchObject([
+            { status: "running", preparationGeneration: 1 },
+          ]);
+          expect(
+            emitted.some(
+              (item) => item.kind === "turn.started" || item.kind === "preparation.ready",
+            ),
+          ).toBe(false);
+          yield* start(2);
+          yield* Deferred.await(ready);
+          expect(fake.opened.count).toBe(0);
+          yield* turns.cancelPreparation(RunId.make("run-1"), 1);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+          expect(fake.opened.count).toBe(0);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 2);
+          yield* Deferred.await(fake.firstStarted);
+          yield* start(2);
+          yield* start(1);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 2);
+          yield* turns.cancelPreparation(RunId.make("run-1"), 2);
+          expect(fake.calls).toEqual(["start run-1"]);
+          expect(checkouts).toBe(2);
+          expect(emitted.filter((item) => item.kind === "turn.started")).toHaveLength(1);
+          expect(
+            emitted.filter(
+              (item) => item.kind === "preparation.cancelled" && item.runId === "run-1",
+            ),
+          ).toHaveLength(1);
+        }),
+      ),
+  );
+
+  it.effect(
+    "reports a recoverable preparation failure without exposing checkout stderr, then retries on the same driver",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const failed = yield* Deferred.make<void>();
+          const ready = yield* Deferred.make<void>();
+          const emitted: Array<RunnerItem> = [];
+          let attempts = 0;
+          const drive = preparationDrive(() =>
+            Effect.suspend(() => {
+              attempts += 1;
+              return attempts === 1
+                ? Effect.fail(
+                    new RunnerGitError({
+                      message: "git checkout failed (128): token=top-secret /arbitrary/host/path",
+                    }),
+                  )
+                : Effect.succeed({ instructions: "", notices: [] });
+            }),
+          );
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            adapters: new Map([[instanceId, fake.adapter]]),
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            openDrive: () => Effect.succeed(drive),
+            emit: (item) =>
+              Effect.gen(function* () {
+                emitted.push(item);
+                if (item.kind === "preparation.failed") yield* Deferred.succeed(failed, undefined);
+                if (item.kind === "preparation.ready") yield* Deferred.succeed(ready, undefined);
+              }),
+          });
+          const start = (preparationGeneration: number) =>
+            turns.start({
+              turn: { ...turnFor(1), preparationGeneration },
+              modelToken: "token",
+              drive: { driveId: "same", token: "token", remoteToken: null },
+            });
+          yield* start(1);
+          yield* Deferred.await(failed);
+          expect(emitted.find((item) => item.kind === "preparation.failed")).toMatchObject({
+            kind: "preparation.failed",
+            runId: RunId.make("run-1"),
+            preparationGeneration: 1,
+            message: expect.stringContaining("git checkout failed (128)"),
+          });
+          expect(emitted.some((item) => item.kind === "turn.failed")).toBe(false);
+          expect(JSON.stringify(emitted)).not.toContain("/arbitrary/host/path");
+          expect(JSON.stringify(emitted)).not.toContain("top-secret");
+          yield* turns.cancelPreparation(RunId.make("run-1"), 1);
+          expect(
+            emitted.some(
+              (item) => item.kind === "preparation.cancelled" && item.preparationGeneration === 1,
+            ),
+          ).toBe(true);
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* start(2);
+          yield* Deferred.await(ready);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 2);
+          yield* Deferred.await(fake.firstStarted);
+          expect(fake.calls).toEqual(["start run-1"]);
+          expect(attempts).toBe(2);
+        }),
+      ),
+  );
+  it.effect(
+    "remembers cancellation before a held turn arrives, and permits only its newer attempt",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const ready = yield* Deferred.make<void>();
+          const emitted: Array<RunnerItem> = [];
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            adapters: new Map([[instanceId, fake.adapter]]),
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) =>
+              Effect.gen(function* () {
+                emitted.push(item);
+                if (item.kind === "preparation.ready") yield* Deferred.succeed(ready, undefined);
+              }),
+          });
+          yield* turns.cancelPreparation(RunId.make("run-1"), 1);
+          const start = (preparationGeneration: number) =>
+            turns.start({ turn: { ...turnFor(1), preparationGeneration }, modelToken: "token" });
+          yield* start(1);
+          expect(fake.opened.count).toBe(0);
+          expect(emitted).toEqual([
+            { kind: "preparation.cancelled", runId: RunId.make("run-1"), preparationGeneration: 1 },
+          ]);
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* start(2);
+          yield* Deferred.await(ready);
+          yield* turns.handoffPreparation(RunId.make("run-1"), 2);
+          yield* Deferred.await(fake.firstStarted);
+          expect(fake.calls).toEqual(["start run-1"]);
+        }),
+      ),
+  );
+  it.effect("interrupts v7 before handoff, confirms the stop, and permits a newer attempt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const ready = yield* Queue.unbounded<number>();
+        const stopped = yield* Deferred.make<void>();
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          adapters: new Map([[instanceId, fake.adapter]]),
+          emit: (item) =>
+            item.kind === "preparation.ready"
+              ? Effect.asVoid(Queue.offer(ready, item.preparationGeneration))
+              : item.kind === "preparation.cancelled"
+                ? Effect.asVoid(Deferred.succeed(stopped, undefined))
+                : Effect.void,
+        });
+        const start = (preparationGeneration: number) =>
+          turns.start({ turn: { ...turnFor(1), preparationGeneration }, modelToken: "token" });
+        yield* start(1);
+        expect(yield* Queue.take(ready)).toBe(1);
+        yield* turns.interrupt(RunId.make("run-1"), 99);
+        expect(yield* Deferred.isDone(stopped)).toBe(false);
+        yield* turns.interrupt(RunId.make("run-1"), 1);
+        yield* Deferred.await(stopped);
+        yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+        expect(fake.calls).toEqual([]);
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* start(2);
+        expect(yield* Queue.take(ready)).toBe(2);
+        yield* turns.interrupt(RunId.make("run-1"), 1);
+        yield* turns.handoffPreparation(RunId.make("run-1"), 2);
+        yield* Deferred.await(fake.firstStarted);
+        expect(fake.calls).toEqual(["start run-1"]);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    { protocol: 6, blockedAt: "openSession" },
+    { protocol: 6, blockedAt: "ensureThread" },
+    { protocol: 7, blockedAt: "openSession" },
+    { protocol: 7, blockedAt: "ensureThread" },
+  ] as const)(
+    "stops protocol $protocol cooperatively during $blockedAt after handoff and reuses its clean session",
+    ({ protocol, blockedAt }) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const fake = yield* makeFakeAdapter;
+            const runtime = yield* fake.adapter.openSession({} as never);
+            const ensure = runtime.ensureThread;
+            const entered = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            const loaded = yield* Deferred.make<boolean>();
+            const ready = yield* Queue.unbounded<RunId>();
+            const emitted: Array<RunnerItem> = [];
+            let opens = 0;
+            let loads = 0;
+            const wait = Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+            );
+            Object.assign(runtime, {
+              ensureThread: (input: Parameters<typeof ensure>[0]) =>
+                Effect.gen(function* () {
+                  const first = ++loads === 1;
+                  if (first && blockedAt === "ensureThread") yield* wait;
+                  const thread = yield* ensure(input);
+                  if (first) yield* Deferred.succeed(loaded, true);
+                  return thread;
+                }).pipe(Effect.onInterrupt(() => Effect.asVoid(Deferred.succeed(loaded, false)))),
+            });
+            const turns = yield* makeRunnerTurns({
+              threadId,
+              cwd: "/tmp",
+              usage: Effect.succeed(unmeasured),
+              useModelToken: () => Effect.void,
+              adapters: new Map([
+                [
+                  instanceId,
+                  {
+                    ...fake.adapter,
+                    openSession: () =>
+                      Effect.gen(function* () {
+                        opens += 1;
+                        yield* Effect.addFinalizer(() =>
+                          Effect.sync(() => {
+                            closed += 1;
+                          }),
+                        );
+                        if (blockedAt === "openSession") yield* wait;
+                        return runtime;
+                      }).pipe(
+                        Effect.onInterrupt(() => Effect.asVoid(Deferred.succeed(loaded, false))),
+                      ),
+                  },
+                ],
+              ]),
+              emit: (item) =>
+                Effect.gen(function* () {
+                  emitted.push(item);
+                  if (item.kind === "preparation.ready") yield* Queue.offer(ready, item.runId);
+                }),
+            });
+            const start = (n: number) =>
+              turns.start({
+                turn: { ...turnFor(n), ...(protocol === 7 ? { preparationGeneration: n } : {}) },
+                modelToken: "token",
+              });
+            yield* Deferred.succeed(fake.loaded, undefined);
+            yield* start(1);
+            if (protocol === 7) {
+              expect(yield* Queue.take(ready)).toBe("run-1");
+              yield* turns.handoffPreparation(RunId.make("run-1"), 1);
+            }
+            yield* Deferred.await(entered);
+            yield* turns.interrupt(RunId.make("run-1"), protocol === 7 ? 1 : undefined);
+            yield* Effect.yieldNow;
+            expect(yield* Deferred.isDone(loaded)).toBe(false);
+            yield* Deferred.succeed(release, undefined);
+            expect(yield* Deferred.await(loaded)).toBe(true);
+            yield* start(2);
+            if (protocol === 7) {
+              expect(yield* Queue.take(ready)).toBe("run-2");
+              yield* turns.handoffPreparation(RunId.make("run-2"), 2);
+            }
+            yield* Deferred.await(fake.secondStarted);
+            expect(opens).toBe(1);
+            expect(loads).toBe(2);
+            expect(closed).toBe(0);
+            expect(fake.calls).toEqual(["start run-2"]);
+            expect(
+              emitted.filter(
+                (item) =>
+                  "runId" in item &&
+                  item.runId === "run-1" &&
+                  ["turn.started", "turn.failed", "provider", "preparation.cancelled"].includes(
+                    item.kind,
+                  ),
+              ),
+            ).toEqual([]);
+          }),
+        );
+        expect(closed).toBe(1);
+      }),
+  );
+
+  it.effect(
+    "reports the actionable oversized-instructions cause over protocol 7 and in the masked thread trace",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const failed = yield* Deferred.make<void>();
+          const emitted: Array<RunnerItem> = [];
+          const message =
+            "This thread's instructions come to 80.0 KiB, over the 64.0 KiB agents can load: code/AGENTS.md 80.0 KiB. Shorten a folder's instructions or remove a shortcut, then send the message again.";
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            cwd: "/tmp",
+            adapters: new Map([[instanceId, fake.adapter]]),
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            openDrive: () =>
+              Effect.succeed(
+                preparationDrive(() => Effect.fail(new RunnerInstructionsError({ message }))),
+              ),
+            emit: (item) =>
+              Effect.gen(function* () {
+                emitted.push(item);
+                if (item.kind === "preparation.failed") yield* Deferred.succeed(failed, undefined);
+              }),
+          });
+          yield* turns.start({
+            turn: { ...turnFor(1), preparationGeneration: 1 },
+            modelToken: "token",
+            drive: { driveId: "saved-drive", token: "drive-token", remoteToken: null },
+          });
+          yield* Deferred.await(failed);
+          expect(emitted.find((item) => item.kind === "preparation.failed")).toEqual({
+            kind: "preparation.failed",
+            runId: RunId.make("run-1"),
+            preparationGeneration: 1,
+            message,
+          });
+          expect(emitted.find((item) => item.kind === "log")).toMatchObject({
+            message: expect.stringContaining(message),
+          });
+          expect(fake.calls).toEqual([]);
+        }),
+      ),
+  );
 });

@@ -1,6 +1,7 @@
-import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import { threadToolSearchWindows, findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
+import { collectThreadFindInputRanges } from "./threadFindInputRanges";
 
 const THREAD_FIND_HIGHLIGHT_NAME = "t3-thread-find";
 const THREAD_FIND_ACTIVE_HIGHLIGHT_NAME = "t3-thread-find-active";
@@ -22,27 +23,51 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
 
   for (const scope of container.querySelectorAll(THREAD_FIND_TEXT_SELECTOR)) {
     if (scope.parentElement?.closest(THREAD_FIND_TEXT_SELECTOR)) continue;
-    const rowId = scope.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id");
+    const rowId =
+      scope.closest("[data-thread-find-entry-id]")?.getAttribute("data-thread-find-entry-id") ??
+      scope.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id");
     if (!rowId) continue;
+
+    // signalbox: Indexed input offsets keep keys and secrets out of Find ordinals.
+    if (scope.getAttribute("data-thread-find-text") === "tool-input") {
+      for (const range of collectThreadFindInputRanges(scope, query)) {
+        const occurrence = occurrenceByRowId.get(rowId) ?? 0;
+        if (range) ranges.push({ rowId, occurrence, range });
+        occurrenceByRowId.set(rowId, occurrence + 1);
+      }
+      continue;
+    }
 
     let text = "";
     let nodes: { node: Node; start: number; end: number }[] = [];
     const flush = () => {
       let startIndex = 0;
       let endIndex = 0;
-      for (const offset of findThreadSearchOccurrences(text, query)) {
-        while (startIndex < nodes.length && nodes[startIndex]!.end <= offset) startIndex++;
-        if (endIndex < startIndex) endIndex = startIndex;
-        while (endIndex < nodes.length && nodes[endIndex]!.end < offset + query.length) endIndex++;
-        const start = nodes[startIndex];
-        const end = nodes[endIndex];
-        if (!start || !end) continue;
-        const range = container.ownerDocument.createRange();
-        range.setStart(start.node, offset - start.start);
-        range.setEnd(end.node, offset + query.length - end.start);
-        const occurrence = occurrenceByRowId.get(rowId) ?? 0;
-        ranges.push({ rowId, occurrence, range });
-        occurrenceByRowId.set(rowId, occurrence + 1);
+      const mode = scope.getAttribute("data-thread-find-text");
+      const windows =
+        mode === "command" || mode === "tool-output"
+          ? threadToolSearchWindows(text, mode === "command" ? "command" : "output")
+          : [{ start: 0, end: text.length }];
+      for (const window of windows) {
+        for (const localOffset of findThreadSearchOccurrences(
+          text.slice(window.start, window.end),
+          query,
+        )) {
+          const offset = window.start + localOffset;
+          while (startIndex < nodes.length && nodes[startIndex]!.end <= offset) startIndex++;
+          if (endIndex < startIndex) endIndex = startIndex;
+          while (endIndex < nodes.length && nodes[endIndex]!.end < offset + query.length)
+            endIndex++;
+          const start = nodes[startIndex];
+          const end = nodes[endIndex];
+          if (!start || !end) continue;
+          const range = container.ownerDocument.createRange();
+          range.setStart(start.node, offset - start.start);
+          range.setEnd(end.node, offset + query.length - end.start);
+          const occurrence = occurrenceByRowId.get(rowId) ?? 0;
+          ranges.push({ rowId, occurrence, range });
+          occurrenceByRowId.set(rowId, occurrence + 1);
+        }
       }
       text = "";
       nodes = [];
@@ -193,6 +218,9 @@ export function useThreadFindHighlights(input: {
         "data-thread-find-fold",
         "data-timeline-row-id",
         "data-thread-find-text",
+        "data-thread-find-source",
+        "data-thread-find-offsets",
+        "data-thread-find-entry-id",
         "data-thread-find-ignore",
       ],
     });

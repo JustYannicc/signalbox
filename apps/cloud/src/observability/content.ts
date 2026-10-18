@@ -120,6 +120,9 @@ export const redactContent = (event: Record<string, unknown>): void => {
         event.error = { name: `ClientIssue.${code}`, message: REDACTED };
       }
     }
+    if (event.action === "durableObject.storage" && event["storage.status"] === "high") {
+      event.error = { name: "DurableObjectStorageCapacity", message: REDACTED };
+    }
   } catch {
     // evlog drains the event anyway when this throws: fail closed instead.
     for (const key of Object.keys(event)) if (!IDENTITY_KEYS.has(key)) delete event[key];

@@ -11,6 +11,7 @@ import type {
   TerminalReport,
 } from "@signalbox/runner-protocol/TerminalProtocol";
 import {
+  NodeId,
   ProviderSessionId,
   RunAttemptId,
   RunId,
@@ -47,8 +48,10 @@ const item = (label: string): RunnerItem => ({
  */
 const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
+  const welcomed = yield* Deferred.make<void>();
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   const terminalProcessIds = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
@@ -77,6 +80,7 @@ const makeFakeThread = Effect.gen(function* () {
             case "hello":
               yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(workflowStopCapabilities, (all) => [...all, message.workflowStops]);
               yield* Ref.update(terminalProcessIds, (all) => [...all, message.terminalProcessId]);
               yield* Ref.update(runtimeResponseCapabilities, (all) => [
                 ...all,
@@ -89,6 +93,7 @@ const makeFakeThread = Effect.gen(function* () {
                 ackedSequence: yield* Ref.get(acked),
                 activeRunId: runId,
               });
+              yield* Deferred.succeed(welcomed, undefined);
               return;
             case "batch": {
               const last = yield* Ref.get(acked);
@@ -120,9 +125,11 @@ const makeFakeThread = Effect.gen(function* () {
 
   return {
     transport,
+    welcomed,
     committed,
     acked,
     hellos,
+    workflowStopCapabilities,
     helloPulls,
     terminalProcessIds,
     terminalReports,
@@ -138,6 +145,11 @@ const makeFakeThread = Effect.gen(function* () {
 const makeFakeTurns = Effect.gen(function* () {
   const emitRef = yield* Deferred.make<(item: RunnerItem) => Effect.Effect<void>>();
   const startedTurns = yield* Ref.make<ReadonlyArray<RunId>>([]);
+  const preparationCommands = yield* Queue.unbounded<{
+    readonly type: string;
+    readonly runId: RunId;
+    readonly generation: number;
+  }>();
   const runtimeResponses = yield* Ref.make<
     ReadonlyArray<Extract<ThreadMessage, { type: "runtime-request.respond" }>>
   >([]);
@@ -150,6 +162,11 @@ const makeFakeTurns = Effect.gen(function* () {
     Effect.as(Deferred.succeed(emitRef, emit), {
       start: (next) => Ref.update(startedTurns, (all) => [...all, next.turn.runId]),
       interrupt: () => Effect.void,
+      cancelPreparation: (runId, generation) =>
+        Effect.asVoid(Queue.offer(preparationCommands, { type: "cancel", runId, generation })),
+      handoffPreparation: (runId, generation) =>
+        Effect.asVoid(Queue.offer(preparationCommands, { type: "handoff", runId, generation })),
+      preparationsTaken: Effect.succeed([]),
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
       watchDrive: () => Effect.void,
@@ -183,6 +200,7 @@ const makeFakeTurns = Effect.gen(function* () {
     make,
     emit,
     startedTurns,
+    preparationCommands,
     runtimeResponses,
     drains,
     unsaved,
@@ -285,6 +303,50 @@ const sessionOf = (
   });
 
 it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
+  it.effect("hands workflow stops only to the machine generation they name", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        const stopped = yield* Deferred.make<void>();
+        const requests: Array<string> = [];
+        yield* makeRunnerSession({
+          threadId,
+          generation: 1,
+          token: "token",
+          machineId: "machine",
+          imageVersion: "test",
+          build,
+          transport: thread.transport,
+          makeTurns: (emit) =>
+            Effect.map(turns.make(emit), (fake) => ({
+              ...fake,
+              stopWorkflow: (request) =>
+                Effect.sync(() => {
+                  requests.push(request.taskId);
+                }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)), Effect.asVoid),
+            })),
+          makeTerminals: makeNoopTerminals,
+        });
+        yield* Deferred.await(thread.welcomed);
+        expect(yield* Ref.get(thread.workflowStopCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        const request = {
+          type: "workflow.stop" as const,
+          generation: 2,
+          runId,
+          subagentId: NodeId.make("workflow"),
+          taskId: "stale-task",
+        };
+        yield* thread.toCurrent(request);
+        yield* thread.toCurrent({ ...request, generation: 1, taskId: "current-task" });
+        yield* Deferred.await(stopped);
+        expect(requests).toEqual(["current-task"]);
+        expect(yield* Ref.get(turns.startedTurns)).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("replays terminal snapshots and routes commands across same-process reconnects", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -439,16 +501,25 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
     ),
   );
 
-  it.effect("advertises and forwards runtime responses to the live turn driver", () =>
+  it.effect("routes preparation controls and native answers to the live turn driver", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const thread = yield* makeFakeThread;
         const turns = yield* makeFakeTurns;
         yield* sessionOf(thread, turns);
-        yield* settle(
-          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
-          "hello",
-        );
+        yield* Deferred.await(thread.welcomed);
+        yield* thread.toCurrent({ type: "preparation.cancel", runId, preparationGeneration: 2 });
+        expect(yield* Queue.take(turns.preparationCommands)).toEqual({
+          type: "cancel",
+          runId,
+          generation: 2,
+        });
+        yield* thread.toCurrent({ type: "preparation.handoff", runId, preparationGeneration: 3 });
+        expect(yield* Queue.take(turns.preparationCommands)).toEqual({
+          type: "handoff",
+          runId,
+          generation: 3,
+        });
         const response = {
           type: "runtime-request.respond",
           runId,
@@ -465,6 +536,7 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
         );
 
         expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(thread.workflowStopCapabilities)).toEqual([false]);
         expect(yield* Ref.get(turns.runtimeResponses)).toEqual([response]);
       }),
     ),

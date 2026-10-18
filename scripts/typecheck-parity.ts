@@ -58,6 +58,18 @@ export function compareDiagnostics(declared: string, effect: string, rust: strin
   return { expected, actual, equal: JSON.stringify(expected) === JSON.stringify(actual) };
 }
 
+export function compilerProjects(directory: string, command: string) {
+  const result = [];
+  for (const part of command.split(" && ")) {
+    // Cloud's declared typecheck generates the probe before parity compares its two compiler configs.
+    if (directory === "apps/cloud" && part === "node infra/syncProbe/prepare.mjs") continue;
+    const match = /^(?:tsc|tsc-rs) --noEmit(?: -p (\S+))?$/.exec(part);
+    if (!match) throw new Error(`Unrecognized typecheck in ${directory}: ${part}`);
+    result.push(NodePath.posix.join(directory, match[1] ?? "tsconfig.json"));
+  }
+  return result;
+}
+
 function projects() {
   const result = [];
   for (const parent of ["apps", "packages", "infra", "."]) {
@@ -70,11 +82,7 @@ function projects() {
       if (!NodeFS.existsSync(manifest)) continue;
       const command = JSON.parse(NodeFS.readFileSync(manifest, "utf8")).scripts?.typecheck;
       if (!command || command === "astro check") continue;
-      for (const part of command.split(" && ")) {
-        const match = /^(?:tsc|tsc-rs) --noEmit(?: -p (\S+))?$/.exec(part);
-        if (!match) throw new Error(`Unrecognized typecheck in ${directory}: ${part}`);
-        result.push(NodePath.posix.join(directory, match[1] ?? "tsconfig.json"));
-      }
+      result.push(...compilerProjects(directory, command));
     }
   }
   return result.sort();

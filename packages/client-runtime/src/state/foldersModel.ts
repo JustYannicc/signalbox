@@ -8,6 +8,7 @@ import type {
   FolderResolvedPool,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
+import { TRASH_RETENTION_DAYS } from "@t3tools/contracts/signalboxTrash";
 
 /**
  * A Signalbox Cloud user's tree as clients show it (`signalboxFolders.ts`):
@@ -254,10 +255,16 @@ export function threadFolderChoices(
 
 /** What deleting `folder` does, for its confirmation. */
 export function folderDeleteMessage(snapshot: SignalboxFoldersSnapshot, folder: Folder): string {
-  const parent = snapshot.folders.find((candidate) => candidate.id === folder.parentId);
-  return `Its folders and threads move up to ${
-    parent === undefined ? "the top level" : `“${parent.name}”`
-  }. No thread or file is deleted.`;
+  const below = snapshot.folders.filter(
+    (candidate) =>
+      candidate.id !== folder.id &&
+      folderPath(snapshot, candidate.id).some((ancestor) => ancestor.id === folder.id),
+  ).length;
+  const contents =
+    below === 0
+      ? "Its threads go"
+      : `Its ${below === 1 ? "folder" : `${below} folders`} and every thread inside go`;
+  return `${contents} to Trash with it. Restore it within ${TRASH_RETENTION_DAYS} days to bring everything back where it was, with its instructions and settings.`;
 }
 
 /**
