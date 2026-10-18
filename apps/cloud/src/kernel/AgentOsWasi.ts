@@ -21,10 +21,12 @@ const FD_ARGUMENTS = Object.freeze({
 
 // These slots carry libc's resolved path dirfd; fd_link's source fd stays explicit.
 const HOST_FS_DIRECTORY_ARGUMENTS = Object.freeze({
+  chmod: Object.freeze([0]),
   fd_link: Object.freeze([1]),
   open_tmpfile: Object.freeze([0]),
   path_access: Object.freeze([0]),
   path_blocks: Object.freeze([0]),
+  path_chown: Object.freeze([0]),
   path_mode: Object.freeze([0]),
   path_owner: Object.freeze([0]),
   path_size: Object.freeze([0]),

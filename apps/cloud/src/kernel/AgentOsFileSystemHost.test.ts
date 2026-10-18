@@ -10,10 +10,18 @@ const U64_MAX = (1n << 64n) - 1n;
 const now = () => 1_800_000_000_000_000_001n;
 const encoder = new TextEncoder();
 
-function fixture(agentOsPreopens = false) {
+function fixture(
+  agentOsPreopens = false,
+  posix = true,
+  credentials = { uid: 1000, gid: 1000, euid: 1000, egid: 1000, groups: [2000] },
+) {
   const database = sqliteFixture();
   const storage = createFacetSqliteStorage(database.storage, now);
-  const fileSystem = new KernelFileSystem({ mounts: [{ path: "/", storage }] });
+  if (posix) storage.posix.initialize(storage.root, { mode: 0o755, uid: 1000, gid: 1000 });
+  const fileSystem = new KernelFileSystem({
+    mounts: [{ path: "/", storage }],
+    ...(posix ? { posix: { credentials, umask: 0o022 } } : {}),
+  });
   const memory = new WebAssembly.Memory({ initial: 1 });
   const host = new AgentOsFileSystemHost({ memory: () => memory, fileSystem, agentOsPreopens });
 
@@ -36,6 +44,7 @@ function fixture(agentOsPreopens = false) {
     memory,
     host,
     fileSystem,
+    storage,
     directoryFd,
     fileFd,
     writePath,
@@ -51,6 +60,8 @@ describe("AgentOS host_fs imports", () => {
     const test = fixture();
     try {
       const names = [
+        "chmod",
+        "fd_chown",
         "set_open_mode",
         "fd_mode",
         "path_mode",
@@ -64,6 +75,7 @@ describe("AgentOS host_fs imports", () => {
         "path_size",
         "path_blocks",
         "path_owner",
+        "path_chown",
         "fd_link",
         "fchmod",
       ].sort();
@@ -88,7 +100,7 @@ describe("AgentOS host_fs imports", () => {
   });
 
   it("uses declared unavailable sentinels and returns ENOTSUP without changing guest or filesystem state", () => {
-    const test = fixture();
+    const test = fixture(false, false);
     try {
       const filePathLength = test.writePath(64, "file");
       const linkPathLength = test.writePath(96, "published");
@@ -106,6 +118,11 @@ describe("AgentOS host_fs imports", () => {
       expect(test.host.imports.path_owner(test.directoryFd, 64, filePathLength, 1, 128, 132)).toBe(
         58,
       );
+      expect(test.host.imports.fd_chown(test.fileFd, 123, 456)).toBe(58);
+      expect(test.host.imports.path_chown(test.directoryFd, 64, filePathLength, 123, 456, 1)).toBe(
+        58,
+      );
+      expect(test.host.imports.chmod(test.directoryFd, 64, filePathLength, 0o600)).toBe(58);
       expect(test.host.imports.path_access(test.directoryFd, 64, filePathLength, 4, 0)).toBe(58);
       expect(test.host.imports.fchmod(test.fileFd, 0o600)).toBe(58);
       expect(test.host.imports.set_open_mode(0o600)).toBe(58);
@@ -130,9 +147,87 @@ describe("AgentOS host_fs imports", () => {
     try {
       expect(test.host.imports.fd_owner(999, 65_535, 0)).toBe(21);
       expect(test.host.imports.path_owner(999, 65_534, 8, 1, 128, 132)).toBe(21);
+      expect(test.host.imports.fd_owner(999, 65_535, 132)).toBe(21);
       expect(test.host.imports.open_tmpfile(999, 65_534, 8, 0, 0, 65_535)).toBe(21);
       expect(test.host.imports.path_access(test.directoryFd, 65_534, 8, 0, 0)).toBe(21);
       expect(test.host.imports.path_access(test.directoryFd, 64, 4, 8, 0)).toBe(28);
+    } finally {
+      test.close();
+    }
+  });
+
+  it("reports and mutates real POSIX mode and owner metadata", () => {
+    const test = fixture();
+    try {
+      const filePathLength = test.writePath(64, "file");
+      const linkPathLength = test.writePath(96, "link");
+      expect(test.host.imports.fd_mode(test.fileFd)).toBe(0o100644);
+      expect(test.host.imports.path_mode(test.directoryFd, 64, filePathLength, 1)).toBe(0o100644);
+      expect(test.host.imports.path_mode(test.directoryFd, 96, linkPathLength, 0)).toBe(0o120777);
+      expect(test.host.imports.path_mode(test.directoryFd, 96, linkPathLength, 1)).toBe(0o100644);
+
+      const view = new DataView(test.memory.buffer);
+      view.setUint32(128, 0xfeed, true);
+      view.setUint32(132, 0xbeef, true);
+      expect(test.host.imports.fd_owner(test.fileFd, 128, 132)).toBe(0);
+      expect([view.getUint32(128, true), view.getUint32(132, true)]).toEqual([1000, 1000]);
+      expect(test.host.imports.path_owner(test.directoryFd, 64, filePathLength, 1, 128, 132)).toBe(
+        0,
+      );
+      expect([view.getUint32(128, true), view.getUint32(132, true)]).toEqual([1000, 1000]);
+
+      expect(test.host.imports.chmod(test.directoryFd, 64, filePathLength, 0o100640)).toBe(0);
+      expect(test.host.imports.path_mode(test.directoryFd, 64, filePathLength, 1)).toBe(0o100640);
+      expect(test.host.imports.fchmod(test.fileFd, 0o100600)).toBe(0);
+      expect(test.host.imports.fd_mode(test.fileFd)).toBe(0o100600);
+      expect(test.host.imports.fd_chown(test.fileFd, 0xffff_ffff, 2000)).toBe(0);
+      expect(test.host.imports.fd_owner(test.fileFd, 128, 132)).toBe(0);
+      expect([view.getUint32(128, true), view.getUint32(132, true)]).toEqual([1000, 2000]);
+      expect(
+        test.host.imports.path_chown(test.directoryFd, 64, filePathLength, 0xffff_ffff, 1000, 1),
+      ).toBe(0);
+      expect(test.host.imports.path_owner(test.directoryFd, 64, filePathLength, 1, 128, 132)).toBe(
+        0,
+      );
+      expect([view.getUint32(128, true), view.getUint32(132, true)]).toEqual([1000, 1000]);
+
+      expect(test.host.imports.set_open_mode(0o610)).toBe(0);
+      expect(test.fileSystem.takeNextCreateMode()).toBe(0o610);
+    } finally {
+      test.close();
+    }
+  });
+
+  it("checks access using real or effective credentials and keeps root execute semantics", () => {
+    const test = fixture(false, true, {
+      uid: 3000,
+      gid: 3000,
+      euid: 4000,
+      egid: 4000,
+      groups: [2000],
+    });
+    try {
+      const filePathLength = test.writePath(64, "file");
+      const fileInode = test.fileSystem.resolve("/work/file").inode;
+      test.storage.posix.chown(fileInode, { uid: 3000, gid: 2000 });
+      test.storage.posix.chmod(fileInode, 0o0400);
+      expect(test.host.imports.path_access(test.directoryFd, 64, filePathLength, 4, 0)).toBe(0);
+      expect(test.host.imports.path_access(test.directoryFd, 64, filePathLength, 4, 1)).toBe(2);
+
+      test.storage.posix.chown(fileInode, { uid: 5000, gid: 2000 });
+      test.storage.posix.chmod(fileInode, 0o0040);
+      expect(test.host.imports.path_access(test.directoryFd, 64, filePathLength, 4, 0)).toBe(0);
+
+      const root = fixture(false, true, { uid: 0, gid: 0, euid: 0, egid: 0, groups: [] });
+      try {
+        const rootPathLength = root.writePath(64, "file");
+        root.fileSystem.chmod("/work/file", 0o0644);
+        expect(root.host.imports.path_access(root.directoryFd, 64, rootPathLength, 1, 1)).toBe(2);
+        root.fileSystem.chmod("/work/file", 0o0744);
+        expect(root.host.imports.path_access(root.directoryFd, 64, rootPathLength, 1, 1)).toBe(0);
+      } finally {
+        root.close();
+      }
     } finally {
       test.close();
     }
@@ -186,8 +281,20 @@ describe("AgentOS host_fs imports", () => {
 
       expect(resolveHiddenPreopenFd(taggedPreopen, test.fileSystem)).toBe(preopenFd);
       expect(test.host.imports.path_size(taggedPreopen, 64, filePathLength, 1)).toBe(5n);
-      expect(test.host.imports.path_owner(taggedPreopen, 64, filePathLength, 1, 128, 132)).toBe(58);
-      expect(test.host.imports.path_access(taggedPreopen, 64, filePathLength, 4, 0)).toBe(58);
+      expect(test.host.imports.path_owner(taggedPreopen, 64, filePathLength, 1, 128, 132)).toBe(0);
+      expect(test.host.imports.path_access(taggedPreopen, 64, filePathLength, 4, 0)).toBe(0);
+      expect(test.host.imports.chmod(taggedPreopen, 64, filePathLength, 0o600)).toBe(0);
+      expect(test.host.imports.path_mode(taggedPreopen, 64, filePathLength, 1)).toBe(0o100600);
+      expect(
+        test.host.imports.path_chown(
+          taggedPreopen,
+          64,
+          filePathLength,
+          0xffff_ffff,
+          0xffff_ffff,
+          1,
+        ),
+      ).toBe(0);
       expect(
         test.host.imports.open_tmpfile(taggedPreopen, 160, directoryPathLength, 0, 0o600, 136),
       ).toBe(58);
@@ -205,10 +312,12 @@ describe("AgentOS host_fs imports", () => {
       ).toBe(8);
 
       const positions: Readonly<Record<string, readonly number[]>> = {
+        chmod: [0],
         fd_link: [1],
         open_tmpfile: [0],
         path_access: [0],
         path_blocks: [0],
+        path_chown: [0],
         path_mode: [0],
         path_owner: [0],
         path_size: [0],

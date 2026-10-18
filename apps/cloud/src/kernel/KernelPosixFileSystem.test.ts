@@ -142,6 +142,83 @@ describe("KernelFileSystem POSIX metadata", () => {
     }
   });
 
+  it("requires descriptor metadata rights while preserving read-only errors", () => {
+    const fixture = sqliteFixture();
+    const storage = createFacetSqliteStorage(fixture.storage, now);
+    storage.posix.initialize(storage.root, rootMetadata);
+    const fs = new KernelFileSystem({
+      mounts: [{ path: "/", storage }],
+      posix: { credentials: user, umask: 0 },
+    });
+    const readOnly = new KernelFileSystem({
+      mounts: [{ path: "/", storage, readOnly: true }],
+      posix: { credentials: user, umask: 0 },
+    });
+    try {
+      const createdFd = fs.open("/file", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR, 0o640);
+      fs.close(createdFd);
+      const pathFd = fs.open("/file", KernelOpenFlags.O_PATH);
+      const readFd = fs.open("/file", KernelOpenFlags.O_RDONLY);
+      const readOnlyFd = readOnly.open("/file", KernelOpenFlags.O_RDONLY);
+
+      expect(() => fs.fchmod(pathFd, 0o600)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      expect(() => fs.fchown(pathFd, 1000, 101)).toThrow(
+        expect.objectContaining({ code: "EBADF" }),
+      );
+      expect(fs.getPosixMetadata("/file")).toEqual({ mode: 0o640, uid: 1000, gid: 100 });
+
+      fs.fchmod(readFd, 0o600);
+      fs.fchown(readFd, 1000, 101);
+      expect(fs.getPosixMetadata("/file")).toEqual({ mode: 0o600, uid: 1000, gid: 101 });
+
+      expect(() => readOnly.fchmod(readOnlyFd, 0o400)).toThrow(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+      expect(() => readOnly.fchown(readOnlyFd, 1000, 100)).toThrow(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+      expect(fs.getPosixMetadata("/file")).toEqual({ mode: 0o600, uid: 1000, gid: 101 });
+
+      fs.close(pathFd);
+      fs.close(readFd);
+      readOnly.close(readOnlyFd);
+    } finally {
+      readOnly.dispose();
+      fs.dispose();
+      fixture.close();
+    }
+  });
+
+  it("maps closed and invalid metadata descriptors to EBADF", () => {
+    const fixture = sqliteFixture();
+    const storage = createFacetSqliteStorage(fixture.storage, now);
+    storage.posix.initialize(storage.root, rootMetadata);
+    const fs = new KernelFileSystem({
+      mounts: [{ path: "/", storage }],
+      posix: { credentials: user, umask: 0 },
+    });
+    try {
+      const fd = fs.open("/file", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR, 0o640);
+      fs.close(fd);
+
+      for (const invalidFd of [fd, 999]) {
+        expect(() => fs.getPosixMetadataForFd(invalidFd)).toThrow(
+          expect.objectContaining({ code: "EBADF" }),
+        );
+        expect(() => fs.fchmod(invalidFd, 0o600)).toThrow(
+          expect.objectContaining({ code: "EBADF" }),
+        );
+        expect(() => fs.fchown(invalidFd, 1000, 101)).toThrow(
+          expect.objectContaining({ code: "EBADF" }),
+        );
+      }
+      expect(fs.getPosixMetadata("/file")).toEqual({ mode: 0o640, uid: 1000, gid: 100 });
+    } finally {
+      fs.dispose();
+      fixture.close();
+    }
+  });
+
   it("enforces owner and group authority and read-only mounts", () => {
     const fixture = sqliteFixture();
     const storage = createFacetSqliteStorage(fixture.storage, now);

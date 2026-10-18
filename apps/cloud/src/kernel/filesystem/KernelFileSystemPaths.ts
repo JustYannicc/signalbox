@@ -154,11 +154,13 @@ export class KernelFileSystemPaths {
   }
 
   getPosixMetadataForFd(fd: number): PosixMetadata {
-    const descriptor = this.#descriptors.get(fd);
-    if (descriptor.mount === undefined || descriptor.inode === undefined) {
-      throw kernelError("ENOTSUP");
-    }
-    return this.#posix.getMetadata(descriptor.mount.storage, descriptor.inode);
+    return withKernelErrors(() => {
+      const descriptor = this.#descriptors.get(fd);
+      if (descriptor.mount === undefined || descriptor.inode === undefined) {
+        throw kernelError("ENOTSUP");
+      }
+      return this.#posix.getMetadata(descriptor.mount.storage, descriptor.inode);
+    });
   }
 
   chmod(path: string, mode: number, follow = true): void {
@@ -167,11 +169,10 @@ export class KernelFileSystemPaths {
   }
 
   fchmod(fd: number, mode: number): void {
-    const descriptor = this.#descriptors.get(fd);
-    if (descriptor.mount === undefined || descriptor.inode === undefined) {
-      throw kernelError("ENOTSUP");
-    }
-    this.#posix.chmod(descriptor.mount, descriptor.inode, mode);
+    withKernelErrors(() => {
+      const descriptor = this.#metadataDescriptor(fd);
+      this.#posix.chmod(descriptor.mount, descriptor.inode, mode);
+    });
   }
 
   chown(path: string, uid: number, gid: number, follow = true): void {
@@ -180,11 +181,10 @@ export class KernelFileSystemPaths {
   }
 
   fchown(fd: number, uid: number, gid: number): void {
-    const descriptor = this.#descriptors.get(fd);
-    if (descriptor.mount === undefined || descriptor.inode === undefined) {
-      throw kernelError("ENOTSUP");
-    }
-    this.#posix.chown(descriptor.mount, descriptor.inode, uid, gid);
+    withKernelErrors(() => {
+      const descriptor = this.#metadataDescriptor(fd);
+      this.#posix.chown(descriptor.mount, descriptor.inode, uid, gid);
+    });
   }
 
   mkdir(path: string, mode = 0o777): void {
@@ -367,6 +367,25 @@ export class KernelFileSystemPaths {
 
   #assertWritable(mount: { readonly readOnly: boolean }): void {
     if (mount.readOnly) throw kernelError("EROFS");
+  }
+
+  #metadataDescriptor(fd: number): WasiDescriptor & {
+    readonly mount: NonNullable<WasiDescriptor["mount"]>;
+    readonly inode: Inode;
+  } {
+    const descriptor = this.#descriptors.get(fd);
+    if (descriptor.mount === undefined || descriptor.inode === undefined) {
+      throw kernelError("EBADF");
+    }
+    this.#assertWritable(descriptor.mount);
+    // There is no separate descriptor right for POSIX mode and owner changes.
+    if ((descriptor.rightsBase & RIGHTS.FD_FILESTAT_SET_TIMES) !== RIGHTS.FD_FILESTAT_SET_TIMES) {
+      throw kernelError("EBADF");
+    }
+    return descriptor as WasiDescriptor & {
+      readonly mount: NonNullable<WasiDescriptor["mount"]>;
+      readonly inode: Inode;
+    };
   }
 
   #truncate(
