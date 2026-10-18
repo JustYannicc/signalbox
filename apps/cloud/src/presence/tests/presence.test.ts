@@ -7,92 +7,100 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as Presence from "../Presence.ts";
-import { makeAccess } from "./accessFixture.ts";
+import * as PresenceService from "../presence.ts";
+import { makeAccess } from "./access-fixture.ts";
 
 const actor = (userId: string) => ({ userId });
 const thread = "canonical-thread";
 const folder = "canonical-folder";
+
 const setup = (users = ["reader", "one", "two"]) =>
-  Effect.gen(function* () {
+  Effect.gen(function* setupPresence() {
     const access = makeAccess();
+
     for (const userId of users) {
       access.allow(userId, thread);
       access.allow(userId, folder);
     }
-    const context = yield* Layer.build(Presence.layer.pipe(Layer.provide(access.layer)));
-    const presence = yield* Presence.Presence.pipe(Effect.provideContext(context));
+
+    const context = yield* Layer.build(PresenceService.layer.pipe(Layer.provide(access.layer)));
+
+    const presence = yield* PresenceService.Presence.pipe(Effect.provideContext(context));
+
     const join = (userId: string, connection: string, target = thread) =>
-      Effect.gen(function* () {
+      Effect.gen(function* createJoin() {
         const scope = yield* Scope.fork(yield* Scope.Scope);
         yield* presence.join(actor(userId), target, connection).pipe(Scope.provide(scope));
+
         return { leave: Scope.close(scope, Exit.void) };
       });
+
     const read = (target = thread) =>
       presence.view(actor("reader"), target).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
-    return { access, presence, join, read };
+
+    return { access, join, presence, read };
   });
 
 describe("Presence", () => {
   it.effect(
     "sticky invalidation before registration rejects a join and withdraws an unread view",
     () =>
-      Effect.gen(function* () {
+      Effect.gen(function* rejectsInvalidatedJoinAndWithdrawsUnreadView() {
         const { presence, access, read } = yield* setup();
         access.invalidateNextOpen("Revoked");
         const joined = yield* presence.join(actor("one"), thread, "web").pipe(Effect.result);
         expect(Result.isFailure(joined) && joined.failure._tag).toBe("PresenceDenied");
-        expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+        expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: [] });
         access.invalidateNextOpen("Reset");
-        expect(yield* presence.view(actor("reader"), thread).pipe(Stream.runCollect)).toEqual([
-          { _tag: "Reset" },
-        ]);
+        expect(yield* presence.view(actor("reader"), thread).pipe(Stream.runCollect)).toStrictEqual(
+          [{ _tag: "Reset" }],
+        );
       }).pipe(Effect.scoped),
   );
 
   it.effect(
     "deduplicates devices and teammates at an exact target, without publishing observers",
     () =>
-      Effect.gen(function* () {
+      Effect.gen(function* deduplicatesConnectionsAtExactTargets() {
         const { join, read } = yield* setup();
-        expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+        expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: [] });
         yield* join("one", "web");
         yield* join("one", "phone");
         yield* join("two", "desktop");
-        expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one", "two"] });
-        expect(yield* read(folder)).toEqual({ _tag: "Snapshot", people: [] });
+        expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: ["one", "two"] });
+        expect(yield* read(folder)).toStrictEqual({ _tag: "Snapshot", people: [] });
       }).pipe(Effect.scoped),
   );
 
   it.effect("closing an older join cannot erase a replacement using the same connection key", () =>
-    Effect.gen(function* () {
+    Effect.gen(function* preservesReplacementJoinWhenOlderJoinCloses() {
       const { join, read } = yield* setup();
       const { leave: leaveOld } = yield* join("one", "connection");
       const { leave: leaveNew } = yield* join("one", "connection");
       yield* leaveOld;
       yield* leaveOld;
-      expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
+      expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: ["one"] });
       yield* leaveNew;
-      expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+      expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: [] });
     }).pipe(Effect.scoped),
   );
 
   it.effect("a slow subscriber receives current people, not queued stale rosters", () =>
-    Effect.gen(function* () {
+    Effect.gen(function* deliversCurrentRosterToSlowSubscriber() {
       const { presence, join } = yield* setup();
       const pull = yield* Stream.toPull(presence.view(actor("reader"), thread));
-      expect(yield* pull).toEqual([{ _tag: "Snapshot", people: [] }]);
+      expect(yield* pull).toStrictEqual([{ _tag: "Snapshot", people: [] }]);
       const { leave } = yield* join("one", "web");
       yield* leave;
       yield* join("two", "phone");
-      expect(yield* pull).toEqual([{ _tag: "Update", people: ["two"] }]);
+      expect(yield* pull).toStrictEqual([{ _tag: "Update", people: ["two"] }]);
     }).pipe(Effect.scoped),
   );
 
   it.effect(
     "publisher revocation removes all devices before an already-queued view is pulled",
     () =>
-      Effect.gen(function* () {
+      Effect.gen(function* removesRevokedPublisherBeforeViewPull() {
         const { presence, join, access } = yield* setup();
         const pull = yield* Stream.toPull(presence.view(actor("reader"), thread));
         yield* pull;
@@ -100,42 +108,42 @@ describe("Presence", () => {
         yield* join("one", "phone");
         yield* join("two", "desktop");
         access.invalidate("one", thread, "Revoked");
-        expect(yield* pull).toEqual([{ _tag: "Update", people: ["two"] }]);
+        expect(yield* pull).toStrictEqual([{ _tag: "Update", people: ["two"] }]);
       }).pipe(Effect.scoped),
   );
 
   it.effect("observer revocation withdraws a queued roster and reopening reauthorizes", () =>
-    Effect.gen(function* () {
+    Effect.gen(function* revokesQueuedRosterAndReauthorizesObserver() {
       const { presence, join, access, read } = yield* setup();
       const pull = yield* Stream.toPull(presence.view(actor("reader"), thread));
       yield* pull;
       yield* join("one", "web");
       access.invalidate("reader", thread, "Revoked");
-      expect(yield* pull).toEqual([{ _tag: "Revoked" }]);
+      expect(yield* pull).toStrictEqual([{ _tag: "Revoked" }]);
       const reopened = yield* read().pipe(Effect.result);
       expect(Result.isFailure(reopened) && reopened.failure._tag).toBe("PresenceDenied");
       access.allow("reader", thread);
-      expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
+      expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: ["one"] });
     }).pipe(Effect.scoped),
   );
 
   it.effect("reset clears the old generation; a new view requires a new guard", () =>
-    Effect.gen(function* () {
+    Effect.gen(function* requiresNewGuardAfterReset() {
       const { presence, join, access, read } = yield* setup();
       yield* join("one", "web");
       const pull = yield* Stream.toPull(presence.view(actor("reader"), thread));
       yield* pull;
       access.invalidate("reader", thread, "Reset");
-      expect(yield* pull).toEqual([{ _tag: "Reset" }]);
+      expect(yield* pull).toStrictEqual([{ _tag: "Reset" }]);
       access.allow("reader", thread);
-      expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
+      expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: ["one"] });
     }).pipe(Effect.scoped),
   );
 
   it.effect(
     "authority failure stays unavailable until the failed join closes, then allows recovery",
     () =>
-      Effect.gen(function* () {
+      Effect.gen(function* keepsAuthorityFailureUnavailableUntilJoinCloses() {
         const { presence, join, access, read } = yield* setup();
         const { leave } = yield* join("one", "web");
         const pull = yield* Stream.toPull(presence.view(actor("reader"), thread));
@@ -149,23 +157,23 @@ describe("Presence", () => {
           "PresenceUnavailable",
         );
         yield* leave;
-        expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+        expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: [] });
         yield* join("one", "web");
-        expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
+        expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: ["one"] });
       }).pipe(Effect.scoped),
   );
 
   it.effect("publisher reset withdraws the old join and recovery reauthorizes a new scope", () =>
-    Effect.gen(function* () {
+    Effect.gen(function* reauthorizesAfterPublisherReset() {
       const { join, access, read } = yield* setup();
       const { leave } = yield* join("one", "web");
       access.invalidate("one", thread, "Reset");
-      expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+      expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: [] });
       access.allow("one", thread);
-      expect(yield* read()).toEqual({ _tag: "Snapshot", people: [] });
+      expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: [] });
       yield* leave;
       yield* join("one", "web");
-      expect(yield* read()).toEqual({ _tag: "Snapshot", people: ["one"] });
+      expect(yield* read()).toStrictEqual({ _tag: "Snapshot", people: ["one"] });
     }).pipe(Effect.scoped),
   );
 });
