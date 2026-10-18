@@ -79,6 +79,7 @@
         "infra/boxd-spike.alchemy.ts!",
         "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
+        "infra/nodeProof/*.ts",
         "infra/kernelProof/*.ts",
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
