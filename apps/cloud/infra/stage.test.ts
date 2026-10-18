@@ -15,7 +15,7 @@ import {
   cloudStage,
   DURABLE_OBJECT_BINDINGS,
   previewStageNumber,
-  previewWorkerRoutes,
+  stageWorkerRouting,
 } from "./stage.ts";
 import { TRACES_PATH } from "../src/observability/nativeTracesWorker.ts";
 
@@ -85,9 +85,14 @@ describe("cloudStage", () => {
 
   it("routes preview gateway and trace paths through the app origin", () => {
     const preview = cloudStage("pr-298");
-    const routes = previewWorkerRoutes(preview);
-    expect(routes).toEqual({
-      modelGateway: [
+    const gateway = stageWorkerRouting(preview, preview.gatewayDomain, [
+      MODEL_GATEWAY_PATHS.anthropic,
+      MODEL_GATEWAY_PATHS.openai,
+    ]);
+    const traces = stageWorkerRouting(preview, `traces-${preview.cloudDomain}`, [TRACES_PATH]);
+    expect(gateway).toEqual({
+      domain: null,
+      routes: [
         {
           pattern: `${preview.cloudDomain}${MODEL_GATEWAY_PATHS.anthropic}*`,
           zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
@@ -97,7 +102,10 @@ describe("cloudStage", () => {
           zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
         },
       ],
-      traceExport: [
+    });
+    expect(traces).toEqual({
+      domain: null,
+      routes: [
         {
           pattern: `${preview.cloudDomain}${TRACES_PATH}*`,
           zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
@@ -109,10 +117,25 @@ describe("cloudStage", () => {
         (path) => new URL(path, preview.vars.MODEL_GATEWAY_URL).origin,
       ),
     ).toEqual([`https://${preview.cloudDomain}`, `https://${preview.cloudDomain}`]);
-    expect(previewWorkerRoutes(cloudStage("production"))).toEqual({
-      modelGateway: [],
-      traceExport: [],
+  });
+
+  it("keeps production Worker domains and omits preview route props", () => {
+    const production = cloudStage("production");
+    const gateway = stageWorkerRouting(production, production.gatewayDomain, [
+      MODEL_GATEWAY_PATHS.anthropic,
+      MODEL_GATEWAY_PATHS.openai,
+    ]);
+    const traces = stageWorkerRouting(production, `traces-${production.cloudDomain}`, [
+      TRACES_PATH,
+    ]);
+    expect(gateway).toEqual({
+      domain: { name: "gateway.signalbox.run", zoneId: "e817cf0e17e849a0aab7a0bf92c0a053" },
     });
+    expect(traces).toEqual({
+      domain: { name: "traces-app.signalbox.run", zoneId: "e817cf0e17e849a0aab7a0bf92c0a053" },
+    });
+    expect("routes" in gateway).toBe(false);
+    expect("routes" in traces).toBe(false);
   });
 
   it("routes each stage's dev-server previews to it alone", async () => {

@@ -17,6 +17,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
@@ -29,7 +30,7 @@ import {
   PREVIEW_DRIVE_PACKS_BUCKET,
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
-  previewWorkerRoutes,
+  stageWorkerRouting,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
@@ -187,7 +188,6 @@ function deploy(
   telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
-    const previewRoutes = previewWorkerRoutes(target);
     const traceExport = yield* nativeTraceExport(target, telemetry);
     const observability = {
       ...workerObservability,
@@ -290,9 +290,11 @@ function deploy(
       main: here("src/models/gatewayWorker.ts"),
       compatibility,
       workersDev: false,
-      // Null detaches older preview domains; provider paths now share the app origin.
-      domain: target.production ? { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID } : null,
-      routes: previewRoutes.modelGateway,
+      // Preview provider paths share the app origin; production keeps its gateway domain.
+      ...stageWorkerRouting(target, target.gatewayDomain, [
+        MODEL_GATEWAY_PATHS.anthropic,
+        MODEL_GATEWAY_PATHS.openai,
+      ]),
       observability,
       env: {
         ...telemetry,

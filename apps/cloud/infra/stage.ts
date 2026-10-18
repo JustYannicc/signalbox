@@ -80,17 +80,20 @@ export interface CloudStage {
  * Preview-only paths that serve the gateway and trace receiver from the app
  * origin. The app owns the preview's only custom domain.
  */
-export const previewWorkerRoutes = (target: CloudStage) => ({
-  modelGateway: target.production
-    ? []
-    : [
-        { pattern: `${target.cloudDomain}/anthropic*`, zoneId: SIGNALBOX_ZONE_ID },
-        { pattern: `${target.cloudDomain}/openai*`, zoneId: SIGNALBOX_ZONE_ID },
-      ],
-  traceExport: target.production
-    ? []
-    : [{ pattern: `${target.cloudDomain}/v1/traces*`, zoneId: SIGNALBOX_ZONE_ID }],
-});
+export const stageWorkerRouting = (
+  target: CloudStage,
+  productionDomain: string,
+  paths: readonly string[],
+) =>
+  target.production
+    ? { domain: { name: productionDomain, zoneId: SIGNALBOX_ZONE_ID } }
+    : {
+        domain: null,
+        routes: paths.map((path) => ({
+          pattern: `${target.cloudDomain}${path}*`,
+          zoneId: SIGNALBOX_ZONE_ID,
+        })),
+      };
 
 export const PRODUCTION_STAGE = "production";
 export const PREVIEW_DRIVE_PACKS_BUCKET = "signalbox-drives-preview";

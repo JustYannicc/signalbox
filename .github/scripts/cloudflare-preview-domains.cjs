@@ -2,6 +2,7 @@
 
 const API = "https://api.cloudflare.com/client/v4";
 const PAGE_SIZE = 1000;
+const ALCHEMY_STACK_TAG = "alchemy:stack:SignalboxCloud";
 const { cloudStage, SIGNALBOX_ZONE_ID } = require("../../apps/cloud/infra/stage.ts");
 
 function parsePullRequestNumber(value) {
@@ -23,6 +24,12 @@ function expectedPreviewBindings(value) {
       service: stage.cloudWorker,
       zone_id: SIGNALBOX_ZONE_ID,
     },
+    {
+      kind: "gateway",
+      hostname: stage.gatewayDomain,
+      service: stage.gatewayWorker,
+      zone_id: SIGNALBOX_ZONE_ID,
+    },
   ];
 }
 
@@ -32,25 +39,12 @@ function cleanupPreviewBindings(value) {
   return [
     ...expectedPreviewBindings(number),
     {
-      kind: "gateway",
-      hostname: stage.gatewayDomain,
-      service: stage.gatewayWorker,
-      zone_id: SIGNALBOX_ZONE_ID,
-    },
-    {
       kind: "traces",
       hostname: `traces-${stage.cloudDomain}`,
       service: `${stage.cloudWorker}-traces`,
       zone_id: SIGNALBOX_ZONE_ID,
     },
   ];
-}
-
-function previewDomainNumbers(domain) {
-  // Preview domains carry either the preview host label or the stage's -pr-N service suffix.
-  const hostname = /(?:^|-)preview-([1-9][0-9]*)\.signalbox\.run$/.exec(domain.hostname ?? "");
-  const service = /(?:^|-)pr-([1-9][0-9]*)(?:-|$)/.exec(domain.service ?? "");
-  return new Set([hostname?.[1], service?.[1]].filter(Boolean).map(Number));
 }
 
 const isEnabled = (domain) =>
@@ -87,12 +81,58 @@ function bindingMismatch(domains, binding, { required }) {
 
 function verifyPreviewBindings(domains, value) {
   const number = parsePullRequestNumber(value);
-  const errors = expectedPreviewBindings(number)
+  return expectedPreviewBindings(number)
     .map((binding) => bindingMismatch(domains, binding, { required: true }))
-    .filter(Boolean);
-  const attached = domains.filter((domain) => previewDomainNumbers(domain).has(number));
-  if (attached.length !== 1) {
-    errors.push(`has ${attached.length} Worker domain records; expected exactly one.`);
+    .filter(Boolean)
+    .map((message) => `The #${number} preview ${message}`);
+}
+
+function previewDomainNumbers(domain) {
+  const hostname = /(?:^|[-.])preview-([1-9][0-9]*)\.signalbox\.run$/.exec(domain.hostname ?? "");
+  return new Set(hostname ? [Number(hostname[1])] : []);
+}
+
+function alchemyStageServices(scripts, value) {
+  if (!Array.isArray(scripts)) {
+    throw new Error("Cloudflare Workers Scripts API returned an invalid script list.");
+  }
+
+  const number = parsePullRequestNumber(value);
+  const stageTag = `alchemy:stage:pr-${number}`;
+  const services = new Set();
+  const seen = new Set();
+  for (const script of scripts) {
+    if (typeof script?.id !== "string" || script.id.length === 0) {
+      throw new Error("Cloudflare Workers Scripts API returned incomplete script metadata.");
+    }
+    if (seen.has(script.id)) {
+      throw new Error("Cloudflare Workers Scripts API returned duplicate script metadata.");
+    }
+    seen.add(script.id);
+    if (
+      script.tags !== undefined &&
+      (!Array.isArray(script.tags) || script.tags.some((tag) => typeof tag !== "string"))
+    ) {
+      throw new Error("Cloudflare Workers Scripts API returned invalid script tags.");
+    }
+    if (script.tags?.includes(ALCHEMY_STACK_TAG) && script.tags.includes(stageTag)) {
+      services.add(script.id);
+    }
+  }
+  return services;
+}
+
+function verifyOneDomainPreviewBindings(domains, scripts, value) {
+  const number = parsePullRequestNumber(value);
+  const stageServices = alchemyStageServices(scripts, number);
+  const appBinding = expectedPreviewBindings(number)[0];
+  const errors = [bindingMismatch(domains, appBinding, { required: true })].filter(Boolean);
+  const stageDomains = domains.filter((domain) => {
+    const hostnameNumbers = previewDomainNumbers(domain);
+    return hostnameNumbers.has(number) || stageServices.has(domain.service);
+  });
+  if (stageDomains.length !== 1) {
+    errors.push(`has ${stageDomains.length} Worker domain records; expected exactly one.`);
   }
   return errors.map((message) => `The #${number} preview ${message}`);
 }
@@ -138,7 +178,7 @@ function managedPreviewNumber(domain) {
   return null;
 }
 
-async function requestJson(fetcher, url, token, init) {
+async function requestJson(fetcher, url, token, init, resource) {
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${token}`);
   const response = await fetcher(url, {
@@ -149,12 +189,10 @@ async function requestJson(fetcher, url, token, init) {
   try {
     payload = await response.json();
   } catch {
-    throw new Error(
-      `Cloudflare Workers Domains API returned invalid JSON (HTTP ${response.status}).`,
-    );
+    throw new Error(`Cloudflare ${resource} API returned invalid JSON (HTTP ${response.status}).`);
   }
   if (!response.ok || payload?.success !== true) {
-    throw new Error(`Cloudflare Workers Domains API request failed (HTTP ${response.status}).`);
+    throw new Error(`Cloudflare ${resource} API request failed (HTTP ${response.status}).`);
   }
   return payload;
 }
@@ -165,7 +203,7 @@ async function listWorkerDomains(accountId, token, fetcher = fetch) {
     const url = new URL(`${API}/accounts/${encodeURIComponent(accountId)}/workers/domains`);
     url.searchParams.set("per_page", String(PAGE_SIZE));
     url.searchParams.set("page", String(page));
-    const payload = await requestJson(fetcher, url, token);
+    const payload = await requestJson(fetcher, url, token, undefined, "Workers Domains");
     if (!Array.isArray(payload.result)) {
       throw new Error("Cloudflare Workers Domains API returned an invalid domain list.");
     }
@@ -181,6 +219,41 @@ async function listWorkerDomains(accountId, token, fetcher = fetch) {
   throw new Error("Cloudflare Workers Domains API pagination exceeded the safety limit.");
 }
 
+async function listWorkerScripts(accountId, token, fetcher = fetch) {
+  const url = `${API}/accounts/${encodeURIComponent(accountId)}/workers/scripts`;
+  const payload = await requestJson(fetcher, url, token, undefined, "Workers Scripts");
+  if (!Array.isArray(payload.result)) {
+    throw new Error("Cloudflare Workers Scripts API returned an invalid script list.");
+  }
+
+  // The scripts endpoint is single-page and has no page parameters. Fail closed
+  // if a response ever advertises pagination instead of treating it as complete.
+  const info = payload.result_info;
+  if (info !== undefined) {
+    if (typeof info !== "object" || info === null || Array.isArray(info)) {
+      throw new Error("Cloudflare Workers Scripts API returned incomplete script metadata.");
+    }
+    const totalPages = info.total_pages === undefined ? 1 : Number(info.total_pages);
+    const page = info.page === undefined ? 1 : Number(info.page);
+    const count = info.count === undefined ? payload.result.length : Number(info.count);
+    const totalCount =
+      info.total_count === undefined ? payload.result.length : Number(info.total_count);
+    if (
+      !Number.isSafeInteger(totalPages) ||
+      totalPages !== 1 ||
+      !Number.isSafeInteger(page) ||
+      page !== 1 ||
+      !Number.isSafeInteger(count) ||
+      count !== payload.result.length ||
+      !Number.isSafeInteger(totalCount) ||
+      totalCount !== payload.result.length
+    ) {
+      throw new Error("Cloudflare Workers Scripts API returned incomplete script metadata.");
+    }
+  }
+  return payload.result;
+}
+
 async function detachClosedPreviewDomains(accountId, token, prNumber, fetcher = fetch) {
   const number = parsePullRequestNumber(prNumber);
   const before = await listWorkerDomains(accountId, token, fetcher);
@@ -192,7 +265,7 @@ async function detachClosedPreviewDomains(accountId, token, prNumber, fetcher = 
       );
     }
     const url = `${API}/accounts/${encodeURIComponent(accountId)}/workers/domains/${encodeURIComponent(domain.id)}`;
-    await requestJson(fetcher, url, token, { method: "DELETE" });
+    await requestJson(fetcher, url, token, { method: "DELETE" }, "Workers Domains");
   }
   const remaining = matchingPreviewBindings(
     await listWorkerDomains(accountId, token, fetcher),
@@ -232,6 +305,20 @@ async function main() {
     return;
   }
 
+  if (command === "verify-one-domain") {
+    const number = assertPreviewStage(process.env.STAGE, process.env.PR_NUMBER);
+    const domains = await listWorkerDomains(accountId, token);
+    const scripts = await listWorkerScripts(accountId, token);
+    const errors = verifyOneDomainPreviewBindings(domains, scripts, number);
+    if (errors.length > 0) {
+      throw new Error(
+        `Cloudflare did not attach the expected single Worker domain for the #${number} preview: ${errors.join(" ")} DNS resolution is checked separately; retry after correcting the Worker domain attachment.`,
+      );
+    }
+    console.log(`Cloudflare's single Worker domain is attached for the #${number} preview.`);
+    return;
+  }
+
   if (command === "delete") {
     const count = await detachClosedPreviewDomains(accountId, token, process.env.PR_NUMBER);
     console.log(
@@ -249,7 +336,7 @@ async function main() {
     return;
   }
 
-  throw new Error("Use one of: verify, delete, list-prs.");
+  throw new Error("Use one of: verify, verify-one-domain, delete, list-prs.");
 }
 
 if (require.main === module) {
@@ -268,5 +355,9 @@ module.exports = {
   managedPreviewNumber,
   matchingPreviewBindings,
   parsePullRequestNumber,
+  listWorkerScripts,
+  alchemyStageServices,
+  previewDomainNumbers,
   verifyPreviewBindings,
+  verifyOneDomainPreviewBindings,
 };

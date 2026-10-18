@@ -3,13 +3,9 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { TRACES_PATH } from "../src/observability/nativeTracesWorker.ts";
 
-import {
-  COMPATIBILITY_DATE,
-  SIGNALBOX_ZONE_ID,
-  type CloudStage,
-  previewWorkerRoutes,
-} from "./stage.ts";
+import { COMPATIBILITY_DATE, type CloudStage, stageWorkerRouting } from "./stage.ts";
 
 export const traceExportUrl = (target: CloudStage, workerUrl: string | null | undefined) => {
   const origin = target.production
@@ -48,16 +44,13 @@ export const nativeTraceExport = (
         skipPreflightCheck: true,
       }).pipe(Alchemy.RemovalPolicy.retain());
     }
-    const domain = `traces-${target.cloudDomain}`;
-    const previewRoutes = previewWorkerRoutes(target);
     const worker = yield* Cloudflare.Worker("TraceExport", {
       name: `${target.cloudWorker}-traces`,
       main: `${import.meta.dirname}/../src/observability/nativeTracesWorker.ts`,
       compatibility: { date: COMPATIBILITY_DATE, flags: ["nodejs_compat"] },
       workersDev: false,
-      // Null retires the old preview domain; trace exports use the app's routed path.
-      domain: target.production ? { name: domain, zoneId: SIGNALBOX_ZONE_ID } : null,
-      routes: previewRoutes.traceExport,
+      // Preview traces use the app origin; production keeps its trace domain.
+      ...stageWorkerRouting(target, `traces-${target.cloudDomain}`, [TRACES_PATH]),
       // Instrumenting the receiver would export its requests back into itself.
       observability: { enabled: false },
       env: {
