@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "vite-plus/test";
 
-import { blockLibraryTargets, groupBlockLibrary } from "./blockLibrary.ts";
+import {
+  blockLibraryTargets,
+  groupBlockLibrary,
+} from "@t3tools/client-runtime/automations/blockLibrary";
 
 const ENV = EnvironmentId.make("cloud");
 const PERSONAL = SignalboxContextId.make("personal");

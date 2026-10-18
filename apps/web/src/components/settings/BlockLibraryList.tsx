@@ -117,7 +117,7 @@ function ContractRow(props: {
     <Collapsible>
       <CollapsibleTrigger className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
         <ChevronRightIcon className="size-3 transition-transform group-data-panel-open:rotate-90" />
-        {props.side === "input" ? "Takes" : "Returns"}
+        {props.side === "input" ? "Input" : "Output"}
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <ContractCode contract={props.contract} />

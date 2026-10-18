@@ -112,7 +112,7 @@ export function BlockLibrarySettings({ level }: { readonly level?: string | unde
         {pending.length === 0 && targets.length === 0 ? (
           <SettingsRow title="No folder to look from" description={BLOCK_LIBRARY_NO_TARGET} />
         ) : null}
-        {targets.length > 0 && target === null ? (
+        {pending.length === 0 && targets.length > 0 && target === null ? (
           <SettingsRow
             title="That folder isn't available"
             description={BLOCK_LIBRARY_STALE_TARGET}

@@ -111,7 +111,7 @@ function Contract(props: {
       </Text>
     );
   }
-  const label = props.side === "input" ? "Takes" : "Returns";
+  const label = props.side === "input" ? "input" : "output";
   return (
     <View className="gap-1">
       <Pressable
@@ -121,7 +121,7 @@ function Contract(props: {
         onPress={() => setOpen((value) => !value)}
       >
         <Text textRole="footnote" className="text-primary-text">
-          {open ? `Hide ${label.toLowerCase()}` : label}
+          {open ? `Hide ${label}` : `Show ${label}`}
         </Text>
       </Pressable>
       {open ? <ContractCode contract={props.contract} /> : null}

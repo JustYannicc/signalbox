@@ -178,7 +178,9 @@ export function groupBlockLibrary(
 
 /** What a block runs as, given the client's label for its fixed mode; null inherits the caller's. */
 export function blockPermissionsLabel(modeLabel: string | null): string {
-  return modeLabel === null ? "Runs with the caller's permissions" : `Runs with ${modeLabel}`;
+  return modeLabel === null
+    ? "Runs with the caller's permissions"
+    : `Requires ${modeLabel} to call`;
 }
 
 /**
