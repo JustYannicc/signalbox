@@ -1,4 +1,5 @@
-import type { Inode, Times } from "../storage.ts";
+import type { CreateOptions, Inode, Times } from "../storage.ts";
+import type { PosixMetadata } from "../PosixStorage.ts";
 import {
   RIGHTS,
   WasiDescriptorTable,
@@ -13,6 +14,7 @@ import { descriptorPathAlias } from "./KernelPathAliases.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
 import { KernelPathResolver, type ResolveOptions } from "./KernelPathResolver.ts";
 import type { KernelStat } from "./KernelFileSystemTypes.ts";
+import { KernelPosix } from "./KernelPosix.ts";
 import { deviceInfoForDescriptor, deviceStat, virtualDevice } from "./KernelVirtualDevices.ts";
 
 const encoder = new TextEncoder();
@@ -20,10 +22,12 @@ const encoder = new TextEncoder();
 export class KernelFileSystemPaths {
   readonly resolver: KernelPathResolver;
   readonly #descriptors: WasiDescriptorTable;
+  readonly #posix: KernelPosix;
 
-  constructor(resolver: KernelPathResolver, descriptors: WasiDescriptorTable) {
+  constructor(resolver: KernelPathResolver, descriptors: WasiDescriptorTable, posix: KernelPosix) {
     this.resolver = resolver;
     this.#descriptors = descriptors;
+    this.#posix = posix;
   }
 
   get cwd(): string {
@@ -42,7 +46,7 @@ export class KernelFileSystemPaths {
       }
 
       const followFinal = options.followFinal ?? true;
-      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options.cwd);
+      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options);
       return this.resolver.resolve(path, options);
     });
   }
@@ -51,7 +55,7 @@ export class KernelFileSystemPaths {
     return withKernelErrors(() => {
       this.#rejectVirtualMutation(path);
       const followFinal = options.followFinal ?? true;
-      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options.cwd);
+      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options);
       return this.resolver.resolveOrCreate(path, options);
     });
   }
@@ -134,15 +138,100 @@ export class KernelFileSystemPaths {
     });
   }
 
-  mkdir(path: string): void {
+  createInode(
+    mount: WasiResolvedPath["mount"],
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): Inode {
+    return this.#posix.createInode(mount, parent, name, options, mode);
+  }
+
+  getPosixMetadata(path: string, follow = true): PosixMetadata {
+    const resolved = this.resolve(path, { followFinal: follow });
+    return this.#posix.getMetadata(resolved.mount.storage, resolved.inode);
+  }
+
+  getPosixMetadataForFd(fd: number): PosixMetadata {
+    return withKernelErrors(() => {
+      const descriptor = this.#descriptors.get(fd);
+      if (descriptor.mount === undefined || descriptor.inode === undefined) {
+        throw kernelError("ENOTSUP");
+      }
+      return this.#posix.getMetadata(descriptor.mount.storage, descriptor.inode);
+    });
+  }
+
+  chmod(path: string, mode: number, follow = true): void {
+    const resolved = this.resolve(path, { followFinal: follow });
+    this.#posix.chmod(resolved.mount, resolved.inode, mode);
+  }
+
+  fchmod(fd: number, mode: number): void {
+    withKernelErrors(() => {
+      const descriptor = this.#metadataDescriptor(fd);
+      this.#posix.chmod(descriptor.mount, descriptor.inode, mode);
+    });
+  }
+
+  chown(path: string, uid: number, gid: number, follow = true): void {
+    const resolved = this.resolve(path, { followFinal: follow });
+    this.#posix.chown(resolved.mount, resolved.inode, uid, gid);
+  }
+
+  fchown(fd: number, uid: number, gid: number): void {
+    withKernelErrors(() => {
+      const descriptor = this.#metadataDescriptor(fd);
+      this.#posix.chown(descriptor.mount, descriptor.inode, uid, gid);
+    });
+  }
+
+  access(path: string, mode: number, effectiveIds = false): void {
+    if (!Number.isInteger(mode) || mode < 0 || (mode & ~7) !== 0) {
+      throw kernelError("EINVAL");
+    }
+    const requested = mode;
+    const alias = descriptorPathAlias(path);
+    const virtualAlias =
+      alias !== undefined && deviceInfoForDescriptor(this.#getAlias(alias)) !== undefined;
+    if (
+      this.#posix.credentials === undefined ||
+      virtualDevice(path) !== undefined ||
+      virtualAlias ||
+      (alias !== undefined && requested === 0)
+    ) {
+      this.stat(path);
+      if (requested !== 0) throw kernelError("ENOTSUP");
+      return;
+    }
+    const checkSearch = (mount: WasiResolvedPath["mount"], directory: Inode): void => {
+      this.#posix.checkAccess(mount.storage, directory, "directory", 1, effectiveIds);
+    };
+    const resolved = this.resolve(path, { checkSearch });
+
+    if ((requested & 2) !== 0 && resolved.mount.readOnly) throw kernelError("EROFS");
+    if (requested !== 0) {
+      this.#posix.checkAccess(
+        resolved.mount.storage,
+        resolved.inode,
+        resolved.stat.type,
+        requested,
+        effectiveIds,
+      );
+    }
+  }
+
+  mkdir(path: string, mode = 0o777): void {
     withKernelErrors(() => {
       const parent = this.resolveParent(path);
       this.#assertWritable(parent.mount);
-      const inode = runKernelSync(
-        parent.mount.storage.create(parent.parent, parent.name, {
-          type: "directory",
-          exclusive: true,
-        }),
+      const inode = this.createInode(
+        parent.mount,
+        parent.parent,
+        parent.name,
+        { type: "directory", exclusive: true },
+        mode,
       );
       runKernelSync(parent.mount.storage.release(inode));
     });
@@ -154,12 +243,16 @@ export class KernelFileSystemPaths {
       this.#assertWritable(parent.mount);
       if (target.startsWith("/"))
         this.#assertAbsoluteTarget(target, parent.mount.id, parent.mount.path);
-      const inode = runKernelSync(
-        parent.mount.storage.create(parent.parent, parent.name, {
+      const inode = this.createInode(
+        parent.mount,
+        parent.parent,
+        parent.name,
+        {
           type: "symlink",
           exclusive: true,
           target,
-        }),
+        },
+        0o777,
       );
       runKernelSync(parent.mount.storage.release(inode));
     });
@@ -294,10 +387,10 @@ export class KernelFileSystemPaths {
     }
   }
 
-  #checkFinalAbsoluteSymlink(path: string, cwd?: string): void {
+  #checkFinalAbsoluteSymlink(path: string, options: ResolveOptions): void {
     const lookup = this.resolver.resolveOrCreate(path, {
+      ...options,
       followFinal: false,
-      ...(cwd === undefined ? {} : { cwd }),
     });
     if (lookup.kind === "missing" || lookup.path.stat.type !== "symlink") return;
     const unresolved = lookup.path;
@@ -309,6 +402,25 @@ export class KernelFileSystemPaths {
 
   #assertWritable(mount: { readonly readOnly: boolean }): void {
     if (mount.readOnly) throw kernelError("EROFS");
+  }
+
+  #metadataDescriptor(fd: number): WasiDescriptor & {
+    readonly mount: NonNullable<WasiDescriptor["mount"]>;
+    readonly inode: Inode;
+  } {
+    const descriptor = this.#descriptors.get(fd);
+    if (descriptor.mount === undefined || descriptor.inode === undefined) {
+      throw kernelError("EBADF");
+    }
+    this.#assertWritable(descriptor.mount);
+    // There is no separate descriptor right for POSIX mode and owner changes.
+    if ((descriptor.rightsBase & RIGHTS.FD_FILESTAT_SET_TIMES) !== RIGHTS.FD_FILESTAT_SET_TIMES) {
+      throw kernelError("EBADF");
+    }
+    return descriptor as WasiDescriptor & {
+      readonly mount: NonNullable<WasiDescriptor["mount"]>;
+      readonly inode: Inode;
+    };
   }
 
   #truncate(

@@ -3,6 +3,8 @@ import * as NodeAssert from "node:assert";
 import * as NodeAsyncHooks from "node:async_hooks";
 import * as NodeBuffer from "node:buffer";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeInspector from "node:inspector";
+import * as NodeQuerystring from "node:querystring";
 import * as NodeCrypto from "node:crypto";
 import * as NodeDns from "node:dns";
 import * as NodeDnsPromises from "node:dns/promises";
@@ -50,6 +52,8 @@ export function getNativeHostModules() {
       events: NodeEvents,
       http: NodeHttp,
       http2: NodeHttp2,
+      inspector: NodeInspector,
+      querystring: NodeQuerystring,
       https: NodeHttps,
       net: NodeNet,
       perf_hooks: NodePerfHooks,

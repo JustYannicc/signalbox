@@ -6,6 +6,7 @@ export const NODE_BUILTIN_ROUTES = {
   child_process: "kernel-process",
   constants: "facet-context",
   crypto: "workerd",
+  diagnostics_channel: "workerd",
   dns: "workerd",
   "dns/promises": "workerd",
   events: "workerd",

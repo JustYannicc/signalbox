@@ -1,4 +1,4 @@
-import type { KernelFileSystem } from "../KernelFileSystem.ts";
+import type { KernelFileSystem, KernelStat } from "../KernelFileSystem.ts";
 import { WasiMemory } from "../wasi/internal_wasi_memory.ts";
 import { mapErrno } from "../wasi/internal_wasi_calls.ts";
 import { kernelError } from "./KernelFileSystemErrors.ts";
@@ -12,10 +12,20 @@ const EIO = 29;
 const ENOTSUP = 58;
 const AT_CWD = 0xffff_ffff;
 const UINT64_MAX = (1n << 64n) - 1n;
+const MODE_MASK = 0o7777;
+const CHOWN_UNCHANGED = 0xffff_ffff;
+const TYPE_MODE_BITS: Readonly<Record<KernelStat["type"], number>> = {
+  file: 0o100000,
+  directory: 0o040000,
+  symlink: 0o120000,
+  character: 0o020000,
+};
 
 export interface AgentOsFileSystemHostOptions {
   readonly memory: () => WebAssembly.Memory;
   readonly fileSystem: KernelFileSystem;
+  /** Enables AgentOS's tagged hidden-preopen operands for path operations. */
+  readonly agentOsPreopens?: boolean;
 }
 
 export interface AgentOsFileSystemImports {
@@ -30,6 +40,16 @@ export interface AgentOsFileSystemImports {
   fd_size: (fd: number) => bigint;
   fd_blocks: (fd: number) => bigint;
   fd_owner: (fd: number, uidPointer: number, gidPointer: number) => number;
+  fd_chown: (fd: number, uid: number, gid: number) => number;
+  path_chown: (
+    dirFd: number,
+    pathPointer: number,
+    pathLength: number,
+    uid: number,
+    gid: number,
+    followSymlinks: number,
+  ) => number;
+  chmod: (dirFd: number, pathPointer: number, pathLength: number, mode: number) => number;
   ftruncate: (fd: number, length: bigint) => number;
   open_tmpfile: (
     dirFd: number,
@@ -83,19 +103,25 @@ export class AgentOsFileSystemOperations {
   constructor(options: AgentOsFileSystemHostOptions) {
     this.#options = options;
     const imports: AgentOsFileSystemImports = {
-      set_open_mode: (_mode) => ENOTSUP,
-      fd_mode: (_fd) => 0,
-      path_mode: (_dirFd, pathPointer, pathLength, _followSymlinks) =>
-        this.#unsupportedPathMetadata(pathPointer, pathLength, 0),
+      set_open_mode: (mode) =>
+        this.#errno(() => options.fileSystem.setNextCreateMode(mode & MODE_MASK)),
+      fd_mode: (fd) => this.#fdMode(fd),
+      path_mode: (dirFd, pathPointer, pathLength, followSymlinks) =>
+        this.#pathMode(dirFd, pathPointer, pathLength, followSymlinks),
       fd_size: (fd) => this.#fdSize(fd),
       fd_blocks: (_fd) => UINT64_MAX,
       fd_owner: (fd, uidPointer, gidPointer) => this.#fdOwner(fd, uidPointer, gidPointer),
+      fd_chown: (fd, uid, gid) => this.#fdChown(fd, uid, gid),
+      path_chown: (dirFd, pathPointer, pathLength, uid, gid, followSymlinks) =>
+        this.#pathChown(dirFd, pathPointer, pathLength, uid, gid, followSymlinks),
+      chmod: (dirFd, pathPointer, pathLength, mode) =>
+        this.#pathChmod(dirFd, pathPointer, pathLength, mode),
       ftruncate: (fd, length) => this.#errno(() => options.fileSystem.ftruncate(fd >>> 0, length)),
       open_tmpfile: (dirFd, pathPointer, pathLength, _flags, _mode, fdPointer) =>
         this.#openTmpfile(dirFd, pathPointer, pathLength, fdPointer),
       set_open_direct: (_enabled) => ENOTSUP,
-      path_access: (dirFd, pathPointer, pathLength, mode, _effectiveIds) =>
-        this.#pathAccess(dirFd, pathPointer, pathLength, mode),
+      path_access: (dirFd, pathPointer, pathLength, mode, effectiveIds) =>
+        this.#pathAccess(dirFd, pathPointer, pathLength, mode, effectiveIds),
       path_size: (dirFd, pathPointer, pathLength, followSymlinks) =>
         this.#pathSize(dirFd, pathPointer, pathLength, followSymlinks),
       path_blocks: (_dirFd, pathPointer, pathLength, _followSymlinks) =>
@@ -104,9 +130,93 @@ export class AgentOsFileSystemOperations {
         this.#pathOwner(dirFd, pathPointer, pathLength, followSymlinks, uidPointer, gidPointer),
       fd_link: (fd, newDirFd, pathPointer, pathLength) =>
         this.#linkFd(fd, newDirFd, pathPointer, pathLength),
-      fchmod: (fd, _mode) => this.#unsupportedDescriptorMutation(fd),
+      fchmod: (fd, mode) =>
+        this.#errno(() => options.fileSystem.fchmod(fd >>> 0, mode & MODE_MASK)),
     };
     this.imports = Object.freeze(imports);
+  }
+
+  #fdMode(fd: number): number {
+    try {
+      const descriptor = fd >>> 0;
+      const stat = this.#options.fileSystem.fstat(descriptor);
+      const metadata = this.#options.fileSystem.getPosixMetadataForFd(descriptor);
+      return this.#modeBits(stat.type, metadata.mode);
+    } catch {
+      // This value-returning ABI uses zero for invalid fds and unknown metadata.
+      return 0;
+    }
+  }
+
+  #pathMode(
+    dirFd: number,
+    pathPointer: number,
+    pathLength: number,
+    followSymlinks: number,
+  ): number {
+    try {
+      const memory = this.#memory();
+      const path = this.#readPath(memory, pathPointer, pathLength);
+      return this.#withPath(dirFd, path, (fileSystem) => {
+        const stat = followSymlinks >>> 0 !== 0 ? fileSystem.stat(path) : fileSystem.lstat(path);
+        const metadata = fileSystem.getPosixMetadata(path, followSymlinks >>> 0 !== 0);
+        return this.#modeBits(stat.type, metadata.mode);
+      });
+    } catch {
+      // This value-returning ABI uses zero for invalid paths and unknown metadata.
+      return 0;
+    }
+  }
+
+  #pathChmod(dirFd: number, pathPointer: number, pathLength: number, mode: number): number {
+    try {
+      const path = this.#readPath(this.#memory(), pathPointer, pathLength);
+      this.#withPath(dirFd, path, (fileSystem) => fileSystem.chmod(path, mode & MODE_MASK));
+      return 0;
+    } catch (error) {
+      return this.#toErrno(error);
+    }
+  }
+
+  #fdChown(fd: number, uidBits: number, gidBits: number): number {
+    try {
+      const descriptor = fd >>> 0;
+      const current = this.#options.fileSystem.getPosixMetadataForFd(descriptor);
+      this.#options.fileSystem.fchown(
+        descriptor,
+        uidBits >>> 0 === CHOWN_UNCHANGED ? current.uid : uidBits >>> 0,
+        gidBits >>> 0 === CHOWN_UNCHANGED ? current.gid : gidBits >>> 0,
+      );
+      return 0;
+    } catch (error) {
+      return this.#toErrno(error);
+    }
+  }
+
+  #pathChown(
+    dirFd: number,
+    pathPointer: number,
+    pathLength: number,
+    uidBits: number,
+    gidBits: number,
+    followSymlinks: number,
+  ): number {
+    try {
+      const path = this.#readPath(this.#memory(), pathPointer, pathLength);
+      this.#withPath(dirFd, path, (fileSystem) => {
+        const follow = followSymlinks >>> 0 !== 0;
+        const current = fileSystem.getPosixMetadata(path, follow);
+        fileSystem.chown(
+          path,
+          uidBits >>> 0 === CHOWN_UNCHANGED ? current.uid : uidBits >>> 0,
+          gidBits >>> 0 === CHOWN_UNCHANGED ? current.gid : gidBits >>> 0,
+          follow,
+        );
+      });
+      return 0;
+    } catch (error) {
+      return this.#toErrno(error);
+    }
   }
 
   #fdSize(fd: number): bigint {
@@ -125,10 +235,28 @@ export class AgentOsFileSystemOperations {
   ): bigint {
     try {
       const path = this.#readPath(this.#memory(), pathPointer, pathLength);
-      return this.#resolvePath(dirFd, path, followSymlinks >>> 0 !== 0).stat.size;
+      return this.#withPath(
+        dirFd,
+        path,
+        (fileSystem) =>
+          (followSymlinks >>> 0 !== 0 ? fileSystem.stat(path) : fileSystem.lstat(path)).size,
+      );
     } catch {
       return UINT64_MAX;
     }
+  }
+
+  #unsupportedPathMetadata<T extends number | bigint>(
+    pathPointer: number,
+    pathLength: number,
+    sentinel: T,
+  ): T {
+    try {
+      this.#readPath(this.#memory(), pathPointer, pathLength);
+    } catch {
+      // The value-returning ABI has no errno channel for an invalid path.
+    }
+    return sentinel;
   }
 
   #fdOwner(fd: number, uidPointer: number, gidPointer: number): number {
@@ -137,8 +265,10 @@ export class AgentOsFileSystemOperations {
       return EFAULT;
     }
     try {
-      this.#options.fileSystem.fstat(fd >>> 0);
-      return ENOTSUP;
+      const metadata = this.#options.fileSystem.getPosixMetadataForFd(fd >>> 0);
+      memory.u32(uidPointer, metadata.uid);
+      memory.u32(gidPointer, metadata.gid);
+      return 0;
     } catch (error) {
       return this.#toErrno(error);
     }
@@ -158,19 +288,33 @@ export class AgentOsFileSystemOperations {
     }
     try {
       const path = this.#readPath(memory, pathPointer, pathLength);
-      this.#resolvePath(dirFd, path, followSymlinks >>> 0 !== 0, dirFd >>> 0 === AT_CWD);
-      return ENOTSUP;
+      const owner = this.#withPath(dirFd, path, (fileSystem) =>
+        fileSystem.getPosixMetadata(path, followSymlinks >>> 0 !== 0),
+      );
+      memory.u32(uidPointer, owner.uid);
+      memory.u32(gidPointer, owner.gid);
+      return 0;
     } catch (error) {
       return this.#toErrno(error);
     }
   }
 
-  #pathAccess(dirFd: number, pathPointer: number, pathLength: number, mode: number): number {
+  #pathAccess(
+    dirFd: number,
+    pathPointer: number,
+    pathLength: number,
+    mode: number,
+    effectiveIds: number,
+  ): number {
     try {
       if (((mode >>> 0) & ~7) !== 0) return EINVAL;
+      if (effectiveIds !== 0 && effectiveIds !== 1) return EINVAL;
       const path = this.#readPath(this.#memory(), pathPointer, pathLength);
-      this.#resolvePath(dirFd, path, true);
-      return ENOTSUP;
+      const requested = mode >>> 0;
+      this.#withPath(dirFd, path, (fileSystem) =>
+        fileSystem.access(path, requested, effectiveIds === 1),
+      );
+      return 0;
     } catch (error) {
       return this.#toErrno(error);
     }
@@ -202,30 +346,7 @@ export class AgentOsFileSystemOperations {
     }
   }
 
-  #unsupportedDescriptorMutation(fd: number): number {
-    try {
-      this.#options.fileSystem.fstat(fd >>> 0);
-      return ENOTSUP;
-    } catch (error) {
-      return this.#toErrno(error);
-    }
-  }
-
-  #unsupportedPathMetadata<T extends number | bigint>(
-    pathPointer: number,
-    pathLength: number,
-    sentinel: T,
-  ): T {
-    try {
-      this.#readPath(this.#memory(), pathPointer, pathLength);
-    } catch {
-      // The value-returning ABI has no errno channel; it uses the same
-      // unavailable sentinel for a bad path and for absent metadata.
-    }
-    return sentinel;
-  }
-
-  #resolvePath(dirFd: number, path: string, followFinal: boolean, allowCwd = false) {
+  #resolvePath(dirFd: number, path: string, followFinal: boolean, allowCwd = true) {
     if (path.startsWith("/") || (allowCwd && dirFd >>> 0 === AT_CWD)) {
       return this.#options.fileSystem.resolve(path, { followFinal });
     }
@@ -243,6 +364,17 @@ export class AgentOsFileSystemOperations {
     } finally {
       anchored.dispose();
     }
+  }
+
+  #withPath<T>(dirFd: number, path: string, operation: (fileSystem: KernelFileSystem) => T): T {
+    if (path.startsWith("/") || dirFd >>> 0 === AT_CWD) {
+      return operation(this.#options.fileSystem);
+    }
+    return this.#withAnchoredDirectory(dirFd, operation);
+  }
+
+  #modeBits(type: KernelStat["type"], permissions: number): number {
+    return TYPE_MODE_BITS[type] | (permissions & MODE_MASK);
   }
 
   #readPath(memory: WasiMemory, pointer: number, length: number): string {
