@@ -130,8 +130,10 @@ class PoolContainerReadinessTimeoutError extends Schema.TaggedError<PoolContaine
 }
 
 /** A failed startup probe retries on the Effect clock and keeps its failure typed. */
-export const waitUntilReady = (container: Container) =>
+export const waitUntilReady = (container: Container, timeoutMs = READY_TIMEOUT_MS) =>
   Effect.gen(function* () {
+    if (timeoutMs <= 0) return yield* new PoolContainerReadinessTimeoutError();
+
     const port = container.getTcpPort(CLI_PROXY_API_PORT);
     const probe = Effect.gen(function* () {
       if (!container.running) return yield* new PoolContainerExitedDuringStartError();
@@ -149,7 +151,7 @@ export const waitUntilReady = (container: Container) =>
         schedule: Schedule.spaced(Duration.millis(READY_POLL_MS)),
         while: Schema.is(PoolContainerReadinessProbeError),
       }),
-      Effect.timeoutOption(Duration.millis(READY_TIMEOUT_MS)),
+      Effect.timeoutOption(Duration.millis(timeoutMs)),
     );
     if (Option.isNone(ready)) return yield* new PoolContainerReadinessTimeoutError();
   });
@@ -292,7 +294,8 @@ export const layerCloudflare = (input: {
     container.start({ enableInternet: true, env: containerEnv(store) });
     await container.setInactivityTimeout(BACKSTOP_TIMEOUT_MS);
     // This promise-shaped fetch adapter bridges Cloudflare's Container API to the Effect schedule.
-    await Effect.runPromise(waitUntilReady(container));
+    const remainingReadyMs = Math.max(0, READY_TIMEOUT_MS - (performance.now() - startedAt));
+    await Effect.runPromise(waitUntilReady(container, remainingReadyMs));
     log("pool.container.started", {
       cliProxyApi: unknownRelease,
       readyMs: Math.round(performance.now() - startedAt),

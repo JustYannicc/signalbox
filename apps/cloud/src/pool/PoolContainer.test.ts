@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
@@ -113,6 +114,55 @@ describe("PoolContainer", () => {
       const error = yield* Effect.flip(Fiber.join(fiber));
       expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
       expect(probes).toBeGreaterThan(1);
+    });
+  });
+
+  it.effect("uses only the readiness budget left after startup setup", () => {
+    let probes = 0;
+    const fake = fakeContainer(
+      async () => new Response("unused"),
+      undefined,
+      async () => {
+        probes += 1;
+        throw new Error("not listening");
+      },
+    );
+    fake.container.start({ enableInternet: true });
+    const setupMs = 20_000;
+    return Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* TestClock.adjust(setupMs);
+      const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+      const remainingMs = Math.max(0, PoolContainer.READY_TIMEOUT_MS - elapsedMs);
+      const fiber = yield* Effect.forkChild(
+        PoolContainer.waitUntilReady(fake.container, remainingMs),
+      );
+      yield* TestClock.adjust(remainingMs);
+      const error = yield* Effect.flip(Fiber.join(fiber));
+      expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
+      expect(probes).toBeGreaterThan(1);
+    });
+  });
+
+  it.effect("does not probe when startup setup has exhausted the readiness budget", () => {
+    let probes = 0;
+    const fake = fakeContainer(
+      async () => new Response("unused"),
+      undefined,
+      async () => {
+        probes += 1;
+        throw new Error("not listening");
+      },
+    );
+    fake.container.start({ enableInternet: true });
+    return Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* TestClock.adjust(PoolContainer.READY_TIMEOUT_MS);
+      const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+      const remainingMs = Math.max(0, PoolContainer.READY_TIMEOUT_MS - elapsedMs);
+      const error = yield* Effect.flip(PoolContainer.waitUntilReady(fake.container, remainingMs));
+      expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
+      expect(probes).toBe(0);
     });
   });
 
