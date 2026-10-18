@@ -14,7 +14,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function binaryHash(path: string) {
+export async function binaryHash(path: string) {
   const hash = NodeCrypto.createHash("sha256");
   for await (const chunk of NodeFS.createReadStream(path)) hash.update(chunk);
   return hash.digest("hex");
