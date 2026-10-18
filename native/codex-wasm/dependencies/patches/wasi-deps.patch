@@ -1,0 +1,2440 @@
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/crates/libs/wasi-http/Cargo.toml b/crates/libs/wasi-http/Cargo.toml
+--- a/crates/libs/wasi-http/Cargo.toml	2026-09-29 00:28:55
++++ b/crates/libs/wasi-http/Cargo.toml	2026-10-15 00:40:58
+@@ -1,8 +1,8 @@
+ [package]
+ name = "agentos-wasi-http"
+-version.workspace = true
+-edition.workspace = true
+-license.workspace = true
++version = "0.0.0"
++edition = "2021"
++license = "Apache-2.0"
+ description = "Minimal HTTP/1.1 client for WASI using host_net TCP/TLS imports"
+ 
+ [dependencies]
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/crates/libs/wasi-pty/Cargo.toml b/crates/libs/wasi-pty/Cargo.toml
+--- a/crates/libs/wasi-pty/Cargo.toml	2026-09-29 00:28:55
++++ b/crates/libs/wasi-pty/Cargo.toml	2026-10-15 00:40:58
+@@ -1,8 +1,8 @@
+ [package]
+ name = "agentos-wasi-pty"
+-version.workspace = true
+-edition.workspace = true
+-license.workspace = true
++version = "0.0.0"
++edition = "2021"
++license = "Apache-2.0"
+ description = "WASI PTY-based process management via host_process FFI for interactive sessions"
+ 
+ [dependencies]
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/crates/libs/wasi-spawn/Cargo.toml b/crates/libs/wasi-spawn/Cargo.toml
+--- a/crates/libs/wasi-spawn/Cargo.toml	2026-09-29 00:28:55
++++ b/crates/libs/wasi-spawn/Cargo.toml	2026-10-15 00:40:58
+@@ -1,8 +1,8 @@
+ [package]
+ name = "agentos-wasi-spawn"
+-version.workspace = true
+-edition.workspace = true
+-license.workspace = true
++version = "0.0.0"
++edition = "2021"
++license = "Apache-2.0"
+ description = "WASI process spawning via host_process FFI with pipe-based stdout/stderr capture"
+ 
+ [dependencies]
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/crates/wasi-ext/Cargo.toml b/crates/wasi-ext/Cargo.toml
+--- a/crates/wasi-ext/Cargo.toml	2026-09-29 00:28:55
++++ b/crates/wasi-ext/Cargo.toml	2026-10-15 00:40:58
+@@ -1,8 +1,8 @@
+ [package]
+ name = "wasi-ext"
+-version.workspace = true
+-edition.workspace = true
+-license.workspace = true
++version = "0.0.0"
++edition = "2021"
++license = "Apache-2.0"
+ description = "Custom WASM import bindings for wasmVM host syscalls"
+ 
+ [lib]
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/gethostname-1.1.0/src/lib.rs b/patched/gethostname-1.1.0/src/lib.rs
+--- a/patched/gethostname-1.1.0/src/lib.rs	2026-10-15 00:51:46
++++ b/patched/gethostname-1.1.0/src/lib.rs	2026-10-15 00:40:58
+@@ -52,6 +52,11 @@
+         use std::os::unix::ffi::OsStringExt;
+         OsString::from_vec(rustix::system::uname().nodename().to_bytes().to_vec())
+     }
++    #[cfg(target_os = "wasi")]
++    {
++        // wasm32-wasip1 (agentOS): no hostname syscall; honor $HOSTNAME.
++        return std::env::var_os("HOSTNAME").unwrap_or_else(|| OsString::from("agentos"));
++    }
+     #[cfg(windows)]
+     {
+         get_computer_physical_dns_hostname()
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/gix-fs-0.19.2/src/capabilities.rs b/patched/gix-fs-0.19.2/src/capabilities.rs
+--- a/patched/gix-fs-0.19.2/src/capabilities.rs	2026-10-15 00:51:47
++++ b/patched/gix-fs-0.19.2/src/capabilities.rs	2026-10-15 00:51:27
+@@ -27,7 +27,7 @@
+     }
+ }
+ 
+-#[cfg(all(unix, not(target_os = "macos")))]
++#[cfg(any(all(unix, not(target_os = "macos")), target_os = "wasi"))]
+ impl Default for Capabilities {
+     fn default() -> Self {
+         Capabilities {
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/gix-fs-0.19.2/src/lib.rs b/patched/gix-fs-0.19.2/src/lib.rs
+--- a/patched/gix-fs-0.19.2/src/lib.rs	2026-10-15 00:51:47
++++ b/patched/gix-fs-0.19.2/src/lib.rs	2026-10-15 00:51:27
+@@ -1,6 +1,7 @@
+ //! A crate with file-system specific utilities.
+ #![deny(rust_2018_idioms, missing_docs)]
+ #![forbid(unsafe_code)]
++#![cfg_attr(target_os = "wasi", feature(wasi_ext))]
+ 
+ use std::path::PathBuf;
+ 
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/gix-fs-0.19.2/src/symlink.rs b/patched/gix-fs-0.19.2/src/symlink.rs
+--- a/patched/gix-fs-0.19.2/src/symlink.rs	2026-10-15 00:51:47
++++ b/patched/gix-fs-0.19.2/src/symlink.rs	2026-10-15 00:51:27
+@@ -5,7 +5,11 @@
+ /// Note that `original` doesn't have to exist.
+ #[cfg(not(windows))]
+ pub fn create(original: &Path, link: &Path) -> io::Result<()> {
+-    std::os::unix::fs::symlink(original, link)
++    #[cfg(not(target_os = "wasi"))]
++    return std::os::unix::fs::symlink(original, link);
++    // agentOS wasm32-wasip1: WASI path_symlink.
++    #[cfg(target_os = "wasi")]
++    return std::os::wasi::fs::symlink_path(original, link);
+ }
+ 
+ /// Remove a symlink.
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/hyper-util-0.1.20/Cargo.toml b/patched/hyper-util-0.1.20/Cargo.toml
+--- a/patched/hyper-util-0.1.20/Cargo.toml	2026-10-15 00:51:46
++++ b/patched/hyper-util-0.1.20/Cargo.toml	2026-10-15 00:40:58
+@@ -191,7 +191,7 @@
+ [dependencies.pin-project-lite]
+ version = "0.2.4"
+ 
+-[dependencies.socket2]
++[target.'cfg(not(target_os = "wasi"))'.dependencies.socket2]
+ version = ">=0.5.9, <0.7"
+ features = ["all"]
+ optional = true
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/hyper-util-0.1.20/src/client/legacy/connect/http.rs b/patched/hyper-util-0.1.20/src/client/legacy/connect/http.rs
+--- a/patched/hyper-util-0.1.20/src/client/legacy/connect/http.rs	2026-10-15 00:51:46
++++ b/patched/hyper-util-0.1.20/src/client/legacy/connect/http.rs	2026-10-15 00:40:58
+@@ -12,6 +12,7 @@
+ use futures_util::future::Either;
+ use http::uri::{Scheme, Uri};
+ use pin_project_lite::pin_project;
++#[cfg(not(target_os = "wasi"))]
+ use socket2::TcpKeepalive;
+ use tokio::net::{TcpSocket, TcpStream};
+ use tokio::time::Sleep;
+@@ -99,6 +100,7 @@
+     retries: Option<u32>,
+ }
+ 
++#[cfg(not(target_os = "wasi"))]
+ impl TcpKeepaliveConfig {
+     /// Converts into a `socket2::TcpKeealive` if there is any keep alive configuration.
+     fn into_tcpkeepalive(self) -> Option<TcpKeepalive> {
+@@ -791,6 +793,7 @@
+     }
+ }
+ 
++#[cfg(not(target_os = "wasi"))]
+ fn bind_local_address(
+     socket: &socket2::Socket,
+     dst_addr: &SocketAddr,
+@@ -819,6 +822,20 @@
+     Ok(())
+ }
+ 
++// agentOS wasm32-wasip1: no socket creation in WASI preview 1 (and no socket2).
++#[cfg(target_os = "wasi")]
++fn connect(
++    _addr: &SocketAddr,
++    _config: &Config,
++    _connect_timeout: Option<Duration>,
++) -> Result<std::future::Ready<Result<TcpStream, ConnectError>>, ConnectError> {
++    Err(ConnectError::new(
++        "tcp connect unsupported on wasm32-wasip1",
++        io::Error::from(io::ErrorKind::Unsupported),
++    ))
++}
++
++#[cfg(not(target_os = "wasi"))]
+ fn connect(
+     addr: &SocketAddr,
+     config: &Config,
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/libc-0.2.186/src/wasi/mod.rs b/patched/libc-0.2.186/src/wasi/mod.rs
+--- a/patched/libc-0.2.186/src/wasi/mod.rs	2026-10-15 00:51:47
++++ b/patched/libc-0.2.186/src/wasi/mod.rs	2026-10-15 00:40:58
+@@ -1091,7 +1091,9 @@
+ }
+ 
+ cfg_if! {
+-    if #[cfg(not(target_env = "p1"))] {
++    // agentOS: its patched wasi-libc implements the preview-2 BSD socket surface
++    // (host_net) for preview 1 too, so expose the same declarations on p1.
++    if #[cfg(target_os = "wasi")] {
+         mod p2;
+         pub use self::p2::*;
+     }
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/opentelemetry-http-0.31.0/src/lib.rs b/patched/opentelemetry-http-0.31.0/src/lib.rs
+--- a/patched/opentelemetry-http-0.31.0/src/lib.rs	2026-10-15 00:51:47
++++ b/patched/opentelemetry-http-0.31.0/src/lib.rs	2026-10-15 00:40:58
+@@ -107,7 +107,8 @@
+         }
+     }
+ 
+-    #[cfg(not(target_arch = "wasm32"))]
++    // agentOS: the wasm32-wasip1 reqwest shim provides a blocking client too.
++    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+     #[cfg(feature = "reqwest-blocking")]
+     #[async_trait]
+     impl HttpClient for reqwest::blocking::Client {
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/rama-net-0.3.0-alpha.4/src/socket/opts.rs b/patched/rama-net-0.3.0-alpha.4/src/socket/opts.rs
+--- a/patched/rama-net-0.3.0-alpha.4/src/socket/opts.rs	2026-10-15 00:51:47
++++ b/patched/rama-net-0.3.0-alpha.4/src/socket/opts.rs	2026-10-15 00:40:58
+@@ -38,7 +38,10 @@
+         match value {
+             Domain::IPv4 => Self::IPV4,
+             Domain::IPv6 => Self::IPV6,
++            #[cfg(not(target_os = "wasi"))]
+             Domain::Unix => Self::UNIX,
++            #[cfg(target_os = "wasi")]
++            Domain::Unix => panic!("agentOS wasm32-wasip1: unsupported socket option"),
+         }
+     }
+ }
+@@ -80,8 +83,14 @@
+ impl From<Protocol> for SocketProtocol {
+     fn from(value: Protocol) -> Self {
+         match value {
++            #[cfg(not(target_os = "wasi"))]
+             Protocol::ICMPV4 => Self::ICMPV4,
++            #[cfg(target_os = "wasi")]
++            Protocol::ICMPV4 => panic!("agentOS wasm32-wasip1: unsupported socket option"),
++            #[cfg(not(target_os = "wasi"))]
+             Protocol::ICMPV6 => Self::ICMPV6,
++            #[cfg(target_os = "wasi")]
++            Protocol::ICMPV6 => panic!("agentOS wasm32-wasip1: unsupported socket option"),
+             Protocol::TCP => Self::TCP,
+             Protocol::UDP => Self::UDP,
+             #[cfg(target_os = "linux")]
+@@ -140,12 +149,16 @@
+             #[cfg(target_os = "linux")]
+             #[cfg_attr(docsrs, doc(cfg(target_os = "linux")))]
+             Type::DCCP => Self::DCCP,
+-            #[cfg(not(target_os = "espidf"))]
+             #[cfg_attr(docsrs, doc(cfg(not(target_os = "espidf"))))]
++            #[cfg(all(not(target_os = "wasi"), not(target_os = "espidf")))]
+             Type::SequencePacket => Self::SEQPACKET,
+-            #[cfg(not(any(target_os = "redox", target_os = "espidf")))]
++            #[cfg(all(target_os = "wasi", not(target_os = "espidf")))]
++            Type::SequencePacket => panic!("agentOS wasm32-wasip1: unsupported socket option"),
+             #[cfg_attr(docsrs, doc(cfg(any(target_os = "redox", target_os = "espidf"))))]
++            #[cfg(all(not(target_os = "wasi"), not(any(target_os = "redox", target_os = "espidf"))))]
+             Type::Raw => Self::RAW,
++            #[cfg(all(target_os = "wasi", not(any(target_os = "redox", target_os = "espidf"))))]
++            Type::Raw => panic!("agentOS wasm32-wasip1: unsupported socket option"),
+         }
+     }
+ }
+@@ -1090,7 +1103,7 @@
+         if let Some(linger) = self.linger {
+             socket.set_linger(Some(linger))?;
+         }
+-        #[cfg(not(target_os = "redox"))]
++        #[cfg(all(not(target_os = "wasi"), not(target_os = "redox")))]
+         if let Some(oob) = self.out_of_band_inline {
+             socket.set_out_of_band_inline(oob)?;
+         }
+@@ -1113,18 +1126,25 @@
+         if let Some(duration) = self.write_timeout {
+             socket.set_write_timeout(Some(duration))?;
+         }
+-        #[cfg(not(any(target_os = "redox", target_os = "espidf")))]
++        #[cfg(all(not(target_os = "wasi"), not(any(target_os = "redox", target_os = "espidf"))))]
+         if let Some(header_included) = self.header_included {
+             socket.set_header_included_v4(header_included)?;
+         }
+-        #[cfg(not(any(
++        #[cfg(all(not(target_os = "wasi"), not(any(
+             target_os = "redox",
+             target_os = "espidf",
+             target_os = "openbsd",
+             target_os = "freebsd",
+             target_os = "dragonfly",
+             target_os = "netbsd"
+-        )))]
++        ))))]
++
++
++
++
++
++
++
+         if let Some(header_included) = self.header_included {
+             socket.set_header_included_v6(header_included)?;
+         }
+@@ -1135,13 +1155,19 @@
+         if let Some(ttl) = self.ttl {
+             socket.set_ttl_v4(ttl)?;
+         }
+-        #[cfg(not(any(
++        #[cfg(all(not(target_os = "wasi"), not(any(
+             target_os = "fuchsia",
+             target_os = "redox",
+             target_os = "solaris",
+             target_os = "illumos",
+             target_os = "haiku",
+-        )))]
++        ))))]
++
++
++
++
++
++
+         if let Some(tos) = self.tos {
+             socket.set_tos_v4(tos)?;
+         }
+@@ -1160,6 +1186,7 @@
+             target_os = "espidf",
+             target_os = "vita",
+         )))]
++        #[cfg(not(target_os = "wasi"))]
+         if let Some(recv_tos) = self.recv_tos {
+             socket.set_recv_tos_v4(recv_tos)?;
+         }
+@@ -1172,6 +1199,7 @@
+         if let Some(ttl) = self.multicast_ttl_v4 {
+             socket.set_multicast_ttl_v4(ttl)?;
+         }
++        #[cfg(not(target_os = "wasi"))]
+         if let Some(hops) = self.multicast_hops_v6 {
+             socket.set_multicast_hops_v6(hops)?;
+         }
+@@ -1183,9 +1211,11 @@
+         if let Some(all) = self.multicast_all_v6 {
+             socket.set_multicast_all_v6(all)?;
+         }
++        #[cfg(not(target_os = "wasi"))]
+         if let Some(interface) = self.multicast_interface_v4.as_ref() {
+             socket.set_multicast_if_v4(interface)?;
+         }
++        #[cfg(not(target_os = "wasi"))]
+         if let Some(interface) = self.multicast_interface_v6 {
+             socket.set_multicast_if_v6(interface)?;
+         }
+@@ -1210,6 +1240,7 @@
+             target_os = "espidf",
+             target_os = "vita",
+         )))]
++        #[cfg(not(target_os = "wasi"))]
+         if let Some(recv) = self.recv_hoplimit_v6 {
+             socket.set_recv_hoplimit_v6(recv)?;
+         }
+@@ -1228,6 +1259,7 @@
+             target_os = "espidf",
+             target_os = "vita",
+         )))]
++        #[cfg(not(target_os = "wasi"))]
+         if let Some(recv) = self.recv_tclass_v6 {
+             socket.set_recv_tclass_v6(recv)?;
+         }
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/rama-tcp-0.3.0-alpha.4/src/server/listener.rs b/patched/rama-tcp-0.3.0-alpha.4/src/server/listener.rs
+--- a/patched/rama-tcp-0.3.0-alpha.4/src/server/listener.rs	2026-10-15 00:51:47
++++ b/patched/rama-tcp-0.3.0-alpha.4/src/server/listener.rs	2026-10-15 00:40:58
+@@ -77,8 +77,8 @@
+         Ok(TcpListener { inner })
+     }
+ 
+-    #[cfg(any(target_os = "windows", target_family = "unix"))]
+-    #[cfg_attr(docsrs, doc(cfg(any(target_os = "windows", target_family = "unix"))))]
++    #[cfg(any(target_os = "windows", target_family = "unix", target_os = "wasi"))]
++    #[cfg_attr(docsrs, doc(cfg(any(target_os = "windows", target_family = "unix", target_os = "wasi"))))]
+     /// Creates a new TcpListener, which will be bound to the specified socket.
+     ///
+     /// The returned listener is ready for accepting connections.
+@@ -172,8 +172,8 @@
+         TcpListenerBuilder::default().bind_address(addr).await
+     }
+ 
+-    #[cfg(any(target_os = "windows", target_family = "unix"))]
+-    #[cfg_attr(docsrs, doc(cfg(any(target_os = "windows", target_family = "unix"))))]
++    #[cfg(any(target_os = "windows", target_family = "unix", target_os = "wasi"))]
++    #[cfg_attr(docsrs, doc(cfg(any(target_os = "windows", target_family = "unix", target_os = "wasi"))))]
+     /// Creates a new TcpListener, which will be bound to the specified socket.
+     ///
+     /// The returned listener is ready for accepting connections.
+@@ -260,7 +260,7 @@
+     }
+ }
+ 
+-#[cfg(any(target_os = "windows", target_family = "unix"))]
++#[cfg(any(target_os = "windows", target_family = "unix", target_os = "wasi"))]
+ impl TryFrom<rama_net::socket::core::Socket> for TcpListener {
+     type Error = std::io::Error;
+ 
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/rama-udp-0.3.0-alpha.4/src/lib.rs b/patched/rama-udp-0.3.0-alpha.4/src/lib.rs
+--- a/patched/rama-udp-0.3.0-alpha.4/src/lib.rs	2026-10-15 00:51:47
++++ b/patched/rama-udp-0.3.0-alpha.4/src/lib.rs	2026-10-15 00:40:58
+@@ -27,5 +27,6 @@
+ #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+ pub use socket::bind_udp_with_device;
+ 
++#[cfg(not(target_os = "wasi"))]
+ #[doc(inline)]
+ pub use tokio_util::udp::UdpFramed;
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/rama-udp-0.3.0-alpha.4/src/socket.rs b/patched/rama-udp-0.3.0-alpha.4/src/socket.rs
+--- a/patched/rama-udp-0.3.0-alpha.4/src/socket.rs	2026-10-15 00:51:47
++++ b/patched/rama-udp-0.3.0-alpha.4/src/socket.rs	2026-10-15 00:40:58
+@@ -26,8 +26,8 @@
+     Ok(socket)
+ }
+ 
+-#[cfg(any(target_os = "windows", target_family = "unix"))]
+-#[cfg_attr(docsrs, doc(cfg(any(target_os = "windows", target_family = "unix"))))]
++#[cfg(any(target_os = "windows", target_family = "unix", target_os = "wasi"))]
++#[cfg_attr(docsrs, doc(cfg(any(target_os = "windows", target_family = "unix", target_os = "wasi"))))]
+ /// Creates a new [`UdpSocket`], which will be bound to the specified socket.
+ ///
+ /// The returned socket is ready for accepting connections and connecting to others.
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/rustls-native-certs-0.8.3/src/lib.rs b/patched/rustls-native-certs-0.8.3/src/lib.rs
+--- a/patched/rustls-native-certs-0.8.3/src/lib.rs	2026-10-15 00:51:46
++++ b/patched/rustls-native-certs-0.8.3/src/lib.rs	2026-10-15 00:40:58
+@@ -43,6 +43,17 @@
+ #[cfg(target_os = "macos")]
+ use macos as platform;
+ 
++// wasm32-wasip1: no native OS cert store. TLS is brokered host-side by the
++// agentos VM (host CAs), so the in-guest rustls never validates certificates.
++// Provide an empty native-cert loader so the crate compiles.
++#[cfg(target_os = "wasi")]
++mod platform {
++    use super::CertificateResult;
++    pub fn load_native_certs() -> CertificateResult {
++        CertificateResult::default()
++    }
++}
++
+ /// Load root certificates found in the platform's native certificate store.
+ ///
+ /// ## Environment Variables
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/socket2-0.6.5/src/lib.rs b/patched/socket2-0.6.5/src/lib.rs
+--- a/patched/socket2-0.6.5/src/lib.rs	2026-10-15 00:51:47
++++ b/patched/socket2-0.6.5/src/lib.rs	2026-10-15 00:40:58
+@@ -109,7 +109,7 @@
+     ($from: ty, $for: ty) => {
+         impl From<$from> for $for {
+             fn from(socket: $from) -> $for {
+-                #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++                #[cfg(any(unix, target_os = "wasi"))]
+                 unsafe {
+                     <$for>::from_raw_fd(socket.into_raw_fd())
+                 }
+@@ -177,13 +177,13 @@
+ mod sockref;
+ 
+ #[cfg_attr(
+-    any(unix, all(target_os = "wasi", not(target_env = "p1"))),
++    any(unix, target_os = "wasi"),
+     path = "sys/unix.rs"
+ )]
+ #[cfg_attr(windows, path = "sys/windows.rs")]
+ mod sys;
+ 
+-#[cfg(not(any(windows, unix, all(target_os = "wasi", not(target_env = "p1")))))]
++#[cfg(not(any(windows, unix, target_os = "wasi")))]
+ compile_error!("Socket2 doesn't support the compile target");
+ 
+ use sys::c_int;
+@@ -542,7 +542,7 @@
+         target_os = "windows",
+         target_os = "cygwin",
+         target_os = "nuttx",
+-        all(target_os = "wasi", not(target_env = "p1")),
++        target_os = "wasi",
+     ))]
+     pub const fn with_interval(self, interval: Duration) -> Self {
+         Self {
+@@ -574,7 +574,7 @@
+             target_os = "cygwin",
+             target_os = "windows",
+             target_os = "nuttx",
+-            all(target_os = "wasi", not(target_env = "p1")),
++            target_os = "wasi",
+         )
+     ))]
+     pub const fn with_retries(self, retries: u32) -> Self {
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/socket2-0.6.5/src/sockaddr.rs b/patched/socket2-0.6.5/src/sockaddr.rs
+--- a/patched/socket2-0.6.5/src/sockaddr.rs	2026-10-15 00:51:47
++++ b/patched/socket2-0.6.5/src/sockaddr.rs	2026-10-15 00:40:58
+@@ -298,7 +298,7 @@
+                 ip,
+                 port,
+                 addr.sin6_flowinfo,
+-                #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++                #[cfg(any(unix, target_os = "wasi"))]
+                 addr.sin6_scope_id,
+                 #[cfg(windows)]
+                 unsafe {
+@@ -393,7 +393,7 @@
+             storage.sin6_port = addr.port().to_be();
+             storage.sin6_addr = crate::sys::to_in6_addr(addr.ip());
+             storage.sin6_flowinfo = addr.flowinfo();
+-            #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++            #[cfg(any(unix, target_os = "wasi"))]
+             {
+                 storage.sin6_scope_id = addr.scope_id();
+             }
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/socket2-0.6.5/src/socket.rs b/patched/socket2-0.6.5/src/socket.rs
+--- a/patched/socket2-0.6.5/src/socket.rs	2026-10-15 00:51:47
++++ b/patched/socket2-0.6.5/src/socket.rs	2026-10-15 00:40:58
+@@ -14,7 +14,7 @@
+ #[cfg(not(any(target_os = "nto", target_os = "nuttx")))]
+ use std::net::Ipv6Addr;
+ use std::net::{self, Ipv4Addr, Shutdown};
+-#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++#[cfg(any(unix, target_os = "wasi"))]
+ use std::os::fd::{FromRawFd, IntoRawFd};
+ #[cfg(windows)]
+ use std::os::windows::io::{FromRawSocket, IntoRawSocket};
+@@ -220,7 +220,7 @@
+         match res {
+             Ok(()) => return Ok(()),
+             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+-            #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++            #[cfg(any(unix, target_os = "wasi"))]
+             Err(ref e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
+             Err(e) => return Err(e),
+         }
+@@ -367,7 +367,7 @@
+     /// On Windows it is not possible retrieve the nonblocking mode status.
+     #[cfg(all(
+         feature = "all",
+-        any(unix, all(target_os = "wasi", not(target_env = "p1")))
++        any(unix, target_os = "wasi")
+     ))]
+     pub fn nonblocking(&self) -> io::Result<bool> {
+         sys::nonblocking(self.as_raw())
+@@ -2271,7 +2271,7 @@
+             target_os = "watchos",
+             target_os = "cygwin",
+             target_os = "nuttx",
+-            all(target_os = "wasi", not(target_env = "p1")),
++            target_os = "wasi",
+         )
+     ))]
+     pub fn tcp_keepalive_interval(&self) -> io::Result<Duration> {
+@@ -2305,7 +2305,7 @@
+             target_os = "cygwin",
+             target_os = "windows",
+             target_os = "nuttx",
+-            all(target_os = "wasi", not(target_env = "p1")),
++            target_os = "wasi",
+         )
+     ))]
+     pub fn tcp_keepalive_retries(&self) -> io::Result<u32> {
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/socket2-0.6.5/src/sockref.rs b/patched/socket2-0.6.5/src/sockref.rs
+--- a/patched/socket2-0.6.5/src/sockref.rs	2026-10-15 00:51:47
++++ b/patched/socket2-0.6.5/src/sockref.rs	2026-10-15 00:40:58
+@@ -2,7 +2,7 @@
+ use std::marker::PhantomData;
+ use std::mem::ManuallyDrop;
+ use std::ops::Deref;
+-#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++#[cfg(any(unix, target_os = "wasi"))]
+ use std::os::fd::{AsFd, AsRawFd, FromRawFd};
+ #[cfg(windows)]
+ use std::os::windows::io::{AsRawSocket, AsSocket, FromRawSocket};
+@@ -77,7 +77,7 @@
+ }
+ 
+ /// On Windows, a corresponding `From<&impl AsSocket>` implementation exists.
+-#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++#[cfg(any(unix, target_os = "wasi"))]
+ impl<'s, S> From<&'s S> for SockRef<'s>
+ where
+     S: AsFd,
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/socket2-0.6.5/src/sys/unix.rs b/patched/socket2-0.6.5/src/sys/unix.rs
+--- a/patched/socket2-0.6.5/src/sys/unix.rs	2026-10-15 00:51:47
++++ b/patched/socket2-0.6.5/src/sys/unix.rs	2026-10-15 00:40:58
+@@ -292,7 +292,7 @@
+     target_os = "solaris",
+     target_os = "tvos",
+     target_os = "watchos",
+-    all(target_os = "wasi", not(target_env = "p1")),
++    target_os = "wasi",
+ ))]
+ pub(crate) use libc::{
+     IPV6_JOIN_GROUP as IPV6_ADD_MEMBERSHIP, IPV6_LEAVE_GROUP as IPV6_DROP_MEMBERSHIP,
+@@ -317,7 +317,7 @@
+         target_os = "watchos",
+         target_os = "cygwin",
+         target_os = "nuttx",
+-        all(target_os = "wasi", not(target_env = "p1")),
++        target_os = "wasi",
+     )
+ ))]
+ pub(crate) use libc::{TCP_KEEPCNT, TCP_KEEPINTVL};
+@@ -482,7 +482,7 @@
+             target_os = "netbsd",
+             target_os = "openbsd",
+             target_os = "cygwin",
+-            all(target_os = "wasi", not(target_env = "p1")),
++            target_os = "wasi",
+         )
+     ))]
+     pub const fn nonblocking(self) -> Type {
+@@ -1040,7 +1040,7 @@
+ 
+ #[cfg(all(
+     feature = "all",
+-    any(unix, all(target_os = "wasi", not(target_env = "p1"))),
++    any(unix, target_os = "wasi"),
+     not(target_os = "vita")
+ ))]
+ pub(crate) fn nonblocking(fd: RawSocket) -> io::Result<bool> {
+@@ -1303,7 +1303,7 @@
+         target_os = "watchos",
+         target_os = "cygwin",
+         target_os = "nuttx",
+-        all(target_os = "wasi", not(target_env = "p1")),
++        target_os = "wasi",
+     ))]
+     {
+         if let Some(interval) = keepalive.interval {
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/tokio-graceful-0.2.2/src/shutdown.rs b/patched/tokio-graceful-0.2.2/src/shutdown.rs
+--- a/patched/tokio-graceful-0.2.2/src/shutdown.rs	2026-10-15 00:51:46
++++ b/patched/tokio-graceful-0.2.2/src/shutdown.rs	2026-10-15 00:40:58
+@@ -521,7 +521,13 @@
+     }
+ }
+ 
+-#[cfg(all(not(loom), any(unix, windows)))]
++/// wasm32-wasip1 (agentOS): no OS signals; never resolves.
++#[cfg(all(not(loom), target_os = "wasi"))]
++pub async fn default_signal() {
++    std::future::pending::<()>().await
++}
++
++#[cfg(all(not(loom), any(unix, windows, target_os = "wasi")))]
+ impl Default for Shutdown {
+     fn default() -> Self {
+         Self::new(default_signal())
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/patched/tonic-0.14.3/src/transport/channel/uds_connector.rs b/patched/tonic-0.14.3/src/transport/channel/uds_connector.rs
+--- a/patched/tonic-0.14.3/src/transport/channel/uds_connector.rs	2026-10-15 00:51:47
++++ b/patched/tonic-0.14.3/src/transport/channel/uds_connector.rs	2026-10-15 00:40:58
+@@ -9,10 +9,10 @@
+ 
+ use crate::status::ConnectError;
+ 
+-#[cfg(not(target_os = "windows"))]
++#[cfg(not(any(target_os = "windows", target_os = "wasi")))]
+ use tokio::net::UnixStream;
+ 
+-#[cfg(not(target_os = "windows"))]
++#[cfg(not(any(target_os = "windows", target_os = "wasi")))]
+ async fn connect_uds(uds_path: String) -> Result<UnixStream, ConnectError> {
+     UnixStream::connect(uds_path)
+         .await
+@@ -21,11 +21,11 @@
+ 
+ // Dummy type that will allow us to compile and match trait bounds
+ // but is never used.
+-#[cfg(target_os = "windows")]
++#[cfg(any(target_os = "windows", target_os = "wasi"))]
+ #[allow(dead_code)]
+ type UnixStream = tokio::io::DuplexStream;
+ 
+-#[cfg(target_os = "windows")]
++#[cfg(any(target_os = "windows", target_os = "wasi"))]
+ async fn connect_uds(_uds_path: String) -> Result<UnixStream, ConnectError> {
+     Err(ConnectError(
+         "uds connections are not allowed on windows".into(),
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/stubs/reqwest-shim/Cargo.toml b/stubs/reqwest-shim/Cargo.toml
+--- a/stubs/reqwest-shim/Cargo.toml	2026-09-29 00:28:55
++++ b/stubs/reqwest-shim/Cargo.toml	2026-10-15 00:40:58
+@@ -26,6 +26,7 @@
+ serde_json = "1"
+ serde_urlencoded = "0.7"
+ futures-core = "0.3"
++http-body = "1"
+ url = "2"
+ base64 = "0.22"
+ 
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/stubs/reqwest-shim/src/lib.rs b/stubs/reqwest-shim/src/lib.rs
+--- a/stubs/reqwest-shim/src/lib.rs	2026-09-29 00:28:55
++++ b/stubs/reqwest-shim/src/lib.rs	2026-10-15 00:40:58
+@@ -1,100 +1,192 @@
+-//! `reqwest` 0.12 API shim for wasm32-wasip1, backed by agentos `wasi-http`
++//! `reqwest` 0.12 API shim for wasm32-wasip1, backed by agentOS `wasi-http`
+ //! (host_net TCP/TLS). Drop-in target for `[patch.crates-io] reqwest`.
+ //!
+-//! STATUS: scaffold. The buffered request/response path is implemented against
+-//! `wasi_http::HttpClient::send`. The streaming path (`Response::bytes_stream`)
+-//! currently yields the fully-buffered body as a single chunk — see the TODO on
+-//! `bytes_stream`. True incremental streaming needs a RAW chunk reader added to
+-//! `wasi-http` (its `SseReader` SSE-parses, but codex's `transport.rs` does its
+-//! own SSE parsing over `bytes_stream`, so the shim must surface raw bytes).
+-//!
+-//! Not yet wired into `[patch.crates-io]` — doing so before it compiles against
+-//! codex-exec's whole subtree would break every command's `make wasm` build.
++//! agentos-lab revision (2026-10): widened from Rivet's July scaffold to the surface
++//! used by upstream Codex's `codex-http-client` (streaming `Body` implementing
++//! `http_body::Body`, a real `Request` value type, `Client::execute`, inert proxy /
++//! cookie / TLS configuration, `http::Response` conversions). TLS, proxies, DNS and
++//! redirects are host-brokered, so their configuration is accepted and ignored.
+ 
++use std::pin::Pin;
++use std::sync::Arc;
++use std::task::Context;
++use std::task::Poll;
+ use std::time::Duration;
+ 
+ use bytes::Bytes;
+ pub use http::Method;
+ pub use http::StatusCode;
++pub use http::Version;
++pub use url::Url;
+ 
+-/// `reqwest::header` — reqwest re-exports the `http` crate's header types.
++type BoxError = Box<dyn std::error::Error + Send + Sync>;
++
++/// `reqwest::header` — re-exports the `http` crate's header types.
+ pub mod header {
+-    pub use http::header::*;
+     pub use http::HeaderMap;
+     pub use http::HeaderName;
+     pub use http::HeaderValue;
++    pub use http::header::*;
+ }
+ 
+ pub use header::HeaderMap;
+ 
+-/// `reqwest::redirect` — redirect policy. Redirects are followed (or not) host-side
+-/// by wasi-http; this surface exists so codex/rmcp's builder calls compile.
++/// `reqwest::redirect` — redirects are handled host-side; the surface compiles.
+ pub mod redirect {
+-    #[derive(Clone, Debug)]
+-    pub struct Policy;
++    use super::StatusCode;
++    use super::Url;
++
++    #[derive(Clone)]
++    pub struct Policy {
++        _p: (),
++    }
++    impl std::fmt::Debug for Policy {
++        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++            f.write_str("Policy")
++        }
++    }
+     impl Policy {
+         pub fn none() -> Self {
+-            Policy
++            Policy { _p: () }
+         }
+         pub fn limited(_max: usize) -> Self {
+-            Policy
++            Policy { _p: () }
+         }
++        #[allow(clippy::should_implement_trait)]
+         pub fn default() -> Self {
+-            Policy
++            Policy { _p: () }
+         }
++        pub fn custom<T>(_policy: T) -> Self
++        where
++            T: Fn(Attempt) -> Action + Send + Sync + 'static,
++        {
++            Policy { _p: () }
++        }
++        pub fn redirect(&self, attempt: Attempt) -> Action {
++            attempt.follow()
++        }
+     }
+     impl Default for Policy {
+         fn default() -> Self {
+-            Policy
++            Policy { _p: () }
+         }
+     }
+-}
+ 
+-/// `reqwest::Url` IS the `url` crate's `Url` (reqwest re-exports it), so all of
+-/// `host_str`/`join`/`path`/`scheme`/`set_path`/… come for free.
+-pub use url::Url;
++    pub struct Attempt<'a> {
++        status: StatusCode,
++        next: &'a Url,
++        previous: &'a [Url],
++    }
++    impl<'a> Attempt<'a> {
++        pub fn status(&self) -> StatusCode {
++            self.status
++        }
++        pub fn url(&self) -> &Url {
++            self.next
++        }
++        pub fn previous(&self) -> &[Url] {
++            self.previous
++        }
++        pub fn follow(self) -> Action {
++            Action { _a: () }
++        }
++        pub fn stop(self) -> Action {
++            Action { _a: () }
++        }
++        pub fn error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(self, _error: E) -> Action {
++            Action { _a: () }
++        }
++    }
+ 
+-fn parse_url(input: &str) -> Result<Url, Error> {
+-    Url::parse(input).map_err(|e| Error::new(e.to_string()))
++    pub struct Action {
++        _a: (),
++    }
+ }
+ 
+-/// Yield control to the runtime exactly once.
+-///
+-/// Returns `Pending` on the first poll (after registering an immediate wakeup so
+-/// the task is re-polled right away) and `Ready` on the second. On the
+-/// single-threaded VM this is a cooperative yield point: while a body recv would
+-/// block, the runtime gets to drive other tasks before we retry. Same shape as
+-/// the non-blocking pipe-I/O fix.
+-fn yield_now() -> YieldNow {
+-    YieldNow { yielded: false }
+-}
++/// `reqwest::tls` — TLS is terminated host-side; configuration is inert.
++pub mod tls {
++    pub use super::Certificate;
++    pub use super::Identity;
+ 
+-struct YieldNow {
+-    yielded: bool,
++    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
++    pub struct Version(u8);
++    impl Version {
++        pub const TLS_1_0: Version = Version(0);
++        pub const TLS_1_1: Version = Version(1);
++        pub const TLS_1_2: Version = Version(2);
++        pub const TLS_1_3: Version = Version(3);
++    }
++
++    #[derive(Clone, Debug)]
++    pub struct TlsInfo {
++        _t: (),
++    }
++    impl TlsInfo {
++        pub fn peer_certificate(&self) -> Option<&[u8]> {
++            None
++        }
++    }
+ }
+ 
+-impl std::future::Future for YieldNow {
+-    type Output = ();
+-    fn poll(
+-        mut self: std::pin::Pin<&mut Self>,
+-        cx: &mut std::task::Context<'_>,
+-    ) -> std::task::Poll<()> {
+-        if self.yielded {
+-            std::task::Poll::Ready(())
+-        } else {
+-            self.yielded = true;
+-            cx.waker().wake_by_ref();
+-            std::task::Poll::Pending
++/// `reqwest::cookie` — the trait and an in-memory jar. The host connection
++/// does not consult the provider; cookies set by callers are kept in memory.
++pub mod cookie {
++    use std::sync::Mutex;
++
++    use super::Url;
++    use http::HeaderValue;
++
++    pub trait CookieStore: Send + Sync {
++        fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url);
++        fn cookies(&self, url: &Url) -> Option<HeaderValue>;
++    }
++
++    #[derive(Debug, Default)]
++    pub struct Jar(Mutex<Vec<(String, String)>>);
++
++    impl Jar {
++        pub fn add_cookie_str(&self, cookie: &str, url: &Url) {
++            if let Ok(mut v) = self.0.lock() {
++                v.push((url.host_str().unwrap_or_default().to_string(), cookie.to_string()));
++            }
+         }
+     }
++
++    impl CookieStore for Jar {
++        fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
++            for h in cookie_headers {
++                if let Ok(s) = h.to_str() {
++                    self.add_cookie_str(s, url);
++                }
++            }
++        }
++        fn cookies(&self, url: &Url) -> Option<HeaderValue> {
++            let host = url.host_str().unwrap_or_default();
++            let v = self.0.lock().ok()?;
++            let joined = v
++                .iter()
++                .filter(|(h, _)| h == host)
++                .filter_map(|(_, c)| c.split(';').next())
++                .collect::<Vec<_>>()
++                .join("; ");
++            if joined.is_empty() {
++                None
++            } else {
++                HeaderValue::from_str(&joined).ok()
++            }
++        }
++    }
+ }
+ 
+-/// `reqwest::IntoUrl` — codex/rmcp pass &str/String/Url.
++fn parse_url(input: &str) -> Result<Url, Error> {
++    Url::parse(input).map_err(|e| Error::new(Kind::Builder, e.to_string()))
++}
++
++/// `reqwest::IntoUrl`.
+ pub trait IntoUrl {
+     fn into_url(self) -> Result<Url, Error>;
+     fn as_str(&self) -> &str;
+ }
+-
+ impl IntoUrl for &str {
+     fn into_url(self) -> Result<Url, Error> {
+         parse_url(self)
+@@ -103,7 +195,6 @@
+         self
+     }
+ }
+-
+ impl IntoUrl for String {
+     fn into_url(self) -> Result<Url, Error> {
+         parse_url(&self)
+@@ -112,7 +203,6 @@
+         String::as_str(self)
+     }
+ }
+-
+ impl IntoUrl for &String {
+     fn into_url(self) -> Result<Url, Error> {
+         parse_url(self)
+@@ -121,7 +211,6 @@
+         String::as_str(self)
+     }
+ }
+-
+ impl IntoUrl for Url {
+     fn into_url(self) -> Result<Url, Error> {
+         Ok(self)
+@@ -130,7 +219,6 @@
+         Url::as_str(self)
+     }
+ }
+-
+ impl IntoUrl for &Url {
+     fn into_url(self) -> Result<Url, Error> {
+         Ok(self.clone())
+@@ -140,43 +228,58 @@
+     }
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++enum Kind {
++    Builder,
++    Request,
++    Body,
++    Decode,
++    Status,
++    Connect,
++    Timeout,
++}
++
+ /// `reqwest::Error`.
+ #[derive(Debug)]
+ pub struct Error {
++    kind: Kind,
+     msg: String,
+     status: Option<StatusCode>,
+     url: Option<Url>,
++    source: Option<BoxError>,
+ }
+ 
+ impl Error {
+-    fn new(msg: impl Into<String>) -> Self {
+-        Error {
+-            msg: msg.into(),
+-            status: None,
+-            url: None,
+-        }
++    fn new(kind: Kind, msg: impl Into<String>) -> Self {
++        Error { kind, msg: msg.into(), status: None, url: None, source: None }
+     }
+     pub fn status(&self) -> Option<StatusCode> {
+         self.status
+     }
+     pub fn is_timeout(&self) -> bool {
+-        false
++        self.kind == Kind::Timeout
+     }
+     pub fn is_connect(&self) -> bool {
+-        false
++        self.kind == Kind::Connect
+     }
+     pub fn is_request(&self) -> bool {
+-        false
++        self.kind == Kind::Request
+     }
+     pub fn is_body(&self) -> bool {
+-        false
++        self.kind == Kind::Body
+     }
+     pub fn is_decode(&self) -> bool {
+-        false
++        self.kind == Kind::Decode
+     }
+     pub fn is_status(&self) -> bool {
+-        self.status.is_some()
++        self.kind == Kind::Status
+     }
++    pub fn is_builder(&self) -> bool {
++        self.kind == Kind::Builder
++    }
++    pub fn is_redirect(&self) -> bool {
++        false
++    }
+     pub fn url(&self) -> Option<&Url> {
+         self.url.as_ref()
+     }
+@@ -187,146 +290,396 @@
+         self.url = Some(url);
+         self
+     }
++    pub fn without_url(mut self) -> Self {
++        self.url = None;
++        self
++    }
+ }
+ 
+ impl std::fmt::Display for Error {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+-        f.write_str(&self.msg)
++        f.write_str(&self.msg)?;
++        if let Some(url) = &self.url {
++            write!(f, " for url ({url})")?;
++        }
++        Ok(())
+     }
+ }
+ 
+-impl std::error::Error for Error {}
++impl std::error::Error for Error {
++    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
++        self.source.as_ref().map(|e| &**e as &(dyn std::error::Error + 'static))
++    }
++}
+ 
+ impl From<wasi_http::HttpError> for Error {
+     fn from(e: wasi_http::HttpError) -> Self {
+-        Error::new(e.to_string())
++        Error::new(Kind::Connect, e.to_string())
+     }
+ }
+ 
+-/// `reqwest::Body`.
+-pub struct Body(Vec<u8>);
++enum BodyInner {
++    Full(Bytes),
++    Reader(Option<wasi_http::RawBodyReader>),
++    Stream(SyncCell<Pin<Box<dyn futures_core::Stream<Item = Result<Bytes, BoxError>> + Send>>>),
++}
+ 
++/// Like `sync_wrapper::SyncWrapper`: only `&mut` access is ever handed out, so the
++/// wrapper is `Sync` whenever the value is `Send`.
++struct SyncCell<T>(T);
++// SAFETY: no `&T` is ever exposed; all access goes through `&mut SyncCell<T>`.
++unsafe impl<T: Send> Sync for SyncCell<T> {}
++
++/// `reqwest::Body`: a full buffer, the host connection's raw reader, or a stream.
++pub struct Body {
++    inner: BodyInner,
++}
++
++impl std::fmt::Debug for Body {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("Body")
++    }
++}
++
++impl Default for Body {
++    fn default() -> Self {
++        Body::empty()
++    }
++}
++
++impl Body {
++    fn empty() -> Self {
++        Body { inner: BodyInner::Full(Bytes::new()) }
++    }
++    pub fn as_bytes(&self) -> Option<&[u8]> {
++        match &self.inner {
++            BodyInner::Full(b) => Some(b.as_ref()),
++            _ => None,
++        }
++    }
++    pub fn try_clone(&self) -> Option<Body> {
++        match &self.inner {
++            BodyInner::Full(b) => Some(Body { inner: BodyInner::Full(b.clone()) }),
++            _ => None,
++        }
++    }
++    pub fn wrap_stream<S>(stream: S) -> Body
++    where
++        S: futures_core::TryStream + Send + 'static,
++        S::Error: Into<BoxError>,
++        Bytes: From<S::Ok>,
++    {
++        Body { inner: BodyInner::Stream(SyncCell(Box::pin(MapTryStream(stream)))) }
++    }
++
++    fn poll_chunk(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
++        match &mut self.inner {
++            BodyInner::Full(b) => {
++                if b.is_empty() {
++                    Poll::Ready(None)
++                } else {
++                    Poll::Ready(Some(Ok(std::mem::take(b))))
++                }
++            }
++            BodyInner::Reader(slot) => {
++                let Some(reader) = slot.as_mut() else {
++                    return Poll::Ready(None);
++                };
++                match reader.read_chunk() {
++                    Ok(wasi_http::ChunkPoll::Ready(chunk)) => Poll::Ready(Some(Ok(Bytes::from(chunk)))),
++                    Ok(wasi_http::ChunkPoll::Eof) => {
++                        *slot = None;
++                        Poll::Ready(None)
++                    }
++                    // No data yet: request an immediate re-poll so the single-threaded
++                    // runtime keeps driving other tasks between socket polls.
++                    Ok(wasi_http::ChunkPoll::WouldBlock) => {
++                        cx.waker().wake_by_ref();
++                        Poll::Pending
++                    }
++                    Err(e) => {
++                        *slot = None;
++                        Poll::Ready(Some(Err(Error::new(Kind::Body, e.to_string()))))
++                    }
++                }
++            }
++            BodyInner::Stream(s) => match s.0.as_mut().poll_next(cx) {
++                Poll::Ready(Some(Ok(b))) => Poll::Ready(Some(Ok(b))),
++                Poll::Ready(Some(Err(e))) => {
++                    let mut err = Error::new(Kind::Body, e.to_string());
++                    err.source = Some(e);
++                    Poll::Ready(Some(Err(err)))
++                }
++                Poll::Ready(None) => Poll::Ready(None),
++                Poll::Pending => Poll::Pending,
++            },
++        }
++    }
++
++    async fn collect(mut self) -> Result<Vec<u8>, Error> {
++        let mut out = Vec::new();
++        while let Some(chunk) = std::future::poll_fn(|cx| self.poll_chunk(cx)).await {
++            out.extend_from_slice(&chunk?);
++        }
++        Ok(out)
++    }
++}
++
++struct MapTryStream<S>(S);
++impl<S> futures_core::Stream for MapTryStream<S>
++where
++    S: futures_core::TryStream,
++    S::Error: Into<BoxError>,
++    Bytes: From<S::Ok>,
++{
++    type Item = Result<Bytes, BoxError>;
++    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
++        // SAFETY: structural pinning of the only field.
++        let inner = unsafe { self.map_unchecked_mut(|s| &mut s.0) };
++        match inner.try_poll_next(cx) {
++            Poll::Ready(Some(Ok(v))) => Poll::Ready(Some(Ok(Bytes::from(v)))),
++            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
++            Poll::Ready(None) => Poll::Ready(None),
++            Poll::Pending => Poll::Pending,
++        }
++    }
++}
++
++impl http_body::Body for Body {
++    type Data = Bytes;
++    type Error = Error;
++    fn poll_frame(
++        self: Pin<&mut Self>,
++        cx: &mut Context<'_>,
++    ) -> Poll<Option<Result<http_body::Frame<Bytes>, Error>>> {
++        self.get_mut().poll_chunk(cx).map(|o| o.map(|r| r.map(http_body::Frame::data)))
++    }
++    fn is_end_stream(&self) -> bool {
++        matches!(&self.inner, BodyInner::Full(b) if b.is_empty())
++            || matches!(&self.inner, BodyInner::Reader(None))
++    }
++}
++
+ impl From<Vec<u8>> for Body {
+     fn from(v: Vec<u8>) -> Self {
+-        Body(v)
++        Body { inner: BodyInner::Full(Bytes::from(v)) }
+     }
+ }
++impl From<Bytes> for Body {
++    fn from(b: Bytes) -> Self {
++        Body { inner: BodyInner::Full(b) }
++    }
++}
+ impl From<String> for Body {
+     fn from(s: String) -> Self {
+-        Body(s.into_bytes())
++        Body::from(s.into_bytes())
+     }
+ }
+ impl From<&'static str> for Body {
+     fn from(s: &'static str) -> Self {
+-        Body(s.as_bytes().to_vec())
++        Body::from(Bytes::from_static(s.as_bytes()))
+     }
+ }
++impl From<&'static [u8]> for Body {
++    fn from(s: &'static [u8]) -> Self {
++        Body::from(Bytes::from_static(s))
++    }
++}
++impl From<()> for Body {
++    fn from(_: ()) -> Self {
++        Body::empty()
++    }
++}
+ 
+-/// `reqwest::Certificate` — TLS is delegated to the host runtime in wasi-http, so
+-/// custom roots are accepted and ignored on this target.
++/// `reqwest::Certificate` — accepted and ignored (host-brokered TLS).
+ #[derive(Clone, Debug)]
+-pub struct Certificate;
+-
++pub struct Certificate {
++    _c: (),
++}
+ impl Certificate {
+     pub fn from_der(_der: &[u8]) -> Result<Self, Error> {
+-        Ok(Certificate)
++        Ok(Certificate { _c: () })
+     }
+     pub fn from_pem(_pem: &[u8]) -> Result<Self, Error> {
+-        Ok(Certificate)
++        Ok(Certificate { _c: () })
+     }
++    pub fn from_pem_bundle(_pem: &[u8]) -> Result<Vec<Self>, Error> {
++        Ok(Vec::new())
++    }
+ }
+ 
+-/// `reqwest::Identity` — client TLS identity. TLS is host-brokered, so this is a
+-/// compile-only placeholder.
++/// `reqwest::Identity` — compile-only placeholder.
+ #[derive(Clone)]
+-pub struct Identity;
+-
++pub struct Identity {
++    _i: (),
++}
+ impl Identity {
+     pub fn from_pem(_pem: &[u8]) -> Result<Self, Error> {
+-        Ok(Identity)
++        Ok(Identity { _i: () })
+     }
++    pub fn from_pkcs8_pem(_pem: &[u8], _key: &[u8]) -> Result<Self, Error> {
++        Ok(Identity { _i: () })
++    }
+     pub fn from_pkcs12_der(_der: &[u8], _pass: &str) -> Result<Self, Error> {
+-        Ok(Identity)
++        Ok(Identity { _i: () })
+     }
+ }
+ 
++/// `reqwest::NoProxy`.
++#[derive(Clone, Debug, Default)]
++pub struct NoProxy {
++    _n: (),
++}
++impl NoProxy {
++    pub fn from_string(_s: &str) -> Option<Self> {
++        Some(NoProxy { _n: () })
++    }
++    pub fn from_env() -> Option<Self> {
++        None
++    }
++}
++
++/// `reqwest::Proxy` — the agentOS host decides egress; proxies are inert.
++#[derive(Clone, Debug)]
++pub struct Proxy {
++    _p: (),
++}
++impl Proxy {
++    pub fn all<U: IntoUrl>(_u: U) -> Result<Proxy, Error> {
++        Ok(Proxy { _p: () })
++    }
++    pub fn http<U: IntoUrl>(_u: U) -> Result<Proxy, Error> {
++        Ok(Proxy { _p: () })
++    }
++    pub fn https<U: IntoUrl>(_u: U) -> Result<Proxy, Error> {
++        Ok(Proxy { _p: () })
++    }
++    pub fn custom<F, U>(_f: F) -> Proxy
++    where
++        F: Fn(&Url) -> Option<U> + Send + Sync + 'static,
++        U: IntoUrl,
++    {
++        Proxy { _p: () }
++    }
++    pub fn no_proxy(self, _n: Option<NoProxy>) -> Proxy {
++        self
++    }
++    pub fn basic_auth(self, _u: &str, _p: &str) -> Proxy {
++        self
++    }
++    pub fn custom_http_auth(self, _v: http::HeaderValue) -> Proxy {
++        self
++    }
++    pub fn headers(self, _h: HeaderMap) -> Proxy {
++        self
++    }
++}
++
+ /// `reqwest::ClientBuilder`.
+ #[derive(Default)]
+ pub struct ClientBuilder {
+-    default_headers: Option<HeaderMap>,
++    default_headers: HeaderMap,
+     timeout: Option<Duration>,
+ }
+ 
++macro_rules! inert_builder {
++    ($($name:ident($($arg:ident : $ty:ty),*);)*) => {
++        $(
++            #[allow(unused_variables)]
++            pub fn $name(self, $($arg: $ty),*) -> Self { self }
++        )*
++    };
++}
++
+ impl ClientBuilder {
+     pub fn new() -> Self {
+         ClientBuilder::default()
+     }
+     pub fn default_headers(mut self, headers: HeaderMap) -> Self {
+-        self.default_headers = Some(headers);
++        self.default_headers = headers;
+         self
+     }
+     pub fn timeout(mut self, timeout: Duration) -> Self {
+         self.timeout = Some(timeout);
+         self
+     }
+-    pub fn add_root_certificate(self, _cert: Certificate) -> Self {
++    pub fn user_agent<V>(mut self, v: V) -> Self
++    where
++        http::HeaderValue: TryFrom<V>,
++    {
++        if let Ok(v) = http::HeaderValue::try_from(v) {
++            self.default_headers.insert(http::header::USER_AGENT, v);
++        }
+         self
+     }
+-    pub fn danger_accept_invalid_certs(self, _v: bool) -> Self {
+-        self
++    inert_builder! {
++        add_root_certificate(c: Certificate);
++        tls_built_in_root_certs(b: bool);
++        tls_built_in_native_certs(b: bool);
++        tls_built_in_webpki_certs(b: bool);
++        danger_accept_invalid_certs(b: bool);
++        danger_accept_invalid_hostnames(b: bool);
++        min_tls_version(v: tls::Version);
++        max_tls_version(v: tls::Version);
++        tls_sni(b: bool);
++        tls_info(b: bool);
++        https_only(b: bool);
++        redirect(p: redirect::Policy);
++        referer(b: bool);
++        connect_timeout(d: Duration);
++        read_timeout(d: Duration);
++        pool_max_idle_per_host(n: usize);
++        http1_only();
++        http2_prior_knowledge();
++        http1_title_case_headers();
++        no_proxy();
++        proxy(p: Proxy);
++        tcp_nodelay(b: bool);
++        use_rustls_tls();
++        use_native_tls();
++        identity(i: Identity);
++        gzip(b: bool);
++        brotli(b: bool);
++        zstd(b: bool);
++        deflate(b: bool);
++        no_gzip();
++        no_brotli();
++        no_zstd();
++        no_deflate();
++        cookie_store(b: bool);
++        hickory_dns(b: bool);
++        resolve(domain: &str, addr: std::net::SocketAddr);
++        resolve_to_addrs(domain: &str, addrs: &[std::net::SocketAddr]);
++        local_address(addr: Option<std::net::IpAddr>);
+     }
+-    pub fn user_agent<V>(self, _v: V) -> Self {
+-        self
+-    }
+-    pub fn redirect(self, _policy: redirect::Policy) -> Self {
+-        self
+-    }
+-    pub fn connect_timeout(self, _timeout: Duration) -> Self {
+-        self
+-    }
+     pub fn pool_idle_timeout<D: Into<Option<Duration>>>(self, _d: D) -> Self {
+         self
+     }
+-    pub fn pool_max_idle_per_host(self, _n: usize) -> Self {
+-        self
+-    }
+-    pub fn http1_only(self) -> Self {
+-        self
+-    }
+-    pub fn no_proxy(self) -> Self {
+-        self
+-    }
+     pub fn tcp_keepalive<D: Into<Option<Duration>>>(self, _d: D) -> Self {
+         self
+     }
+-    pub fn use_rustls_tls(self) -> Self {
++    pub fn cookie_provider<C: cookie::CookieStore + 'static>(self, _c: Arc<C>) -> Self {
+         self
+     }
+-    pub fn identity(self, _id: Identity) -> Self {
++    pub fn use_preconfigured_tls(self, _tls: impl std::any::Any) -> Self {
+         self
+     }
+     pub fn build(self) -> Result<Client, Error> {
+-        Ok(Client {
+-            default_headers: self.default_headers.unwrap_or_default(),
+-            _timeout: self.timeout,
+-        })
++        Ok(Client { inner: Arc::new(ClientInner { default_headers: self.default_headers, timeout: self.timeout }) })
+     }
+ }
+ 
+-/// `reqwest::Client`.
+-#[derive(Clone, Debug)]
+-pub struct Client {
++#[derive(Debug, Default)]
++struct ClientInner {
+     default_headers: HeaderMap,
+-    _timeout: Option<Duration>,
++    #[allow(dead_code)]
++    timeout: Option<Duration>,
+ }
+ 
+-impl Default for Client {
+-    fn default() -> Self {
+-        Client {
+-            default_headers: HeaderMap::new(),
+-            _timeout: None,
+-        }
+-    }
++/// `reqwest::Client`.
++#[derive(Clone, Debug, Default)]
++pub struct Client {
++    inner: Arc<ClientInner>,
+ }
+ 
+ impl Client {
+@@ -355,134 +708,240 @@
+         self.request(Method::HEAD, url)
+     }
+     pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
+-        let url = url.as_str().to_string();
+-        RequestBuilder {
+-            method,
+-            url,
+-            headers: self.default_headers.clone(),
+-            body: None,
+-            err: None,
+-        }
++        let request = url.into_url().map(|url| Request::new(method, url));
++        RequestBuilder { client: self.clone(), request }
+     }
+-    /// `Client::execute(Request)` — send a pre-built request (used by oauth2).
+-    pub async fn execute(&self, req: Request) -> Result<Response, Error> {
+-        RequestBuilder {
+-            method: req.method,
+-            url: req.url,
+-            headers: req.headers,
+-            body: req.body,
+-            err: None,
++    /// Send a pre-built request through the host connection.
++    pub fn execute(
++        &self,
++        request: Request,
++    ) -> impl std::future::Future<Output = Result<Response, Error>> + Send + 'static {
++        let client = self.clone();
++        async move { client.execute_inner(request).await }
++    }
++
++    async fn execute_inner(&self, mut request: Request) -> Result<Response, Error> {
++        for (name, value) in self.inner.default_headers.iter() {
++            if !request.headers.contains_key(name) {
++                request.headers.insert(name.clone(), value.clone());
++            }
+         }
+-        .send()
+-        .await
++        let url = request.url.clone();
++        let method = match request.method {
++            Method::GET => wasi_http::Method::Get,
++            Method::POST => wasi_http::Method::Post,
++            Method::PUT => wasi_http::Method::Put,
++            Method::DELETE => wasi_http::Method::Delete,
++            Method::PATCH => wasi_http::Method::Patch,
++            Method::HEAD => wasi_http::Method::Head,
++            ref other => {
++                return Err(Error::new(Kind::Request, format!("unsupported method {other}"))
++                    .with_url(url));
++            }
++        };
++        let body = match request.body.take() {
++            Some(body) => body.collect().await?,
++            None => Vec::new(),
++        };
++        let mut req = wasi_http::Request::new(method, url.as_str()).map_err(|e| Error::from(e).with_url(url.clone()))?;
++        for (name, value) in request.headers.iter() {
++            if let Ok(v) = value.to_str() {
++                req = req.header(name.as_str(), v);
++            }
++        }
++        if !body.is_empty() {
++            req = req.body(body);
++        }
++        // Headers arrive immediately; the body is pulled incrementally by `Body`.
++        let (resp, reader) = wasi_http::HttpClient::new()
++            .send_raw_stream(&req)
++            .map_err(|e| Error::from(e).with_url(url.clone()))?;
++        Ok(Response::from_wasi(resp, reader, url))
+     }
+ }
+ 
+-/// `reqwest::Request` — a built request (produced by `RequestBuilder::build`-style
+-/// flows and consumed by `Client::execute`).
++/// `reqwest::Request`.
+ pub struct Request {
+     method: Method,
+-    url: String,
++    url: Url,
+     headers: HeaderMap,
+-    body: Option<Vec<u8>>,
++    body: Option<Body>,
++    timeout: Option<Duration>,
++    version: Version,
+ }
+ 
++impl std::fmt::Debug for Request {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("Request").field("method", &self.method).field("url", &self.url).finish()
++    }
++}
++
+ impl Request {
+     pub fn new(method: Method, url: Url) -> Self {
+-        Request {
+-            method,
+-            url: url.as_str().to_string(),
+-            headers: HeaderMap::new(),
+-            body: None,
+-        }
++        Request { method, url, headers: HeaderMap::new(), body: None, timeout: None, version: Version::HTTP_11 }
+     }
++    pub fn method(&self) -> &Method {
++        &self.method
++    }
++    pub fn method_mut(&mut self) -> &mut Method {
++        &mut self.method
++    }
++    pub fn url(&self) -> &Url {
++        &self.url
++    }
++    pub fn url_mut(&mut self) -> &mut Url {
++        &mut self.url
++    }
++    pub fn headers(&self) -> &HeaderMap {
++        &self.headers
++    }
+     pub fn headers_mut(&mut self) -> &mut HeaderMap {
+         &mut self.headers
+     }
+-    pub fn body_mut(&mut self) -> &mut Option<Vec<u8>> {
++    pub fn body(&self) -> Option<&Body> {
++        self.body.as_ref()
++    }
++    pub fn body_mut(&mut self) -> &mut Option<Body> {
+         &mut self.body
+     }
+-    pub fn url(&self) -> Url {
+-        parse_url(&self.url).unwrap_or_else(|_| {
+-            Url::parse("http://invalid.localhost/").expect("static url parses")
+-        })
++    pub fn timeout(&self) -> Option<&Duration> {
++        self.timeout.as_ref()
+     }
+-    pub fn method(&self) -> &Method {
+-        &self.method
++    pub fn timeout_mut(&mut self) -> &mut Option<Duration> {
++        &mut self.timeout
+     }
++    pub fn version(&self) -> Version {
++        self.version
++    }
++    pub fn version_mut(&mut self) -> &mut Version {
++        &mut self.version
++    }
++    pub fn try_clone(&self) -> Option<Request> {
++        let body = match &self.body {
++            Some(b) => Some(b.try_clone()?),
++            None => None,
++        };
++        Some(Request {
++            method: self.method.clone(),
++            url: self.url.clone(),
++            headers: self.headers.clone(),
++            body,
++            timeout: self.timeout,
++            version: self.version,
++        })
++    }
+ }
+ 
+-/// oauth2 builds an `http::Request<Vec<u8>>` and converts it into a
+-/// `reqwest::Request` to feed `Client::execute`.
+-impl TryFrom<http::Request<Vec<u8>>> for Request {
++impl<T: Into<Body>> TryFrom<http::Request<T>> for Request {
+     type Error = Error;
+-    fn try_from(req: http::Request<Vec<u8>>) -> Result<Self, Error> {
++    fn try_from(req: http::Request<T>) -> Result<Self, Error> {
+         let (parts, body) = req.into_parts();
++        let url = parse_url(&parts.uri.to_string())?;
+         Ok(Request {
+             method: parts.method,
+-            url: parts.uri.to_string(),
++            url,
+             headers: parts.headers,
+-            body: if body.is_empty() { None } else { Some(body) },
++            body: Some(body.into()),
++            timeout: None,
++            version: parts.version,
+         })
+     }
+ }
+ 
++impl TryFrom<Request> for http::Request<Body> {
++    type Error = Error;
++    fn try_from(req: Request) -> Result<Self, Error> {
++        let mut out = http::Request::builder()
++            .method(req.method)
++            .uri(req.url.as_str())
++            .version(req.version)
++            .body(req.body.unwrap_or_default())
++            .map_err(|e| Error::new(Kind::Builder, e.to_string()))?;
++        *out.headers_mut() = req.headers;
++        Ok(out)
++    }
++}
++
+ /// `reqwest::RequestBuilder`.
+-#[derive(Debug)]
+ pub struct RequestBuilder {
+-    method: Method,
+-    url: String,
+-    headers: HeaderMap,
+-    body: Option<Vec<u8>>,
+-    err: Option<String>,
++    client: Client,
++    request: Result<Request, Error>,
+ }
+ 
++impl std::fmt::Debug for RequestBuilder {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("RequestBuilder")
++    }
++}
++
+ impl RequestBuilder {
+-    pub fn headers(mut self, headers: HeaderMap) -> Self {
+-        self.headers.extend(headers);
++    pub fn from_parts(client: Client, request: Request) -> RequestBuilder {
++        RequestBuilder { client, request: Ok(request) }
++    }
++    fn with(mut self, f: impl FnOnce(&mut Request) -> Result<(), Error>) -> Self {
++        if let Ok(req) = &mut self.request {
++            if let Err(e) = f(req) {
++                self.request = Err(e);
++            }
++        }
+         self
+     }
+-    pub fn header<K, V>(mut self, key: K, value: V) -> Self
++    pub fn headers(self, headers: HeaderMap) -> Self {
++        self.with(|r| {
++            for (k, v) in headers.iter() {
++                r.headers.insert(k.clone(), v.clone());
++            }
++            Ok(())
++        })
++    }
++    pub fn header<K, V>(self, key: K, value: V) -> Self
+     where
+         http::HeaderName: TryFrom<K>,
+         http::HeaderValue: TryFrom<V>,
+     {
+-        match (http::HeaderName::try_from(key), http::HeaderValue::try_from(value)) {
+-            (Ok(k), Ok(v)) => {
+-                self.headers.insert(k, v);
++        let pair = (http::HeaderName::try_from(key).ok(), http::HeaderValue::try_from(value).ok());
++        self.with(move |r| match pair {
++            (Some(k), Some(v)) => {
++                r.headers.append(k, v);
++                Ok(())
+             }
+-            _ => self.err = Some("invalid header".into()),
+-        }
+-        self
++            _ => Err(Error::new(Kind::Builder, "invalid header")),
++        })
+     }
+-    pub fn body<B: Into<Body>>(mut self, body: B) -> Self {
+-        self.body = Some(body.into().0);
+-        self
++    pub fn body<B: Into<Body>>(self, body: B) -> Self {
++        let body = body.into();
++        self.with(move |r| {
++            r.body = Some(body);
++            Ok(())
++        })
+     }
+-    pub fn json<T: serde::Serialize + ?Sized>(mut self, json: &T) -> Self {
+-        match serde_json::to_vec(json) {
+-            Ok(v) => {
+-                self.headers.insert(
+-                    http::header::CONTENT_TYPE,
+-                    http::HeaderValue::from_static("application/json"),
+-                );
+-                self.body = Some(v);
++    pub fn json<T: serde::Serialize + ?Sized>(self, json: &T) -> Self {
++        let encoded = serde_json::to_vec(json);
++        self.with(move |r| {
++            let v = encoded.map_err(|e| Error::new(Kind::Builder, e.to_string()))?;
++            if !r.headers.contains_key(http::header::CONTENT_TYPE) {
++                r.headers.insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static("application/json"));
+             }
+-            Err(e) => self.err = Some(e.to_string()),
+-        }
+-        self
++            r.body = Some(Body::from(v));
++            Ok(())
++        })
+     }
+-    pub fn timeout(self, _timeout: Duration) -> Self {
+-        self
++    pub fn timeout(self, timeout: Duration) -> Self {
++        self.with(move |r| {
++            r.timeout = Some(timeout);
++            Ok(())
++        })
+     }
++    pub fn version(self, version: Version) -> Self {
++        self.with(move |r| {
++            r.version = version;
++            Ok(())
++        })
++    }
+     pub fn bearer_auth<T: std::fmt::Display>(self, token: T) -> Self {
+         self.header(http::header::AUTHORIZATION, format!("Bearer {token}"))
+     }
+-    pub fn basic_auth<U: std::fmt::Display, P: std::fmt::Display>(
+-        self,
+-        username: U,
+-        password: Option<P>,
+-    ) -> Self {
++    pub fn basic_auth<U: std::fmt::Display, P: std::fmt::Display>(self, username: U, password: Option<P>) -> Self {
+         use base64::Engine;
+         let raw = match password {
+             Some(p) => format!("{username}:{p}"),
+@@ -491,208 +950,329 @@
+         let encoded = base64::engine::general_purpose::STANDARD.encode(raw);
+         self.header(http::header::AUTHORIZATION, format!("Basic {encoded}"))
+     }
+-    pub fn query<T: serde::Serialize + ?Sized>(mut self, query: &T) -> Self {
+-        match serde_urlencoded::to_string(query) {
+-            Ok(q) if !q.is_empty() => {
+-                let sep = if self.url.contains('?') { '&' } else { '?' };
+-                self.url = format!("{}{}{}", self.url, sep, q);
++    pub fn query<T: serde::Serialize + ?Sized>(self, query: &T) -> Self {
++        let encoded = serde_urlencoded::to_string(query);
++        self.with(move |r| {
++            let q = encoded.map_err(|e| Error::new(Kind::Builder, e.to_string()))?;
++            if !q.is_empty() {
++                let merged = match r.url.query() {
++                    Some(existing) if !existing.is_empty() => format!("{existing}&{q}"),
++                    _ => q,
++                };
++                r.url.set_query(Some(&merged));
+             }
+-            Ok(_) => {}
+-            Err(e) => self.err = Some(e.to_string()),
+-        }
+-        self
++            Ok(())
++        })
+     }
+-    pub fn form<T: serde::Serialize + ?Sized>(mut self, form: &T) -> Self {
+-        match serde_urlencoded::to_string(form) {
+-            Ok(body) => {
+-                self.headers.insert(
+-                    http::header::CONTENT_TYPE,
+-                    http::HeaderValue::from_static("application/x-www-form-urlencoded"),
+-                );
+-                self.body = Some(body.into_bytes());
+-            }
+-            Err(e) => self.err = Some(e.to_string()),
+-        }
+-        self
++    pub fn form<T: serde::Serialize + ?Sized>(self, form: &T) -> Self {
++        let encoded = serde_urlencoded::to_string(form);
++        self.with(move |r| {
++            let body = encoded.map_err(|e| Error::new(Kind::Builder, e.to_string()))?;
++            r.headers.insert(
++                http::header::CONTENT_TYPE,
++                http::HeaderValue::from_static("application/x-www-form-urlencoded"),
++            );
++            r.body = Some(Body::from(body));
++            Ok(())
++        })
+     }
+-    pub fn build(self) -> Result<RequestBuilder, Error> {
+-        if let Some(e) = &self.err {
+-            return Err(Error::new(e.clone()));
+-        }
+-        Ok(self)
+-    }
+-
+-    /// Perform the request via wasi-http (blocking under the hood; resolves on
+-    /// first poll on the single-threaded VM).
+-    pub async fn send(self) -> Result<Response, Error> {
+-        if let Some(e) = self.err {
+-            return Err(Error::new(e));
+-        }
+-        let method = match self.method {
+-            Method::GET => wasi_http::Method::Get,
+-            Method::POST => wasi_http::Method::Post,
+-            Method::PUT => wasi_http::Method::Put,
+-            Method::DELETE => wasi_http::Method::Delete,
+-            Method::PATCH => wasi_http::Method::Patch,
+-            Method::HEAD => wasi_http::Method::Head,
+-            _ => wasi_http::Method::Get,
++    pub fn try_clone(&self) -> Option<RequestBuilder> {
++        let request = match &self.request {
++            Ok(r) => Ok(r.try_clone()?),
++            Err(_) => return None,
+         };
+-        let mut req = wasi_http::Request::new(method, &self.url)?;
+-        for (name, value) in self.headers.iter() {
+-            if let Ok(v) = value.to_str() {
+-                req = req.header(name.as_str(), v);
+-            }
+-        }
+-        if let Some(body) = self.body {
+-            req = req.body(body);
+-        }
+-        // Always stream under the hood: headers arrive immediately and the body is
+-        // pulled incrementally. Buffered accessors (`json`/`text`/`bytes`) drain the
+-        // reader; `bytes_stream` yields raw chunks as they arrive.
+-        let (resp, reader) = wasi_http::HttpClient::new().send_raw_stream(&req)?;
+-        Ok(Response::from_wasi(resp, reader))
++        Some(RequestBuilder { client: self.client.clone(), request })
+     }
++    pub fn build(self) -> Result<Request, Error> {
++        self.request
++    }
++    pub fn build_split(self) -> (Client, Result<Request, Error>) {
++        (self.client, self.request)
++    }
++    pub fn send(self) -> impl std::future::Future<Output = Result<Response, Error>> + Send + 'static {
++        let RequestBuilder { client, request } = self;
++        async move { client.execute_inner(request?).await }
++    }
+ }
+ 
+ /// `reqwest::Response`.
+ pub struct Response {
+     status: StatusCode,
+     headers: HeaderMap,
+-    reader: Option<wasi_http::RawBodyReader>,
++    version: Version,
++    url: Url,
++    extensions: http::Extensions,
++    body: Body,
+ }
+ 
+ impl std::fmt::Debug for Response {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         f.debug_struct("Response")
++            .field("url", &self.url.as_str())
+             .field("status", &self.status)
+             .field("headers", &self.headers)
+             .finish()
+     }
+ }
+ 
++fn placeholder_url() -> Url {
++    Url::parse("http://no.url.provided.local/").expect("static url parses")
++}
++
+ impl Response {
+-    fn from_wasi(resp: wasi_http::Response, reader: wasi_http::RawBodyReader) -> Self {
++    fn from_wasi(resp: wasi_http::Response, reader: wasi_http::RawBodyReader, url: Url) -> Self {
+         let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::OK);
+         let mut headers = HeaderMap::new();
+         for (name, value) in &resp.headers {
+-            if let (Ok(n), Ok(v)) = (
+-                http::HeaderName::try_from(name.as_str()),
+-                http::HeaderValue::try_from(value.as_str()),
+-            ) {
+-                headers.insert(n, v);
++            if let (Ok(n), Ok(v)) =
++                (http::HeaderName::try_from(name.as_str()), http::HeaderValue::try_from(value.as_str()))
++            {
++                headers.append(n, v);
+             }
+         }
+         Response {
+             status,
+             headers,
+-            reader: Some(reader),
++            version: Version::HTTP_11,
++            url,
++            extensions: http::Extensions::new(),
++            body: Body { inner: BodyInner::Reader(Some(reader)) },
+         }
+     }
+-
+-    /// Drain the raw reader fully into a buffer (for the buffered accessors).
+-    ///
+-    /// Cooperative: when the underlying socket has no data ready yet
+-    /// (`ChunkPoll::WouldBlock`), this yields to the runtime via [`yield_now`]
+-    /// instead of blocking the single guest thread, so other tasks make progress
+-    /// while the body streams in.
+-    async fn drain(&mut self) -> Result<Vec<u8>, Error> {
+-        let mut body = Vec::new();
+-        if let Some(reader) = self.reader.as_mut() {
+-            loop {
+-                match reader.read_chunk()? {
+-                    wasi_http::ChunkPoll::Ready(chunk) => body.extend_from_slice(&chunk),
+-                    wasi_http::ChunkPoll::Eof => break,
+-                    wasi_http::ChunkPoll::WouldBlock => yield_now().await,
+-                }
+-            }
+-        }
+-        self.reader = None;
+-        Ok(body)
+-    }
+     pub fn status(&self) -> StatusCode {
+         self.status
+     }
+     pub fn headers(&self) -> &HeaderMap {
+         &self.headers
+     }
+-    pub fn version(&self) -> http::Version {
+-        http::Version::HTTP_11
++    pub fn headers_mut(&mut self) -> &mut HeaderMap {
++        &mut self.headers
+     }
++    pub fn version(&self) -> Version {
++        self.version
++    }
++    pub fn url(&self) -> &Url {
++        &self.url
++    }
++    pub fn remote_addr(&self) -> Option<std::net::SocketAddr> {
++        None
++    }
++    pub fn extensions(&self) -> &http::Extensions {
++        &self.extensions
++    }
++    pub fn extensions_mut(&mut self) -> &mut http::Extensions {
++        &mut self.extensions
++    }
+     pub fn content_length(&self) -> Option<u64> {
+         self.headers
+             .get(http::header::CONTENT_LENGTH)
+             .and_then(|v| v.to_str().ok())
+             .and_then(|s| s.parse().ok())
+     }
+-    pub fn error_for_status(self) -> Result<Self, Error> {
++    fn status_error(&self) -> Option<Error> {
+         if self.status.is_client_error() || self.status.is_server_error() {
+-            Err(Error {
+-                msg: format!("HTTP status {}", self.status),
+-                status: Some(self.status),
+-                url: None,
+-            })
++            let mut e = Error::new(Kind::Status, format!("HTTP status {}", self.status));
++            e.status = Some(self.status);
++            e.url = Some(self.url.clone());
++            Some(e)
+         } else {
+-            Ok(self)
++            None
+         }
+     }
+-    pub async fn text(mut self) -> Result<String, Error> {
+-        let body = self.drain().await?;
+-        String::from_utf8(body).map_err(|e| Error::new(e.to_string()))
++    pub fn error_for_status(self) -> Result<Self, Error> {
++        match self.status_error() {
++            Some(e) => Err(e),
++            None => Ok(self),
++        }
+     }
+-    pub async fn bytes(mut self) -> Result<Bytes, Error> {
+-        Ok(Bytes::from(self.drain().await?))
++    pub fn error_for_status_ref(&self) -> Result<&Self, Error> {
++        match self.status_error() {
++            Some(e) => Err(e),
++            None => Ok(self),
++        }
+     }
+-    pub async fn json<T: serde::de::DeserializeOwned>(mut self) -> Result<T, Error> {
+-        let body = self.drain().await?;
+-        serde_json::from_slice(&body).map_err(|e| Error::new(e.to_string()))
++    pub async fn text(self) -> Result<String, Error> {
++        let body = self.body.collect().await?;
++        Ok(String::from_utf8_lossy(&body).into_owned())
+     }
+-    /// Incremental raw byte stream backed by `wasi_http::RawBodyReader`. Yields
+-    /// de-framed body chunks as they arrive (codex's `transport.rs` runs its own
+-    /// SSE parser over these raw bytes). Single-threaded VM: each `recv` resolves
+-    /// the poll immediately.
++    pub async fn bytes(self) -> Result<Bytes, Error> {
++        Ok(Bytes::from(self.body.collect().await?))
++    }
++    pub async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T, Error> {
++        let body = self.body.collect().await?;
++        serde_json::from_slice(&body).map_err(|e| Error::new(Kind::Decode, e.to_string()))
++    }
++    pub async fn chunk(&mut self) -> Result<Option<Bytes>, Error> {
++        loop {
++            match std::future::poll_fn(|cx| self.body.poll_chunk(cx)).await {
++                Some(Ok(b)) if b.is_empty() => continue,
++                Some(Ok(b)) => return Ok(Some(b)),
++                Some(Err(e)) => return Err(e),
++                None => return Ok(None),
++            }
++        }
++    }
+     pub fn bytes_stream(self) -> BytesStream {
+-        BytesStream {
+-            reader: self.reader,
++        BytesStream { body: self.body }
++    }
++}
++
++impl<T: Into<Body>> From<http::Response<T>> for Response {
++    fn from(r: http::Response<T>) -> Self {
++        let (parts, body) = r.into_parts();
++        Response {
++            status: parts.status,
++            headers: parts.headers,
++            version: parts.version,
++            url: placeholder_url(),
++            extensions: parts.extensions,
++            body: body.into(),
+         }
+     }
+ }
+ 
+-/// `Stream<Item = Result<Bytes, Error>>` over a `RawBodyReader`.
++impl From<Response> for http::Response<Body> {
++    fn from(r: Response) -> Self {
++        let mut out = http::Response::new(r.body);
++        *out.status_mut() = r.status;
++        *out.headers_mut() = r.headers;
++        *out.version_mut() = r.version;
++        *out.extensions_mut() = r.extensions;
++        out
++    }
++}
++
++/// `Stream<Item = Result<Bytes, Error>>` over a response body.
+ pub struct BytesStream {
+-    reader: Option<wasi_http::RawBodyReader>,
++    body: Body,
+ }
+ 
+ impl futures_core::Stream for BytesStream {
+     type Item = Result<Bytes, Error>;
+-    fn poll_next(
+-        mut self: std::pin::Pin<&mut Self>,
+-        cx: &mut std::task::Context<'_>,
+-    ) -> std::task::Poll<Option<Self::Item>> {
+-        let reader = match self.reader.as_mut() {
+-            Some(r) => r,
+-            None => return std::task::Poll::Ready(None),
+-        };
+-        match reader.read_chunk() {
+-            Ok(wasi_http::ChunkPoll::Ready(chunk)) => {
+-                std::task::Poll::Ready(Some(Ok(Bytes::from(chunk))))
++    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
++        self.body.poll_chunk(cx)
++    }
++}
++
++pub type Result<T, E = Error> = std::result::Result<T, E>;
++
++/// `reqwest::blocking` — synchronous wrapper over the same host connection. Used
++/// only by OTLP exporters (never configured in the agentOS VM).
++pub mod blocking {
++    use std::time::Duration;
++
++    use super::Body;
++    use super::Error;
++    use super::HeaderMap;
++    use super::Request;
++    use super::StatusCode;
++    use bytes::Bytes;
++
++    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
++        use std::task::Context;
++        use std::task::Poll;
++        use std::task::Wake;
++        struct Noop;
++        impl Wake for Noop {
++            fn wake(self: std::sync::Arc<Self>) {}
++        }
++        let waker = std::sync::Arc::new(Noop).into();
++        let mut cx = Context::from_waker(&waker);
++        let mut fut = std::pin::pin!(fut);
++        loop {
++            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
++                return v;
+             }
+-            Ok(wasi_http::ChunkPoll::Eof) => {
+-                self.reader = None;
+-                std::task::Poll::Ready(None)
++            std::thread::sleep(Duration::from_millis(1));
++        }
++    }
++
++    #[derive(Default)]
++    pub struct ClientBuilder(super::ClientBuilder);
++    impl ClientBuilder {
++        pub fn timeout<T: Into<Option<Duration>>>(self, t: T) -> Self {
++            match t.into() {
++                Some(t) => ClientBuilder(self.0.timeout(t)),
++                None => self,
+             }
+-            // No data ready yet: yield to the runtime and ask to be re-polled
+-            // immediately. On the single-threaded VM this is a cooperative spin
+-            // that lets other tasks (e.g. the turn loop) run between polls.
+-            Ok(wasi_http::ChunkPoll::WouldBlock) => {
+-                cx.waker().wake_by_ref();
+-                std::task::Poll::Pending
+-            }
+-            Err(e) => {
+-                self.reader = None;
+-                std::task::Poll::Ready(Some(Err(Error::new(e.to_string()))))
+-            }
+         }
++        pub fn default_headers(self, h: HeaderMap) -> Self {
++            ClientBuilder(self.0.default_headers(h))
++        }
++        pub fn add_root_certificate(self, c: super::Certificate) -> Self {
++            ClientBuilder(self.0.add_root_certificate(c))
++        }
++        pub fn identity(self, i: super::Identity) -> Self {
++            ClientBuilder(self.0.identity(i))
++        }
++        pub fn tls_built_in_root_certs(self, b: bool) -> Self {
++            ClientBuilder(self.0.tls_built_in_root_certs(b))
++        }
++        pub fn use_rustls_tls(self) -> Self {
++            self
++        }
++        pub fn https_only(self, _b: bool) -> Self {
++            self
++        }
++        pub fn connect_timeout(self, _d: Duration) -> Self {
++            self
++        }
++        pub fn redirect(self, _p: super::redirect::Policy) -> Self {
++            self
++        }
++        pub fn user_agent<V>(self, v: V) -> Self
++        where
++            http::HeaderValue: TryFrom<V>,
++        {
++            ClientBuilder(self.0.user_agent(v))
++        }
++        pub fn no_proxy(self) -> Self {
++            self
++        }
++        pub fn proxy(self, _p: super::Proxy) -> Self {
++            self
++        }
++        pub fn build(self) -> Result<Client, Error> {
++            Ok(Client(self.0.build()?))
++        }
+     }
+-}
+ 
+-pub type Result<T, E = Error> = std::result::Result<T, E>;
++    #[derive(Clone, Debug, Default)]
++    pub struct Client(super::Client);
++    impl Client {
++        pub fn new() -> Self {
++            Client::default()
++        }
++        pub fn builder() -> ClientBuilder {
++            ClientBuilder::default()
++        }
++        pub fn execute(&self, request: Request) -> Result<Response, Error> {
++            block_on(self.0.execute_inner(request)).map(Response)
++        }
++    }
++
++    #[derive(Debug)]
++    pub struct Response(super::Response);
++    impl Response {
++        pub fn status(&self) -> StatusCode {
++            self.0.status()
++        }
++        pub fn headers(&self) -> &HeaderMap {
++            self.0.headers()
++        }
++        pub fn headers_mut(&mut self) -> &mut HeaderMap {
++            self.0.headers_mut()
++        }
++        pub fn error_for_status(self) -> Result<Self, Error> {
++            self.0.error_for_status().map(Response)
++        }
++        pub fn bytes(self) -> Result<Bytes, Error> {
++            block_on(self.0.bytes())
++        }
++        pub fn text(self) -> Result<String, Error> {
++            block_on(self.0.text())
++        }
++    }
++
++    pub type Body2 = Body;
++}
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/tokio/src/net/mod.rs b/tokio/src/net/mod.rs
+--- a/tokio/src/net/mod.rs	2026-07-14 10:59:26
++++ b/tokio/src/net/mod.rs	2026-10-15 00:40:58
+@@ -49,6 +49,11 @@
+         #[doc(inline)]
+         pub use udp::UdpSocket;
+     }
++    // agentOS: inert stand-ins so dependents compile on wasm32-wasip1.
++    #[cfg(all(target_os = "wasi", target_env = "p1"))]
++    mod wasip1_stubs;
++    #[cfg(all(target_os = "wasi", target_env = "p1"))]
++    pub use wasip1_stubs::{TcpSocket, UdpSocket};
+ }
+ 
+ cfg_net_unix! {
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/tokio/src/net/wasip1_stubs.rs b/tokio/src/net/wasip1_stubs.rs
+--- a/tokio/src/net/wasip1_stubs.rs	1969-12-31 16:00:00
++++ b/tokio/src/net/wasip1_stubs.rs	2026-10-15 00:40:58
+@@ -0,0 +1,129 @@
++//! agentOS wasm32-wasip1: inert `UdpSocket` / `TcpSocket` so crates that name these
++//! types (hickory-proto, rama, ...) compile. WASI preview 1 has no socket creation;
++//! every constructor returns `ErrorKind::Unsupported`. Real guest networking in
++//! agentOS goes through the host_net imports (wasi-http), not tokio::net.
++use std::io;
++use std::net::SocketAddr;
++use std::task::{Context, Poll};
++
++use crate::io::ReadBuf;
++use crate::net::{TcpListener, TcpStream, ToSocketAddrs};
++
++fn unsupported() -> io::Error {
++    io::Error::new(io::ErrorKind::Unsupported, "sockets are not supported on wasm32-wasip1")
++}
++
++/// Inert UDP socket (never constructible on wasip1).
++#[derive(Debug)]
++pub struct UdpSocket {
++    _private: (),
++}
++
++impl UdpSocket {
++    /// Always fails on wasip1.
++    pub async fn bind<A: ToSocketAddrs>(_addr: A) -> io::Result<UdpSocket> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn from_std(_socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn local_addr(&self) -> io::Result<SocketAddr> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub async fn connect<A: ToSocketAddrs>(&self, _addr: A) -> io::Result<()> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub async fn send(&self, _buf: &[u8]) -> io::Result<usize> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub async fn recv(&self, _buf: &mut [u8]) -> io::Result<usize> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub async fn send_to<A: ToSocketAddrs>(&self, _buf: &[u8], _target: A) -> io::Result<usize> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub async fn recv_from(&self, _buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn poll_recv_from(
++        &self,
++        _cx: &mut Context<'_>,
++        _buf: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<SocketAddr>> {
++        Poll::Ready(Err(unsupported()))
++    }
++    /// Always fails on wasip1.
++    pub fn poll_send_to(
++        &self,
++        _cx: &mut Context<'_>,
++        _buf: &[u8],
++        _target: SocketAddr,
++    ) -> Poll<io::Result<usize>> {
++        Poll::Ready(Err(unsupported()))
++    }
++    /// Always fails on wasip1.
++    pub fn poll_recv(&self, _cx: &mut Context<'_>, _buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Err(unsupported()))
++    }
++    /// Always fails on wasip1.
++    pub fn poll_send(&self, _cx: &mut Context<'_>, _buf: &[u8]) -> Poll<io::Result<usize>> {
++        Poll::Ready(Err(unsupported()))
++    }
++}
++
++/// Inert TCP socket builder (never constructible on wasip1).
++#[derive(Debug)]
++pub struct TcpSocket {
++    _private: (),
++}
++
++impl TcpSocket {
++    /// Always fails on wasip1.
++    pub fn new_v4() -> io::Result<TcpSocket> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn new_v6() -> io::Result<TcpSocket> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn bind(&self, _addr: SocketAddr) -> io::Result<()> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn set_nodelay(&self, _nodelay: bool) -> io::Result<()> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn set_reuseaddr(&self, _reuseaddr: bool) -> io::Result<()> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn set_keepalive(&self, _keepalive: bool) -> io::Result<()> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn local_addr(&self) -> io::Result<SocketAddr> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub async fn connect(self, _addr: SocketAddr) -> io::Result<TcpStream> {
++        Err(unsupported())
++    }
++    /// Always fails on wasip1.
++    pub fn listen(self, _backlog: u32) -> io::Result<TcpListener> {
++        Err(unsupported())
++    }
++}
+diff --color -ruN -x .cargo-ok -x .cargo_vcs_info.json -x *.orig a/tokio/src/runtime/blocking/pool.rs b/tokio/src/runtime/blocking/pool.rs
+--- a/tokio/src/runtime/blocking/pool.rs	2026-07-14 10:59:26
++++ b/tokio/src/runtime/blocking/pool.rs	2026-10-15 00:40:58
+@@ -216,8 +216,18 @@
+         F: FnOnce() -> R + Send + 'static,
+         R: Send + 'static,
+     {
+-        let rt = Handle::current();
+-        rt.inner.blocking_spawner().spawn_mandatory_blocking(&rt, func)
++        // agentOS wasm32-wasip1: no blocking pool; run inline like spawn_blocking
++        // (tokio::fs::File writes go through here).
++        #[cfg(target_os = "wasi")]
++        {
++            let result = func();
++            return Some(crate::task::spawn(async move { result }));
++        }
++        #[cfg(not(target_os = "wasi"))]
++        {
++            let rt = Handle::current();
++            rt.inner.blocking_spawner().spawn_mandatory_blocking(&rt, func)
++        }
+     }
+ }
+ 

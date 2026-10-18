@@ -1,0 +1,71 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "system-config-path",
+      "path": "codex-rs/config/src/loader/mod.rs",
+      "before": [
+        "#[cfg(windows)]",
+        "pub use windows::probe_windows_system_config_namespace;",
+        "",
+        "#[cfg(unix)]",
+        "const SYSTEM_CONFIG_TOML_FILE_UNIX: &str = \"/etc/codex/config.toml\";",
+        "",
+        "#[cfg(windows)]"
+      ],
+      "after": [
+        "#[cfg(windows)]",
+        "pub use windows::probe_windows_system_config_namespace;",
+        "",
+        "#[cfg(any(unix, target_os = \"wasi\"))]",
+        "const SYSTEM_CONFIG_TOML_FILE_UNIX: &str = \"/etc/codex/config.toml\";",
+        "",
+        "#[cfg(windows)]"
+      ]
+    },
+    {
+      "rule": "system-requirements-path",
+      "path": "codex-rs/config/src/loader/mod.rs",
+      "before": [
+        "    }",
+        "}",
+        "",
+        "#[cfg(unix)]",
+        "fn system_requirements_toml_file() -> io::Result<AbsolutePathBuf> {",
+        "    AbsolutePathBuf::from_absolute_path(Path::new(\"/etc/codex/requirements.toml\"))",
+        "}"
+      ],
+      "after": [
+        "    }",
+        "}",
+        "",
+        "#[cfg(any(unix, target_os = \"wasi\"))]",
+        "fn system_requirements_toml_file() -> io::Result<AbsolutePathBuf> {",
+        "    AbsolutePathBuf::from_absolute_path(Path::new(\"/etc/codex/requirements.toml\"))",
+        "}"
+      ]
+    },
+    {
+      "rule": "system-config-function",
+      "path": "codex-rs/config/src/loader/mod.rs",
+      "before": [
+        "    Ok(false)",
+        "}",
+        "",
+        "#[cfg(unix)]",
+        "pub fn system_config_toml_file() -> io::Result<AbsolutePathBuf> {",
+        "    AbsolutePathBuf::from_absolute_path(Path::new(SYSTEM_CONFIG_TOML_FILE_UNIX))",
+        "}"
+      ],
+      "after": [
+        "    Ok(false)",
+        "}",
+        "",
+        "#[cfg(any(unix, target_os = \"wasi\"))]",
+        "pub fn system_config_toml_file() -> io::Result<AbsolutePathBuf> {",
+        "    AbsolutePathBuf::from_absolute_path(Path::new(SYSTEM_CONFIG_TOML_FILE_UNIX))",
+        "}"
+      ]
+    }
+  ]
+}
