@@ -10,8 +10,8 @@ import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage
 const artifact = {
   name: "ripgrep",
   version: "15.1.0",
-  bytes: 2208393,
-  sha256: "b88624f67935ecd82f757e29862d01ea5b98935ede62b8f69ba3284b7937a5c5",
+  bytes: 2207817,
+  sha256: "5c88ecb6dd08b1952585efc3523b397621b62db54e60572449c784c886a17006",
 };
 const sourceInventory = "__RIPGREP_FACET_SOURCE_INVENTORY__";
 const expectedImports = [

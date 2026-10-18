@@ -3,14 +3,9 @@
   "program": "ripgrep",
   "artifact": {
     "path": "bin/rg.wasm",
-    "bytes": 2208393,
-    "sha256": "b88624f67935ecd82f757e29862d01ea5b98935ede62b8f69ba3284b7937a5c5",
-    "builtFrom": "target-stock-std/wasm32-wasip1/release/rg.wasm",
-    "discardedBuild": {
-      "path": "target/wasm32-wasip1/release/rg.wasm",
-      "sha256": "ca81c1d82703b2dfa1ed6883b0cc0ad71fa2a2e36d656f6f4c6ef14a913dd315",
-      "reason": "Built against the earlier modified 1060 Rust sysroot; this is not the packaged artifact."
-    }
+    "bytes": 2207817,
+    "sha256": "5c88ecb6dd08b1952585efc3523b397621b62db54e60572449c784c886a17006",
+    "builtFrom": "target-stock-std/wasm32-wasip1/release/rg.wasm"
   },
   "source": {
     "name": "ripgrep",
@@ -109,8 +104,8 @@
   },
   "build": {
     "script": "build-rg-stock-std.sh",
-    "scriptSha256": "4ad8e4b94b7ec4980038216904f99454a201b6a54790747b36a799239707aa93",
-    "command": "cargo build --manifest-path $BUILD_ROOT/inputs/ripgrep/Cargo.toml --target-dir $BUILD_ROOT/target-stock-std --target wasm32-wasip1 --release --no-default-features --bin rg --locked --jobs 2",
+    "scriptSha256": "db81f524399c9071afce099a3d2be0da33ddb736e809ece38b166369934596ac",
+    "command": "cargo build --manifest-path $RUN_ROOT/inputs/ripgrep-15.1.0/Cargo.toml --target-dir $RUN_ROOT/target-stock-std --target wasm32-wasip1 --release --no-default-features --bin rg --locked --jobs 2",
     "cargoHome": "isolated task-local Cargo home",
     "rustc": "the nightly-2026-03-01 wasm32-wasip1 toolchain installed into a fresh task-local Rustup home",
     "rustFlags": [
@@ -120,9 +115,14 @@
       "-C link-arg=$WASI_LIBC_SYSROOT/lib/wasm32-wasi/libwasi-emulated-pthread.a",
       "-C link-arg=-L$WASI_LIBC_SYSROOT/lib/wasm32-wasi",
       "-C metadata=agentos-libc-666978aa66b44e8f",
-      "--cfg tokio_unstable"
+      "--cfg tokio_unstable",
+      "--remap-path-prefix=$RUN_ROOT=/signalbox/ripgrep-build",
+      "--remap-path-prefix=$WASI_SDK_ROOT=/signalbox/wasi-sdk"
     ],
-    "result": "success"
+    "result": "success",
+    "canonicalBuildRoot": "/signalbox/ripgrep-build",
+    "gitRevision": null,
+    "sourceDateEpoch": 0
   },
   "rebuildRecipe": {
     "script": "build-rg-stock-std.sh",
@@ -167,6 +167,6 @@
       "absolute /outside/absolute.txt remains absolute",
       "--version reports ripgrep 15.1.0"
     ],
-    "outputSha256": "d9fd1a106dba959aa6707deb65ab9f7c21fae11aea6992be2495b9b2bb880c03"
+    "outputSha256": "0ae456240b9cdc93863272845733d52a7f05db2c2ea9acdfee350e729ec2cc45"
   }
 }
