@@ -80,6 +80,7 @@
         "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
         "infra/kernelProof/*.ts",
+        "src/kernel/KernelPipeProof.ts", // Loaded by the static pipe fixture's generated entry.
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
         "infra/syncProbe/lunora/identity.ts",
