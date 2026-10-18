@@ -5,6 +5,7 @@ const HIDDEN_PREOPEN_FD_TAG_MASK = 0xc000_0000;
 const HIDDEN_PREOPEN_FD_MASK = 0x3fff_ffff;
 
 const FD_ARGUMENTS = Object.freeze({
+  fd_fdstat_get: Object.freeze([0]),
   fd_prestat_get: Object.freeze([0]),
   fd_prestat_dir_name: Object.freeze([0]),
   path_create_directory: Object.freeze([0]),
