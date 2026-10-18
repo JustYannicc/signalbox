@@ -219,6 +219,17 @@ test("the strict verifier ignores another Alchemy stack with the same PR suffix"
   );
 });
 
+test("the strict verifier accepts null tags on unrelated untagged Workers", () => {
+  assert.deepEqual(
+    verifyOneDomainPreviewBindings(
+      [domain(appBinding)],
+      [stageScript(appBinding.service), { id: "unrelated-worker", tags: null }],
+      913,
+    ),
+    [],
+  );
+});
+
 test("the strict verifier catches hand-named Workers on nested preview hosts", () => {
   const nested = domain({
     kind: "nested-host",
