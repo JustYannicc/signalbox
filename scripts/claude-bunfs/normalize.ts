@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - preserve guest module URLs at build time.
+import * as NodeURL from "node:url";
+import * as NodePath from "node:path";
 import ts from "typescript-legacy";
 import { shadowedMetaRequires } from "./normalize-bindings.ts";
 
@@ -11,6 +14,10 @@ export interface NormalizeInput {
 
 /** Bun stores CJS as an uncalled wrapper; esbuild must see its body as CJS. */
 export function normalizeModule(input: NormalizeInput) {
+  const windows = /^[A-Za-z]:[\\/]/.test(input.name);
+  const dirname = windows
+    ? NodePath.win32.dirname(input.name)
+    : input.name.slice(0, input.name.lastIndexOf("/"));
   let source = input.source;
   if (input.format === 2) {
     const ast = parse(input.name, source);
@@ -37,7 +44,6 @@ export function normalizeModule(input: NormalizeInput) {
       if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break;
       directiveEnd = statement.end;
     }
-    const dirname = input.name.slice(0, input.name.lastIndexOf("/"));
     source =
       source.slice(bodyStart, directiveEnd) +
       `\nvar __filename=${JSON.stringify(input.name)},__dirname=${JSON.stringify(dirname)};\n` +
@@ -50,6 +56,21 @@ export function normalizeModule(input: NormalizeInput) {
   const edits: { start: number; end: number; text: string }[] = [];
   const visit = (node: ts.Node) => {
     if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      ts.isMetaProperty(node.expression) &&
+      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      (ts.isPropertyAccessExpression(node)
+        ? node.name.text === "url"
+        : node.argumentExpression &&
+          ts.isStringLiteralLike(node.argumentExpression) &&
+          node.argumentExpression.text === "url")
+    ) {
+      // Chunk URLs belong to the loader; guest paths belong to the original source module.
+      if (!windows && !input.name.startsWith("/"))
+        throw new Error(`BUN_MODULE_URL_PATH_INVALID: ${input.name}`);
+      const url = NodeURL.pathToFileURL(input.name, { windows }).href;
+      edits.push({ start: node.getStart(ast), end: node.end, text: JSON.stringify(url) });
+    } else if (
       ts.isPropertyAccessExpression(node) &&
       ts.isMetaProperty(node.expression) &&
       node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
@@ -62,7 +83,7 @@ export function normalizeModule(input: NormalizeInput) {
         edits.push({
           start: node.getStart(ast),
           end: node.end,
-          text: JSON.stringify(input.name.slice(0, input.name.lastIndexOf("/"))),
+          text: JSON.stringify(dirname),
         });
       else if (node.name.text === "path" || node.name.text === "filename")
         edits.push({ start: node.getStart(ast), end: node.end, text: JSON.stringify(input.name) });
