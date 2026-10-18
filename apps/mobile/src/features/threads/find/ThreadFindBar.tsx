@@ -5,8 +5,9 @@
  * call web's Find makes.
  */
 import { useIsFocused } from "@react-navigation/native";
+import type { InlineSkill } from "@t3tools/shared/inlineSkills";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type TextInputInstance } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -25,6 +26,8 @@ import {
   type ThreadFindStart,
 } from "./thread-find-model";
 import { usePendingThreadFindRequest } from "./thread-find-request";
+import type { ThreadFindRect } from "./thread-find-geometry";
+import { useThreadFindBarOcclusion } from "./use-thread-find-bar-occlusion";
 
 const BAR_ENTERING = FadeIn.duration(140).reduceMotion(ReduceMotion.System);
 const BAR_EXITING = FadeOut.duration(100).reduceMotion(ReduceMotion.System);
@@ -37,6 +40,7 @@ interface FindState {
   /** Bumped per open so a reopened bar focuses again. */
   readonly focusRequest: number;
   readonly autoFocus: boolean;
+  readonly requestId: string | null;
 }
 
 const CLOSED: FindState = {
@@ -46,9 +50,18 @@ const CLOSED: FindState = {
   offset: 0,
   focusRequest: 0,
   autoFocus: false,
+  requestId: null,
 };
 
-function useThreadFindResults(environmentId: EnvironmentId, threadId: ThreadId, state: FindState) {
+let requestSequence = 0;
+const nextRequestId = () => `thread-find:${++requestSequence}`;
+
+function useThreadFindResults(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  state: FindState,
+  skills: readonly InlineSkill[],
+) {
   const query = state.query.trim();
   const debouncedQuery = useDebouncedValue(query, 150);
   const settled = state.open && query.length > 0 && query === debouncedQuery;
@@ -59,6 +72,7 @@ function useThreadFindResults(environmentId: EnvironmentId, threadId: ThreadId, 
           input: {
             threadId,
             query: debouncedQuery,
+            skills: skills.map(({ name, displayName }) => ({ name, displayName })),
             ...(state.start ? { start: state.start } : {}),
             ...(state.offset !== 0 ? { offset: state.offset } : {}),
           },
@@ -76,6 +90,7 @@ function useThreadFindResults(environmentId: EnvironmentId, threadId: ThreadId, 
   const data = result.data ?? (last.query === query ? last.data : null);
   return {
     data,
+    revealData: settled && result.isSuccess && !result.isPending ? result.data : null,
     error: result.error,
     refresh: result.refresh,
     isPending: state.open && query.length > 0 && (query !== debouncedQuery || result.isPending),
@@ -85,9 +100,12 @@ function useThreadFindResults(environmentId: EnvironmentId, threadId: ThreadId, 
 export function ThreadFindBar(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly skills: readonly InlineSkill[];
   readonly onRevealRequestChange: (request: ThreadFindRevealRequest | null) => void;
+  readonly onOcclusionChange?: (rect: ThreadFindRect | null) => void;
   readonly top: number;
 }) {
+  const { onOcclusionChange, onRevealRequestChange } = props;
   const enabled = useEnvironmentServerConfig(props.environmentId)?.threadFind === true;
   const focused = useIsFocused();
   const threadKey = scopedThreadKey(props.environmentId, props.threadId);
@@ -110,6 +128,7 @@ export function ThreadFindBar(props: {
       setFind((previous) => ({
         ...previous,
         open: true,
+        requestId: nextRequestId(),
         ...(query === undefined ? {} : { query, start, offset: 0 }),
         focusRequest: previous.focusRequest + 1,
         autoFocus: query === undefined || query.length === 0,
@@ -117,6 +136,10 @@ export function ThreadFindBar(props: {
     [setFind],
   );
   const close = useCallback(() => setFind(() => CLOSED), [setFind]);
+  const { ref: barRef, measure: measureBar } = useThreadFindBarOcclusion(
+    enabled && focused && find.open,
+    onOcclusionChange,
+  );
 
   usePendingThreadFindRequest(threadKey, enabled, (request) => open(request.query, request.start));
   const onFindCommand = useCallback(() => {
@@ -126,38 +149,46 @@ export function ThreadFindBar(props: {
   }, [enabled, focused, open]);
   useHardwareKeyboardCommand("focusSearch", onFindCommand);
 
-  const results = useThreadFindResults(props.environmentId, props.threadId, find);
+  const results = useThreadFindResults(props.environmentId, props.threadId, find, props.skills);
   const match = results.data?.match ?? null;
   const total = results.data?.totalMatches ?? 0;
   const counting = results.data?.complete === false;
 
-  const matchKey =
-    match === null
-      ? null
-      : `${find.focusRequest}:${find.query.trim()}:${match.entryId}:${match.occurrence}`;
-  const matchEntryId = match?.entryId ?? null;
-  const matchRunId = match?.runId ?? null;
-  const revealRequest = useMemo<ThreadFindRevealRequest | null>(
-    () =>
-      matchEntryId === null || matchKey === null
-        ? null
-        : {
-            key: matchKey,
-            threadKey,
-            target: { entryId: matchEntryId, runId: matchRunId },
-          },
-    [matchEntryId, matchKey, matchRunId, threadKey],
-  );
-  useEffect(() => {
-    props.onRevealRequestChange(revealRequest);
-  }, [props.onRevealRequestChange, revealRequest]);
+  const selected = results.revealData;
+  const revealRequest = useMemo<ThreadFindRevealRequest | null>(() => {
+    if (
+      !enabled ||
+      !focused ||
+      !find.open ||
+      !find.requestId ||
+      !selected?.match ||
+      find.query.trim().length === 0
+    )
+      return null;
+    return {
+      key: `${find.requestId}:${selected.snapshotSequence}`,
+      requestId: find.requestId,
+      query: find.query.trim(),
+      occurrence: selected.match.occurrence,
+      snapshotSequence: selected.snapshotSequence,
+      revision: String(selected.snapshotSequence),
+      ...(selected.match.evidence ? { evidence: selected.match.evidence } : {}),
+      threadKey,
+      target: { entryId: selected.match.entryId, runId: selected.match.runId },
+    };
+  }, [enabled, focused, find.open, find.requestId, find.query, selected, threadKey]);
+  useLayoutEffect(() => {
+    onRevealRequestChange(revealRequest);
+    return () => onRevealRequestChange(null);
+  }, [onRevealRequestChange, revealRequest]);
 
   const step = (delta: number) => {
-    if (match === null || total === 0 || counting) return;
+    if (match === null || total === 0 || counting || results.isPending) return;
     setFind((previous) => ({
       ...previous,
       start: { entryId: match.entryId, occurrence: match.occurrence },
       offset: delta,
+      requestId: nextRequestId(),
     }));
   };
 
@@ -176,6 +207,8 @@ export function ThreadFindBar(props: {
   if (!enabled || !find.open || !focused) return null;
   return (
     <Animated.View
+      ref={barRef}
+      onLayout={measureBar}
       entering={BAR_ENTERING}
       exiting={BAR_EXITING}
       className="absolute inset-x-3 z-30 flex-row items-center gap-1 rounded-2xl border border-border bg-card py-1 pl-3 pr-1 shadow-md shadow-black/15"
@@ -191,7 +224,13 @@ export function ThreadFindBar(props: {
         returnKeyType="search"
         value={find.query}
         onChangeText={(query) =>
-          setFind((previous) => ({ ...previous, query, start: undefined, offset: 0 }))
+          setFind((previous) => ({
+            ...previous,
+            query,
+            start: undefined,
+            offset: 0,
+            requestId: nextRequestId(),
+          }))
         }
         onSubmitEditing={() => step(1)}
         submitBehavior="submit"
@@ -213,13 +252,13 @@ export function ThreadFindBar(props: {
       <FindBarButton
         icon="chevron.up"
         label="Previous match"
-        disabled={total === 0 || counting}
+        disabled={total === 0 || counting || results.isPending}
         onPress={() => step(-1)}
       />
       <FindBarButton
         icon="chevron.down"
         label="Next match"
-        disabled={total === 0 || counting}
+        disabled={total === 0 || counting || results.isPending}
         onPress={() => step(1)}
       />
       <FindBarButton icon="xmark" label="Close find" onPress={close} />

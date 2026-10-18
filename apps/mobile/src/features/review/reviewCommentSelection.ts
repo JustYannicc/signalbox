@@ -299,7 +299,23 @@ export function parseReviewInlineComments(value: string): ReadonlyArray<ReviewIn
 export function parseReviewCommentMessageSegments(
   value: string,
 ): ReadonlyArray<ReviewCommentMessageSegment> {
-  const segments: ReviewCommentMessageSegment[] = [];
+  return parseReviewCommentMessageSegmentsWithSource(value).map((segment) => {
+    if (segment.kind !== "text") return segment;
+    const { sourceOffset: _sourceOffset, ...text } = segment;
+    return text;
+  });
+}
+
+export function parseReviewCommentMessageSegmentsWithSource(
+  value: string,
+): ReadonlyArray<
+  | (Extract<ReviewCommentMessageSegment, { kind: "text" }> & { readonly sourceOffset: number })
+  | Extract<ReviewCommentMessageSegment, { kind: "review-comment" }>
+> {
+  const segments: Array<
+    | (Extract<ReviewCommentMessageSegment, { kind: "text" }> & { readonly sourceOffset: number })
+    | Extract<ReviewCommentMessageSegment, { kind: "review-comment" }>
+  > = [];
   let cursor = 0;
   let parsedCommentIndex = 0;
   const masked = replaceComposerContextReferences(value, (reference) =>
@@ -313,6 +329,7 @@ export function parseReviewCommentMessageSegments(
         kind: "text",
         id: `review-comment-text:${cursor}`,
         text: beforeText,
+        sourceOffset: cursor,
       });
     }
 
@@ -332,6 +349,7 @@ export function parseReviewCommentMessageSegments(
         kind: "text",
         id: `review-comment-invalid:${matchIndex}`,
         text: value.slice(matchIndex, matchIndex + match[0].length),
+        sourceOffset: matchIndex,
       });
     }
 
@@ -344,6 +362,7 @@ export function parseReviewCommentMessageSegments(
       kind: "text",
       id: `review-comment-text:${cursor}`,
       text: rest,
+      sourceOffset: cursor,
     });
   }
 

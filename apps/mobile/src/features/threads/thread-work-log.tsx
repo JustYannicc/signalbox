@@ -37,7 +37,6 @@ import {
   AppState,
   type ColorValue,
   Pressable,
-  ScrollView,
   StyleSheet,
   View,
 } from "react-native";
@@ -87,6 +86,9 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { ThreadFindWorkRowRevealRequest } from "./find/thread-find-model"; // signalbox: Find also scrolls this work log's inner viewport.
+import { useThreadFindListViewport } from "./find/thread-find-list-viewport";
+import { ThreadFindViewportProvider } from "./find/thread-find-reveal-context";
+import { ThreadFindScrollView } from "./find/thread-find-scroll-view";
 import { useThreadFindWorkRowReveal } from "./find/use-thread-find-work-row-reveal"; // signalbox: keep nested Find scrolling and request fencing together.
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
@@ -490,11 +492,20 @@ interface ThreadWorkLogProps {
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
   readonly renderImage: MarkdownImageRenderer;
-  readonly renderReasoning: (text: string) => ReactNode;
+  readonly renderReasoning: (text: string, plan?: { id: string; markdown: string }) => ReactNode;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
+  const groupedReasoning =
+    props.activities[0]?.groupedToolDetail === true &&
+    props.activities.every((row) => row.projectedItem.item.type === "reasoning");
+  useLayoutEffect(() => {
+    const request = props.findReveal;
+    if (groupedReasoning && request && props.activities.some((row) => row.id === request.rowId)) {
+      props.onFindRevealed?.(request.key);
+    }
+  }, [groupedReasoning, props.findReveal, props.activities, props.onFindRevealed]);
   const renderRow = useCallback(
     (row: ThreadFeedActivity) => (
       <ThreadWorkLogRow
@@ -536,16 +547,13 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     return <ThreadSubagentGroup {...props} />;
   }
 
-  if (
-    props.activities[0]?.groupedToolDetail &&
-    props.activities.every((row) => row.projectedItem.item.type === "reasoning")
-  ) {
+  if (groupedReasoning) {
     return (
-      <ScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
+      <ThreadFindScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
         {props.activities.map((row) => (
           <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
         ))}
-      </ScrollView>
+      </ThreadFindScrollView>
     );
   }
 
@@ -578,7 +586,7 @@ function ThreadWorkGroupList(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
   readonly renderRow: (row: ThreadFeedActivity) => ReactNode;
-  readonly findReveal?: ThreadFindWorkRowRevealRequest | null; // signalbox: completion waits for the inner list's scroll promise.
+  readonly findReveal?: ThreadFindWorkRowRevealRequest | null; // signalbox: this acknowledges row mounting, not glyph visibility.
   readonly onFindRevealed?: (key: string) => void;
 }) {
   const estimatedRowsHeight = workLogRowsHeight(
@@ -724,6 +732,11 @@ function ThreadWorkGroupList(props: {
   const cancelPendingAppend = useCallback(() => {
     pendingAppendHeightRef.current = null;
   }, []); // signalbox: Find owns the next scroll instead of append-follow.
+  const findViewport = useThreadFindListViewport({
+    listRef,
+    insets: () => ({ top: WORK_GROUP_EDGE_FADE_HEIGHT, bottom: WORK_GROUP_EDGE_FADE_HEIGHT }),
+    onBeforeScroll: cancelPendingAppend,
+  });
   const findRowId = useThreadFindWorkRowReveal({
     // signalbox: acknowledge only after this viewport reaches the requested activity.
     request: props.findReveal,
@@ -732,78 +745,80 @@ function ThreadWorkGroupList(props: {
     loaded,
     listRef,
     onBeforeScroll: cancelPendingAppend,
-    onRevealed: props.onFindRevealed,
+    onRowMounted: props.onFindRevealed,
   });
 
   return (
-    <View style={{ height, overflow: "hidden" }}>
-      <AnimatedLegendList
-        ref={subscribeToContentSize}
-        data={props.activities}
-        keyExtractor={workLogRowKey}
-        estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
-        getFixedItemSize={getFixedItemSize}
-        initialScrollIndex={initialScrollIndex}
-        // Bootstrap overscan is only 50px. An offset inside expanded detail can
-        // otherwise leave its own row unmeasured until after scroll restoration.
-        alwaysRender={
-          findRowId
-            ? { keys: [findRowId] } // signalbox: measure the expanded Find target before completing its scroll.
-            : restoringPosition && initialPosition
-              ? { keys: [initialPosition.rowId] }
-              : undefined
-        }
-        recycleItems={false}
-        extraData={props.renderRow}
-        renderItem={renderItem}
-        sharedValues={sharedValues}
-        onLayout={finishPendingAppend}
-        onLoad={() => {
-          loadedRef.current = true;
-          setLoaded(true); // signalbox: retry a Find request that arrived before the list loaded.
-          setRestoringPosition(false);
-          rememberPosition();
-        }}
-        onScroll={rememberPosition}
-        onScrollBeginDrag={() => {
-          userScrollingRef.current = true;
-          pendingAppendHeightRef.current = null;
-        }}
-        onScrollEndDrag={() => {
-          userScrollingRef.current = false;
-        }}
-        onMomentumScrollBegin={() => {
-          userScrollingRef.current = true;
-          pendingAppendHeightRef.current = null;
-        }}
-        onMomentumScrollEnd={() => {
-          userScrollingRef.current = false;
-          rememberPosition();
-        }}
-        maintainVisibleContentPosition
-        nestedScrollEnabled
-        directionalLockEnabled
-        showsVerticalScrollIndicator
-        scrollsToTop={false}
-        bounces={false}
-        keyboardShouldPersistTaps="handled"
-        style={{ height }}
-      />
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 top-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, topFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="down" />
-      </Animated.View>
-      <Animated.View
-        pointerEvents="none"
-        className="absolute inset-x-0 bottom-0"
-        style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
-      >
-        <EdgeFade color={props.edgeFadeColor} direction="up" />
-      </Animated.View>
-    </View>
+    <ThreadFindViewportProvider viewport={findViewport}>
+      <View style={{ height, overflow: "hidden" }}>
+        <AnimatedLegendList
+          ref={subscribeToContentSize}
+          data={props.activities}
+          keyExtractor={workLogRowKey}
+          estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
+          getFixedItemSize={getFixedItemSize}
+          initialScrollIndex={initialScrollIndex}
+          // Bootstrap overscan is only 50px. An offset inside expanded detail can
+          // otherwise leave its own row unmeasured until after scroll restoration.
+          alwaysRender={
+            findRowId
+              ? { keys: [findRowId] } // signalbox: measure the expanded Find target before completing its scroll.
+              : restoringPosition && initialPosition
+                ? { keys: [initialPosition.rowId] }
+                : undefined
+          }
+          recycleItems={false}
+          extraData={props.renderRow}
+          renderItem={renderItem}
+          sharedValues={sharedValues}
+          onLayout={finishPendingAppend}
+          onLoad={() => {
+            loadedRef.current = true;
+            setLoaded(true); // signalbox: retry a Find request that arrived before the list loaded.
+            setRestoringPosition(false);
+            rememberPosition();
+          }}
+          onScroll={rememberPosition}
+          onScrollBeginDrag={() => {
+            userScrollingRef.current = true;
+            pendingAppendHeightRef.current = null;
+          }}
+          onScrollEndDrag={() => {
+            userScrollingRef.current = false;
+          }}
+          onMomentumScrollBegin={() => {
+            userScrollingRef.current = true;
+            pendingAppendHeightRef.current = null;
+          }}
+          onMomentumScrollEnd={() => {
+            userScrollingRef.current = false;
+            rememberPosition();
+          }}
+          maintainVisibleContentPosition
+          nestedScrollEnabled
+          directionalLockEnabled
+          showsVerticalScrollIndicator
+          scrollsToTop={false}
+          bounces={false}
+          keyboardShouldPersistTaps="handled"
+          style={{ height }}
+        />
+        <Animated.View
+          pointerEvents="none"
+          className="absolute inset-x-0 top-0"
+          style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, topFadeStyle]}
+        >
+          <EdgeFade color={props.edgeFadeColor} direction="down" />
+        </Animated.View>
+        <Animated.View
+          pointerEvents="none"
+          className="absolute inset-x-0 bottom-0"
+          style={[{ height: WORK_GROUP_EDGE_FADE_HEIGHT }, bottomFadeStyle]}
+        >
+          <EdgeFade color={props.edgeFadeColor} direction="up" />
+        </Animated.View>
+      </View>
+    </ThreadFindViewportProvider>
   );
 }
 
@@ -1244,7 +1259,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               </View>
             ))}
           </FilePreviewGallery>
-          <ScrollView
+          <ThreadFindScrollView
             nestedScrollEnabled
             directionalLockEnabled
             showsVerticalScrollIndicator
@@ -1286,6 +1301,11 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                     line
                   ),
                 )
+            ) : shownItem.type === "proposed_plan" ? (
+              props.renderReasoning(shownItem.markdown, {
+                id: row.projectedItem.item.id,
+                markdown: shownItem.markdown,
+              })
             ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
                 {fullDetail}
@@ -1303,7 +1323,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               </Text>
             ) : null}
             {streamsOutput ? null : exitLine}
-          </ScrollView>
+          </ThreadFindScrollView>
           {streamsOutput ? (
             <>
               <ThreadCommandOutput

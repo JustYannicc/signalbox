@@ -1,4 +1,8 @@
 import { useMemo } from "react";
+import {
+  assistantCitationLabel,
+  parseAssistantCitationHref,
+} from "@t3tools/shared/assistantCitations";
 import { Image } from "react-native";
 import type {
   LinkPillContent,
@@ -22,6 +26,13 @@ function presentation(
 ) {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
+  const citation = parseAssistantCitationHref(url);
+  if (citation)
+    return {
+      color: props.textStyle.linkColor,
+      label: assistantCitationLabel(citation),
+      icon: markdownFileIconSource("markdown"),
+    };
   const context = enrichedContextLinkPresentation(url);
   if (context) return { color: context.color, icon: markdownFileIconSource(context.icon) };
   const skill = enrichedSkillReference(url, props.skills);

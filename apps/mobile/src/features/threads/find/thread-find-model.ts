@@ -1,5 +1,8 @@
 // signalbox: in-thread Find on mobile (#792), the parts that don't need React Native.
-import type { OrchestrationV2SearchThreadInput } from "@t3tools/contracts";
+import type {
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2ThreadFindMatchEvidence,
+} from "@t3tools/contracts";
 
 export type ThreadFindStart = NonNullable<OrchestrationV2SearchThreadInput["start"]>;
 
@@ -10,7 +13,13 @@ export interface ThreadFindTarget {
 
 export interface ThreadFindRevealRequest {
   readonly key: string;
+  readonly requestId: string;
   readonly threadKey: string;
+  readonly query: string;
+  readonly occurrence: number;
+  readonly snapshotSequence: number;
+  readonly revision: string;
+  readonly evidence?: OrchestrationV2ThreadFindMatchEvidence;
   readonly target: ThreadFindTarget;
 }
 
@@ -18,6 +27,16 @@ export interface ThreadFindWorkRowRevealRequest {
   readonly key: string;
   readonly rowId: string;
   readonly anchorKey: string;
+}
+
+export function threadFindRequestForSource(
+  request: ThreadFindRevealRequest | null | undefined,
+  threadKey: string,
+): ThreadFindRevealRequest | null {
+  if (!request || request.threadKey !== threadKey) return null;
+  // The renderer adapter verifies this against the exact local semantic
+  // document. A snapshot sequence cannot prove source identity across forks.
+  return request.evidence ? request : null;
 }
 
 export type ThreadFindRevealAction =

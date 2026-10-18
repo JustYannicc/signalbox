@@ -1,3 +1,11 @@
+// signalbox: native Markdown rewrites need exact edit maps for semantic Find intervals.
+import {
+  applyTextSourceEdits,
+  composeTextSourceMaps,
+  identityTextSourceMap,
+  type TextSourceMap,
+  type TextSourceEdit,
+} from "@t3tools/shared/textSourceMap";
 import type { Root, RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
@@ -57,6 +65,10 @@ function attribute(tag: string, name: string): string | null {
 
 /** Called only for parsed HTML nodes, so Markdown code examples keep their literal tags. */
 export function markdownHtmlContent(content: string): string {
+  return markdownHtmlContentSourceMap(content).text;
+}
+
+function markdownHtmlContentSourceMap(content: string): TextSourceMap {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
   const tags = [...content.matchAll(HTML_TAG)];
@@ -101,43 +113,54 @@ export function markdownHtmlContent(content: string): string {
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
     index = closingIndex;
   }
-  return content.replace(HTML_TAG, (tag, offset: number) => {
-    if (codeRanges.some((range) => offset >= range.start && offset < range.end)) return tag;
-    if (tag.startsWith("<!--")) return "";
-    if (/^<img\b/i.test(tag)) {
-      const src = attribute(tag, "src");
-      if (!src) return "";
-      const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
-      const href = src
-        .replace(/&/g, "\\&")
-        .replace(/</g, "%3C")
-        .replace(/>/g, "%3E")
-        .replace(/\n/g, "");
-      return `![${alt}](<${href}>)`;
-    }
-    if (/^<summary\b/i.test(tag)) return "\n\n**";
-    if (/^<\/summary\s*>/i.test(tag)) return "**\n\n";
-    if (/^<br\b/i.test(tag)) return "  \n";
-    if (/^<\/?(?:p|div|details)\b/i.test(tag)) return "\n\n";
-    return "";
+  const edits: TextSourceEdit[] = [];
+  content.replace(HTML_TAG, (tag, offset: number) => {
+    const replacement = (() => {
+      if (codeRanges.some((range) => offset >= range.start && offset < range.end)) return tag;
+      if (tag.startsWith("<!--")) return "";
+      if (/^<img\b/i.test(tag)) {
+        const src = attribute(tag, "src");
+        if (!src) return "";
+        const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
+        const href = src
+          .replace(/&/g, "\\&")
+          .replace(/</g, "%3C")
+          .replace(/>/g, "%3E")
+          .replace(/\n/g, "");
+        return `![${alt}](<${href}>)`;
+      }
+      if (/^<summary\b/i.test(tag)) return "\n\n**";
+      if (/^<\/summary\s*>/i.test(tag)) return "**\n\n";
+      if (/^<br\b/i.test(tag)) return "  \n";
+      if (/^<\/?(?:p|div|details)\b/i.test(tag)) return "\n\n";
+      return "";
+    })();
+    if (replacement !== tag)
+      edits.push({ start: offset, end: offset + tag.length, text: replacement });
+    return replacement;
   });
+  return applyTextSourceEdits(content, edits);
 }
 
 export function markdownWithHtml(markdown: string): string {
-  if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return markdown;
-  const edits: Array<{ start: number; end: number; content: string }> = [];
+  return markdownWithHtmlSourceMap(markdown).text;
+}
+
+export function markdownWithHtmlSourceMap(markdown: string): TextSourceMap {
+  if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return identityTextSourceMap(markdown);
+  const edits: TextSourceEdit[] = [];
   const visit = (node: MarkdownNode) => {
     if (node.type === "html") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        edits.push({ start, end, content: markdownHtmlContent(node.value) });
+      if (start !== undefined && end !== undefined) {
+        const map = markdownHtmlContentSourceMap(node.value);
+        edits.push({ start, end, text: map.text, map });
+      }
     } else if ("children" in node) node.children.forEach(visit);
   };
   visit(parser.parse(markdown));
-  for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
-  return markdown;
+  return applyTextSourceEdits(markdown, edits);
 }
 
 // A delimiter row such as `|---|:--:|`, possibly inside a blockquote or list item.
@@ -166,7 +189,11 @@ function mayHaveTableUnderText(markdown: string): boolean {
  * run-on paragraph. Insert the blank line md4c needs before each such table.
  */
 export function markdownWithTableBreaks(markdown: string): string {
-  if (!mayHaveTableUnderText(markdown)) return markdown;
+  return markdownWithTableBreaksSourceMap(markdown).text;
+}
+
+export function markdownWithTableBreaksSourceMap(markdown: string): TextSourceMap {
+  if (!mayHaveTableUnderText(markdown)) return identityTextSourceMap(markdown);
   const lineStarts: number[] = [];
   const visit = (node: MarkdownNode) => {
     if (!("children" in node)) return;
@@ -189,17 +216,24 @@ export function markdownWithTableBreaks(markdown: string): string {
     });
   };
   visit(parser.parse(markdown));
-  for (const lineStart of lineStarts.reverse()) {
+  const edits: TextSourceEdit[] = [];
+  for (const lineStart of lineStarts) {
     // The header row may be a lazy line without its container markers (`>` or list indent),
     // so copy the delimiter row's markers onto the blank line and the header row.
-    const [, header = "", cells = "", ending = "\n", markers = ""] =
+    const [, header = "", , ending = "\n", markers = ""] =
       /^([ \t>]*)([^\r\n]*)(\r\n|\r|\n)([ \t>]*)/.exec(markdown.slice(lineStart)) ?? [];
-    markdown =
-      markdown.slice(0, lineStart) +
-      `${markers.trimEnd()}${ending}${markers}${cells}` +
-      markdown.slice(lineStart + header.length + cells.length);
+    edits.push({
+      start: lineStart,
+      end: lineStart + header.length,
+      text: `${markers.trimEnd()}${ending}${markers}`,
+    });
   }
-  return markdown;
+  return applyTextSourceEdits(markdown, edits);
+}
+
+export function nativeMarkdownSourceMap(markdown: string): TextSourceMap {
+  const html = markdownWithHtmlSourceMap(markdown);
+  return composeTextSourceMaps(html, markdownWithTableBreaksSourceMap(html.text));
 }
 
 export function parseMarkdownDocument(markdown: string): Root {
