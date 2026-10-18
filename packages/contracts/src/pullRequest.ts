@@ -801,7 +801,15 @@ export const PullRequestThreadCommentsResult = Schema.Struct({
 });
 export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
 
+export const PullRequestOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).annotate(
+  {
+    description:
+      "Required for cloud replies. Reuse the same operation id when retrying this exact reply.",
+  },
+);
+
 export const PullRequestThreadReplyInput = Schema.Struct({
+  operationId: Schema.optional(PullRequestOperationId),
   ...PullRequestRef.fields,
   threadId: TrimmedNonEmptyString,
   body: CommentBody,
@@ -985,7 +993,20 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
   {
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
-    reason: Schema.optional(Schema.Literal("not-found")),
+    reason: Schema.optional(
+      Schema.Literals([
+        "not-found",
+        "permission",
+        "not-connected",
+        "conflict",
+        "operation-conflict",
+        "rate-limit",
+        "pending",
+        "invalid",
+      ]),
+    ),
+    status: Schema.optional(Schema.Number),
+    retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 502 },

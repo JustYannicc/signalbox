@@ -393,6 +393,23 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
             };
           }
           if (segment !== Ids.PENDING_SEGMENT) return yield* reject("it isn't an upload of yours.");
+          const id = yield* sentId(input.threadId, input.commandId, attachment.id);
+          const previous = yield* storage("head", () => objects.head(keyOf(id)));
+          if (previous !== null) {
+            const claimed = metaOf(previous);
+            if (
+              claimed.owner !== input.userId ||
+              claimed.thread !== input.threadId ||
+              claimed.type !== attachment.type ||
+              previous.size !== attachment.sizeBytes ||
+              (attachment.type === "image" && claimed.mime !== attachment.mimeType.toLowerCase())
+            ) {
+              return yield* reject("it doesn't match its upload.");
+            }
+            // Replays reach the command receipt even after the pending upload is gone.
+            // Never overwrite or release bytes an earlier accepted command may reference.
+            return { attachment: { ...attachment, id, mimeType: claimed.mime ?? "" }, copy: null };
+          }
           if (head === null || meta.owner !== input.userId) {
             return yield* reject("it is no longer available. Attach it again.");
           }
@@ -404,7 +421,6 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
           ) {
             return yield* reject("it doesn't match its upload.");
           }
-          const id = yield* sentId(input.threadId, input.commandId, attachment.id);
           const source = yield* storage("get", () => objects.get(keyOf(attachment.id)));
           if (source === null) return yield* reject("it is no longer available. Attach it again.");
           const sent: AttachmentMeta = {
