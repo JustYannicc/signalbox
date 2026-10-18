@@ -319,6 +319,10 @@
       "types": "./src/state/foldersModel.ts",
       "default": "./src/state/foldersModel.ts"
     },
+    "./state/signalboxSearchModel": {
+      "types": "./src/state/signalboxSearchModel.ts",
+      "default": "./src/state/signalboxSearchModel.ts"
+    },
     "./state/signalboxNotes": {
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"
@@ -490,6 +494,14 @@
     "./state/thread-execution": {
       "types": "./src/state/threadExecution.ts",
       "default": "./src/state/threadExecution.ts"
+    },
+    "./state/thread-detail-shell": {
+      "types": "./src/state/threadDetailShell.ts",
+      "default": "./src/state/threadDetailShell.ts"
+    },
+    "./testing/orchestration-v2": {
+      "types": "./src/state/orchestrationV2TestFixtures.ts",
+      "default": "./src/state/orchestrationV2TestFixtures.ts"
     },
     "./state/thread-fold-expansion": {
       "types": "./src/state/threadFoldExpansion.ts",

@@ -1,0 +1,58 @@
+diff --git a/dist/types.d.mts b/dist/types.d.mts
+index f397c48..3f7bb7a 100644
+--- a/dist/types.d.mts
++++ b/dist/types.d.mts
+@@ -1792,6 +1792,8 @@ interface RetryPolicy {
+   backoff?: "exponential" | "linear";
+   /** Base delay in milliseconds for the first retry. Default `30_000`. */
+   baseMs?: number;
++  /** Retry failed deliveries; cancellation applies after scheduler acceptance, not during shard custody. Delays stay between 1 second and 30 minutes. Node rejects this option. */
++  forever?: boolean;
+   /** Maximum number of dispatch attempts before dead-lettering. Default `5`. */
+   maxAttempts?: number;
+   /** Optional ceiling clamping the computed backoff delay. */
+@@ -1869,9 +1871,13 @@ interface Scheduler {
+    * for the accepted targets. A workflow/agent reference starts a fresh
+    * durable instance on fire (the args become its `params`).
+    */
+-  runAfter: (delayMs: number, target: SchedulableTarget, args?: Record<string, unknown>) => Promise<string>;
++  runAfter: (delayMs: number, target: SchedulableTarget, args?: Record<string, unknown>, options?: {
++    retry?: RetryPolicy;
++  }) => Promise<string>;
+   /** Like {@link Scheduler.runAfter} but fires at an absolute epoch-ms timestamp. */
+-  runAt: (timestampMs: number, target: SchedulableTarget, args?: Record<string, unknown>) => Promise<string>;
++  runAt: (timestampMs: number, target: SchedulableTarget, args?: Record<string, unknown>, options?: {
++    retry?: RetryPolicy;
++  }) => Promise<string>;
+ }
+ /**
+  * A workflow instance's lifecycle status. Clean public mirror of
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index f397c48..3f7bb7a 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -1792,6 +1792,8 @@ interface RetryPolicy {
+   backoff?: "exponential" | "linear";
+   /** Base delay in milliseconds for the first retry. Default `30_000`. */
+   baseMs?: number;
++  /** Retry failed deliveries; cancellation applies after scheduler acceptance, not during shard custody. Delays stay between 1 second and 30 minutes. Node rejects this option. */
++  forever?: boolean;
+   /** Maximum number of dispatch attempts before dead-lettering. Default `5`. */
+   maxAttempts?: number;
+   /** Optional ceiling clamping the computed backoff delay. */
+@@ -1869,9 +1871,13 @@ interface Scheduler {
+    * for the accepted targets. A workflow/agent reference starts a fresh
+    * durable instance on fire (the args become its `params`).
+    */
+-  runAfter: (delayMs: number, target: SchedulableTarget, args?: Record<string, unknown>) => Promise<string>;
++  runAfter: (delayMs: number, target: SchedulableTarget, args?: Record<string, unknown>, options?: {
++    retry?: RetryPolicy;
++  }) => Promise<string>;
+   /** Like {@link Scheduler.runAfter} but fires at an absolute epoch-ms timestamp. */
+-  runAt: (timestampMs: number, target: SchedulableTarget, args?: Record<string, unknown>) => Promise<string>;
++  runAt: (timestampMs: number, target: SchedulableTarget, args?: Record<string, unknown>, options?: {
++    retry?: RetryPolicy;
++  }) => Promise<string>;
+ }
+ /**
+  * A workflow instance's lifecycle status. Clean public mirror of

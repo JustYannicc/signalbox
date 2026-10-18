@@ -6,6 +6,8 @@ import type {
   SecretRequestAnswerInput,
   SecretRequestFailureReason,
   OrchestrationV2Command,
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2SearchThreadResult,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DispatchCommandResult,
@@ -39,6 +41,7 @@ import type {
   BrowsingStreamItem,
 } from "@t3tools/contracts/signalboxBrowsing";
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
+import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngine.ts";
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PullInput } from "./threadWire.ts";
@@ -164,6 +167,20 @@ export interface ThreadObjectApi {
   ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /** Requests/restarts a durable backfill; `not_found` keeps the actor check at the thread. */
+  readonly backfill: (
+    actor: Actor,
+    requestKey?: string,
+  ) => Promise<ThreadObjectReply<SearchBackfillProgress>>;
+  /** Selected current rows only, for stale-candidate checks. */
+  readonly searchDocuments: (
+    actor: Actor,
+    itemIds: ReadonlyArray<string>,
+  ) => Promise<SearchThreadDocuments | null>;
+  readonly find: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<ThreadObjectReply<OrchestrationV2SearchThreadResult>>;
   /** Whether the exact live run still holds the requested Runner generation. */
   readonly authorizeExecutorTurn: (
     actor: Actor,
@@ -315,6 +332,18 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly backfill: (
+    actor: Actor,
+    requestKey?: string,
+  ) => Effect.Effect<SearchBackfillProgress, ThreadNotFoundError | ThreadObjectError>;
+  readonly searchDocuments: (
+    actor: Actor,
+    itemIds: ReadonlyArray<string>,
+  ) => Effect.Effect<SearchThreadDocuments | null, ThreadObjectError>;
+  readonly find: (
+    actor: Actor,
+    input: OrchestrationV2SearchThreadInput,
+  ) => Effect.Effect<OrchestrationV2SearchThreadResult, ThreadNotFoundError | ThreadObjectError>;
   readonly authorizeExecutorTurn: (
     actor: Actor,
     input: { readonly runId: string; readonly generation: number },
@@ -565,6 +594,19 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         // Reads decide no command, so a rejection here is a protocol bug.
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
         Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
+      ),
+    backfill: (actor, requestKey) =>
+      call("backfill", () => api.backfill(actor, requestKey)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+      ),
+    searchDocuments: (actor, itemIds) =>
+      call("searchDocuments", () => api.searchDocuments(actor, itemIds)),
+    find: (actor, input) =>
+      call("find", () => api.find(actor, wire.findInput.encode(input))).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) => decodeIn("find", () => wire.findResult.decode(value))),
       ),
     subscribe: (actor, input) =>
       lines(

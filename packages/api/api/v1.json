@@ -1565,7 +1565,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "47e8e074"
+      "output": "16f25035"
     },
     {
       "name": "server.refreshProviders",
@@ -1602,7 +1602,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "274f0093"
+      "output": "181c6a5a"
     },
     {
       "name": "settings.get",
@@ -1992,6 +1992,13 @@
       "output": "c5e5cd7a"
     },
     {
+      "name": "threads.query",
+      "rpc": "signalbox.search.query",
+      "access": "read",
+      "input": "81f449d7",
+      "output": "fdcbbe22"
+    },
+    {
       "name": "threads.queue.resume",
       "rpc": "orchestration.dispatchCommand",
       "command": "queue.resume",
@@ -2070,7 +2077,7 @@
       "rpc": "orchestration.searchThreads",
       "access": "read",
       "input": "4851e18f",
-      "output": "7e3c74cc"
+      "output": "655a6572"
     },
     {
       "name": "threads.searchOne",

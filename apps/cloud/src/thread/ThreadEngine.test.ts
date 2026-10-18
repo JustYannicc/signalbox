@@ -131,6 +131,42 @@ const replayFrom = (engine: ThreadEngine.ThreadEngine["Service"], afterSequence:
   );
 
 describe("ThreadEngine", () => {
+  it.effect("folds streaming into the final search row and keeps its Find anchor", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* engine.step;
+        const beforeChunk = (yield* store.searchOutbox).revision;
+        yield* engine.step;
+        expect((yield* store.searchOutbox).revision).toBe(beforeChunk);
+        yield* runToIdle(engine);
+        const documents = [];
+        const parts = [];
+        for (
+          let delivery = yield* engine.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* engine.pendingSearchDelivery
+        ) {
+          documents.push(...delivery.documents.filter((item) => item.kind === "assistant"));
+          parts.push(...(delivery.parts ?? []).filter((item) => item.kind === "assistant"));
+          yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
+        expect(documents.length).toBe(0);
+        expect(parts.map((item) => item.text).join("")).toBe(scriptedReply("Hello cloud"));
+        const found = yield* engine.find(owner, { threadId, query: "Hello cloud" });
+        expect(found.totalMatches).toBeGreaterThanOrEqual(2);
+        expect(found.match?.entryId).toBe("message-1");
+        const exact = yield* engine.searchDocuments(owner, [parts[0]!.itemId]);
+        expect(exact?.documents).toHaveLength(1);
+        expect(exact?.documents[0]).toMatchObject({
+          itemId: parts[0]!.itemId,
+          entryId: parts[0]!.entryId,
+          text: scriptedReply("Hello cloud"),
+        });
+      }),
+    ),
+  );
+
   it.effect("launches a thread whose scripted reply streams in chunks and completes", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {
@@ -226,6 +262,13 @@ describe("ThreadEngine", () => {
         yield* engine.dispatch(owner, send("send-queued", "Next"), personal);
         const beforeTrash = yield* engine.snapshot(owner);
         expect(beforeTrash.projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
+        for (
+          let delivery = yield* engine.pendingSearchDelivery;
+          delivery !== null;
+          delivery = yield* engine.pendingSearchDelivery
+        ) {
+          yield* engine.acknowledgeSearchDelivery(delivery.revision, delivery.deliveryId);
+        }
         const deletedAt = yield* Clock.currentTimeMillis;
         const input = {
           trashId: "trash-1",
@@ -235,6 +278,14 @@ describe("ThreadEngine", () => {
 
         const trashed = yield* engine.trash(owner, input);
         expect(trashed).toMatchObject({ trashId: input.trashId, state: "trashed" });
+        const searchTombstone = yield* engine.pendingSearchDelivery;
+        expect(searchTombstone?.thread.deleted).toBe(true);
+        if (searchTombstone === null) throw new Error("Trash must reach the search outbox.");
+        yield* engine.acknowledgeSearchDelivery(
+          searchTombstone.revision,
+          searchTombstone.deliveryId,
+        );
+        expect(yield* engine.searchDocuments(owner, [])).toBeNull();
         expect(yield* engine.canSee(owner)).toBe(false);
         expect((yield* Effect.flip(engine.snapshot(owner)))._tag).toBe("ThreadNotFoundError");
         const refused = yield* Effect.flip(
@@ -252,6 +303,13 @@ describe("ThreadEngine", () => {
 
         const restoredReceipt = yield* engine.restoreTrash(owner, input.trashId);
         expect(restoredReceipt.state).toBe("restored");
+        expect((yield* engine.pendingSearchDelivery)?.thread.deleted).toBe(false);
+        const searchable = yield* engine.searchDocuments(
+          owner,
+          beforeTrash.projection.visibleTurnItems.map((row) => String(row.item.id)),
+        );
+        expect(searchable?.deleted).toBe(false);
+        expect(searchable?.documents.some((item) => item.text === "Hello cloud")).toBe(true);
         expect(yield* engine.canSee(owner)).toBe(true);
         const restored = yield* engine.snapshot(owner);
         expect(restored.projection.thread.deletedAt).toBeNull();
