@@ -103,6 +103,10 @@
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
     },
+    "./rpc/contentSearch": {
+      "types": "./src/rpc/contentSearch.ts",
+      "default": "./src/rpc/contentSearch.ts"
+    },
     "./observability/client-issues": {
       "types": "./src/observability/clientIssues.ts",
       "default": "./src/observability/clientIssues.ts"
@@ -658,6 +662,14 @@
     "./pull-request-write-attempt": {
       "types": "./src/pullRequestWriteAttempt.ts",
       "default": "./src/pullRequestWriteAttempt.ts"
+    },
+    "./observability/action-timing": {
+      "types": "./src/observability/actionTiming.ts",
+      "default": "./src/observability/actionTiming.ts"
+    },
+    "./observability/action-timing-queue": {
+      "types": "./src/observability/actionTimingQueue.ts",
+      "default": "./src/observability/actionTimingQueue.ts"
     }
   },
   "scripts": {

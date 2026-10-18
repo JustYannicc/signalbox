@@ -11,9 +11,17 @@
       "types": "./src/waitingCost.ts",
       "import": "./src/waitingCost.ts"
     },
+    "./askKit": {
+      "types": "./src/askKit.ts",
+      "import": "./src/askKit.ts"
+    },
     "./clientIssues": {
       "types": "./src/clientIssues.ts",
       "import": "./src/clientIssues.ts"
+    },
+    "./clientActionTiming": {
+      "types": "./src/clientActionTiming.ts",
+      "import": "./src/clientActionTiming.ts"
     },
     ".": {
       "types": "./src/index.ts",

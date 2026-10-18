@@ -15,7 +15,7 @@ import type { LaunchRun } from "../engineTypes.ts";
 import type { AutomationThreads } from "../host.ts";
 import { logFailure } from "../errors.ts";
 import { eventsPausedNotice } from "../notices.ts";
-import { MAX_START_DEPTH } from "../startStep.ts";
+import { MAX_START_DEPTH } from "../runLimits.ts";
 import type { AutomationRow, WorkflowStore } from "../WorkflowStore.ts";
 import type { ReadError } from "./candidate.ts";
 import { candidatesFor, type Actor, type Candidate, type EventReads } from "./normalize.ts";
