@@ -1,7 +1,11 @@
 import type { ExecutionEnvironmentCapabilities } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { targetsSupporting, targetsWithRepositoryIdentity } from "./signalboxSettingsTargets";
+import {
+  targetsSupporting,
+  targetsWithProviderAccounts,
+  targetsWithRepositoryIdentity,
+} from "./signalboxSettingsTargets";
 
 function target(id: string, capabilities: Partial<ExecutionEnvironmentCapabilities>) {
   return {
@@ -45,5 +49,22 @@ describe("targetsWithRepositoryIdentity", () => {
     const cloud = repositoryTarget("cloud", false);
 
     expect(targetsWithRepositoryIdentity([selfHosted, cloud])).toEqual([selfHosted]);
+  });
+});
+
+describe("targetsWithProviderAccounts", () => {
+  it("keeps only targets with an installed ACP agent to sign in", () => {
+    const [cloud, idle, acp] = [
+      { environmentId: "cloud" },
+      { environmentId: "idle" },
+      { environmentId: "acp" },
+    ];
+    const providers = new Map([
+      ["cloud", [{ driver: "codex", installed: true }]],
+      ["idle", [{ driver: "acpRegistry", installed: false }]],
+      ["acp", [{ driver: "acpRegistry", installed: true }]],
+    ]);
+
+    expect(targetsWithProviderAccounts([cloud, idle, acp], providers)).toEqual([acp]);
   });
 });

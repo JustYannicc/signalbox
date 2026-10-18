@@ -330,7 +330,9 @@ describe("reviewing a thread's branch in the cloud", () => {
             remote: null,
           },
         });
-        if (result._tag === "None") return expect.unreachable();
+        if (result._tag === "None" || result.value._tag !== "snapshot") {
+          return expect.unreachable();
+        }
         expect(result.value.local).not.toHaveProperty("branchChanges");
         expect(github.calls).toHaveLength(calls);
       }),

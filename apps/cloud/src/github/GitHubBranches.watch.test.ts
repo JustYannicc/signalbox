@@ -90,7 +90,8 @@ const fixture = Effect.gen(function* () {
           Effect.succeed({
             main: BASE,
             thread: HEAD,
-            wip: HEAD,
+            // No autosave: status reads one through the drive's packs, which these tests leave out.
+            wip: null,
             machine: null,
             base: BASE,
             packs: [],
