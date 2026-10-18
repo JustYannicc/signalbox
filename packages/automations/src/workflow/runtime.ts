@@ -70,7 +70,7 @@ export type LoadAutomation = (workflow: (body: WorkflowBody) => unknown) => unkn
  * `Math.random()` and `crypto` randomness in automations, and `console`
  * stays the Worker's own (the compiled `load(workflow)` gets no console).
  *
- * Keys match the QuickJS engine's (`sandbox/guestRuntime.ts`): a site reached
+ * Step keys stay stable across replays: a site reached
  * again in the same frame gets `#n`; `each` and `repeat` add `[index]` per
  * iteration, `parallel` adds `.branch`, helpers add their call site. Marks
  * (`when`, `$arm`, loop counts) buffer until the next host call; replays
