@@ -64,6 +64,7 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { resolveComposerDefaultModelPolicy } from "../../lib/composerDefaultModelPolicy"; // signalbox: combine project, person, and pool defaults for composer drafts.
 import {
   memo,
   type ComponentProps,
@@ -91,15 +92,15 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import { composerModelSendBlockReason } from "../../lib/composerModelPolicy"; // signalbox: apply Signalbox send checks to the selected pooled model.
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import {
   deriveComposerSendState,
-  getAntigravitySendBlockReason,
   readFileAsDataUrl,
   resolveComposerInteractionMode,
-  resolveComposerProviderSelection,
   threadShellHasStarted,
 } from "../ChatView.logic";
+import { resolveComposerProviderSelection } from "../../lib/composerProviderSelection"; // signalbox: select providers from the project's pool.
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -127,6 +128,7 @@ import {
   deriveEffectiveComposerModelState,
   useComposerDraftModelState,
 } from "../../composerDraftStore";
+import { deriveSignalboxComposerModelState } from "../../lib/composerModelStatePolicy"; // signalbox: refresh implicit new-thread models while preserving explicit picks.
 import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
@@ -1571,6 +1573,7 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
+  personDefaultModelSelection: ModelSelection | null; // signalbox: fallback when the project has no configured choice.
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
@@ -1793,8 +1796,11 @@ function useComposerProviderModel(
     readonly threadModelSelection: ModelSelection | null | undefined;
     readonly projectModelSelection: ModelSelection | null | undefined;
     readonly promptInjectionState: ReturnType<typeof getComposerPromptInjectionState>;
-    readonly environmentId: EnvironmentId | null; // signalbox: pools
+    readonly environmentId: EnvironmentId; // signalbox: pools
     readonly activeThreadId: ThreadId | null; // signalbox: pools
+    readonly routeKind: "server" | "draft"; // signalbox: new-thread defaults
+    readonly personDefaultModelSelection: ModelSelection | null; // signalbox: new-thread defaults
+    readonly modelSelectionExplicit: boolean | undefined; // signalbox: new-thread defaults
   },
 ) {
   const {
@@ -1810,6 +1816,9 @@ function useComposerProviderModel(
     lockedInstanceId,
     environmentId,
     activeThreadId,
+    routeKind,
+    personDefaultModelSelection,
+    modelSelectionExplicit,
   } = input;
   const draftModelState = useComposerDraftModelState(threadRef);
   const allProviderInstanceEntries: ReadonlyArray<ProviderInstanceEntry> =
@@ -1821,31 +1830,64 @@ function useComposerProviderModel(
       ),
     );
   // signalbox: pools
-  const { entries: providerInstanceEntries, need: poolNeed } = useProjectPoolEntries(
+  const {
+    entries: providerInstanceEntries,
+    need: poolNeed,
+    mapModelSelectionToPool, // signalbox: resolve defaults against the destination project's pool.
+  } = useProjectPoolEntries(
     environmentId,
     activeProjectId,
     allProviderInstanceEntries,
     settings.providerInstances,
     activeThreadId,
   );
-  const selection = resolveComposerProviderSelection({
-    entries: providerInstanceEntries,
-    candidateInstanceIds,
-    lockedProvider,
-    lockedInstanceId,
-  });
+  // signalbox: resolve initial model and provider state from the folder, person, and project pool.
+  const { initialModelSelection, selectedProviderSelection: selection } =
+    resolveComposerDefaultModelPolicy({
+      environmentId,
+      routeKind,
+      activeProjectDefaultModelSelection: projectModelSelection,
+      activeProjectId,
+      activeThreadId,
+      personDefaultModelSelection,
+      providerStatuses,
+      settings,
+      lockedProvider,
+      composerDraft: {
+        ...draftModelState,
+        ...(modelSelectionExplicit === undefined ? {} : { modelSelectionExplicit }),
+      },
+      providerSelection: {
+        ...resolveComposerProviderSelection({
+          entries: providerInstanceEntries,
+          providerInstances: settings.providerInstances, // signalbox: identify cached custom pools.
+          candidateInstanceIds,
+          lockedProvider,
+          lockedInstanceId,
+        }),
+        providerInstanceEntries,
+        mapModelSelectionToPool,
+      },
+    });
   const selectedInstanceId =
     selection.selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const selectedProvider: ProviderDriverKind =
     selection.selectedProviderEntry?.driverKind ?? selection.requestedDriverKind;
-  const modelState = deriveEffectiveComposerModelState({
-    draft: draftModelState,
-    providers: providerStatuses,
-    selectedProvider,
+  // signalbox: apply new-thread defaults while preserving explicit picks and existing thread pins.
+  const modelState = deriveSignalboxComposerModelState({
+    legacyState: deriveEffectiveComposerModelState({
+      draft: draftModelState,
+      providers: providerStatuses,
+      selectedProvider,
+      selectedInstanceId,
+      threadModelSelection,
+      projectModelSelection,
+      settings,
+    }),
+    composerDraft: modelSelectionExplicit === undefined ? {} : { modelSelectionExplicit },
+    isNewThreadDraft: routeKind === "draft",
+    initialModelSelection,
     selectedInstanceId,
-    threadModelSelection,
-    projectModelSelection,
-    settings,
   });
   const selectedProviderModels = selection.selectedProviderEntry?.models ?? NO_PROVIDER_MODELS;
   const composerProviderState = getComposerProviderState({
@@ -1859,6 +1901,7 @@ function useComposerProviderModel(
   return {
     providerInstanceEntries,
     poolNeed, // signalbox: pools
+    mapModelSelectionToPool, // signalbox: pass pool mapping into default resolution.
     ...selection,
     selectedInstanceId,
     selectedProvider,
@@ -1954,6 +1997,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerStatuses,
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
+    personDefaultModelSelection, // signalbox: fallback when the project has no configured choice.
     activeThreadModelSelection,
     reportedModelSelection,
     activeProjectId,
@@ -2309,6 +2353,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptInjectionState: getComposerPromptInjectionState(prompt),
     environmentId, // signalbox: pools
     activeThreadId, // signalbox: pools
+    routeKind, // signalbox: new-thread defaults
+    personDefaultModelSelection, // signalbox: new-thread defaults
+    modelSelectionExplicit: composerDraft.modelSelectionExplicit, // signalbox: new-thread defaults
     candidateInstanceIds: [
       composerDraft.activeProvider ?? null,
       activeThread?.runtime?.providerInstanceId,
@@ -2344,7 +2391,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ? runtimeMode
     : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
 
-  const providerSendBlockReason = getAntigravitySendBlockReason(
+  // signalbox: use the pool-aware model policy for provider send eligibility.
+  const providerSendBlockReason = composerModelSendBlockReason(
     selectedProviderEntry?.snapshot,
     selectedModel,
   );

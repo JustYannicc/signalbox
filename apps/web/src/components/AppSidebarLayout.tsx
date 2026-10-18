@@ -58,6 +58,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 // signalbox: view rail
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { SidebarViews } from "./sidebar/SidebarViews";
+import { SidebarViewShortcuts } from "./sidebar/sidebarViewCommands";
 import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
 import { resolveCollapsedRailWidth } from "../workspaceTitlebar";
 import { FolderDialogs } from "./sidebar/folders/FolderDialogs"; // signalbox: folders
@@ -386,6 +387,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarControl />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
+        <SidebarViewShortcuts />
         <FolderDialogs />
         <NotesSheet />
         <QuickCaptureHost />

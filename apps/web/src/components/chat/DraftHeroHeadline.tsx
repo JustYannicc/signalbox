@@ -14,6 +14,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
+import { resolveProjectDraftStartingModelSelection } from "~/lib/newThreadModelSelectionPolicy"; // signalbox: apply project/person precedence before mapping a draft to its pool.
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -42,8 +43,7 @@ import {
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { draftModelSelection, useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
+import { useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox: map the project's starting model to its assigned pool.
 import { useDraftHeroCopy } from "../sidebar/folders/useFolderCopy"; // signalbox
 
 const ADD_PROJECT_VALUE = "add-project";
@@ -74,7 +74,6 @@ export function DraftHeroHeadline({
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
-  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const projectPool = useProjectPoolModelSelection(); // signalbox
   const openAddProject = () => openCommandPalette({ open: "add-project" });
@@ -193,32 +192,22 @@ export function DraftHeroHeadline({
       draftId,
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
-      applyStickyState(draftId);
-      const environmentSettings = environments.find(
-        (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings;
-      const defaultModelSelection = environmentSettings
-        ? resolveProjectSettings(environmentSettings, project.id, project).settings
-            .defaultModelSelection
-        : project.defaultModelSelection;
-      // signalbox: the draft starts on the pool its project runs on.
-      const environmentConfig = environments.find(
+      const serverConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
       )?.serverConfig;
-      const startingModelSelection =
-        (environmentConfig &&
-          projectPool({
-            environmentId: project.environmentId,
-            projectId: project.id,
-            selection: defaultModelSelection ?? draftModelSelection(getComposerDraft(draftId)),
-            providerInstances: environmentConfig.settings.providerInstances,
-            // Read at call time: provider status pushes would re-render the headline.
-            providers:
-              appAtomRegistry
-                .get(environmentPresentations.providersByEnvironmentAtom)
-                .get(project.environmentId) ?? [],
-          })) ||
-        defaultModelSelection;
+      // signalbox: initialize the project draft from configured defaults on its project pool.
+      const startingModelSelection = resolveProjectDraftStartingModelSelection({
+        project,
+        environmentConfig: serverConfig && {
+          settings: serverConfig.settings,
+          // Read at call time: provider status pushes would re-render the headline.
+          providers:
+            appAtomRegistry
+              .get(environmentPresentations.providersByEnvironmentAtom)
+              .get(project.environmentId) ?? [],
+        },
+        mapToPool: projectPool,
+      });
       if (startingModelSelection) {
         setModelSelection(draftId, startingModelSelection, {
           replaceOptions: true,

@@ -361,6 +361,7 @@ export function buildKeybindingCommandOptions(
 }
 
 export function commandLabel(command: KeybindingCommand, hasLocalFilesystem = true): string {
+  if (command === "sidebar.home") return "Go to Home";
   const capabilityLabel = capabilityKeybindingLabel(command, hasLocalFilesystem);
   if (capabilityLabel) return capabilityLabel;
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";

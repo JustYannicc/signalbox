@@ -139,6 +139,7 @@ interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
+  browserProfilesAvailable?: boolean;
   terminalAvailable: boolean;
   /** signalbox: false when the environment serves no terminals, which hides the surface. */
   terminalSupported?: boolean;
@@ -170,7 +171,7 @@ export function shouldOpenDefaultBrowserProfileFromMenuClick(
 }
 
 const SURFACE_DISABLED_REASONS = {
-  browser: "Browser previews are only available in the Signalbox desktop app.",
+  browser: "Browser is unavailable for this connection.",
   terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for threads in Git repositories.",
@@ -201,7 +202,7 @@ function isSurfaceSupported(
 }
 
 const SURFACE_UNAVAILABLE_HINTS = {
-  browser: "Only available in the desktop app.",
+  browser: "Unavailable for this connection.",
   terminal: "Available when a project is open.",
   files: "Available when a project is open.",
   diff: "Available for Git repositories.",
@@ -981,7 +982,8 @@ function RightPanelTab(
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
-  const browserProfiles = useBrowserDefaults().profiles;
+  const browserDefaults = useBrowserDefaults();
+  const browserProfiles = props.browserProfilesAvailable === false ? [] : browserDefaults.profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1361,7 +1363,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 >
                   {addSurfaceActions.map((action) => {
                     const Icon = action.icon;
-                    if (action.label === "Browser" && action.available) {
+                    if (
+                      action.label === "Browser" &&
+                      action.available &&
+                      browserProfiles.length > 0
+                    ) {
                       return (
                         <MenuSub key={action.label}>
                           <MenuSubTrigger

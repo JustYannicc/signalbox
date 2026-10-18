@@ -2,6 +2,8 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
+import { evlogLintOverrides } from "./scripts/lib/evlog-lint.ts";
+
 const RESTRICTED_IMPORT_PATHS = [
   {
     name: "@t3tools/client-runtime",
@@ -408,6 +410,7 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
+      ...evlogLintOverrides([...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS]),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

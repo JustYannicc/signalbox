@@ -1,5 +1,6 @@
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -486,7 +487,7 @@ describe("work settings policy", () => {
       { future: BigInt(1) },
       { future: Symbol() },
       { future: () => true },
-      { future: new Date(0) },
+      { future: DateTime.toDateUtc(DateTime.makeUnsafe(0)) },
       { future: cycle },
       { future: sparse },
       { [Symbol()]: true },

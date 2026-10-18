@@ -49,9 +49,11 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./chat/composerFocusRedirect";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { configuredProjectModelSelection } from "../lib/composerModelPolicy"; // signalbox: distinguish explicit project defaults from inherited person defaults.
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthTerminalReadScope,
@@ -59,7 +61,6 @@ import {
   type AssistantCitation,
   type ChatFileAttachment,
   CommandId,
-  DEFAULT_MODEL,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type MessageId,
@@ -236,6 +237,7 @@ import {
 } from "../previewStateStore";
 import { BrowserSettingsReadError, openUrlInPreview } from "../browser/openFileInPreview";
 import { resolveDiscoveredServerUrl } from "../browser/browserTargetResolver";
+import { browserLauncher } from "../browser/browserLauncher";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
@@ -353,6 +355,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupportsSignalboxPreviews } from "~/state/signalboxPreviews";
 import {
   readEnvironmentSupports,
   useEnvironmentSupports,
@@ -1206,7 +1209,7 @@ export default function ChatView(props: ChatViewProps) {
     (store) => store.threadLastVisitedAtById[routeThreadKey],
   );
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const visitDedupe = useRef(createVisitDedupe()).current; // signalbox: forgets on thread switch
+  const [visitDedupe] = useState(createVisitDedupe); // signalbox: forgets on thread switch
 
   const lastVisitDispatchAtRef = useRef(0);
   const settings = useEnvironmentSettings(environmentId);
@@ -1597,7 +1600,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
   );
-  const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
+  const activeEnvironmentAgentBrowser = useEnvironmentSupportsSignalboxPreviews(
+    activeThreadRef?.environmentId ?? null,
+  );
   const threadBrowser = useThreadBrowserAvailability(
     activeThreadRef,
     activeEnvironmentServerBrowser,
@@ -1687,7 +1692,9 @@ export default function ChatView(props: ChatViewProps) {
     ),
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
-  const previewPanelOpen = activeRightPanelKind === "preview" && threadBrowser.viewable;
+  const previewPanelOpen =
+    (activeRightPanelKind === "preview" && threadBrowser.viewable) ||
+    (activeRightPanelKind === "agent-browser" && activeEnvironmentAgentBrowser);
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -1909,7 +1916,8 @@ export default function ChatView(props: ChatViewProps) {
       ),
     };
   })() as ComposerBannerStackItem | null;
-  const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  // signalbox: pass only a configured project choice as the project's default.
+  const activeProjectDefaultModelSelection = configuredProjectModelSelection(activeProjectSettings);
   const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   };
@@ -2213,12 +2221,12 @@ export default function ChatView(props: ChatViewProps) {
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);
 
+  const visitStamp = serverThread ? visitStampFor(serverThread) : null; // signalbox: at least the latest run's end
   useEffect(() => {
-    if (!serverThread?.id) return;
+    if (!serverThread?.id || visitStamp === null) return;
     // signalbox: a cached shell renders before the environment connects, and a visit sent then
     // fails with nothing to resend it; this effect re-runs once the connection is up.
     if (activeEnvironmentUnavailable) return;
-    const visitStamp = visitStampFor(serverThread); // signalbox: at least the latest run's end
     const threadUpdatedAt = Date.parse(visitStamp);
     if (Number.isNaN(threadUpdatedAt)) return;
     const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
@@ -2274,6 +2282,8 @@ export default function ChatView(props: ChatViewProps) {
     serverThread?.lastVisitedAt,
     serverThread?.latestRun?.completedAt,
     serverThread?.updatedAt,
+    visitDedupe,
+    visitStamp,
     visitThreadMutation,
   ]);
 
@@ -2514,6 +2524,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
+    providerInstances: settings.providerInstances,
     candidateInstanceIds: [
       selectedProviderByThreadId,
       activeRuntime?.providerInstanceId,
@@ -3745,11 +3756,24 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
   );
+  const canReadAgentBrowser = useEnvironmentScope(
+    activeThreadRef?.environmentId ?? null,
+    AuthOrchestrationReadScope,
+  );
+  const launcher = browserLauncher({
+    desktop: isPreviewSupportedInRuntime(),
+    serverBrowser: activeEnvironmentServerBrowser,
+    agentBrowser: activeEnvironmentAgentBrowser,
+    canOperatePreview,
+    canReadAgentBrowser,
+  });
+  const canLaunchBrowser = launcher.permitted;
   const createBrowserSurface = (profileId?: string) => {
-    if (!activeThreadRef || !canOperatePreview) return;
+    if (!activeThreadRef || !canLaunchBrowser) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
+      target: launcher.target,
       ...(profileId === undefined ? {} : { profileId }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -3884,12 +3908,16 @@ export default function ChatView(props: ChatViewProps) {
   };
   const closePreviewPanelStable = useStableCallback(closePreviewPanel);
   const togglePreviewPanel = () => {
-    if (!activeThreadRef || !threadBrowser.viewable) return;
+    if (!activeThreadRef || (!threadBrowser.viewable && !activeEnvironmentAgentBrowser)) return;
     if (previewPanelOpen) {
       closePreviewPanel();
       return;
     }
-    if (!canOperatePreview) return;
+    if (!canLaunchBrowser) return;
+    if (launcher.target === "agent-browser") {
+      createBrowserSurface();
+      return;
+    }
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
@@ -6994,11 +7022,8 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     const title = truncate(titleSeed);
-    const threadCreateModelSelection = createModelSelection(
-      ctxSelectedModelSelection.instanceId,
-      ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
-      ctxSelectedModelSelection.options,
-    );
+    // signalbox: create the thread with the selection resolved for this draft.
+    const threadCreateModelSelection = ctxSelectedModelSelection;
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
 
@@ -7856,6 +7881,7 @@ export default function ChatView(props: ChatViewProps) {
       threadRef={activeThreadRef}
       environmentId={activeThread.environmentId}
       visible={rightPanelOpen}
+      isServerThread={isServerThread}
       composerDraftTarget={composerDraftTarget}
       keybindings={keybindings}
       configuredPreviewUrls={configuredPreviewUrls}
@@ -8451,6 +8477,11 @@ export default function ChatView(props: ChatViewProps) {
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
                               }
+                              personDefaultModelSelection={
+                                /* signalbox: pass the person's fallback when this project has no configured default. */
+                                environmentById.get(environmentId)?.serverConfig?.settings
+                                  .defaultModelSelection ?? null
+                              }
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}
                               activeContextWindow={activeContextWindow}
@@ -8692,7 +8723,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          browserAvailable={canOperatePreview && browserAvailable}
+          browserAvailable={canLaunchBrowser && launcher.available}
+          browserProfilesAvailable={launcher.profilesAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           terminalSupported={terminalSupported}
           devicesSupported={devicesSupported}
@@ -8749,7 +8781,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
-            browserAvailable={canOperatePreview && browserAvailable}
+            browserAvailable={canLaunchBrowser && launcher.available}
+            browserProfilesAvailable={launcher.profilesAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             terminalSupported={terminalSupported}
             devicesSupported={devicesSupported}

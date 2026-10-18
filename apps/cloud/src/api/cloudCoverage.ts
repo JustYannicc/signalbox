@@ -31,7 +31,6 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 /** Keys are operation names, or `prefix.*` for every operation under a prefix. */
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
-  "keybindings.*": gap("#440"),
 
   // Waiting on you: approvals, questions and secret requests.
   "threads.respond": gap("#410"),
@@ -88,8 +87,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "git.preparePullRequestThread": gap("#818"),
 
   // Git beyond the thread's own branch.
-  "vcs.listRefs": gap("#809"),
-  "review.getDiffFileContents": gap("#809"),
   "sourceControl.cloneRepository": githubImports,
   "sourceControl.publishRepository": gap("#810"),
 

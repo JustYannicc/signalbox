@@ -11,18 +11,19 @@
  * thread.
  */
 import { useLocation } from "@tanstack/react-router";
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { AutomationsWaitingGroup } from "../automations/AutomationsWaitingGroup";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { SidebarStageBackdrop, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
-import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import { isSidebarUtilityPage } from "./mainAppLocation";
 import { SidebarChromeHeader, SidebarRailContext } from "./SidebarChrome";
 import { HomeDrafts } from "./HomeDrafts";
 import { SidebarNewButton } from "./SidebarNewButton";
 import { SidebarViewRail } from "./SidebarViewRail";
-import { useSidebarView, type SidebarView } from "./sidebarView";
+import type { SidebarView } from "./sidebarView";
+import { useSidebarViewNavigation } from "./sidebarViewCommands";
 
 const VIEW_TITLES: Record<SidebarView, string> = {
   home: "Home",
@@ -50,8 +51,7 @@ export function SidebarViews(props: {
   /** Replaces the view panel, e.g. the settings navigation. */
   panelOverride?: ReactNode;
 }) {
-  const [view, setView] = useSidebarView();
-  const navigateToMainApp = useNavigateToMainApp();
+  const { view, changeView } = useSidebarViewNavigation();
   const onUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
@@ -59,11 +59,6 @@ export function SidebarViews(props: {
   const backdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
-
-  const changeView = (next: SidebarView) => {
-    setView(next);
-    if (onUtilityPage) void navigateToMainApp();
-  };
 
   return (
     <SidebarRailContext value>

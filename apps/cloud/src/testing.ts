@@ -31,13 +31,14 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import { canWrite, myDriveId } from "./drive/driveAccess.ts";
-import type * as DriveDirectory from "./drive/DriveDirectory.ts";
+import * as DriveDirectory from "./drive/DriveDirectory.ts";
 import * as DriveFiles from "./drive/DriveFiles.ts";
 import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as NoteReader from "./notes/NoteReader.ts";
+import * as ModelCompletion from "./models/ModelCompletion.ts";
 import * as UserNotes from "./notes/UserNotes.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
@@ -74,7 +75,10 @@ import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
-import * as ModelManifest from "./thread/ModelManifest.ts";
+import * as ThreadPulls from "./thread/ThreadPulls.ts";
+import * as PullState from "./thread/PullState.ts";
+import * as ModelManifest from "./models/ModelManifest.ts";
+import * as ModelCatalog from "./models/ModelCatalog.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
@@ -83,6 +87,7 @@ import * as DriveShortcuts from "./user/DriveShortcuts.ts";
 import * as OnePasswordAccount from "./user/OnePasswordAccount.ts";
 import * as ResourceBindings from "./user/ResourceBindings.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
+import * as ThreadContextLayers from "./user/threadContextLayers.ts";
 import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubActions from "./github/GitHubActions.ts";
@@ -109,7 +114,9 @@ import * as UserShell from "./user/UserShell.ts";
 import * as UserThreadStatus from "./user/UserThreadStatus.ts";
 import * as UserStore from "./user/UserStore.ts";
 import * as UserModelSettings from "./user/UserModelSettings.ts";
+import * as UserKeybindings from "./user/UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./user/UserAnalyticsPreference.ts";
+import * as UserTimezone from "./user/UserTimezone.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
 
@@ -145,7 +152,9 @@ export const layerMemoryStore = LegacySections.layer.pipe(
     Layer.mergeAll(
       UserStore.layer,
       UserModelSettings.layer,
+      UserKeybindings.layer,
       UserAnalyticsPreference.layer,
+      UserTimezone.layer,
       UserContexts.layerWithDrives,
       ResourceBindings.layer,
       OnePasswordAccount.layer,
@@ -162,6 +171,7 @@ export const layerPersonalThreadContexts = (userId: string) =>
   Layer.succeed(
     ThreadContexts.ThreadContexts,
     ThreadContexts.ThreadContexts.of({
+      initialModelSelection: () => Effect.succeed(null),
       placeOfProject: (projectId) => {
         const contextId = contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId);
         return Effect.succeed(
@@ -206,6 +216,7 @@ export const layerThreadObject = (
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
   options: {
     readonly drives?: boolean;
+    readonly driveDirectory?: Layer.Layer<DriveDirectory.DriveDirectory>;
     /** Whether a thread's owner may change files in its drive; yes unless given. */
     readonly writes?: (
       userId: string,
@@ -227,6 +238,8 @@ export const layerThreadObject = (
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
+    Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+    Layer.provideMerge(options.driveDirectory ?? Layer.empty),
     Layer.provideMerge(
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
@@ -251,7 +264,9 @@ export const layerThreadObject = (
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer, PullState.layer),
+    ),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
@@ -294,11 +309,12 @@ const makeUserRuntime = (
   kernel: KernelApi | null,
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
   noteReader: Layer.Layer<NoteReader.NoteReader>,
+  modelCompletion: Layer.Layer<ModelCompletion.ModelCompletion>,
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
-      Layer.provide(Layer.mergeAll(runner, alarm)),
+      Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
@@ -331,7 +347,7 @@ const makeUserRuntime = (
           ),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
+              ThreadContextLayers.layer,
               Platform.layerCrypto,
               UserThreadKinds.layerTurns,
               attachments,
@@ -364,7 +380,12 @@ const makeUserRuntime = (
               Layer.provideMerge(LearnerJev.layerNone),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              layerMemoryStore,
+              ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layerBundled)),
+            ),
+          ),
           Layer.provideMerge(Layer.mergeAll(drives, people, github)),
           Layer.provideMerge(
             Layer.mergeAll(
@@ -493,6 +514,7 @@ export const makeMemoryCloud = (
       options.kernel ?? null,
       { kernel: options.kernelAuth ?? null, executor: options.executorLogins ?? null },
       options.noteReader ?? NoteReader.layerNone,
+      ModelCompletion.layer((name) => pools.objectFor(name).api),
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -502,6 +524,9 @@ export const makeMemoryCloud = (
   const layerThreadObjectInMemory = () =>
     layerThreadObject(":memory:", MachineBackends.layerNone, {
       drives: true,
+      driveDirectory: Layer.succeed(DriveDirectory.DriveDirectory, {
+        forDrive: (id) => DriveDirectory.handleFor(drives.apiFor(id)),
+      }),
       writes: (userId, driveId) =>
         Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
       secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
@@ -527,6 +552,7 @@ export const makeMemoryCloud = (
         E,
         | ThreadEngine.ThreadEngine
         | ThreadStore.ThreadStore
+        | ThreadPulls.ThreadPulls
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
         | ThreadBrowsing.ThreadBrowsing
@@ -681,7 +707,7 @@ export const makeMemoryCloud = (
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
     layerFor: (userId: string) =>
       threadService.pipe(
-        Layer.provideMerge(ThreadContexts.layer),
+        Layer.provideMerge(ThreadContextLayers.layer),
         Layer.provideMerge(userObject(userId)),
       ),
     /** The thread service for tests where `userId` has only Personal. */

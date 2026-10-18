@@ -180,6 +180,9 @@ export const AccountPoolOverview = Schema.Struct({
   id: AccountPoolId,
   name: PoolName,
   providers: Schema.Array(AccountPoolProvider),
+  checkedAt: Schema.optional(IsoDateTime),
+  /** A failed refresh leaves the last known quota and reset times visible. */
+  error: Schema.optional(Schema.String),
 });
 export type AccountPoolOverview = typeof AccountPoolOverview.Type;
 

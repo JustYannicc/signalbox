@@ -46,6 +46,25 @@ vi.mock(import("../../state/session"), async (original) => {
       new Set(state.canWriteSettings ? ["primary-settings"] : [])) as never,
   };
 });
+// signalbox: keybinding writes follow the upsert and remove grants, not settings:write alone.
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const permissionAtom = (environmentId: EnvironmentId | null) =>
+    Atom.make(environmentId === "primary-settings" && state.canWriteSettings);
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      upsertKeybinding: Object.assign(actual.serverEnvironment.upsertKeybinding, {
+        permissionAtom,
+      }),
+      removeKeybinding: Object.assign(actual.serverEnvironment.removeKeybinding, {
+        permissionAtom,
+      }),
+    } as never,
+  };
+});
 vi.mock(import("../../editorPreferences"), async (original) => ({
   ...(await original()),
   useOpenInPreferredEditor: ((environmentId: EnvironmentId) => (path: string) =>

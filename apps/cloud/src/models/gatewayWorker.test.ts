@@ -1,22 +1,32 @@
 import { RunId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import type { WideEvent } from "evlog";
+import { vi } from "vite-plus/test";
 
 import type { ModelGatewayRecord } from "./ModelRecords.ts";
 import type { ModelServeReply } from "./ModelProtocol.ts";
+
+const state = vi.hoisted(() => ({ events: new Array<WideEvent>() }));
+
+vi.mock("../../evlog.config.ts", async () => {
+  const { defineEvlog } = await import("evlog");
+  return {
+    drain: undefined,
+    default: defineEvlog({
+      silent: true,
+      drain: ({ event }) => {
+        state.events.push(event);
+      },
+    }),
+  };
+});
+
 import GatewayWorker, { type ModelGatewayEnv } from "./gatewayWorker.ts";
 
 const LIVE = "sbm1.dGhyZWFkLWE.live";
 const LOCAL = "sbk_live";
 const runId = RunId.make("run-1");
 const traceId = "trace-1";
-
-const captureLogs = () => {
-  const lines: Array<string> = [];
-  const spy = vi.spyOn(console, "log").mockImplementation((...args) => {
-    lines.push(args.map(String).join(" "));
-  });
-  return { lines, restore: () => spy.mockRestore() };
-};
 
 const makeContext = () => {
   const waitUntil: Array<Promise<unknown>> = [];
@@ -31,6 +41,13 @@ const makeContext = () => {
 };
 
 describe("public model gateway worker", () => {
+  beforeEach(() => {
+    state.events.length = 0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   it("streams the completed response before its background report resolves", async () => {
     let sendChunk: ((chunk: string) => void) | undefined;
     let closeStream: (() => void) | undefined;
@@ -64,58 +81,58 @@ describe("public model gateway worker", () => {
       },
     };
     const ctx = makeContext();
-    const logs = captureLogs();
 
-    try {
-      const response = await GatewayWorker.fetch(
-        new Request("https://gateway.test/anthropic/v1/messages", {
-          method: "POST",
-          headers: { "x-api-key": LIVE },
-          body: "{}",
-        }),
-        env,
-        ctx.context,
-      );
-      expect(response.status).toBe(200);
-      expect(ctx.waitUntil).toEqual([]);
+    const response = await GatewayWorker.fetch(
+      new Request("https://gateway.test/anthropic/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": LIVE },
+        body: "{}",
+      }),
+      env,
+      ctx.context,
+    );
+    expect(response.status).toBe(200);
 
-      const reader = response.body?.getReader();
-      if (reader === undefined) throw new Error("expected a streamed response body");
-      const firstRead = reader.read();
-      sendChunk?.("event: message_start\n\n");
-      expect(new TextDecoder().decode((await firstRead).value)).toBe("event: message_start\n\n");
-      expect(reports).toEqual([]);
-      expect(ctx.waitUntil).toEqual([]);
-      expect(logs.lines).toEqual([]);
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("expected a streamed response body");
+    const firstRead = reader.read();
+    sendChunk?.("event: message_start\n\n");
+    expect(new TextDecoder().decode((await firstRead).value)).toBe("event: message_start\n\n");
+    expect(reports).toEqual([]);
 
-      const finalRead = reader.read();
-      closeStream?.();
-      expect((await finalRead).done).toBe(true);
+    const finalRead = reader.read();
+    closeStream?.();
+    expect((await finalRead).done).toBe(true);
 
-      expect(reports).toHaveLength(1);
-      expect(reports[0]).toMatchObject({
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      provider: "anthropic",
+      status: 200,
+      threadId: "thread-a",
+      runId,
+      traceId,
+      outcome: "complete",
+    });
+
+    expect(state.events).toMatchObject([
+      {
+        route: "model",
         provider: "anthropic",
         status: 200,
-        threadId: "thread-a",
-        runId,
-        traceId,
-        outcome: "complete",
-      });
-      expect(ctx.waitUntil).toHaveLength(1);
-      expect(JSON.parse(logs.lines[0] ?? "{}")).toMatchObject({
-        event: "model_gateway.request",
-        provider: "anthropic",
-        status: 200,
-        outcome: "complete",
-      });
-
-      finishReport?.();
-      const reportTask = ctx.waitUntil[0];
-      if (reportTask === undefined) throw new Error("expected waitUntil to capture the report");
-      await reportTask;
-    } finally {
-      logs.restore();
-    }
+        thread: { id: "thread-a" },
+        turn: { id: runId, traceId },
+        modelGateway: { outcome: "complete", status: 200 },
+      },
+    ]);
+    let released = false;
+    const lifetime = Promise.all(ctx.waitUntil).then(() => {
+      released = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).toBe(false);
+    finishReport?.();
+    await lifetime;
+    expect(released).toBe(true);
   });
 
   it("reports usage from a completed local-key response to the key owner", async () => {
@@ -147,45 +164,45 @@ describe("public model gateway worker", () => {
       },
     };
     const ctx = makeContext();
-    const logs = captureLogs();
 
-    try {
-      const response = await GatewayWorker.fetch(
-        new Request("https://gateway.test/anthropic/v1/messages", {
-          method: "POST",
-          headers: { "x-signalbox-key": LOCAL },
-          body: "{}",
-        }),
-        env,
-        ctx.context,
-      );
-      expect(response.status).toBe(200);
-      expect(reports).toEqual([]);
-      expect(ctx.waitUntil).toEqual([]);
+    const response = await GatewayWorker.fetch(
+      new Request("https://gateway.test/anthropic/v1/messages", {
+        method: "POST",
+        headers: { "x-signalbox-key": LOCAL },
+        body: "{}",
+      }),
+      env,
+      ctx.context,
+    );
+    expect(response.status).toBe(200);
+    expect(reports).toEqual([]);
 
-      expect(await response.text()).toContain("message_stop");
-      expect(reports).toMatchObject([
-        {
-          status: 200,
-          threadId: null,
-          runId: null,
-          local: { userId: "user-1", keyId: "key-1" },
+    expect(await response.text()).toContain("message_stop");
+    expect(reports).toMatchObject([
+      {
+        status: 200,
+        threadId: null,
+        runId: null,
+        local: { userId: "user-1", keyId: "key-1" },
+        outcome: "complete",
+        model: "claude",
+        usage: { input: 5, output: 7, cacheRead: 0, cacheWrite: 0 },
+      },
+    ]);
+    await Promise.all(ctx.waitUntil);
+    expect(state.events).toMatchObject([
+      {
+        route: "model",
+        provider: "anthropic",
+        status: 200,
+        model: "claude",
+        person: { id: "user-1" },
+        modelGateway: {
           outcome: "complete",
-          model: "claude",
           usage: { input: 5, output: 7, cacheRead: 0, cacheWrite: 0 },
         },
-      ]);
-      const reportTask = ctx.waitUntil[0];
-      if (reportTask === undefined) throw new Error("expected waitUntil to capture the report");
-      await reportTask;
-      expect(JSON.parse(logs.lines[0] ?? "{}")).toMatchObject({
-        event: "model_gateway.request",
-        local: { userId: "user-1", keyId: "key-1" },
-        usage: { input: 5, output: 7, cacheRead: 0, cacheWrite: 0 },
-      });
-    } finally {
-      logs.restore();
-    }
+      },
+    ]);
   });
 
   it("swallows a rejected report and never reports denied or unsuccessful local requests", async () => {
@@ -215,48 +232,49 @@ describe("public model gateway worker", () => {
       },
     };
     const ctx = makeContext();
-    const logs = captureLogs();
 
-    try {
-      const denied = await GatewayWorker.fetch(
-        new Request("https://gateway.test/anthropic/v1/messages", {
-          method: "POST",
-          headers: { "x-api-key": LIVE },
-          body: "{}",
-        }),
-        env,
-        ctx.context,
-      );
-      expect(denied.status).toBe(401);
-      await denied.text();
+    const denied = await GatewayWorker.fetch(
+      new Request("https://gateway.test/anthropic/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": LIVE },
+        body: "{}",
+      }),
+      env,
+      ctx.context,
+    );
+    expect(denied.status).toBe(401);
+    await denied.text();
 
-      const failedLocal = await GatewayWorker.fetch(
-        new Request("https://gateway.test/anthropic/v1/messages", {
-          method: "POST",
-          headers: { "x-signalbox-key": LOCAL },
-          body: "{}",
-        }),
-        env,
-        ctx.context,
-      );
-      expect(failedLocal.status).toBe(503);
-      await failedLocal.text();
+    const failedLocal = await GatewayWorker.fetch(
+      new Request("https://gateway.test/anthropic/v1/messages", {
+        method: "POST",
+        headers: { "x-signalbox-key": LOCAL },
+        body: "{}",
+      }),
+      env,
+      ctx.context,
+    );
+    expect(failedLocal.status).toBe(503);
+    await failedLocal.text();
 
-      expect(reports).toEqual([]);
-      expect(ctx.waitUntil).toEqual([]);
-      expect(logs.lines.map((line) => JSON.parse(line))).toMatchObject([
-        { event: "model_gateway.request", status: 401, threadId: "thread-a", runId: null },
-        {
-          event: "model_gateway.request",
-          status: 503,
-          threadId: null,
-          runId: null,
-          local: { userId: "user-1", keyId: "key-1" },
-        },
-      ]);
-    } finally {
-      logs.restore();
-    }
+    expect(reports).toEqual([]);
+    await Promise.all(ctx.waitUntil);
+    expect(state.events).toMatchObject([
+      {
+        route: "model",
+        provider: "anthropic",
+        status: 401,
+        thread: { id: "thread-a" },
+        modelGateway: { status: 401 },
+      },
+      {
+        route: "model",
+        provider: "anthropic",
+        status: 503,
+        person: { id: "user-1" },
+        modelGateway: { status: 503 },
+      },
+    ]);
 
     const rejectedReports: Array<ModelGatewayRecord> = [];
     const reportEnv: ModelGatewayEnv = {
@@ -275,25 +293,18 @@ describe("public model gateway worker", () => {
       },
     };
     const reportContext = makeContext();
-    const reportLogs = captureLogs();
-    try {
-      const response = await GatewayWorker.fetch(
-        new Request("https://gateway.test/anthropic/v1/messages", {
-          method: "POST",
-          headers: { "x-api-key": LIVE },
-          body: "{}",
-        }),
-        reportEnv,
-        reportContext.context,
-      );
-      expect(response.status).toBe(200);
-      await response.text();
-      expect(rejectedReports).toMatchObject([{ outcome: "complete", runId }]);
-      const reportTask = reportContext.waitUntil[0];
-      if (reportTask === undefined) throw new Error("expected waitUntil to capture the report");
-      await expect(reportTask).resolves.toBeUndefined();
-    } finally {
-      reportLogs.restore();
-    }
+    const response = await GatewayWorker.fetch(
+      new Request("https://gateway.test/anthropic/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": LIVE },
+        body: "{}",
+      }),
+      reportEnv,
+      reportContext.context,
+    );
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(rejectedReports).toMatchObject([{ outcome: "complete", runId }]);
+    await expect(Promise.all(reportContext.waitUntil)).resolves.toBeDefined();
   });
 });

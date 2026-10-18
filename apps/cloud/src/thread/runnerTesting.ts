@@ -10,7 +10,10 @@ import {
   type ThreadMessage,
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import { CLAUDE_STREAM_PREFIX } from "@signalbox/runner-protocol/SessionProtocol";
+import {
+  CLAUDE_STREAM_PREFIX,
+  type SessionAppend,
+} from "@signalbox/runner-protocol/SessionProtocol";
 import {
   CommandId,
   MessageId,
@@ -114,8 +117,16 @@ export const launch = (
   engine: ThreadEngine.ThreadEngine["Service"],
   commandId = "launch-1",
   creation: ThreadEngine.ThreadCreation = personal,
-  projectId = ProjectId.make("scratch"),
-  modelSelection: ModelSelection = claude,
+  {
+    projectId = ProjectId.make("scratch"),
+    modelSelection = claude,
+    text = "Hi",
+  }: {
+    readonly projectId?: ProjectId;
+    readonly modelSelection?: ModelSelection;
+    /** The first message's text. */
+    readonly text?: string;
+  } = {},
 ) =>
   engine.launch(
     owner,
@@ -128,7 +139,7 @@ export const launch = (
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceStrategy: { type: "root" },
-      initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
+      initialMessage: { messageId: MessageId.make("message-1"), text, attachments: [] },
     },
     creation,
   );
@@ -152,6 +163,11 @@ export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, te
     personal,
   );
 
+export const appendSession = (
+  context: Context.Context<SessionRows.SessionRows>,
+  input: SessionAppend,
+) => Context.get(context, SessionRows.SessionRows).append(input);
+
 /** Stores a row of Claude's session `nativeId`, as a machine's session store does. */
 export const saveSession = (context: Context.Context<SessionRows.SessionRows>, nativeId: string) =>
   Context.get(context, SessionRows.SessionRows).append({
@@ -170,6 +186,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  pulls: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>
@@ -284,6 +301,7 @@ export const turnReport = (
   runId: RunId,
   runOrdinal: number,
   providerThread: OrchestrationV2ProviderThread,
+  { replyText = "Hello!" }: { readonly replyText?: string } = {},
 ) => {
   const reply = (text: string, done: boolean) =>
     encodeTurnItem({
@@ -333,8 +351,8 @@ export const turnReport = (
         nativeThreadRef: { driver: claudeDriver, nativeId: "claude-session-1", strength: "strong" },
       },
     } satisfies RunnerItem,
-    partial: provider({ type: "turn_item.updated", turnItem: reply("Hel", false) }),
-    full: provider({ type: "turn_item.updated", turnItem: reply("Hello!", true) }),
+    partial: provider({ type: "turn_item.updated", turnItem: reply(replyText.slice(0, 3), false) }),
+    full: provider({ type: "turn_item.updated", turnItem: reply(replyText, true) }),
     terminal: provider({
       type: "turn.terminal",
       providerThreadId: providerThread.id,
@@ -408,3 +426,6 @@ export const hostFor = (
     holdsTurn: () => Promise.resolve(holds()),
     afterChange: () => Promise.resolve(),
   }));
+
+export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+export { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";

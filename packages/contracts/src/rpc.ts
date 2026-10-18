@@ -47,6 +47,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PERSON_TIMEZONE_RPCS } from "./personTimezone.ts"; // signalbox: person timezone
 import { SIGNALBOX_ANALYTICS_RPCS } from "./signalboxAnalytics.ts"; // signalbox: analytics
 import { SIGNALBOX_CONTEXTS_RPCS } from "./signalboxContexts.ts"; // signalbox: contexts
 import { SIGNALBOX_DRIVES_RPCS } from "./signalboxDrives.ts"; // signalbox: drives
@@ -60,6 +61,7 @@ import { SIGNALBOX_THREAD_KINDS_RPCS } from "./signalboxThreadKinds.ts"; // sign
 import { SIGNALBOX_THREAD_STATUS_RPCS } from "./signalboxStatusLine.ts"; // signalbox: status lines
 import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
 import { SIGNALBOX_SIGN_IN_RPCS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
+import { SIGNALBOX_PERSON_BROWSER_RPCS } from "./signalboxPersonBrowser.ts"; // signalbox: person's cloud browser
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -2019,6 +2021,7 @@ export const SectionsWsRpcGroup =
 /** Signalbox's RPCs; the server serves them from `signalbox/wsRpc.ts`. */
 export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_ANALYTICS_RPCS,
+  ...PERSON_TIMEZONE_RPCS,
   ...ACCOUNT_POOL_RPCS,
   ...AutomationRpcs,
   ...SectionRpcs,
@@ -2034,6 +2037,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_THREAD_STATUS_RPCS,
   ...SIGNALBOX_KEYS_RPCS,
   ...SIGNALBOX_SIGN_IN_RPCS,
+  ...SIGNALBOX_PERSON_BROWSER_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(

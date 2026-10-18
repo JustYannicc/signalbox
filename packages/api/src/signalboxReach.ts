@@ -1,7 +1,15 @@
 import { exempt, read, type Reach, write, type WsRpcMethod } from "./reach.ts";
+import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalboxPersonBrowser";
 
 /** Signalbox's own RPC groups (`SIGNALBOX_WS_RPCS` in contracts' rpc.ts). */
 export const SIGNALBOX_RPC_REACH = {
+  "signalbox.timezone.get": read({ name: "timezone.get" }),
+  "signalbox.timezone.set": write({
+    name: "timezone.set",
+    summary:
+      "Set your scheduling timezone; null restores device detection. Existing schedules keep their timezone.",
+  }),
+  "signalbox.timezone.report": exempt("client-report", "A client reports its own device timezone."),
   "signalbox.analytics.getSettings": read({ name: "analytics.get" }),
   "signalbox.analytics.setEnabled": write({ name: "analytics.setEnabled" }),
   "signalbox.analytics.recordClientEvent": exempt(
@@ -217,5 +225,15 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.signIn.check": read({
     name: "signIn.check",
     summary: "Whether agents would sign in to a site without asking.",
+  }),
+
+  [SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]: read({
+    name: "personBrowser.profileStatus",
+    summary: "Whether your one cloud browser profile is available.",
+  }),
+  [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: write({
+    name: "personBrowser.clearProfile",
+    summary: "Clear your cloud browser sessions, saved site data, and managed sign-ins.",
+    destructive: true,
   }),
 } as const satisfies Partial<Record<WsRpcMethod, Reach>>;

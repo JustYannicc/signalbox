@@ -39,6 +39,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
   unavailable?: boolean;
+  poolStatusText?: string | undefined;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
@@ -50,6 +51,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
     subProvider: props.subProvider,
   };
   const providerLabel = getProviderRowLabel(props.providerDisplayName, props.subProvider);
+  const providerText = (
+    <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
+      {props.poolStatusText ? `${providerLabel} · ${props.poolStatusText}` : providerLabel}
+    </span>
+  );
 
   const row = (
     <ComboboxItem
@@ -97,9 +103,17 @@ export const ModelListRow = memo(function ModelListRow(props: {
               className="size-3"
               iconClassName="size-3"
             />
-            <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
-              {providerLabel}
-            </span>
+            {/* signalbox: Reset details remain readable without covering favorite controls. */}
+            {props.poolStatusText && !props.disabledReason ? (
+              <Tooltip>
+                <TooltipTrigger render={providerText} />
+                <TooltipPopup side="left" align="center">
+                  {props.poolStatusText}
+                </TooltipPopup>
+              </Tooltip>
+            ) : (
+              providerText
+            )}
           </div>
         )}
       </div>

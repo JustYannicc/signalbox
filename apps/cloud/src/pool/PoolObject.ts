@@ -1,10 +1,12 @@
-// @effect-diagnostics globalConsole:off globalDate:off - container logs go straight to Workers logs; alarms are wall-clock.
+// @effect-diagnostics globalDate:off - alarms are wall-clock.
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { log } from "evlog";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
+import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
 import {
   POOL_OBJECT_JURISDICTION,
@@ -47,9 +49,6 @@ interface StoreGatewayProps {
   readonly objectId: string;
 }
 
-const log = (event: string, fields: Record<string, unknown>) =>
-  console.log(JSON.stringify({ event, ...fields }));
-
 /** Keep an earlier idle or catalog alarm when another request schedules later work. */
 const scheduleEarlierAlarm = async (storage: DurableObjectStorage, at: number) => {
   const current = await storage.getAlarm();
@@ -69,7 +68,9 @@ const makeRuntime = (ctx: DurableObjectState) =>
                 ctx as unknown as { readonly exports: PoolExports }
               ).exports.PoolStoreGateway({ props: { objectId: ctx.id.toString() } }),
               wakeAt: (at) => ctx.waitUntil(scheduleEarlierAlarm(ctx.storage, at)),
-              log,
+              // Each container milestone is a wide event of its own.
+              log: (action, fields) =>
+                log.info({ ...fields, action, pool: { id: ctx.id.toString() } }),
             })
           : PoolContainer.layerUnavailable,
       ),
@@ -77,6 +78,7 @@ const makeRuntime = (ctx: DurableObjectState) =>
       Layer.provideMerge(
         Layer.mergeAll(SqliteClient.layer({ storage: ctx.storage }), Platform.layerCrypto),
       ),
+      Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil(ctx))),
     ),
   );
 
@@ -104,7 +106,11 @@ export class PoolObject
         );
         if (at !== null) await scheduleEarlierAlarm(ctx.storage, at);
       } catch (cause) {
-        log("pool.models_alarm_schedule_failed", { cause: String(cause) });
+        log.error({
+          action: "pool.models_alarm_schedule_failed",
+          pool: { id: poolObject },
+          cause: String(cause),
+        });
       }
     };
     this.api = makePoolObjectApi(
@@ -240,10 +246,16 @@ export class PoolObject
         PoolEngine.PoolEngine.use((engine) => engine.refreshModelsAtAlarm()),
       );
     } catch (cause) {
-      log("pool.models_alarm_refresh_failed", { cause: String(cause) });
+      log.error({
+        action: "pool.models_alarm_refresh_failed",
+        pool: { id: this.ctx.id.toString() },
+        cause: String(cause),
+      });
     }
     const next = await this.runtime.runPromise(
-      PoolContainer.PoolContainer.use((container) => container.sleepIfIdle(Date.now())),
+      PoolContainer.PoolContainer.use((container) => container.sleepIfIdle(Date.now())).pipe(
+        Evlog.withUnit("pool.alarm", { pool: { id: this.ctx.id.toString() } }),
+      ),
     );
     const refresh = await this.runtime.runPromise(
       PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt()),

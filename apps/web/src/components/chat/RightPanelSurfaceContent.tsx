@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty"; // signalbox: agent browser
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
@@ -70,6 +71,8 @@ export function RightPanelSurfaceContent(props: {
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly visible: boolean;
+  /** signalbox: a draft has no agent browser yet. */
+  readonly isServerThread: boolean;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly configuredPreviewUrls: ReadonlyArray<string>;
@@ -169,7 +172,7 @@ export function RightPanelSurfaceContent(props: {
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
     case "agent-browser": // signalbox: agent browser
-      return (
+      return props.isServerThread ? (
         <Suspense fallback={null}>
           <AgentBrowserPanel
             environmentId={threadRef.environmentId}
@@ -177,6 +180,15 @@ export function RightPanelSurfaceContent(props: {
             visible={visible}
           />
         </Suspense>
+      ) : (
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>Agent's browser</EmptyTitle>
+            <EmptyDescription>
+              Send a message to start this thread. Pages the agent opens will appear here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       );
     case "device":
       return (

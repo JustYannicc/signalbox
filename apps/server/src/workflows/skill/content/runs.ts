@@ -5,7 +5,7 @@ export const RUNS = `# Runs
 
 \`automation_run_read\` returns the run's status, input, output, every step (status, result, error, \`errorDetail: { why, fix, link }\`, attempt, thread) and the run's console logs. Check results against what the user wanted, not only statuses.
 
-Each agent and model step has a thread the user can open; link it when you report.
+Each agent step has a thread the user can open; link it when you report. Cloud model steps record their output in the run without creating a thread.
 
 ## When a run fails
 

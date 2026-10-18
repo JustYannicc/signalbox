@@ -6,7 +6,7 @@ import { CircleAlertIcon } from "lucide-react";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { usePoolViews } from "../../state/accountPools";
-import { useProjectPool } from "../../state/projectPool";
+import { useProjectPool, useProjectPoolModelSelection } from "../../state/projectPool";
 import { ComposerControl, type ComposerControlSize } from "../chat/ComposerControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { needsPoolCopy } from "./needsPoolCopy";
@@ -22,8 +22,13 @@ export function useProjectPoolEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   providerInstances: Readonly<Record<string, { readonly config?: unknown }>>,
   threadId?: ThreadId | null,
-): { readonly entries: ReadonlyArray<ProviderInstanceEntry>; readonly need: PoolNeed | null } {
+): {
+  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly need: PoolNeed | null;
+  readonly mapModelSelectionToPool: ReturnType<typeof useProjectPoolModelSelection>;
+} {
   const pool = useProjectPool(environmentId, projectId, threadId);
+  const mapModelSelectionToPool = useProjectPoolModelSelection();
   return (() => {
     const own = pool
       ? entries.filter((entry) => isPoolInstance(providerInstances, entry.instanceId, pool.poolId))
@@ -35,7 +40,7 @@ export function useProjectPoolEntries(
       providerInstances,
       providers: own.map((entry) => entry.snapshot),
     });
-    return { entries: own, need };
+    return { entries: own, need, mapModelSelectionToPool };
   })();
 }
 

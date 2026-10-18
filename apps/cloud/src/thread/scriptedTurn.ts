@@ -5,7 +5,7 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
+import { isHarnessInstance } from "../models/ModelRouting.ts";
 import { activeRun, finishRunEvents, nextQueuedRun, startRunEvents } from "./runLifecycle.ts";
 import { nextScriptedPrefix, scriptedReply } from "./scriptedProvider.ts";
 import {

@@ -1,4 +1,9 @@
-import { AuthSettingsWriteScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  EnvironmentAuthorizationError,
+  environmentCanWriteKeybindings,
+  environmentSupports,
+} from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -29,6 +34,7 @@ import {
   nextProjectScriptId,
   releaseClaimedRoles,
 } from "../../projectScripts";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -79,9 +85,15 @@ export function useProjectScriptSettings(
       return AsyncResult.failure(Cause.fail(new Error(message)));
     }
     if (
-      targets.some(
-        ({ environmentId }) => !readEnvironmentScope(environmentId, AuthSettingsWriteScope),
-      )
+      targets.some(({ environmentId }) => {
+        const capabilities = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))
+          ?.environment.capabilities;
+        return (
+          !readEnvironmentScope(environmentId, AuthSettingsWriteScope) ||
+          !environmentSupports(capabilities, "serverSettingsWrite") ||
+          !environmentSupports(capabilities, "terminal")
+        );
+      })
     ) {
       return reportScriptFailure(
         AsyncResult.failure(
@@ -107,12 +119,89 @@ export function useProjectScriptSettings(
     scriptId: string | undefined,
     keybinding: string | null | undefined,
   ): Promise<AtomCommandResult<void, unknown>> {
-    for (const { environmentId, settings, keybindings, project } of targets) {
+    const plans = targets.map(({ environmentId, settings, keybindings, project }) => {
       const current = project
         ? resolveProjectScripts(settings, project)
         : settings.defaultProjectScripts;
       const nextScripts = transform(current);
       const effectiveScripts = nextScripts ?? settings.defaultProjectScripts;
+      const changedIds = scriptId
+        ? [scriptId]
+        : current
+            .filter((script) => !effectiveScripts.some((next) => next.id === script.id))
+            .map((script) => script.id);
+      const bindings = changedIds.flatMap((id) => {
+        const command = commandForProjectScript(id);
+        const previousValue = keybindingValueForCommand(keybindings, command);
+        if (
+          scriptId &&
+          (keybinding === undefined || (keybinding?.trim() || null) === previousValue)
+        ) {
+          return [];
+        }
+        const previous = previousValue
+          ? decodeProjectScriptKeybindingRule({ keybinding: previousValue, command })
+          : null;
+        const next = decodeProjectScriptKeybindingRule({ keybinding, command });
+        const retainedElsewhere =
+          !nextScripts?.some((script) => script.id === id) &&
+          ((project && settings.defaultProjectScripts.some((script) => script.id === id)) ||
+            Object.entries(settings.projectSettingsOverrides).some(
+              ([projectId, entry]) =>
+                projectId !== project?.id &&
+                entry.defaultProjectScripts?.some((script) => script.id === id),
+            ) ||
+            projects.some(
+              (other) =>
+                other.environmentId === environmentId &&
+                other.id !== project?.id &&
+                (project ? resolveProjectScripts(settings, other) : other.scripts).some(
+                  (script) => script.id === id,
+                ),
+            ));
+        return next || (previous && !retainedElsewhere) ? [{ previous, next }] : [];
+      });
+      return { environmentId, settings, project, nextScripts, bindings };
+    });
+    // signalbox: reject every requested shortcut write before changing any target's scripts.
+    const canWriteBindings = (
+      plan: (typeof plans)[number],
+      only?: (typeof plans)[number]["bindings"],
+    ) => {
+      const bindings = only ?? plan.bindings;
+      const capabilities = appAtomRegistry.get(
+        serverEnvironment.configValueAtom(plan.environmentId),
+      )?.environment.capabilities;
+      return (
+        bindings.length === 0 ||
+        (environmentCanWriteKeybindings(capabilities) &&
+          bindings.every(({ next }) =>
+            appAtomRegistry.get(
+              next
+                ? serverEnvironment.upsertKeybinding.permissionAtom(plan.environmentId)
+                : serverEnvironment.removeKeybinding.permissionAtom(plan.environmentId),
+            ),
+          ))
+      );
+    };
+    let savedScripts = false;
+    const denied = () =>
+      reportScriptFailure(
+        AsyncResult.failure(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthSettingsWriteScope,
+              message: savedScripts
+                ? "Scripts were saved, but this connection can no longer change keyboard shortcuts."
+                : "This connection cannot change keyboard shortcuts.",
+            }),
+          ),
+        ),
+      );
+    if (plans.some((plan) => !canWriteBindings(plan))) return denied();
+    for (const plan of plans) {
+      const { environmentId, settings, project, nextScripts, bindings } = plan;
+      if (!canWriteBindings(plan)) return denied();
       const result = await updateSettings({
         environmentId,
         input: {
@@ -134,40 +223,16 @@ export function useProjectScriptSettings(
         },
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
-      const changedIds = scriptId
-        ? [scriptId]
-        : current
-            .filter((script) => !effectiveScripts.some((next) => next.id === script.id))
-            .map((script) => script.id);
-      for (const id of changedIds) {
-        const command = commandForProjectScript(id);
-        const previousValue = keybindingValueForCommand(keybindings, command);
-        const previous = previousValue
-          ? decodeProjectScriptKeybindingRule({ keybinding: previousValue, command })
-          : null;
-        const next = decodeProjectScriptKeybindingRule({ keybinding, command });
-        const retainedElsewhere =
-          !nextScripts?.some((script) => script.id === id) &&
-          ((project && settings.defaultProjectScripts.some((script) => script.id === id)) ||
-            Object.entries(settings.projectSettingsOverrides).some(
-              ([projectId, entry]) =>
-                projectId !== project?.id &&
-                entry.defaultProjectScripts?.some((script) => script.id === id),
-            ) ||
-            projects.some(
-              (other) =>
-                other.environmentId === environmentId &&
-                other.id !== project?.id &&
-                (project ? resolveProjectScripts(settings, other) : other.scripts).some(
-                  (script) => script.id === id,
-                ),
-            ));
+      savedScripts = true;
+      if (!canWriteBindings(plan)) return denied();
+      for (const { previous, next } of bindings) {
+        if (!canWriteBindings(plan, [{ previous, next }])) return denied();
         const bindingResult = next
           ? await upsertKeybinding({
               environmentId,
               input: previous && previous.key !== next.key ? { ...next, replace: previous } : next,
             })
-          : previous && !retainedElsewhere
+          : previous
             ? await removeKeybinding({ environmentId, input: previous })
             : null;
         if (bindingResult?._tag === "Failure") return reportScriptFailure(bindingResult);

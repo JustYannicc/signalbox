@@ -1,5 +1,6 @@
-import { useEnvironmentScope } from "../../state/session";
-import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   ChevronDownIcon,
   CircleXIcon,
@@ -22,13 +23,12 @@ import {
 } from "react";
 import {
   AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
   type KeybindingCommand,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { environmentSupports } from "@t3tools/contracts"; // signalbox
+import { environmentCanWriteKeybindings, environmentSupports } from "@t3tools/contracts"; // signalbox
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
@@ -1353,9 +1353,9 @@ export function KeybindingsSettingsPanel() {
     primaryEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   const supportsSettingsWrite = connectedEnvironments.every((target) =>
-    environmentSupports(target.serverConfig?.environment?.capabilities, "serverSettingsWrite"),
+    environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities),
   );
   const hasTerminal =
     connectedEnvironments.length === 0 ||
@@ -1367,13 +1367,18 @@ export function KeybindingsSettingsPanel() {
     connectedEnvironments.some((target) =>
       environmentSupports(target.serverConfig?.environment?.capabilities, "localFilesystem"),
     );
-  const canWriteSettings =
-    connectedEnvironments.length > 0 &&
-    connectedEnvironments.every(
-      (target) =>
-        writableIds.has(target.environmentId) &&
-        environmentSupports(target.serverConfig?.environment?.capabilities, "serverSettingsWrite"),
-    );
+  const canWriteSettings = useAtomValue(
+    Atom.make(
+      (get) =>
+        connectedEnvironments.length > 0 &&
+        connectedEnvironments.every(
+          (target) =>
+            environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities) &&
+            get(serverEnvironment.upsertKeybinding.permissionAtom(target.environmentId)) &&
+            get(serverEnvironment.removeKeybinding.permissionAtom(target.environmentId)),
+        ),
+    ),
+  );
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   // signalbox: keybindings.json only opens in an editor on a machine the user reaches.
   const canOpenKeybindingsJson = environmentSupports(
@@ -1434,18 +1439,7 @@ export function KeybindingsSettingsPanel() {
   };
 
   const saveKeybinding = (input: ServerUpsertKeybindingInput) => {
-    if (
-      !primaryEnvironment ||
-      !connectedEnvironments.every(
-        (target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope) &&
-          environmentSupports(
-            target.serverConfig?.environment?.capabilities,
-            "serverSettingsWrite",
-          ),
-      )
-    )
-      return;
+    if (!primaryEnvironment || !canWriteSettings) return;
     setSavingCommand(input.command);
     const payload: ServerUpsertKeybindingInput = {
       command: input.command,
@@ -1477,18 +1471,7 @@ export function KeybindingsSettingsPanel() {
   };
 
   const removeKeybinding = (row: KeybindingRow) => {
-    if (
-      !primaryEnvironment ||
-      !connectedEnvironments.every(
-        (target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope) &&
-          environmentSupports(
-            target.serverConfig?.environment?.capabilities,
-            "serverSettingsWrite",
-          ),
-      )
-    )
-      return;
+    if (!primaryEnvironment || !canWriteSettings) return;
     setSavingCommand(row.command);
     void (async () => {
       const results = await Promise.all(
@@ -1583,10 +1566,14 @@ export function KeybindingsSettingsPanel() {
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">
           {connectedEnvironments.length === 0
-            ? "Connect an environment to change keybindings."
+            ? showsEnvironmentUi
+              ? "Connect an environment to change keybindings."
+              : "Reconnect to Signalbox to change keybindings."
             : !supportsSettingsWrite // signalbox: the server can't store them, not a missing grant
               ? "Keybindings can't be changed here yet."
-              : "This connection can view keybindings but cannot change them."}
+              : showsEnvironmentUi
+                ? "This connection can view keybindings but cannot change them."
+                : "You can view keybindings but can't change them."}
         </p>
       ) : null}
       <div inert={!canWriteSettings && supportsSettingsWrite} className="flex flex-col gap-8">
