@@ -1,5 +1,6 @@
 import { WsRpcGroup } from "@t3tools/contracts";
 import { CLIENT_ISSUE_CODES, CLIENT_ISSUE_RELEASE_PATTERN } from "@t3tools/contracts/clientIssues";
+import { CLIENT_ACTION_IDS } from "@t3tools/contracts/clientActionTiming";
 
 /**
  * What may leave Cloudflare's native Worker traces for Sentry (#680). Every
@@ -47,6 +48,38 @@ const clientRelease = {
 const environmentId = { type: "id", format: /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/ } as const;
 const clientIssueSources = oneOf("ui", "rpc", "subscription", "exception", "console", "react");
 const clientIssueClients = oneOf("web", "desktop", "mobile");
+const clientActionEntryPoints = oneOf(
+  "click",
+  "key",
+  "palette",
+  "menu",
+  "gesture",
+  "touch",
+  "accessibility",
+  "native_menu",
+);
+const clientActionClients = oneOf("web", "desktop", "ios", "android");
+const clientActionOperatingSystems = oneOf(
+  "windows",
+  "macos",
+  "linux",
+  "ios",
+  "android",
+  "unknown",
+);
+const clientActionDevices = oneOf("phone", "tablet", "computer", "unknown");
+const clientActionIds = oneOf(...CLIENT_ACTION_IDS);
+const clientActionConnections = oneOf("online", "reconnecting", "offline");
+const clientActionModes = oneOf("cloud", "local");
+const clientActionPaths = oneOf("optimistic", "pending", "local", "server");
+const clientActionMethods = oneOf(
+  "browser_frame_estimate",
+  "native_frame_estimate",
+  "rn_event_mount",
+  "native_presented",
+  "commit_only",
+);
+const clientActionOutcomes = oneOf("success", "rejected", "abandoned", "no_feedback", "background");
 
 /**
  * The shared dimensions (`evlogWorkers.ts` `CloudFields`) the clients stamp
@@ -96,6 +129,26 @@ export const SPAN_ATTRIBUTES: ReadonlyMap<string, AttributeRule> = new Map<strin
   ["client.issue.duration_ms", measure],
   ["client.release", clientRelease],
   ["client.type", clientIssueClients],
+  ["client.action.id", clientActionIds],
+  ["client.action.entry_point", clientActionEntryPoints],
+  ["client.action.client", clientActionClients],
+  ["client.action.os", clientActionOperatingSystems],
+  ["client.action.device", clientActionDevices],
+  ["client.action.connection", clientActionConnections],
+  ["client.action.mode", clientActionModes],
+  ["client.action.path", clientActionPaths],
+  ["client.action.feedback_method", clientActionMethods],
+  ["client.action.desired_state_method", clientActionMethods],
+  ["client.action.outcome", clientActionOutcomes],
+  ["client.action.handler_delay_ms", measure],
+  ["client.action.feedback_ms", measure],
+  ["client.action.desired_state_ms", measure],
+  ["client.action.event_timing_ms", measure],
+  ["client.action.event_timing_method", oneOf("browser_event_timing", "rn_event_mount")],
+  ["client.action.event_timing_status", oneOf("observed", "no_entry", "unavailable", "cancelled")],
+  ["client.action.acknowledgement_ms", measure],
+  ["client.action.convergence_ms", measure],
+  ["client.action.completion_ms", measure],
   ["environment.id", environmentId],
   // Root spans: what ran and how it went.
   ["faas.trigger", FAAS_TRIGGERS],
@@ -171,6 +224,7 @@ export const SPAN_ATTRIBUTES: ReadonlyMap<string, AttributeRule> = new Map<strin
 /** Known Cloudflare operations and exact RPC templates; other names become `worker.operation`. */
 export const OPERATIONS: ReadonlySet<string> = new Set([
   ...RPC_SPAN_NAMES,
+  "client.action",
   "client.issue",
   "client.issue.intake",
   "fetch",

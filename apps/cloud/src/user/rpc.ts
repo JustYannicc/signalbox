@@ -30,6 +30,7 @@ import {
   OrchestrationV2ThreadLaunchError,
   ProjectListEntriesError,
   ProjectReadFileError,
+  ProjectSearchContentsError,
   ProjectSearchEntriesError,
   RpcScopeAuthorization,
   type ProjectCloneListEvent,
@@ -124,6 +125,8 @@ import { makeRepositoryPublication } from "../github/GitHubRepositoryPublication
 import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
+import * as DriveContentSearch from "./DriveContentSearch.ts";
+import { messages as contentSearchMessages } from "./DriveContentSearchErrors.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
@@ -235,6 +238,7 @@ const SERVED = [
   WS_METHODS.projectsListEntries,
   WS_METHODS.projectsReadFile,
   WS_METHODS.projectsSearchEntries,
+  WS_METHODS.projectsSearchContents,
   WS_METHODS.reviewGetDiffPreview,
   WS_METHODS.reviewGetDiffFileContents,
   WS_METHODS.vcsListRefs,
@@ -267,6 +271,10 @@ const SERVED = [
   WS_METHODS.pullRequestsPreview,
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
+  WS_METHODS.pullRequestsReviewGuide,
+  WS_METHODS.pullRequestsGenerateReviewGuide,
+  WS_METHODS.pullRequestsFilesViewed,
+  WS_METHODS.pullRequestsSetFilesViewed,
   WS_METHODS.pullRequestsThreadComments,
   WS_METHODS.pullRequestsComment,
   WS_METHODS.pullRequestsUpdateComment,
@@ -356,6 +364,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSearchContents]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffFileContents]: AuthFilesystemReadScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
@@ -385,6 +394,10 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsReviewGuide]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsGenerateReviewGuide]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pullRequestsFilesViewed]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSetFilesViewed]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdateComment]: AuthSourceControlWriteScope,
@@ -582,6 +595,7 @@ export const layerHandlers = (input: {
         (contextIds) => ({ userId, contextIds }),
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
+      const contentSearch = yield* DriveContentSearch.DriveContentSearch;
       const githubImport = yield* makeGitHubImport();
       const publishRepository = yield* makeRepositoryPublication(userDrives.access);
       const browsing = yield* makeBrowsingHandlers({
@@ -668,7 +682,7 @@ export const layerHandlers = (input: {
       const signIn = yield* makeSignInHandlers({ userId });
       const keybindings = yield* makeKeybindingHandlers;
       const personBrowser = yield* LoginService.LoginService;
-      const analytics = yield* makeAnalyticsHandlers;
+      const analytics = yield* makeAnalyticsHandlers({ userId: input.userId });
       const timezone = yield* makeTimezoneHandlers;
       return {
         ...terminals,
@@ -936,6 +950,20 @@ export const layerHandlers = (input: {
                 }),
             ),
           ),
+        [WS_METHODS.projectsSearchContents]: (request) =>
+          actorNow.pipe(Effect.flatMap((actor) => contentSearch.query(actor, request))).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectSearchContentsError({
+                  cwd: request.cwd,
+                  queryLength: request.query.length,
+                  limit: request.limit,
+                  failure: "search_index_search_failed",
+                  detail: contentSearchMessages[cause._tag],
+                  cause,
+                }),
+            ),
+          ),
         [WS_METHODS.reviewGetDiffFileContents]: (request) =>
           drives.diffFileContents(request).pipe(
             Effect.mapError(
@@ -1003,6 +1031,11 @@ export const layerHandlers = (input: {
         [WS_METHODS.pullRequestsPreview]: (request) => pullRequests.preview(request),
         [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
         [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
+        [WS_METHODS.pullRequestsReviewGuide]: (request) => pullRequests.reviewGuide(request),
+        [WS_METHODS.pullRequestsGenerateReviewGuide]: (request) =>
+          pullRequests.generateReviewGuide(request),
+        [WS_METHODS.pullRequestsFilesViewed]: (request) => pullRequests.filesViewed(request),
+        [WS_METHODS.pullRequestsSetFilesViewed]: (request) => pullRequests.setFilesViewed(request),
         [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
         [WS_METHODS.pullRequestsComment]: (request) => pullRequests.comment(request),
         [WS_METHODS.pullRequestsUpdateComment]: (request) => pullRequests.updateComment(request),

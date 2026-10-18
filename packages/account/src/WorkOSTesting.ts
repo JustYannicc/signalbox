@@ -47,8 +47,24 @@ const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
+/**
+ * One active membership. `roleSlugs` are sent as WorkOS does, as `role` (the
+ * first) and `roles`; `wire` sends its fields instead, for other shapes.
+ */
+export interface WorkOSTestMembership extends WorkOSOrganization {
+  readonly wire?: { readonly role?: unknown; readonly roles?: unknown };
+}
+
 /** Each user's active organizations, in the order WorkOS lists them. */
-export type WorkOSMemberships = Readonly<Record<string, ReadonlyArray<WorkOSOrganization>>>;
+export type WorkOSMemberships = Readonly<Record<string, ReadonlyArray<WorkOSTestMembership>>>;
+
+const roleFields = ({ roleSlugs = [], wire }: WorkOSTestMembership) => {
+  if (wire) return wire;
+  const [first] = roleSlugs;
+  return first === undefined
+    ? {}
+    : { role: { slug: first }, roles: roleSlugs.map((slug) => ({ slug })) };
+};
 
 /** Fake `GET /user_management/organization_memberships`, paged by `limit` and `after`. */
 const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => {
@@ -57,6 +73,7 @@ const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => 
       id: `om_${index}`,
       organization_id: organization.id,
       organization_name: organization.name,
+      ...roleFields(organization),
     }),
   );
   const after = url.searchParams.get("after");
@@ -85,7 +102,8 @@ const findUsers = (url: URL, codes: WorkOSCodes): Response => {
 
 /**
  * Fake WorkOS: `POST /user_management/authenticate` (recording each request
- * body), the membership listing, and users by email.
+ * body), the membership listing, users by email, and organizations by
+ * external ID (always 404).
  */
 export const workosStubLayer = (
   codes: WorkOSCodes,
@@ -102,6 +120,13 @@ export const workosStubLayer = (
         }
         if (url.pathname === "/user_management/users") {
           return HttpClientResponse.fromWeb(request, findUsers(url, codes));
+        }
+        // Nobody has a personal organization here: tests that need one bring their own client.
+        if (url.pathname.startsWith("/organizations/external_id/")) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ code: "entity_not_found" }, { status: 404 }),
+          );
         }
         if (url.pathname === "/user_management/authorize/device") {
           return HttpClientResponse.fromWeb(

@@ -1,4 +1,5 @@
 import type { WorkflowNode } from "@t3tools/contracts";
+import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { CompiledWorkflow } from "@signalbox/automations/compiled";
@@ -586,6 +587,95 @@ export default workflow(async (w) => {
     ]);
     const wrong = withTrigger(`{ webhook: { signature: { header: "x-sig", encoding: "sha1" } } }`);
     expect(!wrong.ok && wrong.diagnostics[0]?.message).toContain("meta is invalid");
+  });
+
+  it("compiles Effect Schema input and output contracts without running workflow code", () => {
+    const result = compileWorkflow(`
+      import { Schema as S } from "effect";
+      export const meta = {
+        name: "Typed",
+        input: S.Struct({
+          id: S.String.annotate({ description: "Remote issue identifier" }),
+          count: S.Int,
+          active: S.Boolean,
+          previous: S.optional(S.NullOr(S.String)),
+          context: S.Unknown,
+          note: S.optionalKey(S.Union([S.String, S.Null])),
+          tags: S.Array(S.Literal("bug")),
+        }),
+        output: S.Union([S.Struct({ ok: S.Literal(true) }), S.Struct({ ok: S.Literal(false) })]),
+      } as const;
+      const count = (value: number) => value;
+      export default workflow(async (_w, input) => {
+        await _w.run("Count", count, input.count);
+      });
+    `);
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
+
+    expect(result.workflow.meta.input).toBeDefined();
+    expect(result.workflow.meta.output).toBeDefined();
+    const input = SchemaRepresentation.fromJson(result.workflow.meta.input!);
+    expect(input.representation._tag).toBe("Objects");
+    expect(JSON.stringify(input)).toContain("Remote issue identifier");
+    expect(result.workflow.script).not.toContain("S.Struct");
+    expect(result.workflow.script).toContain('"_tag": "Objects"');
+    expect(result.workflow.workerModule).not.toContain('from "effect"');
+    expect(result.workflow.workerModule).not.toContain('from "effect/Schema"');
+    expect(result.workflow.runModule).not.toContain("S.Struct");
+  });
+
+  it("recognizes effect/Schema namespace imports and rejects executable schemas", () => {
+    const valid = compileWorkflow(`
+      import * as S from "effect/Schema";
+      export const meta = { name: "Typed", input: S.Array(S.Literals(["a", "b"])) } as const;
+      export default workflow(async () => {});
+    `);
+    expect(valid.ok && valid.workflow.meta.input).toBeDefined();
+
+    const unsafe = compileWorkflow(`
+      import * as S from "effect/Schema";
+      export const meta = { name: "Unsafe", input: S.Struct(buildFields()) } as const;
+      export default workflow(async () => {});
+    `);
+    expect(!unsafe.ok && unsafe.diagnostics[0]?.message).toContain(
+      "supported Effect Schema expression",
+    );
+  });
+
+  it("compiles the short w.start form with the name in its label and runtime arguments", () => {
+    const { graph, script } = compiled(`
+      await w.start("Weekly report", { week: 12 }, { wait: false });
+      await w.start("Daily report", "plain text");
+    `);
+    expect(graph.nodes[0]).toMatchObject({
+      type: "step",
+      verb: "start",
+      label: { text: "Weekly report" },
+      detail: {
+        automation: { literal: "Weekly report" },
+        input: { literal: { week: 12 } },
+        wait: { literal: false },
+      },
+    });
+    expect(script.replace(/\s+/g, " ")).toContain(
+      'w.start("s1", "Weekly report", "Weekly report", { week: 12 }, { wait: false })',
+    );
+    expect(graph.nodes[1]).toMatchObject({
+      type: "step",
+      label: { text: "Daily report" },
+      detail: { automation: { literal: "Daily report" }, input: { literal: "plain text" } },
+    });
+    expect(script.replace(/\s+/g, " ")).toContain(
+      'w.start("s2", "Daily report", "Daily report", "plain text")',
+    );
+
+    const noInput = compiled(`await w.start("No input");`);
+    expect(noInput.graph.nodes[0]).toMatchObject({
+      type: "step",
+      label: { text: "No input" },
+      detail: { automation: { literal: "No input" } },
+    });
+    expect(noInput.script.replace(/\s+/g, " ")).toContain('w.start("s1", "No input", "No input")');
   });
 
   it("points diagnostics at the offending line", () => {

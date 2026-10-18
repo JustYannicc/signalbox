@@ -3,6 +3,7 @@ import {
   AuthSettingsWriteScope,
   EnvironmentId,
 } from "@t3tools/contracts";
+import type { ProductAnalyticsSettings } from "@t3tools/contracts/signalboxAnalytics";
 import { SIGNALBOX_ANALYTICS_WS_METHODS as methods } from "@t3tools/contracts/signalboxAnalytics";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,9 @@ import * as RpcTest from "effect/rpc/RpcTest";
 
 import { makeMemoryCloud } from "../testing.ts";
 import * as CloudRpc from "./rpc.ts";
+import * as ClientActionTimings from "../observability/ClientActionTimings.ts";
+import { makeAnalyticsHandlers } from "./analyticsRpc.ts";
+import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
 
 const connect = (cloud: ReturnType<typeof makeMemoryCloud>, userId: string, writable = true) =>
   Effect.andThen(
@@ -37,6 +41,77 @@ const connect = (cloud: ReturnType<typeof makeMemoryCloud>, userId: string, writ
   );
 
 describe("cloud analytics preference RPC", () => {
+  it.effect("exports timings only with person consent and uses the server's person identity", () =>
+    Effect.gen(function* () {
+      const received: Array<{ readonly userId: string; readonly samples: ReadonlyArray<unknown> }> =
+        [];
+      const event = {
+        event: "interaction.timings",
+        samples: [
+          {
+            action: "thread.send",
+            entryPoint: "click",
+            client: "web",
+            os: "linux",
+            device: "computer",
+            release: "1.2.3",
+            connection: "online",
+            mode: "cloud",
+            path: "optimistic",
+            inputTimeMs: 12,
+            handlerDelayMs: 1,
+            feedback: null,
+            desiredState: null,
+            eventTimingMs: null,
+            eventTimingMethod: null,
+            eventTimingStatus: "unavailable",
+            acknowledgementMs: null,
+            convergenceMs: null,
+            completionMs: null,
+            outcome: "success",
+            correlationId: "1234567890abcdef1234567890abcdef",
+          },
+        ],
+      } as const;
+      const recordWithSettings = (settings: ProductAnalyticsSettings) =>
+        Effect.gen(function* () {
+          const handlers = yield* makeAnalyticsHandlers({ userId: "trusted-server-person" });
+          yield* handlers[methods.recordClientEvent](event);
+          yield* handlers[methods.recordClientEvent]({ event: "capture.used" });
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                UserAnalyticsPreference.UserAnalyticsPreference,
+                UserAnalyticsPreference.UserAnalyticsPreference.of({
+                  settings: Effect.succeed(settings),
+                  setEnabled: () => Effect.succeed(settings),
+                }),
+              ),
+              Layer.succeed(
+                ClientActionTimings.ClientActionTimings,
+                ClientActionTimings.ClientActionTimings.of({
+                  record: (userId, samples) =>
+                    Effect.sync(() => {
+                      received.push({ userId, samples });
+                    }),
+                }),
+              ),
+            ),
+          ),
+        );
+
+      yield* recordWithSettings({ enabled: false, disabledByServer: false });
+      yield* recordWithSettings({ enabled: true, disabledByServer: true });
+      yield* recordWithSettings({ enabled: true, disabledByServer: false });
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({
+        userId: "trusted-server-person",
+        samples: event.samples,
+      });
+    }),
+  );
+
   it.effect("persists the person's opt-in across clients and keeps other people separate", () =>
     Effect.gen(function* () {
       const cloud = makeMemoryCloud();

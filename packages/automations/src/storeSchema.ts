@@ -11,6 +11,15 @@ import * as SqlClient from "effect/sql/SqlClient";
  */
 
 const TABLES = [
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_children (
+    parent_run_id TEXT NOT NULL,
+    step_key TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    child_run_id TEXT NOT NULL UNIQUE,
+    wait INTEGER NOT NULL,
+    parent_notified INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (parent_run_id, step_key, attempt)
+  )`,
   /** Names are unique per project: two projects can each have a "Weekly report". */
   `CREATE TABLE IF NOT EXISTS signalbox_automations (
     automation_id TEXT PRIMARY KEY,
@@ -202,6 +211,7 @@ const TABLES = [
  * constraint change can't be added this way; it needs a table rebuild.
  */
 const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
+  ["signalbox_automation_children", "parent_notified", "INTEGER NOT NULL DEFAULT 0"],
   ["signalbox_automations", "webhook_secret_set", "INTEGER NOT NULL DEFAULT 0"],
   ["signalbox_automations", "builtin_slug", "TEXT"],
   ["signalbox_automation_versions", "approved_by", "TEXT"],

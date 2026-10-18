@@ -1,5 +1,5 @@
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestDiffRevision, PullRequestRef } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -13,7 +13,6 @@ import {
   isStaleViewedState,
   revertFileViewedOverlay,
   settleFileViewedOverlay,
-  toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
   type FileViewedStates,
@@ -27,7 +26,11 @@ export interface PullRequestFilesViewedView {
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
-  readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly setViewed: (
+    path: string,
+    viewed: boolean,
+    displayedRevision?: PullRequestDiffRevision,
+  ) => void;
   readonly truncated: boolean;
   readonly error: string | null;
   readonly refresh: () => void;
@@ -51,7 +54,9 @@ export function usePullRequestFilesViewed(options: {
     reportFailure: false,
   });
 
-  const queued = useRef<Map<string, boolean>>(new Map());
+  const queued = useRef<
+    Map<string, { readonly viewed: boolean; readonly displayedRevision?: PullRequestDiffRevision }>
+  >(new Map());
   const sentBy = useRef<Map<string, number>>(new Map());
   const requests = useRef(0);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -87,34 +92,61 @@ export function usePullRequestFilesViewed(options: {
     readonly reference: PullRequestRef;
   }) => {
     flushTimer.current = null;
-    const batch = toFileViewedBatch(queued.current);
-    if (batch.length === 0) return;
+    const queuedFiles = [...queued.current];
+    if (queuedFiles.length === 0) return;
     queued.current = new Map();
     const sentFrom = scope.current;
-    const request = ++requests.current;
-    for (const file of batch) sentBy.current.set(file.path, request);
-    void setFilesViewed({
-      environmentId: target.environmentId,
-      input: { ...target.reference, files: batch },
-    }).then((result) => {
-      const mine = batch
-        .map((file) => file.path)
-        .filter((path) => sentBy.current.get(path) === request);
-      for (const path of mine) sentBy.current.delete(path);
-      if (scope.current !== sentFrom) return;
-      if (result._tag === "Failure") {
-        const owned = new Set(mine.filter((path) => !queued.current.has(path)));
-        setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
-        if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
-          toastManager.add({ type: "error", title: "Could not update viewed files" });
-        }
-        return;
+    const groups = new Map<
+      string,
+      {
+        readonly displayedRevision?: PullRequestDiffRevision;
+        readonly files: Array<{ readonly path: string; readonly viewed: boolean }>;
       }
-      // Answered for from the next read on, whatever it says. A push landing between the write
-      // and that read comes back as `dismissed`, and the press must not stand over it.
-      for (const path of mine) answeredFrom.current.set(path, committedStates.current);
-      refresh();
-    });
+    >();
+    for (const [path, value] of queuedFiles) {
+      const key = JSON.stringify(value.displayedRevision ?? null);
+      const group = groups.get(key) ?? {
+        ...(value.displayedRevision === undefined
+          ? {}
+          : { displayedRevision: value.displayedRevision }),
+        files: [],
+      };
+      group.files.push({ path, viewed: value.viewed });
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const batch = group.files;
+      const request = ++requests.current;
+      for (const file of batch) sentBy.current.set(file.path, request);
+      void setFilesViewed({
+        environmentId: target.environmentId,
+        input: {
+          ...target.reference,
+          ...(group.displayedRevision === undefined
+            ? {}
+            : { displayedRevision: group.displayedRevision }),
+          files: batch,
+        },
+      }).then((result) => {
+        const mine = batch
+          .map((file) => file.path)
+          .filter((path) => sentBy.current.get(path) === request);
+        for (const path of mine) sentBy.current.delete(path);
+        if (scope.current !== sentFrom) return;
+        if (result._tag === "Failure") {
+          const owned = new Set(mine.filter((path) => !queued.current.has(path)));
+          setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
+          if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
+            toastManager.add({ type: "error", title: "Could not update viewed files" });
+          }
+          return;
+        }
+        // Answered for from the next read on, whatever it says. A push landing between the write
+        // and that read comes back as `dismissed`, and the press must not stand over it.
+        for (const path of mine) answeredFrom.current.set(path, committedStates.current);
+        refresh();
+      });
+    }
   };
 
   const currentTarget = useEffectEvent(() => ({ environmentId, reference }));
@@ -138,13 +170,18 @@ export function usePullRequestFilesViewed(options: {
   }, [scopeKey]);
 
   // Handed to every file header the viewer draws; a new identity would rebuild all of them.
-  const setViewed = useStableCallback((path: string, viewed: boolean) => {
-    setOverlay((current) => new Map(current).set(path, viewed));
-    queued.current.set(path, viewed);
-    if (flushTimer.current !== null) clearTimeout(flushTimer.current);
-    const target = { environmentId, reference };
-    flushTimer.current = setTimeout(() => flush(target), FLUSH_DELAY_MS);
-  });
+  const setViewed = useStableCallback(
+    (path: string, viewed: boolean, displayedRevision?: PullRequestDiffRevision) => {
+      setOverlay((current) => new Map(current).set(path, viewed));
+      queued.current.set(path, {
+        viewed,
+        ...(displayedRevision === undefined ? {} : { displayedRevision }),
+      });
+      if (flushTimer.current !== null) clearTimeout(flushTimer.current);
+      const target = { environmentId, reference };
+      flushTimer.current = setTimeout(() => flush(target), FLUSH_DELAY_MS);
+    },
+  );
 
   return {
     enabled,
