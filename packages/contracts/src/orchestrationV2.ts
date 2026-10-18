@@ -3533,10 +3533,22 @@ export const OrchestrationV2SearchThreadInput = Schema.Struct({
 });
 export type OrchestrationV2SearchThreadInput = typeof OrchestrationV2SearchThreadInput.Type;
 
+// signalbox: Source identity lets inherited Find matches outlive unrelated snapshot revisions.
+export const OrchestrationV2ThreadFindMatchEvidence = Schema.Struct({
+  version: Schema.Literal(1),
+  documentId: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  segmentIndex: NonNegativeInt,
+  start: NonNegativeInt,
+  end: NonNegativeInt,
+});
+export type OrchestrationV2ThreadFindMatchEvidence =
+  typeof OrchestrationV2ThreadFindMatchEvidence.Type;
+
 export const OrchestrationV2ThreadFindMatch = Schema.Struct({
   entryId: TrimmedNonEmptyString,
   runId: Schema.NullOr(RunId),
   occurrence: NonNegativeInt,
+  evidence: Schema.optionalKey(OrchestrationV2ThreadFindMatchEvidence),
 });
 export const OrchestrationV2SearchThreadResult = Schema.Struct({
   complete: Schema.optionalKey(Schema.Boolean),
