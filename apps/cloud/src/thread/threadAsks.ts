@@ -7,6 +7,7 @@ import {
 import type { SignalboxAskServerCommand } from "@t3tools/contracts/signalboxAsks";
 import { applyAskCommand, nativeAskAnswerMessage } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
+import { applyEvents } from "./threadProjection.ts";
 
 import type { Decision } from "./threadEvents.ts";
 import { type DecisionContext, threadEvent } from "./threadEvents.ts";
@@ -91,7 +92,7 @@ export function decideAsk(
       ]);
       if (!comments.length) return { _tag: "accepted", events: [changed, ...response.events] };
       const sent = deliver(
-        withAsk,
+        applyEvents(withAsk, response.events) ?? withAsk,
         {
           type: "message.dispatch",
           commandId: command.commandId,

@@ -49,7 +49,15 @@ describe("cloud native asks", () => {
       expiresBetweenRounds: true,
       name: "delivers held answers after the provider turn dies between rounds",
     },
-  ])("$name", ({ secret, nonBlocking, expiresBetweenRounds }) =>
+    ...[false, true].map((completeBeforeAnswer) => ({
+      secret: false,
+      nonBlocking: true,
+      expiresBetweenRounds: false,
+      withComments: true,
+      completeBeforeAnswer,
+      name: `keeps answers and comments in separate runs with the original run ${completeBeforeAnswer ? "completed" : "running"}`,
+    })),
+  ])("$name", ({ secret, nonBlocking, expiresBetweenRounds, ...scenario }) =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
         yield* launch(engine, "launch", personal, {
@@ -161,6 +169,15 @@ describe("cloud native asks", () => {
         expect((yield* engine.summary(owner))?.shell.pendingRuntimeRequest?.id ?? null).toBe(
           nonBlocking ? null : requestId,
         );
+        const withComments = "withComments" in scenario && scenario.withComments;
+        const completeBeforeAnswer =
+          "completeBeforeAnswer" in scenario && scenario.completeBeforeAnswer;
+        if (completeBeforeAnswer)
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 2,
+            items: [report.full, report.terminal],
+          });
         yield* engine.dispatch(
           owner,
           {
@@ -168,7 +185,7 @@ describe("cloud native asks", () => {
             commandId: CommandId.make("answer-native"),
             threadId,
             askId: `native:${requestId}`,
-            ...(expiresBetweenRounds ? { comment: "Keep the first choice" } : {}),
+            ...(expiresBetweenRounds || withComments ? { comment: "Keep the first choice" } : {}),
             round: 1,
             answers: [{ questionId: "public", value: "Zurich" }],
             deferredQuestionIds: [],
@@ -234,6 +251,31 @@ describe("cloud native asks", () => {
           "public",
         ]);
         expect(JSON.stringify(projection.thread.asks)).not.toContain("Private token");
+        if (withComments) {
+          const answerRun = projection.runs[1];
+          expect(
+            projection.messages.find((message) => message.id === answerRun?.userMessageId)?.text,
+          ).toContain("Which city?\nZurich");
+          expect(projection.runs.map((run) => run.status)).toEqual(
+            completeBeforeAnswer
+              ? ["completed", "starting", "queued"]
+              : ["running", "queued", "queued"],
+          );
+          if (!completeBeforeAnswer)
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 2,
+              items: [report.full, report.terminal],
+            });
+          const next = yield* liveTurn(runner);
+          expect(next.message.text).toContain("Which city?\nZurich");
+          expect(next.message.text).not.toContain("Comments on ask");
+          expect(
+            projection.messages.find((message) => message.id === projection.runs[2]?.userMessageId)
+              ?.text,
+          ).toContain("Keep the first choice");
+          return;
+        }
         const replies = projection.messages.filter((message) => message.text.includes("Zurich"));
         expect(replies).toHaveLength(secret || nonBlocking ? 1 : 0);
         expect(projection.runs.map((run) => run.status)).toEqual(
