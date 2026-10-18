@@ -13,13 +13,16 @@
  * resources are retained, so no destroy or replace ever deletes them.
  */
 import * as Alchemy from "alchemy";
+import * as AlchemyOutput from "alchemy/Output";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
+import { searchSettings } from "./src/search/searchSettings.ts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
+import { executorSigningJwk } from "./infra/executorSigningKey.ts";
 import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
@@ -34,10 +37,12 @@ import {
 } from "./infra/stage.ts";
 import type {
   DriveObject,
+  ExecutorTokenBindingObject,
   ModelGrants,
   PoolObject,
   PreviewLinkRegistry,
   ThreadObject,
+  SearchIndexObject,
   UserObject,
 } from "./src/worker.ts";
 
@@ -144,6 +149,7 @@ function telemetryEnv(stage: string) {
       POSTHOG_HOST: yield* optional("POSTHOG_HOST"),
       SIGNALBOX_POSTHOG_ENABLED: yield* optional("SIGNALBOX_POSTHOG_ENABLED"),
       T3CODE_TELEMETRY_ENABLED: yield* optional("T3CODE_TELEMETRY_ENABLED"),
+      SIGNALBOX_DO_STORAGE_ALERT_PERCENT: yield* optional("SIGNALBOX_DO_STORAGE_ALERT_PERCENT"),
     };
   });
 }
@@ -151,7 +157,18 @@ function telemetryEnv(stage: string) {
 /** Vars and secrets from CI's environment, next to the stage's own vars. */
 function workerEnv(target: CloudStage) {
   return Effect.gen(function* () {
+    const search = searchSettings({
+      SEARCH_INDEX_GENERATION: yield* optional("SEARCH_INDEX_GENERATION"),
+      SEARCH_INDEX_DISABLED: yield* optional("SEARCH_INDEX_DISABLED"),
+    });
+    const signingSeedId = `ExecutorTokenSigningKeySeed${target.cloudWorker.replaceAll("-", "")}`;
+    const signingSeed = yield* Alchemy.makeRandom(signingSeedId, { bytes: 32 });
+    const signingJwk = AlchemyOutput.map(signingSeed, (seed) =>
+      Redacted.make(executorSigningJwk(Redacted.value(seed))),
+    ).as<Redacted.Redacted<string>>();
     const shared = {
+      SEARCH_INDEX_GENERATION: search.generation,
+      SEARCH_INDEX_DISABLED: search.disabled ? "1" : "0",
       T3CODE_WORKOS_CLIENT_ID: yield* Config.String("T3CODE_WORKOS_CLIENT_ID"),
       MACHINE_BACKEND: yield* optional("MACHINE_BACKEND"),
       // Optional: the MCP authorization server (`src/api/mcpRoutes.ts`); unset, MCP takes keys only.
@@ -162,6 +179,9 @@ function workerEnv(target: CloudStage) {
       EXECUTOR_MCP_URL: yield* optional("EXECUTOR_MCP_URL"),
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
+      EXECUTOR_TOKEN_PRIVATE_JWK: signingJwk,
+      // Optional public verification keys for tokens signed before an operator rotates the seed.
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: yield* optional("EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS"),
       // Optional: Claude and Codex on boat VMs.
       BOAT_API_KEY: yield* optionalSecret("BOAT_API_KEY"),
       // Optional: chat or task classifiers (`src/threadKinds/`); unset, threads stay tasks.
@@ -199,7 +219,12 @@ function workerEnv(target: CloudStage) {
 
 function deploy(
   target: CloudStage,
-  env: Readonly<Record<string, string | Redacted.Redacted<string>>>,
+  env: Readonly<
+    Record<
+      string,
+      string | Redacted.Redacted<string> | AlchemyOutput.Output<Redacted.Redacted<string>, unknown>
+    >
+  >,
   telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
@@ -262,6 +287,10 @@ function deploy(
         AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
+        SEARCH_INDEX: Cloudflare.DurableObject<SearchIndexObject>(DO.SEARCH_INDEX),
+        EXECUTOR_TOKEN_BINDINGS: Cloudflare.DurableObject<ExecutorTokenBindingObject>(
+          DO.EXECUTOR_TOKEN_BINDINGS,
+        ),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),
         // A managed pool's CLIProxyAPI, pinned in containers/cliproxyapi/release.json.

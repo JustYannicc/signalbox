@@ -13,8 +13,8 @@ import { searchOperations } from "./search.ts";
  * search (#335). The cloud serves them on `/mcp` and the CLI over stdio
  * (`signalbox mcp`); each provides `SignalboxApi` for its transport.
  *
- * An MCP caller is always an agent: human-only and destructive operations
- * are left out of search and refused by the API (#335 decisions 4 and 5).
+ * An MCP caller is always an agent. Human-only operations are refused;
+ * destructive operations require an explicit reach entry allowing agents.
  */
 
 /** Whether the Signalbox behind the tools serves an operation, and if not, why. */
@@ -43,7 +43,7 @@ export class SignalboxApi extends Context.Service<
   }
 >()("@signalbox/api/mcpTools/SignalboxApi") {}
 
-const forAgents = (operation: Operation) => !operation.humanOnly && !operation.destructive;
+const forAgents = (operation: Operation) => operation.agentCallable;
 
 const SearchResult = Schema.Struct({
   operations: Schema.Array(
@@ -51,6 +51,7 @@ const SearchResult = Schema.Struct({
       name: Schema.String,
       summary: Schema.optionalKey(Schema.String),
       access: Schema.Literals(["read", "write"]),
+      destructive: Schema.Boolean,
       /** Present for streams: what one call answers with. */
       stream: Schema.optionalKey(Schema.String),
       available: Schema.Boolean,
@@ -113,6 +114,7 @@ export const layerSignalboxTools = SignalboxToolkit.toLayer(
                 name: operation.name,
                 ...(operation.summary === undefined ? {} : { summary: operation.summary }),
                 access: operation.access,
+                destructive: operation.destructive,
                 ...(operation.stream === undefined ? {} : { stream: operation.stream }),
                 available: coverage.served,
                 ...(unavailable === undefined ? {} : { unavailable }),

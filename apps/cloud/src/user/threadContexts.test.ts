@@ -1,5 +1,6 @@
-import { ProjectId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { ProjectId, ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { poolSourceId } from "@t3tools/contracts/accountHub";
+import { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,6 +14,7 @@ import * as UserDrives from "./UserDrives.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
 import * as UserPools from "./UserPools.ts";
+import { projectIdForDrive } from "./contextProjects.ts";
 
 const projectId = ProjectId.make("project");
 const checkedAt = "2026-10-17T00:00:00.000Z";
@@ -107,5 +109,54 @@ describe("initial model on a folder's pool", () => {
         options: [{ id: "reasoningEffort", value: "high" }],
       });
     }),
+  );
+});
+
+describe("folder context lifecycle", () => {
+  it.effect.each(["place", "turn", "initial model"] as const)(
+    "returns a typed refusal for a trashed home during %s resolution",
+    (operation) =>
+      Effect.gen(function* () {
+        const contexts = yield* ThreadContexts.ThreadContexts;
+        const threadId = ThreadId.make("trashed-home");
+        const project = projectIdForDrive("folder/personal/hidden");
+        const attempt =
+          operation === "place"
+            ? contexts.placeOfProject(project).pipe(Effect.asVoid)
+            : operation === "turn"
+              ? contexts.turn(threadId, project).pipe(Effect.asVoid)
+              : contexts.initialModelSelection(project, threadId).pipe(Effect.asVoid);
+        expect(yield* Effect.flip(attempt)).toMatchObject({
+          _tag: "ThreadFolderTrashedError",
+          message: "This thread's folder is in Trash.",
+        });
+      }).pipe(
+        Effect.provide(
+          ThreadContextLayers.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(UserDrives.UserDrives)({
+                  userId: Effect.succeed("owner"),
+                  access: () => Effect.succeed("owner"),
+                }),
+                Layer.mock(UserFolders.UserFolders)({
+                  driveIsTrashed: () => Effect.succeed(true),
+                  turn: () =>
+                    Effect.fail(
+                      new UserFolders.ThreadHomeTrashedError({
+                        folderId: FolderId.make("hidden"),
+                      }),
+                    ),
+                }),
+                Layer.mock(UserPools.UserPools)({ state: () => Effect.succeed([pool]) }),
+                Layer.mock(UserModelSettings.UserModelSettings)({
+                  snapshot: Effect.succeed(UserModelSettings.EMPTY_MODEL_SETTINGS),
+                }),
+                ModelCatalog.layer.pipe(Layer.provide(ModelManifest.layerBundled)),
+              ),
+            ),
+          ),
+        ),
+      ),
   );
 });

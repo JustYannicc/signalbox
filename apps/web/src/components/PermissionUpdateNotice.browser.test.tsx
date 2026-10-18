@@ -10,6 +10,7 @@ type Session = {
 const state = vi.hoisted(() => ({
   id: 0,
   session: null as unknown as Session,
+  serverConfig: null as { environment: { capabilities: { accessManagement?: boolean } } } | null,
   add: vi.fn((_notice: unknown) => "notice"),
   close: vi.fn(),
   navigate: vi.fn(),
@@ -30,7 +31,9 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 vi.mock(import("../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironments: (() => ({
-    environments: [{ environmentId: `env-${state.id}`, label: "Work laptop" }],
+    environments: [
+      { environmentId: `env-${state.id}`, label: "Work laptop", serverConfig: state.serverConfig },
+    ],
   })) as never,
 }));
 vi.mock(import("./ui/toast"), async (original) => {
@@ -49,6 +52,7 @@ const storageKey = () => `t3code:permission-update:v1:env-${state.id}`;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.id++;
+  state.serverConfig = { environment: { capabilities: {} } };
   state.session = {
     _tag: "Success",
     waiting: false,
@@ -115,4 +119,15 @@ it("persists the secondary dismissal without relying on the toast close callback
   notice().data.secondaryActionProps.onClick();
   expect(localStorage.getItem(storageKey())).toBe("true");
   expect(state.close).toHaveBeenCalledWith("notice");
+});
+
+it("waits for the environment to report whether it pairs", async () => {
+  state.serverConfig = null;
+  await render();
+  expect(state.add).not.toHaveBeenCalled();
+});
+it("never asks to pair again where the environment has no pairing", async () => {
+  state.serverConfig = { environment: { capabilities: { accessManagement: false } } };
+  await render();
+  expect(state.add).not.toHaveBeenCalled();
 });

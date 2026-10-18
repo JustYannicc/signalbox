@@ -6,6 +6,7 @@ import * as Atom from "effect/reactivity/Atom";
 import { useContext, useEffect, useRef, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+import { reviewFilePatchRequest } from "@t3tools/client-runtime/state/review"; // signalbox
 import { reviewEnvironment } from "~/state/review";
 
 const filePathCollator = new Intl.Collator(undefined, {
@@ -190,16 +191,14 @@ function reviewFileQueries({
               environmentId,
               input: {
                 cacheKey: scope,
-                request: {
+                // signalbox: pinned to the source's commits (#864)
+                request: reviewFilePatchRequest({
                   cwd,
-                  ...(baseRef ? { baseRef } : {}),
+                  source,
+                  file,
+                  fallbackBaseRef: baseRef,
                   ignoreWhitespace,
-                  file: {
-                    path: file.path,
-                    previousPath: file.previousPath,
-                    sourceKind: source.kind,
-                  },
-                },
+                }),
               },
             };
             return { index, target, query: reviewEnvironment.diffFilePatch(target) };

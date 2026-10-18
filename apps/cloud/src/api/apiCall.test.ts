@@ -10,17 +10,26 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import { TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
 
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import { projectIdForDrive } from "../user/contextProjects.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
 import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
+const decodeFolders = Schema.decodeUnknownSync(SignalboxFoldersSnapshot);
+const decodeTrash = Schema.decodeUnknownSync(TrashSnapshot);
+
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
+const projectDrive = "folder/personal/trash-restore";
+const projectId = projectIdForDrive(projectDrive);
 const standard = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
 const person = (scopes: ReadonlyArray<AuthEnvironmentScope> = standard): ApiCaller => ({
@@ -89,6 +98,279 @@ describe("public API calls", () => {
           yield* call("assets.persistChatAttachments", input, person([AuthOrchestrationReadScope])),
         ).status,
       ).toBe(403);
+    }),
+  );
+
+  it.effect("explains when an independently trashed child needs its parent restored first", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      let folders = decodeFolders(
+        json(
+          yield* call("folders.create", {
+            name: "Parent",
+            parentId: null,
+          }),
+        ).body,
+      );
+      const parent = folders.folders.find((folder) => folder.name === "Parent")!;
+      folders = decodeFolders(
+        json(
+          yield* call("folders.create", {
+            name: "Child",
+            parentId: parent.id,
+          }),
+        ).body,
+      );
+      const child = folders.folders.find((folder) => folder.name === "Child")!;
+      const childTrash = decodeTrash(
+        json(
+          yield* call("trash.folder", {
+            folderId: child.id,
+          }),
+        ).body,
+      ).entries[0]!;
+      const parentTrash = decodeTrash(
+        json(
+          yield* call("trash.folder", {
+            folderId: parent.id,
+          }),
+        ).body,
+      ).entries.find((entry) => entry.targetId === parent.id)!;
+      const waiting = decodeTrash(
+        json(yield* call("trash.restore", { id: childTrash.id })).body,
+      ).entries.find((entry) => entry.id === childTrash.id)!;
+      expect(waiting.status).toBe("trashed");
+      expect(waiting.error).toBe("Restore the parent folder first.");
+      expect(json(yield* call("trash.restore", { id: parentTrash.id })).status).toBe(200);
+      const restored = decodeTrash(
+        json(yield* call("trash.restore", { id: childTrash.id })).body,
+      ).entries.find((entry) => entry.id === childTrash.id)!;
+      expect(restored.status).toBe("restored");
+      expect(restored.error).toBeNull();
+    }),
+  );
+
+  it.effect(
+    "keeps a project-home thread trashed until its folder is restored and honors another filing",
+    () =>
+      Effect.gen(function* () {
+        const { call, cloud } = yield* setup;
+        yield* Effect.promise(() =>
+          cloud.drives.apiFor(projectDrive).setup({
+            name: "Trash restore project",
+            members: [{ userId, email: "a@b.c", name: "Test", role: "owner" }],
+          }),
+        );
+        let folders = decodeFolders(
+          json(yield* call("folders.create", { name: "Project home", parentId: null })).body,
+        );
+        const projectHome = folders.folders.find((folder) => folder.name === "Project home")!;
+        folders = decodeFolders(
+          json(yield* call("folders.create", { name: "Elsewhere", parentId: null })).body,
+        );
+        const elsewhere = folders.folders.find((folder) => folder.name === "Elsewhere")!;
+        expect(
+          json(
+            yield* call("folders.update", {
+              id: projectHome.id,
+              files: projectId,
+            }),
+          ).status,
+        ).toBe(200);
+
+        for (const [threadId, title] of [
+          ["unfiled-project-home", "Unfiled project thread"],
+          ["filed-project-home", "Thread filed in its project home"],
+          ["filed-elsewhere", "Explicitly filed thread"],
+        ] as const) {
+          const created = json(
+            yield* call("threads.create", {
+              commandId: `launch-${threadId}`,
+              threadId,
+              projectId,
+              title,
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+            }),
+          );
+          expect(created.status, JSON.stringify(created.body)).toBe(200);
+        }
+        yield* cloud.settle;
+        expect(
+          json(
+            yield* call("threads.move", {
+              threadId: "filed-project-home",
+              folderId: projectHome.id,
+            }),
+          ).status,
+        ).toBe(200);
+        expect(
+          json(
+            yield* call("threads.move", {
+              threadId: "filed-elsewhere",
+              folderId: elsewhere.id,
+            }),
+          ).status,
+        ).toBe(200);
+
+        const unfiled = decodeTrash(
+          json(yield* call("trash.thread", { threadId: "unfiled-project-home" })).body,
+        ).entries.find((entry) => entry.targetId === "unfiled-project-home")!;
+        const filed = decodeTrash(
+          json(yield* call("trash.thread", { threadId: "filed-elsewhere" })).body,
+        ).entries.find((entry) => entry.targetId === "filed-elsewhere")!;
+        const filedInHome = decodeTrash(
+          json(yield* call("trash.thread", { threadId: "filed-project-home" })).body,
+        ).entries.find((entry) => entry.targetId === "filed-project-home")!;
+        yield* cloud.settle;
+        const projectHomeTrash = decodeTrash(
+          json(yield* call("trash.folder", { folderId: projectHome.id })).body,
+        ).entries.find((entry) => entry.targetId === projectHome.id)!;
+        expect(projectHomeTrash.status).toBe("trashed");
+
+        const filedRestore = decodeTrash(
+          json(yield* call("trash.restore", { id: filed.id })).body,
+        ).entries.find((entry) => entry.id === filed.id)!;
+        expect(filedRestore, JSON.stringify(filedRestore)).toMatchObject({ status: "restored" });
+
+        const blocked = decodeTrash(
+          json(yield* call("trash.restore", { id: unfiled.id })).body,
+        ).entries.find((entry) => entry.id === unfiled.id)!;
+        expect(blocked).toMatchObject({
+          status: "trashed",
+          error: "Restore its folder, then this thread.",
+        });
+        const filedInHomeBlocked = decodeTrash(
+          json(yield* call("trash.restore", { id: filedInHome.id })).body,
+        ).entries.find((entry) => entry.id === filedInHome.id)!;
+        expect(filedInHomeBlocked).toMatchObject({
+          status: "trashed",
+          error: "Restore its folder, then this thread.",
+        });
+
+        const restoredProjectHome = decodeTrash(
+          json(yield* call("trash.restore", { id: projectHomeTrash.id })).body,
+        ).entries.find((entry) => entry.id === projectHomeTrash.id)!;
+        expect(restoredProjectHome).toMatchObject({ status: "restored", error: null });
+        const restored = decodeTrash(
+          json(yield* call("trash.restore", { id: unfiled.id })).body,
+        ).entries.find((entry) => entry.id === unfiled.id)!;
+        expect(restored, JSON.stringify(restored)).toMatchObject({
+          status: "restored",
+          error: null,
+        });
+        const filedInHomeRestored = decodeTrash(
+          json(yield* call("trash.restore", { id: filedInHome.id })).body,
+        ).entries.find((entry) => entry.id === filedInHome.id)!;
+        expect(filedInHomeRestored).toMatchObject({ status: "restored", error: null });
+      }),
+  );
+
+  it.effect(
+    "restores a trashed thread and keeps an old delete command inert after restoration",
+    () =>
+      Effect.gen(function* () {
+        const { call, cloud } = yield* setup;
+        expect(
+          json(
+            yield* call("threads.create", {
+              commandId: "launch-trash-roundtrip",
+              threadId: "trash-roundtrip",
+              projectId: Environment.SCRATCH_PROJECT_ID,
+              title: "Retained conversation",
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+            }),
+          ).status,
+        ).toBe(200);
+        yield* cloud.settle;
+        const first = decodeTrash(
+          json(
+            yield* call("trash.thread", {
+              threadId: "trash-roundtrip",
+              commandId: "delete-roundtrip",
+            }),
+          ).body,
+        ).entries[0]!;
+        expect(first.status).toBe("trashed");
+        expect(json(yield* call("trash.restore", { id: first.id })).status).toBe(200);
+        yield* cloud.settle;
+        expect(JSON.stringify(json(yield* call("threads.list", {})).body)).toContain(
+          "Retained conversation",
+        );
+        const replayed = decodeTrash(
+          json(
+            yield* call("trash.thread", {
+              threadId: "trash-roundtrip",
+              commandId: "delete-roundtrip",
+            }),
+          ).body,
+        );
+        expect(replayed.entries).toHaveLength(1);
+        expect(replayed.entries[0]?.status).toBe("restored");
+      }),
+  );
+
+  it.effect(
+    "trashes and restores through the agent API, while scopes and disabled cleanup still apply",
+    () =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        const agent: ApiCaller = { ...person(), kind: "agent" };
+        const created = json(
+          yield* call("folders.create", { name: "Trash round trip", parentId: null }),
+        );
+        const folder = decodeFolders(created.body).folders[0]!;
+        const trashed = json(yield* call("trash.folder", { folderId: folder.id }, agent));
+        expect(trashed.status).toBe(200);
+        const entry = decodeTrash(trashed.body).entries[0]!;
+        expect(decodeFolders(json(yield* call("folders.list", {})).body).folders).toEqual([]);
+        const denied = json(
+          yield* call("trash.restore", { id: entry.id }, person([AuthOrchestrationReadScope])),
+        );
+        expect(denied.status).toBe(403);
+        const restored = json(yield* call("trash.restore", { id: entry.id }, agent));
+        expect(restored.status).toBe(200);
+        expect(decodeFolders(json(yield* call("folders.list", {})).body).folders[0]?.id).toBe(
+          folder.id,
+        );
+        const second = decodeTrash(
+          json(yield* call("trash.folder", { folderId: folder.id }, agent)).body,
+        ).entries.find((row) => row.status === "trashed")!;
+        expect(second.id).not.toBe(entry.id);
+        expect(json(yield* call("trash.empty", { ids: [second.id] }, agent)).status).toBe(403);
+        const emptied = json(yield* call("trash.empty", { ids: [second.id] }));
+        expect(emptied.status).toBe(422);
+        expect(emptied.body).toMatchObject({
+          error: {
+            _tag: "SignalboxTrashError",
+            message: "Permanent cleanup is not available yet.",
+          },
+        });
+        const retained = decodeTrash(json(yield* call("trash.list", {}, agent)).body).entries.find(
+          (row) => row.id === second.id,
+        )!;
+        expect(retained.status).toBe("trashed");
+        expect(retained.removals).toEqual([]);
+        expect(json(yield* call("trash.restore", { id: second.id }, agent)).status).toBe(200);
+      }),
+  );
+
+  it.effect("requires thread read access for a command output snapshot", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const input = { threadId: "hidden-thread", itemId: "hidden-command" };
+      const unscoped = json(
+        yield* call("threads.commandOutput", input, person([AuthOrchestrationOperateScope])),
+      );
+      expect(unscoped.status).toBe(403);
+      const missing = json(yield* call("threads.commandOutput", input));
+      expect(missing.status).toBe(422);
+      expect(missing.body).toMatchObject({ error: { _tag: "OrchestrationV2CommandOutputError" } });
     }),
   );
 
@@ -332,6 +614,8 @@ describe("public API calls", () => {
       const { call } = yield* setup;
       const agent: ApiCaller = { ...person(), kind: "agent" };
       expect(json(yield* call("threads.respond", {}, agent)).status).toBe(403);
+      expect(json(yield* call("threads.dismissQuestion", {}, agent)).status).toBe(403);
+      expect(json(yield* call("secrets.answer", {}, agent)).status).toBe(403);
       expect(json(yield* call("folders.delete", { id: "f" }, agent)).status).toBe(403);
       expect(
         json(yield* call("keys.create", { label: "mine", scopes: [], model: true }, agent)).status,
@@ -370,5 +654,99 @@ describe("public API calls", () => {
       expect(answer.status).toBe(400);
       expect(answer.body).toMatchObject({ error: { code: "invalid_input" } });
     }),
+  );
+});
+
+describe("queue operations through the public API", () => {
+  it.effect(
+    "edits and reorders with the app service, enforces scopes and returns typed stale failures",
+    () =>
+      Effect.gen(function* () {
+        const { call, cloud } = yield* setup;
+        expect(
+          json(
+            yield* call("threads.create", {
+              commandId: "queue-launch",
+              threadId: "queue-api",
+              projectId: Environment.SCRATCH_PROJECT_ID,
+              title: "Queue API",
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+              initialMessage: { text: "Live", attachments: [] },
+            }),
+          ).status,
+        ).toBe(200);
+        for (const n of [2, 3]) {
+          expect(
+            json(
+              yield* call("threads.send", {
+                commandId: `queue-send-${n}`,
+                threadId: "queue-api",
+                createdBy: "user",
+                creationSource: "mcp",
+                messageId: `queue-message-${n}`,
+                text: `Queued ${n}`,
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+              }),
+            ).status,
+          ).toBe(200);
+        }
+        const threadId = "queue-api";
+        const second = "run:queue-api:2";
+        const third = "run:queue-api:3";
+        const input = {
+          commandId: "api-edit",
+          threadId,
+          runId: second,
+          text: "Edited through API",
+        };
+        for (const [name, body] of [
+          ["threads.queuedRun.edit", input],
+          ["threads.queuedRun.reorder", { threadId, runId: third, beforeRunId: second }],
+        ] as const) {
+          expect(json(yield* call(name, body, person([AuthOrchestrationReadScope]))).status).toBe(
+            403,
+          );
+        }
+        const edited = json(yield* call("threads.queuedRun.edit", input));
+        expect(edited.status).toBe(200);
+        expect(json(yield* call("threads.queuedRun.edit", input))).toEqual(edited);
+        expect(
+          json(
+            yield* call("threads.queuedRun.reorder", {
+              commandId: "api-reorder",
+              threadId,
+              runId: third,
+              beforeRunId: second,
+            }),
+          ).status,
+        ).toBe(200);
+        expect(json(yield* call("threads.get", { threadId })).body).toMatchObject({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ id: "queue-message-2", text: "Edited through API" }),
+          ]),
+          runs: expect.arrayContaining([
+            expect.objectContaining({ id: third, status: "queued", queuePosition: 1 }),
+            expect.objectContaining({ id: second, status: "queued", queuePosition: 2 }),
+          ]),
+        });
+        expect(
+          json(yield* call("threads.queuedRun.cancel", { threadId, runId: second })).status,
+        ).toBe(200);
+        for (const [name, body] of [
+          ["threads.queuedRun.edit", { ...input, commandId: "stale-api-edit" }],
+          ["threads.queuedRun.reorder", { threadId, runId: second, beforeRunId: null }],
+        ] as const) {
+          const refused = json(yield* call(name, body));
+          expect(refused.status).toBe(422);
+          expect(refused.body).toMatchObject({
+            error: { _tag: "OrchestrationV2DispatchCommandError" },
+          });
+        }
+        yield* cloud.settle;
+      }),
   );
 });

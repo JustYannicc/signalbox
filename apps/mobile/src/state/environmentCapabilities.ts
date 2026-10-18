@@ -11,6 +11,7 @@ import { SIGNALBOX_APP_URL } from "@t3tools/shared/signalboxAppUrl";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
+import { appAtomRegistry } from "./atom-registry";
 import { useEnvironmentServerConfig, useServerConfigs } from "./entities";
 import { environmentServerConfigsAtom } from "./server";
 import { savedConnectionsByIdAtom } from "./use-remote-environment-registry";
@@ -102,4 +103,9 @@ const showsEnvironmentUiAtom = Atom.make((get) =>
  */
 export function useShowsEnvironmentUi(): boolean {
   return useAtomValue(showsEnvironmentUiAtom);
+}
+
+/** `useShowsEnvironmentUi` outside React, for alerts and queued-message errors. */
+export function readShowsEnvironmentUi(): boolean {
+  return appAtomRegistry.get(showsEnvironmentUiAtom);
 }

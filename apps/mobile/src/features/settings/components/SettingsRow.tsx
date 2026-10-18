@@ -33,7 +33,11 @@ export function SettingsRow(props: {
         if (props.target) {
           navigation.navigate("SettingsSheet", {
             screen: "SettingsContent",
-            params: { screen: props.target },
+            // signalbox: the nested route union exceeds the compiler's distribution limit.
+            params:
+              props.target === "SettingsTrash"
+                ? { screen: props.target }
+                : { screen: props.target },
           });
         } else if (props.fullScreenTarget) {
           navigation.navigate(props.fullScreenTarget);

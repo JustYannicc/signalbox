@@ -8,10 +8,13 @@ import {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
+  OrchestrationV2RuntimeRequest,
   PositiveInt,
   ProviderInteractionMode,
+  ProviderSessionId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -69,8 +72,8 @@ import { SessionAccess } from "./SessionProtocol.ts";
  * frame it sends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 6;
-/** Version 5 remains readable while existing machines finish their image rollout. */
+export const RUNNER_PROTOCOL_VERSION = 7;
+/** Versions 5 and 6 remain readable while existing machines finish their image rollout. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
@@ -91,6 +94,8 @@ export type RunnerMessageInput = typeof RunnerMessageInput.Type;
 
 /** One turn the thread hands to the Runner. Everything the adapter's `startTurn` needs. */
 export const RunnerTurn = Schema.Struct({
+  /** Present when checkout and provider handoff are fenced by the thread. */
+  preparationGeneration: Schema.optional(PositiveInt),
   threadId: ThreadId,
   runId: RunId,
   /** The turn's trace id (32 hex), on everything the Runner logs about it. */
@@ -184,10 +189,58 @@ export const RunnerBuild = Schema.Struct({
 export type RunnerBuild = typeof RunnerBuild.Type;
 
 /** Something that happened on the machine, in the order it happened. */
+export const RetainedWorkflowScript = Schema.Struct({
+  subagentId: NodeId,
+  runId: RunId,
+  scriptPath: Schema.String,
+  revision: Schema.String,
+  contents: Schema.String.check(Schema.isMaxLength(256 * 1024)),
+  truncated: Schema.Boolean,
+});
+export type RetainedWorkflowScript = typeof RetainedWorkflowScript.Type;
+
+export const WorkflowStopRequest = Schema.Struct({
+  attempt: Schema.optional(PositiveInt),
+  subagentId: NodeId,
+  runId: RunId,
+  generation: PositiveInt,
+  taskId: Schema.String,
+});
+export type WorkflowStopRequest = typeof WorkflowStopRequest.Type;
+
 export const RunnerItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("preparation.progress"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+    stage: Schema.Literals(["fetch", "checkout"]),
+    status: Schema.Literals(["running", "done", "skipped"]),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("preparation.ready"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("preparation.cancelled"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("preparation.failed"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+    message: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workflow.stopped"),
+    ...WorkflowStopRequest.fields,
+    ok: Schema.Boolean,
+  }),
   /** The harness has the turn: its session and provider thread as loaded. */
   Schema.Struct({
     kind: Schema.Literal("turn.started"),
+    preparationGeneration: Schema.optional(PositiveInt),
     runId: RunId,
     providerSession: OrchestrationV2ProviderSession,
     providerThread: OrchestrationV2ProviderThread,
@@ -195,6 +248,7 @@ export const RunnerItem = Schema.Union([
   /** The turn never reached the harness. */
   Schema.Struct({
     kind: Schema.Literal("turn.failed"),
+    preparationGeneration: Schema.optional(PositiveInt),
     runId: RunId,
     message: Schema.String,
   }),
@@ -221,6 +275,7 @@ export const RunnerItem = Schema.Union([
   /** Dependency preparation is progress until it fails; keep each root in one stable row. */
   Schema.Struct({
     kind: Schema.Literal("dependencies.progress"),
+    preparationGeneration: Schema.optional(PositiveInt),
     runId: RunId,
     ...DependencyProgress.fields,
   }),
@@ -315,8 +370,14 @@ export const RunnerHello = Schema.Struct({
    * Absent from Runners built before it: the thread can't tell.
    */
   takenRunIds: Schema.optional(Schema.Array(RunId)),
+  takenPreparations: Schema.optional(
+    Schema.Array(Schema.Struct({ runId: RunId, preparationGeneration: PositiveInt })),
+  ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  workflowStops: Schema.optional(Schema.Boolean),
+  /** The Runner can answer a pending native provider request. */
+  runtimeResponses: Schema.optional(Schema.Boolean),
   /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
   pulls: Schema.optional(Schema.Boolean),
 });
@@ -346,6 +407,7 @@ export type RunnerRefusal = typeof RunnerRefusal.Type;
 
 /** Thread to Runner. */
 export const ThreadMessage = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("workflow.stop"), ...WorkflowStopRequest.fields }),
   Schema.Struct({
     type: Schema.Literal("welcome"),
     generation: PositiveInt,
@@ -359,6 +421,16 @@ export const ThreadMessage = Schema.Union([
     message: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
+  /** A committed response to a native request this live run observed on its harness session. */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    runId: RunId,
+    attemptId: RunAttemptId,
+    providerSessionId: ProviderSessionId,
+    requestId: RuntimeRequestId,
+    decision: OrchestrationV2RuntimeRequest.fields.decision,
+    answers: OrchestrationV2RuntimeRequest.fields.answers,
+  }),
   Schema.Struct({
     type: Schema.Literal("turn.start"),
     turn: RunnerTurn,
@@ -371,7 +443,21 @@ export const ThreadMessage = Schema.Union([
     /** The secrets of the thread's folders. Absent: none, or a cloud older than this field. */
     secrets: Schema.optionalKey(SecretsAccess),
   }),
-  Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
+  Schema.Struct({
+    type: Schema.Literal("preparation.cancel"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("preparation.handoff"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("interrupt"),
+    runId: RunId,
+    preparationGeneration: Schema.optional(PositiveInt),
+  }),
   /**
    * A message the person sent into `runId` while it runs (#562). Sent again on
    * each reconnect while the run is live; the Runner takes each message once.

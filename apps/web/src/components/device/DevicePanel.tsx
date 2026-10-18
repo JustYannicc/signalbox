@@ -1,12 +1,16 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
+import { deviceSessionRequiresReadOnlyPanel } from "@t3tools/contracts";
 import type {
   DevicePlatform,
+  DeviceSession,
   DeviceServiceState,
   DeviceSummary,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { Smartphone, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
@@ -15,13 +19,16 @@ import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list"
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
-import { cn } from "~/lib/utils";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { cn, randomUUID } from "~/lib/utils";
+import { deviceEnvironment, useDeviceAgentCommandFailure, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
+import { settleDeviceOpenForSurface } from "./deviceOpenSurfaceRequest";
+import { deferDeviceLeaseRelease, retainDeviceLeaseOwner } from "./deviceLeaseOwnership";
+import { DeviceAgentCommandFailureNotice } from "./DeviceAgentCommandFailureNotice";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
 const platformLabel = (platform: DevicePlatform) =>
@@ -41,9 +48,23 @@ export function DevicePanel(props: {
   const { state, loaded } = useDeviceState(environmentId);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
+  const cancelOpen = useAtomCommand(deviceEnvironment.cancelOpen, { reportFailure: false });
   const close = useAtomCommand(deviceEnvironment.close);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const [pendingDevice, setPendingDevice] = useState<DeviceSummary | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<{
+    readonly requestId: string;
+    readonly device: DeviceSummary;
+  } | null>(null);
+  const [panelSession, setPanelSession] = useState<DeviceSession | null>(null);
+  const panelSessionRef = useRef<DeviceSession | null>(null);
+  const preserveLeaseForFloat = useRef(false);
+  const selectionControllerRef = useRef<{
+    readonly surfaceId: string;
+    readonly controller: AbortController;
+  } | null>(null);
+  const selectionGenerationRef = useRef(0);
+  const [leaseWaiting, setLeaseWaiting] = useState(false);
+  const pendingDevice = pendingSelection?.device ?? null;
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
 
   const hostDisabled = state.hostStatus === "disabled";
@@ -55,54 +76,315 @@ export function DevicePanel(props: {
   }, [environmentId, list, loaded, props.visible, hostDisabled]);
 
   const sessions = state.sessions.filter((session) => session.threadId === threadId);
-  const activeSession = props.surface.target
-    ? sessions.find(
+  const targetSession = props.surface.target
+    ? sessions.filter(
         (session) =>
           session.deviceId === props.surface.target?.deviceId &&
           session.hostId === props.surface.target.hostId,
       )
+    : [];
+  const activeSession = panelSession
+    ? targetSession.find(
+        (session) =>
+          session.ownerKind === "panel" &&
+          session.sessionId === panelSession.sessionId &&
+          session.leaseId === panelSession.leaseId,
+      )
     : undefined;
+  const agentCommandFailure = useDeviceAgentCommandFailure(environmentId, activeSession, sessions);
   const activeDevice = activeSession
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
       )
     : undefined;
 
+  useEffect(() => {
+    const target = props.surface.target;
+    if (!props.visible || !target) return;
+    const threadRef = { environmentId, threadId };
+    const surfaceId = props.surface.id;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let requestController: AbortController | null = null;
+    let owner = panelSessionRef.current;
+    const targetOwner =
+      target.sessionId !== undefined && target.leaseId !== undefined
+        ? {
+            threadId,
+            hostId: target.hostId,
+            deviceId: target.deviceId,
+            sessionId: target.sessionId,
+            leaseId: target.leaseId,
+          }
+        : null;
+    if (
+      owner &&
+      (owner.threadId !== threadId ||
+        owner.hostId !== target.hostId ||
+        owner.deviceId !== target.deviceId ||
+        (targetOwner !== null &&
+          (owner.sessionId !== targetOwner.sessionId || owner.leaseId !== targetOwner.leaseId)))
+    )
+      owner = null;
+    const retainedOwner = owner ?? targetOwner;
+    let targetLeaseConsumed = false;
+    if (retainedOwner !== null) retainDeviceLeaseOwner({ environmentId, ...retainedOwner });
+    const heartbeat = async () => {
+      const controller = new AbortController();
+      const requestId = randomUUID();
+      requestController = controller;
+      useRightPanelStore.getState().beginDeviceOpen(threadRef, requestId, {
+        hostId: target.hostId,
+      });
+      await settleDeviceOpenForSurface({
+        signal: controller.signal,
+        isCurrent: () => !cancelled,
+        requestId,
+        open: (signal, requestId) =>
+          open(
+            {
+              environmentId,
+              input: {
+                threadId,
+                hostId: target.hostId,
+                deviceId: target.deviceId,
+                platform: target.platform,
+                requestId,
+                ...(owner !== null
+                  ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
+                  : !targetLeaseConsumed && targetOwner !== null
+                    ? { sessionId: targetOwner.sessionId, leaseId: targetOwner.leaseId }
+                    : {}),
+              },
+            },
+            signal,
+          ),
+        cancel: (requestId) =>
+          cancelOpen({
+            environmentId,
+            input: {
+              threadId,
+              hostId: target.hostId,
+              deviceId: target.deviceId,
+              requestId,
+            },
+          }),
+        release: (session) => {
+          if (
+            retainedOwner !== null &&
+            session.sessionId === retainedOwner.sessionId &&
+            session.leaseId === retainedOwner.leaseId
+          )
+            return Promise.resolve();
+          return close({
+            environmentId,
+            input: {
+              threadId,
+              hostId: session.hostId,
+              deviceId: session.deviceId,
+              sessionId: session.sessionId,
+              leaseId: session.leaseId,
+            },
+          });
+        },
+        accept: () => undefined,
+      })
+        .then((settlement) => {
+          if (settlement._tag === "Cancelled") return;
+          const result = settlement.result;
+          if (result._tag === "Success") {
+            owner = result.value;
+            panelSessionRef.current = owner;
+            targetLeaseConsumed = true;
+            useRightPanelStore
+              .getState()
+              .updateDeviceSurfaceOwner(threadRef, surfaceId, target, owner);
+            setPanelSession(owner);
+            setLeaseWaiting(false);
+            setOperationError(null);
+          } else {
+            const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
+            const staleSession =
+              typeof failure === "object" &&
+              failure !== null &&
+              "_tag" in failure &&
+              failure._tag === "DeviceOperationError" &&
+              "reason" in failure &&
+              failure.reason === "stale_session";
+            if (owner !== null && staleSession) {
+              const staleOwner = owner;
+              owner = null;
+              panelSessionRef.current = null;
+              setPanelSession(null);
+              targetLeaseConsumed =
+                targetOwner !== null &&
+                staleOwner.sessionId === targetOwner.sessionId &&
+                staleOwner.leaseId === targetOwner.leaseId;
+              setLeaseWaiting(true);
+              timer = setTimeout(() => void heartbeat(), 0);
+              return;
+            }
+            if (owner === null) {
+              if (!targetLeaseConsumed && targetOwner !== null) {
+                targetLeaseConsumed = true;
+                setLeaseWaiting(true);
+                timer = setTimeout(() => void heartbeat(), 0);
+                return;
+              }
+              setLeaseWaiting(false);
+              setOperationError(formatEnvironmentQueryError(result.cause));
+            }
+          }
+          timer = setTimeout(() => void heartbeat(), 60_000);
+        })
+        .finally(() => {
+          if (requestController === controller) requestController = null;
+          useRightPanelStore.getState().endDeviceOpen(threadRef, requestId);
+        });
+    };
+    void heartbeat();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      requestController?.abort();
+      requestController = null;
+      if (preserveLeaseForFloat.current) {
+        preserveLeaseForFloat.current = false;
+      } else {
+        const released = owner ?? targetOwner;
+        if (released !== null) {
+          deferDeviceLeaseRelease({ environmentId, ...released }, () =>
+            close({
+              environmentId,
+              input: {
+                threadId,
+                hostId: released.hostId,
+                deviceId: released.deviceId,
+                sessionId: released.sessionId,
+                leaseId: released.leaseId,
+              },
+            }),
+          );
+        }
+      }
+    };
+  }, [
+    cancelOpen,
+    close,
+    environmentId,
+    open,
+    props.surface.id,
+    props.surface.target,
+    props.visible,
+    threadId,
+  ]);
+
+  useEffect(() => {
+    const selection = selectionControllerRef.current;
+    if (!selection || (props.visible && selection.surfaceId === props.surface.id)) return;
+    selectionGenerationRef.current++;
+    selection.controller.abort();
+    selectionControllerRef.current = null;
+  }, [props.visible, props.surface.id]);
+  useEffect(
+    () => () => {
+      selectionGenerationRef.current++;
+      selectionControllerRef.current?.controller.abort();
+      selectionControllerRef.current = null;
+    },
+    [],
+  );
+
   const grouped = groupDevices(state);
 
   const selectDevice = async (value: string) => {
     const device = state.devices.find((candidate) => deviceKey(candidate) === value);
     if (!device) return;
+    selectionControllerRef.current?.controller.abort();
+    const controller = new AbortController();
+    selectionControllerRef.current = { surfaceId: props.surface.id, controller };
+    const generation = ++selectionGenerationRef.current;
+    const requestId = randomUUID();
     setOperationError(null);
-    setPendingDevice(device);
-    const result = await open({
-      environmentId,
-      input: {
-        threadId,
-        hostId: device.hostId,
-        deviceId: device.id,
-        platform: device.platform,
-      },
+    setPendingSelection({ requestId, device });
+    useRightPanelStore.getState().beginDeviceOpen(props.threadRef, requestId, {
+      hostId: device.hostId,
     });
-    if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-    else
-      useRightPanelStore.getState().openDevice(props.threadRef, {
-        hostId: result.value.hostId,
-        deviceId: result.value.deviceId,
-        platform: device.platform,
-        name: device.name,
-      });
-    setPendingDevice(null);
+    await settleDeviceOpenForSurface({
+      signal: controller.signal,
+      requestId,
+      isCurrent: () => generation === selectionGenerationRef.current,
+      open: (signal, requestId) =>
+        open(
+          {
+            environmentId,
+            input: {
+              threadId,
+              hostId: device.hostId,
+              deviceId: device.id,
+              platform: device.platform,
+              requestId,
+            },
+          },
+          signal,
+        ),
+      cancel: (requestId) =>
+        cancelOpen({
+          environmentId,
+          input: {
+            threadId,
+            hostId: device.hostId,
+            deviceId: device.id,
+            requestId,
+          },
+        }),
+      release: (session) =>
+        close({
+          environmentId,
+          input: {
+            threadId,
+            hostId: session.hostId,
+            deviceId: session.deviceId,
+            sessionId: session.sessionId,
+            leaseId: session.leaseId,
+          },
+        }),
+      accept: (result) => {
+        if (result._tag === "Failure") {
+          setOperationError(formatEnvironmentQueryError(result.cause));
+          return;
+        }
+        panelSessionRef.current = result.value;
+        setPanelSession(result.value);
+        useRightPanelStore.getState().openDevice(props.threadRef, {
+          hostId: result.value.hostId,
+          deviceId: result.value.deviceId,
+          platform: device.platform,
+          name: device.name,
+          sessionId: result.value.sessionId,
+          leaseId: result.value.leaseId,
+        });
+      },
+    }).finally(() => {
+      useRightPanelStore.getState().endDeviceOpen(props.threadRef, requestId);
+      if (generation === selectionGenerationRef.current) {
+        selectionControllerRef.current = null;
+      }
+      setPendingSelection((current) => (current?.requestId === requestId ? null : current));
+    });
   };
 
   const floatActive = () => {
     if (!activeDevice) return;
+    const session = panelSessionRef.current;
+    preserveLeaseForFloat.current = true;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {
       kind: "device",
       hostId: activeDevice.hostId,
       deviceId: activeDevice.id,
       platform: activeDevice.platform,
       name: activeDevice.name,
+      ...(session === null ? {} : { sessionId: session.sessionId, leaseId: session.leaseId }),
     });
     useRightPanelStore.getState().close(props.threadRef);
   };
@@ -112,24 +394,40 @@ export function DevicePanel(props: {
       useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
       return;
     }
-    if (!activeSession) return;
+    const session =
+      panelSessionRef.current ?? (activeSession?.ownerKind === "panel" ? activeSession : undefined);
+    if (!session) return;
     setOperationError(null);
     void close({
       environmentId,
       input: {
         threadId,
-        hostId: activeSession.hostId,
-        deviceId: activeSession.deviceId,
+        hostId: session.hostId,
+        deviceId: session.deviceId,
+        sessionId: session.sessionId,
+        leaseId: session.leaseId,
         shutdown: powerOff,
       },
     }).then((result) => {
       if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      else {
+        panelSessionRef.current = null;
+        setPanelSession(null);
+        useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      }
     });
   };
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
+  const waitingForDevice =
+    pendingDevice !== null &&
+    (state.queuedDevices ?? []).some(
+      (device) =>
+        device.hostId === pendingDevice.hostId &&
+        device.id === pendingDevice.id &&
+        device.threadId === threadId,
+    );
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
   const unavailablePlatforms = state.hosts.flatMap((host) =>
     host.platforms
@@ -184,6 +482,14 @@ export function DevicePanel(props: {
           </Button>
         </div>
       ) : null}
+      {leaseWaiting ? (
+        <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
+          Waiting to reacquire this device…
+        </div>
+      ) : null}
+      {agentCommandFailure ? (
+        <DeviceAgentCommandFailureNotice failure={agentCommandFailure} />
+      ) : null}
       <div className="@container relative flex min-h-0 flex-1">
         {activeDevice && activeSession ? (
           <DeviceWorkspace
@@ -195,6 +501,7 @@ export function DevicePanel(props: {
             }
             hostDiagnostics={state.hostStatusDetail}
             visible={props.visible}
+            observer={deviceSessionRequiresReadOnlyPanel(activeSession)}
             onFloat={floatActive}
             onClose={() => closeActive(false)}
             onPowerOff={() => closeActive(true)}
@@ -209,13 +516,15 @@ export function DevicePanel(props: {
             }
             stage="opening"
             message={
-              pendingDevice
-                ? pendingDevice.booted
-                  ? "Opening device…"
-                  : "Starting device…"
-                : state.hostStatus === "installing"
-                  ? (state.hostStatusDetail ?? "Installing device support…")
-                  : "Finding devices…"
+              waitingForDevice
+                ? `Waiting for ${pendingDevice?.name ?? "device"} to become available…`
+                : pendingDevice
+                  ? pendingDevice.booted
+                    ? "Opening device…"
+                    : "Starting device…"
+                  : state.hostStatus === "installing"
+                    ? (state.hostStatusDetail ?? "Installing device support…")
+                    : "Finding devices…"
             }
           />
         ) : (

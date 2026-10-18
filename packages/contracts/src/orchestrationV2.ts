@@ -664,10 +664,23 @@ export const OrchestrationV2WorkflowRunHandles = Schema.Struct({
   runId: Schema.optional(TrimmedNonEmptyString),
   transcriptDir: Schema.optional(TrimmedNonEmptyString),
   scriptPath: Schema.optional(TrimmedNonEmptyString),
+  // signalbox: Retain the script revision after the workflow's machine goes away.
+  scriptRevision: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2WorkflowRunHandles = typeof OrchestrationV2WorkflowRunHandles.Type;
 
+// signalbox: Keep workflow stop receipts durable across retries and runner replacement.
+export const OrchestrationV2WorkflowStop = Schema.Struct({
+  attempt: Schema.optional(PositiveInt),
+  generation: NonNegativeInt,
+  runId: RunId,
+  taskId: TrimmedNonEmptyString,
+  status: Schema.Literals(["requested", "stopped", "failed"]),
+});
+export type OrchestrationV2WorkflowStop = typeof OrchestrationV2WorkflowStop.Type;
+
 export const OrchestrationV2SubagentWorkflow = Schema.Struct({
+  stop: Schema.optional(OrchestrationV2WorkflowStop),
   name: Schema.optional(TrimmedNonEmptyString),
   runHandles: Schema.optional(OrchestrationV2WorkflowRunHandles),
   phases: Schema.Array(OrchestrationV2WorkflowPhase),
@@ -1403,6 +1416,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** The provider omitted output from its inline result. */
+    outputTruncated: Schema.optional(Schema.Boolean),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
@@ -1801,6 +1816,8 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
+  /** Cloud thread summary outbox revision, comparable only with this thread's summary receipt. */
+  summaryRevision: Schema.optionalKey(NonNegativeInt), // signalbox: optimistic ledger
   projectId: ProjectId,
   title: Schema.String,
   providerInstanceId: ProviderInstanceId,
@@ -2158,6 +2175,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** The provider omitted output from its inline result. */
+    outputTruncated: Schema.optional(Schema.Boolean),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
@@ -2832,6 +2851,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    preparationGeneration: Schema.optional(PositiveInt),
   }),
   Schema.Struct({
     type: Schema.Literal("subagent.stop"),
@@ -3094,6 +3114,8 @@ export type OrchestrationV2SubscribeCommandOutputInput =
  */
 export const OrchestrationV2CommandOutputFrame = Schema.Struct({
   kind: Schema.Literals(["replace", "append"]),
+  /** Retained cloud output revision, stable across reconnects. Older servers omit it. */
+  sequence: Schema.optionalKey(NonNegativeInt),
   text: Schema.String,
   /** Earlier output was dropped to keep the tail bounded. */
   truncated: Schema.Boolean,
@@ -3169,6 +3191,8 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  /** Same counter as ThreadShell.summaryRevision, never the user-index snapshot sequence. */
+  summaryRevision: Schema.optionalKey(NonNegativeInt), // signalbox: optimistic ledger
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 
@@ -3389,14 +3413,18 @@ export const OrchestrationV2RpcError = Schema.Union([
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
+// signalbox: A retained script belongs to a coordinator, even when workflows reuse its path.
 export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
+  subagentId: Schema.optional(NodeId),
   scriptPath: TrimmedNonEmptyString,
 });
 export type OrchestrationV2GetWorkflowScriptInput =
   typeof OrchestrationV2GetWorkflowScriptInput.Type;
 
 export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
+  subagentId: Schema.optional(NodeId),
+  revision: Schema.optional(TrimmedNonEmptyString),
   scriptPath: TrimmedNonEmptyString,
   contents: Schema.String,
   truncated: Schema.Boolean,

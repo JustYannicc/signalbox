@@ -48,6 +48,9 @@ export function CommandOutputPanel(props: {
   if (text.length === 0) {
     if (error) return <div className="text-destructive">Couldn&apos;t load output: {error}</div>;
     if (data === null) return <div className="text-muted-foreground italic">Loading output…</div>;
+    if (data.output.truncated) {
+      return <div className="text-muted-foreground italic">Output is no longer available.</div>;
+    }
     return data.running ? null : <div className="text-muted-foreground italic">No output.</div>;
   }
   // Parsed after the layout effect, the last hook, so the compiler caches it on text and theme.
@@ -58,6 +61,7 @@ export function CommandOutputPanel(props: {
         <div className="text-muted-foreground italic">Earlier output not shown</div>
       ) : null}
       <div
+        data-thread-find-text="tool-output"
         ref={scrollRef}
         onScroll={(event) => {
           const element = event.currentTarget;
@@ -78,6 +82,7 @@ export function CommandOutputPanel(props: {
           ),
         )}
       </div>
+      {error ? <div className="text-destructive">Couldn&apos;t load output: {error}</div> : null}
     </div>
   );
 }

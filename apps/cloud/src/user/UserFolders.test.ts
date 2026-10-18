@@ -110,54 +110,56 @@ describe("UserFolders", () => {
     }).pipe(Effect.provide(layerMemoryStore)),
   );
 
-  it.effect(
-    "gives every thread a home it can move out of, and deleting a folder moves its threads up",
-    () =>
-      Effect.gen(function* () {
-        const { folders, contexts, store } = yield* services;
-        yield* store.recordSignIn({ id: USER, email: "a@b.c" });
-        yield* contexts.syncOrganizations([{ id: ACME, name: "Acme" }]);
-        const scratchThread = ThreadId.make("thread-scratch");
-        const acmeThread = ThreadId.make("thread-acme");
-        yield* indexThread(scratchThread, PERSONAL_CONTEXT_ID, SCRATCH);
-        yield* indexThread(acmeThread, ACME, "context:org_acme");
+  it.effect("gives every thread a home and hides a trashed folder subtree until restore", () =>
+    Effect.gen(function* () {
+      const { folders, contexts, store } = yield* services;
+      yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+      yield* contexts.syncOrganizations([{ id: ACME, name: "Acme" }]);
+      const scratchThread = ThreadId.make("thread-scratch");
+      const acmeThread = ThreadId.make("thread-acme");
+      yield* indexThread(scratchThread, PERSONAL_CONTEXT_ID, SCRATCH);
+      yield* indexThread(acmeThread, ACME, "context:org_acme");
 
-        let snapshot = yield* folders.create({ name: "Work", parentId: null });
-        snapshot = yield* folders.create({ name: "Clients", parentId: idOf(snapshot, "Work") });
-        const work = idOf(snapshot, "Work");
-        const clients = idOf(snapshot, "Clients");
-        // At the top level until filed.
-        expect(snapshot.threadHomes).toEqual([]);
-        expect(snapshot.projectHomes).toContainEqual({ projectId: SCRATCH, folderId: null });
+      let snapshot = yield* folders.create({ name: "Work", parentId: null });
+      snapshot = yield* folders.create({ name: "Clients", parentId: idOf(snapshot, "Work") });
+      const work = idOf(snapshot, "Work");
+      const clients = idOf(snapshot, "Clients");
+      // At the top level until filed.
+      expect(snapshot.threadHomes).toEqual([]);
+      expect(snapshot.projectHomes).toContainEqual({ projectId: SCRATCH, folderId: null });
 
-        snapshot = yield* folders.moveThread({ threadId: scratchThread, folderId: clients });
-        expect(snapshot.threadHomes).toEqual([{ threadId: scratchThread, folderId: clients }]);
-        // A thread stays in its owner's tree.
-        expect(yield* reasonOf(folders.moveThread({ threadId: acmeThread, folderId: work }))).toBe(
-          "invalid",
-        );
+      snapshot = yield* folders.moveThread({ threadId: scratchThread, folderId: clients });
+      expect(snapshot.threadHomes).toEqual([{ threadId: scratchThread, folderId: clients }]);
+      // A thread stays in its owner's tree.
+      expect(yield* reasonOf(folders.moveThread({ threadId: acmeThread, folderId: work }))).toBe(
+        "invalid",
+      );
 
-        // Deleting Clients: its thread goes up to Work.
-        snapshot = yield* folders.delete({ id: clients });
-        expect(outline(snapshot)).toEqual(["Work"]);
-        expect(snapshot.threadHomes).toEqual([{ threadId: scratchThread, folderId: work }]);
+      // Trash hides the subtree and its homes without moving them.
+      const trashed = yield* folders.trash({ id: clients });
+      snapshot = trashed.snapshot;
+      expect(outline(snapshot)).toEqual(["Work"]);
+      expect(snapshot.threadHomes).toEqual([]);
+      expect(trashed.trash.threadIds).toEqual([scratchThread]);
+      snapshot = (yield* folders.restoreTrash(trashed.trash.trashId)).snapshot;
+      expect(snapshot.threadHomes).toEqual([{ threadId: scratchThread, folderId: clients }]);
 
-        // A thread filed before it exists, never created: the next filing a day on drops it.
-        yield* folders.moveThread({ threadId: ThreadId.make("never-created"), folderId: work });
-        yield* TestClock.adjust("25 hours");
-        snapshot = yield* folders.moveThread({
-          threadId: ThreadId.make("just-filed"),
-          folderId: work,
-        });
-        expect(snapshot.threadHomes.map((home) => home.threadId)).toEqual([
-          scratchThread,
-          "just-filed",
-        ]);
+      // A thread filed before it exists, never created: the next filing a day on drops it.
+      yield* folders.moveThread({ threadId: ThreadId.make("never-created"), folderId: work });
+      yield* TestClock.adjust("25 hours");
+      snapshot = yield* folders.moveThread({
+        threadId: ThreadId.make("just-filed"),
+        folderId: work,
+      });
+      expect(snapshot.threadHomes.map((home) => home.threadId)).toEqual([
+        scratchThread,
+        "just-filed",
+      ]);
 
-        // Back to where its project would put it: no filing left.
-        snapshot = yield* folders.moveThread({ threadId: scratchThread, folderId: null });
-        expect(snapshot.threadHomes).toEqual([{ threadId: "just-filed", folderId: work }]);
-      }).pipe(Effect.provide(layerMemoryStore)),
+      // Back to where its project would put it: no filing left.
+      snapshot = yield* folders.moveThread({ threadId: scratchThread, folderId: null });
+      expect(snapshot.threadHomes).toEqual([{ threadId: "just-filed", folderId: work }]);
+    }).pipe(Effect.provide(layerMemoryStore)),
   );
 
   it.effect(
@@ -272,12 +274,14 @@ describe("UserFolders", () => {
           "env-clients",
         ]);
 
-        // Deleting Clients takes its reference with it; its thread goes up to Work.
-        snapshot = yield* folders.delete({ id: clients });
+        // Trash hides the reference with the folder and restores the same chain.
+        const trashed = yield* folders.trash({ id: clients });
+        snapshot = trashed.snapshot;
         expect(snapshot.folders.map((folder) => folder.secrets)).toEqual([undefined]);
-        expect((yield* folders.turn({ threadId, projectId: null })).secrets.thread).toEqual([
-          "env-top",
-        ]);
+        expect(yield* folders.turn({ threadId, projectId: null }).pipe(Effect.flip)).toMatchObject({
+          _tag: "ThreadHomeTrashedError",
+          folderId: clients,
+        });
         expect(
           yield* reasonOf(
             folders.setSecrets({
@@ -286,6 +290,11 @@ describe("UserFolders", () => {
             }),
           ),
         ).toBe("not-found");
+        snapshot = (yield* folders.restoreTrash(trashed.trash.trashId)).snapshot;
+        expect((yield* folders.turn({ threadId, projectId: null })).secrets.thread).toEqual([
+          "env-top",
+          "env-clients",
+        ]);
 
         // 1Password: the snapshot says when it was connected, never the token.
         expect(snapshot.onePassword).toBeUndefined();
@@ -366,7 +375,7 @@ describe("UserFolders", () => {
 
   it.effect("lends a GitHub account to a folder for CI steps, and takes it back (#641)", () =>
     Effect.gen(function* () {
-      const { folders, store } = yield* services;
+      const { folders, store, sql } = yield* services;
       yield* store.recordSignIn({ id: USER, email: "a@b.c" });
       yield* TestClock.setTime(1_000);
       yield* give(CLIENT_DRIVE, "Northwind");
@@ -392,11 +401,19 @@ describe("UserFolders", () => {
       yield* folders.setGitHubLend(repo.id, "octo");
       expect(lendOf(yield* folders.update({ id: repo.id, files: null }))).toBeUndefined();
 
-      // A deleted folder's lend goes with it.
+      // A trashed folder's lend is hidden from active rows but remains for restore.
       yield* folders.setGitHubLend(repo.id, "octo");
-      yield* folders.delete({ id: repo.id });
+      const trashed = yield* folders.trash({ id: repo.id });
       const { bindings } = yield* folders.rows;
       expect(bindings.filter((row) => row.kind === "github-actions")).toEqual([]);
+      expect(
+        yield* sql`SELECT resource_id FROM resource_bindings
+          WHERE level_kind = 'folder' AND level_id = ${repo.id} AND kind = 'github-actions'`,
+      ).toHaveLength(1);
+      const restored = yield* folders.restoreTrash(trashed.trash.trashId);
+      expect(
+        restored.snapshot.folders.find((folder) => folder.id === repo.id)?.githubLend?.login,
+      ).toBe("octo");
     }).pipe(Effect.provide(layerMemoryStore)),
   );
 
@@ -413,10 +430,12 @@ describe("UserFolders", () => {
       yield* sql`DROP TABLE folder_drives`;
       yield* sql`DROP TABLE thread_homes`;
       yield* sql`DROP TABLE folders_state`;
+      yield* sql`DROP TABLE folder_trash`;
       yield* sql`DROP TABLE onepassword_account`;
       yield* sql`DELETE FROM effect_sql_migrations
         WHERE migration_id IN (13, 15)
           OR (migration_id = 20 AND name = 'folder_phases')
+          OR (migration_id = 21 AND name = 'folder_trash')
           OR (migration_id = 23 AND name = 'folder_lineage')`;
       yield* sql`INSERT INTO sections (id, context_id, parent_id, name, position) VALUES
         ('work', 'personal', NULL, 'Work', 0),
