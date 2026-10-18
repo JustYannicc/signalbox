@@ -170,7 +170,14 @@ describe("organization root policy", () => {
   );
 
   it("exposes membership and bootstrap authority only as trusted projections", () => {
-    expect(Object.keys(org.changes).toSorted()).toEqual(["moveFolder", "renameFolder", "setGrant"]);
+    expect(Object.keys(org.changes).toSorted()).toEqual([
+      "createFolder",
+      "moveFolder",
+      "renameFolder",
+      "reopenFolder",
+      "retireFolder",
+      "setGrant",
+    ]);
     expect(Object.keys(org.projections).toSorted()).toEqual(["bootstrap", "syncMembership"]);
     expect(Object.values(org.projections).map(({ kind }) => kind)).toEqual([
       "projection",
