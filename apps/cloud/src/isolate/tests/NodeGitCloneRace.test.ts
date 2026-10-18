@@ -11,59 +11,61 @@ import {
 } from "./helpers/NodeGitFixture.ts";
 
 describe("NodeGit HTTP clone", () => {
-  it("keeps the first clone intact when an overlapping clone fails before its first request", async () => {
+  it("keeps one public clone intact when both see an empty destination", async () => {
     const fixture = createNodeGitFixture();
     const fs = createNodeFs(fixture.filesystem).fs;
     const server = createSmartHttpServer({ authenticate: false });
-    const uploadPackStarted = deferred<void>();
-    const releaseUploadPack = deferred<void>();
-    let uploadPackRequests = 0;
-    const fetch: typeof globalThis.fetch = async (input, init) => {
-      const url = new URL(String(input));
-      if ((init?.method ?? "GET") === "POST" && url.pathname.endsWith("/git-upload-pack")) {
-        uploadPackRequests += 1;
-        if (uploadPackRequests === 1) {
-          uploadPackStarted.resolve();
-          await releaseUploadPack.promise;
-        }
-      }
-      return server.fetch(input, init);
+    const bothPreflights = deferred<void>();
+    const observedEntries: string[][] = [];
+    const program = () =>
+      createNodeGitProgram({ local: createLocalGitRunner(), fetch: server.fetch });
+
+    await fs.promises.mkdir("/work/racing");
+
+    const onProcessFilesystem: NonNullable<Parameters<typeof spawnGit>[6]> = (
+      processFilesystem,
+    ) => {
+      const readdir = processFilesystem.readdir.bind(processFilesystem);
+      let observedDestinationPreflight = false;
+
+      processFilesystem.readdir = ((path: string) => {
+        const entries = readdir(path);
+        if (path !== "racing" || observedDestinationPreflight) return entries;
+
+        observedDestinationPreflight = true;
+        observedEntries.push(entries);
+        if (observedEntries.length === 2) bothPreflights.resolve();
+
+        // The async fs bridge awaits this real syscall's return, so both clones hold their snapshots.
+        return bothPreflights.promise.then(() => entries);
+      }) as unknown as typeof processFilesystem.readdir;
     };
-    const program = () => createNodeGitProgram({ local: createLocalGitRunner(), fetch });
-    let winnerCompletion: ReturnType<typeof finishGit> | undefined;
 
+    const clone = () =>
+      spawnGit(
+        fixture.filesystem,
+        program(),
+        ["/usr/bin/git", "clone", "https://git.invalid/remote.git", "racing"],
+        {},
+        "/work",
+        undefined,
+        onProcessFilesystem,
+      );
+
+    const attempts: Array<ReturnType<typeof finishGit>> = [];
     try {
-      const winner = await spawnGit(fixture.filesystem, program(), [
-        "/usr/bin/git",
-        "clone",
-        "https://git.invalid/remote.git",
-        "racing",
-      ]);
-      winnerCompletion = finishGit(winner.host, winner.handle);
-      await uploadPackStarted.promise;
-      const requestCount = server.requests.length;
+      const spawned = await Promise.all([clone(), clone()]);
+      attempts.push(...spawned.map(({ host, handle }) => finishGit(host, handle)));
+      const statuses = await Promise.all(attempts);
 
-      const loser = await spawnGit(fixture.filesystem, program(), [
-        "/usr/bin/git",
-        "clone",
-        "https://git.invalid/remote.git",
-        "racing",
-      ]);
-      const loserStatus = await finishGit(loser.host, loser.handle);
+      expect(observedEntries).toEqual([[], []]);
+      expect(statuses.map(({ exitCode }) => exitCode).sort((a, b) => a - b)).toEqual([0, 128]);
+      expect(server.requests.map(({ method }) => method).sort()).toEqual(["GET", "POST"]);
+      expect(fixture.stderr()).toContain("already exists");
 
-      expect(loserStatus.exitCode).toBe(128);
-      expect(fixture.stderr()).toContain("destination path 'racing' already exists");
-      expect(server.requests).toHaveLength(requestCount);
-      expect(uploadPackRequests).toBe(1);
-
-      releaseUploadPack.resolve();
-      const winnerStatus = await winnerCompletion;
-      winnerCompletion = undefined;
-      expect(winnerStatus.exitCode, fixture.stderr()).toBe(0);
       expect(await fs.promises.readFile("/work/racing/README.md", "utf8")).toBe("remote README\n");
     } finally {
-      releaseUploadPack.resolve();
-      if (winnerCompletion !== undefined) await winnerCompletion.catch(() => undefined);
+      await Promise.allSettled(attempts);
       fixture.close();
     }
   });
