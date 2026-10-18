@@ -22,7 +22,8 @@ import { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
  * the self-hosted server serves (`apps/server/src/workflows/rpcHandlers.ts`),
  * each calling one engine method and then flushing, so what it started
  * here is done before the request ends. Validating and saving take what the
- * caller compiled (`compiled`), since the cloud can't compile. Executor
+ * caller compiled (`compiled`), since the cloud can't compile. Saves resolve
+ * omitted cron zones into scheduling metadata without changing the source or code. Executor
  * connections aren't in the cloud yet and say so.
  */
 
