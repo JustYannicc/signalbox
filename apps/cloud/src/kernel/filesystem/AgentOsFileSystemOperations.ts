@@ -1,5 +1,4 @@
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
-import { joinGuestPath } from "./KernelPathResolver.ts";
 import { WasiMemory } from "../wasi/internal_wasi_memory.ts";
 import { mapErrno } from "../wasi/internal_wasi_calls.ts";
 import { kernelError } from "./KernelFileSystemErrors.ts";
@@ -194,7 +193,9 @@ export class AgentOsFileSystemOperations {
     try {
       const path = this.#readPath(this.#memory(), pathPointer, pathLength);
       this.#options.fileSystem.fstat(fd >>> 0);
-      if (!path.startsWith("/")) this.#directoryCwd(newDirFd);
+      if (!path.startsWith("/")) {
+        this.#withAnchoredDirectory(newDirFd, () => undefined);
+      }
       return ENOTSUP;
     } catch (error) {
       return this.#toErrno(error);
@@ -225,26 +226,23 @@ export class AgentOsFileSystemOperations {
   }
 
   #resolvePath(dirFd: number, path: string, followFinal: boolean, allowCwd = false) {
-    let cwd: string | undefined;
-    if (!path.startsWith("/")) {
-      cwd = this.#directoryCwd(dirFd, allowCwd);
+    if (path.startsWith("/") || (allowCwd && dirFd >>> 0 === AT_CWD)) {
+      return this.#options.fileSystem.resolve(path, { followFinal });
     }
-    return this.#options.fileSystem.resolve(path, {
-      followFinal,
-      ...(cwd === undefined ? {} : { cwd }),
-    });
+
+    return this.#withAnchoredDirectory(dirFd, (anchored) =>
+      anchored.resolve(path, { followFinal }),
+    );
   }
 
-  #directoryCwd(dirFd: number, allowCwd = false): string {
-    const descriptorFd = dirFd >>> 0;
-    if (allowCwd && descriptorFd === AT_CWD) return this.#options.fileSystem.cwd;
-    const descriptor = this.#options.fileSystem.descriptors.get(descriptorFd);
-    if (descriptor.kind !== "directory") throw kernelError("ENOTDIR");
-    if (descriptor.preopenPath !== undefined) return descriptor.preopenPath;
-    if (descriptor.mount !== undefined && descriptor.pathComponents !== undefined) {
-      return joinGuestPath(descriptor.mount.path, descriptor.pathComponents);
+  #withAnchoredDirectory<T>(dirFd: number, operation: (anchored: KernelFileSystem) => T): T {
+    const anchored = this.#options.fileSystem.fork(this.#options.fileSystem.descriptors);
+    try {
+      anchored.fchdir(dirFd >>> 0);
+      return operation(anchored);
+    } finally {
+      anchored.dispose();
     }
-    throw kernelError("EBADF");
   }
 
   #readPath(memory: WasiMemory, pointer: number, length: number): string {

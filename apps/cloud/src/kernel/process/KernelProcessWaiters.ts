@@ -1,5 +1,6 @@
 import { attemptKernelOperation, kernelError, kernelOk, type KernelResult } from "../KernelAbi.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
+import type { KernelProcessCancelledError } from "./KernelProcessCancellation.ts";
 
 export interface KernelExitStatus {
   readonly exitCode: number;
@@ -9,6 +10,7 @@ export interface KernelExitStatus {
 
 export type KernelWaitOutcome =
   | { readonly kind: "exited"; readonly status: KernelExitStatus }
+  | { readonly kind: "cancelled"; readonly error: KernelProcessCancelledError }
   | { readonly kind: "failed"; readonly error: unknown };
 
 export interface KernelWaitableProcess {
@@ -65,8 +67,11 @@ export class KernelProcessWaiters {
         if (completed) {
           const outcome = completed.outcome;
           reap(completed);
-          return outcome?.kind === "exited"
-            ? kernelOk({ pid: completed.pid, status: outcome.status })
+          if (outcome?.kind === "exited") {
+            return kernelOk({ pid: completed.pid, status: outcome.status });
+          }
+          return outcome?.kind === "cancelled"
+            ? kernelError("CANCELLED", outcome.error.message)
             : kernelError("IO_ERROR", "Child process completion failed");
         }
         return options & KERNEL_WNOHANG ? kernelOk({ pid: 0 }) : { status: "would_block" };

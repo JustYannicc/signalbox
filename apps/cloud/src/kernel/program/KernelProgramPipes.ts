@@ -1,6 +1,6 @@
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { KernelPipe } from "../KernelPipe.ts";
-import { currentKernelSignal } from "../process/KernelExecution.ts";
+import { currentKernelIoMode, currentKernelSignal } from "../process/KernelExecution.ts";
 import {
   RIGHTS,
   type WasiDescriptorSpec,
@@ -101,7 +101,10 @@ function readEndpoint(
   signal?: AbortSignal,
 ): PollableStdio {
   return {
-    readInto: (target) => pipe.readInto(target, { signal: currentKernelSignal() ?? signal }),
+    readInto: (target) =>
+      currentKernelIoMode() === "sync"
+        ? pipe.tryReadInto(target)
+        : pipe.readInto(target, { signal: currentKernelSignal() ?? signal }),
     poll: (direction, requestedSignal) =>
       pollPipe(pipe, wakes, direction, requestedSignal ?? currentKernelSignal() ?? signal),
   };
@@ -109,7 +112,10 @@ function readEndpoint(
 
 function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): PollableStdio {
   return {
-    write: (source) => pipe.write(source, { signal: currentKernelSignal() }),
+    write: (source) =>
+      currentKernelIoMode() === "sync"
+        ? pipe.tryWrite(source)
+        : pipe.write(source, { signal: currentKernelSignal() }),
     poll: (direction, signal) => pollPipe(pipe, wakes, direction, signal ?? currentKernelSignal()),
   };
 }

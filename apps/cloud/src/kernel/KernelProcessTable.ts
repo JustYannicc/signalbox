@@ -9,6 +9,7 @@ import {
 } from "./KernelAbi.ts";
 import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import { KernelProcessCleanup } from "./process/KernelProcessCleanup.ts";
+import { isKernelProcessCancelledError } from "./process/KernelProcessCancellation.ts";
 import {
   KERNEL_WNOHANG,
   KernelProcessWaiters,
@@ -34,7 +35,7 @@ export interface KernelProcessInfo {
 export interface KernelProcessLookup {
   readonly handle: KernelHandle<"process">;
   readonly info: KernelProcessInfo;
-  readonly status: "running" | "exited" | "failed";
+  readonly status: "running" | "exited" | "cancelled" | "failed";
 }
 
 export interface KernelProcessIdentity {
@@ -215,7 +216,9 @@ export class KernelProcessTable {
         if (!outcome) return { status: "would_block" };
         return outcome.kind === "exited"
           ? kernelOk(outcome.status)
-          : kernelError("IO_ERROR", "Child process completion failed");
+          : outcome.kind === "cancelled"
+            ? kernelError("CANCELLED", outcome.error.message)
+            : kernelError("IO_ERROR", "Child process completion failed");
       },
     );
   }
@@ -230,7 +233,9 @@ export class KernelProcessTable {
     this.#reap(record.value);
     return outcome.kind === "exited"
       ? kernelOk(undefined)
-      : kernelError("IO_ERROR", "Child process completion failed");
+      : outcome.kind === "cancelled"
+        ? kernelError("CANCELLED", outcome.error.message)
+        : kernelError("IO_ERROR", "Child process completion failed");
   }
 
   /** Resolves a live or unreaped PID to its existing opaque process handle. */
@@ -245,7 +250,9 @@ export class KernelProcessTable {
         ? "running"
         : process.outcome.kind === "exited"
           ? "exited"
-          : "failed";
+          : process.outcome.kind === "cancelled"
+            ? "cancelled"
+            : "failed";
     return kernelOk({
       handle: process.handle,
       info: {
@@ -418,8 +425,12 @@ export class KernelProcessTable {
     let outcome: ProcessOutcome;
     try {
       await record.cleanup();
-      if (result.kind === "failed") {
+      if (result.kind === "cancelled") {
         outcome = result;
+      } else if (result.kind === "failed") {
+        outcome = isKernelProcessCancelledError(result.error)
+          ? { kind: "cancelled", error: result.error }
+          : result;
       } else {
         const status = this.#validateStatus(result.status);
         outcome = status

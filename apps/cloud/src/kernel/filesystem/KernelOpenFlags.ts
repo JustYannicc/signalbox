@@ -1,4 +1,9 @@
-import { FDFLAGS, READ_ONLY_RIGHTS, RIGHTS } from "../wasi/internal_wasi_descriptors.ts";
+import {
+  ALL_RIGHTS,
+  FDFLAGS,
+  READ_ONLY_RIGHTS,
+  RIGHTS,
+} from "../wasi/internal_wasi_descriptors.ts";
 import type { Stat } from "../storage.ts";
 import { kernelError } from "./KernelFileSystemErrors.ts";
 
@@ -87,8 +92,10 @@ export function parseOpenFlags(flags: number): ParsedOpenFlags {
       RIGHTS.FD_FDSTAT_SET_FLAGS |
       RIGHTS.FD_SYNC |
       RIGHTS.FD_DATASYNC |
-      RIGHTS.FD_FILESTAT_SET_TIMES;
-    if (readable) rightsBase |= RIGHTS.FD_READ | RIGHTS.FD_SEEK | RIGHTS.FD_TELL;
+      RIGHTS.FD_FILESTAT_SET_TIMES |
+      RIGHTS.FD_SEEK |
+      RIGHTS.FD_TELL;
+    if (readable) rightsBase |= RIGHTS.FD_READ;
     if (writable) {
       rightsBase |= RIGHTS.FD_WRITE | RIGHTS.FD_ALLOCATE | RIGHTS.FD_FILESTAT_SET_SIZE;
     }
@@ -138,9 +145,8 @@ export function descriptorRights(
   let base = flags.rightsBase;
   let inheriting = 0n;
   if (type === "directory") {
-    base |= DIRECTORY_RIGHTS;
-    if (!flags.pathOnly) base |= RIGHTS.FD_READDIR;
-    inheriting = base;
+    base |= flags.pathOnly ? DIRECTORY_RIGHTS & ~RIGHTS.FD_READDIR : DIRECTORY_RIGHTS;
+    inheriting = readOnly ? READ_ONLY_RIGHTS : ALL_RIGHTS;
   } else if (flags.pathOnly) {
     base = RIGHTS.FD_FILESTAT_GET;
   }

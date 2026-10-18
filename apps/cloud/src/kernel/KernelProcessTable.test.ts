@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import { KERNEL_WNOHANG, KernelProcessTable, type KernelExitStatus } from "./KernelProcessTable.ts";
 import { kernelError } from "./KernelAbi.ts";
@@ -21,7 +21,10 @@ function deferred<T>() {
 
 function makeTable(maxProcesses?: number) {
   const wakes = new KernelWakeRegistry();
-  const table = new KernelProcessTable({ wakes, maxProcesses });
+  const table = new KernelProcessTable({
+    wakes,
+    ...(maxProcesses === undefined ? {} : { maxProcesses }),
+  });
   return { table, wakes };
 }
 

@@ -5,6 +5,7 @@ import { createKernelAsyncWasi } from "./KernelWasi.ts";
 import { AgentOsFileSystemHost } from "./AgentOsFileSystemHost.ts";
 import type { KernelDescriptorResource, WasiPollResult } from "./KernelDescriptors.ts";
 import type { Storage } from "./storage.ts";
+import { runKernelInlineProof } from "./program/KernelInlineProof.ts";
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -31,6 +32,9 @@ export async function runKernelRuntimeProof(
   const filesystem = new KernelFileSystem({ mounts: [{ path: "/", storage }] });
   const wakes = new KernelWakeRegistry();
   try {
+    await run("inline JS pipes preserve bytes, exit status and parent cancellation", () =>
+      runKernelInlineProof(filesystem, wakes),
+    );
     await run(
       "public shared-fd reactor suspends, survives memory growth, and reports HUP",
       async () => {

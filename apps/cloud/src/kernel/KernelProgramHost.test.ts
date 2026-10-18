@@ -11,7 +11,6 @@ import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
 import { KernelProgramHost, type KernelProgramBinding } from "./KernelProgramHost.ts";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
-import { runSync } from "./wasi/internal_wasi_calls.ts";
 
 const now = () => 1_800_000_000_000_000_001n;
 const bytes = (text: string) => new TextEncoder().encode(text);
@@ -237,7 +236,7 @@ describe("KernelProgramHost", () => {
       expect(() => prepared.filesystem.cwd).toThrow(expect.objectContaining({ code: "EBADF" }));
     } finally {
       closeAll.mockRestore();
-      runSync(prepared.filesystem.descriptors.closeAll());
+      expect(prepared.filesystem.descriptors.closeAll().next().done).toBe(true);
       filesystem.dispose();
       fixture.close();
       wakes.dispose();

@@ -135,4 +135,37 @@ describe("AgentOS host_fs imports", () => {
       test.close();
     }
   });
+
+  it("resolves relative paths from a live directory descriptor after its path is replaced", () => {
+    const test = fixture();
+    try {
+      test.fileSystem.mkdir("/old");
+      const oldDirectoryFd = test.fileSystem.open(
+        "/old",
+        KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_DIRECTORY,
+      );
+      const originalFileFd = test.fileSystem.open(
+        "/old/file",
+        KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR,
+      );
+      test.fileSystem.write(originalFileFd, encoder.encode("12345"), 0n);
+      test.fileSystem.close(originalFileFd);
+
+      test.fileSystem.rename("/old", "/new");
+      test.fileSystem.mkdir("/old");
+      const replacementFileFd = test.fileSystem.open(
+        "/old/file",
+        KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR,
+      );
+      test.fileSystem.write(replacementFileFd, encoder.encode("123456789"), 0n);
+
+      const pathLength = test.writePath(256, "file");
+      const openDescriptors = [...test.fileSystem.descriptors.entries()].map(([fd]) => fd);
+      expect(test.host.imports.path_size(oldDirectoryFd, 256, pathLength, 1)).toBe(5n);
+      expect(test.host.imports.fd_size(replacementFileFd)).toBe(9n);
+      expect([...test.fileSystem.descriptors.entries()].map(([fd]) => fd)).toEqual(openDescriptors);
+    } finally {
+      test.close();
+    }
+  });
 });

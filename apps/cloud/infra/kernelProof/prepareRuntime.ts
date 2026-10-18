@@ -16,7 +16,7 @@ export async function prepareKernelRuntimeProof(destination: string, ripgrepPath
       !path.endsWith(".ts") ||
       path.endsWith(".test.ts") ||
       path.startsWith("tests/") ||
-      (path.endsWith("Proof.ts") && path !== "KernelRuntimeProof.ts")
+      (!path.includes("/") && path.endsWith("Proof.ts") && path !== "KernelRuntimeProof.ts")
     )
       continue;
     const source = await NodeFSP.readFile(NodePath.join(root, path), "utf8");

@@ -15,7 +15,8 @@ import {
   type KernelProcessIdentity,
 } from "../KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
-import { runKernelExecution } from "../process/KernelExecution.ts";
+import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
+import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
 import { prepareKernelProgram, type KernelPreparedProgram } from "./KernelPreparedProgram.ts";
 import {
   createKernelWasiRuntime,
@@ -99,7 +100,15 @@ export class KernelProgramSpawner {
   ): Promise<KernelResult<KernelHandle<"process">>> {
     // Only SETPGROUP has host semantics here; mask/default/identity changes must
     // not be accepted until the process table can actually apply them.
-    if ((request.attributes.flags & ~2) !== 0) {
+    // AgentOS applies this mask even without SETSIGMASK. SIGKILL and SIGSTOP
+    // cannot be blocked and are removed by the pinned runner before spawning.
+    const mask = request.attributes.signalMask;
+    const unblockable = (1 << (9 - 1)) | (1 << (19 - 1));
+    if (
+      (request.attributes.flags & ~2) !== 0 ||
+      (mask.low & ~unblockable) !== 0 ||
+      mask.high !== 0
+    ) {
       return Promise.resolve(
         kernelError("UNSUPPORTED", "Requested spawn attributes are unavailable"),
       );
@@ -265,7 +274,9 @@ export class KernelProgramSpawner {
     if (implementation.kind === "javascript") {
       const completion = Promise.resolve().then(() => {
         if (controller.signal.aborted) return terminatedStatus(sentSignal);
-        const exitCode = runInlineJavaScript(implementation.runInline, prepared, args, env);
+        const exitCode = runKernelInlineExecution(controller.signal, () =>
+          runInlineJavaScript(implementation.runInline, prepared, args, env),
+        );
         return controller.signal.aborted
           ? terminatedStatus(sentSignal)
           : { exitCode, signal: 0, coreDumped: false };
@@ -309,7 +320,8 @@ function withHome(
 }
 
 function terminatedStatus(signal: number) {
-  return { exitCode: 0, signal: signal || 15, coreDumped: false };
+  if (signal === 0) throw new KernelProcessCancelledError("Parent process was cancelled");
+  return { exitCode: 0, signal, coreDumped: false };
 }
 
 function hasOnlyStringValues(

@@ -224,6 +224,7 @@ function borrowedStdioDescriptor(fd: number, stdio: WasiStdio): WasiDescriptorSp
     offset: 0n,
     rightsBase:
       ioRight |
+      RIGHTS.POLL_FD_READWRITE |
       RIGHTS.FD_FDSTAT_SET_FLAGS |
       RIGHTS.FD_SYNC |
       RIGHTS.FD_DATASYNC |

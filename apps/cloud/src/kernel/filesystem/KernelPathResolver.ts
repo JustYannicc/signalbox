@@ -117,20 +117,30 @@ export class KernelPathResolver {
 
   resolve(path: string, options: ResolveOptions = {}): WasiResolvedPath {
     const context = this.#context(path, options.cwd);
-    return this.#run(
+    const resolved = this.#run(
       this.#resolver.resolve(context.anchor, context.relative, options.followFinal ?? true),
     );
+    this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
+    return resolved;
   }
 
   resolveFromAnchor(anchor: WasiPathAnchor, path: string, followFinal = true): WasiResolvedPath {
-    return this.#run(this.#resolver.resolve(anchor, path, followFinal));
+    const resolved = this.#run(this.#resolver.resolve(anchor, path, followFinal));
+    this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
+    return resolved;
   }
 
   resolveOrCreate(path: string, options: ResolveOptions = {}): WasiPathLookup {
     const context = this.#context(path, options.cwd);
-    return this.#run(
+    const lookup = this.#run(
       this.#resolver.resolveOrCreate(context.anchor, context.relative, options.followFinal ?? true),
     );
+    if (lookup.kind === "existing") {
+      this.#assertResolvedMount(lookup.path.mount, lookup.path.pathComponents);
+    } else {
+      this.#assertResolvedMount(lookup.parent.mount, lookup.parent.pathComponents);
+    }
+    return lookup;
   }
 
   resolveParent(
@@ -138,7 +148,9 @@ export class KernelPathResolver {
     options: Omit<ResolveOptions, "followFinal"> = {},
   ): WasiResolvedParent {
     const context = this.#context(path, options.cwd);
-    return this.#run(this.#resolver.resolveParent(context.anchor, context.relative));
+    const parent = this.#run(this.#resolver.resolveParent(context.anchor, context.relative));
+    this.#assertResolvedMount(parent.mount, parent.pathComponents);
+    return parent;
   }
 
   guestPath(path: WasiResolvedPath): string {
@@ -237,10 +249,48 @@ export class KernelPathResolver {
     if (cwdOverride === undefined) {
       const anchor = this.#cwdAnchor;
       if (anchor === undefined) throw kernelError("ENOENT", "No mounted working directory");
-      return { anchor: copyAnchor(anchor), relative: path };
+      const validated = this.#validateAnchor(anchor);
+      this.#cwdAnchor = copyAnchor(validated);
+      return this.#relativeMountContext(validated, path);
     }
     const mount = this.#mountFor(cwdOverride);
-    return { anchor: this.#anchorAt(mount, cwdOverride), relative: path };
+    return this.#relativeMountContext(this.#anchorAt(mount, cwdOverride), path);
+  }
+
+  #relativeMountContext(
+    anchor: WasiPathAnchor,
+    path: string,
+  ): { anchor: WasiPathAnchor; relative: string } {
+    const segments = path.split("/");
+    if (
+      anchor.pathComponents.length !== 0 ||
+      segments.some((segment) => segment === "" || segment === "." || segment === "..")
+    ) {
+      return { anchor: copyAnchor(anchor), relative: path };
+    }
+
+    const rootParts = mountPathParts(anchor.mount.path);
+    const destination = this.#mountFor(joinGuestPath(anchor.mount.path, segments));
+    if (destination === anchor.mount) return { anchor: copyAnchor(anchor), relative: path };
+    const destinationParts = mountPathParts(destination.path);
+    if (
+      destinationParts.length !== rootParts.length + 1 ||
+      !rootParts.every((part, index) => destinationParts[index] === part) ||
+      segments[0] !== destinationParts[rootParts.length]
+    ) {
+      return { anchor: copyAnchor(anchor), relative: path };
+    }
+    return {
+      anchor: this.#rootAnchor(destination),
+      relative: segments.slice(1).join("/") || ".",
+    };
+  }
+
+  #assertResolvedMount(mount: WasiMountedStorage, pathComponents: readonly string[]): void {
+    const expected = this.#mountFor(joinGuestPath(mount.path, pathComponents));
+    if (expected !== mount) {
+      throw kernelError("ENOTCAPABLE", "Resolved path crosses a mount through an aliased path");
+    }
   }
 
   #anchorAt(mount: WasiMountedStorage, path: string): WasiPathAnchor {
@@ -296,4 +346,8 @@ function copyAnchor(anchor: WasiPathAnchor): WasiPathAnchor {
     ancestors: [...anchor.ancestors],
     pathComponents: [...anchor.pathComponents],
   };
+}
+
+function mountPathParts(path: string): string[] {
+  return path.split("/").filter((part) => part !== "");
 }

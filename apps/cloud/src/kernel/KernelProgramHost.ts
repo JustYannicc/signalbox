@@ -9,6 +9,7 @@ import {
 } from "./KernelAbi.ts";
 import { KernelProcessTable, type KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
+import { runKernelInlineExecution } from "./process/KernelExecution.ts";
 import {
   prepareKernelProgram,
   type KernelPreparedProgram,
@@ -169,11 +170,8 @@ export class KernelProgramHost {
     }
     try {
       if (implementation.kind === "javascript") {
-        return runInlineJavaScript(
-          implementation.runInline,
-          prepared,
-          args,
-          withHome(prepared, env),
+        return runKernelInlineExecution(prepared.signal, () =>
+          runInlineJavaScript(implementation.runInline, prepared, args, withHome(prepared, env)),
         );
       }
       const runtime = createKernelWasiRuntime(implementation.module, {
@@ -187,7 +185,9 @@ export class KernelProgramHost {
         wakes: this.wakes,
         spawn: async () => kernelError("UNSUPPORTED", "Inline process spawn is asynchronous"),
       });
-      return runtime.lifecycle.start(runtime.instance);
+      return runKernelInlineExecution(prepared.signal, () =>
+        runtime.lifecycle.start(runtime.instance),
+      );
     } finally {
       prepared.releaseSync();
     }

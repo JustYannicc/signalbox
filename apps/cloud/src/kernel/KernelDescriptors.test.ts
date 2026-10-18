@@ -1,48 +1,78 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
 import { KernelDescriptors, type KernelDescriptorResource } from "./KernelDescriptors.ts";
+import { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
-import { runAsync } from "./wasi/internal_wasi_calls.ts";
-import { WasiHost } from "./wasi/internal_wasi_host.ts";
-import {
-  FDFLAGS,
-  RIGHTS,
-  WasiDescriptorTable,
-  type WasiPollResult,
-} from "./wasi/internal_wasi_descriptors.ts";
-import { WasiError, WasiMemory } from "./wasi/internal_wasi_memory.ts";
+import { createKernelAsyncWasi } from "./KernelWasi.ts";
+import { sqliteFixture } from "./tests/sqliteFixture.ts";
+import { wasmImportReactor } from "./tests/wasmGuest.ts";
+import type { WasiPollResult, WasiStdio } from "./Wasi.ts";
 
-const inertStdio = {};
+const now = () => 1_800_000_000_000_000_001n;
+const inertStdio: WasiStdio = {};
 
 describe("KernelDescriptors", () => {
-  it("attaches resources to the shared descriptor table and closes after the last alias", () => {
-    const table = new WasiDescriptorTable([inertStdio, inertStdio, inertStdio]);
+  it("exposes pollable nonblocking resources through the WASI fdstat contract", async () => {
+    const { filesystem, fixture } = fileSystem();
     const wakes = new KernelWakeRegistry();
-    const descriptors = new KernelDescriptors(table, wakes);
+    const descriptors = new KernelDescriptors(filesystem.descriptors, wakes);
     const resource = new TestResource();
+    let wasi: ReturnType<typeof createKernelAsyncWasi> | undefined;
     try {
       const fd = descriptors.register(resource);
-      const descriptor = table.get(fd);
-      expect(fd).toBe(3);
+      expect(filesystem.descriptors.has(fd)).toBe(true);
       expect(descriptors.resource(fd)).toBe(resource);
-      expect(descriptor.kind).toBe("stdio");
-      expect(descriptor.stdioIndex).toBeUndefined();
-      expect(descriptor.flags).toBe(FDFLAGS.NONBLOCK);
-      expect(descriptor.rightsBase).toBe(
-        RIGHTS.FD_READ | RIGHTS.FD_WRITE | RIGHTS.FD_FDSTAT_SET_FLAGS | RIGHTS.POLL_FD_READWRITE,
+
+      wasi = createKernelAsyncWasi({ filesystem, wakes });
+      const instance = new WebAssembly.Instance(
+        wasmImportReactor("wasi_snapshot_preview1", "fd_fdstat_get", ["i32", "i32"], ["i32"]),
+        wasi.wasi.getImportObject(),
       );
-      expect(descriptor.rightsInheriting).toBe(0n);
+      await wasi.wasi.initialize(instance);
+      const memory = guestMemory(instance);
+      expect(await wasi.wasi.run(guestRun(instance), fd, 64)).toBe(0);
+      const stat = new DataView(memory.buffer, 64, 24);
+      expect(stat.getUint8(0)).toBe(2);
+      expect(stat.getUint16(2, true)).toBe(4);
+      const rights = stat.getBigUint64(8, true);
+      expect(rights & (1n << 1n)).not.toBe(0n);
+      expect(rights & (1n << 3n)).not.toBe(0n);
+      expect(rights & (1n << 6n)).not.toBe(0n);
+      expect(rights & (1n << 27n)).not.toBe(0n);
+      expect(rights & (1n << 21n)).toBe(0n);
+    } finally {
+      await wasi?.wasi.close();
+      filesystem.dispose();
+      fixture.close();
+      wakes.dispose();
+    }
+  });
+
+  it("shares a resource across table dup and fork until the final close", () => {
+    const { filesystem, fixture } = fileSystem();
+    const wakes = new KernelWakeRegistry();
+    const descriptors = new KernelDescriptors(filesystem.descriptors, wakes);
+    const resource = new TestResource();
+    const parentFds: number[] = [];
+    let childTable: typeof filesystem.descriptors | undefined;
+    let childDescriptors: KernelDescriptors | undefined;
+    try {
+      const fd = descriptors.register(resource);
+      parentFds.push(fd);
+      expect(filesystem.descriptors.has(fd)).toBe(true);
+      expect(descriptors.resource(fd)).toBe(resource);
 
       const duplicate = descriptors.duplicate(fd);
-      const duplicateAtMinimum = descriptors.duplicate(fd, 6);
-      expect(duplicate).toBe(4);
-      expect(duplicateAtMinimum).toBe(6);
-      expect(table.get(duplicate).stdio).toBe(descriptor.stdio);
+      const duplicateAtMinimum = descriptors.duplicate(fd, duplicate + 1);
+      parentFds.push(duplicate, duplicateAtMinimum);
+      expect(duplicate).toBe(fd + 1);
+      expect(duplicateAtMinimum).toBe(duplicate + 1);
 
-      const childTable = table.fork([
+      childTable = filesystem.descriptors.fork([
         { parentFd: duplicate, childFd: 70 },
         { parentFd: duplicateAtMinimum, childFd: 71 },
       ]);
-      const childDescriptors = new KernelDescriptors(childTable, wakes);
+      childDescriptors = new KernelDescriptors(childTable, wakes);
       expect(childDescriptors.resource(70)).toBe(resource);
       expect(childDescriptors.resource(71)).toBe(resource);
 
@@ -56,86 +86,127 @@ describe("KernelDescriptors", () => {
       expect(resource.closeCalls).toBe(1);
       expect(wakes.size).toBe(0);
     } finally {
-      for (const fd of [3, 4, 6]) {
-        if (table.has(fd)) descriptors.close(fd);
+      for (const fd of [70, 71]) {
+        if (childTable?.has(fd)) childDescriptors?.close(fd);
       }
+      for (const fd of parentFds) {
+        if (filesystem.descriptors.has(fd)) descriptors.close(fd);
+      }
+      filesystem.dispose();
+      fixture.close();
       wakes.dispose();
     }
   });
 
-  it("does not take resource ownership when descriptor allocation fails", () => {
-    class FullDescriptorTable extends WasiDescriptorTable {
-      override allocate(): number {
-        throw new WasiError(33);
-      }
-    }
-
+  it("does not transfer ownership if descriptor allocation fails", () => {
+    const { filesystem, fixture } = fileSystem();
     const wakes = new KernelWakeRegistry();
-    const descriptors = new KernelDescriptors(new FullDescriptorTable(), wakes);
     const resource = new TestResource();
+    const fullTable = new Proxy(filesystem.descriptors, {
+      get(target, property) {
+        if (property === "allocate") {
+          return () => {
+            throw Object.assign(new Error("Descriptor table is full"), { code: "EMFILE" });
+          };
+        }
+        return Reflect.get(target, property, target);
+      },
+    });
+    const descriptors = new KernelDescriptors(fullTable, wakes);
     try {
       expect(() => descriptors.register(resource)).toThrow(
         expect.objectContaining({ code: "EMFILE" }),
       );
       expect(resource.closeCalls).toBe(0);
     } finally {
+      filesystem.dispose();
+      fixture.close();
       wakes.dispose();
     }
   });
 
-  it("uses the table resource through WASI poll_oneoff for data and EOF readiness", async () => {
-    const table = new WasiDescriptorTable([inertStdio, inertStdio, inertStdio]);
+  it("reports data and EOF through the public WASI poll_oneoff import", async () => {
+    const { filesystem, fixture } = fileSystem();
     const wakes = new KernelWakeRegistry();
-    const descriptors = new KernelDescriptors(table, wakes);
+    const { wasi, descriptors } = createKernelAsyncWasi({ filesystem, wakes });
     const resource = new TestResource();
     const fd = descriptors.register(resource);
-    const memory = new WasiMemory();
-    memory.set(new WebAssembly.Memory({ initial: 1 }));
-    const host = new WasiHost(memory, [], [], true, table);
+    const instance = new WebAssembly.Instance(
+      wasmImportReactor(
+        "wasi_snapshot_preview1",
+        "poll_oneoff",
+        ["i32", "i32", "i32", "i32"],
+        ["i32"],
+      ),
+      wasi.getImportObject(),
+    );
     try {
-      writePollSubscription(memory, fd, 1);
-      const dataPoll = runAsync(host.imports.poll_oneoff(0, 64, 1, 96));
+      await wasi.initialize(instance);
+      const memory = guestMemory(instance);
+      writePollSubscription(memory, fd);
+      const pending = wasi.run(guestRun(instance), 0, 64, 1, 96);
+      await resource.subscribed;
       expect(wakes.size).toBe(1);
       resource.setReady("read", { bytes: 12n });
-      expect(await dataPoll).toBe(0);
-      expect(readPollEvent(memory)).toMatchObject({
-        errno: 0,
-        type: 1,
-        bytes: 12n,
-        hangup: false,
-      });
+      expect(await pending).toBe(0);
+      expect(readPollEvent(memory)).toMatchObject({ errno: 0, type: 1, bytes: 12n, hangup: false });
       expect(wakes.size).toBe(0);
 
       resource.setReady("read", { bytes: 0n, hangup: true }, false);
-      writePollSubscription(memory, fd, 1);
-      expect(await runAsync(host.imports.poll_oneoff(0, 64, 1, 96))).toBe(0);
+      writePollSubscription(memory, fd);
+      expect(await wasi.run(guestRun(instance), 0, 64, 1, 96)).toBe(0);
       expect(readPollEvent(memory)).toMatchObject({ errno: 0, type: 1, bytes: 0n, hangup: true });
       expect(wakes.size).toBe(0);
-    } finally {
+      await wasi.close();
+      expect(filesystem.descriptors.has(fd)).toBe(true);
       descriptors.close(fd);
+      expect(resource.closeCalls).toBe(1);
+    } finally {
+      await wasi.close();
+      if (filesystem.descriptors.has(fd)) descriptors.close(fd);
+      filesystem.dispose();
+      fixture.close();
       wakes.dispose();
     }
   });
 
-  it("cancels a pending poll input and detaches its readiness subscription", async () => {
-    const table = new WasiDescriptorTable([inertStdio, inertStdio, inertStdio]);
+  it("cancels a waiting guest poll and detaches the readiness subscription", async () => {
+    const { filesystem, fixture } = fileSystem();
     const wakes = new KernelWakeRegistry();
-    const descriptors = new KernelDescriptors(table, wakes);
+    const { wasi, descriptors } = createKernelAsyncWasi({ filesystem, wakes });
     const resource = new TestResource();
     const fd = descriptors.register(resource);
-    const controller = new AbortController();
-    const stdio = table.get(fd).stdio;
+    const instance = new WebAssembly.Instance(
+      wasmImportReactor(
+        "wasi_snapshot_preview1",
+        "poll_oneoff",
+        ["i32", "i32", "i32", "i32"],
+        ["i32"],
+      ),
+      wasi.getImportObject(),
+    );
     try {
-      expect(stdio).toBeDefined();
-      const waiting = Promise.resolve(stdio!.poll!("read", controller.signal));
+      await wasi.initialize(instance);
+      const memory = guestMemory(instance);
+      writePollSubscription(memory, fd);
+      const pending = wasi.run(guestRun(instance), 0, 64, 1, 96);
+      await resource.subscribed;
       expect(wakes.size).toBe(1);
       expect(resource.subscriberCount("read")).toBe(1);
-      controller.abort();
-      await expect(waiting).rejects.toMatchObject({ code: "ECANCELED" });
+
+      wakes.dispose();
+      expect(await pending).toBe(0);
+      expect(readPollEvent(memory)).toMatchObject({ errno: 11, type: 1 });
       expect(wakes.size).toBe(0);
       expect(resource.subscriberCount("read")).toBe(0);
-    } finally {
+      await wasi.close();
       descriptors.close(fd);
+      expect(resource.closeCalls).toBe(1);
+    } finally {
+      await wasi.close();
+      if (filesystem.descriptors.has(fd)) descriptors.close(fd);
+      filesystem.dispose();
+      fixture.close();
       wakes.dispose();
     }
   });
@@ -147,8 +218,15 @@ class TestResource implements KernelDescriptorResource {
     ["read", new Set()],
     ["write", new Set()],
   ]);
+  readonly subscribed: Promise<void>;
   closeCalls = 0;
-  onSubscribe: ((direction: "read" | "write", notify: () => void) => void) | undefined;
+  #resolveSubscribed: (() => void) | undefined;
+
+  constructor() {
+    this.subscribed = new Promise((resolve) => {
+      this.#resolveSubscribed = resolve;
+    });
+  }
 
   ready(direction: "read" | "write"): WasiPollResult | undefined {
     return this.#readiness.get(direction);
@@ -158,7 +236,8 @@ class TestResource implements KernelDescriptorResource {
     const listeners = this.#listeners.get(direction);
     if (listeners === undefined) throw new Error("Missing readiness listeners");
     listeners.add(notify);
-    this.onSubscribe?.(direction, notify);
+    this.#resolveSubscribed?.();
+    this.#resolveSubscribed = undefined;
     return () => {
       listeners.delete(notify);
     };
@@ -182,16 +261,37 @@ class TestResource implements KernelDescriptorResource {
   }
 }
 
-function writePollSubscription(memory: WasiMemory, fd: number, type: number): void {
-  const subscription = memory.view(0, 48);
-  new Uint8Array(subscription.buffer, subscription.byteOffset, subscription.byteLength).fill(0);
-  subscription.setBigUint64(0, 0xabcden, true);
-  subscription.setUint8(8, type);
-  subscription.setUint32(16, fd, true);
+function fileSystem() {
+  const fixture = sqliteFixture();
+  const storage = createFacetSqliteStorage(fixture.storage, now);
+  const filesystem = new KernelFileSystem({
+    mounts: [{ path: "/", storage }],
+    stdio: [inertStdio, inertStdio, inertStdio],
+  });
+  return { filesystem, fixture };
 }
 
-function readPollEvent(memory: WasiMemory) {
-  const event = memory.view(64, 32);
+function guestMemory(instance: WebAssembly.Instance): WebAssembly.Memory {
+  const memory = (instance.exports as { memory?: unknown }).memory;
+  if (!(memory instanceof WebAssembly.Memory)) throw new Error("Guest memory export is missing");
+  return memory;
+}
+
+function guestRun(instance: WebAssembly.Instance): (...args: Array<number | bigint>) => unknown {
+  const run = (instance.exports as { run?: unknown }).run;
+  if (typeof run !== "function") throw new Error("Guest run export is missing");
+  return run as (...args: Array<number | bigint>) => unknown;
+}
+
+function writePollSubscription(memory: WebAssembly.Memory, fd: number): void {
+  const view = new DataView(memory.buffer);
+  view.setBigUint64(0, 0xabcden, true);
+  view.setUint8(8, 1);
+  view.setUint32(16, fd, true);
+}
+
+function readPollEvent(memory: WebAssembly.Memory) {
+  const event = new DataView(memory.buffer, 64, 32);
   return {
     userdata: event.getBigUint64(0, true),
     errno: event.getUint16(8, true),

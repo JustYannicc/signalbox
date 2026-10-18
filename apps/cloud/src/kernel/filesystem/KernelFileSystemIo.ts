@@ -67,9 +67,9 @@ export class KernelFileSystemIo {
     if (position !== null && descriptor.kind === "stdio") throw kernelError("ESPIPE");
     if (position !== null) this.#offset(position);
     if (descriptor.kind === "stdio") {
-      const readInto = descriptor.stdio?.readInto;
-      if (readInto === undefined || target.byteLength === 0) return 0;
-      const count = yield* complete(readInto(target));
+      const stream = descriptor.stdio;
+      if (stream?.readInto === undefined || target.byteLength === 0) return 0;
+      const count = yield* complete(stream.readInto(target));
       this.#count(count, target.byteLength);
       return count;
     }
@@ -94,10 +94,10 @@ export class KernelFileSystemIo {
     if (position !== null && descriptor.kind === "stdio") throw kernelError("ESPIPE");
     if (position !== null) this.#offset(position);
     if (descriptor.kind === "stdio") {
-      const write = descriptor.stdio?.write;
-      if (write === undefined) throw kernelError("EIO");
+      const stream = descriptor.stdio;
+      if (stream?.write === undefined) throw kernelError("EIO");
       if (source.byteLength === 0) return 0;
-      const count = yield* complete(write(source));
+      const count = yield* complete(stream.write(source));
       this.#count(count, source.byteLength);
       yield* this.#syncAfterWrite(descriptor);
       return count;
@@ -139,8 +139,8 @@ export class KernelFileSystemIo {
 
   *#sync(descriptor: WasiDescriptor, dataOnly: boolean): WasiCall<void> {
     if (descriptor.kind === "stdio") {
-      const sync = descriptor.stdio?.sync;
-      if (sync !== undefined) yield* complete(sync());
+      const stream = descriptor.stdio;
+      if (stream?.sync !== undefined) yield* complete(stream.sync());
       return;
     }
     const storage = this.#storageDescriptor(descriptor);
