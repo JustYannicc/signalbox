@@ -9,6 +9,9 @@ export {
   type VoiceInputState,
   type VoiceRecorder,
   type VoiceRecorderStatus,
+  type VoiceRecordingDraftChange,
+  type VoiceRecordingSinkContext,
+  type VoiceRecordingSink,
 } from "./controller.ts";
 export {
   VoiceTranscriptionError,
