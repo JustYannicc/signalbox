@@ -126,6 +126,7 @@ export function failRunEvents(
   failure: OrchestrationV2ProviderFailure,
   ctx: DecisionContext,
   providerTurnId: ProviderTurnId | null = null,
+  options: { readonly queue?: "advance" | "hold" | "keep" } = {},
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   const errorItem: OrchestrationV2TurnItem = {
     id: TurnItemId.make(`turn-item:${run.id}:failure`),
@@ -146,6 +147,7 @@ export function failRunEvents(
     failure,
   };
   return finishRunEvents(projection, run, "failed", ctx, {
+    ...options,
     leading: [turnItemEvent(ctx, errorItem)],
   });
 }
@@ -272,6 +274,11 @@ function itemEvents(
   // A report about a run that already ended (stopped, or failed for want of a machine).
   if (run === undefined || run.id !== item.runId) return [];
   switch (item.kind) {
+    case "preparation.progress":
+    case "preparation.ready":
+    case "preparation.cancelled":
+    case "preparation.failed":
+      return [];
     case "turn.started":
       return startedEvents(projection, run, item, ctx);
     case "turn.failed":

@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
 import { evlogLintOverrides } from "./scripts/lib/evlog-lint.ts";
+import signalboxLint from "./packages/oxlint-plugin-signalbox/config.ts"; // signalbox: fork-owned lint rules
 
 const RESTRICTED_IMPORT_PATHS = [
   {
@@ -124,7 +125,7 @@ export default defineConfig({
       "scripts/upstream-sync/automations/**", // signalbox: copies of the prod automations, kept as prod has them
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
+    jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint", ...signalboxLint.jsPlugins], // signalbox: fork-owned plugins
     settings: {
       shadcn: { ui: "~/components/ui" },
     },
@@ -178,6 +179,7 @@ export default defineConfig({
       "t3code/require-suppression-reason": "error",
     },
     overrides: [
+      ...signalboxLint.overrides, // signalbox: fork-owned rules
       {
         files: [
           "apps/mobile/src/features/settings/{SettingsRouteScreen,SettingsAuthRouteScreen}.tsx",

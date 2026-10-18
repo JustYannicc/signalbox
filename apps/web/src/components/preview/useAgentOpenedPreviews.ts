@@ -8,10 +8,15 @@ import {
   type PreviewMiniPlayerState,
 } from "../../previewMiniPlayerStore";
 import type { ThreadPreviewState } from "../../previewStateStore";
-import { useRightPanelStore, type RightPanelSurface } from "../../rightPanelStore";
+import {
+  useRightPanelStore,
+  type PendingDeviceOpen,
+  type RightPanelSurface,
+} from "../../rightPanelStore";
 
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
+const EMPTY_PENDING_DEVICE_OPENS: ReadonlyArray<PendingDeviceOpen> = [];
 
 /**
  * Shows browsers and devices an agent or another client opened for the thread,
@@ -40,6 +45,12 @@ export function useAgentOpenedPreviews(input: {
     sheetLayout,
   } = input;
   const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
+  const pendingDeviceOpens = useRightPanelStore((state) =>
+    threadRef === null
+      ? EMPTY_PENDING_DEVICE_OPENS
+      : (state.pendingDeviceOpensByThreadKey[scopedThreadKey(threadRef)] ??
+        EMPTY_PENDING_DEVICE_OPENS),
+  );
   // A device the agent opens floats over chat like an agent-driven browser,
   // or becomes a panel tab when floating previews are off. Sessions opened by
   // another client arrive the same way; sheet layouts get neither. The first
@@ -49,11 +60,12 @@ export function useAgentOpenedPreviews(input: {
   const previousDeviceSessions = useRef(new Map<string, Set<string>>());
   useEffect(() => {
     if (!threadRef || !deviceStateLoaded) return;
-    const threadKey = `${threadRef.environmentId}:${threadRef.threadId}`;
+    const threadKey = scopedThreadKey(threadRef);
     const sessions = deviceState.sessions.filter(
       (session) => session.threadId === threadRef.threadId,
     );
-    const key = (session: (typeof sessions)[number]) => `${session.hostId}:${session.deviceId}`;
+    const key = (session: (typeof sessions)[number]) =>
+      JSON.stringify([session.hostId, session.deviceId, session.sessionId, session.leaseId]);
     const deviceFor = (session: (typeof sessions)[number]) =>
       deviceState.devices.find(
         (entry) => entry.hostId === session.hostId && entry.id === session.deviceId,
@@ -68,6 +80,27 @@ export function useAgentOpenedPreviews(input: {
       if (previous.has(key(session))) continue;
       const device = deviceFor(session);
       if (!device) continue;
+      if (
+        session.ownerKind === "panel" &&
+        pendingDeviceOpens.some(
+          (pending) => session.hostId === pending.hostId && session.requestId === pending.requestId,
+        )
+      )
+        continue;
+      const existingPanelSurface = panelSurfaces.some(
+        (surface) =>
+          surface.kind === "device" &&
+          surface.target?.hostId === session.hostId &&
+          surface.target.deviceId === session.deviceId &&
+          surface.target.sessionId === session.sessionId &&
+          surface.target.leaseId === session.leaseId,
+      );
+      if (existingPanelSurface) continue;
+      const existingMiniPlayer =
+        miniPlayerSource?.kind === "device" &&
+        miniPlayerSource.hostId === session.hostId &&
+        miniPlayerSource.deviceId === session.deviceId;
+      if (existingMiniPlayer) continue;
       const target = {
         hostId: session.hostId,
         deviceId: session.deviceId,
@@ -78,15 +111,6 @@ export function useAgentOpenedPreviews(input: {
         usePreviewMiniPlayerStore.getState().open(threadRef, { kind: "device", ...target });
         continue;
       }
-      const existing = useRightPanelStore
-        .getState()
-        .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.some(
-          (surface) =>
-            surface.kind === "device" &&
-            surface.target?.hostId === session.hostId &&
-            surface.target.deviceId === session.deviceId,
-        );
-      if (existing) continue;
       useRightPanelStore.getState().openDevice(threadRef, target, true);
     }
   }, [
@@ -96,6 +120,9 @@ export function useAgentOpenedPreviews(input: {
     sheetLayout,
     deviceState.sessions,
     deviceState.devices,
+    panelSurfaces,
+    miniPlayerSource,
+    pendingDeviceOpens,
   ]);
   // Baseline loaded tabs so reloads never reopen previews the user dismissed.
   const previousServerPreviewTabs = useRef(new Map<string, Map<string, string | undefined>>());

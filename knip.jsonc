@@ -53,9 +53,7 @@
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
-        "scripts/verify-automations-live.ts", // signalbox: automations
         "scripts/precompile-built-in-automations.ts", // signalbox: automations
-        "scripts/verify-automations-tickets.ts", // signalbox: automations
         "src/provider/testFixtures/*.mjs",
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.
@@ -79,7 +77,11 @@
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
+        "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
+        "infra/syncProbe/alchemy.run.ts!",
+        "infra/syncProbe/worker.ts!",
+        "infra/syncProbe/lunora/identity.ts",
       ],
       // `cloudflare:workers` is a Workers runtime module, not a package.
       "ignoreDependencies": ["cloudflare", "wrangler"], // Wrangler runs through the process cleanup wrapper.
@@ -151,6 +153,10 @@
     "packages/*": {
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
+    },
+    "packages/client-runtime": {
+      // signalbox: retain upstream's lifecycle adapter so its patches merge cleanly.
+      "ignore": ["src/state/threadLifecycle.ts"],
     },
     "packages/sync": {
       "entry": [

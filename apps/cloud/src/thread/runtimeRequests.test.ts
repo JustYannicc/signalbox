@@ -174,6 +174,52 @@ const answer = (commandId = "answer-1") => ({
 });
 
 describe("cloud native runtime requests", () => {
+  it.effect("keeps structured native answers in the callback and durable ask history", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* waiting(engine, runner);
+        const answers = { choice: ["Blue", "Green"] };
+        yield* engine.dispatch(owner, { ...answer(), answers }, personal);
+        const projection = (yield* snapshot(engine)).projection;
+        const ask = projection.thread.asks?.find(
+          (entry) => entry.source.kind === "native" && entry.source.requestId === requestId,
+        );
+        expect(ask?.status).toBe("answered");
+        expect(ask?.rounds[0]?.answers[0]).toMatchObject({
+          value: ["Blue", "Green"],
+          answeredBy: { kind: "person", personId: owner.userId },
+        });
+        expect((yield* runner.work).runtimeResponses).toMatchObject([{ requestId, answers }]);
+      }),
+    ),
+  );
+
+  it.effect("dismisses the native callback and its durable public mirror together", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* waiting(engine, runner);
+        yield* engine.dispatch(
+          owner,
+          {
+            type: "thread.user-input.dismiss",
+            commandId: CommandId.make("dismiss-mirror"),
+            threadId,
+            requestId,
+          },
+          personal,
+        );
+        const projection = (yield* snapshot(engine)).projection;
+        const ask = projection.thread.asks?.find(
+          (entry) => entry.source.kind === "native" && entry.source.requestId === requestId,
+        );
+        expect(ask?.status).toBe("withdrawn");
+        expect((yield* runner.work).runtimeResponses).toMatchObject([
+          { requestId, decision: "cancel" },
+        ]);
+      }),
+    ),
+  );
+
   it.effect.each([false, true])(
     "preserves an answer for retry when the legacy machine's update attempt is %s",
     (runtimeResponsesUpgrade) =>
@@ -536,7 +582,11 @@ describe("cloud native runtime requests", () => {
             ThreadsLive.layer.pipe(
               Layer.provide(
                 Layer.succeed(ThreadDirectory.ThreadDirectory, {
-                  forThread: (id) => ({ ...directory.forThread(id), dispatch: engine.dispatch }),
+                  forThread: (id) => ({
+                    ...directory.forThread(id),
+                    dispatch: engine.dispatch,
+                    workspace: engine.workspace,
+                  }),
                 }),
               ),
               Layer.provide(layerPersonalThreadContexts(owner.userId)),

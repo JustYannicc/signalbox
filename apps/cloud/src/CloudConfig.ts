@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
+import { searchSettings } from "./search/searchSettings.ts";
 import { DEFAULT_ENVIRONMENT_LABEL } from "./environment.ts";
 
 /**
@@ -50,9 +51,11 @@ export class CloudConfig extends Context.Service<
   {
     readonly environmentId: EnvironmentId;
     readonly label: string;
+    readonly searchDisabled?: boolean;
     readonly sessionSecret: Redacted.Redacted<string>;
     readonly accounts: AccountConfig.AccountConfig;
     readonly workosWebhookSecret: Redacted.Redacted<string> | undefined;
+    readonly drives?: boolean;
   }
 >()("@signalbox/cloud/CloudConfig") {}
 
@@ -81,7 +84,16 @@ const make = Effect.gen(function* () {
     return yield* Effect.die(new Error("T3CODE_WORKOS_CLIENT_ID is required for the cloud"));
   }
   const workosWebhookSecret = yield* optionalSecret("T3CODE_WORKOS_WEBHOOK_SECRET");
+  const search = searchSettings({
+    SEARCH_INDEX_GENERATION: yield* Config.String("SEARCH_INDEX_GENERATION").pipe(
+      Config.withDefault("1"),
+    ),
+    SEARCH_INDEX_DISABLED: yield* Config.String("SEARCH_INDEX_DISABLED").pipe(
+      Config.withDefault("0"),
+    ),
+  });
   return CloudConfig.of({
+    searchDisabled: search.disabled,
     environmentId,
     label,
     sessionSecret,
@@ -93,3 +105,9 @@ const make = Effect.gen(function* () {
 
 /** Reads the ambient `ConfigProvider`; the Worker builds one from its `env`. */
 export const layer = Layer.effect(CloudConfig, make);
+
+export const layerWithDrives = (drives: boolean) =>
+  Layer.effect(
+    CloudConfig,
+    Effect.map(make, (config) => ({ ...config, drives })),
+  );

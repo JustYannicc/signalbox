@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
+import { pauseTaskDone } from "../automations/taskLifecycleTesting.ts";
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
@@ -24,6 +25,7 @@ const threadId = ThreadId.make("archived-thread");
 const setup = Effect.gen(function* () {
   const cloud = makeMemoryCloud();
   yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+  yield* pauseTaskDone(cloud, userId, Environment.SCRATCH_PROJECT_ID);
   const threads = yield* CloudThreadService.pipe(Effect.provide(cloud.layerFor(userId)));
   const shell = yield* UserShell.pipe(Effect.provide(cloud.layerFor(userId)));
   yield* threads.launchThread(actor, {

@@ -150,6 +150,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+  const removedThreadSignals = yield* Queue.unbounded<ThreadId>();
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
     AVAILABLE_CONNECTION_STATE,
   );
@@ -240,7 +241,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
         Effect.andThen(options?.saveThread?.(environmentId, thread) ?? Effect.void),
       ),
     removeThread: (_environmentId, threadId) =>
-      Ref.update(removedThreads, (current) => [...current, threadId]),
+      Ref.update(removedThreads, (current) => [...current, threadId]).pipe(
+        Effect.andThen(Queue.offer(removedThreadSignals, threadId)),
+      ),
     loadServerConfig: () => Effect.succeedNone,
     saveServerConfig: () => Effect.void,
     loadVcsRefs: () => Effect.succeedNone,
@@ -305,6 +308,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     supervisorSession,
     savedThreads,
     removedThreads,
+    removedThreadSignals,
     wakeups,
     replaceSession: SubscriptionRef.set(
       supervisorSession,
@@ -672,7 +676,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("retains a deletion instead of restoring the old disk snapshot", () =>
+  it.effect("retains a deletion when the server confirms the thread is missing", () =>
     Effect.gen(function* () {
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
         snapshot: undefined,
@@ -685,15 +689,64 @@ describe("EnvironmentThreads", () => {
           if (update.kind !== "event") return yield* Effect.die("Expected an event");
           yield* Queue.offer(first.inputs, { ...update, sequence: 8 });
           yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+          expect(yield* Queue.take(first.removedThreadSignals)).toBe(THREAD_ID);
         }),
       );
-      const resumed = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
+      const resumed = yield* makeHarness({
+        cached: BASE_PROJECTION,
+        resumeCache,
+        httpSnapshot: { _tag: "missing" },
+      });
       const state = yield* awaitThreadState(
         resumed.observed,
         (value) => value.status === "deleted",
       );
+      expect(yield* Queue.take(resumed.removedThreadSignals)).toBe(THREAD_ID);
       expect(Option.isNone(state.data)).toBe(true);
-      expect(yield* Ref.get(resumed.loaderCalls)).toBe(0);
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(resumed.subscriptionCount)).toBe(0);
+    }),
+  );
+
+  it.effect("revalidates a deleted thread against the server snapshot on reopen", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const deletedThread = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
+          const update = deleted(8);
+          if (update.kind !== "event") return yield* Effect.die("Expected an event");
+          yield* Queue.offer(deletedThread.inputs, update);
+          yield* awaitThreadState(deletedThread.observed, (value) => value.status === "deleted");
+          expect(yield* Queue.take(deletedThread.removedThreadSignals)).toBe(THREAD_ID);
+        }),
+      );
+
+      const restoredProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "Restored thread" },
+      };
+      const reopened = yield* makeHarness({
+        resumeCache,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 9, projection: restoredProjection },
+        },
+      });
+      const subscription = yield* Queue.take(reopened.subscribed);
+      expect(subscription.afterSequence).toBe(9);
+      const state = yield* awaitThreadState(
+        reopened.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      expect(state.status).toBe("live");
+      expect(Option.getOrThrow(state.data).thread.title).toBe("Restored thread");
+      expect(yield* Ref.get(reopened.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(reopened.lastSubscribeAfterSequence)).toBe(9);
     }),
   );
 

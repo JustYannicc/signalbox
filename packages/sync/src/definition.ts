@@ -233,6 +233,15 @@ export type Input<Op extends OperationShape> = Op["input"]["Type"];
 export type Output<Op extends OperationShape> = Op["output"]["Type"];
 export type Failure<Op extends OperationShape> = Op["failure"]["Type"];
 
+/** Client reads use the authenticated channel's actor, rather than accepting one over the wire. */
+export interface SyncViewSource<Views extends HomeOperations["views"]> {
+  readonly view: <K extends keyof Views & string>(
+    operation: K,
+    input: Input<Views[K]>,
+    resume?: SyncCursor,
+  ) => Stream.Stream<ViewFrame<Output<Views[K]>>, Failure<Views[K]> | SyncFailure>;
+}
+
 /** Trusted ingress is a server capability supplied by the owning module, never public request data. */
 export interface SyncHome<
   Ingress,
@@ -247,7 +256,10 @@ export interface SyncHome<
     ViewFrame<Output<Definitions["views"][K]>>,
     Failure<Definitions["views"][K]> | SyncFailure
   >;
-  /** Key replay reauthorizes the actor before returning any stored output. */
+  /**
+   * A fresh fenced change returns only Pending, even when it removes the actor's access.
+   * Key replay and Committed output require current authorization.
+   */
   readonly change: <K extends keyof Definitions["changes"] & string>(
     actor: Definitions["actor"]["Type"],
     operation: K,
@@ -270,6 +282,11 @@ export interface SyncHome<
 
 /** The catalog supplies current authority; the adapter supplies its local send fence. */
 export interface AuthorizationGuard<Actor, Home, Permit> {
+  /**
+   * A change permit admits the transaction against its starting local policy. Its own
+   * policy writes do not invalidate that admission, but independent authority changes do.
+   * View and receipt requests resolve current access, including the transaction's writes.
+   */
   readonly authorize: (
     actor: Actor,
     request: {
@@ -279,7 +296,11 @@ export interface AuthorizationGuard<Actor, Home, Permit> {
       readonly input: unknown;
     },
   ) => Effect.Effect<Permit, SyncFailure>;
-  /** Must run immediately at enqueue, with no intervening await. */
+  /**
+   * Synchronous fence check, with no intervening await at the guarded boundary.
+   * For an admitted change, distinguish its own staged policy writes from independent
+   * revocation. Valid admission alone does not authorize protected output or receipt replay.
+   */
   readonly isCurrent: (permit: Permit) => boolean;
 }
 

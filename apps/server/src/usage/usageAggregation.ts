@@ -8,7 +8,11 @@ import type {
 } from "@t3tools/contracts";
 
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
-import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
+import {
+  cacheSavingsUsd,
+  priceUsage,
+  type RateTable,
+} from "@t3tools/provider-core/server/usagePricing";
 
 /**
  * `en-CA` yields ISO-ordered parts, which is why it is used here rather than

@@ -9,7 +9,6 @@ import {
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
-import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -17,10 +16,12 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as IdentityProvider from "./account/IdentityProvider.ts";
-import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
+import { API_HEADER, encodeApiCredential } from "./api/apiCredential.ts";
+import { serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
+import * as ClientActionTimings from "./observability/ClientActionTimings.ts";
 import type { KernelApi } from "./browser/KernelApi.ts";
 import type { KernelAuth } from "./browser/KernelAuth.ts";
 import * as PersonBrowsers from "./browser/PersonBrowsers.ts";
@@ -46,20 +47,20 @@ import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as TerminalTesting from "./thread/TerminalTesting.ts";
 import * as ThreadsLive from "./thread/ThreadsLive.ts";
-import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
-import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
-import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
+import * as ThreadSearchLive from "./search/ThreadSearchLive.ts";
+import * as SearchAuthority from "./search/SearchAuthority.ts";
+import * as SearchCursors from "./search/SearchCursors.ts";
+import * as SearchIndex from "./search/SearchIndex.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
-import * as PreviewState from "./thread/PreviewState.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as ThreadFeedback from "./thread/ThreadFeedback.ts";
 import * as ThreadSecretRequests from "./thread/ThreadSecrets.ts";
-import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
-import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as LearnerService from "./learner/LearnerService.ts";
 import * as LearnerJev from "./learner/LearnerJev.ts";
@@ -70,14 +71,10 @@ import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
-import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
-import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
-import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import * as ThreadPulls from "./thread/ThreadPulls.ts";
-import * as PullState from "./thread/PullState.ts";
 import * as ModelManifest from "./models/ModelManifest.ts";
 import * as ModelCatalog from "./models/ModelCatalog.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
@@ -115,6 +112,7 @@ import * as PoolSignIns from "./user/PoolSignIns.ts";
 import * as UserPools from "./user/UserPools.ts";
 import * as UserShell from "./user/UserShell.ts";
 import * as UserThreadStatus from "./user/UserThreadStatus.ts";
+import * as UserTerminals from "./user/UserTerminals.ts";
 import * as UserStore from "./user/UserStore.ts";
 import * as UserModelSettings from "./user/UserModelSettings.ts";
 import * as UserKeybindings from "./user/UserKeybindings.ts";
@@ -122,6 +120,9 @@ import * as UserAnalyticsPreference from "./user/UserAnalyticsPreference.ts";
 import * as UserTimezone from "./user/UserTimezone.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
+import * as UserTrash from "./trash/UserTrash.ts";
+import * as TrashResourcesLive from "./trash/trashResourcesLive.ts";
+import { TrashAlarm, layerPreview as layerTrashPreview } from "./trash/TrashWorkflow.ts";
 
 /** Test wiring: fixed config, a fake WorkOS, and user objects on in-memory SQLite. */
 
@@ -210,69 +211,7 @@ export const layerTestPeople = (people: TestPeople) =>
     }),
   );
 
-/**
- * One thread object's engine on SQLite at `filename`. Building the layer again
- * on the same file is what a Durable Object waking after eviction does.
- */
-export const layerThreadObject = (
-  filename: string,
-  machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
-  options: {
-    readonly drives?: boolean;
-    readonly driveDirectory?: Layer.Layer<DriveDirectory.DriveDirectory>;
-    /** Whether a thread's owner may change files in its drive; yes unless given. */
-    readonly writes?: (
-      userId: string,
-      driveId: string,
-    ) => Effect.Effect<boolean, UserDirectory.UserObjectError>;
-    /** Who an owner's commits are by; nobody (the fallback) unless given. */
-    readonly commitAuthor?: ThreadRunner.ThreadDrives["Service"]["commitAuthor"];
-    /** An owner's 1Password token; none connected unless given. */
-    readonly secretsToken?: ThreadRunner.ThreadSecrets["Service"]["token"];
-    readonly analytics?: Layer.Layer<
-      CloudAnalytics.CloudAnalytics,
-      never,
-      DiagnosticsStore.DiagnosticsStore | Crypto.Crypto
-    >;
-    /** Which models turns may start on; any, unless given. */
-    readonly models?: Layer.Layer<TurnModels.TurnModels>;
-    /** What writes runtime status notes; no model, unless given. */
-    readonly statusNoteModel?: Layer.Layer<StatusNoteModel.StatusNoteModel>;
-  } = {},
-) =>
-  ThreadRunner.layer.pipe(
-    Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
-    Layer.provideMerge(options.driveDirectory ?? Layer.empty),
-    Layer.provideMerge(
-      Layer.succeed(ThreadRunner.ThreadDrives, {
-        enabled: options.drives === true,
-        writes: options.writes ?? (() => Effect.succeed(true)),
-        commitAuthor: options.commitAuthor ?? (() => Effect.succeed(null)),
-      }),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ThreadRunner.ThreadSecrets, {
-        token: options.secretsToken ?? (() => Effect.succeed(null)),
-      }),
-    ),
-    Layer.provideMerge(ThreadBrowsing.layer),
-    Layer.provideMerge(
-      ThreadStatusNotes.layer.pipe(
-        Layer.provide(options.statusNoteModel ?? StatusNoteModel.layerNone),
-      ),
-    ),
-    Layer.provideMerge(ThreadSecretRequests.layer),
-    Layer.provideMerge(ThreadEngine.layer),
-    Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
-    Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
-    Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
-    Layer.provideMerge(machines),
-    Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(
-      Layer.mergeAll(ThreadStore.layer, SessionRows.layer, PreviewState.layer, PullState.layer),
-    ),
-    Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
-  );
+export const layerThreadObject = TerminalTesting.layerThreadObject;
 
 /** A user object's signing keys, as `UserObject` reads them. */
 const layerUserObjectTokens = CloudTokens.layerSessionSecret.pipe(
@@ -314,8 +253,8 @@ const makeUserRuntime = (
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
   noteReader: Layer.Layer<NoteReader.NoteReader>,
   modelCompletion: Layer.Layer<ModelCompletion.ModelCompletion>,
-) =>
-  ManagedRuntime.make(
+) => {
+  const services =
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
       Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
@@ -337,6 +276,7 @@ const makeUserRuntime = (
               Layer.succeed(LoginService.LoginAlarm, { armBy: () => Effect.void }),
               UserShell.layer,
               UserThreadStatus.layer,
+              UserTerminals.layer,
               DriveSharing.layer,
               DriveShortcuts.layer,
               DriveFiles.layer,
@@ -346,6 +286,19 @@ const makeUserRuntime = (
               SignInGrants.layer,
               PoolSignIns.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              TerminalTesting.layerCloudTerminals,
+              ThreadSearchLive.layer.pipe(
+                Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
+                Layer.provide(
+                  Layer.succeed(SearchIndex.SearchIndex, {
+                    generation: "1",
+                    disabled: false,
+                    deliver: () => Effect.void,
+                    query: () => Effect.succeed({ candidates: [], hasMore: false }),
+                    progress: () => Effect.succeed([]),
+                  }),
+                ),
+              ),
               UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PersonBrowsers.layer(kernel),
             ),
@@ -401,12 +354,21 @@ const makeUserRuntime = (
               layerUserObjectTokens,
             ),
           ),
-          Layer.provideMerge(observe),
+          Layer.provideMerge(Layer.mergeAll(observe, ClientActionTimings.layerOff)),
         ),
       ),
       Layer.merge(automations),
+    );
+  return ManagedRuntime.make(
+    UserTrash.layer.pipe(
+      Layer.provideMerge(TrashResourcesLive.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(Layer.succeed(TrashAlarm, { armBy: () => Effect.void }), layerTrashPreview),
+      ),
+      Layer.provideMerge(services),
     ),
   );
+};
 
 /**
  * The cloud's objects in memory: a user object per user id and a thread
@@ -452,7 +414,10 @@ export const makeMemoryCloud = (
           A,
           E,
           | ThreadEngine.ThreadEngine
+          | TerminalTesting.ThreadRunnerRequirement
+          | ThreadFeedback.ThreadFeedback
           | ThreadStore.ThreadStore
+          | TerminalTesting.TerminalOutboxRequirement
           | UserDirectory.UserDirectory
           | ThreadBrowsing.ThreadBrowsing
           | PullRequestSync.PullRequestSync
@@ -528,7 +493,7 @@ export const makeMemoryCloud = (
   };
   /** One thread object's services; its linked pull requests sync with `options.github`. */
   const layerThreadObjectInMemory = () =>
-    layerThreadObject(":memory:", MachineBackends.layerNone, {
+    TerminalTesting.layerThreadObject(":memory:", MachineBackends.layerNone, {
       drives: true,
       driveDirectory: Layer.succeed(DriveDirectory.DriveDirectory, {
         forDrive: (id) => DriveDirectory.handleFor(drives.apiFor(id)),
@@ -557,12 +522,16 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | TerminalTesting.ThreadRunnerRequirement
+        | ThreadFeedback.ThreadFeedback
         | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore
+        | TerminalTesting.TerminalOutboxRequirement
         | ThreadPulls.ThreadPulls
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
         | ThreadBrowsing.ThreadBrowsing
+        | TerminalTesting.ThreadTerminalsRequirement
         | PullRequestSync.PullRequestSync
         | PullRequestPolls.PullRequestPolls
       >,
@@ -617,6 +586,7 @@ export const makeMemoryCloud = (
             // One provider step per alarm in production; here, until the turn ends.
           }
           yield* deliverPendingSummary;
+          yield* TerminalTesting.deliverPendingTerminals;
           yield* deliverPendingEvents;
         }),
       );
@@ -647,6 +617,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | TerminalTesting.ThreadRunnerRequirement
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | ThreadBrowsing.ThreadBrowsing
@@ -679,6 +650,11 @@ export const makeMemoryCloud = (
       Effect.promise(() =>
         threadFor(threadId).run(ThreadStore.ThreadStore.use((store) => Effect.orDie(store.owner))),
       ),
+    /** Runs an effect against one thread's actual Runner service. */
+    threadRun: <A, E>(
+      threadId: string,
+      effect: Effect.Effect<A, E, TerminalTesting.ThreadRunnerRequirement>,
+    ) => Effect.promise(() => threadFor(threadId).run(effect)),
     /** The 1Password Environments a thread's turns get, top level first. */
     threadSecrets: (threadId: string) =>
       Effect.promise(() =>

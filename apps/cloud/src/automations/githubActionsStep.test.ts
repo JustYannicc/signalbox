@@ -30,6 +30,7 @@ import { makeRepo } from "../drive/driveTesting.ts";
 import { type FakeActionsJob, makeFakeActions } from "../github/actionsTesting.ts";
 import { makeFakeGitHub } from "../github/githubTesting.ts";
 import { makeMemoryCloud } from "../testing.ts";
+import { pauseTaskDone } from "./taskLifecycleTesting.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
 import * as CloudRpc from "../user/rpc.ts";
@@ -131,6 +132,7 @@ const setup = Effect.gen(function* () {
     remoteUrl: "https://github.com/owner/repo.git",
     destinationPath: "~/repo",
   });
+  yield* pauseTaskDone(cloud, userId, imported.projectId);
   yield* rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
     commandId: CommandId.make(`launch-${threadId}`),
     threadId,

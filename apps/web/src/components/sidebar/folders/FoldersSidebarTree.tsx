@@ -21,22 +21,41 @@ import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
 import {
   Building2Icon,
+  ChevronRightIcon,
   FolderClosedIcon,
   FolderOpenIcon,
   FolderPlusIcon,
   HardDriveIcon,
 } from "lucide-react";
-import { createContext, memo, useContext, type ReactNode } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { effectiveThreadKind } from "@t3tools/contracts/signalboxThreadKinds";
+import {
+  threadKindLookup,
+  threadKindWithCapabilityFallback,
+} from "@t3tools/client-runtime/state/signalboxThreadKinds";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 import { useComposerDraftStore } from "../../../composerDraftStore";
+import { cn } from "../../../lib/utils";
 import {
   folderEditableEnvironmentsAtom,
   retryEnvironmentFolders,
 } from "../../../state/signalboxFolders";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "../../../threadRoutes";
-import { cn } from "../../../lib/utils";
+import { useArchivedThreadSnapshots } from "../../../lib/archivedThreadsState";
+import { environmentThreadKindsAtom } from "../../../state/signalboxThreadKinds";
+import { useServerConfigs } from "../../../state/entities";
 import { DriveShareDialogHost } from "../../drives/DriveProjectShareMenuItem";
 import { NewSharedDriveButton } from "../../drives/NewSharedDriveButton";
+import { TaskLifecycleControl } from "../../taskLifecycle/TaskLifecycleControl";
 import { Button } from "../../ui/button";
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "../../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
@@ -58,7 +77,9 @@ import {
   folderThreadListKey,
   moveThreadMenuItem,
   movedThreadDestination,
+  recentlySettledFolderThreads,
   type FolderOwner,
+  type FolderListKey,
 } from "./folderSidebarModel";
 import { folderThreadSliceAtom } from "./folderThreads";
 import { SidebarThreadScopeContext, type SidebarThreadScope } from "./threadScope";
@@ -123,8 +144,50 @@ function HomeThreads(props: ListProps) {
   const renderProject = useContext(RenderProjectContext);
   const listKey = folderThreadListKey(environmentId, ownerId, home);
   const threads = useAtomValue(folderThreadSliceAtom(listKey));
+  const serverConfigs = useServerConfigs();
+  const supportsThreadKinds =
+    serverConfigs.get(environmentId)?.environment.capabilities.threadKinds;
+  const archived = useArchivedThreadSnapshots([environmentId]);
+  const kinds = useAtomValue(environmentThreadKindsAtom(environmentId));
+  const kindOf = kinds === null ? null : threadKindLookup(kinds);
+  const archivedThreads =
+    archived.snapshots
+      .find((entry) => entry.environmentId === environmentId)
+      ?.snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)) ?? [];
+  const recentlySettled = recentlySettledFolderThreads({
+    environmentId,
+    projectIds: owner.context.projectIds,
+    home,
+    homeOf: threadHomeLookup(snapshot),
+    liveThreads: threads,
+    archivedThreads,
+    isTask: (thread) =>
+      threadKindWithCapabilityFallback(
+        supportsThreadKinds,
+        kindOf === null ? null : effectiveThreadKind(kindOf(thread.id)).kind,
+      ) === "task",
+  });
+  const recentlySettledKeys = new Set(
+    recentlySettled.map((thread) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    ),
+  );
+  const visibleThreads = threads.filter(
+    (thread) =>
+      !recentlySettledKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+  );
+  const liveThreadMembership = threads
+    .map((thread) => thread.id)
+    .toSorted()
+    .join("\n");
+  const previousLiveThreadMembership = useRef(liveThreadMembership);
+  useEffect(() => {
+    if (previousLiveThreadMembership.current === liveThreadMembership) return;
+    previousLiveThreadMembership.current = liveThreadMembership;
+    archived.refresh();
+  }, [archived, liveThreadMembership]);
   // Only the list holding the open thread changes when it does.
-  const activeHere = threads.some(
+  const activeHere = visibleThreads.some(
     (thread) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
   )
@@ -132,7 +195,7 @@ function HomeThreads(props: ListProps) {
     : null;
   const homeOf = threadHomeLookup(snapshot);
   const scope: SidebarThreadScope = {
-    threads,
+    threads: visibleThreads,
     activeThreadKey: activeHere,
     settingsProjectKey: (thread) => projectKeys.get(thread.projectId),
     threadMenu: (thread) => ({
@@ -147,11 +210,77 @@ function HomeThreads(props: ListProps) {
   };
   const project = environment.ownerProjects.get(ownerId);
   const row = project && folderListRow(project, listKey);
-  if (!row || !renderProject || threads.length === 0) return null;
+  if (!row || !renderProject || (visibleThreads.length === 0 && recentlySettled.length === 0))
+    return null;
   return (
     <SidebarThreadScopeContext value={scope}>
-      {renderProject(environmentId, row, null, NO_SIBLINGS, null)}
+      {visibleThreads.length > 0
+        ? renderProject(environmentId, row, null, NO_SIBLINGS, null)
+        : null}
+      <RecentlySettledTasks
+        listKey={listKey}
+        threads={recentlySettled}
+        onReopen={archived.refresh}
+      />
     </SidebarThreadScopeContext>
+  );
+}
+
+function RecentlySettledTasks(props: {
+  readonly listKey: FolderListKey;
+  readonly threads: ReadonlyArray<ReturnType<typeof presentThreadShell>>;
+  readonly onReopen: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(5);
+  if (props.threads.length === 0) return null;
+  const visible = props.threads.slice(0, visibleCount);
+  const hiddenCount = props.threads.length - visible.length;
+  const listId = `recently-settled-${props.listKey}`;
+  return (
+    <li className="list-none">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={listId}
+        onClick={() => setExpanded((current) => !current)}
+        className={cn(
+          LEVEL_ITEM_ROW_CLASS,
+          "text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+        )}
+      >
+        <ChevronRightIcon
+          aria-hidden
+          className={cn("size-3.5 shrink-0 transition-transform", expanded && "rotate-90")}
+        />
+        <span className="truncate">Recently settled ({props.threads.length})</span>
+      </button>
+      {expanded ? (
+        <ul id={listId} className="m-0 flex list-none flex-col gap-0.5 ps-3">
+          {visible.map((thread) => (
+            <TaskLifecycleControl
+              key={`${thread.environmentId}:${thread.id}`}
+              environmentId={thread.environmentId}
+              threadId={thread.id}
+              shell={thread}
+              presentation="recent"
+              onReopen={props.onReopen}
+            />
+          ))}
+          {hiddenCount > 0 ? (
+            <li className="list-none">
+              <button
+                type="button"
+                onClick={() => setVisibleCount((count) => count + 5)}
+                className="flex h-7 w-full cursor-pointer items-center ps-2 text-left text-xs text-sidebar-muted-foreground/70 hover:text-sidebar-foreground"
+              >
+                Show {Math.min(hiddenCount, 5)} more
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </li>
   );
 }
 
@@ -164,6 +293,7 @@ function FilesRow(props: { name: string; onOpen: () => void }) {
           render={
             <button
               type="button"
+              aria-label="Files"
               onClick={props.onOpen}
               className={cn(
                 LEVEL_ITEM_ROW_CLASS,

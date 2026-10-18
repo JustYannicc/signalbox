@@ -183,6 +183,7 @@ it.effect("expands promised files through authenticated GitHub blobs and verifie
         begin: () => Effect.die("unused"),
         complete: () => Effect.die("unused"),
         abort: () => Effect.void,
+        cancel: () => Effect.succeed(false),
         recorded: Effect.succeed(null),
         adopt: () => Effect.void,
         disconnect: Effect.void,

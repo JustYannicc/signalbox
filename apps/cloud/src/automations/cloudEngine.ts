@@ -23,7 +23,8 @@ import * as PullRequestReadsModule from "../github/PullRequestReads.ts";
 import * as GitHubWebhooksModule from "../github/GitHubWebhooks.ts";
 import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import { projectOfDrive } from "../user/contextProjects.ts";
+import { contextOfProject, projectOfDrive } from "../user/contextProjects.ts";
+import { folderOfProject } from "../user/folderTree.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserFolders from "../user/UserFolders.ts";
 import * as UserStore from "../user/UserStore.ts";
@@ -163,20 +164,18 @@ const make = Effect.gen(function* () {
     yield* engine.drain;
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
   });
-  /**
-   * The alarm goes off for the next cron, or sooner to tell an instance an
-   * outcome again or to read a step's run on GitHub Actions.
-   */
+  /** The next scheduled work, including outcome delivery, ask sync and external runs. */
   const nextAlarmAt = Effect.all([
     runs.nextCronAt,
     runs.nextRedeliveryAt,
+    engine.nextAskSyncAt,
     engine.nextExternalPollAt,
     inbox.nextAt,
     githubHooks.nextAt,
   ]).pipe(
     Effect.map((times) => {
-      const due = times.filter((at) => at !== null);
-      return due.length === 0 ? null : Math.min(...due);
+      const pending = times.filter((at): at is number => at !== null);
+      return pending.length ? Math.min(...pending) : null;
     }),
   );
   const reconcileGitHubHooks = githubHooks.reconcile.pipe(
@@ -251,6 +250,8 @@ const make = Effect.gen(function* () {
     )(...call.args);
 
   return CloudAutomations.of({
+    answerAsk: (command, ask) =>
+      engine.answerSignalboxAsk(command, ask).pipe(Effect.andThen(flush)),
     save: (input, newThreadModel) =>
       Effect.gen(function* () {
         if (input.compiled === undefined) {
@@ -372,6 +373,19 @@ const make = Effect.gen(function* () {
         }),
       );
     },
+    executorRunActive: (input) =>
+      Effect.gen(function* () {
+        const { run } = yield* engine.getRun(input.runId);
+        if (run.status !== "running") return false;
+        const { automation } = yield* engine.get(run.automationId);
+        const state = yield* folders.state;
+        const home = folderOfProject(state.tree, automation.projectId);
+        const ownerId =
+          (home === null
+            ? contextOfProject(state.contexts, automation.projectId)
+            : state.tree.folders.find((folder) => folder.id === home)?.ownerId) ?? null;
+        return ownerId === input.ownerId && (home ?? ownerId) === input.level;
+      }).pipe(Effect.orElseSucceed(() => false)),
     workerModule: (automationId, version) =>
       runs.workerModule(automationId, version).pipe(
         Effect.flatMap((module) =>

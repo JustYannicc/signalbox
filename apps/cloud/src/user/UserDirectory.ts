@@ -7,6 +7,8 @@ import {
   type SourceControlProviderKind,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
+import type { ThreadSearchInput, ThreadSearchResult } from "@t3tools/contracts/signalboxSearch";
+import type * as ThreadSearch from "../search/ThreadSearch.ts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
@@ -33,13 +35,14 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
-import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiObject.ts";
+import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiCredential.ts";
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView } from "../localKeys/localModelAccess.ts";
 import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
 import type { ModelUsage } from "../models/ModelRecords.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type { SignInCheck } from "../signIn/SignInGrants.ts";
+import type { ExecutorTokenBinding } from "../executor/ExecutorTokenBindings.ts";
 import type {
   PreviewSetupApplied,
   PreviewSetupRedemption,
@@ -107,6 +110,18 @@ export type PullRequestDiffReply =
 
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
+  readonly trashProgress: (
+    id: string,
+  ) => Promise<import("../trash/TrashWorkflow.ts").TrashProgress>;
+  readonly searchThreads: (
+    actor: ThreadSearch.SearchActor,
+    input: ThreadSearchInput,
+  ) => Promise<ThreadSearchResult>;
+  readonly readSearchItem: (
+    actor: ThreadSearch.SearchActor,
+    threadId: Parameters<ThreadSearch.ThreadSearch["Service"]["readItem"]>[1],
+    itemId: string,
+  ) => Promise<Effect.Success<ReturnType<ThreadSearch.ThreadSearch["Service"]["readItem"]>>>;
   readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
@@ -144,6 +159,8 @@ export interface UserObjectApi {
   readonly shellSnapshot: () => Promise<unknown>;
   /** A thread object's summary outbox delivery, in its JSON encoding. */
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /** A thread object's terminal outbox delivery, in `terminalSync.wire.delivery` encoding. */
+  readonly recordTerminalEvents: (encoded: unknown) => Promise<void>;
   /**
    * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
    * user's thread's next domain events with their sequence, in order and in
@@ -171,6 +188,7 @@ export interface UserObjectApi {
     readonly returnTo: string;
   }) => Promise<ConnectStart>;
   readonly completeGitHubConnect: (grantId: string) => Promise<ConnectResult>;
+  readonly cancelGitHubConnect: (grantId: string) => Promise<boolean>;
   /** Ends a connect attempt that came back in another browser, and what it connected. */
   readonly abortGitHubConnect: (grantId: string) => Promise<void>;
   readonly disconnectGitHub: () => Promise<void>;
@@ -286,6 +304,11 @@ export interface UserObjectApi {
     readonly source: SignInSource;
     readonly origin: string;
   }) => Promise<SignInCheck>;
+  /** Rechecks a JTI's source grant and current role authority for Executor. */
+  readonly authorizeExecutorToken: (
+    claims: unknown,
+    binding: ExecutorTokenBinding,
+  ) => Promise<boolean>;
   /** Ends the thread's session in the person's browser, which saves its profile. */
   readonly endBrowser: (input: {
     readonly threadId: string;
@@ -343,6 +366,9 @@ export class UserDirectory extends Context.Service<
 
 // A record, so adding a method to `UserObjectApi` without wrapping it fails to compile.
 const METHODS = Object.keys({
+  trashProgress: true,
+  searchThreads: true,
+  readSearchItem: true,
   recordSignIn: true,
   profile: true,
   createSession: true,
@@ -354,12 +380,14 @@ const METHODS = Object.keys({
   syncOrganizations: true,
   shellSnapshot: true,
   recordThreadSummary: true,
+  recordTerminalEvents: true,
   threadEvents: true,
   driveEvents: true,
   receiveHook: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,
+  cancelGitHubConnect: true,
   abortGitHubConnect: true,
   disconnectGitHub: true,
   githubAccessToken: true,
@@ -392,6 +420,7 @@ const METHODS = Object.keys({
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,
+  authorizeExecutorToken: true,
   endBrowser: true,
   automationHost: true,
   automationWorkerModule: true,

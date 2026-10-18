@@ -20,11 +20,12 @@ import {
   type RunnerRefusal,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ThreadProjection,
+import {
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ThreadProjection,
   RunId,
-  ThreadId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { TurnItemId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -33,6 +34,14 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+
+import {
+  beginPreparation,
+  changePreparation,
+  preparationEvents,
+  type PreparationState,
+} from "../preparation/preparationState.ts";
+import { preparationBatch } from "../preparation/preparationBatch.ts";
 
 import type { DriveAuthorization, RemoteAuthorization } from "../ThreadAuthorization.ts";
 import { myDriveId } from "../../drive/driveAccess.ts";
@@ -63,7 +72,8 @@ import * as PullState from "../PullState.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
 import type { SecretEnvironmentNames } from "../turnPool.ts";
-import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
+import { MachineBackend, type MachineExit, type MachineStartupProblem } from "./MachineBackend.ts";
+import { MAX_STARTUP_RETRIES, startupFailure } from "./machineStartup.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
 import { isModelToken, type ModelGrant, modelToken } from "../ModelTokens.ts";
@@ -153,6 +163,12 @@ export const PreviewHold = Context.Reference<{
   defaultValue: () => ({ held: Effect.succeed(false), lastActiveAt: Effect.succeed(null) }),
 });
 
+/** A terminal holds the machine independently of a provider turn or preview socket. */
+export const TerminalHold = Context.Reference<{ readonly held: Effect.Effect<boolean> }>(
+  "@signalbox/cloud/thread/runner/ThreadRunner/TerminalHold",
+  { defaultValue: () => ({ held: Effect.succeed(false) }) },
+);
+
 /**
  * Whether this cloud stores drives, and whether a thread's owner may still
  * change files in its drive: asked of their own object on every drive call,
@@ -188,6 +204,12 @@ export type SessionAuthorization =
   | { readonly _tag: "granted"; readonly generation: number }
   | { readonly _tag: "denied"; readonly reason: string };
 
+/** A turn lease binding kept privately beside an Executor token's JTI. */
+export interface ExecutorTurnLease {
+  readonly runId: RunId;
+  readonly generation: number;
+}
+
 /** What the object must do for the lease, and when to look again. */
 export interface MachinePlan {
   /** Ask the backend for this machine. Idempotent per generation. */
@@ -212,11 +234,20 @@ export interface MachinePlan {
   readonly lost: boolean;
 }
 
+export type MachineReport = Omit<
+  Parameters<TurnDiagnostics["Service"]["machineReported"]>[0],
+  "generation" | "now"
+> & {
+  readonly generation?: number | undefined;
+  readonly startupProblem?: MachineStartupProblem | undefined;
+};
+
 /** What the connected Runner should be doing right now. */
 export interface RunnerWork {
   readonly workflowStops: ReadonlyArray<WorkflowStopRequest>;
   readonly connection: number;
   readonly generation: number;
+  readonly preparation?: PreparationState | null;
   readonly pull?: {
     readonly operation: PullOperation;
     readonly drive: DriveAccess;
@@ -272,10 +303,13 @@ export class ThreadRunner extends Context.Service<
     }) => Effect.Effect<void>;
     /** The backend confirmed a request. */
     readonly ensured: (generation: number) => Effect.Effect<void>;
+    readonly machineReported: (input: MachineReport) => Effect.Effect<void>;
     readonly work: Effect.Effect<RunnerWork>;
     readonly reconcile: Effect.Effect<MachinePlan>;
     /** The preview tunnel can connect before the main Runner socket, using the same lease. */
     readonly previewDrive: Effect.Effect<DriveAccess | null>;
+    /** A held terminal can prepare the thread's drive even without a provider turn. */
+    readonly terminalDrive: Effect.Effect<DriveAccess | null>;
     /** The pool moved the thread off its account during `runId` (`pool/threadAccounts.ts`). */
     readonly accountMoved: (runId: RunId, message: string) => Effect.Effect<void>;
     /** Whether the ModelGateway may serve `token` for `provider` right now. */
@@ -283,6 +317,8 @@ export class ThreadRunner extends Context.Service<
       token: string,
       provider: ModelGatewayProvider,
     ) => Effect.Effect<ModelAuthorization>;
+    /** Whether this exact user-message run still holds the connected Runner lease. */
+    readonly authorizeExecutorTurn: (input: ExecutorTurnLease) => Effect.Effect<boolean>;
     /**
      * The lease token, when `generation` holds the lease and `token` is its
      * token (a preview tunnel's hello), or when only `generation` is given.
@@ -399,6 +435,7 @@ const needsSecretUpgrade = (
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
+  const terminals = yield* TerminalHold;
   const previewState = yield* PreviewState.PreviewState;
   const store = yield* ThreadStore.ThreadStore;
   const pullState = yield* PullState.PullState;
@@ -420,6 +457,7 @@ const make = Effect.gen(function* () {
   );
 
   const lease = Effect.orDie(store.machine);
+  const terminalRemoteRun = (generation: number) => RunId.make(`terminal:lease:${generation}`);
 
   const ownerId = Effect.map(Effect.orDie(store.owner), (owner) => owner?.userId ?? null);
 
@@ -542,8 +580,10 @@ const make = Effect.gen(function* () {
             disconnectedAt: null,
             drains: hello.drains === true,
             steers: hello.steers === true,
+            preparations: hello.protocolVersion >= 7,
             pulls: hello.pulls === true,
             secretScopes: hello.secretScopes === true,
+            terminals: hello.terminalProcessId !== undefined,
             workflowStops: hello.workflowStops === true,
             runtimeResponses: hello.runtimeResponses === true,
             runtimeResponsesUpgrade:
@@ -562,94 +602,115 @@ const make = Effect.gen(function* () {
     });
 
   const batch: ThreadRunner["Service"]["batch"] = (input) =>
-    withLease(({ projection, lease, now }, ctx) => {
-      if (
-        projection === null ||
-        lease.status !== "connected" ||
-        input.generation !== lease.generation
-      ) {
-        return Effect.succeed(keep<BatchResult>({ _tag: "stale" }));
-      }
-      if (input.sequence <= lease.ackedSequence) {
-        return Effect.succeed(keep<BatchResult>({ _tag: "ack", sequence: input.sequence }));
-      }
-      if (input.sequence !== lease.ackedSequence + 1) {
-        return Effect.succeed(
-          keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence }),
-        );
-      }
-      const { events, commandOutput, undecodable, outgrown, drained } = runnerOutputBatch(
-        projection,
-        input.items.filter(
-          (item) => item.kind !== "workflow.stopped" || item.generation === input.generation,
-        ),
-        ctx,
-        lease.steers === true,
-      );
-      const recorded = Effect.andThen(
-        Effect.forEach(
+    withLease(({ projection, lease, now }, ctx) =>
+      Effect.gen(function* () {
+        if (
+          projection === null ||
+          lease.status !== "connected" ||
+          input.generation !== lease.generation
+        ) {
+          return keep<BatchResult>({ _tag: "stale" });
+        }
+        if (input.sequence <= lease.ackedSequence) {
+          return keep<BatchResult>({ _tag: "ack", sequence: input.sequence });
+        }
+        if (input.sequence !== lease.ackedSequence + 1) {
+          return keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence });
+        }
+        const currentPreparation = yield* engine.preparation;
+        const prepared = preparationBatch(
+          projection,
+          currentPreparation,
+          lease.generation,
           input.items,
-          (item) =>
-            item.kind === "git.pull.result"
-              ? pulls.reported(input.generation, item.result)
-              : item.kind === "git.pull.interrupted"
-                ? Effect.gen(function* () {
-                    const pending = yield* Effect.orDie(pullState.pending);
-                    if (pending?.id === item.id && pending.generation === input.generation) {
-                      yield* Effect.orDie(
-                        pullState.retry(
-                          item.id,
-                          input.generation,
-                          input.sequence,
-                          now + Math.min(1_000 * 2 ** pending.attempts, 30_000),
-                        ),
-                      );
-                    }
-                  })
-                : Effect.void,
-          { discard: true },
-        ),
-        Effect.andThen(
-          diagnostics.batch({
-            ...input,
-            liveRunId: harnessRun(projection)?.id ?? null,
-            runs: projection.runs,
-            now,
-          }),
-          undecodable.length === 0
-            ? Effect.void
-            : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
-        ),
-      );
-      const after = applyEvents(projection, events) ?? projection;
-      const scripts = attachedWorkflowScripts(after, workflowScriptsOf(input.items));
-      const acked = { _tag: "ack", sequence: input.sequence } as const;
-      // The Runner saved everything and stopped reporting: its machine is done
-      // either way, and only a light one's run moves up.
-      if (outgrown !== null) {
-        return Effect.andThen(
-          recorded,
-          Effect.map(
-            machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
-            (gone) => ({ ...gone, scripts, commandOutput, result: acked }),
+          ctx,
+          lease.preparations === true,
+        );
+        const {
+          events: runnerEvents,
+          commandOutput,
+          undecodable,
+          outgrown,
+          drained,
+        } = runnerOutputBatch(
+          applyEvents(projection, prepared.events) ?? projection,
+          prepared.items.filter(
+            (item) => item.kind !== "workflow.stopped" || item.generation === input.generation,
+          ),
+          ctx,
+          lease.steers === true,
+        );
+        const events = [...prepared.events, ...runnerEvents];
+        const preparation =
+          prepared.preparation === currentPreparation || prepared.preparation === null
+            ? {}
+            : { preparation: prepared.preparation };
+        const recorded = Effect.andThen(
+          Effect.forEach(
+            input.items,
+            (item) =>
+              item.kind === "git.pull.result"
+                ? pulls.reported(input.generation, item.result)
+                : item.kind === "git.pull.interrupted"
+                  ? Effect.gen(function* () {
+                      const pending = yield* Effect.orDie(pullState.pending);
+                      if (pending?.id === item.id && pending.generation === input.generation) {
+                        yield* Effect.orDie(
+                          pullState.retry(
+                            item.id,
+                            input.generation,
+                            input.sequence,
+                            now + Math.min(1_000 * 2 ** pending.attempts, 30_000),
+                          ),
+                        );
+                      }
+                    })
+                  : Effect.void,
+            { discard: true },
+          ),
+          Effect.andThen(
+            diagnostics.batch({
+              ...input,
+              liveRunId: harnessRun(projection)?.id ?? null,
+              runs: projection.runs,
+              now,
+            }),
+            undecodable.length === 0
+              ? Effect.void
+              : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
           ),
         );
-      }
-      return Effect.as(recorded, {
-        events,
-        scripts,
-        commandOutput,
-        machine: {
-          ...lease,
-          ackedSequence: input.sequence,
-          // Only an answer to a drain still asked for lets the machine go.
-          ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
-            ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
-            : {}),
-        },
-        result: acked,
-      });
-    });
+        const after = applyEvents(projection, events) ?? projection;
+        const scripts = attachedWorkflowScripts(after, workflowScriptsOf(input.items));
+        const acked = { _tag: "ack", sequence: input.sequence } as const;
+        // The Runner saved everything and stopped reporting: its machine is done
+        // either way, and only a light one's run moves up.
+        if (outgrown !== null) {
+          return yield* Effect.andThen(
+            recorded,
+            Effect.map(
+              machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
+              (gone) => ({ ...gone, ...preparation, scripts, commandOutput, result: acked }),
+            ),
+          );
+        }
+        return yield* Effect.as(recorded, {
+          events,
+          ...preparation,
+          scripts,
+          commandOutput,
+          machine: {
+            ...lease,
+            ackedSequence: input.sequence,
+            // Only an answer to a drain still asked for lets the machine go.
+            ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
+              ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
+              : {}),
+          },
+          result: acked,
+        });
+      }),
+    );
 
   /** Updates the lease when it is still at `generation`. */
   const updateLease = (
@@ -703,27 +764,42 @@ const make = Effect.gen(function* () {
     readonly detail: string;
     readonly moveUp: boolean;
     readonly events?: ReadonlyArray<OrchestrationV2DomainEvent>;
-  }) => {
-    const { lease, ctx, detail, events = [] } = input;
-    const after = events.length === 0 ? input.projection : applyEvents(input.projection, events);
-    const run = after === null ? undefined : harnessRun(after);
-    const moves = input.moveUp && run !== undefined && classOf(lease) === "light";
-    return Effect.as(
-      sessionEnded(lease, {
-        reason: moves ? "outgrown" : "error",
-        detail,
-        runId: run?.id ?? null,
-        now: input.now,
-      }),
-      {
-        events: [
-          ...events,
-          ...(after === null || run === undefined ? [] : recoverRunEvents(after, run, ctx, moves)),
-        ],
-        machine: { ...released(lease), movedUp: lease.movedUp === true || moves },
-      },
-    );
-  };
+  }) =>
+    Effect.gen(function* () {
+      const { lease, ctx, detail, events = [] } = input;
+      const preparation = yield* engine.preparation;
+      const settledPreparation =
+        preparation !== null && preparation.machineGeneration === lease.generation
+          ? preparation.status === "cancelling"
+            ? changePreparation(preparation, "cancelled", ctx)
+            : preparation.status === "preparing"
+              ? changePreparation(preparation, "failed", ctx)
+              : null
+          : null;
+      const after = events.length === 0 ? input.projection : applyEvents(input.projection, events);
+      const run = after === null ? undefined : harnessRun(after);
+      const moves = input.moveUp && run !== undefined && classOf(lease) === "light";
+      return yield* Effect.as(
+        sessionEnded(lease, {
+          reason: moves ? "outgrown" : "error",
+          detail,
+          runId: run?.id ?? null,
+          now: input.now,
+        }),
+        {
+          events: [
+            ...events,
+            ...(after === null || run === undefined
+              ? []
+              : settledPreparation?.status === "cancelled"
+                ? preparationEvents(after, settledPreparation, ctx)
+                : recoverRunEvents(after, run, ctx, moves)),
+          ],
+          machine: { ...released(lease), movedUp: lease.movedUp === true || moves },
+          ...(settledPreparation === null ? {} : { preparation: settledPreparation }),
+        },
+      );
+    });
 
   const ended: ThreadRunner["Service"]["ended"] = (generation, reason) =>
     withLease(({ projection, lease, now }, ctx) => {
@@ -792,6 +868,47 @@ const make = Effect.gen(function* () {
       lease.status === "none" || lease.ensuredAt !== null ? null : { ...lease, ensuredAt: now },
     );
 
+  const machineReported: ThreadRunner["Service"]["machineReported"] = (input) =>
+    withLease(({ projection, lease, now }) =>
+      Effect.gen(function* () {
+        if (projection === null) return keep(undefined);
+        const generation = input.generation ?? lease.generation;
+        yield* diagnostics.machineReported({ ...input, generation, now });
+        if (
+          input.operation !== "ensure" ||
+          generation !== lease.generation ||
+          lease.status !== "requested"
+        ) {
+          return keep(undefined);
+        }
+        const problem = input.startupProblem ?? input.status?.startupProblem;
+        const previous = lease.startup?.problem;
+        if (
+          (problem === undefined && lease.startup === undefined) ||
+          (lease.startup !== undefined &&
+            previous?.code === problem?.code &&
+            previous?.message === problem?.message &&
+            previous?.retryable === problem?.retryable)
+        ) {
+          return keep(undefined);
+        }
+        const backend = backends[classOf(lease)];
+        return {
+          events: [],
+          machine: {
+            ...lease,
+            startup: {
+              retries: lease.startup?.retries ?? 0,
+              deadline:
+                lease.startup?.deadline ?? (lease.requestedAt ?? now) + backend.connectTimeoutMs,
+              ...(problem === undefined ? {} : { problem }),
+            },
+          },
+          result: undefined,
+        };
+      }),
+    );
+
   /**
    * The owner's 1Password token, asked of their object outside the thread's
    * lock. A turn starts without it rather than wait: the Runner then reports
@@ -843,10 +960,47 @@ const make = Effect.gen(function* () {
           (item) => item.id === `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
         );
       const untraced = projection === null ? null : yield* turnFor(projection);
+      let preparation = yield* engine.preparation;
+      const previous = preparation;
+      const stoppingPrevious = preparation?.status === "cancelling";
+      if (
+        projection !== null &&
+        untraced !== null &&
+        lease.status === "connected" &&
+        upgrade.type === "none" &&
+        !stoppingPrevious
+      ) {
+        if (preparation === null || preparation.runId !== untraced.runId) {
+          preparation = beginPreparation(
+            projection,
+            untraced.runId,
+            lease.generation,
+            preparation,
+            ctx,
+          );
+        } else if (preparation.machineGeneration === 0) {
+          preparation = { ...preparation, machineGeneration: lease.generation };
+        }
+        if (preparation.status === "cancelling" && previous?.machineGeneration === 0) {
+          preparation = changePreparation(preparation, "cancelled", ctx);
+        } else if (lease.preparations !== true && preparation.status === "preparing") {
+          preparation = changePreparation(preparation, "handoff", ctx);
+        }
+      }
+      const eligible =
+        preparation === null ||
+        (preparation.runId === untraced?.runId &&
+          (preparation.status === "preparing" || preparation.status === "handoff"));
       const turn =
-        untraced === null || upgrade.type !== "none"
+        untraced === null || !eligible || upgrade.type !== "none"
           ? null
-          : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
+          : {
+              ...untraced,
+              ...(lease.preparations === true && preparation !== null
+                ? { preparationGeneration: preparation.generation }
+                : {}),
+              traceId: yield* withCrypto(traceIdOf(untraced.runId)),
+            };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const secrets = turn === null ? [] : yield* Effect.orDie(store.secrets);
       const upgrading = needsSecretUpgrade(lease, run, secrets.length > 0);
@@ -891,68 +1045,76 @@ const make = Effect.gen(function* () {
       const environmentNames =
         turn === null ? undefined : yield* Effect.orDie(store.secretEnvironmentNames);
       const settled = projection === null ? [] : lostWorkflowStopEvents(projection, lease, ctx);
-      return {
-        ...keep<RunnerWork>({
-          connection: lease.connection ?? 0,
-          workflowStops:
-            projection === null || lease.workflowStops !== true || lease.status !== "connected"
-              ? []
-              : pendingWorkflowStops(projection, lease.generation),
-          generation: lease.generation,
-          pull,
-          needsUpkeep:
-            upgrading ||
-            (upgrade.type !== "none" && upgrade.type !== "blocked") ||
-            blockedNoticeMissing ||
-            pending?.retry_at != null ||
-            (pending !== null && pending.attempts >= PullState.MAX_PULL_FAILURES) ||
-            needsUpkeep(
-              lease,
-              run !== undefined || pending !== null,
-              projection?.thread.archivedAt != null ||
-                projection?.thread.settledOverride === "settled"
+      const result: RunnerWork = {
+        connection: lease.connection ?? 0,
+        workflowStops:
+          projection === null || lease.workflowStops !== true || lease.status !== "connected"
+            ? []
+            : pendingWorkflowStops(projection, lease.generation),
+        generation: lease.generation,
+        preparation,
+        pull,
+        needsUpkeep:
+          upgrading ||
+          (upgrade.type !== "none" && upgrade.type !== "blocked") ||
+          blockedNoticeMissing ||
+          pending?.retry_at != null ||
+          (pending !== null && pending.attempts >= PullState.MAX_PULL_FAILURES) ||
+          needsUpkeep(
+            lease,
+            run !== undefined || pending !== null,
+            (yield* terminals.held) ||
+              (projection?.thread.archivedAt != null ||
+              projection?.thread.settledOverride === "settled"
                 ? false
-                : yield* previews.held,
-            ),
-          drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
-          turn: upgrading ? null : turn,
-          modelToken:
-            upgrading || turn === null || grant === undefined || lease.token === null
-              ? null
-              : yield* modelToken(lease.token, grant),
-          drive:
-            driveId === null || lease.token === null || projection === null || run === undefined
-              ? null
-              : {
-                  driveId,
-                  token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
-                  // Any drive may have a remote to fetch, or a shortcut to one (#142).
-                  remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
-                  // Its folders' `AGENTS.md`, as the turn was started with (#227), also
-                  // when this run continues it on another machine (#620).
-                  instructions: [
-                    ...(yield* Effect.orDie(store.instructions(continuedRun(projection, run).id))),
-                    ...(classOf(lease) === "light" ? [REQUEST_HEAVY_MACHINE_INSTRUCTIONS] : []),
-                  ],
-                },
-          sessions:
-            turn === null || lease.token === null || projection === null
-              ? null
-              : {
-                  token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation),
-                },
-          secrets: upgrading ? [] : secrets,
-          ...(environmentNames === undefined ? {} : { environmentNames }),
-          activeRunId: run?.id ?? null,
-          runtimeResponses:
-            projection === null || run === undefined ? [] : runtimeResponses(projection, run.id),
-          // Only a Runner that takes steers is handed them.
-          steers:
-            projection === null || run?.status !== "running" || lease.steers !== true
-              ? []
-              : steersOf(projection, run).map(runnerMessageOf),
-        }),
-        events: settled,
+                : yield* previews.held),
+          ),
+        drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
+        turn: upgrading ? null : turn,
+        modelToken:
+          upgrading || turn === null || grant === undefined || lease.token === null
+            ? null
+            : yield* modelToken(lease.token, grant),
+        drive:
+          driveId === null || lease.token === null || projection === null || run === undefined
+            ? null
+            : {
+                driveId,
+                token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
+                // Any drive may have a remote to fetch, or a shortcut to one (#142).
+                remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
+                // Its folders' `AGENTS.md`, as the turn was started with (#227), also
+                // when this run continues it on another machine (#620).
+                instructions: [
+                  ...(yield* Effect.orDie(store.instructions(continuedRun(projection, run).id))),
+                  ...(classOf(lease) === "light" ? [REQUEST_HEAVY_MACHINE_INSTRUCTIONS] : []),
+                ],
+              },
+        sessions:
+          turn === null || lease.token === null || projection === null
+            ? null
+            : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
+        secrets: upgrading ? [] : secrets,
+        ...(environmentNames === undefined ? {} : { environmentNames }),
+        activeRunId: run?.id ?? null,
+        runtimeResponses:
+          projection === null || run === undefined ? [] : runtimeResponses(projection, run.id),
+        // Only a Runner that takes steers is handed them.
+        steers:
+          projection === null || run?.status !== "running" || lease.steers !== true
+            ? []
+            : steersOf(projection, run).map(runnerMessageOf),
+      };
+      const changed = preparation !== previous ? preparation : null;
+      return {
+        events: [
+          ...settled,
+          ...(changed !== null && projection !== null
+            ? preparationEvents(projection, changed, ctx)
+            : []),
+        ],
+        ...(changed === null ? {} : { preparation: changed }),
+        result,
       };
     }),
   );
@@ -968,8 +1130,24 @@ const make = Effect.gen(function* () {
     return {
       driveId,
       token: yield* driveToken(current.token, projection.thread.id, current.generation),
-      // Remotes are authenticated for a live turn only.
       remoteToken: null,
+    } satisfies DriveAccess;
+  });
+
+  const terminalDrive: ThreadRunner["Service"]["terminalDrive"] = Effect.gen(function* () {
+    if (!(yield* terminals.held)) return null;
+    const access = yield* previewDrive;
+    if (access === null) return null;
+    const projection = yield* engine.projection;
+    const current = yield* lease;
+    if (projection === null || current.token === null || current.status === "none") return null;
+    return {
+      ...access,
+      remoteToken: yield* remoteToken(
+        current.token,
+        projection.thread.id,
+        terminalRemoteRun(current.generation),
+      ),
     } satisfies DriveAccess;
   });
 
@@ -1013,6 +1191,32 @@ const make = Effect.gen(function* () {
         secrets: secrets.values,
       } satisfies ModelAuthorization;
     });
+
+  const authorizeExecutorTurn: ThreadRunner["Service"]["authorizeExecutorTurn"] = (input) =>
+    Effect.gen(function* () {
+      if (!Number.isSafeInteger(input.generation) || input.generation < 1) return false;
+      const projection = yield* engine.projection;
+      if (projection === null) return false;
+      const run = harnessRun(projection);
+      if (run === undefined || run.id !== input.runId || run.threadId !== projection.thread.id) {
+        return false;
+      }
+      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      if (
+        message === undefined ||
+        message.threadId !== projection.thread.id ||
+        message.role !== "user"
+      ) {
+        return false;
+      }
+      const current = yield* lease;
+      return (
+        current.status === "connected" &&
+        current.token !== null &&
+        current.disconnectedAt === null &&
+        current.generation === input.generation
+      );
+    }).pipe(Effect.catchCause(() => Effect.succeed(false)));
 
   const accountMoved: ThreadRunner["Service"]["accountMoved"] = (runId, message) =>
     engine.apply((projection, ctx) =>
@@ -1075,22 +1279,31 @@ const make = Effect.gen(function* () {
       if (!drivesEnabled) return deny("This cloud stores no drives.");
       const projection = yield* engine.projection;
       const run = projection === null ? undefined : harnessRun(projection);
-      const current = projection === null ? null : yield* lease;
-      const leaseToken = current?.token ?? null;
-      if (projection === null || leaseToken === null || current?.status === "none") {
+      const current = yield* lease;
+      if (projection === null || current.status === "none" || current.token === null) {
         return deny("This thread has no machine.");
       }
       const pending = yield* Effect.orDie(pullState.pending);
-      if (run === undefined && pending === null) return deny("No turn is running on this thread.");
+      if (run === undefined && pending === null && !(yield* terminals.held)) {
+        return deny("This token is not for a live turn or terminal on this machine.");
+      }
       const threadId = projection.thread.id;
-      const forTurn =
-        run !== undefined && (yield* isRemoteToken(token, leaseToken, threadId, run.id));
-      const forPull =
+      const runGranted =
+        run !== undefined && (yield* isRemoteToken(token, current.token, threadId, run.id));
+      const terminalGranted =
+        (yield* terminals.held) &&
+        (yield* isRemoteToken(
+          token,
+          current.token,
+          threadId,
+          terminalRemoteRun(current.generation),
+        ));
+      const pullGranted =
         pending !== null &&
-        pending.generation === current?.generation &&
-        (yield* isRemoteOperationToken(token, leaseToken, threadId, pending.id));
-      if (!forTurn && !forPull) {
-        return deny("This token is not for the running turn or pull.");
+        pending.generation === current.generation &&
+        (yield* isRemoteOperationToken(token, current.token, threadId, pending.id));
+      if (!runGranted && !terminalGranted && !pullGranted) {
+        return deny("This token is not for a live turn or terminal on this machine.");
       }
       const owner = yield* Effect.orDie(store.owner);
       if (owner === null) return deny("This thread has no drive.");
@@ -1098,7 +1311,7 @@ const make = Effect.gen(function* () {
       // Fetching acts with the owner's GitHub connection, so it needs their access to the drive.
       if (drives._tag === "Some") {
         if (
-          forPull &&
+          pullGranted &&
           pending !== null &&
           !(yield* drives.value
             .writes(pending.actor_id, driveId)
@@ -1220,8 +1433,21 @@ const make = Effect.gen(function* () {
           }
         }
         const runId = run?.id ?? null;
+        const preparation = yield* engine.preparation;
+        const cancelled =
+          preparation?.status === "cancelling" &&
+          (preparation.machineGeneration === 0 ||
+            preparation.machineGeneration === lease.generation)
+            ? changePreparation(preparation, "cancelled", ctx)
+            : null;
         const upgrade = runtimeResponseUpgrade(lease, projection, run, now, DRAIN_TIMEOUT_MS);
-        if (upgrade.type !== "none" && projection !== null && run !== undefined) {
+        if (
+          cancelled === null &&
+          preparation?.status !== "cancelling" &&
+          upgrade.type !== "none" &&
+          projection !== null &&
+          run !== undefined
+        ) {
           const notice = () =>
             systemNoticeEvents(
               projection,
@@ -1311,20 +1537,37 @@ const make = Effect.gen(function* () {
         const release = (input: {
           readonly reason: StopReason;
           readonly detail: string;
-          readonly failure?: string;
+          readonly failure?: string | OrchestrationV2ProviderFailure;
           readonly recover?: boolean;
           readonly lost?: boolean;
           readonly idleSince?: number;
           readonly secretUpgradeRunId?: RunId;
         }) => {
+          const settledPreparation =
+            cancelled ??
+            (preparation?.status === "preparing" &&
+            (input.failure !== undefined || input.recover === true) &&
+            (preparation.machineGeneration === 0 ||
+              preparation.machineGeneration === lease.generation)
+              ? changePreparation(preparation, "failed", ctx)
+              : null);
           const events =
             projection === null || run === undefined
               ? []
-              : input.recover === true
-                ? recoverRunEvents(projection, run, ctx)
-                : input.failure === undefined
-                  ? []
-                  : failRunEvents(projection, run, unknownFailure(input.failure), ctx);
+              : cancelled !== null
+                ? preparationEvents(projection, cancelled, ctx)
+                : input.recover === true
+                  ? recoverRunEvents(projection, run, ctx)
+                  : input.failure === undefined
+                    ? []
+                    : failRunEvents(
+                        projection,
+                        run,
+                        typeof input.failure === "string"
+                          ? unknownFailure(input.failure)
+                          : input.failure,
+                        ctx,
+                      );
           const after = projection === null ? null : applyEvents(projection, events);
           const continues = pending !== null || (after !== null && harnessRun(after) !== undefined);
           return Effect.as(
@@ -1335,6 +1578,7 @@ const make = Effect.gen(function* () {
                 ...released(lease),
                 secretUpgradeRunId: input.secretUpgradeRunId ?? lease.secretUpgradeRunId,
               },
+              ...(settledPreparation === null ? {} : { preparation: settledPreparation }),
               result: {
                 ...UNNEEDED,
                 release: lease.generation,
@@ -1354,7 +1598,7 @@ const make = Effect.gen(function* () {
           });
         }
         if (lease.status === "none") {
-          const previewHeld = !closing && (yield* previews.held);
+          const previewHeld = (!closing && (yield* previews.held)) || (yield* terminals.held);
           if ((run === undefined && pending === null && !previewHeld) || projection === null) {
             return keep(UNNEEDED);
           }
@@ -1403,19 +1647,62 @@ const make = Effect.gen(function* () {
             });
           }
           // A preview can keep the request alive without a run to fail.
-          const previewHeld = !closing && (yield* previews.held);
+          const previewHeld = (!closing && (yield* previews.held)) || (yield* terminals.held);
           if (run === undefined && pending === null && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
-          const deadline = (lease.requestedAt ?? now) + backend.connectTimeoutMs;
-          if (now >= deadline) {
-            const failure = "No machine came up to run this turn.";
+          const deadline =
+            lease.startup?.deadline ?? (lease.requestedAt ?? now) + backend.connectTimeoutMs;
+          const retries = lease.startup?.retries ?? 0;
+          const problem = lease.startup?.problem;
+          const timedOut = now >= deadline;
+          if (timedOut || problem?.retryable === false) {
+            // No Runner has connected, so none could have received this run.
+            // Keep the VM and its in-progress restore while retrying the same request.
+            if (
+              timedOut &&
+              problem?.retryable !== false &&
+              backend.kind !== "none" &&
+              run?.startedAt === null &&
+              retries < MAX_STARTUP_RETRIES
+            ) {
+              yield* Effect.logWarning("retrying machine startup before handoff", {
+                generation: lease.generation,
+                attempt: retries + 2,
+                code: problem?.code ?? "machine_start_timeout",
+              });
+              return {
+                events: [],
+                machine: {
+                  ...lease,
+                  ensuredAt: null,
+                  startup: {
+                    retries: retries + 1,
+                    deadline: now + backend.connectTimeoutMs,
+                    problem,
+                  },
+                },
+                result: {
+                  ...IDLE,
+                  ensure:
+                    lease.token === null
+                      ? null
+                      : { generation: lease.generation, token: lease.token },
+                  wakeAt: now + ENSURE_RETRY_MS,
+                  runId,
+                },
+              };
+            }
+            const failure = startupFailure(
+              backend.kind,
+              backend.connectTimeoutMs,
+              retries,
+              problem,
+              timedOut,
+            );
             return yield* release({
               reason: "error",
-              detail:
-                run === undefined
-                  ? `No preview machine connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`
-                  : `No Runner connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`,
+              detail: failure.message,
               ...(run === undefined ? {} : { failure }),
             });
           }
@@ -1462,7 +1749,12 @@ const make = Effect.gen(function* () {
               : {}),
           });
         }
-        if (run !== undefined || pending !== null || (!closing && (yield* previews.held))) {
+        if (
+          run !== undefined ||
+          pending !== null ||
+          (!closing && (yield* previews.held)) ||
+          (yield* terminals.held)
+        ) {
           const busy = { ...BUSY, runId, wakeAt: pending?.retry_at ?? null };
           // Needed again: a drain under way no longer leads anywhere.
           return lease.idleSince === null && lease.drain === undefined
@@ -1580,11 +1872,14 @@ const make = Effect.gen(function* () {
     machineExited,
     disconnected,
     ensured,
+    machineReported,
     work,
     reconcile,
     previewDrive,
+    terminalDrive,
     accountMoved,
     authorizeModel,
+    authorizeExecutorTurn,
     authorizeDrive,
     authorizeSession,
     authorizeRemote,

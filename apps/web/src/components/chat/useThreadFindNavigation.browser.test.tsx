@@ -72,6 +72,32 @@ afterEach(async () => {
 });
 
 describe("find result navigation", () => {
+  it("reveals the source occurrence inside a separately scrolling work group", async () => {
+    container.innerHTML =
+      '<div data-timeline-row-id="work-group:first:details"><div style="height:200px;overflow-y:auto" data-tool-group-scroll><div style="height:2000px" data-thread-find-entry-id="second"><pre data-thread-find-text>COD4</pre></div></div></div>';
+    const inner = container.querySelector<HTMLElement>("[data-tool-group-scroll]")!;
+    inner.getBoundingClientRect = () => new DOMRect(0, 150, 800, 200);
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(0, 900 - inner.scrollTop, 40, 20),
+    });
+    await act(async () =>
+      root.render(
+        <Probe
+          {...props}
+          match={{ entryId: "second", runId: null, occurrence: 0 }}
+          entries={[{ id: "second" }]}
+        />,
+      ),
+    );
+    expect(inner.scrollTop).toBe(586);
+    const active = [...(CSS.highlights.get("t3-thread-find-active") ?? [])].filter(
+      (range): range is Range => range instanceof Range,
+    );
+    expect(active).toHaveLength(1);
+    expect(active[0]!.getBoundingClientRect().bottom).toBeLessThanOrEqual(350);
+  });
+
   it("retargets a pending first jump when progressive history moves the matching row", async () => {
     container.replaceChildren();
     let first!: () => void;

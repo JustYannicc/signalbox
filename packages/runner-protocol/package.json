@@ -19,6 +19,10 @@
       "types": "./src/PreviewServices.ts",
       "import": "./src/PreviewServices.ts"
     },
+    "./TerminalProtocol": {
+      "types": "./src/TerminalProtocol.ts",
+      "import": "./src/TerminalProtocol.ts"
+    },
     "./DriveProtocol": {
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"
@@ -38,6 +42,10 @@
     "./BranchProtocol": {
       "types": "./src/BranchProtocol.ts",
       "import": "./src/BranchProtocol.ts"
+    },
+    "./PullRequestReviewTools": {
+      "types": "./src/PullRequestReviewTools.ts",
+      "import": "./src/PullRequestReviewTools.ts"
     },
     "./AutomationProtocol": {
       "types": "./src/AutomationProtocol.ts",
@@ -70,6 +78,10 @@
     "./SecretScrubber": {
       "types": "./src/SecretScrubber.ts",
       "import": "./src/SecretScrubber.ts"
+    },
+    "./FeedbackProtocol": {
+      "types": "./src/FeedbackProtocol.ts",
+      "import": "./src/FeedbackProtocol.ts"
     },
     "./PullRequestTools": {
       "types": "./src/PullRequestTools.ts",

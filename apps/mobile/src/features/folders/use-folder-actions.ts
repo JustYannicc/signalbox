@@ -19,6 +19,7 @@ import type {
   FolderSetPhaseInput,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
+import { useNavigation } from "@react-navigation/native";
 import { useCallback, useState } from "react";
 import { Alert } from "react-native";
 
@@ -80,6 +81,7 @@ export function useFolderActions(input: {
 }) {
   const { environmentId, snapshot, pools, owners } = input;
   const run = useFolderCommandRunner();
+  const navigation = useNavigation();
   const createFolder = useAtomCommand(signalboxFolders.createFolder, QUIET);
   const updateFolder = useAtomCommand(signalboxFolders.updateFolder, QUIET);
   const moveFolder = useAtomCommand(signalboxFolders.moveFolder, QUIET);
@@ -164,6 +166,13 @@ export function useFolderActions(input: {
             setGitHubLend({ environmentId, input: { id: folder.id, lent: choice.lent } }),
           );
           return;
+        case "publish":
+          if (folder.files === undefined) return;
+          navigation.navigate("PublishFolder", {
+            environmentId: String(environmentId),
+            projectId: String(folder.files.projectId),
+          });
+          return;
         case "instructions":
           setEditing({
             level: { _tag: "folder", folderId: folder.id },
@@ -205,6 +214,7 @@ export function useFolderActions(input: {
       deleteFolder,
       environmentId,
       moveFolder,
+      navigation,
       owners,
       pools,
       requestCreateFolder,

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { EnvironmentId, TerminalSessionSnapshot, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  TerminalSessionSnapshot,
+  ThreadId,
+  type TerminalSummary,
+} from "@t3tools/contracts";
 
 import {
   applyTerminalAttachStreamEvent,
@@ -174,6 +179,62 @@ describe("terminal session reducers", () => {
 
     expect(snapshot).toMatchObject({ status: "running", lifecycleVersion: 0 });
     expect(restarted).toMatchObject({ status: "running", lifecycleVersion: 1 });
+  });
+
+  it("propagates terminal generation from metadata and keeps it fenced across deltas", () => {
+    const summary: TerminalSummary = {
+      generation: 7,
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      cwd: BASE_SNAPSHOT.cwd,
+      worktreePath: BASE_SNAPSHOT.worktreePath,
+      status: BASE_SNAPSHOT.status,
+      pid: BASE_SNAPSHOT.pid,
+      exitCode: BASE_SNAPSHOT.exitCode,
+      exitSignal: BASE_SNAPSHOT.exitSignal,
+      hasRunningSubprocess: false,
+      label: BASE_SNAPSHOT.label,
+      updatedAt: BASE_SNAPSHOT.updatedAt,
+    };
+
+    expect(combineTerminalSessionState(summary, EMPTY_TERMINAL_BUFFER_STATE)).toMatchObject({
+      generation: 7,
+    });
+
+    const attached = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, generation: 7 },
+    });
+    const cleared = applyTerminalAttachStreamEvent(attached, {
+      type: "cleared",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    const output = applyTerminalAttachStreamEvent(cleared, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "new shell output",
+    });
+
+    expect(cleared.generation).toBe(7);
+    expect(combineTerminalSessionState(summary, output).generation).toBe(7);
+
+    const restarted = applyTerminalAttachStreamEvent(output, {
+      type: "restarted",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      snapshot: { ...BASE_SNAPSHOT, generation: 8, pid: 456 },
+    });
+    const closed = applyTerminalAttachStreamEvent(restarted, {
+      type: "closed",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+
+    expect(restarted.generation).toBe(8);
+    expect(combineTerminalSessionState(summary, restarted).generation).toBe(8);
+    expect(closed).toMatchObject({ status: "closed", generation: 8 });
   });
 
   it("reduces terminal metadata snapshots, upserts, and removals", () => {

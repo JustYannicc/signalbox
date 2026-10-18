@@ -1061,7 +1061,12 @@ function AgentInstallTerminal({
 
       const wrote = await writeTerminal({
         environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
+        input: {
+          threadId: AGENT_ONBOARDING_THREAD_ID,
+          terminalId,
+          data: command,
+          ...(opened.value.generation !== undefined ? { generation: opened.value.generation } : {}),
+        },
       });
       if (activeSetupGenerationRef.current !== generation) return;
       setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");

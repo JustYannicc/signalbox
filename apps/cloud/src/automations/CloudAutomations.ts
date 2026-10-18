@@ -6,6 +6,7 @@ import type {
   OrchestrationV2DomainEvent,
   ProjectId,
 } from "@t3tools/contracts";
+import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import type {
   AutomationRunHost,
   HostStepStart,
@@ -63,6 +64,10 @@ export const hostOver = (
 export interface CloudAutomationsShape {
   /** Verifies and durably accepts a request before the Worker acknowledges it. */
   readonly receiveHook: (request: HookRequest) => Effect.Effect<HookAnswer, AutomationError>;
+  readonly answerAsk: (
+    command: typeof SignalboxAskAnswerCommand.Type,
+    ask: SignalboxAsk,
+  ) => Effect.Effect<void, AutomationError>;
   readonly save: (
     input: Omit<AutomationSaveInput, "defaults"> & { readonly compiled?: unknown },
     newThreadModel: (projectId?: ProjectId) => Effect.Effect<ModelSelection | null>,
@@ -97,6 +102,12 @@ export interface CloudAutomationsShape {
   ) => Effect.Effect<unknown, AutomationError>;
   /** A run's instance calling back: starting a step, ending a wait, finishing. */
   readonly host: (call: AutomationHostCall) => Effect.Effect<unknown, AutomationError>;
+  /** A running automation has authority only at its current home. */
+  readonly executorRunActive: (input: {
+    readonly runId: string;
+    readonly ownerId: string;
+    readonly level: string;
+  }) => Effect.Effect<boolean>;
   /** A version's code, for loading it as a Dynamic Worker. */
   readonly workerModule: (
     automationId: string,

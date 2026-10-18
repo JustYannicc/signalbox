@@ -1,3 +1,4 @@
+import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import type {
   OrchestrationV2Command,
   OrchestrationV2GetWorkflowScriptInput,
@@ -8,6 +9,7 @@ import type {
   OrchestrationV2CommandOutputError,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
+  OrchestrationV2DispatchCommandResult,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadHistoryPage,
@@ -15,6 +17,8 @@ import type {
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  WorktreeSetupSnapshot,
+  WorktreeSetupCancelInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -33,7 +37,25 @@ type ThreadError = ThreadReadError | ThreadCommandRejectedError;
 export class Threads extends Context.Service<
   Threads,
   {
+    readonly syncAutomationAsk: (
+      actor: Actor,
+      threadId: ThreadId,
+      ask: SignalboxAsk,
+    ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    readonly answerAskAsAssistant: (
+      actor: Actor,
+      caller: ThreadId,
+      command: typeof SignalboxAskAnswerCommand.Type,
+    ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
     /** A missing thread id is derived from actor + command id, so retrying a launch cannot duplicate it. */
+    readonly subscribePreparation: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Stream.Stream<WorktreeSetupSnapshot | null, ThreadReadError>;
+    readonly cancelPreparation: (
+      actor: Actor,
+      input: WorktreeSetupCancelInput,
+    ) => Effect.Effect<{ readonly cancelled: boolean }, ThreadError>;
     readonly launch: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,
@@ -42,7 +64,12 @@ export class Threads extends Context.Service<
     readonly dispatch: (
       actor: Actor,
       command: OrchestrationV2Command,
-    ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    ) => Effect.Effect<OrchestrationV2DispatchCommandResult, ThreadError>;
+    /** Adopts a newly published drive's own thread branch, using the current authoritative home. */
+    readonly refreshRemoteWorkspace: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, ThreadError>;
     readonly getWorkflowScript: (
       actor: Actor,
       input: OrchestrationV2GetWorkflowScriptInput,
