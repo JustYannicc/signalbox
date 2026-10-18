@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Owns Playwright resources outside the Effect runtime.
 import * as NodeCrypto from "node:crypto";
-import { relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import {
   INCOGNITO_BROWSER_PROFILE_ID,
@@ -351,14 +351,18 @@ export const makeRunnerBrowser = (
         throw failure("Only files in this thread's workspace can be opened in the preview.");
       let filePath: string;
       try {
-        filePath = fileURLToPath(parsed);
+        filePath = NodeURL.fileURLToPath(parsed);
       } catch {
         throw failure("Only files in this thread's workspace can be opened in the preview.");
       }
-      const relativePath = relative(resolve(options.workspaceRoot), resolve(filePath));
-      if (relativePath === ".." || relativePath.startsWith(`..${sep}`))
+      const relativePath = NodePath.relative(
+        NodePath.resolve(options.workspaceRoot),
+        NodePath.resolve(filePath),
+      );
+      if (relativePath === ".." || relativePath.startsWith(`..${NodePath.sep}`))
         throw failure("Only files in this thread's workspace can be opened in the preview.");
-      const segments = relativePath === "" ? [] : relativePath.split(sep).map(encodeURIComponent);
+      const segments =
+        relativePath === "" ? [] : relativePath.split(NodePath.sep).map(encodeURIComponent);
       path = `/${segments.join("/")}${parsed.search}${parsed.hash}`;
       port ??= 80;
     } else {

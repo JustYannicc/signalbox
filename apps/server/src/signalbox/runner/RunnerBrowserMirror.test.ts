@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - serves the page a real Chromium opens.
 import * as NodeHttp from "node:http";
-import { pathToFileURL } from "node:url";
+import * as NodeURL from "node:url";
 
 import type { AgentBrowserStep, AgentBrowserUpdate } from "@t3tools/contracts/signalboxPreviews";
 import { type Browser, chromium } from "playwright-core";
@@ -189,7 +189,7 @@ describe("the agent's browser, mirrored", () => {
       expect(minted).toBe(2);
 
       await browser.navigate({
-        url: `${pathToFileURL(`${process.cwd()}/README.md`).href}?source=workspace#intro`,
+        url: `${NodeURL.pathToFileURL(`${process.cwd()}/README.md`).href}?source=workspace#intro`,
       });
       expect(requests[2]).toEqual({ port: 80, path: "/README.md?source=workspace#intro" });
       expect(minted).toBe(3);

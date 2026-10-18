@@ -28,6 +28,8 @@ const response = (
 const safeRoot = (root: ReadonlyArray<string>) =>
   root.every(
     (segment) =>
+      // Control characters cannot name a preview root segment.
+      // eslint-disable-next-line no-control-regex
       segment !== "" && !segment.startsWith(".") && !/[\\/\u0000-\u001f\u007f%]/u.test(segment),
   );
 

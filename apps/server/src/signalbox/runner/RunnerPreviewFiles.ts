@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - serves the thread workspace through its preview tunnel.
-import { constants } from "node:fs";
-import * as FileSystem from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import {
   PREVIEW_FILE_MAX_BYTES,
@@ -20,8 +20,8 @@ export interface RunnerPreviewFiles {
 }
 
 const within = (root: string, target: string) => {
-  const path = relative(root, target);
-  return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+  const path = NodePath.relative(root, target);
+  return path !== ".." && !path.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(path);
 };
 
 const textResponse = (status: number, message: string, headers: Record<string, string> = {}) => {
@@ -42,9 +42,12 @@ const textResponse = (status: number, message: string, headers: Record<string, s
 const notFound = () => textResponse(404, "Not Found");
 
 /** Reads one workspace file without following links outside, or through symlinks within, the checkout. */
-export const makeRunnerPreviewFiles = (workspace: string): RunnerPreviewFiles => {
+export const makeRunnerPreviewFiles = (
+  workspace: string,
+  platform: NodeJS.Platform,
+): RunnerPreviewFiles => {
   let rootPromise: Promise<string> | undefined;
-  const root = () => (rootPromise ??= FileSystem.realpath(workspace));
+  const root = () => (rootPromise ??= NodeFSP.realpath(workspace));
 
   const read = async (method: string, requestPath: string): Promise<PreviewFileResponse> => {
     const answer = (response: PreviewFileResponse): PreviewFileResponse =>
@@ -65,11 +68,11 @@ export const makeRunnerPreviewFiles = (workspace: string): RunnerPreviewFiles =>
       const segments = path.split("/").filter((segment) => segment !== "");
       let current = workspaceRoot;
       for (const segment of segments) {
-        current = join(current, segment);
-        const item = await FileSystem.lstat(current).catch(() => null);
+        current = NodePath.join(current, segment);
+        const item = await NodeFSP.lstat(current).catch(() => null);
         if (item === null || item.isSymbolicLink()) return null;
       }
-      const item = await FileSystem.stat(current).catch(() => null);
+      const item = await NodeFSP.stat(current).catch(() => null);
       return item === null ? null : { path: current, item };
     };
 
@@ -91,22 +94,25 @@ export const makeRunnerPreviewFiles = (workspace: string): RunnerPreviewFiles =>
           body: null,
         });
       }
-      file = join(relativePath, "index.html");
+      file = NodePath.join(relativePath, "index.html");
       inspected = await inspect(file);
     }
     if (inspected === null || !inspected.item.isFile()) return answer(notFound());
 
-    const filePath = resolve(workspaceRoot, file);
-    const realPath = await FileSystem.realpath(filePath).catch(() => null);
+    const filePath = NodePath.resolve(workspaceRoot, file);
+    const realPath = await NodeFSP.realpath(filePath).catch(() => null);
     if (realPath === null || !within(workspaceRoot, realPath)) return answer(notFound());
 
-    let handle: Awaited<ReturnType<typeof FileSystem.open>> | undefined;
+    let handle: Awaited<ReturnType<typeof NodeFSP.open>> | undefined;
     try {
-      handle = await FileSystem.open(realPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      handle = await NodeFSP.open(
+        realPath,
+        NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+      );
       const openedStat = await handle.stat();
-      const descriptorPath = process.platform === "linux" ? `/proc/self/fd/${handle.fd}` : null;
+      const descriptorPath = platform === "linux" ? `/proc/self/fd/${handle.fd}` : null;
       if (descriptorPath !== null) {
-        const openedPath = await FileSystem.realpath(descriptorPath).catch(() => null);
+        const openedPath = await NodeFSP.realpath(descriptorPath).catch(() => null);
         if (openedPath === null || !within(workspaceRoot, openedPath)) return answer(notFound());
       }
       if (!openedStat.isFile()) return answer(notFound());

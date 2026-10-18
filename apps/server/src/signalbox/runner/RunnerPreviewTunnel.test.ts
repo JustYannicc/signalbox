@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - real dev servers on ephemeral ports.
 import * as NodeHttp from "node:http";
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type * as NodeNet from "node:net";
@@ -342,15 +342,15 @@ describe("RunnerPreviewTunnel", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const workspace = yield* Effect.promise(() =>
-          NodeFS.mkdtemp(NodePath.join(NodeOS.tmpdir(), "signalbox-preview-tunnel-")),
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "signalbox-preview-tunnel-")),
         );
         yield* Effect.addFinalizer(() =>
-          Effect.promise(() => NodeFS.rm(workspace, { recursive: true, force: true })),
+          Effect.promise(() => NodeFSP.rm(workspace, { recursive: true, force: true })),
         );
         yield* Effect.promise(async () => {
-          await NodeFS.mkdir(NodePath.join(workspace, "assets"));
-          await NodeFS.writeFile(NodePath.join(workspace, "index.html"), "<main>thread</main>");
-          await NodeFS.writeFile(
+          await NodeFSP.mkdir(NodePath.join(workspace, "assets"));
+          await NodeFSP.writeFile(NodePath.join(workspace, "index.html"), "<main>thread</main>");
+          await NodeFSP.writeFile(
             NodePath.join(workspace, "assets", "site.css"),
             "body { color: red; }",
           );

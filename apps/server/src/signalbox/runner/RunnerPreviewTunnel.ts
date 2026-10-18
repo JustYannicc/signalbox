@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   type DataFrame,
   PREVIEW_TUNNEL_VERSION,
@@ -151,7 +152,7 @@ export const previewTunnelTransport = (url: string): PreviewTunnelTransport => (
 export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
   input: PreviewTunnelInput,
 ): Effect.fn.Return<PreviewTunnel, never, Scope.Scope> {
-  const previewFiles = makeRunnerPreviewFiles(input.workspaceRoot);
+  const previewFiles = makeRunnerPreviewFiles(input.workspaceRoot, yield* HostProcess.Platform);
   const isMachinePort = (port: number) =>
     port !== THREAD_FILES_PREVIEW_PORT &&
     isPreviewPortAllowed(port) &&
