@@ -3,6 +3,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { isSignInHandBack } from "@t3tools/client-runtime/state/signalboxPoolSignIn";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { CopyIcon } from "lucide-react";
@@ -17,15 +18,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsRow } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-
-/** True for the address a provider's sign-in ends on: it carries the code to hand back. */
-function isCallbackAddress(text: string) {
-  try {
-    return new URL(text).searchParams.has("code");
-  } catch {
-    return false;
-  }
-}
 
 /**
  * A tab opened during the click, so the browser lets it through; the sign-in
@@ -45,9 +37,10 @@ function openPendingTab(account: string) {
  * so there is no signed-in state here, only "add another".
  *
  * When the environment runs on this machine the redirect lands on it
- * directly. From another device the provider redirects to a localhost page
- * that cannot load, and the user pastes that address back here; pasting it
- * finishes the sign-in.
+ * directly, and in the desktop app the app catches it. Otherwise the user
+ * pastes back what the sign-in ends on: the code a provider's page shows
+ * (`acceptsCode` without `acceptsCallback`), or the address of the localhost
+ * page that cannot load. A device code needs nothing handed back.
  */
 export function HubSignIn({
   environmentId,
@@ -85,6 +78,9 @@ export function HubSignIn({
       : null;
   const userCode = interaction?.type === "deviceCode" ? interaction.userCode : null;
   const acceptsCallback = interaction?.type === "browser" && interaction.acceptsCallback === true;
+  // The provider's own page shows a code to paste: there is no localhost page to copy from.
+  const showsCode =
+    interaction?.type === "browser" && interaction.acceptsCode === true && !acceptsCallback;
   const flowId = auth?.flowId ?? null;
   const callbackUrl = pasted.flowId === flowId ? pasted.value : "";
   // In the desktop app the app itself catches the provider's localhost redirect: one click.
@@ -135,6 +131,8 @@ export function HubSignIn({
   });
   const openSignInPage = useEffectEvent((url: string) => {
     if (!startedHere.current || openedUrl.current === url) return;
+    // The desktop catch opens the page itself once it listens.
+    if (desktopReceive && acceptsCallback) return;
     openedUrl.current = url;
     const tab = pendingTab.current;
     pendingTab.current = null;
@@ -191,10 +189,12 @@ export function HubSignIn({
     ? auth?.phase === "verifying"
       ? "Checking the account…"
       : userCode
-        ? `Open the sign-in page and enter this code to ${methodId ? "sign in to" : "add"} the ${account} account.`
-        : desktopReceive || !acceptsCallback
-          ? `Finish signing in to ${account} in your browser.`
-          : `Sign in to ${account} in the new tab. When it ends on a page that won't load, copy that page's address and paste it below.`
+        ? `Enter this code on the ${account} page that opened. Signalbox finishes on its own.`
+        : showsCode
+          ? `Sign in to ${account} in the new tab. It ends on a page with a code: copy it and paste it below.`
+          : desktopReceive || !acceptsCallback
+            ? `Finish signing in to ${account} in your browser.`
+            : `Sign in to ${account} in the new tab. When it ends on a page that won't load, copy that page's address and paste it below.`
     : auth?.phase === "failed"
       ? (auth.message ?? "Sign-in failed. Try again.")
       : methodId
@@ -260,9 +260,14 @@ export function HubSignIn({
                       environmentId,
                       input: {
                         instanceId,
-                        // The desktop app or a pasted address finishes it; a local hub must not
-                        // hold the redirect port the desktop app listens on.
-                        callbackMode: local && !desktopReceive ? "server" : "client",
+                        // A local hub takes the redirect itself; the desktop app catches it, so
+                        // the hub must not hold that port. Left out, the redirect can't reach
+                        // anything here, and Signalbox Cloud signs Claude in with a code to paste.
+                        ...(desktopReceive
+                          ? { callbackMode: "client" as const }
+                          : local
+                            ? { callbackMode: "server" as const }
+                            : {}),
                         ...(methodId ? { methodId } : {}),
                       },
                     }),
@@ -298,7 +303,7 @@ export function HubSignIn({
       ) : null}
       {/* Offered locally too: the redirect only reaches the hub when the browser runs beside it. */}
       {/* Gone while the account is checked: there is nothing left to hand back. */}
-      {active && acceptsCallback && flowId && !verifying ? (
+      {active && (acceptsCallback || showsCode) && flowId && !verifying ? (
         <form
           className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
           onSubmit={(event) => {
@@ -307,16 +312,24 @@ export function HubSignIn({
           }}
         >
           <Input
-            aria-label="Address of the page that did not load"
-            placeholder={
-              local ? "Page didn't finish? Paste its full address" : "Paste the full address"
+            aria-label={
+              showsCode ? "Code from the sign-in page" : "Address of the page that did not load"
             }
+            placeholder={
+              showsCode
+                ? "Paste the code"
+                : local
+                  ? "Page didn't finish? Paste its full address"
+                  : "Paste the full address"
+            }
+            autoComplete="off"
+            spellCheck={false}
             className="min-w-0 flex-1"
             value={callbackUrl}
             onChange={(event) => setPasted({ flowId, value: event.target.value })}
             onPaste={(event) => {
               const text = event.clipboardData.getData("text").trim();
-              if (!isCallbackAddress(text)) return;
+              if (!isSignInHandBack(text)) return;
               event.preventDefault();
               setPasted({ flowId, value: text });
               finish(text);

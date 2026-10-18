@@ -148,9 +148,8 @@ export function SidebarFeedbackButton() {
         title: "Couldn't send feedback",
         description: error instanceof Error ? error.message : "Something went wrong.",
       });
-    } finally {
-      setSending(false);
     }
+    setSending(false);
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {

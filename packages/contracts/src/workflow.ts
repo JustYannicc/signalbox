@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, RunId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { MAX_WEBHOOK_DELIVERY_AGE_MINUTES } from "./scheduledTask.ts";
 
 export * from "./automationEvents.ts";
@@ -68,6 +68,13 @@ export const WorkflowDuration = Schema.Struct({
   days: Schema.optional(DurationAmount),
 });
 export type WorkflowDuration = typeof WorkflowDuration.Type;
+
+/** A run-owned inbox boundary for waits that must ignore already-buffered events. */
+export const WorkflowEventCursor = Schema.Struct({
+  runId: RunId,
+  sequence: NonNegativeInt,
+});
+export type WorkflowEventCursor = typeof WorkflowEventCursor.Type;
 
 const EventFieldValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]);
 
@@ -179,6 +186,7 @@ export const WorkflowStepVerb = Schema.Literals([
   "notify",
   "sleep",
   "waitFor",
+  "eventCursor",
   "hook",
   "recall",
   "remember",

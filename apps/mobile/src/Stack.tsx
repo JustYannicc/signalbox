@@ -134,6 +134,7 @@ import {
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
+import { AddPoolAccountScreen } from "./features/accountHub/AddPoolAccountScreen"; // signalbox: pool sign-in (#205)
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
@@ -399,6 +400,11 @@ const SettingsContentStack = createV5SheetStackNavigator({
     SettingsUsageAccount: createNativeStackScreen({
       screen: UsageLimitAccountScreen,
       options: { title: "Account" },
+    }),
+    // signalbox: adding an account to a pool; its params name a sign-in, not a page to link to.
+    SettingsAddPoolAccount: createNativeStackScreen({
+      screen: AddPoolAccountScreen,
+      options: { title: "Add account" },
     }),
     SettingsOpenSourceLicenses: createNativeStackScreen({
       screen: SettingsOpenSourceLicensesRouteScreen,

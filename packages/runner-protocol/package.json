@@ -66,6 +66,10 @@
     "./SecretScrubber": {
       "types": "./src/SecretScrubber.ts",
       "import": "./src/SecretScrubber.ts"
+    },
+    "./PullRequestTools": {
+      "types": "./src/PullRequestTools.ts",
+      "import": "./src/PullRequestTools.ts"
     }
   },
   "scripts": {
