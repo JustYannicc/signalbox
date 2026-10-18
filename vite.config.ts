@@ -79,6 +79,8 @@ export default defineConfig({
   fmt: {
     ignorePatterns: [
       ".repos/**",
+      // signalbox: preserve byte-identical upstream workerd Storage contract.
+      "apps/cloud/src/kernel/storage.ts",
       // signalbox: preserve pinned Nimbus interpreter source; verify its prepared runtime separately.
       "apps/cloud/src/isolate/node/vm/vendor/**",
       // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
