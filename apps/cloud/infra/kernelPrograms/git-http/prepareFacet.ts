@@ -94,7 +94,11 @@ export async function prepareKernelGitHttpFacet(
   });
   const sources = await Promise.all(
     Object.keys(build.metafile.inputs)
-      .filter((path) => path !== "kernel-git-http-facet-entry.ts")
+      .filter(
+        (path) =>
+          path !== "kernel-git-http-facet-entry.ts" &&
+          !path.endsWith("/kernel-git-http-facet-entry.ts"),
+      )
       .sort()
       .map(async (path) => sourceRecord(cloudRoot, path)),
   );
