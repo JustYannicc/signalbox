@@ -21,6 +21,9 @@ class CaptureTileService : TileService() {
     CaptureTileState.setAdded(this, true)
     qsTile?.apply {
       state = Tile.STATE_INACTIVE
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        subtitle = applicationInfo.loadLabel(packageManager)
+      }
       updateTile()
     }
   }

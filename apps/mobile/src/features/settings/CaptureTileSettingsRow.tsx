@@ -21,17 +21,24 @@ export function CaptureTileSettingsRow() {
 
   useEffect(() => {
     if (!native) return;
+    const refresh = () => setAdded(native.isAdded());
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") setAdded(native.isAdded());
+      if (state === "active") refresh();
     });
-    return () => subscription.remove();
+    const focus = AppState.addEventListener("focus", refresh);
+    return () => {
+      subscription.remove();
+      focus.remove();
+    };
   }, [native]);
 
   if (!native) return null;
 
   const addTile = async () => {
     if (requesting) return;
-    if (added) {
+    const currentlyAdded = native.isAdded();
+    setAdded(currentlyAdded);
+    if (currentlyAdded) {
       Dialog.alert(
         "Capture is in Quick Settings",
         "To remove it, pull down Quick Settings, tap Edit, then remove Capture.",
@@ -49,10 +56,7 @@ export function CaptureTileSettingsRow() {
         );
       }
     } catch {
-      Dialog.alert(
-        "Couldn't add Capture",
-        "Try again while Signalbox is open, or add Capture from Quick Settings → Edit.",
-      );
+      Dialog.alert("Couldn't add Capture", "Try again, or add Capture from Quick Settings → Edit.");
     } finally {
       setRequesting(false);
     }
@@ -62,7 +66,7 @@ export function CaptureTileSettingsRow() {
     <SettingsRow
       icon="plus"
       label="Capture in Quick Settings"
-      value={added ? "Added" : requesting ? "Adding…" : "Add Capture"}
+      value={added ? "Added" : requesting ? "Adding…" : "Add Capture · or Quick Settings → Edit"}
       disabled={requesting}
       onPress={() => void addTile()}
     />
