@@ -2,6 +2,7 @@ import type { AutomationError, AutomationRunSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { runtimeModeWithin } from "./access.ts";
+import { preferSavedBlock } from "./blockResolution.ts";
 import { childSettlement } from "./childRuns.ts";
 import { automationDefaults } from "./columns.ts";
 import { fail } from "./errors.ts";
@@ -60,11 +61,8 @@ export const startChild = (
     let target: AutomationRow | undefined;
     for (const projectId of yield* deps.projects(automation.project_id)) {
       const candidate = yield* deps.store.getAutomationByName(projectId, name);
-      // Materialized built-ins don't shadow a saved block in a parent folder.
-      if (candidate && !candidate.builtin_slug) {
-        target = candidate;
-        break;
-      }
+      target = preferSavedBlock(target, candidate);
+      if (target !== undefined) break;
     }
     target ??= yield* deps.resolveBuiltIn(name, automation);
     if (!target) {

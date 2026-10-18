@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import * as TestClock from "effect/testing/TestClock";
 
 // Machines and the CLI compile saves (oxc can't run in workerd); tests compile the same way.
@@ -161,6 +162,45 @@ export default workflow(async (w) => w.ask("Continue?", { options: ["yes", "no"]
       expect(restored.thread.asks?.filter((ask) => ask.status === "pending")).toEqual([]);
     }),
   );
+  it.effect("lists block contracts through the public RPC without materializing built-ins", () =>
+    Effect.gen(function* () {
+      const { rpc, settingsRpc, engine } = yield* setup;
+      const source = `import { Schema as S } from "effect";
+export const meta = {
+  name: "Library typed",
+  description: "A block with declared contracts",
+  input: S.Struct({ issueId: S.String }),
+  output: S.Struct({ closed: S.Boolean }),
+} as const;
+export default workflow(async (_w, _input: { issueId: string }) => ({ closed: true }));`;
+      const saved = yield* rpc[AUTOMATION_WS_METHODS.automationsSave]({
+        source,
+        projectId: Environment.SCRATCH_PROJECT_ID,
+        compiled: compiledOf(source),
+      });
+      if (!saved.ok) return expect.unreachable();
+
+      const result = yield* settingsRpc[AUTOMATION_WS_METHODS.automationsListBlocks]({
+        projectId: Environment.SCRATCH_PROJECT_ID,
+      });
+      const block = result.blocks.find((candidate) => candidate.name === "Library typed");
+      expect(result.projectId).toBe(Environment.SCRATCH_PROJECT_ID);
+      expect(block).toMatchObject({
+        description: "A block with declared contracts",
+        source: { type: "folder", projectId: Environment.SCRATCH_PROJECT_ID },
+        availability: { enabled: true, hasLiveVersion: true, runtimeMode: "full-access" },
+      });
+      expect(block?.input).toBeDefined();
+      expect(block?.output).toBeDefined();
+      expect(SchemaRepresentation.fromJson(block!.input!).representation._tag).toBe("Objects");
+      expect(SchemaRepresentation.fromJson(block!.output!).representation._tag).toBe("Objects");
+      expect(
+        (yield* engine((workflow) => workflow.list())).some((automation) => automation.builtIn),
+      ).toBe(false);
+      expect(result.blocks.some((candidate) => candidate.source.type === "builtin")).toBe(true);
+    }),
+  );
+
   it.effect("snapshots the saved zone for cron versions and drafts", () =>
     Effect.gen(function* () {
       vi.useFakeTimers({ toFake: ["Date"] });

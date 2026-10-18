@@ -253,6 +253,7 @@ const make = Effect.gen(function* () {
   return CloudAutomations.of({
     answerAsk: (command, ask) =>
       engine.answerSignalboxAsk(command, ask).pipe(Effect.andThen(flush)),
+    listBlocks: (projectId) => engine.listBlocks(projectId),
     save: (input, newThreadModel) =>
       Effect.gen(function* () {
         if (input.compiled === undefined) {

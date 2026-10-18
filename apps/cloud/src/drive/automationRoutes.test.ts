@@ -32,6 +32,7 @@ const cloud = makeMemoryCloud({
     CloudAutomations,
     CloudAutomations.of({
       answerAsk: () => Effect.die("not in these tests"),
+      listBlocks: () => Effect.die("not in these tests"),
       save: () => Effect.die("not in these tests"),
       receiveHook: () => Effect.die("not in these tests"),
       threadEvents: () => Effect.void,
