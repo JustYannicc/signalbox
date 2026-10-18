@@ -88,6 +88,9 @@ const TABLES = [
     attempt INTEGER NOT NULL DEFAULT 1,
     error_detail_json TEXT,
     agent_run_id TEXT,
+    ask_json TEXT,
+    ask_synced_at TEXT,
+    ask_receipts_json TEXT NOT NULL DEFAULT '[]',
     external_json TEXT,
     poll_at TEXT,
     PRIMARY KEY (run_id, step_key)
@@ -207,6 +210,9 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "live_since", "TEXT"],
   ["signalbox_automation_versions", "worker_module", "TEXT"],
   ["signalbox_automation_runs", "instance_at", "TEXT"],
+  ["signalbox_automation_steps", "ask_json", "TEXT"],
+  ["signalbox_automation_steps", "ask_synced_at", "TEXT"],
+  ["signalbox_automation_steps", "ask_receipts_json", "TEXT NOT NULL DEFAULT '[]'"],
   ["signalbox_automation_steps", "external_json", "TEXT"],
   ["signalbox_automation_steps", "poll_at", "TEXT"],
 ];

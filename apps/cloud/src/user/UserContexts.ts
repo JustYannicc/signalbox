@@ -23,6 +23,9 @@ import * as UserDriveIndex from "./UserDriveIndex.ts";
  * reported. Leaving an organization hides its context, the sections
  * organizing it and its drives without deleting them, so rejoining brings
  * everything back. A context's projects are its drives (`contextProjects`).
+ *
+ * Each membership keeps the member's WorkOS role slugs for organization
+ * authority. They stay out of `SignalboxContext`: clients have no use for them.
  */
 
 type ContextRecord = Omit<SignalboxContext, "projectIds">;
@@ -43,6 +46,26 @@ export const PERSONAL_CONTEXT: SignalboxContext = {
   projectIds: [projectIdForContext(PERSONAL_CONTEXT_ID)],
 };
 
+/** An active organization membership, as its latest sync left it. */
+export interface OrganizationMembership {
+  readonly organizationId: SignalboxContextId;
+  /**
+   * WorkOS role slugs, sorted and verbatim. Nothing here interprets them;
+   * an unknown slug means no more than plain membership.
+   */
+  readonly roleSlugs: ReadonlyArray<string>;
+}
+
+/** One organization's membership, or its absence, and the revision it was read at. */
+export interface OrganizationMembershipRead {
+  /**
+   * The contexts revision. It only grows, and every membership change moves
+   * it, role changes and leaving included, so a removal is versioned too.
+   */
+  readonly revision: number;
+  readonly membership: OrganizationMembership | null;
+}
+
 export class UserContexts extends Context.Service<
   UserContexts,
   {
@@ -50,6 +73,10 @@ export class UserContexts extends Context.Service<
     readonly syncOrganizations: (
       organizations: ReadonlyArray<WorkOSOrganization>,
     ) => Effect.Effect<void, SqlError>;
+    /** The user's active membership in `organizationId`, null when they are not a member. */
+    readonly membership: (
+      organizationId: SignalboxContextId,
+    ) => Effect.Effect<OrganizationMembershipRead, SqlError>;
     /** The user's current contexts, Personal first. */
     readonly contexts: Effect.Effect<ReadonlyArray<SignalboxContext>, SqlError>;
     /** Just their ids: what every access check needs, without listing projects. */
@@ -78,8 +105,29 @@ export const createTables = Effect.gen(function* () {
   yield* sql`INSERT INTO contexts_state (id, revision) VALUES (1, 0)`;
 });
 
-const OrganizationRow = Schema.Struct({ id: SignalboxContextId, name: Schema.String });
+/** `UserStore`'s `0025` migration. Rows from before it hold no roles. */
+export const addRoleSlugs = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE organizations ADD COLUMN role_slugs TEXT NOT NULL DEFAULT '[]'`;
+});
+
+const RoleSlugs = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeRoleSlugs = Schema.encodeSync(RoleSlugs);
+const OrganizationRow = Schema.Struct({
+  id: SignalboxContextId,
+  name: Schema.String,
+  role_slugs: RoleSlugs,
+});
 const decodeOrganizationRows = Schema.decodeUnknownSync(Schema.Array(OrganizationRow));
+const decodeMembershipRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ role_slugs: Schema.NullOr(RoleSlugs), revision: Schema.Number })),
+);
+
+/** One spelling per set of slugs, so comparing them is comparing strings. */
+const normalRoleSlugs = (organization: WorkOSOrganization) =>
+  encodeRoleSlugs(
+    [...new Set(organization.roleSlugs ?? [])].filter((slug) => slug.length > 0).toSorted(),
+  );
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -87,13 +135,30 @@ const make = Effect.gen(function* () {
   // Sliding at one: a subscriber that falls behind needs only the latest state.
   const changed = yield* PubSub.sliding<void>(1);
 
-  const organizations = sql`SELECT id, name FROM organizations WHERE member = 1
+  const organizations = sql`SELECT id, name, role_slugs FROM organizations WHERE member = 1
     ORDER BY name COLLATE NOCASE, id`.pipe(Effect.map(decodeOrganizationRows));
 
   const contextIds: UserContexts["Service"]["contextIds"] = Effect.map(organizations, (orgs) => [
     PERSONAL_CONTEXT_ID,
     ...orgs.map((org) => org.id),
   ]);
+
+  // One statement, so the membership and its revision are read together.
+  const membership: UserContexts["Service"]["membership"] = (organizationId) =>
+    sql`SELECT organizations.role_slugs, contexts_state.revision FROM contexts_state
+      LEFT JOIN organizations
+        ON organizations.id = ${organizationId} AND organizations.member = 1
+      WHERE contexts_state.id = 1`.pipe(
+      Effect.map((rows): OrganizationMembershipRead => {
+        const [row] = decodeMembershipRows(rows);
+        const roleSlugs = row?.role_slugs ?? null;
+        return {
+          revision: row?.revision ?? 0,
+          membership: roleSlugs === null ? null : { organizationId, roleSlugs },
+        };
+      }),
+      Effect.withSpan("UserContexts.membership"),
+    );
 
   const contexts: UserContexts["Service"]["contexts"] = Effect.map(
     Effect.all([organizations, driveIndex.drives]),
@@ -119,17 +184,27 @@ const make = Effect.gen(function* () {
       const current = yield* organizations;
       const unchanged =
         current.length === orgs.length &&
-        orgs.every((org) => current.some((row) => row.id === org.id && row.name === org.name));
+        orgs.every((org) =>
+          current.some(
+            (row) =>
+              row.id === org.id &&
+              row.name === org.name &&
+              encodeRoleSlugs(row.role_slugs) === normalRoleSlugs(org),
+          ),
+        );
       // Most sign-ins change nothing; skip the writes and the pushes to every client.
       if (unchanged) return;
       yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* sql`UPDATE organizations SET member = 0`;
+          // A former member holds no roles; rejoining brings the current ones.
+          yield* sql`UPDATE organizations SET member = 0, role_slugs = '[]'`;
           yield* Effect.forEach(
             orgs,
             (org) =>
-              sql`INSERT INTO organizations (id, name, member) VALUES (${org.id}, ${org.name}, 1)
-                ON CONFLICT (id) DO UPDATE SET name = excluded.name, member = 1`,
+              sql`INSERT INTO organizations (id, name, member, role_slugs)
+                VALUES (${org.id}, ${org.name}, 1, ${normalRoleSlugs(org)})
+                ON CONFLICT (id) DO UPDATE SET name = excluded.name, member = 1,
+                  role_slugs = excluded.role_slugs`,
             { discard: true },
           );
           yield* sql`UPDATE contexts_state SET revision = revision + 1 WHERE id = 1`;
@@ -157,6 +232,7 @@ const make = Effect.gen(function* () {
 
   return UserContexts.of({
     syncOrganizations,
+    membership,
     contexts,
     contextIds,
     revision,
