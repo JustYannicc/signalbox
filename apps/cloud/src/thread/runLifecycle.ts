@@ -24,6 +24,7 @@ import {
   providerThreadEvent,
   runEvent,
   turnItemEvent,
+  threadEvent,
 } from "./threadEvents.ts";
 
 /**
@@ -72,7 +73,7 @@ export const nextQueuedRun = (projection: Projection): Run | undefined =>
 /**
  * The thread's provider thread as of `run`. A record on the same provider
  * keeps what the harness put there (its native session ref above all); a new
- * one, or one the thread switched provider on, starts without native state.
+ * one starts without native state and leaves previous provider threads intact.
  */
 export const providerThreadFor = (
   projection: Projection,
@@ -80,13 +81,18 @@ export const providerThreadFor = (
   status: OrchestrationV2ProviderThread["status"],
   ctx: DecisionContext,
 ): OrchestrationV2ProviderThread => {
-  const id = ids.providerThread(projection.thread.id);
-  const current = projection.providerThreads.find((candidate) => candidate.id === id);
+  const current =
+    projection.providerThreads.find((candidate) => candidate.id === run.providerThreadId) ??
+    projection.providerThreads
+      .filter((candidate) => candidate.ownerNodeId === null)
+      .toSorted((left, right) => (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0))[0];
   // A record stored on the harness's own instance (`claudeAgent` for a pool's
   // `claude_hub`) is the same provider: threads saved before the instance was
   // kept keep their session.
   const sameProvider =
     current !== undefined &&
+    current.driver === driverFor(run.providerInstanceId) &&
+    (current.nativeThreadRef === null || current.nativeThreadRef.driver === current.driver) &&
     (current.providerInstanceId === run.providerInstanceId ||
       current.providerInstanceId === runnerInstanceFor(run.providerInstanceId));
   if (current !== undefined && sameProvider) {
@@ -99,7 +105,10 @@ export const providerThreadFor = (
     };
   }
   return {
-    id,
+    id:
+      projection.providerThreads.length === 0
+        ? ids.providerThread(projection.thread.id)
+        : ids.providerThreadForRun(run.id),
     driver: driverFor(run.providerInstanceId),
     providerInstanceId: run.providerInstanceId,
     providerSessionId: null,
@@ -108,7 +117,7 @@ export const providerThreadFor = (
     nativeThreadRef: null,
     nativeConversationHeadRef: null,
     status,
-    firstRunOrdinal: current?.firstRunOrdinal ?? run.ordinal,
+    firstRunOrdinal: run.ordinal,
     lastRunOrdinal: run.ordinal,
     handoffIds: [],
     forkedFrom: null,
@@ -116,7 +125,7 @@ export const providerThreadFor = (
     contextUsage: null,
     nativeMetadata: null,
     goal: null,
-    createdAt: current?.createdAt ?? ctx.now,
+    createdAt: ctx.now,
     updatedAt: ctx.now,
   };
 };
@@ -134,7 +143,8 @@ export function startRunEvents(
   const threadId = projection.thread.id;
   const attemptId = ids.attempt(run.id);
   const rootNodeId = ids.rootNode(run.id);
-  const providerThreadId = ids.providerThread(threadId);
+  const providerThread = providerThreadFor(projection, run, "active", ctx);
+  const providerThreadId = providerThread.id;
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
   // The timer starts on activation, after any queue wait, and before provider startup.
   const workStartedAt =
@@ -173,7 +183,16 @@ export function startRunEvents(
     ...(message?.context === undefined ? {} : { context: message.context }),
   };
   return [
-    providerThreadEvent(ctx, threadId, providerThreadFor(projection, run, "active", ctx)),
+    providerThreadEvent(ctx, threadId, providerThread),
+    ...(projection.thread.activeProviderThreadId === providerThreadId
+      ? []
+      : [
+          threadEvent(ctx, "thread.metadata-updated", {
+            ...projection.thread,
+            activeProviderThreadId: providerThreadId,
+            updatedAt: ctx.now,
+          }),
+        ]),
     runEvent(
       ctx,
       projection.runs.some((candidate) => candidate.id === run.id) ? "run.updated" : "run.created",
