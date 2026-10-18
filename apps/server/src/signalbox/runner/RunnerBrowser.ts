@@ -194,9 +194,9 @@ const isThreadPreviewHost = (
 
 /** Resolves the URL shape already used by the shared browser tools. */
 const navigationUrl = (input: PreviewAutomationNavigateInput) => {
-  if (input.url !== undefined) return normalizePreviewUrl(input.url);
+  if (input.url !== undefined) return input.url;
   const target = input.target!;
-  if (target.kind === "url") return normalizePreviewUrl(target.url);
+  if (target.kind === "url") return target.url;
   const path = target.path ?? "";
   return `${target.protocol ?? "http"}://localhost:${target.port}${path === "" || path.startsWith("/") ? path : `/${path}`}`;
 };
