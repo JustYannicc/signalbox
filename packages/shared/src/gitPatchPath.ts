@@ -163,7 +163,7 @@ export function parseGitPatchHeaderPath(
   const header = side === "a" ? "--- " : "+++ ";
   if (!line.startsWith(header)) return null;
 
-  const token = line.slice(header.length).replace(/\r$/u, "");
+  const token = line.slice(header.length).replace(/\t?\r?$/u, "");
   const quoted = token.startsWith(QUOTE);
   if (quoted !== token.endsWith(QUOTE)) return null;
   const body = quoted ? token.slice(1, -1) : token;

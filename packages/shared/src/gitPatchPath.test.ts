@@ -120,4 +120,15 @@ describe("parseGitPatchHeaderPath", () => {
     expect(parseGitPatchHeaderPath("+++ b/", "b")).toBeNull();
     expect(parseGitPatchHeaderPath(undefined, "a")).toBeNull();
   });
+
+  it("reads Git's trailing header tab without removing spaces from the file name", () => {
+    expect(parseGitPatchHeaderPath("+++ b/src/ new.ts\t", "b")).toEqual({
+      _tag: "Path",
+      path: "src/ new.ts",
+    });
+    expect(parseGitPatchHeaderPath("--- a/src/ old.ts \t\r", "a")).toEqual({
+      _tag: "Path",
+      path: "src/ old.ts ",
+    });
+  });
 });
