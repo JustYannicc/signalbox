@@ -3,15 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prepare": "node infra/catalogRuntime/prepare.mjs",
+    "generate:catalog": "node infra/catalogRuntime/generate.ts && vp fmt src/catalog/lunora/schema.ts src/catalog/lunora/personal.ts src/catalog/lunora/personalRecovery.ts",
     "dev": "mkdir -p ../web/dist && node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",
     "dev:gateway": "node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev -c wrangler.model-gateway.jsonc --port 8788 --inspector-port 9230",
-    "typecheck": "node infra/syncProbe/prepare.mjs && node --experimental-strip-types infra/isolateProbe/prepare.ts && tsc-rs --noEmit && tsc-rs --noEmit -p tsconfig.infra.json",
+    "typecheck": "node infra/syncProbe/prepare.mjs && node infra/catalogRuntime/prepare.mjs && node --experimental-strip-types infra/isolateProbe/prepare.ts && tsc-rs --noEmit && tsc-rs --noEmit -p tsconfig.infra.json",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "@boxd-sh/sdk": "0.2.17",
     "@cloudflare/dynamic-workflows": "0.1.1",
     "@effect/sql-sqlite-do": "catalog:",
+    "@lunora/scheduler": "1.0.0-alpha.130",
     "@signalbox/account": "workspace:*",
     "@signalbox/api": "workspace:*",
     "@signalbox/automations": "workspace:*",

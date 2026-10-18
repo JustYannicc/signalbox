@@ -41,6 +41,8 @@ export const COMPATIBILITY_DATE = "2026-10-01";
  */
 export const DURABLE_OBJECT_BINDINGS = {
   USERS: "UserObject",
+  HOMES: "HomeObject",
+  CATALOG_SCHEDULER: "CatalogScheduler",
   SEARCH_INDEX: "SearchIndexObject",
   THREADS: "ThreadObject",
   POOLS: "PoolObject",

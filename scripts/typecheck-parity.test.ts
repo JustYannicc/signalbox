@@ -30,12 +30,13 @@ test("parity rejects unknown commands and the Cloud prerequisite in other worksp
   expect(() => compilerProjects("apps/cloud", "node other-check.mjs && tsc-rs --noEmit")).toThrow(
     "Unrecognized typecheck",
   );
-  expect(() => compilerProjects("apps/web", "node infra/syncProbe/prepare.mjs")).toThrow(
-    "Unrecognized typecheck",
-  );
-  expect(() =>
-    compilerProjects("apps/web", "node --experimental-strip-types infra/isolateProbe/prepare.ts"),
-  ).toThrow("Unrecognized typecheck");
+  for (const prerequisite of [
+    "node infra/syncProbe/prepare.mjs",
+    "node infra/catalogRuntime/prepare.mjs",
+    "node --experimental-strip-types infra/isolateProbe/prepare.ts",
+  ]) {
+    expect(() => compilerProjects("apps/web", prerequisite)).toThrow("Unrecognized typecheck");
+  }
 });
 
 test("parity rejects same-version Effect patches through compiler symlinks", () => {

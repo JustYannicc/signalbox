@@ -406,9 +406,10 @@ function shipOnlyReason(statement: string, existing: Set<string>, created: Set<s
 export function parseJsonc(text: string): unknown {
   const { code, bare } = parse(text);
   let json = code;
-  // Found in `bare`, so a comma inside a string is never touched.
-  for (const comma of bare.matchAll(/,(?=\s*[}\]])/g))
-    json = `${json.slice(0, comma.index)} ${json.slice(comma.index + 1)}`;
+  // Keep following string values visible, and use `bare` to exclude literal commas.
+  for (const comma of code.matchAll(/,(?=\s*[}\]])/g))
+    if (bare[comma.index] === ",")
+      json = `${json.slice(0, comma.index)} ${json.slice(comma.index + 1)}`;
   return JSON.parse(json);
 }
 

@@ -39,7 +39,11 @@ export const ${functions.pending} = internalQuery
   }))
   .query(async ({ ctx, args }) => {
     const { runtime } = await bindRecovery(ctx, args.home);
-    return runtime.pendingFences({ ctx: toLunoraReadContext(ctx), after: args.after ?? null });
+    const page = await runtime.pendingFences({ ctx: toLunoraReadContext(ctx), after: args.after ?? null });
+    return {
+      after: page.after,
+      receipts: page.receipts.map(({ receipt, fences }) => ({ receipt, fences: fences.map((fence) => ({ ...fence })) })),
+    };
   });
 
 export const ${functions.schedule} = internalMutation
@@ -65,7 +69,13 @@ export const ${functions.recover} = internalAction
   .action(async ({ ctx, args }) => {
     const { runtime, client } = await bindRecovery(ctx, args.home);
     return runtime.recoverFences({
-      pending: (after) => client.call(${names}.${functions.pending}, { home: args.home, after }),
+      pending: async (after) => {
+        const page = await client.call(${names}.${functions.pending}, { home: args.home, after });
+        return {
+          after: page.after,
+          receipts: page.receipts.map(({ receipt, fences }) => ({ receipt: SyncReceipt.make(receipt), fences })),
+        };
+      },
       scheduleNext: (after) => client.call(${names}.${functions.schedule}, { home: args.home, after }),
       acknowledge: async (receipt) => {
         await client.call(${names}.${functions.acknowledge}, { home: args.home, receipt });
