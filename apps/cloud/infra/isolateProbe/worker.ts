@@ -4,12 +4,10 @@ import { FACET_SOURCE } from "./facetSource.ts";
 import { JSPI_WASM } from "./wasmFixture.ts";
 import { probe } from "./generated/runtime.js";
 import {
-  openModuleTransport,
   MODULE_TRANSPORT_CONTENT_TYPE,
-  type ModuleTransport,
   DEFAULT_MODULE_TRANSPORT_LIMITS,
 } from "./moduleTransport.ts";
-import { preflightWrapper, withPreflight } from "./preflight.ts";
+import { ModuleUploadStore } from "./moduleUpload.ts";
 
 interface ProbeInput {
   id: string;
@@ -84,13 +82,16 @@ async function rejectedUpload(request: Request, error: unknown) {
 }
 
 export class ProbeSession extends DurableObject<Env> {
+  private uploads: ModuleUploadStore | undefined;
+
   override async fetch(request: Request) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/root/")) {
       url.pathname = url.pathname.slice("/root".length);
       return probe(new Request(url, request), this.ctx);
     }
-    let transport: ModuleTransport | undefined;
+    const started = Date.now();
+    let upload: Awaited<ReturnType<ModuleUploadStore["stage"]>> | undefined;
     try {
       let input: ProbeInput;
       let suppliedModules: Record<string, LegacyModule> | undefined;
@@ -100,13 +101,12 @@ export class ProbeSession extends DurableObject<Env> {
           MODULE_TRANSPORT_CONTENT_TYPE
         ) {
           if (!request.body) return new Response("Missing module transport body", { status: 400 });
-          transport = await openModuleTransport(request.body);
-          if (!probeInput(transport.input)) {
-            // Cancelling a forwarded body can abort the HTTP response instead of returning a 400.
-            await transport.discard();
+          this.uploads ??= new ModuleUploadStore(this.ctx.storage.sql);
+          upload = await this.uploads.stage(request.body);
+          if (!probeInput(upload.input)) {
             return new Response("Invalid probe input", { status: 400 });
           }
-          input = transport.input;
+          input = upload.input;
         } else {
           const value: unknown = await request.json();
           if (!probeInput(value) || !record(value))
@@ -120,22 +120,11 @@ export class ProbeSession extends DurableObject<Env> {
       } catch (error) {
         return rejectedUpload(request, error);
       }
-      const finishUpload = async () => {
-        try {
-          await transport?.discard();
-        } catch (error) {
-          return rejectedUpload(request, error);
-        }
-      };
-      const started = Date.now();
       try {
         if (input.count !== undefined) {
           if (!Number.isInteger(input.count) || input.count < 1 || input.count > 20) {
-            await transport?.discard();
             return new Response("Invalid worker count", { status: 400 });
           }
-          const uploadError = await finishUpload();
-          if (uploadError) return uploadError;
           const handles = Array.from({ length: input.count }, (_, i) =>
             this.env.LOADER.get(`${input.id}-${i}`, () => ({
               compatibilityDate: "2026-10-18",
@@ -162,61 +151,46 @@ export class ProbeSession extends DurableObject<Env> {
           });
         }
         if (input.generatedValue !== undefined && !Number.isSafeInteger(input.generatedValue)) {
-          await transport?.discard();
           return new Response("Invalid generated value", { status: 400 });
         }
-        const wrapper = transport
-          ? preflightWrapper(
-              transport.moduleNames,
-              input.mainModule ?? "main.js",
-              input.entrypoint ?? (input.mode === "worker" ? "default" : "ProbeFacet"),
-            )
-          : undefined;
-        // Legacy ids cannot contain ':', so they can never substitute a fixture for our preflight.
-        const worker = this.env.LOADER.get(
-          transport ? `framed:${input.id}` : input.id,
-          async () => {
-            const modules =
-              input.generatedValue !== undefined
+        const worker = this.env.LOADER.get(upload ? `staged:${input.id}` : input.id, async () => {
+          const modules =
+            input.generatedValue !== undefined
+              ? {
+                  "main.js": `export default {fetch(){return Response.json({value:${input.generatedValue},generated:true})}}`,
+                }
+              : upload
+                ? await upload.readModules()
+                : (suppliedModules ?? {
+                    "main.js": FACET_SOURCE,
+                    "esm.js": "export const answer = 42;",
+                    "suspend.wasm": { wasm: new Uint8Array(JSPI_WASM).buffer },
+                  });
+          const decodedModules = Object.fromEntries(
+            Object.entries(modules).map(([name, module]) => [
+              name,
+              typeof module === "object" && "wasmBase64" in module
                 ? {
-                    "main.js": `export default {fetch(){return Response.json({value:${input.generatedValue},generated:true})}}`,
+                    wasm: Uint8Array.from(atob(module.wasmBase64), (c) => c.charCodeAt(0)).buffer,
                   }
-                : transport
-                  ? await transport.readModules()
-                  : (suppliedModules ?? {
-                      "main.js": FACET_SOURCE,
-                      "esm.js": "export const answer = 42;",
-                      "suspend.wasm": { wasm: new Uint8Array(JSPI_WASM).buffer },
-                    });
-            const decodedModules = Object.fromEntries(
-              Object.entries(modules).map(([name, module]) => [
-                name,
-                typeof module === "object" && "wasmBase64" in module
-                  ? {
-                      wasm: Uint8Array.from(atob(module.wasmBase64), (c) => c.charCodeAt(0)).buffer,
-                    }
-                  : module,
-              ]),
-            );
-            if (wrapper) decodedModules[wrapper.moduleName] = { js: wrapper.source };
-            return {
-              compatibilityDate: "2026-10-18",
-              compatibilityFlags: ["nodejs_compat"],
-              mainModule: wrapper?.moduleName ?? input.mainModule ?? "main.js",
-              modules: decodedModules,
-              ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
-            };
-          },
-        );
+                : module,
+            ]),
+          );
+          return {
+            compatibilityDate: "2026-10-18",
+            compatibilityFlags: ["nodejs_compat"],
+            mainModule: input.mainModule ?? "main.js",
+            modules: decodedModules,
+            ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
+          };
+        });
         const invoke = async () => {
           const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`);
           const stub =
             input.mode === "worker"
-              ? worker.getEntrypoint(wrapper?.fixtureExport ?? input.entrypoint)
+              ? worker.getEntrypoint(input.entrypoint)
               : this.ctx.facets.get(input.id, () => ({
-                  class: worker.getDurableObjectClass(
-                    wrapper?.fixtureExport ?? input.entrypoint ?? "ProbeFacet",
-                  ),
+                  class: worker.getDurableObjectClass(input.entrypoint ?? "ProbeFacet"),
                 }));
           const response = await stub.fetch(probeRequest);
           return Response.json({
@@ -227,19 +201,8 @@ export class ProbeSession extends DurableObject<Env> {
             result: await response.json(),
           });
         };
-        if (wrapper && transport) {
-          const upload = transport;
-          return await withPreflight(
-            (request) => worker.getEntrypoint(wrapper.entrypoint).fetch(request),
-            () => upload.discard(),
-            invoke,
-            wrapper.identity,
-          );
-        }
         return await invoke();
       } catch (error) {
-        const uploadError = await finishUpload();
-        if (uploadError) return uploadError;
         return Response.json({
           id: input.id,
           target: input.mode ?? "facet",
@@ -248,7 +211,7 @@ export class ProbeSession extends DurableObject<Env> {
         });
       }
     } finally {
-      await transport?.cancel();
+      upload?.dispose();
     }
   }
 }

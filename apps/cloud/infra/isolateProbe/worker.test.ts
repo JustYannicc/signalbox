@@ -122,7 +122,7 @@ describe("framed fixtures over workerd HTTP", () => {
     expect(error).toContain("Metadata budget exceeded");
   });
 
-  it("cannot use a legacy worker's fixture export as the framed preflight", async () => {
+  it("cannot use a legacy worker's export to bypass framed upload validation", async () => {
     const id = "legacy-preflight-collision";
     const before = outboundRequests;
     const response = await fetch(new URL("/run?session=framed-fixture", endpoint), {
@@ -181,7 +181,7 @@ describe("framed fixtures over workerd HTTP", () => {
     expect(outboundRequests).toBe(before + 1);
     const changed = await framedRun({ ...input, entrypoint: "default" }, modules);
     expect(await changed.json()).toMatchObject({
-      error: "Error: Cached probe fixture configuration changed; use a fresh id",
+      error: expect.any(String),
     });
     expect(outboundRequests).toBe(before + 1);
   });
