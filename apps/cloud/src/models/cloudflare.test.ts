@@ -158,7 +158,13 @@ describe("Cloudflare ModelAccess", () => {
         expect(f.forwards).toEqual([
           {
             name: "pool-owner:work",
-            args: [{ userId: "requester" }, "/v1/messages?stream=true", request, undefined],
+            args: [
+              { userId: "requester" },
+              "/v1/messages?stream=true",
+              request,
+              undefined,
+              undefined,
+            ],
           },
         ]);
         expect(f.lookups).toEqual(["users:requester", "pools:pool-owner:work"]);
@@ -183,7 +189,13 @@ describe("Cloudflare ModelAccess", () => {
         expect(f.forwards).toEqual([
           {
             name: "pool-owner:work",
-            args: [{ userId: "requester" }, "/v1/messages", request, "thread-a"],
+            args: [
+              { userId: "requester" },
+              "/v1/messages",
+              request,
+              "thread-a",
+              { runId, traceId: "trace-1" },
+            ],
           },
         ]);
         expect(

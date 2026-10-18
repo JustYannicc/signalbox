@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as Evlog from "../observability/Evlog.ts";
+import { drainsSettled } from "../observability/evlogWorkers.ts";
 import * as Platform from "../platform.ts";
 import {
   POOL_OBJECT_JURISDICTION,
@@ -25,6 +26,7 @@ import {
 } from "./PreviewLinkRegistry.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
+import { PoolTelemetry } from "./PoolTelemetry.ts";
 
 /**
  * One per account pool, named by `poolObjectName`, always in the EU
@@ -56,8 +58,18 @@ const scheduleEarlierAlarm = async (storage: DurableObjectStorage, at: number) =
 };
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (ctx: DurableObjectState) =>
-  ManagedRuntime.make(
+const makeRuntime = (ctx: DurableObjectState) => {
+  const emit = (action: string, fields: Record<string, unknown>) => {
+    const event = { ...fields, action, pool: { id: ctx.id.toString() } };
+    try {
+      if (typeof fields.status === "number" && fields.status >= 500) log.error(event);
+      else log.info(event);
+      ctx.waitUntil(drainsSettled());
+    } catch {
+      // Telemetry must never fail a pool request.
+    }
+  };
+  return ManagedRuntime.make(
     PoolEngine.layer.pipe(
       Layer.provideMerge(PoolLinks.layer),
       Layer.provideMerge(
@@ -69,8 +81,7 @@ const makeRuntime = (ctx: DurableObjectState) =>
               ).exports.PoolStoreGateway({ props: { objectId: ctx.id.toString() } }),
               wakeAt: (at) => ctx.waitUntil(scheduleEarlierAlarm(ctx.storage, at)),
               // Each container milestone is a wide event of its own.
-              log: (action, fields) =>
-                log.info({ ...fields, action, pool: { id: ctx.id.toString() } }),
+              log: emit,
             })
           : PoolContainer.layerUnavailable,
       ),
@@ -79,8 +90,12 @@ const makeRuntime = (ctx: DurableObjectState) =>
         Layer.mergeAll(SqliteClient.layer({ storage: ctx.storage }), Platform.layerCrypto),
       ),
       Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil(ctx))),
+      Layer.provideMerge(
+        Layer.succeed(PoolTelemetry, { submit: (event) => emit(event.action, { ...event }) }),
+      ),
     ),
   );
+};
 
 export class PoolObject
   extends DurableObject<PoolObjectEnv>
