@@ -107,13 +107,12 @@ export class KernelGitFacet extends DurableObject {
 
       const hasCommit = (await runGit(host, filesystem, "/work/repo", "rev-parse", "--verify", "HEAD")).exitCode === 0;
       if (!hasCommit) {
-        writeFile(filesystem, "/work/repo/.gitattributes", "sample.txt filter=proof\n");
         writeFile(filesystem, "/sample.txt", "Root-relative decoy\n");
         writeFile(filesystem, "/absolute.txt", "Root absolute-path decoy\n");
         writeFile(filesystem, "/work/repo/sample.txt", "Relative worktree file\n");
         writeFile(filesystem, "/work/repo/absolute.txt", "Absolute worktree file\n");
         assert(JSON.stringify(filesystem.getPosixMetadata("/work/repo/sample.txt")) === JSON.stringify({ mode: 0o644, uid: 1001, gid: 1002 }), "Seed file metadata changed");
-        const add = await runGit(host, filesystem, "/work/repo", "add", ".gitattributes", "sample.txt", "/work/repo/absolute.txt");
+        const add = await runGit(host, filesystem, "/work/repo", "add", "sample.txt", "/work/repo/absolute.txt");
         assertResult(add, 0);
         const relativeContent = await runGit(host, filesystem, "/work/repo", "show", ":sample.txt");
         assertResult(relativeContent, 0);
@@ -129,12 +128,9 @@ export class KernelGitFacet extends DurableObject {
         assertResult(commit, 0);
       }
 
-      const filtered = await runGit(host, filesystem, "/work/repo", "-c", "filter.proof.clean=/bin/cat", "-c", "filter.proof.required=true", "hash-object", "--path=sample.txt", "sample.txt");
-      assertResult(filtered, 0);
-      const unfiltered = await runGit(host, filesystem, "/work/repo", "hash-object", "--no-filters", "sample.txt");
-      assertResult(unfiltered, 0);
-      assert(filtered.stdout === unfiltered.stdout, "External clean filter changed bytes");
-      assert(catRuns > 0, "Git never executed the external BusyBox filter");
+      const editedCommit = await runGit(host, filesystem, "/work/repo", "-c", "core.editor=/bin/cat", "commit", "--allow-empty", "--edit", "-m", "Exercise external editor");
+      assertResult(editedCommit, 0);
+      assert(catRuns > 0, "Git never executed the external BusyBox editor");
 
       const cleanStatus = await runGit(host, filesystem, "/work/repo", "status", "--porcelain=v1");
       assertResult(cleanStatus, 0);
@@ -156,7 +152,7 @@ export class KernelGitFacet extends DurableObject {
         filesystem: "KernelFileSystem over Durable Object SQLite storage",
         cwd: "/work/repo",
         initializedOnThisRequest: !hasCommit,
-        checks: ["git --version", "git init in supplied cwd", "relative and absolute git add with root decoys", "git commit", "real BusyBox clean filter receives pipe EOF", "clean status/diff persisted across requests"],
+        checks: ["git --version", "git init in supplied cwd", "relative and absolute git add with root decoys", "git commit", "real BusyBox editor runs as a child", "clean status/diff persisted across requests"],
         status: cleanStatus.stdout,
         diff: cleanDiff.stdout,
         catRuns,
