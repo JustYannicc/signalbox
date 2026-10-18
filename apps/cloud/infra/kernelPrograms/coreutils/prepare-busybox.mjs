@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 const ARTIFACT = Object.freeze({
   repository: "https://github.com/AshishKumar4/Nimbus",
@@ -53,13 +53,13 @@ const IMPORTS = Object.freeze([
   "wasi_snapshot_preview1.proc_exit:function",
 ]);
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const outputDir = resolve(process.argv[2] ?? scriptDir);
+const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const outputDir = NodePath.resolve(process.argv[2] ?? scriptDir);
 const url = `https://raw.githubusercontent.com/AshishKumar4/Nimbus/${ARTIFACT.revision}/${ARTIFACT.path}`;
 const response = await fetch(url);
 if (!response.ok) throw new Error(`Could not fetch pinned BusyBox: ${response.status}`);
 const bytes = Buffer.from(await response.arrayBuffer());
-const sha256 = createHash("sha256").update(bytes).digest("hex");
+const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 if (bytes.byteLength !== ARTIFACT.bytes || sha256 !== ARTIFACT.sha256) {
   throw new Error(`Nimbus BusyBox pin mismatch: ${bytes.byteLength} bytes ${sha256}`);
 }
@@ -78,10 +78,10 @@ if (JSON.stringify(exports) !== JSON.stringify(["_start:function", "memory:memor
   throw new Error("Pinned BusyBox exports changed");
 }
 
-await mkdir(join(outputDir, "bin"), { recursive: true });
-await writeFile(join(outputDir, "bin/busybox.wasm"), bytes);
-await writeFile(
-  join(outputDir, "busybox.provenance.json"),
+await NodeFSP.mkdir(NodePath.join(outputDir, "bin"), { recursive: true });
+await NodeFSP.writeFile(NodePath.join(outputDir, "bin/busybox.wasm"), bytes);
+await NodeFSP.writeFile(
+  NodePath.join(outputDir, "busybox.provenance.json"),
   `${JSON.stringify({ ...ARTIFACT, imports, exports }, null, 2)}\n`,
 );
 console.log(JSON.stringify({ outputDir, ...ARTIFACT, imports: imports.length }));
