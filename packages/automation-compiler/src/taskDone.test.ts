@@ -86,6 +86,7 @@ function fixture(
     recordCondition?: { summary: string; input?: unknown } | null;
     verification?: Array<{ state: string; evidence?: string; commit?: string; runId?: string }>;
     deployment?: { status: "pending" | "failed" | "succeeded"; commit?: string };
+    deploymentUrl?: string;
     deploymentRead?: (args: Record<string, unknown>) => void;
     onAgent?: () => void;
     wait?: (label: string, args: Record<string, unknown>) => unknown;
@@ -157,7 +158,8 @@ function fixture(
               ? null
               : {
                   id: String(actionArgs.runId),
-                  url: "https://github.com/example/project/actions/runs/123",
+                  url:
+                    options.deploymentUrl ?? "https://github.com/example/project/actions/runs/123",
                   status: options.deployment?.status ?? "succeeded",
                   commit: options.deployment?.commit ?? COMMIT,
                 },
@@ -299,11 +301,41 @@ describe("Task done automation", () => {
       expect(test.agents).toHaveLength(count);
       expect(text.length).toBeLessThanOrEqual(2000);
       expect(links.length).toBeGreaterThanOrEqual(7);
-      expect(text.replace(linkPattern, "").replaceAll("; ", "")).toBe("");
+      if (count === 7) expect(links).toHaveLength(count);
+      const remainder = count - links.length;
+      expect(text.replace(linkPattern, "").replaceAll("; ", "")).toBe(
+        remainder > 0 ? `+${remainder} more` : "",
+      );
       for (const link of links)
         expect(link[1]).toBe("https://github.com/example/project/actions/runs/123");
     }
   });
+
+  it.each([
+    { entryLength: 999, kept: 2, length: 2000 },
+    { entryLength: 1991, kept: 1, length: 2000 },
+    { entryLength: 1992, kept: 0, length: 7 },
+  ])(
+    "keeps whole links and the omitted count at the outcome boundary: $entryLength",
+    async ({ entryLength, kept, length }) => {
+      const prefix = `[Live at ${COMMIT.slice(0, 12)}](`;
+      const url = "https://github.com/".padEnd(entryLength - prefix.length - 1, "x");
+      const entry = `${prefix}${url})`;
+      const test = fixture({
+        deploymentUrl: url,
+        pullRequests: [
+          mergedPullRequest,
+          { ...mergedPullRequest, url: mergedPullRequest.url + "0" },
+        ],
+      });
+      await test.run({ threadId: "task-1", event: "thread.created" });
+      const outcome = test.calls.find((call) => call.args.action === "complete")?.args.outcome;
+      const expected = Array.from({ length: kept }, () => entry);
+      if (kept < 2) expected.push(`+${2 - kept} more`);
+      expect(outcome).toBe(expected.join("; "));
+      expect(String(outcome)).toHaveLength(length);
+    },
+  );
 
   it.each(["missing connection", "GitHub API unavailable"])(
     "recovers an initial merge read after %s",
@@ -315,7 +347,7 @@ describe("Task done automation", () => {
         },
         wait: (label, args) => {
           expect(label).toBe("Wait for merge evidence access");
-          expect(args.timeout).toEqual({ minutes: 1 });
+          expect(args.timeout).toEqual({ minutes: 2 ** (test.waits.length - 1) });
           expect(test.agents).toHaveLength(0);
           expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
           return null;
@@ -327,6 +359,33 @@ describe("Task done automation", () => {
       expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
     },
   );
+
+  it("caps merge-read backoff at an hour and resets after a successful read", async () => {
+    const attempts = new Map<string, number>();
+    const test = fixture({
+      pullRequests: [mergedPullRequest, { ...mergedPullRequest, url: mergedPullRequest.url + "0" }],
+      deploymentRead: (args) => {
+        if (args.runId !== undefined) return;
+        const url = String(args.url);
+        const attempt = (attempts.get(url) ?? 0) + 1;
+        attempts.set(url, attempt);
+        if (attempt <= 9) throw new Error("GitHub is unavailable");
+      },
+      wait: (label, args) => {
+        expect(label).toBe("Wait for merge evidence access");
+        expect(args).toMatchObject({
+          on: ["pr.updated", "turn.finished", "thread.archived"],
+          where: { threadId: "task-1" },
+        });
+        return test.waits.length === 1 ? { event: "pr.updated", threadId: "task-1" } : null;
+      },
+    });
+    await test.run({ threadId: "task-1", event: "thread.created" });
+    const delays = [1, 2, 4, 8, 16, 32, 60, 60, 60].map((minutes) => ({ minutes }));
+    expect(test.waits.map((wait) => wait.args.timeout)).toEqual([...delays, ...delays]);
+    expect(test.agents).toHaveLength(2);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
+  });
 
   it.each(["during verification", "while waiting"])(
     "drops an unlinked PR %s and completes from the remaining proof",
@@ -355,7 +414,7 @@ describe("Task done automation", () => {
           if (removed) throw stop;
           expect(label).toBe("Wait for deployment evidence");
           expect(args.on).toContain("pr.updated");
-          expect(args.where).toBeUndefined();
+          expect(args.where).toEqual({ threadId: ["task-1", "verification-2"] });
           unlink();
           return { event: "pr.updated", threadId: "task-1" };
         },
@@ -383,6 +442,7 @@ describe("Task done automation", () => {
         label: "Wait for deployment evidence",
         args: {
           on: ["turn.finished", "pr.updated", "thread.archived"],
+          where: { threadId: ["task-1", "verification-1"] },
           after: { runId: "run-1", sequence: 0 },
         },
       },

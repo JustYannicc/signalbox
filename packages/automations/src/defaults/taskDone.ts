@@ -271,6 +271,7 @@ function pullRequestsVerified(state: Lifecycle, verified: Verified) {
 async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, generation: number, verified: Verified) {
   const current = (state: Lifecycle) => state.record?.generation === generation &&
     state.thread.archivedAt === null && state.thread.settledAt === null && state.kind === "task" && pullRequestsMerged(state);
+  let retryMinutes = 1;
   for (;;) {
     const after = await w.eventCursor("Before reading merge evidence");
     state = await read(w, threadId);
@@ -289,10 +290,12 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
         on: ["pr.updated", "turn.finished", "thread.archived"],
         where: { threadId },
         after,
-        timeout: { minutes: 1 },
+        timeout: { minutes: retryMinutes },
       });
+      retryMinutes = Math.min(retryMinutes * 2, 60);
       continue;
     }
+    retryMinutes = 1;
     const result = await w.agent("Verify the merged work is live", {
       prompt: [
         "You represent this project folder. Verify completion of " + pr.url + ". This is a read-only verification task; do not change files, merge, deploy, or publish anything.",
@@ -301,13 +304,14 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
         "Return only JSON with state (live, none, failed, or unknown), commit (exactly " + merge.commit + "), runId (the numeric GitHub Actions deployment run id as a string, required for live or failed), and evidence (specific observed deployment/smoke results, or affirmative repository configuration showing no deployment). Use failed when the deploy OR its configured smoke check fails. Use live only after the deploy succeeds and the configured smoke check passes, if there is one. Use none only after inspecting configuration and establishing there is no deploy. Use unknown for missing access, other deployment hosts, or missing proof, and ask for what is missing in this verification thread.",
       ].join("\\n\\n"),
     });
+    // Keep the same boundary across wakes so a queued verifier finish cannot be skipped.
+    const evidenceAfter = await w.eventCursor("Before checking deployment evidence");
     state = await read(w, threadId);
     if (!current(state)) return { valid: false, state, outcome: "" };
     if (!currentLinks(state).some((link) => link.url === pr.url)) continue;
     let proof = await verifyDeploymentRun(w, result.text, threadId, pr, merge.commit);
     let lastCorrection = "";
     while (proof.state === "unknown") {
-      const after = await w.eventCursor("Before checking deployment evidence");
       state = await read(w, threadId);
       if (!current(state)) return { valid: false, state, outcome: "" };
       if (!currentLinks(state).some((link) => link.url === pr.url)) break;
@@ -321,7 +325,8 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
       }
       const news = await w.waitFor("Wait for deployment evidence", {
         on: ["turn.finished", "pr.updated", "thread.archived"],
-        after,
+        where: { threadId: [threadId, result.threadId] },
+        after: evidenceAfter,
       });
       state = await read(w, threadId);
       if (!current(state)) return { valid: false, state, outcome: "" };
@@ -330,7 +335,7 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
       const verification = await read(w, result.threadId, true);
       proof = await verifyDeploymentRun(w, verification.messages.filter((message) => message.role === "assistant").at(-1)?.text ?? "", threadId, pr, merge.commit);
     }
-    let repairAfter = await w.eventCursor("Before reporting deployment failure");
+    const repairAfter = await w.eventCursor("Before reporting deployment failure");
     state = await read(w, threadId);
     if (!current(state)) return { valid: false, state, outcome: "" };
     if (!currentLinks(state).some((link) => link.url === pr.url)) continue;
@@ -344,7 +349,6 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
         const news = await w.waitFor("Wait for the deployment repair", {
           on: ["turn.finished", "pr.updated", "thread.archived"], where: { threadId }, after: repairAfter,
         });
-        repairAfter = await w.eventCursor("Before checking the deployment repair");
         state = await read(w, threadId);
         if (!current(state)) return { valid: false, state, outcome: "" };
         if (!currentLinks(state).some((link) => link.url === pr.url) || news?.event === "turn.finished") break;
@@ -360,9 +364,12 @@ async function verifyMergedPullRequests(w, threadId: string, state: Lifecycle, g
       : "Merged at " + proof.commit.slice(0, 12));
   const kept: string[] = [];
   for (const entry of entries) {
-    if ([...kept, entry].join("; ").length > 2000) break;
+    const remaining = entries.length - kept.length - 1;
+    const suffix = remaining > 0 ? "; +" + remaining + " more" : "";
+    if ([...kept, entry].join("; ").length + suffix.length > 2000) break;
     kept.push(entry);
   }
+  if (kept.length < entries.length) kept.push("+" + (entries.length - kept.length) + " more");
   return { valid: true, state, outcome: kept.join("; ") };
 }
 

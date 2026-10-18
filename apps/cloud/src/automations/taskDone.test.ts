@@ -1,6 +1,7 @@
 import { CommandId, MessageId, ORCHESTRATION_V2_WS_METHODS, ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 
 import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
@@ -9,10 +10,13 @@ import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "@t3tools/contracts/signalboxT
 import { TaskLifecycleResult } from "@t3tools/contracts/taskLifecycle";
 
 import { makePullRequestThread, threadId } from "./pullRequestThreadTesting.ts";
+import * as CloudBuiltinTools from "./cloudBuiltinTools.ts";
 import * as ScriptedProvider from "../thread/scriptedProvider.ts";
 
 const userId = "user_1";
-const decodeVerifierReply = Schema.decodeUnknownEffect(Schema.Struct({ text: Schema.String }));
+const decodeVerifierReply = Schema.decodeUnknownEffect(
+  Schema.Struct({ text: Schema.String, threadId: Schema.String }),
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -81,6 +85,208 @@ const compiledOf = (source: string) => {
 };
 
 describe("cloud Task done automation", () => {
+  it.effect.each(["evidence", "repair"] as const)(
+    "keeps a queued turn finish after a PR wake during the %s wait",
+    (phase) => {
+      const proof: { state: VerificationReply["state"]; evidence: string } = {
+        state: phase === "evidence" ? "unknown" : "failed",
+        evidence: "The production check is not passing yet.",
+      };
+      withVerificationReply(proof);
+      if (phase === "repair") {
+        // Real notifications re-arm the evaluator; agent-wake tests cover that separately.
+        const makeTools = CloudBuiltinTools.makeCloudBuiltinTools;
+        vi.spyOn(CloudBuiltinTools, "makeCloudBuiltinTools").mockImplementation((deps) => {
+          const tools = makeTools(deps);
+          return {
+            ...tools,
+            call: (call) =>
+              call.tool === "t3_thread_send"
+                ? Effect.succeed({ delivery: "queued" })
+                : tools.call(call),
+          };
+        });
+      }
+      const { cloud, github, open, tool, getRun, run } = makeDeployedThread();
+      const reached = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      const forUser = cloud.userDirectory.forUser;
+      let heldRunId: string | undefined;
+      vi.spyOn(cloud.userDirectory, "forUser").mockImplementation((id) => {
+        const user = forUser(id);
+        return {
+          ...user,
+          automationHost: (call) =>
+            Effect.gen(function* () {
+              const answer = yield* user.automationHost(call);
+              if (
+                !heldRunId &&
+                call.method === "step" &&
+                call.args[1].label ===
+                  (phase === "evidence"
+                    ? "Wait for deployment evidence"
+                    : "Wait for the deployment repair")
+              ) {
+                const key = call.args[1].key;
+                const detail = yield* getRun(call.args[0]);
+                // Let an already-buffered initial verifier finish be consumed before injecting the race.
+                if (detail.steps.find((step) => step.key === key)?.status === "waiting") {
+                  heldRunId = call.args[0];
+                  reached.resolve();
+                  yield* Effect.promise(() => resume.promise);
+                }
+              }
+              return answer;
+            }),
+        };
+      });
+      return run(
+        Effect.gen(function* () {
+          const { rpc, turn: commit } = yield* open;
+          yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+            type: "message.dispatch",
+            commandId: CommandId.make("task-done-race-request"),
+            threadId,
+            messageId: MessageId.make("task-done-race-request"),
+            text: "Finish this useful task.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          });
+          yield* cloud.settle;
+          github.merge(1);
+          yield* cloud.syncPullRequests(threadId);
+          const settling = yield* Effect.forkChild(cloud.settle);
+          yield* Effect.promise(() => reached.promise);
+          try {
+            const waiting = yield* taskRecord(tool);
+            expect(heldRunId).toBe(waiting.record?.condition?.runId);
+            const evaluation = yield* getRun(heldRunId!);
+            const verifier = yield* decodeVerifierReply(
+              evaluation.steps.find((step) => step.label === "Verify the merged work is live")!
+                .result,
+            );
+            // The real inbox must consume the PR event first and retain the following turn.
+            yield* cloud.inUser(
+              userId,
+              WorkflowEngine.WorkflowEngine.use((engine) =>
+                engine.deliverEvent({
+                  event: "pr.updated",
+                  id: `task-done-${phase}-race`,
+                  at: "2026-10-18T10:00:00.000Z",
+                  projectId: waiting.thread.projectId,
+                  threadId,
+                  fields: Effect.succeed({}),
+                }),
+              ),
+            );
+            proof.state = "live";
+            proof.evidence = "Production smoke passed.";
+            if (phase === "evidence") {
+              yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+                type: "message.dispatch",
+                commandId: CommandId.make("task-done-verifier-race-reply"),
+                threadId: ThreadId.make(verifier.threadId),
+                messageId: MessageId.make("task-done-verifier-race-reply"),
+                text: `This is a read-only verification task. The actual merge commit is ${commit}. Check again.`,
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+                dispatchMode: { type: "start_immediately" },
+                deliveryIntent: "auto",
+              });
+            } else {
+              yield* cloud.inUser(
+                userId,
+                WorkflowEngine.WorkflowEngine.use((engine) =>
+                  engine.deliverEvent({
+                    event: "turn.finished",
+                    id: "task-done-repair-finished",
+                    at: "2026-10-18T10:00:00.000Z",
+                    projectId: waiting.thread.projectId,
+                    threadId,
+                    fields: Effect.succeed({ status: "completed" }),
+                  }),
+                ),
+              );
+            }
+            yield* cloud.settleThreads;
+          } finally {
+            resume.resolve();
+          }
+          yield* Fiber.join(settling);
+          yield* cloud.settle;
+
+          const completed = yield* taskRecord(tool);
+          expect(completed.record?.condition?.runId).toBe(heldRunId);
+          expect(completed.thread.archivedAt).not.toBeNull();
+          expect(completed.record?.outcome).toContain("[Live at ");
+          const evaluation = yield* getRun(heldRunId!);
+          const label =
+            phase === "evidence"
+              ? "Wait for deployment evidence"
+              : "Wait for the deployment repair";
+          expect(
+            evaluation.steps
+              .filter((step) => step.label === label)
+              .slice(-2)
+              .map((step) => step.result),
+          ).toEqual([
+            expect.objectContaining({ event: "pr.updated", threadId }),
+            expect.objectContaining({ event: "turn.finished" }),
+          ]);
+          expect(evaluation.run.error).toBeNull();
+        }),
+      );
+    },
+  );
+
+  it.effect("ignores unrelated project events and ends the evidence wait on task archival", () => {
+    withVerificationReply({ state: "unknown", evidence: "Production access is missing." });
+    const { cloud, github, open, tool, getRun, run } = makeDeployedThread();
+    return run(
+      Effect.gen(function* () {
+        const { rpc } = yield* open;
+        yield* cloud.settle;
+        github.merge(1);
+        yield* cloud.syncPullRequests(threadId);
+        yield* cloud.settle;
+        const waiting = yield* taskRecord(tool);
+        const runId = waiting.record!.condition!.runId!;
+        const before = yield* getRun(runId);
+        for (const event of ["pr.updated", "turn.finished", "thread.archived"] as const) {
+          yield* cloud.inUser(
+            userId,
+            WorkflowEngine.WorkflowEngine.use((engine) =>
+              engine.deliverEvent({
+                event,
+                id: `unrelated-${event}`,
+                at: "2026-10-18T10:00:00.000Z",
+                projectId: waiting.thread.projectId,
+                threadId: "unrelated-task",
+                fields: Effect.succeed({}),
+              }),
+            ),
+          );
+          yield* cloud.settle;
+        }
+        expect((yield* getRun(runId)).steps).toHaveLength(before.steps.length);
+        yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+          type: "thread.archive",
+          commandId: CommandId.make("task-done-archive-during-verification"),
+          threadId,
+        });
+        yield* cloud.settle;
+        const archived = yield* taskRecord(tool);
+        expect(archived.thread.archivedAt).not.toBeNull();
+        expect(archived.record?.outcome).toBeNull();
+        expect((yield* getRun(runId)).run.status).not.toBe("running");
+      }),
+    );
+  });
+
   it.effect("keeps the evaluator waiting without GitHub and resumes after reconnecting", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     withVerificationReply({ state: "live", evidence: "Production smoke passed." });
