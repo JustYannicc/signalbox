@@ -5,9 +5,11 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DRIVE_COMMIT_AUTHOR,
+  EMPTY_TREE,
   type CheckpointViews,
   threadRemoteBranch,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullOperation } from "@signalbox/runner-protocol/PullProtocol";
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -523,6 +525,426 @@ describe("RunnerDrive", () => {
           expect(read(cwd, ".git/config")).not.toContain("remote-token");
           expect(git(cwd, "config", "--get", "extensions.partialClone")).toBe("origin");
           expect(gitOk(drive.store, "cat-file", "-e", files[0]!)).toBe(false);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect(
+      "pulls the selected thread branch, preserves disjoint WIP, and replays its receipt",
+      () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const first = yield* machine(drive, root, "vm-1", "t1");
+            yield* first.runner.prepare("remote-token");
+            const base = drive.refs("t1").thread!;
+            write(first.cwd, "local.txt", "keep this local change\n");
+            yield* first.runner.autosave;
+            yield* first.runner.flush;
+            const expectedWip = drive.refs("t1").wip;
+
+            const branch = threadRemoteBranch("t1");
+            git(upstream.dir, "switch", "-q", "-c", "thread/pull", base);
+            const target = upstream.commit("feature.txt", "selected branch\n", "Feature");
+            const laterRemoteTip = upstream.commit(
+              "later.txt",
+              "not selected\n",
+              "Later remote commit",
+            );
+            git(upstream.dir, "update-ref", `refs/heads/${branch}`, laterRemoteTip);
+            git(upstream.dir, "switch", "-q", "main");
+            upstream.commit("main-only.txt", "leave this on main\n", "Main only");
+            git(
+              first.cwd,
+              "fetch",
+              "-q",
+              "origin",
+              `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
+            );
+
+            const operation: PullOperation = {
+              id: "pull-feature-1",
+              target,
+              expectedThread: base,
+              expectedWip,
+              revision: null,
+              branch,
+            };
+            const result = yield* first.runner.pull(operation, "remote-token");
+            expect(result).toMatchObject({
+              id: operation.id,
+              target,
+              head: target,
+              outcome: "pulled",
+              reason: null,
+              hasWorkingTreeChanges: true,
+            });
+            expect(read(first.cwd, "feature.txt")).toBe("selected branch\n");
+            expect(read(first.cwd, "local.txt")).toBe("keep this local change\n");
+            expect(NodeFS.existsSync(NodePath.join(first.cwd, "later.txt"))).toBe(false);
+            expect(NodeFS.existsSync(NodePath.join(first.cwd, "main-only.txt"))).toBe(false);
+            expect(git(first.cwd, "show", `${result.wip}:feature.txt`)).toBe("selected branch");
+            expect(git(first.cwd, "show", `${result.wip}:local.txt`)).toBe(
+              "keep this local change",
+            );
+            expect(drive.refs("t1")).toMatchObject({ main: base, thread: target, wip: result.wip });
+            // The fetched branch tip advanced beyond this selection. Only target is incorporated.
+            expect(git(first.cwd, "rev-parse", `refs/remotes/origin/${branch}`)).toBe(target);
+
+            const packsAfterSave = drive.packs.length;
+            git(first.cwd, "update-ref", "-d", `refs/remotes/origin/${branch}`);
+            expect(yield* first.runner.pull(operation, "remote-token")).toEqual(result);
+            expect(git(first.cwd, "rev-parse", `refs/remotes/origin/${branch}`)).toBe(target);
+            expect(drive.packs).toHaveLength(packsAfterSave);
+
+            // A replacement machine restores directly from the drive; this pull must not sync main.
+            const replacement = yield* machine(drive, root, "vm-2", "t1");
+            const replay = yield* replacement.runner.pull(
+              {
+                ...operation,
+                id: "pull-feature-2",
+                expectedThread: target,
+                expectedWip: result.wip,
+              },
+              "remote-token",
+            );
+            expect(replay).toMatchObject({ outcome: "up_to_date", head: target });
+            expect(read(replacement.cwd, "feature.txt")).toBe("selected branch\n");
+            expect(read(replacement.cwd, "local.txt")).toBe("keep this local change\n");
+            expect(NodeFS.existsSync(NodePath.join(replacement.cwd, "main-only.txt"))).toBe(false);
+            expect(drive.refs("t1").main).toBe(base);
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+    );
+
+    it.effect("leases only the selected remote target when a later push races", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          const base = drive.refs("t1").thread!;
+          const branch = threadRemoteBranch("t1");
+          git(upstream.dir, "switch", "-q", "-c", "thread/push", base);
+          const target = upstream.commit("upstream.txt", "selected target\n", "Selected target");
+          git(upstream.dir, "update-ref", `refs/heads/${branch}`, target);
+          git(upstream.dir, "switch", "-q", "main");
+
+          const result = yield* runner.pull(
+            {
+              id: "pull-before-publish",
+              target,
+              expectedThread: base,
+              expectedWip: drive.refs("t1").wip,
+              revision: null,
+              branch,
+            },
+            "remote-token",
+          );
+          expect(result).toMatchObject({ outcome: "pulled", head: target });
+          write(cwd, "local.txt", "local follow-up\n");
+          const saved = yield* runner.saveBranch("Publish after pulling");
+          const lease = saved._tag === "saved" ? saved.lease : null;
+          expect(saved._tag).toBe("saved");
+          expect(lease).toBe(target);
+          expect(
+            gitOk(
+              cwd,
+              "push",
+              "--dry-run",
+              `--force-with-lease=refs/heads/${branch}:${lease}`,
+              "origin",
+              `HEAD:refs/heads/${branch}`,
+            ),
+          ).toBe(true);
+
+          // GitHub moves after saveBranch computed its lease but before the push.
+          git(upstream.dir, "switch", "-q", branch);
+          const raced = upstream.commit("raced.txt", "concurrent remote work\n", "Concurrent work");
+          git(upstream.dir, "switch", "-q", "main");
+          expect(
+            gitOk(
+              cwd,
+              "push",
+              `--force-with-lease=refs/heads/${branch}:${lease}`,
+              "origin",
+              `HEAD:refs/heads/${branch}`,
+            ),
+          ).toBe(false);
+          expect(git(upstream.dir, "rev-parse", `refs/heads/${branch}`)).toBe(raced);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("does not lease a newer remote tip when only an older target was selected", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          const base = drive.refs("t1").thread!;
+          const branch = threadRemoteBranch("t1");
+          git(upstream.dir, "switch", "-q", "-c", "thread/advanced", base);
+          const selected = upstream.commit("selected.txt", "selected\n", "Selected");
+          const newer = upstream.commit("newer.txt", "not selected\n", "Newer remote commit");
+          git(upstream.dir, "update-ref", `refs/heads/${branch}`, newer);
+          git(upstream.dir, "switch", "-q", "main");
+          git(cwd, "fetch", "-q", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`);
+
+          const result = yield* runner.pull(
+            {
+              id: "pull-older-selection",
+              target: selected,
+              expectedThread: base,
+              expectedWip: drive.refs("t1").wip,
+              revision: null,
+              branch,
+            },
+            "remote-token",
+          );
+          expect(result).toMatchObject({ outcome: "pulled", head: selected });
+          expect(git(cwd, "rev-parse", `refs/remotes/origin/${branch}`)).toBe(selected);
+
+          write(cwd, "follow-up.txt", "new local work\n");
+          const saved = yield* runner.saveBranch("Do not replace the newer remote commit");
+          const lease = saved._tag === "saved" ? saved.lease : null;
+          expect(lease).toBe(selected);
+          expect(
+            gitOk(
+              cwd,
+              "push",
+              `--force-with-lease=refs/heads/${branch}:${lease}`,
+              "origin",
+              `HEAD:refs/heads/${branch}`,
+            ),
+          ).toBe(false);
+          expect(git(upstream.dir, "rev-parse", `refs/heads/${branch}`)).toBe(newer);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect(
+      "retries an interrupted local apply using the same operation and stores a stable receipt",
+      () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+            yield* runner.prepare("remote-token");
+            const base = drive.refs("t1").thread!;
+            git(upstream.dir, "switch", "-q", "-c", "feature/retry", base);
+            const target = upstream.commit("retry.txt", "saved after retry\n", "Retry");
+            const operation: PullOperation = {
+              id: "pull-retry-1",
+              target,
+              expectedThread: base,
+              expectedWip: drive.refs("t1").wip,
+              revision: null,
+              branch: "feature/retry",
+            };
+
+            drive.settings.failPullSaveOnce = true;
+            const interrupted = yield* Effect.exit(runner.pull(operation, "remote-token"));
+            expect(interrupted._tag).toBe("Failure");
+            expect(git(cwd, "rev-parse", "HEAD")).toBe(target);
+            expect(drive.refs("t1").thread).toBe(base);
+
+            const result = yield* runner.pull(operation, "remote-token");
+            expect(result).toMatchObject({ outcome: "pulled", head: target, reason: null });
+            expect(drive.refs("t1").thread).toBe(target);
+            expect(yield* runner.pull(operation, "remote-token")).toEqual(result);
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+    );
+
+    it.effect("replays the committed pull receipt after its response is interrupted", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          const base = drive.refs("t1").thread!;
+          const branch = threadRemoteBranch("t1");
+          git(upstream.dir, "switch", "-q", "-c", "thread/receipt", base);
+          const target = upstream.commit("receipt.txt", "receipt persisted\n", "Receipt");
+          git(upstream.dir, "update-ref", `refs/heads/${branch}`, target);
+          git(upstream.dir, "switch", "-q", "main");
+          const operation: PullOperation = {
+            id: "pull-lost-response",
+            target,
+            expectedThread: base,
+            expectedWip: drive.refs("t1").wip,
+            revision: null,
+            branch,
+          };
+
+          drive.settings.failPullResponseAfterSaveOnce = true;
+          const interrupted = yield* Effect.exit(runner.pull(operation, "remote-token"));
+          expect(interrupted._tag).toBe("Failure");
+          expect(git(cwd, "rev-parse", "HEAD")).toBe(target);
+          expect(drive.refs("t1").thread).toBe(target);
+          const packsAfterCommit = drive.packs.length;
+
+          const replay = yield* runner.pull(operation, "remote-token");
+          expect(replay).toMatchObject({ outcome: "pulled", head: target });
+          expect(git(cwd, "rev-parse", `refs/remotes/origin/${branch}`)).toBe(target);
+          expect(drive.packs).toHaveLength(packsAfterCommit);
+          expect(yield* runner.pull(operation, "remote-token")).toEqual(replay);
+
+          write(cwd, "published.txt", "later incorporated work\n");
+          const later = yield* runner.saveBranch("Publish after replay");
+          expect(later._tag).toBe("saved");
+          const laterHead = later._tag === "saved" ? later.head : "";
+          expect(
+            gitOk(
+              cwd,
+              "push",
+              `--force-with-lease=refs/heads/${branch}:${target}`,
+              "origin",
+              `HEAD:refs/heads/${branch}`,
+            ),
+          ).toBe(true);
+          yield* runner.published(laterHead);
+          expect(git(cwd, "rev-parse", `refs/remotes/origin/${branch}`)).toBe(laterHead);
+          expect(yield* runner.pull(operation, "remote-token")).toEqual(replay);
+          expect(git(cwd, "rev-parse", `refs/remotes/origin/${branch}`)).toBe(laterHead);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect(
+      "refuses overlapping dirty files and leaves the fetched branch out of push leases",
+      () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+            yield* runner.prepare("remote-token");
+            const base = drive.refs("t1").thread!;
+            const branch = threadRemoteBranch("t1");
+            git(upstream.dir, "update-ref", `refs/heads/${branch}`, base);
+            git(upstream.dir, "switch", "-q", "-c", "remote-thread", base);
+            const target = upstream.commit("src/app.ts", "remote change\n", "Remote thread");
+            git(upstream.dir, "update-ref", `refs/heads/${branch}`, target);
+            write(cwd, "src/app.ts", "keep my local change\n");
+            yield* runner.autosave;
+            yield* runner.flush;
+            const wip = drive.refs("t1").wip;
+
+            const result = yield* runner.pull(
+              {
+                id: "pull-overlap-1",
+                target,
+                expectedThread: base,
+                expectedWip: wip,
+                revision: null,
+                branch,
+              },
+              "remote-token",
+            );
+            expect(result).toMatchObject({
+              outcome: "refused",
+              head: base,
+              wip,
+              hasWorkingTreeChanges: true,
+            });
+            expect(read(cwd, "src/app.ts")).toBe("keep my local change\n");
+            expect(git(cwd, "rev-parse", "HEAD")).toBe(base);
+            expect(gitOk(cwd, "show-ref", "--verify", `refs/remotes/origin/${branch}`)).toBe(false);
+            expect(drive.refs("t1")).toMatchObject({ thread: base, wip });
+            expect(yield* runner.saveBranch("Publish after refused pull")).toMatchObject({
+              _tag: "saved",
+              lease: null,
+            });
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+    );
+
+    it.effect("refuses a diverged selected branch without moving the thread", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          const base = drive.refs("t1").thread!;
+          const target = git(
+            upstream.dir,
+            "-c",
+            "user.name=Dev",
+            "-c",
+            "user.email=dev@example.com",
+            "commit-tree",
+            EMPTY_TREE,
+            "-m",
+            "Other root",
+          );
+          const branch = threadRemoteBranch("t1");
+          git(upstream.dir, "update-ref", `refs/heads/${branch}`, target);
+
+          const result = yield* runner.pull(
+            {
+              id: "pull-diverged-1",
+              target,
+              expectedThread: base,
+              expectedWip: null,
+              revision: null,
+              branch,
+            },
+            "remote-token",
+          );
+          expect(result).toMatchObject({ outcome: "refused", head: base });
+          expect(result.reason).toContain("diverged");
+          expect(git(cwd, "rev-parse", "HEAD")).toBe(base);
+          expect(NodeFS.existsSync(NodePath.join(cwd, "unrelated.txt"))).toBe(false);
+          expect(drive.refs("t1")).toMatchObject({ thread: base, wip: null });
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("refuses an existing merge or rebase without clearing its state", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          const base = drive.refs("t1").thread!;
+          git(upstream.dir, "switch", "-q", "-c", "feature/merge-state", base);
+          const target = upstream.commit("feature.txt", "remote\n", "Feature");
+
+          const operation: PullOperation = {
+            id: "pull-in-progress-1",
+            target,
+            expectedThread: base,
+            expectedWip: null,
+            revision: null,
+            branch: "feature/merge-state",
+          };
+          const mergeHead = NodePath.join(cwd, ".git", "MERGE_HEAD");
+          NodeFS.writeFileSync(mergeHead, `${base}\n`);
+          const merge = yield* runner.pull(operation, "remote-token");
+          expect(merge).toMatchObject({ outcome: "refused" });
+          expect(merge.reason).toContain("merge or rebase");
+          expect(NodeFS.existsSync(mergeHead)).toBe(true);
+          NodeFS.rmSync(mergeHead);
+
+          const rebaseDir = NodePath.join(cwd, ".git", "rebase-merge");
+          NodeFS.mkdirSync(rebaseDir);
+          const rebase = yield* runner.pull(
+            { ...operation, id: "pull-in-progress-2" },
+            "remote-token",
+          );
+          expect(rebase).toMatchObject({ outcome: "refused" });
+          expect(rebase.reason).toContain("merge or rebase");
+          expect(NodeFS.existsSync(rebaseDir)).toBe(true);
+          expect(git(cwd, "rev-parse", "HEAD")).toBe(base);
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );

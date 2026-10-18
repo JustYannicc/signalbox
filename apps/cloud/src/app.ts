@@ -24,6 +24,8 @@ import * as ClientTraceExport from "./observability/ClientTraceExport.ts";
 import * as ClientTraceLimits from "./observability/ClientTraceLimits.ts";
 import * as ClientTraceIntake from "./observability/ClientTraceIntake.ts";
 import * as ClientTraceRoutes from "./observability/clientTraceRoutes.ts";
+import * as ClientIssueIntake from "./observability/ClientIssueIntake.ts";
+import * as ClientIssueRoutes from "./observability/clientIssueRoutes.ts";
 import { logRequestFailure } from "./observability/requestFailures.ts";
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as IdentityProvider from "./account/IdentityProvider.ts";
@@ -102,7 +104,7 @@ export const layerServices = (input: {
   /** The drives bucket and its preview prefix, where attachments live. */
   readonly attachments: AttachmentStorage;
 }) =>
-  Layer.merge(CloudAssets.layer, ClientTraceIntake.layer).pipe(
+  Layer.mergeAll(CloudAssets.layer, ClientTraceIntake.layer, ClientIssueIntake.layer).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         ClientTraceExport.layer({
@@ -158,6 +160,7 @@ type Services = Layer.Success<ReturnType<typeof layerServices>>;
 // handler is built with; the API groups take them when the router is built.
 const routes = Layer.mergeAll(
   ClientTraceRoutes.layer,
+  ClientIssueRoutes.layer,
   EnvironmentApi.layer,
   AccountRoutes.layer,
   TestSignInRoutes.layer,

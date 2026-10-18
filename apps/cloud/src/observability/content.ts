@@ -1,3 +1,5 @@
+import { CLIENT_ISSUE_CODES } from "@t3tools/contracts/clientIssues";
+
 /**
  * Wide events say how much work was done, never what it said (#284): sizes,
  * counts, kinds and timings, never message text, prompts, file contents or
@@ -49,6 +51,7 @@ const TURN_FAILURE_CLASSES = new Set([
   "validation_error",
   "unknown",
 ]);
+const CLIENT_ISSUE_CODE_SET = new Set<string>(CLIENT_ISSUE_CODES);
 
 /** What an event keeps if redacting it fails: enough to find it, nothing more. */
 const IDENTITY_KEYS = new Set([
@@ -100,6 +103,21 @@ export const redactContent = (event: Record<string, unknown>): void => {
       const failureClass = (turn as Record<string, unknown>).failureClass;
       if (typeof failureClass === "string" && TURN_FAILURE_CLASSES.has(failureClass)) {
         event.error = { name: `TurnFailure.${failureClass}`, message: REDACTED };
+      }
+    }
+    const clientIssue = event.clientIssue;
+    if (
+      typeof event.action === "string" &&
+      typeof clientIssue === "object" &&
+      clientIssue !== null
+    ) {
+      const code = (clientIssue as Record<string, unknown>).code;
+      if (
+        typeof code === "string" &&
+        CLIENT_ISSUE_CODE_SET.has(code) &&
+        event.action === `client.issue.${code}`
+      ) {
+        event.error = { name: `ClientIssue.${code}`, message: REDACTED };
       }
     }
   } catch {

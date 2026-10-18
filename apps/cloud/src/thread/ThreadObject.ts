@@ -64,6 +64,8 @@ import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as ThreadPulls from "./ThreadPulls.ts";
+import * as PullState from "./PullState.ts";
 import * as TurnModels from "./TurnModels.ts";
 import { scriptedProviderEnabled } from "./scriptedProvider.ts";
 import { noteView } from "./statusLine/statusNotePolicy.ts";
@@ -205,6 +207,14 @@ const makeRuntime = (
         }),
       ),
       Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+      Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+      Layer.provideMerge(
+        env.DRIVES === undefined
+          ? Layer.empty
+          : DriveDirectory.layerDurableObjects(env.DRIVES, {
+              localWorkerd: env.LOCAL_WORKERD === "1",
+            }),
+      ),
       // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
       Layer.provideMerge(
         PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
@@ -256,6 +266,7 @@ const makeRuntime = (
       Layer.provideMerge(
         Layer.mergeAll(
           ThreadStore.layer,
+          PullState.layer,
           SessionRows.layer,
           PreviewState.layer,
           BrowserTrail.layer(attachmentStorage(env), threadId),
@@ -393,6 +404,26 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   snapshot(...args: Parameters<ThreadObjectApi["snapshot"]>) {
     return this.api.snapshot(...args);
+  }
+
+  pull(...args: Parameters<ThreadObjectApi["pull"]>) {
+    return this.api.pull(...args);
+  }
+
+  pullOwner(...args: Parameters<ThreadObjectApi["pullOwner"]>) {
+    return this.api.pullOwner(...args);
+  }
+
+  pullTarget(...args: Parameters<ThreadObjectApi["pullTarget"]>) {
+    return this.api.pullTarget(...args);
+  }
+
+  reservePublication(...args: Parameters<ThreadObjectApi["reservePublication"]>) {
+    return this.api.reservePublication(...args);
+  }
+
+  releasePublication(...args: Parameters<ThreadObjectApi["releasePublication"]>) {
+    return this.api.releasePublication(...args);
   }
 
   subscribe(...args: Parameters<ThreadObjectApi["subscribe"]>) {

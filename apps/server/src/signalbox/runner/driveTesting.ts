@@ -17,10 +17,11 @@ import {
   type RefWriteResult,
   threadRemoteBranch,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import { pullJson, type PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import * as Effect from "effect/Effect";
 
 import { makeRunnerDrive } from "./RunnerDrive.ts";
-import type { DriveClient } from "./RunnerDriveClient.ts";
+import { DriveClientError, type DriveClient } from "./RunnerDriveClient.ts";
 import type { SecretMask } from "./secretMask.ts";
 
 const GIT_ENV = {
@@ -97,9 +98,14 @@ export const makeFakeDrive = (
     }
   >();
   const checkpointRecords = new Map<string, Array<DriveCheckpointRecord>>();
+  const pullReceipts = new Map<string, { readonly request: string; readonly result: PullResult }>();
   const calls = { reconcile: 0, reconcileConflicts: 0, mirror: 0 };
   /** Set to make the cloud refuse every mirror, as when GitHub has not caught up yet. */
-  const settings = { refuseMirror: false };
+  const settings = {
+    refuseMirror: false,
+    failPullSaveOnce: false,
+    failPullResponseAfterSaveOnce: false,
+  };
   const shallow: Array<{ seq: number; oid: string }> = [];
   /** Files the remote keeps for the drive, as the cloud records them. */
   const promised = new Set<string>();
@@ -210,6 +216,103 @@ export const makeFakeDrive = (
           checkpointRecords.set(threadId, records);
           return { _tag: "ok", state: state(threadId, packsAfter) };
         }),
+      savePull: ({ operation, result }) =>
+        Effect.suspend(() => {
+          if (settings.failPullSaveOnce) {
+            settings.failPullSaveOnce = false;
+            return Effect.fail(
+              new DriveClientError({ message: "temporary pull receipt failure", retryable: true }),
+            );
+          }
+          return Effect.sync(() => {
+            const request = { operation, result };
+            const encoded = pullJson.save.encode(request);
+            const key = `${threadId}:${operation.id}`;
+            const existing = pullReceipts.get(key);
+            if (existing !== undefined) {
+              return existing.request === encoded
+                ? existing.result
+                : ({
+                    ...result,
+                    outcome: "refused",
+                    reason: "This pull operation id already names a different request.",
+                  } satisfies PullResult);
+            }
+            const refs = threads.get(threadId);
+            if (refs === undefined) {
+              return {
+                ...result,
+                outcome: "refused",
+                reason: "This thread has no drive branch.",
+              } satisfies PullResult;
+            }
+            let saved: PullResult = result;
+            if (operation.id !== result.id || operation.target !== result.target) {
+              saved = {
+                ...result,
+                outcome: "refused",
+                reason: "The pull result does not match its operation.",
+              };
+            } else if (
+              refs.revision !== operation.revision ||
+              refs.thread !== operation.expectedThread ||
+              refs.wip !== operation.expectedWip
+            ) {
+              saved = {
+                ...result,
+                head: refs.thread,
+                wip: refs.wip,
+                outcome: "refused",
+                reason: "The thread's saved work changed while pulling.",
+              };
+            } else if (
+              (result.outcome === "pulled" && result.head !== operation.target) ||
+              (result.outcome === "up_to_date" && result.head !== refs.thread) ||
+              (result.outcome === "refused" &&
+                (result.head !== refs.thread || result.wip !== refs.wip))
+            ) {
+              saved = {
+                ...result,
+                head: refs.thread,
+                wip: refs.wip,
+                outcome: "refused",
+                reason: "The pull result does not match the selected target or current branch.",
+              };
+            } else if (result.outcome !== "refused") {
+              const missing = [
+                ...(result.outcome === "pulled" ? [operation.target] : []),
+                result.head,
+                result.wip,
+              ].find((oid) => oid !== null && !has(oid));
+              if (missing !== undefined) {
+                saved = {
+                  ...result,
+                  head: refs.thread,
+                  wip: refs.wip,
+                  outcome: "refused",
+                  reason: `The drive does not have commit ${missing}.`,
+                };
+              } else {
+                refs.thread = result.head;
+                refs.wip = result.wip;
+              }
+            }
+            pullReceipts.set(key, { request: encoded, result: saved });
+            return saved;
+          }).pipe(
+            Effect.flatMap((saved) => {
+              if (!settings.failPullResponseAfterSaveOnce) return Effect.succeed(saved);
+              settings.failPullResponseAfterSaveOnce = false;
+              return Effect.fail(
+                new DriveClientError({
+                  message: "temporary pull response failure after receipt commit",
+                  retryable: true,
+                }),
+              );
+            }),
+          );
+        }),
+      pullReceipt: (id) => Effect.sync(() => pullReceipts.get(`${threadId}:${id}`)?.result ?? null),
       downloadPack: (name, dir) =>
         Effect.sync(() => {
           NodeFS.mkdirSync(dir, { recursive: true });

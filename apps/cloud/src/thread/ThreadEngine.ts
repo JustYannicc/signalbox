@@ -42,6 +42,7 @@ import * as CheckpointRollback from "./CheckpointRollback.ts";
 import { baselineEvents, rollbackEvents } from "./rollbackEvents.ts";
 import type { RollbackOperation } from "./rollbackState.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as PullState from "./PullState.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
   commandOnPool,
@@ -274,6 +275,7 @@ const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStr
 
 const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
+  const pullState = yield* PullState.PullState;
   const crypto = yield* Crypto.Crypto;
   const turnModels = yield* TurnModels.TurnModels;
   const rollbackService = yield* CheckpointRollback.CheckpointRollback;
@@ -463,6 +465,15 @@ const make = Effect.gen(function* () {
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
+        if (
+          started !== undefined &&
+          current.thread !== null &&
+          (yield* Effect.orDie(pullState.pending)) !== null
+        ) {
+          return yield* refuse("Wait for this thread's pull to finish before starting a turn.", {
+            record: false,
+          });
+        }
         // A turn starts only on its thread's pool, on a model it serves. A pool
         // that can't be asked right now leaves no receipt, so a retry asks
         // again. Asked under the lock, from the pool's cache: only a pool whose

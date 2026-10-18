@@ -681,6 +681,7 @@ describe("drive checkpoints and revisions", () => {
         [7, "drive_revisions"],
         [8, "drive_restore_snapshots"],
         [9, "ref_deletions"],
+        [10, "drive_pull_receipts"],
         [10, "restore_requesters"],
         [10, "shared_history_packs"],
         [11, "shared_history_transfers"],
