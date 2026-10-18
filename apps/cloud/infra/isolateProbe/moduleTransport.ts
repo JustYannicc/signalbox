@@ -43,7 +43,7 @@ function validateMetadata(value: unknown, limits: ModuleTransportLimits) {
     !isObject(value) ||
     !Object.hasOwn(value, "input") ||
     !Array.isArray(value.modules) ||
-    Object.keys(value).length !== 2
+    Object.keys(value).length !== (Object.hasOwn(value, "payload") ? 3 : 2)
   ) {
     throw new Error("Invalid module metadata");
   }
@@ -73,7 +73,22 @@ function validateMetadata(value: unknown, limits: ModuleTransportLimits) {
     total += module.byteLength;
     modules.push({ name: module.name, type: module.type, byteLength: module.byteLength });
   }
-  return { input: value.input, modules };
+  let payload: { byteLength: number } | undefined;
+  if (Object.hasOwn(value, "payload")) {
+    const raw = value.payload;
+    if (
+      !isObject(raw) ||
+      Object.keys(raw).length !== 1 ||
+      typeof raw.byteLength !== "number" ||
+      !Number.isSafeInteger(raw.byteLength) ||
+      raw.byteLength < 0
+    )
+      throw new Error("Invalid payload descriptor");
+    if (raw.byteLength > limits.maxBodyBytes - total)
+      throw new Error("Payload body budget exceeded");
+    payload = { byteLength: raw.byteLength };
+  }
+  return { input: value.input, modules, ...(payload ? { payload } : {}) };
 }
 
 /** Input must be JSON-serializable; callers keep module bytes unchanged until consumed. */
@@ -81,15 +96,19 @@ export function encodeModuleTransport(
   input: unknown,
   modules: readonly ModuleDescriptor[],
   options: Partial<ModuleTransportLimits> = {},
+  payload?: Uint8Array,
 ): ReadableStream<Uint8Array> {
   const limits = resolveLimits(options);
   const bodies = modules.map((module) => {
     if (!(module.bytes instanceof Uint8Array)) throw new Error("Invalid module bytes");
     return module.bytes;
   });
+  if (payload !== undefined && !(payload instanceof Uint8Array))
+    throw new Error("Invalid payload bytes");
   const metadata = validateMetadata(
     {
       input,
+      ...(payload !== undefined ? { payload: { byteLength: payload.byteLength } } : {}),
       modules: modules.map(({ name, type }, index) => ({
         name,
         type,
@@ -106,6 +125,7 @@ export function encodeModuleTransport(
   if (encoded.byteLength > limits.maxMetadataBytes) throw new Error("Metadata budget exceeded");
   const prefix = new Uint8Array(4);
   new DataView(prefix.buffer).setUint32(0, encoded.byteLength, false);
+  if (payload !== undefined) bodies.push(payload);
   let stage = 0;
   let index = -1;
   let offset = 0;
@@ -143,7 +163,9 @@ export function encodeModuleTransport(
 export interface ModuleTransport {
   readonly input: unknown;
   readonly moduleNames: readonly string[];
+  readonly payloadRange: { readonly offset: number; readonly byteLength: number } | undefined;
   readModules(): Promise<Record<string, WorkerLoaderModule>>;
+  readPayload(): Promise<Uint8Array | undefined>;
   discard(): Promise<void>;
   cancel(reason?: unknown): Promise<void>;
 }
@@ -214,7 +236,7 @@ export async function openModuleTransport(
       JSON.parse(new TextDecoder("utf-8", utf8).decode(metadataBytes)),
       limits,
     );
-    async function consumeModules(retain: boolean) {
+    async function consumeModules(retain: boolean, retainPayload: boolean) {
       try {
         const modules: Record<string, WorkerLoaderModule> = {};
         for (const module of metadata.modules) {
@@ -252,17 +274,23 @@ export async function openModuleTransport(
             configurable: true,
           });
         }
+        let payload: Uint8Array | undefined;
+        if (metadata.payload) {
+          if (retainPayload)
+            payload = await readBytes(metadata.payload.byteLength, "request payload");
+          else await consume(metadata.payload.byteLength, "request payload", () => {});
+        }
         if (await nextChunk()) throw new Error("Trailing module transport bytes");
-        return modules;
+        return { modules, payload };
       } finally {
         release();
       }
     }
     let consumption: Promise<void> | undefined;
     let failure: { error: unknown } | undefined;
-    function start(retain: boolean) {
+    function start(retain: boolean, retainPayload = false) {
       if (consumption || closed) throw new Error("Module bodies already consumed or cancelled");
-      const result = consumeModules(retain);
+      const result = consumeModules(retain, retainPayload);
       // Retain completion and failure, never the materialized map after the loader receives it.
       consumption = result.then(
         () => {},
@@ -275,7 +303,15 @@ export async function openModuleTransport(
     return {
       input: metadata.input,
       moduleNames: metadata.modules.map((module) => module.name),
-      readModules: async () => start(true),
+      payloadRange: metadata.payload
+        ? {
+            offset:
+              4 + length + metadata.modules.reduce((sum, module) => sum + module.byteLength, 0),
+            byteLength: metadata.payload.byteLength,
+          }
+        : undefined,
+      readModules: async () => (await start(true)).modules,
+      readPayload: async () => (await start(false, true)).payload,
       async discard() {
         if (!consumption) start(false);
         await consumption;

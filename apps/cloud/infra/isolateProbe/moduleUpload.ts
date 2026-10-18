@@ -81,6 +81,32 @@ export class ModuleUploadStore {
       await transport.discard();
       return {
         input: transport.input,
+        hasPayload: transport.payloadRange !== undefined,
+        // Warm WorkerLoader hits skip getCode; read the body without rebuilding the code map.
+        readPayload: () => {
+          if (released) throw new Error("Staged module upload has been released");
+          const range = transport.payloadRange;
+          if (!range) return undefined;
+          const result = new Uint8Array(range.byteLength);
+          let written = 0;
+          let offset = range.offset;
+          while (written < result.byteLength) {
+            const { data } = this.sql
+              .exec(
+                "SELECT data FROM probe_module_upload WHERE sequence = ?",
+                Math.floor(offset / buffer.byteLength),
+              )
+              .one();
+            if (!(data instanceof ArrayBuffer)) throw new Error("Invalid staged payload chunk");
+            const start = offset % buffer.byteLength;
+            const count = Math.min(data.byteLength - start, result.byteLength - written);
+            if (count <= 0) throw new Error("Truncated staged payload");
+            result.set(new Uint8Array(data, start, count), written);
+            written += count;
+            offset += count;
+          }
+          return result;
+        },
         readModules: async () => {
           if (released) throw new Error("Staged module upload has been released");
           let index = 0;
