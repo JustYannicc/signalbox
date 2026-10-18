@@ -74,14 +74,14 @@ describe("cloud API coverage", () => {
     ).toEqual([]);
   });
 
-  it("reports deferred cloud terminals as tracked gaps", () => {
+  it("serves every public terminal operation", () => {
     const terminals = operations.filter((operation) =>
       /^(terminal\.|terminalEvents\.|terminalMetadata\.)/.test(operation.name),
     );
     expect(terminals).toHaveLength(9);
     for (const operation of terminals) {
-      expect(cloudServes(operation)).toBe(false);
-      expect(cloudUnserved(operation)).toEqual({ _tag: "gap", issue: "#744" });
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
     }
   });
 

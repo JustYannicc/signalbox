@@ -62,6 +62,7 @@ import * as SearchBackfill from "../search/SearchBackfill.ts";
 import * as SearchBackfillLive from "../search/SearchBackfillLive.ts";
 import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as CloudTerminalsLayer from "../thread/CloudTerminalsLayer.ts";
 import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ModelManifest from "../models/ModelManifest.ts";
 import * as ModelCatalog from "../models/ModelCatalog.ts";
@@ -100,6 +101,7 @@ import * as TrashResourcesLive from "../trash/trashResourcesLive.ts";
 import { TrashAlarm, layerPreview as layerTrashPreview } from "../trash/TrashWorkflow.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserTerminals from "./UserTerminals.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
 import * as UserKeybindings from "./UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
@@ -285,6 +287,8 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer.pipe(Layer.provide(searchBackfill)),
               UserThreadStatus.layer,
+              UserTerminals.layer,
+              CloudTerminalsLayer.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
               ThreadSearchLive.layer.pipe(
                 Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
@@ -443,6 +447,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
+      drives: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
       searchDisabled: searchSettings(env).disabled,
     };
     this.runtime = makeRuntime(ctx, env);
@@ -550,6 +555,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   recordThreadSummary(summary: unknown) {
     return this.api.recordThreadSummary(summary);
+  }
+
+  recordTerminalEvents(encoded: unknown) {
+    return this.api.recordTerminalEvents(encoded);
   }
 
   rebuildThreadIndex() {

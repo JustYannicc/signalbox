@@ -3,6 +3,8 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
+  AuthStandardClientScopes,
+  AuthTerminalReadScope,
   type AuthEnvironmentScope,
   EnvironmentId,
   ProviderInstanceId,
@@ -621,6 +623,87 @@ describe("public API calls", () => {
     }),
   );
 
+  it.effect("serves cloud terminal lifecycle and owner metadata through the public API", () =>
+    Effect.gen(function* () {
+      const { call, cloud } = yield* setup;
+      const caller = person(AuthStandardClientScopes);
+      expect(
+        json(
+          yield* call(
+            "threads.create",
+            {
+              commandId: "terminal-launch",
+              threadId: "terminal-thread",
+              projectId: Environment.SCRATCH_PROJECT_ID,
+              title: "Terminal API",
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+            },
+            caller,
+          ),
+        ).status,
+      ).toBe(200);
+      const target = { threadId: "terminal-thread", terminalId: "term-1" };
+      const started = json(
+        yield* call("terminal.open", { ...target, cwd: "/client/path", env: {} }, caller),
+      );
+      expect(started.status).toBe(200);
+      expect(started.body).toMatchObject({
+        terminalId: "term-1",
+        cwd: "/scratch",
+        status: "starting",
+        generation: 1,
+      });
+      expect(
+        json(yield* call("terminal.resize", { ...target, cols: 100, rows: 40 }, caller)).status,
+      ).toBe(200);
+      expect(json(yield* call("terminal.clear", target, caller)).status).toBe(200);
+      const restarted = json(
+        yield* call(
+          "terminal.restart",
+          { ...target, cwd: "/client/path", cols: 100, rows: 40 },
+          caller,
+        ),
+      );
+      expect(restarted.status).toBe(200);
+      const observed = json(
+        yield* call("terminal.observe", target, person([AuthTerminalReadScope])),
+      );
+      expect(observed.status).toBe(200);
+      expect(observed.body).toMatchObject({
+        type: "snapshot",
+        snapshot: { terminalId: "term-1", history: "", generation: 2 },
+      });
+      const input = { ...target, commandId: "typed-once", data: "a", generation: 2 };
+      expect(json(yield* call("terminal.write", input, caller)).status).toBe(200);
+      expect(json(yield* call("terminal.write", input, caller)).status).toBe(200);
+      expect(
+        json(yield* call("terminal.write", { ...input, generation: 1 }, caller)).status,
+      ).not.toBe(200);
+      const forbidden = json(
+        yield* call(
+          "terminal.write",
+          { ...target, commandId: "typed-once", data: "a" },
+          person([AuthTerminalReadScope]),
+        ),
+      );
+      expect(forbidden.status).toBe(403);
+      yield* cloud.settle;
+      const metadata = json(yield* call("terminalMetadata.subscribe", {}, caller));
+      expect(metadata.status).toBe(200);
+      expect(metadata.body).toMatchObject({
+        type: "snapshot",
+        terminals: [{ terminalId: "term-1", status: "starting", generation: 2 }],
+      });
+      expect(json(yield* call("terminal.close", target, caller)).status).toBe(200);
+      yield* cloud.settle;
+      const closed = json(yield* call("terminalMetadata.subscribe", {}, caller));
+      expect(closed.body).toEqual({ type: "snapshot", terminals: [] });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("streams a subscription as lines when the caller follows it", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
@@ -667,7 +750,7 @@ describe("public API calls", () => {
         yield* call(
           "keys.create",
           { label: "relay", scopes: ["relay:write"], model: false },
-          person(CLOUD_CLIENT_SCOPES),
+          person(AuthStandardClientScopes),
         ),
       );
       expect(answer.status).toBe(422);

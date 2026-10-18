@@ -18,6 +18,7 @@ import { terminalEnvironment } from "../../state/terminal";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
+import { useSignalboxTerminalGenerations } from "../../signalbox/terminal/terminalGenerations";
 
 /** Where a new terminal starts. Omitted fields fall back to the thread's project and worktree. */
 export interface TerminalLaunchLocation {
@@ -50,6 +51,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     environmentId: threadRef?.environmentId ?? null,
     threadId: threadRef?.threadId ?? null,
   });
+  const terminalGenerations = useSignalboxTerminalGenerations(threadRef);
   const drawerTerminalIds = useTerminalUiStateStore(
     (state) => selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef).terminalIds,
   );
@@ -123,6 +125,11 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         }),
         ...input.size,
       },
+    }).then((opened) => {
+      if (opened._tag === "Success") {
+        terminalGenerations.rememberOpened(terminalId, opened.value.generation);
+      }
+      return opened;
     });
     return { terminalId, result };
   };
@@ -132,6 +139,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     if (!threadRef || !canWrite()) return;
     const environmentId = threadRef.environmentId;
     const threadId = threadRef.threadId;
+    const generation = terminalGenerations.generationFor(terminalId, knownSessions);
     void (async () => {
       const closeResult = await closeTerminalCommand({
         environmentId,
@@ -142,16 +150,31 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         !isAtomCommandInterrupted(closeResult) &&
         readEnvironmentScope(environmentId, AuthTerminalOperateScope)
       ) {
-        await writeTerminal({ environmentId, input: { threadId, terminalId, data: "exit\n" } });
+        await writeTerminal({
+          environmentId,
+          input: {
+            threadId,
+            terminalId,
+            data: "exit\n",
+            ...(generation !== undefined ? { generation } : {}),
+          },
+        });
       }
+      terminalGenerations.forgetAfterClose(terminalId, closeResult._tag);
     })();
   };
 
   const writeToTerminal = (terminalId: string, data: string) => {
     if (!threadRef || !canWrite()) return null;
+    const generation = terminalGenerations.generationFor(terminalId, knownSessions, true);
     return writeTerminal({
       environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, terminalId, data },
+      input: {
+        threadId: threadRef.threadId,
+        terminalId,
+        data,
+        ...(generation !== undefined ? { generation } : {}),
+      },
     });
   };
 

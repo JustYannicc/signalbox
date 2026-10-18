@@ -57,6 +57,10 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import * as ThreadTerminals from "./terminal/ThreadTerminals.ts";
+import * as TerminalStore from "./terminal/TerminalStore.ts";
+import * as TerminalOutbox from "./terminal/TerminalOutbox.ts";
+import { deliverPendingTerminals } from "./terminal/terminalDelivery.ts";
 import * as ThreadFeedback from "./ThreadFeedback.ts";
 import { FeedbackSockets } from "./FeedbackSockets.ts";
 import * as SessionRows from "./session/SessionRows.ts";
@@ -194,8 +198,9 @@ const makeRuntime = (
 ) => {
   const settings = machineSettings(env);
   return ManagedRuntime.make(
-    ThreadRunner.layer
+    ThreadTerminals.layer
       .pipe(
+        Layer.provideMerge(ThreadRunner.layer.pipe(Layer.provide(ThreadTerminals.holdLayer))),
         Layer.provide(
           Layer.succeed(ThreadRunner.PreviewHold, {
             held: Effect.sync(() => previews.held),
@@ -255,8 +260,14 @@ const makeRuntime = (
         Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
         Layer.provideMerge(layerMachineBackend(env, machine)),
         Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
-        Layer.provideMerge(DiagnosticsStore.layer),
-        Layer.provideMerge(ThreadStore.layerMachineRecords),
+        Layer.provideMerge(
+          Layer.mergeAll(
+            TerminalStore.layer,
+            TerminalOutbox.layer,
+            DiagnosticsStore.layer,
+            ThreadStore.layerMachineRecords,
+          ),
+        ),
         Layer.provideMerge(
           Layer.mergeAll(
             ThreadStore.layer,
@@ -345,6 +356,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       feedbackResult: (socket, response) => feedback.receive(socket, response),
       now: () => this.now(),
       run: (effect) => this.runtime.runPromise(effect),
+      terminals: (effect) => this.runtime.runPromise(effect),
       holdsTurn: () =>
         this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),
       afterChange: (work) => this.armAlarm(work),
@@ -448,6 +460,34 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.snapshot(...args);
   }
 
+  terminalOpen(...args: Parameters<ThreadObjectApi["terminalOpen"]>) {
+    return this.api.terminalOpen(...args);
+  }
+
+  terminalWrite(...args: Parameters<ThreadObjectApi["terminalWrite"]>) {
+    return this.api.terminalWrite(...args);
+  }
+
+  terminalClose(...args: Parameters<ThreadObjectApi["terminalClose"]>) {
+    return this.api.terminalClose(...args);
+  }
+
+  terminalResize(...args: Parameters<ThreadObjectApi["terminalResize"]>) {
+    return this.api.terminalResize(...args);
+  }
+
+  terminalClear(...args: Parameters<ThreadObjectApi["terminalClear"]>) {
+    return this.api.terminalClear(...args);
+  }
+
+  terminalRestart(...args: Parameters<ThreadObjectApi["terminalRestart"]>) {
+    return this.api.terminalRestart(...args);
+  }
+
+  terminalAttach(...args: Parameters<ThreadObjectApi["terminalAttach"]>) {
+    return this.api.terminalAttach(...args);
+  }
+
   pull(...args: Parameters<ThreadObjectApi["pull"]>) {
     return this.api.pull(...args);
   }
@@ -514,6 +554,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */
   private async machineExited(exit: MachineBackend.MachineExit, generation: number) {
+    await this.runtime.runPromise(
+      ThreadTerminals.ThreadTerminals.use((terminals) => terminals.lost(generation)),
+    );
     await this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.machineExited(generation, exit)),
     );
@@ -728,6 +771,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private stepFailures = 0;
   private deliveryFailures = 0;
   private nextDeliveryAt = 0;
+  private terminalFailures = 0;
+  private nextTerminalsAt = 0;
   private eventFailures = 0;
   private nextEventsAt = 0;
   private searchFailures = 0;
@@ -759,6 +804,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
+    await this.runtime.runPromise(
+      ThreadTerminals.ThreadTerminals.use((terminals) => terminals.reconcile),
+    );
     const now = await this.now();
     const runnerWakeAt = await this.tendRunnerLiveness(now);
     const hasWork = await this.runtime.runPromise(
@@ -771,6 +819,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           (yield* engine.hasPendingSummary) ||
           (yield* engine.hasPendingSearch) ||
           (yield* engine.hasPendingEvents) ||
+          (yield* Effect.orDie((yield* TerminalOutbox.TerminalOutbox).hasPending)) ||
           (yield* Effect.forEach(
             MachineBackend.distinctBackends(yield* MachineBackend.MachineBackend),
             (backend) => backend.pending,
@@ -813,11 +862,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * look again.
    */
   private async tendMachine(log: Evlog.UnitLog, now: number): Promise<number | null> {
+    await this.run(
+      log,
+      ThreadTerminals.ThreadTerminals.use((terminals) => terminals.reconcile),
+    );
     const plan = await this.run(
       log,
       ThreadRunner.ThreadRunner.use((runner) => runner.reconcile),
     );
     if (plan.release !== null) {
+      await this.runtime.runPromise(
+        ThreadTerminals.ThreadTerminals.use((terminals) => terminals.lost(plan.release!)),
+      );
       endRunners(this.ctx, plan.release, "This machine is no longer needed.");
       await this.gateway.release(plan.release);
     }
@@ -1088,6 +1144,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.deliveryFailures = delivered ? 0 : this.deliveryFailures + 1;
       this.nextDeliveryAt = delivered ? 0 : now + retryDelay(this.deliveryFailures);
     }
+    if (now >= this.nextTerminalsAt) {
+      const delivered = await this.run(
+        log,
+        deliverPendingTerminals.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("terminal delivery failed", Cause.pretty(cause)).pipe(Effect.as(false)),
+          ),
+        ),
+      );
+      this.terminalFailures = delivered ? 0 : this.terminalFailures + 1;
+      this.nextTerminalsAt = delivered ? 0 : now + retryDelay(this.terminalFailures);
+    }
     await this.deliverEvents(log, now);
     if (now >= this.nextSearchAt) {
       const delivered = await this.run(
@@ -1152,9 +1220,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             ))
           ? now
           : null;
+    const terminalsAt =
+      this.nextTerminalsAt > 0
+        ? this.nextTerminalsAt
+        : (await this.runtime.runPromise(
+              TerminalOutbox.TerminalOutbox.use((outbox) => Effect.orDie(outbox.hasPending)),
+            ))
+          ? now
+          : null;
     const due = [
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
       summaryAt,
+      terminalsAt,
       eventsAt,
       this.nextSearchAt > 0
         ? this.nextSearchAt
