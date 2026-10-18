@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import git from "isomorphic-git";
 import { createNodeFs } from "../NodeFs.ts";
 import { createNodeGitProgram } from "../NodeGit.ts";
 import {
@@ -7,6 +8,7 @@ import {
   createSmartHttpServer,
   deferred,
   finishGit,
+  GIT_FIXTURE_COMMIT,
   spawnGit,
 } from "./helpers/NodeGitFixture.ts";
 
@@ -64,6 +66,9 @@ describe("NodeGit HTTP clone", () => {
       expect(fixture.stderr()).toContain("already exists");
 
       expect(await fs.promises.readFile("/work/racing/README.md", "utf8")).toBe("remote README\n");
+      for (const ref of ["HEAD", "refs/heads/main"]) {
+        expect(await git.resolveRef({ fs, dir: "/work/racing", ref })).toBe(GIT_FIXTURE_COMMIT);
+      }
     } finally {
       await Promise.allSettled(attempts);
       fixture.close();
