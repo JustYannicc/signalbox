@@ -32,6 +32,7 @@ export interface BunSubprocess {
   readonly pid: number;
   readonly exited: Promise<number>;
   readonly exitCode: number | null;
+  readonly signalCode: string | null;
   readonly stdin?: unknown;
   readonly stdout?: ReadableStream<Uint8Array>;
   readonly stderr?: ReadableStream<Uint8Array>;
@@ -148,6 +149,9 @@ export function createBunShim(host: BunShimHost) {
         },
         get exitCode() {
           return child.exitCode;
+        },
+        get signalCode() {
+          return child.signalCode;
         },
         get stdin() {
           return child.stdin;
