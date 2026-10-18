@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - downloads and verifies build inputs.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalConsole:off - standalone Node release downloader and CLI.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";

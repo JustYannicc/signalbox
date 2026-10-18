@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - build-time extraction from official release artifacts.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - standalone Node extraction from official release artifacts.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
