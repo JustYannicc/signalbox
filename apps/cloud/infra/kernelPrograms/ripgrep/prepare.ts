@@ -203,5 +203,7 @@ if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
     process.argv[4] === undefined ? undefined : NodePath.resolve(process.argv[4]),
     process.argv[5],
   );
-  console.log(JSON.stringify({ destination: NodePath.resolve(destination), inventory }, null, 2));
+  process.stdout.write(
+    `${JSON.stringify({ destination: NodePath.resolve(destination), inventory }, null, 2)}\n`,
+  );
 }
