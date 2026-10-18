@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 
 export const RELEASE_TAG = "probe-1057-r4-5459d40b";
+export const RELEASE_ID = 416_630_243;
 export const ARCHIVE_SHA = "5459d40b16a6c26562b463092fd82082edd4bc93297c97698d45791674eff84a";
 export const SOURCE_PIN = "002c311a136766f1ebc7be7ad65f5143667f5ffa";
 const ARCHIVE_NAME = "pristine-r4-ci-inputs.tar.gz";
@@ -38,11 +39,21 @@ export async function downloadArchive(
   if (tag !== RELEASE_TAG || !/^[\w.-]+\/[\w.-]+$/.test(repository))
     throw new Error("Invalid release source");
   const headers = { authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28" };
-  const release = await fetch(`https://api.github.com/repos/${repository}/releases/tags/${tag}`, {
+  // Draft tags are pending and cannot be resolved through the published-release tag endpoint.
+  const release = await fetch(`https://api.github.com/repos/${repository}/releases/${RELEASE_ID}`, {
     headers,
   });
   if (!release.ok) throw new Error(`Release lookup HTTP ${release.status}`);
-  const assets = record(await release.json()).assets;
+  const metadata = record(await release.json());
+  if (
+    metadata.id !== RELEASE_ID ||
+    metadata.draft !== true ||
+    metadata.tag_name !== RELEASE_TAG ||
+    metadata.target_commitish !== SOURCE_PIN
+  ) {
+    throw new Error("Frozen draft release metadata mismatch");
+  }
+  const assets = metadata.assets;
   if (!Array.isArray(assets)) throw new Error("Release has no assets");
   const matches = assets.map(record).filter((asset) => asset.name === ARCHIVE_NAME);
   const asset = matches[0];

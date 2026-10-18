@@ -171,7 +171,8 @@ jobs:
     environment:
       name: cloud-preview
     permissions:
-      contents: read
+      # Draft release assets require push visibility. This grant is limited to owner dispatch on main.
+      contents: write
     concurrency:
       group: isolate-probe-pristine-r4
       cancel-in-progress: false

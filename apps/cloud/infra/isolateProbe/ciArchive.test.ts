@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import { afterEach, expect, it, vi } from "@effect/vitest";
 import {
   SOURCE_PIN,
+  RELEASE_ID,
+  RELEASE_TAG,
   digest,
   downloadArchive,
   json,
@@ -92,4 +94,41 @@ it("rejects arbitrary release tags before using the GitHub token", async () => {
     downloadArchive("owner/repo", "arbitrary", "fake-ci-token", "/unused"),
   ).rejects.toThrow("Invalid release source");
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+const draft = {
+  id: RELEASE_ID,
+  tag_name: RELEASE_TAG,
+  draft: true,
+  target_commitish: SOURCE_PIN,
+  assets: [{ id: 654194580, name: "pristine-r4-ci-inputs.tar.gz", size: 21893763 }],
+};
+
+it("resolves the frozen draft by ID and still rejects corrupt asset bytes", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json(draft))
+    .mockResolvedValueOnce(new Response("corrupt archive"));
+  vi.stubGlobal("fetch", fetcher);
+  await expect(
+    downloadArchive("owner/repo", RELEASE_TAG, "fake-ci-token", "/unused"),
+  ).rejects.toThrow("Frozen archive SHA/size mismatch");
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+    `https://api.github.com/repos/owner/repo/releases/${RELEASE_ID}`,
+    "https://api.github.com/repos/owner/repo/releases/assets/654194580",
+  ]);
+});
+
+it.each([
+  { id: RELEASE_ID + 1 },
+  { draft: false },
+  { tag_name: "another-input" },
+  { target_commitish: "another-source" },
+])("rejects changed frozen draft metadata %j before downloading an asset", async (changed) => {
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ ...draft, ...changed }));
+  vi.stubGlobal("fetch", fetcher);
+  await expect(
+    downloadArchive("owner/repo", RELEASE_TAG, "fake-ci-token", "/unused"),
+  ).rejects.toThrow("Frozen draft release metadata mismatch");
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
