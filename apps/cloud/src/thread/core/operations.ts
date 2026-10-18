@@ -174,6 +174,12 @@ export const makeThreads = Effect.gen(function* () {
             { id: command.commandId, type: command.type },
           )
         : null;
+      if (command.type === "prepared-run.retry") {
+        yield* rejectTrashedFolder(threadContexts.turn(threadId, null), {
+          id: command.commandId,
+          type: command.type,
+        });
+      }
       const creation = placed(place, threadId, turn);
       if (
         command.type !== "message.dispatch" &&

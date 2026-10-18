@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -37,6 +37,7 @@ const cases = [
   { type: "thread.launch", checkpoint: "initial model" },
   { type: "message.dispatch", checkpoint: "turn" },
   { type: "thread.model-selection.set", checkpoint: "turn" },
+  { type: "prepared-run.retry", checkpoint: "turn" },
 ] as const;
 
 const attempt = (
@@ -45,6 +46,16 @@ const attempt = (
   checkpoint: (typeof cases)[number]["checkpoint"],
 ) => {
   switch (type) {
+    case "prepared-run.retry":
+      return service
+        .dispatch(actor, {
+          type,
+          commandId,
+          threadId,
+          runId: RunId.make("blocked-run"),
+          preparationGeneration: 1,
+        })
+        .pipe(Effect.asVoid);
     case "thread.launch":
       return service
         .launch(actor, {
