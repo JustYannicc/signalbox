@@ -133,6 +133,23 @@ const DefaultHeadBody = Schema.Struct({
     ),
   }),
 });
+
+const BlobSizeBody = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        object: Schema.NullOr(
+          Schema.Struct({
+            __typename: Schema.Literal("Blob"),
+            oid: Schema.String,
+            byteSize: Schema.Natural,
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+const decodeBlobSize = Schema.decodeUnknownEffect(Schema.fromJsonString(BlobSizeBody));
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const decodeErrorBody = Schema.decodeUnknownOption(
   Schema.Struct({ message: Schema.optional(Schema.String) }),
@@ -409,6 +426,7 @@ export const makeGitHubApi = (
     request: HttpClientRequest.HttpClientRequest,
     token: string,
     requestKind: GitHubRequestKind = "rest",
+    maxResponseBytes = MAX_JSON_RESPONSE_BYTES,
   ) =>
     send(
       operation,
@@ -428,7 +446,7 @@ export const makeGitHubApi = (
           yield* response.stream.pipe(
             Stream.runForEach((chunk) => {
               length += chunk.byteLength;
-              if (length > MAX_JSON_RESPONSE_BYTES) {
+              if (length > maxResponseBytes) {
                 return Effect.fail(
                   new GitHubError({
                     operation,
@@ -766,6 +784,46 @@ export const makeGitHubApi = (
     /** A file's bytes by id, or null when `repository` doesn't have it (#406). */
     blob: (token: string, repository: string, sha: string) =>
       rawBytes("blob", HttpClientRequest.get(`${api}/repos/${repository}/git/blobs/${sha}`), token),
+    /** GitHub raw ranges may omit their total. Ask for metadata without requesting blob text. */
+    blobSize: Effect.fnUntraced(function* (token: string, repository: string, sha: string) {
+      const [owner, name] = repository.split("/");
+      const text = yield* raw(
+        "blobSize",
+        HttpClientRequest.post(`${api}/graphql`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            query:
+              "query($owner:String!,$name:String!,$oid:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$oid){__typename ... on Blob{oid byteSize}}}}",
+            variables: { owner, name, oid: sha },
+          }),
+        ),
+        token,
+        "graphql",
+        4096,
+      );
+      if (text === null) return null;
+      const body = yield* decodeBlobSize(text).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitHubError({
+              operation: "blobSize",
+              status: 200,
+              message: "GitHub did not identify the requested blob's size.",
+              requestKind: "graphql",
+              cause,
+            }),
+        ),
+      );
+      const object = body.data.repository?.object;
+      if (object === null || object === undefined) return null;
+      if (object.oid !== sha)
+        return yield* new GitHubError({
+          operation: "blobSize",
+          status: 200,
+          message: "GitHub returned metadata for another blob.",
+          requestKind: "graphql",
+        });
+      return object.byteSize;
+    }),
     /** A bounded raw slice by id. A chunk alone does not verify the blob's Git object id. */
     blobRange: Effect.fnUntraced(
       function* (token: string, repository: string, sha: string, offset: number, length: number) {

@@ -27,6 +27,7 @@ export interface HydrationRemoteRequest {
   readonly oid: Oid;
   readonly offset: number;
   readonly length: number;
+  readonly knownSize?: number;
 }
 export type HydrationRemote = (
   input: HydrationRemoteRequest,
@@ -123,6 +124,7 @@ export const makeDriveHydration = Effect.fn("makeDriveHydration")(function* (
         oid: state.oid,
         offset: state.bytesWritten,
         length,
+        ...(knownSize === null ? {} : { knownSize }),
       }),
     );
     if (

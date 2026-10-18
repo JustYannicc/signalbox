@@ -26,6 +26,17 @@ const input = {
 const codec = Schema.fromJsonString(DriveContentScanState);
 const encode = Schema.encodeSync(codec);
 const decode = Schema.decodeUnknownSync(codec);
+const decodeMetadataRequest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      query: Schema.String,
+      variables: Schema.Struct({ owner: Schema.String, name: Schema.String, oid: Schema.String }),
+    }),
+  ),
+);
+const decodePersistedSize = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ kind: Schema.Literal("remote"), size: Schema.Natural })),
+);
 const repos: Array<ReturnType<typeof makeRepo>> = [];
 let fixtureNumber = 0;
 
@@ -33,15 +44,59 @@ afterEach(() => {
   for (const repo of repos.splice(0)) repo.cleanup();
 });
 
-type Fault = "wrong-size" | "wrong-hash" | "missing-token" | "missing-total";
+type Fault =
+  | "wrong-size"
+  | "wrong-hash"
+  | "missing-token"
+  | "malformed-size"
+  | "wrong-oid"
+  | "non-blob"
+  | "missing-size"
+  | "denied-size"
+  | "oversized-size";
 
 const remoteFixture = (files: Record<string, string>, fault?: Fault) => {
   const driveId = `folder/personal/remote-metadata-${++fixtureNumber}`;
   const drives = makeMemoryDrives();
   const contents = new Map<string, Uint8Array<ArrayBuffer>>();
   const requests: Array<{ repository: string; oid: string; offset: number; length: number }> = [];
+  const metadataRequests: Array<{ repository: string; oid: string }> = [];
   let fullRequests = 0;
   const client = HttpClient.make((request) => {
+    expect(request.headers.authorization).toBe(`Bearer ${token}`);
+    if (request.url === "https://api.github.com/graphql") {
+      expect(request.method).toBe("POST");
+      expect(request.body._tag).toBe("Uint8Array");
+      const body = decodeMetadataRequest(
+        request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+      );
+      expect(body.query).toContain("byteSize");
+      expect(body.query).not.toMatch(/\btext\b/);
+      const { owner, name, oid } = body.variables;
+      metadataRequests.push({ repository: `${owner}/${name}`, oid });
+      const response =
+        fault === "malformed-size"
+          ? new Response("not JSON")
+          : fault === "denied-size"
+            ? Response.json({ message: "Forbidden" }, { status: 403 })
+            : Response.json({
+                data: {
+                  repository: {
+                    object: {
+                      __typename: fault === "non-blob" ? "Tree" : "Blob",
+                      oid: fault === "wrong-oid" ? "b".repeat(40) : oid,
+                      ...(fault === "missing-size"
+                        ? {}
+                        : {
+                            byteSize: contents.get(oid)!.length + (fault === "wrong-size" ? 1 : 0),
+                          }),
+                    },
+                  },
+                },
+                ...(fault === "oversized-size" ? { padding: "x".repeat(4096) } : {}),
+              });
+      return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+    }
     if (request.headers.range === undefined) {
       fullRequests++;
       return Effect.die("Metadata search attempted a whole-blob HTTP request.");
@@ -53,19 +108,26 @@ const remoteFixture = (files: Record<string, string>, fault?: Fault) => {
     expect(length).toBeGreaterThan(0);
     expect(length).toBeLessThanOrEqual(64 * 1024);
     expect(request.headers.accept).toBe("application/vnd.github.raw+json");
-    expect(request.headers.authorization).toBe(`Bearer ${token}`);
     requests.push({ repository: path[1]!, oid: path[2]!, offset, length });
     const original = contents.get(path[2]!)!;
+    if (offset >= original.length)
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(null, {
+            status: 416,
+            headers: { "content-range": `bytes */${original.length}` },
+          }),
+        ),
+      );
     const bytes = original.slice(offset, offset + length);
     if (fault === "wrong-hash" && offset === 0) bytes[0] = bytes[0]! ^ 1;
-    const total =
-      fault === "missing-total" ? "*" : String(original.length + (fault === "wrong-size" ? 1 : 0));
     return Effect.succeed(
       HttpClientResponse.fromWeb(
         request,
         new Response(bytes, {
           status: 206,
-          headers: { "content-range": `bytes ${offset}-${offset + bytes.length - 1}/${total}` },
+          headers: { "content-range": `bytes ${offset}-${offset + bytes.length - 1}/*` },
         }),
       ),
     );
@@ -89,9 +151,7 @@ const remoteFixture = (files: Record<string, string>, fault?: Fault) => {
     for (const [path, oid] of ids) contents.set(oid, encoder.encode(files[path]!));
     const sizes = new Map(
       [...ids].flatMap(([path, oid]) =>
-        path === ".gitignore" || fault === "wrong-size"
-          ? [[oid, contents.get(oid)!.length] as const]
-          : [],
+        path === ".gitignore" ? [[oid, contents.get(oid)!.length] as const] : [],
       ),
     );
     const handle = (yield* DriveDirectory.DriveDirectory).forDrive(driveId);
@@ -108,110 +168,160 @@ const remoteFixture = (files: Record<string, string>, fault?: Fault) => {
     expect(yield* handle.locate([...ids.values()])).toEqual([]);
     return { head, ids, handle };
   });
-  return { driveId, layer, seed, requests, fullRequests: () => fullRequests };
+  return { driveId, layer, seed, requests, metadataRequests, fullRequests: () => fullRequests };
 };
 
 describe("GitHub metadata ranges through content search", () => {
-  it.effect(
-    "hydrates promised ignore and unknown-size content through raw ranges and freezes its source",
-    () => {
-      const ignoreText = `#${"z".repeat(3 * 64 * 1024)}\nblocked.txt\n`;
-      const content = `needle survives remote hydration\n${"padding\n".repeat(10_000)}`;
-      const test = remoteFixture({
-        ".gitignore": ignoreText,
-        "blocked.txt": "needle blocked\n",
-        "keep.txt": content,
+  it.effect("resumes unknown-total ranges with one size lookup and freezes the source", () => {
+    const ignoreText = `#${"z".repeat(3 * 64 * 1024)}\nblocked.txt\n`;
+    const content = `needle survives remote hydration\n${"padding\n".repeat(30_000)}`;
+    const test = remoteFixture({
+      ".gitignore": ignoreText,
+      "blocked.txt": "needle blocked\n",
+      "keep.txt": content,
+    });
+    return Effect.gen(function* () {
+      const { head, ids, handle } = yield* test.seed;
+      const ignore = ids.get(".gitignore")!;
+      const keep = ids.get("keep.txt")!;
+      expect(
+        new Map((yield* handle.promised([ignore, keep])).map((file) => [file.oid, file.size])),
+      ).toEqual(
+        new Map<string, number | null>([
+          [ignore, encoder.encode(ignoreText).length],
+          [keep, null],
+        ]),
+      );
+      let state: DriveContentScanState | null = null;
+      const paths: string[] = [];
+      let checkedSourceChange = false;
+      let checkedDiscoveredSize = false;
+      let complete = false;
+      for (let page = 0; page < 256; page++) {
+        const reader = yield* remoteDriveReader(test.driveId, Effect.succeed(token));
+        const result = yield* scanDriveContents(reader, head, input, state, {
+          entries: 2,
+          bytes: 512 * 1024,
+        });
+        paths.push(...result.matches.map((match) => match.path));
+        if (result.nextState === undefined) {
+          complete = true;
+          break;
+        }
+        state = decode(encode(result.nextState));
+        const contentState = yield* handle.metadataStatus(keep);
+        if (contentState !== null && !contentState.complete && contentState.bytesWritten > 0) {
+          checkedDiscoveredSize = true;
+          expect(decodePersistedSize(contentState.checkpoint)).toMatchObject({
+            kind: "remote",
+            size: encoder.encode(content).length,
+          });
+          expect(test.metadataRequests).toEqual([{ repository, oid: keep }]);
+        }
+        const partial = yield* handle.metadataStatus(ignore);
+        if (
+          !checkedSourceChange &&
+          partial !== null &&
+          !partial.complete &&
+          partial.bytesWritten > 0
+        ) {
+          checkedSourceChange = true;
+          yield* handle.setRemote({
+            provider: "github",
+            repository: "changed/source",
+            defaultBranch: "main",
+          });
+          const count = test.requests.length;
+          const changed = yield* remoteDriveReader(test.driveId, Effect.succeed(token));
+          const error = yield* scanDriveContents(changed, head, input, state).pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "DriveReadError",
+            message: "The drive's search metadata could not be read.",
+          });
+          expect(error.cause).toMatchObject({
+            _tag: "DriveHydrationError",
+            reason: "source",
+          });
+          expect(test.requests).toHaveLength(count);
+          expect(yield* handle.metadataStatus(ignore)).toEqual(partial);
+          yield* handle.setRemote({ provider: "github", repository, defaultBranch: "main" });
+        }
+      }
+      expect(complete).toBe(true);
+      expect(checkedSourceChange).toBe(true);
+      expect(checkedDiscoveredSize).toBe(true);
+      expect(paths).toEqual(["keep.txt"]);
+      expect(test.requests.every((request) => request.repository === repository)).toBe(true);
+      expect(test.requests.some((request) => request.oid === ignore && request.offset > 0)).toBe(
+        true,
+      );
+      expect(test.requests.some((request) => request.oid === keep && request.offset > 0)).toBe(
+        true,
+      );
+      expect(test.requests.some((request) => request.oid === ids.get("blocked.txt"))).toBe(false);
+      expect(test.fullRequests()).toBe(0);
+      expect(test.metadataRequests).toEqual([{ repository, oid: keep }]);
+      expect(yield* handle.metadataStatus(keep)).toMatchObject({
+        complete: true,
+        bytesWritten: encoder.encode(content).length,
+        source: { kind: "remote", repository, size: null },
       });
+    }).pipe(Effect.provide(test.layer));
+  });
+
+  it.effect(
+    "finishes empty and exact-range files without requesting an extra content range",
+    () => {
+      const content = `needle\n${"x".repeat(64 * 1024 - 7)}`;
+      const test = remoteFixture({ "empty.txt": "", "exact.txt": content });
       return Effect.gen(function* () {
         const { head, ids, handle } = yield* test.seed;
-        const ignore = ids.get(".gitignore")!;
-        const keep = ids.get("keep.txt")!;
-        expect(
-          new Map((yield* handle.promised([ignore, keep])).map((file) => [file.oid, file.size])),
-        ).toEqual(
-          new Map<string, number | null>([
-            [ignore, encoder.encode(ignoreText).length],
-            [keep, null],
-          ]),
-        );
         let state: DriveContentScanState | null = null;
         const paths: string[] = [];
-        let checkedSourceChange = false;
         let complete = false;
-        for (let page = 0; page < 256; page++) {
+        for (let page = 0; page < 100; page++) {
           const reader = yield* remoteDriveReader(test.driveId, Effect.succeed(token));
-          const result = yield* scanDriveContents(reader, head, input, state, {
-            entries: 2,
-            bytes: 512 * 1024,
-          });
+          const result = yield* scanDriveContents(reader, head, input, state, { entries: 2 });
           paths.push(...result.matches.map((match) => match.path));
           if (result.nextState === undefined) {
             complete = true;
             break;
           }
           state = decode(encode(result.nextState));
-          const partial = yield* handle.metadataStatus(ignore);
-          if (
-            !checkedSourceChange &&
-            partial !== null &&
-            !partial.complete &&
-            partial.bytesWritten > 0
-          ) {
-            checkedSourceChange = true;
-            yield* handle.setRemote({
-              provider: "github",
-              repository: "changed/source",
-              defaultBranch: "main",
-            });
-            const count = test.requests.length;
-            const changed = yield* remoteDriveReader(test.driveId, Effect.succeed(token));
-            const error = yield* scanDriveContents(changed, head, input, state).pipe(Effect.flip);
-            expect(error).toMatchObject({
-              _tag: "DriveReadError",
-              cause: {
-                _tag: "DriveHydrationError",
-                reason: "range",
-                cause: {
-                  _tag: "HydrationRemoteError",
-                  cause: { message: "The drive's remote source has changed." },
-                },
-              },
-            });
-            expect(test.requests).toHaveLength(count);
-            expect(yield* handle.metadataStatus(ignore)).toEqual(partial);
-            yield* handle.setRemote({ provider: "github", repository, defaultBranch: "main" });
-          }
         }
         expect(complete).toBe(true);
-        expect(checkedSourceChange).toBe(true);
-        expect(paths).toEqual(["keep.txt"]);
-        expect(test.requests.every((request) => request.repository === repository)).toBe(true);
-        expect(test.requests.some((request) => request.oid === ignore && request.offset > 0)).toBe(
-          true,
-        );
-        expect(test.requests.some((request) => request.oid === keep && request.offset > 0)).toBe(
-          true,
-        );
-        expect(test.requests.some((request) => request.oid === ids.get("blocked.txt"))).toBe(false);
+        expect(paths).toEqual(["exact.txt"]);
+        for (const [path, size] of [
+          ["empty.txt", 0],
+          ["exact.txt", 64 * 1024],
+        ] as const) {
+          const oid = ids.get(path)!;
+          expect(yield* handle.metadataStatus(oid)).toMatchObject({
+            complete: true,
+            bytesWritten: size,
+          });
+          expect(test.requests.filter((request) => request.oid === oid)).toHaveLength(1);
+        }
+        expect(test.metadataRequests).toEqual([{ repository, oid: ids.get("exact.txt")! }]);
         expect(test.fullRequests()).toBe(0);
-        expect(yield* handle.metadataStatus(keep)).toMatchObject({
-          complete: true,
-          bytesWritten: encoder.encode(content).length,
-          source: { kind: "remote", repository, size: null },
-        });
       }).pipe(Effect.provide(test.layer));
     },
   );
 
   it.effect(
-    "returns explicit range, hash, and missing-token failures before exposing snippets",
+    "rejects invalid size metadata, range, hash, and token answers before exposing snippets",
     () =>
       Effect.gen(function* () {
         for (const fault of [
           "wrong-size",
           "wrong-hash",
           "missing-token",
-          "missing-total",
+          "malformed-size",
+          "wrong-oid",
+          "non-blob",
+          "missing-size",
+          "denied-size",
+          "oversized-size",
         ] as const) {
           const test = remoteFixture(
             { "keep.txt": `needle must stay hidden\n${"padding\n".repeat(10_000)}` },
@@ -245,7 +355,7 @@ describe("GitHub metadata ranges through content search", () => {
                     reason: fault === "wrong-hash" ? "hash" : "range",
                   },
                 });
-                if (fault === "missing-token" || fault === "missing-total")
+                if (fault !== "wrong-hash" && fault !== "wrong-size")
                   expect(result.error).toMatchObject({
                     cause: {
                       cause: {
@@ -269,7 +379,10 @@ describe("GitHub metadata ranges through content search", () => {
             expect(matches).toEqual([]);
             expect((yield* handle.metadataStatus(ids.get("keep.txt")!))?.complete).toBe(false);
             expect(test.fullRequests()).toBe(0);
-            if (fault === "missing-token") expect(test.requests).toEqual([]);
+            if (fault === "missing-token") {
+              expect(test.requests).toEqual([]);
+              expect(test.metadataRequests).toEqual([]);
+            } else expect(test.metadataRequests).toHaveLength(1);
           }).pipe(Effect.provide(test.layer));
         }
       }),

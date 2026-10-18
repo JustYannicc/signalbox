@@ -484,6 +484,12 @@ describe("restartable drive metadata hydration", () => {
           test.remoteRepository("original/repository");
           yield* test.finish(oid);
           expect(requests).toHaveLength(4);
+          expect(requests.map((request) => request.knownSize)).toEqual([
+            undefined,
+            content.length,
+            content.length,
+            content.length,
+          ]);
           expect(
             requests.every(
               (request) => request.repository === "original/repository" && request.length <= LIMIT,
@@ -494,6 +500,36 @@ describe("restartable drive metadata hydration", () => {
             repository: "original/repository",
             size: null,
           });
+          yield* expectContent(test.store, oid, content);
+        }),
+      ),
+  );
+
+  it.effect(
+    "supplies the frozen promised size on the first remote request and across cold hydrators",
+    () =>
+      withStore(
+        Effect.gen(function* () {
+          const content = Buffer.alloc(LIMIT + 17, 0x73);
+          const oid = id("blob", content);
+          const requests: Array<DriveHydration.HydrationRemoteRequest> = [];
+          const test = yield* rig([], (request) => {
+            requests.push(request);
+            const bytes = content.subarray(request.offset, request.offset + request.length);
+            return Effect.succeed({
+              bytes,
+              totalSize: content.length,
+              complete: request.offset + bytes.length === content.length,
+            });
+          });
+          test.promisedSize(content.length);
+          yield* test.step(oid);
+          test.promisedSize(42);
+          yield* test.finish(oid);
+          expect(requests.map((request) => request.knownSize)).toEqual([
+            content.length,
+            content.length,
+          ]);
           yield* expectContent(test.store, oid, content);
         }),
       ),

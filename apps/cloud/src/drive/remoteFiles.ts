@@ -58,7 +58,7 @@ export const makeRemoteFiles = Effect.fn("makeRemoteFiles")(function* <E>(
     token.pipe(Effect.mapError(() => fail("GitHub can't be reached right now."))),
   );
   return {
-    range: ({ repository: frozenRepository, oid, offset, length }) =>
+    range: ({ repository: frozenRepository, oid, offset, length, knownSize }) =>
       Effect.gen(function* () {
         if ((yield* repository) !== frozenRepository) {
           return yield* fail("The drive's remote source has changed.");
@@ -77,8 +77,24 @@ export const makeRemoteFiles = Effect.fn("makeRemoteFiles")(function* <E>(
             ),
           );
         if (page === null) return null;
-        if (page.size === null) return yield* fail("GitHub did not identify the file's size.");
-        return { bytes: page.bytes, totalSize: page.size, complete: page.complete };
+        const size =
+          page.size ??
+          knownSize ??
+          (yield* github.api.blobSize(bearer, frozenRepository, oid).pipe(
+            Effect.mapError(
+              (cause) =>
+                new DriveReadError({
+                  message: "GitHub did not identify the file's size.",
+                  cause,
+                }),
+            ),
+          ));
+        if (size === null) return yield* fail("GitHub did not identify the file's size.");
+        return {
+          bytes: page.bytes,
+          totalSize: size,
+          complete: offset + page.bytes.length === size,
+        };
       }).pipe(Effect.mapError((cause) => new HydrationRemoteError({ oid, cause }))),
     blob: (oid) =>
       Effect.gen(function* () {
