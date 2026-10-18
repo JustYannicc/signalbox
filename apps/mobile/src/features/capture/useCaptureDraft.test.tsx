@@ -134,7 +134,7 @@ describe("capture draft destination", () => {
   let root: Root | null;
   let current: ReturnType<typeof useCaptureDraft>;
 
-  function Probe(props: { readonly target: CaptureTarget }) {
+  function Probe(props: { readonly target: CaptureTarget | null }) {
     const capture = useCaptureDraft(props.target);
     useLayoutEffect(() => {
       current = capture;
@@ -192,5 +192,84 @@ describe("capture draft destination", () => {
     act(() => root?.unmount());
     root = null;
     expect(drafts.read(draftKey)).toBeUndefined();
+  });
+
+  it("waits for a pending import before finalizing the same text draft", async () => {
+    act(() => root!.render(<Probe target={target("folder-a")} />));
+    const text = "Keep this draft";
+    let draftKey = "";
+    act(() => {
+      draftKey = current.prepare() ?? "";
+      current.setText(text);
+    });
+
+    const conversion = deferred<ReadonlyArray<DraftComposerAttachment>>();
+    let finalized = false;
+    let finalDraftKey: string | null = null;
+    let finishing = Promise.resolve();
+    act(() => {
+      current.trackImport(async () => {
+        const attachments = await conversion.promise;
+        current.addAttachments(attachments, { text, start: text.length, end: text.length });
+      });
+      finishing = (async () => {
+        await current.awaitImports();
+        finalized = true;
+        finalDraftKey = current.prepare();
+      })();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(current.isImporting).toBe(true);
+    expect(finalized).toBe(false);
+
+    conversion.resolve([attachment]);
+    await act(async () => finishing);
+
+    expect(finalized).toBe(true);
+    expect(finalDraftKey).toBe(draftKey);
+    expect(drafts.read(draftKey)).toMatchObject({ text, attachments: [attachment] });
+    expect(current.isImporting).toBe(false);
+  });
+
+  it("keeps an existing draft when an import finishes after its destination disappears", async () => {
+    act(() => root!.render(<Probe target={target("folder-a")} />));
+    const text = "Keep this draft";
+    let draftKey = "";
+    act(() => {
+      draftKey = current.prepare() ?? "";
+      current.setText(text);
+    });
+
+    const conversion = deferred<void>();
+    let importing = Promise.resolve();
+    act(() => {
+      importing = current.trackImport(async () => {
+        await conversion.promise;
+        current.addAttachments([attachment], { text, start: text.length, end: text.length });
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(current.isImporting).toBe(true);
+
+    act(() => root!.render(<Probe target={null} />));
+
+    conversion.resolve();
+    await act(async () => {
+      await importing.catch(() => undefined);
+      await current.awaitImports();
+    });
+
+    expect(current.isImporting).toBe(false);
+    expect(drafts.read(draftKey)).toMatchObject({
+      text,
+      attachments: [],
+      project: { environmentId: "environment-a" },
+    });
+    expect(drafts.read("capture-draft-2")).toBeUndefined();
   });
 });

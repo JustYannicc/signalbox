@@ -34,6 +34,7 @@ export function CaptureAttachmentButton(props: {
   readonly supportsFiles: boolean;
   readonly maxFileBytes?: number;
   readonly maxVideoBytes?: number;
+  readonly trackImport?: <T>(operation: () => Promise<T>) => Promise<T>;
   readonly onAddAttachments: CaptureAddAttachments;
   readonly onError: (message: string) => void;
 }) {
@@ -56,19 +57,23 @@ export function CaptureAttachmentButton(props: {
     if (disabled) return;
     setIsPicking(true);
     try {
-      const result = await picker();
-      let rejected = 0;
-      if (result.attachments.length > 0) {
-        rejected = onAddAttachmentsRef.current(result.attachments);
-      }
-      const errors = [
-        result.error,
-        rejected > 0 ? `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items.` : null,
-      ].filter(
-        (message, index, all): message is string =>
-          message !== null && all.indexOf(message) === index,
-      );
-      if (errors.length > 0) onErrorRef.current(errors.join(" "));
+      const importOperation = async () => {
+        const result = await picker();
+        let rejected = 0;
+        if (result.attachments.length > 0) {
+          rejected = onAddAttachmentsRef.current(result.attachments);
+        }
+        const errors = [
+          result.error,
+          rejected > 0 ? `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items.` : null,
+        ].filter(
+          (message, index, all): message is string =>
+            message !== null && all.indexOf(message) === index,
+        );
+        if (errors.length > 0) onErrorRef.current(errors.join(" "));
+      };
+      if (props.trackImport) await props.trackImport(importOperation);
+      else await importOperation();
     } catch (error) {
       onErrorRef.current(error instanceof Error ? error.message : "Could not add that attachment.");
     } finally {
@@ -140,6 +145,30 @@ export function CaptureAttachmentButton(props: {
     return { attachments, error: null };
   };
 
+  const control = (
+    <Pressable
+      accessibilityLabel="Add attachment"
+      accessibilityRole="button"
+      accessibilityState={{ disabled, busy: isPicking }}
+      className="size-12 shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50"
+      disabled={disabled}
+    >
+      {isPicking ? (
+        <AppActivityIndicator />
+      ) : (
+        <SymbolView
+          name="plus"
+          size={20}
+          weight="regular"
+          tintColorClassName="accent-icon"
+          type="monochrome"
+        />
+      )}
+    </Pressable>
+  );
+
+  if (disabled) return control;
+
   return (
     <Menu
       accessible
@@ -152,25 +181,7 @@ export function CaptureAttachmentButton(props: {
         else if (nativeEvent.event === "files") void runPicker(pickFiles);
       }}
     >
-      <Pressable
-        accessibilityLabel="Add attachment"
-        accessibilityRole="button"
-        accessibilityState={{ disabled, busy: isPicking }}
-        className="size-12 shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50"
-        disabled={disabled}
-      >
-        {isPicking ? (
-          <AppActivityIndicator />
-        ) : (
-          <SymbolView
-            name="plus"
-            size={20}
-            weight="regular"
-            tintColorClassName="accent-icon"
-            type="monochrome"
-          />
-        )}
-      </Pressable>
+      {control}
     </Menu>
   );
 }

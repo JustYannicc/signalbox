@@ -22,12 +22,32 @@ export type CaptureAddAttachments = (
 
 export function useCaptureDraft(target: CaptureTarget | null) {
   const [draftKey, setDraftKey] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const draftKeyRef = useRef<string | null>(null);
+  const pendingImportsRef = useRef(new Set<Promise<unknown>>());
   const targetRef = useRef(target);
   useLayoutEffect(() => {
     targetRef.current = target;
   }, [target]);
   const draft = useComposerDraft(draftKey);
+
+  const trackImport = useCallback(<T,>(operation: () => Promise<T>) => {
+    const pending = Promise.resolve().then(operation);
+    pendingImportsRef.current.add(pending);
+    setIsImporting(true);
+    const settle = () => {
+      pendingImportsRef.current.delete(pending);
+      if (pendingImportsRef.current.size === 0) setIsImporting(false);
+    };
+    void pending.then(settle, settle);
+    return pending;
+  }, []);
+
+  const awaitImports = useCallback(async () => {
+    while (pendingImportsRef.current.size > 0) {
+      await Promise.allSettled(pendingImportsRef.current);
+    }
+  }, []);
 
   const ensureDraft = useCallback(() => {
     const currentTarget = targetRef.current;
@@ -130,5 +150,16 @@ export function useCaptureDraft(target: CaptureTarget | null) {
 
   const prepare = useCallback(() => ensureDraft(), [ensureDraft]);
 
-  return { draft, draftKey, setText, addAttachments, removeAttachment, prepare, retarget };
+  return {
+    draft,
+    draftKey,
+    setText,
+    addAttachments,
+    removeAttachment,
+    prepare,
+    retarget,
+    trackImport,
+    awaitImports,
+    isImporting,
+  };
 }

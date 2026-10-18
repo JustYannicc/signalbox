@@ -14,7 +14,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import { Platform, Pressable, ScrollView, View } from "react-native";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
+import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -37,6 +37,7 @@ import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { folderEnvironmentsAtom } from "../../state/signalboxFolders";
 import {
   flushComposerDrafts,
+  getComposerDraftSnapshot,
   rememberComposerDraftSelection,
 } from "../../state/use-composer-drafts";
 import { CaptureAttachmentButton } from "./CaptureAttachmentButton";
@@ -83,7 +84,17 @@ export function CaptureRouteScreen() {
     selectedTarget === null &&
     (initialPersonalDestinationKey !== null || selectedDestinationKey !== null);
   const captureDraft = useCaptureDraft(selectedTarget);
-  const { addAttachments, draft, draftKey, prepare, retarget, setText } = captureDraft;
+  const {
+    addAttachments,
+    awaitImports,
+    draft,
+    draftKey,
+    isImporting,
+    prepare,
+    retarget,
+    setText,
+    trackImport,
+  } = captureDraft;
   useEffect(() => {
     if (!selectedTarget || draftKey !== null) return;
     // The editor consumes native context paste only when it has a durable draft key.
@@ -91,8 +102,9 @@ export function CaptureRouteScreen() {
   }, [draftKey, prepare, selectedTarget]);
   const selectedConfig = useEnvironmentServerConfig(selectedTarget?.start.environmentId ?? null);
   const hasContent = draft.text.length > 0 || draft.attachments.length > 0;
+  const hasCapture = hasContent || isImporting;
   const draftEnvironmentId = selectedTarget?.start.environmentId ?? draft.project?.environmentId;
-  const saveDisabled = !hasContent || selectedTarget === null || isSaving;
+  const saveDisabled = !hasCapture || selectedTarget === null || isSaving;
   const activeTrigger = useMemo(() => findFolderTrigger(draft.text, caret), [caret, draft.text]);
   const suggestions = activeTrigger
     ? rankByLabel(labeledTargets, activeTrigger.query, 5)
@@ -100,17 +112,19 @@ export function CaptureRouteScreen() {
       ? rankByLabel(labeledTargets, "", labeledTargets.length)
       : [];
   const selectedLabel = selectedTarget?.destination.label ?? "Choose a destination";
-  const bottomOffset = Math.max(0, Math.max(insets.bottom, 10) - 8);
 
   const persistDraft = useCallback((): Promise<boolean> => {
     if (persistenceRef.current) return persistenceRef.current;
-    const key = draftKey;
-    if (!key || !hasContent) return Promise.resolve(false);
+    if (!hasCapture) return Promise.resolve(false);
     const operation = (async () => {
       setIsSaving(true);
       setErrorMessage(null);
       try {
-        if (selectedTarget) prepare();
+        await awaitImports();
+        const key = prepare() ?? draftKey;
+        if (!key) return false;
+        const current = getComposerDraftSnapshot(key);
+        if (current.text.length === 0 && current.attachments.length === 0) return true;
         await flushComposerDrafts();
         setSaved(true);
         return true;
@@ -126,11 +140,11 @@ export function CaptureRouteScreen() {
     })();
     persistenceRef.current = operation;
     return operation;
-  }, [draftKey, hasContent, prepare, selectedTarget]);
+  }, [awaitImports, draftKey, hasCapture, prepare]);
 
   const requestDismiss = useCallback(() => navigation.goBack(), [navigation]);
 
-  usePreventRemove(hasContent && !allowRemoval, ({ data }) => {
+  usePreventRemove(hasCapture && !allowRemoval, ({ data }) => {
     if (pendingRemovalActionRef.current) return;
     pendingRemovalActionRef.current = data.action;
     void persistDraft().then((didPersist) => {
@@ -231,25 +245,27 @@ export function CaptureRouteScreen() {
       }
       const insertion = { text: draft.text, ...selectionRef.current };
       try {
-        const attachments = await convertPastedImagesToAttachments({
-          uris,
-          existingCount: draft.attachments.length,
+        await trackImport(async () => {
+          const attachments = await convertPastedImagesToAttachments({
+            uris,
+            existingCount: draft.attachments.length,
+          });
+          if (attachments.length === 0) return;
+          const rejected = addAttachments(attachments, insertion);
+          setSaved(false);
+          if (rejected > 0) {
+            setErrorMessage(`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items.`);
+          } else {
+            setErrorMessage(null);
+          }
         });
-        if (attachments.length === 0) return;
-        const rejected = addAttachments(attachments, insertion);
-        setSaved(false);
-        if (rejected > 0) {
-          setErrorMessage(`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items.`);
-        } else {
-          setErrorMessage(null);
-        }
       } catch (error) {
         setErrorMessage(
           error instanceof Error ? error.message : "Couldn't add that image. Try again.",
         );
       }
     },
-    [addAttachments, draft.attachments.length, draft.text, selectedTarget],
+    [addAttachments, draft.attachments.length, draft.text, selectedTarget, trackImport],
   );
 
   const openSavedDraft = useCallback(() => {
@@ -262,6 +278,42 @@ export function CaptureRouteScreen() {
     selectedConfig?.environment.capabilities.attachmentUploads === true
       ? selectedConfig.environment.capabilities.fileAttachments?.maxUploadBytes
       : undefined;
+  const footer = (
+    <View
+      className="flex-row items-center gap-3 border-t border-border-subtle bg-sheet-solid px-4 pt-3"
+      style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+    >
+      <CaptureAttachmentButton
+        disabled={personal === null || isSaving || isImporting || !selectedTarget}
+        existingCount={draft.attachments.length}
+        supportsFiles={Boolean(selectedConfig?.environment.capabilities.fileAttachments)}
+        maxFileBytes={selectedConfig?.environment.capabilities.fileAttachments?.maxUploadBytes}
+        maxVideoBytes={attachmentMaxVideoBytes}
+        trackImport={trackImport}
+        onAddAttachments={(attachments) => {
+          setSaved(false);
+          setErrorMessage(null);
+          return addAttachments(attachments, { text: draft.text, ...selectionRef.current });
+        }}
+        onError={setErrorMessage}
+      />
+      <View className="min-w-0 flex-1 flex-row items-center gap-2">
+        <SymbolView
+          name={selectedTarget?.destination.folderId === null ? "person.crop.circle" : "folder"}
+          size={16}
+          tintColorClassName="accent-icon-muted"
+          type="monochrome"
+        />
+        <Text className="min-w-0 flex-1 text-sm text-foreground-muted" numberOfLines={1}>
+          {isSaving
+            ? "Saving…"
+            : selectedTarget
+              ? `Draft ${selectedTarget.destination.inPlace} · # to pick a folder`
+              : selectedLabel}
+        </Text>
+      </View>
+    </View>
+  );
 
   return (
     <View className="flex-1 bg-sheet-solid">
@@ -307,152 +359,128 @@ export function CaptureRouteScreen() {
         </>
       )}
 
-      <ScrollView
-        className="flex-1"
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ paddingBottom: 100 }}
-      >
-        <View className="gap-4 px-4 pt-4">
-          {destinationUnavailable ? (
-            <Text
-              accessibilityLiveRegion="polite"
-              className="rounded-xl bg-subtle px-4 py-3 text-sm text-foreground-muted"
-            >
-              That destination is no longer available.{" "}
-              {draftKey
-                ? "Type # to choose another folder, or reconnect the original workspace."
-                : "Choose a destination below, or reconnect the original workspace."}
-            </Text>
-          ) : noPersonalDestination ? (
-            <Text
-              accessibilityLiveRegion="polite"
-              className="rounded-xl bg-subtle px-4 py-3 text-sm text-foreground-muted"
-            >
-              {showPersonalLoading
-                ? "Loading your personal workspace…"
-                : "Your Personal top level isn't ready. Connect a Signalbox Cloud workspace, then try again."}
-            </Text>
-          ) : null}
-
-          <ComposerEditor
-            draftKey={draftKey}
-            environmentId={draftEnvironmentId}
-            ref={inputRef}
-            autoFocus
-            readOnly={isSaving || draftKey === null}
-            multiline
-            onChangeText={handleTextChange}
-            onSelectionChange={handleSelectionChange}
-            onPasteImages={(uris) => void handlePasteImages(uris)}
-            placeholder="What's on your mind?"
-            scrollEnabled
-            style={{ minHeight: 136, opacity: personal === null ? 0.65 : 1 }}
-            textStyle={{ textAlignVertical: "top" }}
-            value={draft.text}
-          />
-
-          {suggestions.length > 0 ? (
-            <View className="overflow-hidden rounded-2xl bg-grouped-card">
-              {suggestions.map((target) => (
-                <Pressable
-                  key={target.destination.key}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${activeTrigger ? "Save in" : "Choose"} ${target.destination.label}`}
-                  accessibilityState={{
-                    selected: selectedTarget?.destination.key === target.destination.key,
-                  }}
-                  className="min-h-12 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:bg-subtle"
-                  onPress={() => selectDestination(target)}
-                >
-                  <SymbolView
-                    name={target.destination.folderId === null ? "person.crop.circle" : "folder"}
-                    size={17}
-                    tintColorClassName="accent-icon-muted"
-                    type="monochrome"
-                  />
-                  <View className="min-w-0 flex-1">
-                    <Text className="text-sm font-t3-medium text-foreground" numberOfLines={1}>
-                      {target.destination.label}
-                    </Text>
-                    {target.destination.detail ? (
-                      <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                        {target.destination.detail}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {selectedTarget?.destination.key === target.destination.key ? (
-                    <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
-                  ) : null}
-                </Pressable>
-              ))}
-            </View>
-          ) : activeTrigger ? (
-            <Text className="text-sm text-foreground-muted">No matching folders.</Text>
-          ) : null}
-
-          {composerStripAttachments(draft.attachments).length > 0 && draftEnvironmentId ? (
-            <ComposerAttachmentStrip
-              environmentId={draftEnvironmentId}
-              attachments={composerStripAttachments(draft.attachments)}
-              imageSize={72}
-              imageBorderRadius={16}
-              onRemove={(attachmentId) => {
-                setSaved(false);
-                captureDraft.removeAttachment(attachmentId);
-              }}
-            />
-          ) : null}
-
-          {errorMessage ? (
-            <Toast
-              message="Couldn't save capture"
-              description={errorMessage}
-              tone="danger"
-              onDismiss={() => setErrorMessage(null)}
-            />
-          ) : saved && draftKey ? (
-            <Toast
-              message="Saved to drafts"
-              action={selectedTarget ? { label: "Open draft", onPress: openSavedDraft } : undefined}
-            />
-          ) : null}
-        </View>
-      </ScrollView>
-
-      <KeyboardStickyView
-        className="absolute inset-x-0 bottom-0"
-        offset={{ closed: 0, opened: bottomOffset }}
-      >
-        <View
-          className="flex-row items-center gap-3 border-t border-border-subtle bg-sheet-solid px-4 pt-3"
-          style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+      <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+        <ScrollView
+          className="flex-1"
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: Platform.OS === "android" ? 72 : 0 }}
         >
-          <CaptureAttachmentButton
-            disabled={personal === null || isSaving || !selectedTarget}
-            existingCount={draft.attachments.length}
-            supportsFiles={Boolean(selectedConfig?.environment.capabilities.fileAttachments)}
-            maxFileBytes={selectedConfig?.environment.capabilities.fileAttachments?.maxUploadBytes}
-            maxVideoBytes={attachmentMaxVideoBytes}
-            onAddAttachments={(attachments) => {
-              setSaved(false);
-              setErrorMessage(null);
-              return addAttachments(attachments, { text: draft.text, ...selectionRef.current });
-            }}
-            onError={setErrorMessage}
-          />
-          <View className="min-w-0 flex-1 flex-row items-center gap-2">
-            <SymbolView
-              name={selectedTarget?.destination.folderId === null ? "person.crop.circle" : "folder"}
-              size={16}
-              tintColorClassName="accent-icon-muted"
-              type="monochrome"
+          <View className="gap-4 px-4 pt-4">
+            {destinationUnavailable ? (
+              <Text
+                accessibilityLiveRegion="polite"
+                className="rounded-xl bg-subtle px-4 py-3 text-sm text-foreground-muted"
+              >
+                That destination is no longer available.{" "}
+                {draftKey
+                  ? "Type # to choose another folder, or reconnect the original workspace."
+                  : "Choose a destination below, or reconnect the original workspace."}
+              </Text>
+            ) : noPersonalDestination ? (
+              <Text
+                accessibilityLiveRegion="polite"
+                className="rounded-xl bg-subtle px-4 py-3 text-sm text-foreground-muted"
+              >
+                {showPersonalLoading
+                  ? "Loading your personal workspace…"
+                  : "Your Personal top level isn't ready. Connect a Signalbox Cloud workspace, then try again."}
+              </Text>
+            ) : null}
+
+            <ComposerEditor
+              draftKey={draftKey}
+              environmentId={draftEnvironmentId}
+              ref={inputRef}
+              autoFocus
+              readOnly={isSaving || draftKey === null}
+              multiline
+              onChangeText={handleTextChange}
+              onSelectionChange={handleSelectionChange}
+              onPasteImages={(uris) => void handlePasteImages(uris)}
+              placeholder="What's on your mind?"
+              scrollEnabled
+              style={{ minHeight: 136, opacity: personal === null ? 0.65 : 1 }}
+              textStyle={{ textAlignVertical: "top" }}
+              value={draft.text}
             />
-            <Text className="min-w-0 flex-1 text-sm text-foreground-muted" numberOfLines={1}>
-              {selectedTarget ? `Saving to ${selectedLabel}` : selectedLabel}
-            </Text>
+
+            {suggestions.length > 0 ? (
+              <View className="overflow-hidden rounded-2xl bg-grouped-card">
+                {suggestions.map((target) => (
+                  <Pressable
+                    key={target.destination.key}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${activeTrigger ? "Save in" : "Choose"} ${target.destination.label}`}
+                    accessibilityState={{
+                      selected: selectedTarget?.destination.key === target.destination.key,
+                    }}
+                    className="min-h-12 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:bg-subtle"
+                    onPress={() => selectDestination(target)}
+                  >
+                    <SymbolView
+                      name={target.destination.folderId === null ? "person.crop.circle" : "folder"}
+                      size={17}
+                      tintColorClassName="accent-icon-muted"
+                      type="monochrome"
+                    />
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-sm font-t3-medium text-foreground" numberOfLines={1}>
+                        {target.destination.label}
+                      </Text>
+                      {target.destination.detail ? (
+                        <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                          {target.destination.detail}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {selectedTarget?.destination.key === target.destination.key ? (
+                      <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
+                    ) : null}
+                  </Pressable>
+                ))}
+              </View>
+            ) : activeTrigger ? (
+              <Text className="text-sm text-foreground-muted">No matching folders.</Text>
+            ) : null}
+
+            {composerStripAttachments(draft.attachments).length > 0 && draftEnvironmentId ? (
+              <ComposerAttachmentStrip
+                environmentId={draftEnvironmentId}
+                attachments={composerStripAttachments(draft.attachments)}
+                imageSize={72}
+                imageBorderRadius={16}
+                onRemove={(attachmentId) => {
+                  setSaved(false);
+                  captureDraft.removeAttachment(attachmentId);
+                }}
+              />
+            ) : null}
+
+            {errorMessage ? (
+              <Toast
+                message="Capture needs attention"
+                description={errorMessage}
+                tone="danger"
+                onDismiss={() => setErrorMessage(null)}
+              />
+            ) : saved && draftKey ? (
+              <Toast
+                message="Saved to drafts"
+                action={selectedTarget ? { label: "Open draft", onPress: openSavedDraft } : undefined}
+              />
+            ) : null}
           </View>
-        </View>
-      </KeyboardStickyView>
+        </ScrollView>
+        {Platform.OS !== "android" ? footer : null}
+      </KeyboardAvoidingView>
+      {Platform.OS === "android" ? (
+        <KeyboardStickyView
+          className="absolute inset-x-0 bottom-0"
+          offset={{ closed: 0, opened: 0 }}
+        >
+          {footer}
+        </KeyboardStickyView>
+      ) : null}
     </View>
   );
 }

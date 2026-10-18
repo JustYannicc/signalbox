@@ -1030,6 +1030,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerShown: false,
       },
     }),
+    // signalbox: capture opens a durable draft without starting an agent turn.
     Capture: createNativeStackScreen({
       screen: CaptureRouteScreen,
       linking: "capture",

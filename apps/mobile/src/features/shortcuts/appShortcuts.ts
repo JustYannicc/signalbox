@@ -107,7 +107,7 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
   return [
     {
       id: NEW_TASK_SHORTCUT_ID,
-      title: "New task",
+      title: "Capture",
       icon: SHORTCUT_ICON,
       params: { href: CAPTURE_SHORTCUT_HREF },
     },
