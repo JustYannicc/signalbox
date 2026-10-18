@@ -33,12 +33,16 @@ export async function prepareGeneratedCodeModules(
   }
   await NodeFSP.writeFile(
     NodePath.join(root, "generated-modules.json"),
-    JSON.stringify({
-      moduleMapByteBudget,
-      moduleMapBytes: prepared.moduleMapBytes,
-      modules: Object.keys(prepared.modules).sort(),
-      omittedKeys: prepared.omittedKeys,
-    }, null, 2),
+    JSON.stringify(
+      {
+        moduleMapByteBudget,
+        moduleMapBytes: prepared.moduleMapBytes,
+        modules: Object.keys(prepared.modules).sort(),
+        omittedKeys: prepared.omittedKeys,
+      },
+      null,
+      2,
+    ),
   );
   await NodeFSP.writeFile(
     NodePath.join(root, "generated-function-index.json"),

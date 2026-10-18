@@ -1,6 +1,9 @@
 const NativeUint8Array = Uint8Array;
 const NativeUint32Array = Uint32Array;
-const NativeDataView = DataView;
+const NativeDataView: {
+  new (buffer: ArrayBufferLike, byteOffset?: number, byteLength?: number): DataView;
+  readonly prototype: DataView;
+} = DataView;
 const apply = Reflect.apply;
 const prototypeOf = Object.getPrototypeOf;
 const own = Object.getOwnPropertyDescriptor;
@@ -14,6 +17,7 @@ const byteLength = own(typed, "byteLength")!.get!;
 const length = own(typed, "length")!.get!;
 const set = NativeUint8Array.prototype.set;
 const fill = NativeUint8Array.prototype.fill;
+const fillUint32 = NativeUint32Array.prototype.fill;
 const subarray = NativeUint8Array.prototype.subarray;
 const slice = NativeUint8Array.prototype.slice;
 const getUint32 = NativeDataView.prototype.getUint32;
@@ -53,7 +57,7 @@ export class HashUint8Array extends NativeUint8Array {
 
 export class HashUint32Array extends NativeUint32Array {
   override fill(value: number, start?: number, end?: number): this {
-    return apply(fill, this, [value, start, end]) as this;
+    return apply(fillUint32, this, [value, start, end]) as this;
   }
 }
 
