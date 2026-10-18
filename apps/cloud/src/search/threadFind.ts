@@ -8,6 +8,10 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import { searchableMessageSegments, searchablePlanSegments } from "@t3tools/shared/threadFindText";
+import {
+  createThreadFindMatchEvidence,
+  type ThreadFindEvidenceDocument,
+} from "@t3tools/shared/threadFindMatchEvidence";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import * as Data from "effect/Data";
 import { documentForProjectedItem } from "../thread/searchDocuments.ts";
@@ -22,6 +26,7 @@ interface FindDocument extends FindRow {
   readonly entryId: string;
   readonly runId: OrchestrationV2TurnItem["runId"];
   readonly count: number;
+  readonly text: ThreadFindEvidenceDocument | null;
 }
 class TextKey extends Data.Class<{
   text: string;
@@ -81,7 +86,11 @@ function searchableRows(items: readonly OrchestrationV2ProjectedTurnItem[]) {
   );
 }
 
-function documentFor(row: OrchestrationV2ProjectedTurnItem, count: number): FindDocument {
+function documentFor(
+  row: OrchestrationV2ProjectedTurnItem,
+  count: number,
+  text: ThreadFindEvidenceDocument | null,
+): FindDocument {
   return {
     position: row.position,
     visibility: row.visibility,
@@ -93,6 +102,7 @@ function documentFor(row: OrchestrationV2ProjectedTurnItem, count: number): Find
         : row.item.id,
     runId: row.item.runId,
     count,
+    text,
   };
 }
 
@@ -135,25 +145,33 @@ export function findProjectedThreadItems(
   cwd?: string,
 ): OrchestrationV2SearchThreadResult {
   const rows = searchableRows(projection.visibleTurnItems);
-  const docs = rows.map((row) =>
-    documentFor(
-      row,
-      countSegments(
-        ["user_message", "assistant_message", "proposed_plan"].includes(row.item.type)
-          ? parseText(textKey(row.item, cwd, input.skills ?? []))
-          : [documentForProjectedItem(projection, row)?.text ?? ""],
-        input.query,
-      ),
-    ),
-  );
-  return resultForSelection(selectMatch(docs, input), docs, snapshotSequence);
+  const docs = rows.map((row) => {
+    if (!["user_message", "assistant_message", "proposed_plan"].includes(row.item.type)) {
+      return documentFor(
+        row,
+        countSegments([documentForProjectedItem(projection, row)?.text ?? ""], input.query),
+        null,
+      );
+    }
+    const key = textKey(row.item, cwd, input.skills ?? []);
+    const segments = parseText(key);
+    return documentFor(row, countSegments(segments, input.query), {
+      source: key.text,
+      segments: segments.map((text) => ({ text })),
+    });
+  });
+  return resultForSelection(selectMatch(docs, input), docs, snapshotSequence, input.query);
 }
 
 function resultForSelection(
   selected: ReturnType<typeof selectMatch>,
   documents: readonly FindDocument[],
   snapshotSequence: number,
+  query: string,
 ): OrchestrationV2SearchThreadResult {
+  const evidence = selected.document?.text
+    ? createThreadFindMatchEvidence(selected.document.text, query, selected.occurrence)
+    : null;
   let startIndex = 0;
   const entries = documents.flatMap(({ entryId, runId, count }) => {
     const entry = { entryId, runId, count, startIndex };
@@ -180,6 +198,7 @@ function resultForSelection(
             entryId: selected.document.entryId,
             runId: selected.document.runId,
             occurrence: selected.occurrence,
+            ...(evidence === null ? {} : { evidence }),
           },
   };
 }

@@ -268,6 +268,7 @@ export const ProjectSearchContentsInput = Schema.Struct({
   caseSensitive: Schema.Boolean,
   wholeWord: Schema.Boolean,
   useRegex: Schema.Boolean,
+  cursor: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
 export type ProjectSearchContentsInput = typeof ProjectSearchContentsInput.Type;
 
@@ -289,6 +290,8 @@ export const ProjectSearchContentsResult = Schema.Struct({
   matches: Schema.Array(ProjectContentMatch),
   truncated: Schema.Boolean,
   regexFallbackError: Schema.optional(Schema.String),
+  /** Opaque position in an immutable cloud scan. Omitted by legacy servers. */
+  nextCursor: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Type;
 
