@@ -6,5 +6,7 @@ export const secretSendRequestId = (runId: string, ordinal: number) =>
   RuntimeRequestId.make(`${prefix}${runId}:${ordinal}`);
 
 /** Only the cloud can allocate these requests and their transcript cards. */
-export const isSecretSendId = (id: string) =>
-  id.startsWith(prefix) || id.startsWith(`turn-item:${prefix}`);
+export const isSecretSendId = (id: string) => {
+  const trimmed = id.trim();
+  return trimmed.startsWith(prefix) || trimmed.startsWith(`turn-item:${prefix}`);
+};

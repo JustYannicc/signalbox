@@ -49,6 +49,7 @@ const HOST = "hooks.example.test";
 const encodeRequest = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2RuntimeRequest));
 const encodeItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
 const encodeNode = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ExecutionNode));
+const jsonRecord = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
 
 /** The owner's object as the gate asks it: the grants it keeps, and what it answers. */
 const fakeOwner = () => {
@@ -372,6 +373,10 @@ describe("ThreadSends", () => {
     "requestId",
     "pending-and-card",
     "node",
+    "padded-card-id",
+    "padded-requestId",
+    "padded-runtimeRequestId",
+    "padded-request-id",
   ] as const)("rejects a runner preclaiming a send before the first ask with a %s", (attack) =>
     midTurn(fakeOwner(), ({ engine, sends, batch }) =>
       Effect.gen(function* () {
@@ -428,22 +433,44 @@ describe("ThreadSends", () => {
             kind: "provider",
             runId: run.id,
             event:
-              attack === "pending"
-                ? { type: "runtime_request.updated", runtimeRequest: encodeRequest(request) }
-                : attack === "node"
+              attack === "pending" || attack === "padded-request-id"
+                ? {
+                    type: "runtime_request.updated",
+                    runtimeRequest: {
+                      ...jsonRecord(encodeRequest(request)),
+                      ...(attack === "padded-request-id" ? { id: ` \t${guessed}\n` } : {}),
+                    },
+                  }
+                : attack === "node" || attack === "padded-runtimeRequestId"
                   ? {
                       type: "node.updated",
-                      node: encodeNode({ ...root, runtimeRequestId: guessed }),
+                      node: {
+                        ...jsonRecord(encodeNode({ ...root, runtimeRequestId: guessed })),
+                        ...(attack === "padded-runtimeRequestId"
+                          ? { runtimeRequestId: ` \t${guessed}\n` }
+                          : {}),
+                      },
                     }
                   : {
                       type: "turn_item.updated",
-                      turnItem: encodeItem(
-                        attack === "disguised-card"
-                          ? { ...card, type: "system_notice", message: "Disguised preclaim" }
-                          : attack === "requestId"
-                            ? { ...card, id: TurnItemId.make("native-looking-card") }
-                            : card,
-                      ),
+                      turnItem: {
+                        ...jsonRecord(
+                          encodeItem(
+                            attack === "disguised-card"
+                              ? { ...card, type: "system_notice", message: "Disguised preclaim" }
+                              : attack === "requestId" || attack === "padded-requestId"
+                                ? { ...card, id: TurnItemId.make("native-looking-card") }
+                                : card,
+                          ),
+                        ),
+                        ...(attack === "padded-card-id"
+                          ? {
+                              id: ` \t${card.id}\n`,
+                              requestId: "native-looking-request",
+                            }
+                          : {}),
+                        ...(attack === "padded-requestId" ? { requestId: ` \t${guessed}\n` } : {}),
+                      },
                     },
           },
         ]);
