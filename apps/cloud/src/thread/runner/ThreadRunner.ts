@@ -22,6 +22,7 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
   OrchestrationV2DomainEvent,
+  OrchestrationV2ProviderFailure,
   OrchestrationV2ThreadProjection,
   RunId,
   ThreadId,
@@ -62,7 +63,8 @@ import * as ThreadStore from "../ThreadStore.ts";
 import * as PullState from "../PullState.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
-import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
+import { MachineBackend, type MachineExit, type MachineStartupProblem } from "./MachineBackend.ts";
+import { MAX_STARTUP_RETRIES, startupFailure } from "./machineStartup.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
 import { isModelToken, type ModelGrant, modelToken } from "../ModelTokens.ts";
@@ -217,6 +219,14 @@ export interface MachinePlan {
   readonly lost: boolean;
 }
 
+export type MachineReport = Omit<
+  Parameters<TurnDiagnostics["Service"]["machineReported"]>[0],
+  "generation" | "now"
+> & {
+  readonly generation?: number | undefined;
+  readonly startupProblem?: MachineStartupProblem | undefined;
+};
+
 /** What the connected Runner should be doing right now. */
 export interface RunnerWork {
   readonly workflowStops: ReadonlyArray<WorkflowStopRequest>;
@@ -275,6 +285,7 @@ export class ThreadRunner extends Context.Service<
     }) => Effect.Effect<void>;
     /** The backend confirmed a request. */
     readonly ensured: (generation: number) => Effect.Effect<void>;
+    readonly machineReported: (input: MachineReport) => Effect.Effect<void>;
     readonly work: Effect.Effect<RunnerWork>;
     readonly reconcile: Effect.Effect<MachinePlan>;
     /** The preview tunnel can connect before the main Runner socket, using the same lease. */
@@ -782,6 +793,47 @@ const make = Effect.gen(function* () {
   const ensured: ThreadRunner["Service"]["ensured"] = (generation) =>
     updateLease(generation, (lease, now) =>
       lease.status === "none" || lease.ensuredAt !== null ? null : { ...lease, ensuredAt: now },
+    );
+
+  const machineReported: ThreadRunner["Service"]["machineReported"] = (input) =>
+    withLease(({ projection, lease, now }) =>
+      Effect.gen(function* () {
+        if (projection === null) return keep(undefined);
+        const generation = input.generation ?? lease.generation;
+        yield* diagnostics.machineReported({ ...input, generation, now });
+        if (
+          input.operation !== "ensure" ||
+          generation !== lease.generation ||
+          lease.status !== "requested"
+        ) {
+          return keep(undefined);
+        }
+        const problem = input.startupProblem ?? input.status?.startupProblem;
+        const previous = lease.startup?.problem;
+        if (
+          (problem === undefined && lease.startup === undefined) ||
+          (lease.startup !== undefined &&
+            previous?.code === problem?.code &&
+            previous?.message === problem?.message &&
+            previous?.retryable === problem?.retryable)
+        ) {
+          return keep(undefined);
+        }
+        const backend = backends[classOf(lease)];
+        return {
+          events: [],
+          machine: {
+            ...lease,
+            startup: {
+              retries: lease.startup?.retries ?? 0,
+              deadline:
+                lease.startup?.deadline ?? (lease.requestedAt ?? now) + backend.connectTimeoutMs,
+              ...(problem === undefined ? {} : { problem }),
+            },
+          },
+          result: undefined,
+        };
+      }),
     );
 
   /**
@@ -1322,7 +1374,7 @@ const make = Effect.gen(function* () {
         const release = (input: {
           readonly reason: StopReason;
           readonly detail: string;
-          readonly failure?: string;
+          readonly failure?: string | OrchestrationV2ProviderFailure;
           readonly recover?: boolean;
           readonly lost?: boolean;
           readonly idleSince?: number;
@@ -1334,7 +1386,14 @@ const make = Effect.gen(function* () {
                 ? recoverRunEvents(projection, run, ctx)
                 : input.failure === undefined
                   ? []
-                  : failRunEvents(projection, run, unknownFailure(input.failure), ctx);
+                  : failRunEvents(
+                      projection,
+                      run,
+                      typeof input.failure === "string"
+                        ? unknownFailure(input.failure)
+                        : input.failure,
+                      ctx,
+                    );
           const after = projection === null ? null : applyEvents(projection, events);
           const continues = pending !== null || (after !== null && harnessRun(after) !== undefined);
           return Effect.as(
@@ -1413,15 +1472,58 @@ const make = Effect.gen(function* () {
           if (run === undefined && pending === null && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
-          const deadline = (lease.requestedAt ?? now) + backend.connectTimeoutMs;
-          if (now >= deadline) {
-            const failure = "No machine came up to run this turn.";
+          const deadline =
+            lease.startup?.deadline ?? (lease.requestedAt ?? now) + backend.connectTimeoutMs;
+          const retries = lease.startup?.retries ?? 0;
+          const problem = lease.startup?.problem;
+          const timedOut = now >= deadline;
+          if (timedOut || problem?.retryable === false) {
+            // No Runner has connected, so none could have received this run.
+            // Keep the VM and its in-progress restore while retrying the same request.
+            if (
+              timedOut &&
+              problem?.retryable !== false &&
+              backend.kind !== "none" &&
+              run?.startedAt === null &&
+              retries < MAX_STARTUP_RETRIES
+            ) {
+              yield* Effect.logWarning("retrying machine startup before handoff", {
+                generation: lease.generation,
+                attempt: retries + 2,
+                code: problem?.code ?? "machine_start_timeout",
+              });
+              return {
+                events: [],
+                machine: {
+                  ...lease,
+                  ensuredAt: null,
+                  startup: {
+                    retries: retries + 1,
+                    deadline: now + backend.connectTimeoutMs,
+                    problem,
+                  },
+                },
+                result: {
+                  ...IDLE,
+                  ensure:
+                    lease.token === null
+                      ? null
+                      : { generation: lease.generation, token: lease.token },
+                  wakeAt: now + ENSURE_RETRY_MS,
+                  runId,
+                },
+              };
+            }
+            const failure = startupFailure(
+              backend.kind,
+              backend.connectTimeoutMs,
+              retries,
+              problem,
+              timedOut,
+            );
             return yield* release({
               reason: "error",
-              detail:
-                run === undefined
-                  ? `No preview machine connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`
-                  : `No Runner connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`,
+              detail: failure.message,
               ...(run === undefined ? {} : { failure }),
             });
           }
@@ -1567,6 +1669,7 @@ const make = Effect.gen(function* () {
     machineExited,
     disconnected,
     ensured,
+    machineReported,
     work,
     reconcile,
     previewDrive,
