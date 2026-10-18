@@ -15,6 +15,8 @@ import {
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationSearchThreadsError,
+  OrchestrationV2SearchThreadError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
@@ -49,6 +51,11 @@ import {
   SIGNALBOX_FOLDERS_WS_METHODS,
   SignalboxFolderError,
 } from "@t3tools/contracts/signalboxFolders";
+import {
+  SIGNALBOX_SEARCH_REQUIRED_SCOPES,
+  SIGNALBOX_SEARCH_WS_METHODS,
+} from "@t3tools/contracts/signalboxSearch";
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes";
 import {
   SIGNALBOX_BROWSING_REQUIRED_SCOPES,
@@ -197,6 +204,10 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
+  ORCHESTRATION_V2_WS_METHODS.searchThreads,
+  ORCHESTRATION_V2_WS_METHODS.searchThread,
+  ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+  SIGNALBOX_SEARCH_WS_METHODS.query,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
@@ -310,6 +321,10 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
+  ...SIGNALBOX_SEARCH_REQUIRED_SCOPES,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
@@ -523,6 +538,7 @@ export const layerHandlers = (input: {
     Effect.gen(function* () {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
+      const search = yield* ThreadSearch.ThreadSearch;
       const coreThreads = yield* Threads.Threads;
       const assets = yield* CloudAssets.CloudAssets;
       const contexts = yield* UserContexts.UserContexts;
@@ -713,6 +729,26 @@ export const layerHandlers = (input: {
                 }),
             ),
           ),
+        [SIGNALBOX_SEARCH_WS_METHODS.query]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.query(actor, request)),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.search(actor, request)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationSearchThreadsError({
+                  message: "Could not search threads. Please retry.",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThread]: (request) =>
+          Effect.flatMap(actorNow, (actor) => search.searchOne(actor, request)).pipe(
+            Effect.mapError((cause) => new OrchestrationV2SearchThreadError({ cause })),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: (request) =>
+          Stream.fromEffect(
+            Effect.flatMap(actorNow, (actor) => search.searchOne(actor, request)),
+          ).pipe(Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
         [WS_METHODS.subscribeWorktreeSetup]: (request) =>
           Stream.unwrap(
             Effect.map(actorNow, (actor) =>

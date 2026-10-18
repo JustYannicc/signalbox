@@ -984,6 +984,125 @@ columns that are nullable or have a default, and rows in tables the same pull
 request creates. Anything else is ship-only, including a new Durable Object
 class (an entry in `migrations` in `wrangler.jsonc`). Ship-only never blocks.
 
+### Recovering thread search
+
+Thread history is authoritative; search is a disposable replica. The part-storage
+conversion is resumable: each alarm commits bounded work, retains the old text and
+FTS until complete part coverage and replacement FTS are durable, then clears old
+whole-text copies transactionally. Its schema migration marker does not mark that
+conversion complete. Disable takes effect before index initialization or conversion.
+The converted layout is not compatible with old search code; use forward-disable,
+not a code rollback. Only selected objects convert; inactive generations stay untouched.
+
+These procedures
+apply only to `SearchIndexObject`. They do not repair threads or reset any other
+Durable Object. Confirm the account, stage Worker, `SEARCH_INDEX` namespace,
+canonical home and EU jurisdiction before touching data. Do not delete a namespace,
+change a class/binding name, or roll back across the release that creates the class.
+Cloudflare does not support that lifecycle rollback. See
+[Worker rollback restrictions](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/).
+
+`SEARCH_INDEX_DISABLED=1` stops capture, delivery, backfill and search alarm retries;
+queued deliveries remain unacknowledged. Other thread work and alarms continue.
+Queries return `unavailable` and the descriptor stops advertising content search.
+`SEARCH_INDEX_GENERATION` defaults to `1`, which preserves the original object name
+`[ownerId,projectId]`. Other generations use `["search",generation,ownerId,projectId]`
+in the same namespace. This prefix belongs to search only; it does not change the
+canonical home or any catalog identity. Values allow 1–64 letters, digits,
+underscores or hyphens, starting with a letter or digit.
+
+To stop search in production, set the GitHub environment variable and deploy
+forward from a version that retains all classes and bindings:
+
+```sh
+gh variable set SEARCH_INDEX_DISABLED --env cloud-production --body 1
+gh workflow run deploy-cloud.yml --ref main
+```
+
+Before re-enabling, choose a fresh generation and deploy again:
+
+```sh
+gh variable set SEARCH_INDEX_GENERATION --env cloud-production --body incident-20261017-a
+gh variable set SEARCH_INDEX_DISABLED --env cloud-production --body 0
+gh workflow run deploy-cloud.yml --ref main
+```
+
+Each user object's next wake starts a durable registry scan. Every activation,
+including switching 1 → 2 → 1, requests fresh source snapshots with a retry-stable
+activation key; retained `complete` watermarks never skip that replay. Completed
+scans hibernate instead of rereading the registry on every unrelated alarm. A
+user object that observes a disabled generation refuses to serve that generation
+again. Objects asleep throughout a disable cannot observe it, so always use a
+fresh generation when re-enabling. Old objects remain available for investigation;
+switching back also requires replay and is not an instant rollback.
+
+For previews, set the variables in `cloud-preview` and use the PR's normal preview
+deploy. Those environment variables affect all subsequent preview deploys, so
+restore their intended values afterwards. Never point a preview at production's
+namespace.
+
+For an FTS-only repair, first deploy the disable flag and confirm search writes
+have stopped. Use [Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
+or the account Durable Objects API. Discover the namespace with
+`GET /accounts/{account_id}/workers/durable_objects/namespaces`, confirm its
+`SearchIndexObject` class and stage script, then inspect its objects with
+`GET /accounts/{account_id}/workers/durable_objects/namespaces/{namespace_id}/objects`.
+Address the expected EU object by its exact JSON name with
+`POST /accounts/{account_id}/workers/durable_objects/namespaces/{namespace_id}/query/v2`:
+
+```json
+{
+  "durable_object_name": "[\"search\",\"incident-20261017-a\",\"<ownerId>\",\"<projectId>\"]",
+  "jurisdiction": "eu",
+  "queries": [{ "sql": "SELECT owner_id, project_id FROM search_home WHERE id = 1" }]
+}
+```
+
+Check the returned home before writing. For each response require HTTP success,
+`success: true`, no `result.error`, and a result for every submitted query. The
+API may execute queries separately; a batch is not an assumed transaction. With
+search disabled and writes stopped, run and check each statement separately:
+
+```sql
+DELETE FROM search_document_parts_fts;
+INSERT INTO search_document_parts_fts(rowid, search_text)
+  SELECT p.id, p.search_text FROM search_document_parts p
+  LEFT JOIN search_document_conversion c ON c.document_id = p.document_id
+  WHERE c.document_id IS NULL
+    OR c.stage = 'verifying'
+    OR (c.stage = 'indexing' AND p.part_index < c.next_index_part);
+```
+
+This only rebuilds FTS from intact published parts and committed conversion steps.
+It leaves unfinished conversion chunks for their next alarm step. It cannot recover damaged
+logical rows, missing parts, receipts, tombstones or watermarks. For logical damage,
+use a new generation and source replay. Do not drop tables or reset migration
+records: a running object caches its migration readiness. If an isolated replica
+must be cleared for investigation, disable search first and clear all replica data
+together, in foreign-key order, preserving `search_home` and migration records:
+
+```sql
+DELETE FROM search_document_parts_fts;
+DELETE FROM search_documents_fts;
+DELETE FROM search_document_conversion;
+DELETE FROM search_snapshot_pages;
+DELETE FROM search_snapshot_items;
+DELETE FROM search_thread_snapshots;
+DELETE FROM search_thread_coverage_gaps;
+DELETE FROM search_document_staging_parts;
+DELETE FROM search_document_staging;
+DELETE FROM search_document_parts;
+DELETE FROM search_documents;
+DELETE FROM search_tombstones;
+DELETE FROM search_delivery_receipts;
+DELETE FROM search_threads;
+```
+
+Do not resume after a partial clear. Verify each result, then rebuild through a
+fresh generation. After replay, check normal keyword and literal queries, a long
+item spanning parts, archived results, exact-item Find anchors, and current access
+revocation before relying on the replacement index.
+
 ### What a preview starts with
 
 A preview has its own Durable Objects, so it starts empty. Signing in to one

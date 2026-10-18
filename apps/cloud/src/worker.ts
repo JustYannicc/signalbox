@@ -44,6 +44,7 @@ import { threadObjectStub } from "./thread/ThreadDirectory.ts";
 export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
 export { DriveObject } from "./drive/DriveObject.ts";
+export { SearchIndexObject } from "./search/CloudflareSearchIndex.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
 export { ExecutorTokenBindingObject } from "./executor/ExecutorTokenBindingObject.ts";
