@@ -11,6 +11,10 @@ import type {
 import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 
 import {
+  connectionStatusText,
+  type EnvironmentConnectionPresentation,
+} from "../connection/presentation.ts";
+import {
   folderDestinations,
   folderPath,
   ownerFilesProject,
@@ -26,7 +30,7 @@ export const BLOCK_LIBRARY_DISCONNECTED =
 export const BLOCK_LIBRARY_NO_TARGET =
   "Blocks live in a folder's files. Give a folder files of its own to see what its automations can call.";
 
-export const BLOCK_LIBRARY_RECONNECTING =
+export const BLOCK_LIBRARY_UNCONFIRMED =
   "Blocks show again once the connection is back and it's confirmed you can still call them.";
 
 export const BLOCK_LIBRARY_EMPTY =
@@ -219,27 +223,44 @@ export function blockLibraryQueryInput(
 }
 
 export type BlockLibraryView =
+  /** No answer yet, or a fresh one is on its way and the last can't stand in for it. */
   | { readonly _tag: "Loading" }
   /** The last answer can't be trusted any more; its blocks stay hidden until a retry succeeds. */
   | { readonly _tag: "Failed"; readonly error: string }
-  /** Offline or reconnecting: whether you can still call these blocks isn't known. */
-  | { readonly _tag: "Reconnecting" }
+  /**
+   * Not connected, so whether you can still call these blocks isn't known.
+   * `connecting` only while a connection attempt is actually under way.
+   */
+  | { readonly _tag: "Disconnected"; readonly status: string; readonly connecting: boolean }
   | { readonly _tag: "Ready"; readonly blocks: ReadonlyArray<AutomationBlockLibraryEntry> };
 
 /**
- * What the library can show. Queries keep their last answer through failures
- * and reconnects, but blocks say who may call them and whether they run, so
- * an answer the server can't currently confirm isn't shown as current.
+ * What the library can show. Queries keep their last answer through failures,
+ * reconnects and refetches, but blocks say who may call them and whether they
+ * run, so only an answer the server just settled is shown as current.
  */
 export function blockLibraryView(
   query: {
     readonly data: { readonly blocks: ReadonlyArray<AutomationBlockLibraryEntry> } | null;
     readonly error: string | null;
+    /** A request is in flight, so `data` may already be out of date. */
+    readonly isPending: boolean;
   },
-  connected: boolean,
+  /** The environment's connection; null when the client doesn't know the environment. */
+  connection: EnvironmentConnectionPresentation | null,
 ): BlockLibraryView {
   if (query.error !== null) return { _tag: "Failed", error: query.error };
   if (query.data === null) return { _tag: "Loading" };
-  if (!connected) return { _tag: "Reconnecting" };
-  return { _tag: "Ready", blocks: query.data.blocks };
+  if (connection?.phase === "connected") {
+    return query.isPending ? { _tag: "Loading" } : { _tag: "Ready", blocks: query.data.blocks };
+  }
+  return {
+    _tag: "Disconnected",
+    // "Available" means known but not connected, which reads wrong on its own here.
+    status:
+      connection === null || connection.phase === "available"
+        ? "Not connected"
+        : connectionStatusText(connection),
+    connecting: connection?.phase === "connecting" || connection?.phase === "reconnecting",
+  };
 }

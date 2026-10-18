@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/automations/blockContract";
 import {
   BLOCK_LIBRARY_EMPTY,
-  BLOCK_LIBRARY_RECONNECTING,
+  BLOCK_LIBRARY_UNCONFIRMED,
   blockLibraryQueryInput,
   blockLibraryStatuses,
   blockLibraryView,
@@ -36,11 +36,11 @@ export function BlockLibraryList({ target }: { readonly target: BlockLibraryTarg
       input: blockLibraryQueryInput(target),
     }),
   );
-  const connected =
+  const connection =
     useEnvironments().environments.find(
       (environment) => environment.environmentId === target.environmentId,
-    )?.connection.phase === "connected";
-  const view = blockLibraryView(query, connected);
+    )?.connection ?? null;
+  const view = blockLibraryView(query, connection);
   if (view._tag !== "Ready") {
     return (
       <SettingsSection id="block-library-blocks" title="Blocks">
@@ -58,15 +58,24 @@ export function BlockLibraryList({ target }: { readonly target: BlockLibraryTarg
               </Button>
             }
           />
+        ) : view._tag === "Disconnected" ? (
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                {view.connecting ? <Spinner size="sm" tone="muted" /> : null}
+                {view.status}
+              </span>
+            }
+            description={BLOCK_LIBRARY_UNCONFIRMED}
+          />
         ) : (
           <SettingsRow
             title={
               <span className="inline-flex items-center gap-2">
                 <Spinner size="sm" tone="muted" />
-                {view._tag === "Loading" ? "Loading blocks" : "Reconnecting"}
+                Loading blocks
               </span>
             }
-            description={view._tag === "Reconnecting" ? BLOCK_LIBRARY_RECONNECTING : undefined}
           />
         )}
       </SettingsSection>

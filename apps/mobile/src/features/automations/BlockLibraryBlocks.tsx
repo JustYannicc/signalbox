@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/automations/blockContract";
 import {
   BLOCK_LIBRARY_EMPTY,
-  BLOCK_LIBRARY_RECONNECTING,
+  BLOCK_LIBRARY_UNCONFIRMED,
   blockLibraryQueryInput,
   blockLibraryStatuses,
   blockLibraryView,
@@ -34,11 +34,11 @@ export function BlockLibraryBlocks({ target }: { readonly target: BlockLibraryTa
       input: blockLibraryQueryInput(target),
     }),
   );
-  const connected =
+  const connection =
     useEnvironments().environments.find(
       (environment) => environment.environmentId === target.environmentId,
-    )?.connection.phase === "connected";
-  const view = blockLibraryView(query, connected);
+    )?.connection ?? null;
+  const view = blockLibraryView(query, connection);
   const blocks = view._tag === "Ready" ? view.blocks : null;
   const groups = useMemo(
     () => (blocks === null ? [] : groupBlockLibrary(target, blocks)),
@@ -55,9 +55,9 @@ export function BlockLibraryBlocks({ target }: { readonly target: BlockLibraryTa
   if (view._tag === "Loading") {
     return <Text className="px-2 text-foreground-muted">Loading blocks…</Text>;
   }
-  if (view._tag === "Reconnecting") {
+  if (view._tag === "Disconnected") {
     return (
-      <Text className="px-2 text-foreground-muted">{`Reconnecting… ${BLOCK_LIBRARY_RECONNECTING}`}</Text>
+      <Text className="px-2 text-foreground-muted">{`${view.status} ${BLOCK_LIBRARY_UNCONFIRMED}`}</Text>
     );
   }
   if (groups.length === 0) {
