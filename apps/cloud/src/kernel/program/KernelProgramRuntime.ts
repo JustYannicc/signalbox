@@ -1,3 +1,4 @@
+import { createAgentOsWasiArgumentTransform } from "../AgentOsWasi.ts";
 import type { KernelCapability, KernelHandle, KernelResult } from "../KernelAbi.ts";
 import type { KernelAsyncProgram } from "../KernelAsyncProgram.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
@@ -22,7 +23,11 @@ export interface KernelInlineProgramContext {
 export type KernelInlineProgram = (context: KernelInlineProgramContext) => number;
 
 export type KernelProgramImplementation =
-  | { readonly kind: "wasm"; readonly module: WebAssembly.Module }
+  | {
+      readonly kind: "wasm";
+      readonly module: WebAssembly.Module;
+      readonly agentOsPreopens?: boolean;
+    }
   | { readonly kind: "javascript"; readonly runInline: KernelInlineProgram }
   | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] };
 
@@ -44,6 +49,7 @@ export interface KernelWasiRuntimeOptions {
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly asyncMode: boolean;
+  readonly agentOsPreopens?: boolean;
   readonly identity: KernelProcessIdentity | undefined;
   readonly signal: AbortSignal | undefined;
   readonly processes: KernelProcessTable;
@@ -73,6 +79,9 @@ export function createKernelWasiRuntime(
       table: options.prepared.filesystem.descriptors,
       ownership: options.descriptorOwnership ?? "owned",
     },
+    options.agentOsPreopens
+      ? createAgentOsWasiArgumentTransform(options.prepared.filesystem)
+      : undefined,
   );
 
   const importObject = Object.create(null) as WebAssembly.Imports;

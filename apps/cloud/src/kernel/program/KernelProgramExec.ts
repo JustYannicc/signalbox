@@ -74,6 +74,7 @@ export function execKernelProgram(
       // Validate every import before CLOEXEC descriptors are removed.
       const runtime = beforeExecCommit(() =>
         createKernelWasiRuntime(implementation.module, {
+          ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
           prepared,
           descriptorOwnership: "borrowed",
           args: request.args,
