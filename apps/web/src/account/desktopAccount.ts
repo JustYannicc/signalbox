@@ -1,12 +1,12 @@
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import {
-  AccountHandoffError,
   buildAccountAuthorizeUrl,
+  isAccountHandoffError,
   redeemAccountHandoff,
 } from "@t3tools/client-runtime/account";
 
 import { runtime } from "../lib/runtime";
-import { AccountFlowError, reloadAt, requirePrimaryOrigin } from "./accountPlatform";
+import { accountFlowError, reloadAt, requirePrimaryOrigin } from "./accountPlatform";
 import { sanitizeReturnTo } from "./accountGate";
 import { createPkceVerifier, pkceChallenge } from "./pkce";
 
@@ -58,7 +58,7 @@ export async function startNativeSignIn(input: {
   readonly environmentOrigin?: string;
 }): Promise<void> {
   const bridge = window.desktopBridge;
-  if (!bridge) throw new AccountFlowError("failed");
+  if (!bridge) throw accountFlowError("failed");
   const pending = readPendingNativeSignIn();
   // A retry for the same target reuses the verifier, so an earlier tab can still finish.
   const verifier =
@@ -85,7 +85,7 @@ export async function startNativeSignIn(input: {
     challenge: await pkceChallenge(verifier),
     ...(input.selectAccount ? { selectAccount: "1" as const } : {}),
   });
-  if (!(await bridge.openExternal(url))) throw new AccountFlowError("failed");
+  if (!(await bridge.openExternal(url))) throw accountFlowError("failed");
 }
 
 /** "Cancel": forget the attempt so a late deep link can't finish it. */
@@ -136,7 +136,7 @@ function takePendingNativeSignIn() {
 
 const redeem = (origin: string, handoff: string, verifier: string) =>
   redeemAccountHandoff(origin, { handoff, verifier }).catch((error: unknown) => {
-    throw new AccountFlowError(error instanceof AccountHandoffError ? error.code : "failed");
+    throw accountFlowError(isAccountHandoffError(error) ? error.code : "failed");
   });
 
 /**
@@ -147,7 +147,7 @@ export async function completeEnvironmentSignIn(
   handoff: string,
 ): Promise<{ readonly origin: string; readonly credential: string }> {
   const pending = takePendingNativeSignIn();
-  if (!pending?.environmentOrigin) throw new AccountFlowError("expired");
+  if (!pending?.environmentOrigin) throw accountFlowError("expired");
   const origin = pending.environmentOrigin;
   const { credential } = await redeem(origin, handoff, pending.verifier);
   return { origin, credential };
@@ -156,10 +156,10 @@ export async function completeEnvironmentSignIn(
 /** Redeems the handoff with this window's verifier, stores the account bearer, reloads signed in. */
 export async function completeNativeSignIn(handoff: string): Promise<void> {
   const pending = takePendingNativeSignIn();
-  if (!pending) throw new AccountFlowError("expired");
+  if (!pending) throw accountFlowError("expired");
   const origin = requirePrimaryOrigin();
   const failed = () => {
-    throw new AccountFlowError("failed");
+    throw accountFlowError("failed");
   };
   const { credential } = await redeem(origin, handoff, pending.verifier);
   const access = await runtime

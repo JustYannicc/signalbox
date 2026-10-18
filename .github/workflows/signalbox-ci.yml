@@ -493,6 +493,21 @@ jobs:
           esac
           node scripts/cloud-migrations/check.ts "$@"
 
+      - name: Fetch upstream for server migration identity
+        run: git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
+
+      - name: Check fork-only server migrations
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request) set -- --base HEAD^1 ;;
+            push) set -- --base "$BEFORE_SHA" ;;
+            *) set -- --base origin/main ;;
+          esac
+          node scripts/fork-migrations/check.ts "$@" --head HEAD --upstream upstream/main
+
   # This repo is public: lines the fork adds over upstream must not carry real
   # emails, people, or employers. The denylist is a repository secret because
   # it is personal data itself; fork PRs without it get the email check only.

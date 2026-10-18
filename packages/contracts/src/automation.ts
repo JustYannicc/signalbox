@@ -6,6 +6,7 @@ import { ExternalRun } from "./externalRun.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ScheduledTaskWebhookEndpoint } from "./scheduledTask.ts";
+import { SignalboxAsk } from "./signalboxAsks.ts";
 import {
   WorkflowDiagnostic,
   WorkflowGraph,
@@ -98,6 +99,7 @@ export const AutomationWaitingQuestion = Schema.Struct({
   /** What to open beside it: a thread, or its agent's live browser. */
   open: Schema.optionalKey(Schema.NullOr(AutomationAskOpen)),
   since: IsoDateTime,
+  commonAsk: Schema.optional(SignalboxAsk),
 });
 export type AutomationWaitingQuestion = typeof AutomationWaitingQuestion.Type;
 
@@ -147,8 +149,15 @@ export const AutomationStep = Schema.Struct({
   attempt: Schema.Int,
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
+  commonAsk: Schema.optional(SignalboxAsk),
   /** The run in another system this step started, e.g. on GitHub Actions, as last read. */
   external: Schema.optional(Schema.NullOr(ExternalRun)),
+  childRun: Schema.optional(
+    Schema.Struct({
+      runId: Schema.String,
+      automationId: Schema.String,
+    }),
+  ),
 });
 export type AutomationStep = typeof AutomationStep.Type;
 

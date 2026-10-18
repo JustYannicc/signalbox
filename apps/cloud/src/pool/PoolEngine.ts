@@ -38,6 +38,7 @@ import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
 import * as PoolUsageHistory from "./poolUsageHistory.ts";
+import * as PoolUsageLedger from "./PoolUsageLedger.ts";
 import * as PoolStore from "./poolStore.ts";
 import * as ThreadAccounts from "./threadAccounts.ts";
 
@@ -190,6 +191,11 @@ export class PoolEngine extends Context.Service<
       callback: CliProxyApi.LoginCallback,
     ) => Effect.Effect<void, Failure>;
     readonly cancelLogin: (actor: PoolActor, state: string) => Effect.Effect<boolean, Failure>;
+    readonly logoutAccount: (
+      actor: PoolActor,
+      provider: CliProxyApi.PoolLoginProvider,
+      name: string,
+    ) => Effect.Effect<void, Failure>;
     readonly updateAccount: (
       actor: PoolActor,
       name: string,
@@ -319,6 +325,15 @@ const migrations = Migrator.fromRecord({
   "0009_model_metadata": PoolModels.addMetadata,
   "0010_usage_history": PoolUsageHistory.createTables,
   "0011_usage_sampling": PoolUsageHistory.addSampling,
+  "0012_account_logout": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE logged_out_accounts (name TEXT PRIMARY KEY)`;
+  }),
+  "0012_usage_ledger": PoolUsageLedger.createTable,
+  "0013_pending_account_logout": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE logged_out_accounts ADD COLUMN pending INTEGER NOT NULL DEFAULT 0`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -358,7 +373,7 @@ export const ACCOUNTS_READ_TIMEOUT_MS = 750;
 /** A stuck upstream request must release the shared refresh so polling can retry. */
 export const ACCOUNTS_REFRESH_TIMEOUT_MS = 120_000;
 
-const ACCOUNTS_READ_TIMEOUT_MESSAGE =
+export const ACCOUNTS_READ_TIMEOUT_MESSAGE =
   "The pool did not refresh its account snapshot in time. Try again shortly.";
 
 /** CLIProxyAPI refreshes its model registry every three hours. */
@@ -618,6 +633,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const accountChanges = yield* Semaphore.make(1);
   const cachedAccounts = Effect.gen(function* () {
     const rows = yield* sql<AccountRow>`SELECT name, type, email, disabled, signed_out,
       contributed_by FROM accounts ORDER BY added_at, name`;
@@ -651,6 +667,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const known = new Map(cached.map((account) => [account.name, account]));
       for (const account of live) {
+        // A fresh credential for this name completes reauthentication.
+        yield* sql`DELETE FROM logged_out_accounts WHERE name = ${account.name} AND pending = 0`;
         const before = known.get(account.name);
         if (
           before !== undefined &&
@@ -670,7 +688,15 @@ const make = Effect.gen(function* () {
       }
       const names = new Set(live.map((account) => account.name));
       for (const account of cached) {
-        if (!names.has(account.name)) yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
+        if (!names.has(account.name)) {
+          // The account lock excludes DELETE, so absence confirms a pending logout completed.
+          yield* sql`UPDATE accounts SET signed_out = 1 WHERE name = ${account.name}
+            AND name IN (SELECT name FROM logged_out_accounts WHERE pending = 1)`;
+          yield* sql`UPDATE logged_out_accounts SET pending = 0
+            WHERE name = ${account.name} AND pending = 1`;
+          yield* sql`DELETE FROM accounts WHERE name = ${account.name}
+            AND name NOT IN (SELECT name FROM logged_out_accounts)`;
+        }
       }
     });
 
@@ -759,22 +785,25 @@ const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const endpoint = endpointOf(row, options);
       yield* ensureManagedConfig(endpoint);
-      const live = yield* CliProxyApi.listAccounts(endpoint).pipe(
-        Effect.catchTags({
-          PoolBackendError: (error) =>
-            sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
-              WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
-        }),
-      );
-      const cached = yield* cachedAccounts;
+      const live = yield* Effect.gen(function* () {
+        const live = yield* CliProxyApi.listAccounts(endpoint).pipe(
+          Effect.catchTags({
+            PoolBackendError: (error) =>
+              sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
+                WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
+          }),
+        );
+        const cached = yield* cachedAccounts;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* storeAccountRows(live, cached.accounts, now, contributors);
+            yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+          }),
+        );
+        return live;
+      }).pipe(accountChanges.withPermits(1));
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* storeAccountRows(live, cached.accounts, now, contributors);
-          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
-        }),
-      );
       // Account freshness must not wait for model discovery or provider usage probes.
       yield* CliProxyApi.listModels(endpoint).pipe(
         Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
@@ -1163,12 +1192,15 @@ const make = Effect.gen(function* () {
       // Unlike foreground snapshots, the quarter-hourly sample may wake a sleeping pool.
       const endpoint = endpointOf(row, { models: true });
       yield* ensureManagedConfig(endpoint);
-      const live = yield* CliProxyApi.listAccounts(endpoint);
-      const cached = yield* cachedAccounts;
-      // Login/import must discover new accounts so their contributor is recorded on insertion.
-      const known = new Set(cached.accounts.map((account) => account.name));
-      const held = live.filter((account) => known.has(account.name));
-      yield* sql.withTransaction(storeAccountRows(held, cached.accounts, now));
+      const live = yield* Effect.gen(function* () {
+        const live = yield* CliProxyApi.listAccounts(endpoint);
+        const cached = yield* cachedAccounts;
+        // Login/import must discover new accounts so their contributor is recorded on insertion.
+        const known = new Set(cached.accounts.map((account) => account.name));
+        const held = live.filter((account) => known.has(account.name));
+        yield* sql.withTransaction(storeAccountRows(held, cached.accounts, now));
+        return live;
+      }).pipe(accountChanges.withPermits(1));
       yield* refreshLimits(endpoint, live, now, "probe");
     }).pipe(
       samplingUsage.withPermits(1),
@@ -1234,13 +1266,59 @@ const make = Effect.gen(function* () {
       return cancelled;
     });
 
+  const logoutAccount: PoolEngine["Service"]["logoutAccount"] = (actor, provider, name) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "admin");
+      yield* refuseIfLinked(row);
+      const [account] = yield* sql<AccountRow>`SELECT * FROM accounts WHERE name = ${name}`;
+      if (account === undefined || account.type !== provider) {
+        return yield* reject("That account does not belong to this provider in this pool.");
+      }
+      const endpoint = endpointOf(row);
+      const live = yield* CliProxyApi.listAccounts(endpoint);
+      const credential = live.find((entry) => entry.name === name);
+      if (credential !== undefined && credential.type !== provider) {
+        return yield* reject("That account does not belong to this provider in this pool.");
+      }
+      // CLIProxyAPI invalidates its runtime session when its credential is removed.
+      // Keep the pool account and attribution, so logout is distinct from removing it.
+      if (credential !== undefined) {
+        // A lost DELETE reply must not let refresh discard the row needed for a retry.
+        yield* sql`INSERT INTO logged_out_accounts (name, pending) VALUES (${name}, 1)
+          ON CONFLICT (name) DO UPDATE SET pending = 1`;
+        yield* CliProxyApi.removeAccount(endpoint, name);
+      }
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`INSERT INTO logged_out_accounts (name, pending) VALUES (${name}, 0)
+            ON CONFLICT (name) DO UPDATE SET pending = 0`;
+          yield* sql`UPDATE accounts SET signed_out = 1 WHERE name = ${name}`;
+          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+          yield* audit(actor, "logout-account", name);
+        }),
+      );
+    }).pipe(accountChanges.withPermits(1));
+
   const updateAccount: PoolEngine["Service"]["updateAccount"] = (actor, name, action) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
       yield* refuseIfLinked(row);
       const endpoint = endpointOf(row);
-      if (action === "remove") yield* CliProxyApi.removeAccount(endpoint, name);
-      else yield* CliProxyApi.setAccountDisabled(endpoint, name, action === "pause");
+      const loggedOut = yield* sql`SELECT 1 FROM logged_out_accounts WHERE name = ${name}
+        AND pending = 0`;
+      if (loggedOut.length > 0) {
+        if (action !== "remove") return yield* reject("Sign in to this account again first.");
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`DELETE FROM logged_out_accounts WHERE name = ${name}`;
+            yield* sql`DELETE FROM accounts WHERE name = ${name}`;
+          }),
+        );
+      } else if (action === "remove") {
+        yield* CliProxyApi.removeAccount(endpoint, name);
+        yield* sql`DELETE FROM logged_out_accounts WHERE name = ${name}`;
+      } else yield* CliProxyApi.setAccountDisabled(endpoint, name, action === "pause");
       yield* audit(actor, `${action}-account`, name);
       yield* refreshAccounts(row).pipe(Effect.ignore);
     });
@@ -1392,6 +1470,7 @@ const make = Effect.gen(function* () {
     loginStatus,
     completeLogin,
     cancelLogin,
+    logoutAccount,
     updateAccount,
     openLink,
     linkInfo,

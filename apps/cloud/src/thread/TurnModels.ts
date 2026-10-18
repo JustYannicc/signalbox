@@ -1,4 +1,4 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -39,9 +39,32 @@ export class ProviderUnavailableError extends Schema.TaggedError<ProviderUnavail
   { instanceId: Schema.String },
 ) {
   override get message() {
-    return "That provider isn't available in Signalbox Cloud. Pick a model from one of your pools.";
+    return "That harness isn't available in Signalbox Cloud. Choose Claude or Codex from a pool.";
   }
 }
+
+export class ProviderModeUnavailableError extends Schema.TaggedError<ProviderModeUnavailableError>()(
+  "ProviderModeUnavailableError",
+  {
+    instanceId: Schema.String,
+    modeKind: Schema.Literals(["runtime", "interaction"]),
+    mode: Schema.String,
+  },
+) {
+  override get message() {
+    return `That harness doesn't support the ${this.modeKind} mode '${this.mode}'.`;
+  }
+}
+
+// ClaudeAdapterV2 and CodexAdapterV2 handle each current contract mode. Keep
+// the sets explicit so a new contract mode is refused until cloud supports it.
+const SUPPORTED_RUNTIME_MODES = new Set<RuntimeMode>([
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
+const SUPPORTED_INTERACTION_MODES = new Set<ProviderInteractionMode>(["default", "plan"]);
 
 export class TurnModels extends Context.Service<
   TurnModels,
@@ -51,11 +74,14 @@ export class TurnModels extends Context.Service<
       readonly ownerId: string;
       readonly pool: string | null;
       readonly selection: ModelSelection;
+      readonly runtimeMode?: RuntimeMode;
+      readonly interactionMode?: ProviderInteractionMode;
     }) => Effect.Effect<
       void,
       | ModelNotServedError
       | PoolNeededError
       | ProviderUnavailableError
+      | ProviderModeUnavailableError
       | PoolRejectedError
       | PoolDirectory.PoolObjectError
     >;
@@ -69,12 +95,29 @@ export const layer = (options: { readonly scripted: boolean }) =>
     Effect.gen(function* () {
       const directory = yield* PoolDirectory.PoolDirectory;
       return TurnModels.of({
-        check: ({ ownerId, pool, selection }) =>
+        check: ({ ownerId, pool, selection, runtimeMode, interactionMode }) =>
           Effect.gen(function* () {
             const kind = poolKindOfInstance(selection.instanceId);
             if (kind === undefined) {
               if (options.scripted && selection.instanceId === SCRIPTED_INSTANCE_ID) return;
               return yield* new ProviderUnavailableError({ instanceId: selection.instanceId });
+            }
+            if (runtimeMode !== undefined && !SUPPORTED_RUNTIME_MODES.has(runtimeMode)) {
+              return yield* new ProviderModeUnavailableError({
+                instanceId: selection.instanceId,
+                modeKind: "runtime",
+                mode: runtimeMode,
+              });
+            }
+            if (
+              interactionMode !== undefined &&
+              !SUPPORTED_INTERACTION_MODES.has(interactionMode)
+            ) {
+              return yield* new ProviderModeUnavailableError({
+                instanceId: selection.instanceId,
+                modeKind: "interaction",
+                mode: interactionMode,
+              });
             }
             if (pool === null) return yield* new PoolNeededError();
             const { models } = yield* directory

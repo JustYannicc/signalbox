@@ -1,15 +1,25 @@
-import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ProviderSessionId,
+  ProviderTurnId,
+  RuntimeRequestId,
+  type OrchestrationV2RuntimeRequest,
+  type RunId,
+} from "@t3tools/contracts";
+import {
+  MIN_RUNNER_PROTOCOL_VERSION,
+  RUNNER_PROTOCOL_VERSION,
+} from "@signalbox/runner-protocol/RunnerProtocol";
+import type { ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { requestCancellation } from "../preparationTesting.ts";
 
 import type * as ThreadRunner from "./ThreadRunner.ts";
 import { terminalTestServices } from "../TerminalTesting.ts";
-import {
-  MIN_RUNNER_PROTOCOL_VERSION,
-  RUNNER_PROTOCOL_VERSION,
-} from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   capabilities,
   claudeDriver,
@@ -31,6 +41,8 @@ import {
   withObject,
 } from "../runnerTesting.ts";
 import { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runnerSockets.ts";
+import type { RunnerExecSocketHost } from "../ThreadExecForwarder.ts";
+import { unstampedEventId } from "../threadEvents.ts";
 
 /**
  * The thread object's end of its Runner's socket, on in-memory sockets: what
@@ -54,6 +66,7 @@ const runningTurn = (
   engine: Parameters<Parameters<typeof withObject>[1]>[0],
   runner: ThreadRunner.ThreadRunner["Service"],
   steers: boolean,
+  runtimeResponses = false,
 ) =>
   Effect.gen(function* () {
     yield* launch(engine);
@@ -68,6 +81,7 @@ const runningTurn = (
       ...hello(plan.ensure.generation, plan.ensure.token),
       takenRunIds: [],
       ...(steers ? { steers: true } : {}),
+      runtimeResponses,
     });
     const start = socket.sent.find((message) => message.type === "turn.start");
     if (start?.type !== "turn.start") throw new Error("expected the turn");
@@ -107,6 +121,7 @@ const runningTurn = (
     socket.sent.length = 0;
     return {
       host,
+      sockets,
       socket,
       turn,
       report,
@@ -128,6 +143,267 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect("routes exec reports only for the current connection that negotiated protocol 8", () =>
+    Effect.gen(function* () {
+      const callbacks: Array<string> = [];
+      let currentSocket: WebSocket;
+      const exec: RunnerExecSocketHost = {
+        connected: (socket, connection) => {
+          callbacks.push(
+            `connected:${connection.generation}:${connection.connection}:${connection.exec}`,
+          );
+          expect(socket).toBe(currentSocket);
+        },
+        report: (_socket, generation, connection, report) => {
+          callbacks.push(`report:${generation}:${connection}:${report.type}`);
+        },
+        disconnected: (_socket, generation, connection) => {
+          callbacks.push(`disconnected:${generation}:${connection}`);
+        },
+        generationEnded: (generation) => callbacks.push(`ended:${generation}`),
+      };
+      const filename = freshDatabase();
+      yield* withObject(filename, (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const plan = yield* runner.reconcile;
+          if (plan.ensure === null) throw new Error("expected a machine request");
+          yield* runner.ensured(plan.ensure.generation);
+          const sockets: Array<WebSocket> = [];
+          const base = yield* hostFor(runner, sockets);
+          const host = { ...base, exec };
+
+          const legacy = fakeSocket();
+          currentSocket = legacy.socket;
+          sockets.push(legacy.socket);
+          yield* say(host, legacy, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: 7,
+            exec: true,
+          });
+          expect(callbacks).toContain(`connected:${plan.ensure.generation}:1:false`);
+
+          const modern = fakeSocket();
+          currentSocket = modern.socket;
+          sockets.push(modern.socket);
+          yield* say(host, modern, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: 8,
+            exec: true,
+          });
+          expect(callbacks).toContain(`connected:${plan.ensure.generation}:2:true`);
+          const report: ExecReport = {
+            type: "ack",
+            generation: plan.ensure.generation,
+            processId: "process-1",
+            operation: "start",
+            requestId: "request-1",
+            applied: true,
+          };
+          yield* say(host, modern, { type: "exec.report", report });
+          expect(callbacks).toContain(`report:${plan.ensure.generation}:2:ack`);
+
+          const replaced = fakeSocket();
+          currentSocket = replaced.socket;
+          sockets.push(replaced.socket);
+          yield* say(host, replaced, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: 8,
+            exec: false,
+          });
+          expect(callbacks).toContain(`disconnected:${plan.ensure.generation}:2`);
+          expect(callbacks).toContain(`connected:${plan.ensure.generation}:3:false`);
+          yield* say(host, modern, { type: "exec.report", report });
+          expect(callbacks.filter((callback) => callback.includes("report:"))).toHaveLength(1);
+        }),
+      );
+    }),
+  );
+
+  it.effect("replays committed native answers after socket reconnect and object restart", () =>
+    Effect.gen(function* () {
+      const filename = freshDatabase();
+      const saved = yield* withObject(filename, (engine, runner) =>
+        Effect.gen(function* () {
+          const live = yield* runningTurn(engine, runner, false, true);
+          const request: OrchestrationV2RuntimeRequest = {
+            id: RuntimeRequestId.make("native-question"),
+            nodeId: live.turn.rootNodeId,
+            providerTurnId: ProviderTurnId.make(`claude-turn:${live.turn.runId}`),
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "resolved",
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make("session-1"),
+            },
+            createdAt: DateTime.makeUnsafe(0),
+            resolvedAt: DateTime.makeUnsafe(1),
+            answers: { destination: "Zurich" },
+          };
+          // A committed decision, with no transport call: this also covers answering while disconnected.
+          yield* engine.apply((_projection, ctx) =>
+            Effect.succeed({
+              events: [
+                {
+                  id: unstampedEventId,
+                  threadId,
+                  type: "runtime-request.updated",
+                  occurredAt: ctx.now,
+                  payload: request,
+                },
+              ],
+              result: undefined,
+            }),
+          );
+          const response = {
+            runId: live.turn.runId,
+            requestId: request.id,
+            providerSessionId: ProviderSessionId.make("session-1"),
+            attemptId: live.turn.attemptId,
+            answers: request.answers,
+          };
+          yield* Effect.promise(() => pushRunnerWork(live.host));
+          expect(live.socket.sent).toEqual([{ type: "runtime-request.respond", ...response }]);
+          yield* Effect.promise(() => pushRunnerWork(live.host));
+          expect(live.socket.sent).toHaveLength(1);
+          // Hibernation attachments store ids, never answer values.
+          expect(JSON.stringify(live.socket.socket.deserializeAttachment())).not.toContain(
+            "Zurich",
+          );
+          const again = fakeSocket();
+          live.sockets.splice(0, live.sockets.length, again.socket);
+          yield* say(live.host, again, {
+            ...hello(live.generation, live.token),
+            takenRunIds: [live.turn.runId],
+            runtimeResponses: true,
+          });
+          expect(
+            again.sent.filter((message) => message.type === "runtime-request.respond"),
+          ).toEqual([{ type: "runtime-request.respond", ...response }]);
+          return { generation: live.generation, token: live.token, response };
+        }),
+      );
+      // A new object has only persisted projection + lease, no delivery state in memory.
+      yield* withObject(filename, (_engine, runner) =>
+        Effect.gen(function* () {
+          const socket = fakeSocket();
+          const host = yield* hostFor(runner, [socket.socket]);
+          yield* say(host, socket, {
+            ...hello(saved.generation, saved.token),
+            takenRunIds: [saved.response.runId],
+            runtimeResponses: true,
+          });
+          expect(
+            socket.sent.filter((message) => message.type === "runtime-request.respond"),
+          ).toEqual([{ type: "runtime-request.respond", ...saved.response }]);
+        }),
+      );
+    }),
+  );
+
+  it.effect("keeps the additive response frame away from older v5 Runners", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { host, socket, turn } = yield* runningTurn(engine, runner, false);
+        yield* engine.apply((_projection, ctx) =>
+          Effect.succeed({
+            events: [
+              {
+                id: unstampedEventId,
+                threadId,
+                type: "runtime-request.updated",
+                occurredAt: ctx.now,
+                payload: {
+                  id: RuntimeRequestId.make("approval"),
+                  nodeId: turn.rootNodeId,
+                  providerTurnId: ProviderTurnId.make(`claude-turn:${turn.runId}`),
+                  nativeRequestRef: null,
+                  kind: "command",
+                  status: "resolved",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: ProviderSessionId.make("session-1"),
+                  },
+                  createdAt: ctx.now,
+                  resolvedAt: ctx.now,
+                  decision: "accept",
+                },
+              },
+            ],
+            result: undefined,
+          }),
+        );
+        expect((yield* runner.work).runtimeResponses).toHaveLength(1);
+        yield* Effect.promise(() => pushRunnerWork(host));
+        expect(socket.sent).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("never delivers pending, expired, message-only or stale-session native requests", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { host, socket, turn } = yield* runningTurn(engine, runner, false, true);
+        yield* engine.apply((_projection, ctx) => {
+          const resolved: OrchestrationV2RuntimeRequest = {
+            id: RuntimeRequestId.make("resolved"),
+            nodeId: turn.rootNodeId,
+            providerTurnId: ProviderTurnId.make(`claude-turn:${turn.runId}`),
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "resolved",
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make("session-1"),
+            },
+            createdAt: ctx.now,
+            resolvedAt: ctx.now,
+            answers: { answer: "continue" },
+          };
+          const requests: ReadonlyArray<OrchestrationV2RuntimeRequest> = [
+            { ...resolved, id: RuntimeRequestId.make("pending"), status: "pending" },
+            { ...resolved, id: RuntimeRequestId.make("expired"), status: "expired" },
+            {
+              ...resolved,
+              id: RuntimeRequestId.make("message"),
+              responseCapability: { type: "message" },
+            },
+            {
+              ...resolved,
+              id: RuntimeRequestId.make("old-session"),
+              responseCapability: {
+                type: "live",
+                providerSessionId: ProviderSessionId.make("old-session"),
+              },
+            },
+            {
+              ...resolved,
+              id: RuntimeRequestId.make("old-turn"),
+              providerTurnId: ProviderTurnId.make("old-turn"),
+            },
+            resolved,
+          ];
+          return Effect.succeed({
+            events: requests.map((payload) => ({
+              id: unstampedEventId,
+              threadId,
+              type: "runtime-request.updated" as const,
+              occurredAt: ctx.now,
+              payload,
+            })),
+            result: undefined,
+          });
+        });
+        yield* Effect.promise(() => pushRunnerWork(host));
+        expect(
+          socket.sent
+            .filter((message) => message.type === "runtime-request.respond")
+            .map((message) => message.requestId),
+        ).toEqual(["resolved"]);
+      }),
+    ),
+  );
   it.effect.each([MIN_RUNNER_PROTOCOL_VERSION, RUNNER_PROTOCOL_VERSION])(
     "does not hold an unsupported terminal on a protocol %s runner",
     (protocolVersion) =>
@@ -591,7 +867,9 @@ describe("runnerSockets", () => {
           message: { text: "Again" },
           providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
         });
-        expect(start.turn.freshSessionText).toContain("User:\nHi\n\nAssistant:\nHello!\n\n");
+        expect(start.turn.freshSessionText).toContain("[Historical user;");
+        expect(start.turn.freshSessionText).toContain("]\nHi\n\n[Historical assistant;");
+        expect(start.turn.freshSessionText).toContain("]\nHello!\n\n");
         expect(start.turn.freshSessionText?.endsWith("User message:\nAgain")).toBe(true);
       }),
     ),

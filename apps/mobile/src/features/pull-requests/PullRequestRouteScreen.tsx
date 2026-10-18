@@ -769,7 +769,11 @@ export function PullRequestFileRouteScreen({
   const { loadMore } = result;
   const parsed = filter.parsed;
   const reviewDraft = usePullRequestReviewDraft(route.params);
-  const viewed = usePullRequestFilesViewed(route.params, commit ? null : detail.data);
+  const viewed = usePullRequestFilesViewed(
+    route.params,
+    commit ? null : detail.data,
+    result.revision,
+  );
   const [commitViewedPaths, setCommitViewedPaths] = useState<ReadonlySet<string>>(() => new Set());
   const permissions = usePullRequestPermissions(route.params, detail.data);
   const scopeKey = pullRequestReviewKey(route.params);

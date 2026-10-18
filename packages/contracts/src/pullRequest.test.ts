@@ -7,6 +7,7 @@ import {
   PullRequestCapabilities,
   PullRequestCommentInput,
   PullRequestFilesViewedResult,
+  PullRequestGenerateReviewGuideInput,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
@@ -22,6 +23,7 @@ const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerReques
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
 const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
 const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
+const decodeGenerateReviewGuide = Schema.decodeUnknownSync(PullRequestGenerateReviewGuideInput);
 const decodeComment = Schema.decodeUnknownSync(PullRequestCommentInput);
 const decodeReview = Schema.decodeUnknownSync(PullRequestSubmitReviewInput);
 
@@ -360,6 +362,22 @@ describe("naming the file a tick belongs to", () => {
     ).toEqual([{ path: "docs/readme.md ", viewed: true }]);
   });
 
+  it("accepts the displayed diff revision and keeps the self-hosted request shape valid", () => {
+    const reference = {
+      projectId: "p1",
+      repository: "group/project",
+      number: 7,
+      files: [{ path: "src/app.ts", viewed: true }],
+    };
+    expect(decodeSetFilesViewed(reference)).toEqual(reference);
+    expect(
+      decodeSetFilesViewed({
+        ...reference,
+        displayedRevision: { baseSha: "a".repeat(40), headSha: "b".repeat(40) },
+      }).displayedRevision,
+    ).toEqual({ baseSha: "a".repeat(40), headSha: "b".repeat(40) });
+  });
+
   it("keeps the spaces around a path being reported back", () => {
     expect(
       decodeFilesViewed({
@@ -400,6 +418,31 @@ describe("naming the file a tick belongs to", () => {
         repository: "group/project",
         number: 7,
         files: [{ path: `src/${"a".repeat(4096)}.ts`, viewed: true }],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("review guide generation attempts", () => {
+  it("keeps the local reference-only request valid and accepts a pinned cloud attempt", () => {
+    const reference = { projectId: "p1", repository: "group/project", number: 7 };
+    expect(decodeGenerateReviewGuide(reference)).toEqual(reference);
+    expect(
+      decodeGenerateReviewGuide({
+        ...reference,
+        operationId: "attempt-1",
+        headSha: "a".repeat(40),
+      }),
+    ).toEqual({ ...reference, operationId: "attempt-1", headSha: "a".repeat(40) });
+  });
+
+  it("rejects an invalid pinned head", () => {
+    expect(() =>
+      decodeGenerateReviewGuide({
+        projectId: "p1",
+        repository: "group/project",
+        number: 7,
+        headSha: "short",
       }),
     ).toThrow();
   });

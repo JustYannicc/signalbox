@@ -6,11 +6,13 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId } from "@t3tools/contracts";
 import type { FeedbackResponse } from "@signalbox/runner-protocol/FeedbackProtocol";
+import { EXEC_PROTOCOL_VERSION } from "@signalbox/runner-protocol/ExecProtocol";
 import type * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 
 import * as ThreadRunner from "./ThreadRunner.ts";
 import * as ThreadTerminals from "../terminal/ThreadTerminals.ts";
+import type { RunnerExecSocketHost } from "../ThreadExecForwarder.ts";
 
 /**
  * The thread object's end of its Runner's WebSocket. Sockets use the
@@ -44,9 +46,12 @@ export interface RunnerSocketAttachment {
   /** How many of `sentRunId`'s steers this socket's Runner was handed; absent: none. */
   readonly sentSteers?: number | undefined;
   readonly terminalProcessId?: string | undefined;
+  /** This connection negotiated versioned non-PTY process forwarding. */
+  readonly exec?: boolean | undefined;
   readonly sentTerminalRequests?: ReadonlyArray<string> | undefined;
   /** SHA-256 of pending stop identities. Older attachments stored an array per stop. */
   readonly sentWorkflowStops?: string | ReadonlyArray<string> | undefined;
+  /** Ids only; the committed projection owns the answer values. Reset on reconnect. */
   readonly runtimeResponses?: boolean | undefined;
   readonly sentRuntimeResponses?: ReadonlyArray<string> | undefined;
 }
@@ -61,6 +66,7 @@ export interface RunnerSocketHost {
   readonly terminals?:
     | (<A>(effect: Effect.Effect<A, never, ThreadTerminals.ThreadTerminals>) => Promise<A>)
     | undefined;
+  readonly exec?: RunnerExecSocketHost | undefined;
   /**
    * Whether the turn waits for its pull requests' reads, which the object's
    * alarm makes before it hands work out again (#495). Never rejects.
@@ -111,10 +117,19 @@ const latestConnection = (ctx: DurableObjectState, generation: number) =>
   );
 
 /** Tells every socket of `generation` to go away: its machine's lease is over. */
-export function endRunners(ctx: DurableObjectState, generation: number, reason: string) {
+export function endRunners(
+  ctx: DurableObjectState,
+  generation: number,
+  reason: string,
+  exec?: RunnerExecSocketHost,
+) {
   for (const socket of ctx.getWebSockets(RUNNER_TAG)) {
     const attachment = attachmentOf(socket);
     if (attachment?.generation !== generation) continue;
+    if (attachment.inactive !== true && attachment.exec === true) {
+      // The Runner's lease is gone; fail any local process waiters before closing the socket.
+      exec?.disconnected(socket, attachment.generation, attachment.connection);
+    }
     socket.serializeAttachment({ ...attachment, inactive: true });
     send(socket, { type: "end", reason });
     close(socket, CLOSE.released, reason);
@@ -157,12 +172,6 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
   const secretsToken =
     starting && work.secrets.length > 0
       ? await host.run(runner.use((service) => service.secretsToken))
-      : null;
-  // Asked the same way, and only for a turn that resumes its harness session.
-  const handed = turn?.turn ?? null;
-  const freshSessionText =
-    starting && handed !== null && handed.providerThread.nativeThreadRef !== null
-      ? await host.run(runner.use((service) => service.freshSessionText(handed)))
       : null;
   const drive: DriveAccess | null =
     work.drive === null || author === null ? work.drive : { ...work.drive, author };
@@ -230,7 +239,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     ) {
       send(socket, {
         type: "turn.start",
-        turn: freshSessionText === null ? turn.turn : { ...turn.turn, freshSessionText },
+        turn: turn.turn,
         modelToken: turn.modelToken,
         drive,
         sessions: turn.sessions,
@@ -284,12 +293,13 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentSteers = Math.max(sentSteers, work.steers.length);
     }
     if (attachment.runtimeResponses === true && sentRunId === work.activeRunId) {
+      const sent = new Set(sentRuntimeResponses);
       for (const response of work.runtimeResponses) {
-        if (response.runId !== sentRunId || sentRuntimeResponses.includes(response.requestId))
-          continue;
+        if (response.runId !== sentRunId || sent.has(response.requestId)) continue;
         send(socket, response);
-        sentRuntimeResponses = [...sentRuntimeResponses, response.requestId];
+        sent.add(response.requestId);
       }
+      sentRuntimeResponses = [...sent];
     }
     // A drain asked for and not answered yet, once per connection (#493).
     let sentDrainId = attachment.sentDrainId;
@@ -316,7 +326,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentDrainId !== attachment.sentDrainId ||
       sentSteers !== (attachment.sentSteers ?? 0) ||
       sentTerminalRequests.join("\n") !== (attachment.sentTerminalRequests ?? []).join("\n") ||
-      sentRuntimeResponses !== attachment.sentRuntimeResponses
+      sentRuntimeResponses.length !== (attachment.sentRuntimeResponses?.length ?? 0)
     ) {
       socket.serializeAttachment({
         ...attachment,
@@ -370,7 +380,12 @@ export async function onRunnerMessage(
       for (const other of host.ctx.getWebSockets(RUNNER_TAG)) {
         if (other === socket) continue;
         const previous = attachmentOf(other);
-        if (previous !== null) other.serializeAttachment({ ...previous, inactive: true });
+        if (previous !== null) {
+          if (previous.inactive !== true && previous.exec === true) {
+            host.exec?.disconnected(other, previous.generation, previous.connection);
+          }
+          other.serializeAttachment({ ...previous, inactive: true });
+        }
         close(other, CLOSE.replaced, "Replaced by a newer connection.");
       }
       // A reconnect already holds its live run: what the thread decides about
@@ -387,9 +402,20 @@ export async function onRunnerMessage(
         ...(message.terminalProcessId === undefined
           ? {}
           : { terminalProcessId: message.terminalProcessId }),
+        exec: message.protocolVersion >= EXEC_PROTOCOL_VERSION && message.exec === true,
         feedback: message.feedback === true,
         runtimeResponses: message.runtimeResponses === true,
       } satisfies Attachment);
+      host.exec?.connected(socket, {
+        generation: result.generation,
+        connection: result.connection,
+        protocolVersion: message.protocolVersion,
+        exec: message.protocolVersion >= EXEC_PROTOCOL_VERSION && message.exec === true,
+        send: (frame) => {
+          if (socket.readyState !== WebSocket.OPEN) throw new Error("Runner socket is closed");
+          socket.send(threadFrame.encode(frame));
+        },
+      });
       if (host.terminals !== undefined && message.terminalProcessId !== undefined) {
         await host.terminals(
           ThreadTerminals.ThreadTerminals.use((service) =>
@@ -452,6 +478,27 @@ export async function onRunnerMessage(
       await host.afterChange(await pushRunnerWork(host));
       return;
     }
+    case "exec.report": {
+      if (
+        attachment === null ||
+        attachment.inactive === true ||
+        attachment.exec !== true ||
+        attachment.connection !== latestConnection(host.ctx, attachment.generation)
+      ) {
+        close(
+          socket,
+          CLOSE.protocol,
+          "Exec reports require the current negotiated Runner connection.",
+        );
+        return;
+      }
+      if (host.exec === undefined) {
+        close(socket, CLOSE.protocol, "This thread has no process forwarding session.");
+        return;
+      }
+      host.exec.report(socket, attachment.generation, attachment.connection, message.report);
+      return;
+    }
     case "end":
       if (attachment !== null) {
         // A replaced socket cannot retire the live PTYs on its replacement.
@@ -463,6 +510,9 @@ export async function onRunnerMessage(
           await host.terminals(
             ThreadTerminals.ThreadTerminals.use((service) => service.lost(attachment.generation)),
           );
+        }
+        if (attachment.exec === true) {
+          host.exec?.disconnected(socket, attachment.generation, attachment.connection);
         }
         await host.run(
           runner.use((service) => service.ended(attachment.generation, message.reason)),
@@ -500,6 +550,9 @@ export async function onRunnerClose(
     );
   });
   if (!replaced) {
+    if (attachment.exec === true) {
+      host.exec?.disconnected(socket, attachment.generation, attachment.connection);
+    }
     const detail = `code ${code}${reason === "" ? "" : `, ${reason}`}`;
     await host.run(runner.use((service) => service.disconnected({ ...attachment, detail })));
   }

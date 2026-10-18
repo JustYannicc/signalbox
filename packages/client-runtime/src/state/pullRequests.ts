@@ -326,6 +326,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsFilesViewed,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsFilesViewed, input),
       staleTimeMs: 15_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     /**
      * One write in flight per change request: the host applies these in order, and a reader
