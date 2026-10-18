@@ -1816,6 +1816,8 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
+  /** Cloud thread summary outbox revision, comparable only with this thread's summary receipt. */
+  summaryRevision: Schema.optionalKey(NonNegativeInt), // signalbox: optimistic ledger
   projectId: ProjectId,
   title: Schema.String,
   providerInstanceId: ProviderInstanceId,
@@ -3188,6 +3190,8 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  /** Same counter as ThreadShell.summaryRevision, never the user-index snapshot sequence. */
+  summaryRevision: Schema.optionalKey(NonNegativeInt), // signalbox: optimistic ledger
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 

@@ -49,7 +49,12 @@ import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { migrateStatusNote, readNote, writeNote } from "./statusLine/statusNoteTables.ts";
 import { migratePulls } from "./PullState.ts";
-import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
+import {
+  type MachineRecord,
+  MachineRecords,
+  MachineStartupProblem,
+  NO_MACHINE_RECORD,
+} from "./runner/MachineBackend.ts";
 import {
   migrateSecretValues,
   readSecretValues,
@@ -115,6 +120,14 @@ export interface MachineLease {
   readonly requestedAt: number | null;
   /** When the backend confirmed the request; null until then. */
   readonly ensuredAt: number | null;
+  /** A bounded retry of the same idempotent request, before any Runner connected. */
+  readonly startup?:
+    | {
+        readonly retries: number;
+        readonly deadline: number;
+        readonly problem?: MachineStartupProblem | undefined;
+      }
+    | undefined;
   /** When the Runner's socket closed, while the lease still stands. */
   readonly disconnectedAt: number | null;
   /** When the machine last ran out of work. */
@@ -452,6 +465,13 @@ const MachineLeaseJson = Schema.fromJsonString(
     connection: Schema.optional(Schema.Number),
     requestedAt: Schema.NullOr(Schema.Number),
     ensuredAt: Schema.NullOr(Schema.Number),
+    startup: Schema.optional(
+      Schema.Struct({
+        retries: Schema.Number,
+        deadline: Schema.Number,
+        problem: Schema.optional(MachineStartupProblem),
+      }),
+    ),
     disconnectedAt: Schema.NullOr(Schema.Number),
     idleSince: Schema.NullOr(Schema.Number),
     ackedSequence: Schema.Number,

@@ -279,6 +279,10 @@
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
     },
+    "./state/optimistic-ledger": {
+      "types": "./src/state/optimisticLedger.ts",
+      "default": "./src/state/optimisticLedger.ts"
+    },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"

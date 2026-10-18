@@ -616,3 +616,97 @@ describe("public API calls", () => {
     }),
   );
 });
+
+describe("queue operations through the public API", () => {
+  it.effect(
+    "edits and reorders with the app service, enforces scopes and returns typed stale failures",
+    () =>
+      Effect.gen(function* () {
+        const { call, cloud } = yield* setup;
+        expect(
+          json(
+            yield* call("threads.create", {
+              commandId: "queue-launch",
+              threadId: "queue-api",
+              projectId: Environment.SCRATCH_PROJECT_ID,
+              title: "Queue API",
+              modelSelection: scriptedModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+              initialMessage: { text: "Live", attachments: [] },
+            }),
+          ).status,
+        ).toBe(200);
+        for (const n of [2, 3]) {
+          expect(
+            json(
+              yield* call("threads.send", {
+                commandId: `queue-send-${n}`,
+                threadId: "queue-api",
+                createdBy: "user",
+                creationSource: "mcp",
+                messageId: `queue-message-${n}`,
+                text: `Queued ${n}`,
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+              }),
+            ).status,
+          ).toBe(200);
+        }
+        const threadId = "queue-api";
+        const second = "run:queue-api:2";
+        const third = "run:queue-api:3";
+        const input = {
+          commandId: "api-edit",
+          threadId,
+          runId: second,
+          text: "Edited through API",
+        };
+        for (const [name, body] of [
+          ["threads.queuedRun.edit", input],
+          ["threads.queuedRun.reorder", { threadId, runId: third, beforeRunId: second }],
+        ] as const) {
+          expect(json(yield* call(name, body, person([AuthOrchestrationReadScope]))).status).toBe(
+            403,
+          );
+        }
+        const edited = json(yield* call("threads.queuedRun.edit", input));
+        expect(edited.status).toBe(200);
+        expect(json(yield* call("threads.queuedRun.edit", input))).toEqual(edited);
+        expect(
+          json(
+            yield* call("threads.queuedRun.reorder", {
+              commandId: "api-reorder",
+              threadId,
+              runId: third,
+              beforeRunId: second,
+            }),
+          ).status,
+        ).toBe(200);
+        expect(json(yield* call("threads.get", { threadId })).body).toMatchObject({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ id: "queue-message-2", text: "Edited through API" }),
+          ]),
+          runs: expect.arrayContaining([
+            expect.objectContaining({ id: third, status: "queued", queuePosition: 1 }),
+            expect.objectContaining({ id: second, status: "queued", queuePosition: 2 }),
+          ]),
+        });
+        expect(
+          json(yield* call("threads.queuedRun.cancel", { threadId, runId: second })).status,
+        ).toBe(200);
+        for (const [name, body] of [
+          ["threads.queuedRun.edit", { ...input, commandId: "stale-api-edit" }],
+          ["threads.queuedRun.reorder", { threadId, runId: second, beforeRunId: null }],
+        ] as const) {
+          const refused = json(yield* call(name, body));
+          expect(refused.status).toBe(422);
+          expect(refused.body).toMatchObject({
+            error: { _tag: "OrchestrationV2DispatchCommandError" },
+          });
+        }
+        yield* cloud.settle;
+      }),
+  );
+});

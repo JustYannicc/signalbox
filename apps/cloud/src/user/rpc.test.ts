@@ -8,6 +8,7 @@ import {
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CommandOutputError,
+  OrchestrationV2DispatchCommandResult,
   ProjectId,
   ThreadId,
   TurnItemId,
@@ -19,9 +20,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as RpcTest from "effect/rpc/RpcTest";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { SIGNALBOX_TRASH_WS_METHODS } from "@t3tools/contracts/signalboxTrash";
@@ -247,6 +250,65 @@ describe("cloud RPC", () => {
       );
       expect(new Set(transitions.map((span) => span.traceId)).size).toBe(1);
       expect(transitions.every((span) => span.status._tag === "Ended")).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("restores a legacy shell's confirmation marker from its stored revision", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      yield* launch(rpc);
+      yield* cloud.settle;
+      const original = yield* sidebar(rpc);
+      const revision = original?.threads[0]?.summaryRevision;
+      expect(revision).toBeTypeOf("number");
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE thread_index SET shell = json_remove(shell, '$.summaryRevision')
+          WHERE thread_id = ${threadId}`;
+        const [row] = yield* sql<{ readonly marker: number | null; readonly revision: number }>`
+          SELECT json_extract(shell, '$.summaryRevision') AS marker, revision
+          FROM thread_index WHERE thread_id = ${threadId}`;
+        expect(row).toEqual({ marker: null, revision });
+      }).pipe(Effect.provide(cloud.userObject(userId)));
+
+      const restored = yield* sidebar(rpc);
+      expect(restored).toEqual(original);
+      const receipt = yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("noop-legacy"),
+        threadId,
+      });
+      expect(receipt.summaryRevision).toBe(revision);
+      expect(restored?.threads[0]?.summaryRevision).toBe(receipt.summaryRevision);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves the confirmation revision through receipt and sidebar transport", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      yield* launch(rpc);
+      yield* cloud.settle;
+      const receipt = yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename"),
+        threadId,
+        title: "Renamed",
+      });
+      yield* cloud.settle;
+      const shell = yield* sidebar(rpc);
+      expect(receipt.summaryRevision).toBeTypeOf("number");
+      expect(shell?.threads[0]).toMatchObject({
+        title: "Renamed",
+        summaryRevision: receipt.summaryRevision,
+      });
+      // RpcTest bypasses serialization; exercise the socket's success codec too.
+      const codec = Schema.toCodecJson(OrchestrationV2DispatchCommandResult);
+      const encoded = yield* Schema.encodeEffect(codec)(receipt);
+      expect(encoded).toEqual(receipt);
+      expect(yield* Schema.decodeEffect(codec)(encoded)).toEqual(receipt);
+      expect(yield* Schema.decodeEffect(codec)({ sequence: receipt.sequence })).toEqual({
+        sequence: receipt.sequence,
+      });
     }).pipe(Effect.scoped),
   );
 

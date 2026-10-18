@@ -1,6 +1,12 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { CommandId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  OrchestrationV2DispatchCommandResult,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { normalizeTerminalOutput } from "@t3tools/shared/terminalOutput";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -50,6 +56,7 @@ const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(JsonRpcAnswe
 const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
 const decodeToolList = Schema.decodeUnknownEffect(ToolList);
 const decodeSearch = Schema.decodeUnknownEffect(Schema.fromJsonString(SearchAnswer));
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** The answer's JSON, whether the server sent JSON or one SSE event. */
 const bodyOf = (text: string) =>
@@ -231,7 +238,19 @@ describe("Signalbox's MCP", () => {
         expect((yield* snapshot()).projection.thread.settledOverride).toBe("settled");
         yield* call("threads.unsettle", { commandId: "unsettle", threadId, reason: "user" });
         expect((yield* snapshot()).projection.thread.settledOverride).toBe("active");
-        expect(yield* call("threads.settle", { commandId: "settle", threadId })).toEqual(settled);
+        const replayed = yield* call("threads.settle", { commandId: "settle", threadId });
+        expect(replayed.isError ?? false).toBe(false);
+        const decodeReceipt = Schema.decodeUnknownEffect(
+          Schema.fromJsonString(OrchestrationV2DispatchCommandResult),
+        );
+        const originalReceipt = yield* decodeReceipt(settled.content[0]!.text);
+        const replayedReceipt = yield* decodeReceipt(replayed.content[0]!.text);
+        const summary = yield* cloud.threadDirectory.forThread(threadId).summary(actor);
+        expect(replayedReceipt).toEqual({
+          sequence: originalReceipt.sequence,
+          summaryRevision: summary?.shell.summaryRevision,
+        });
+        expect(replayedReceipt.summaryRevision).toBeGreaterThan(originalReceipt.summaryRevision!);
         expect((yield* snapshot()).projection.thread.settledOverride).toBe("active");
         yield* call("threads.archive", { commandId: "archive", threadId });
         yield* cloud.settle;
@@ -426,6 +445,80 @@ describe("Signalbox's MCP", () => {
       expect(
         decodeTrash(listed.content[0]!.text).entries.find((row) => row.id === next.id)?.status,
       ).toBe("trashed");
+    }),
+  );
+});
+
+describe("MCP queue operations", () => {
+  it.effect("uses the same durable queue and reports stale edits and reorders", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connect;
+      const call = (operation: string, input: object) =>
+        tool("signalbox_call", { operation, input });
+      expect(
+        (yield* call("threads.create", {
+          commandId: "mcp-queue-launch",
+          threadId: "mcp-queue",
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "MCP Queue",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { text: "Live", attachments: [] },
+        })).isError ?? false,
+      ).toBe(false);
+      for (const n of [2, 3]) {
+        expect(
+          (yield* call("threads.send", {
+            commandId: `mcp-queue-send-${n}`,
+            threadId: "mcp-queue",
+            createdBy: "user",
+            creationSource: "mcp",
+            messageId: `mcp-queue-message-${n}`,
+            text: `Queued ${n}`,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          })).isError ?? false,
+        ).toBe(false);
+      }
+      const threadId = "mcp-queue";
+      const second = "run:mcp-queue:2";
+      const third = "run:mcp-queue:3";
+      expect(
+        (yield* call("threads.queuedRun.edit", {
+          commandId: "mcp-edit",
+          threadId,
+          runId: second,
+          text: "Edited through MCP",
+        })).isError ?? false,
+      ).toBe(false);
+      expect(
+        (yield* call("threads.queuedRun.reorder", {
+          commandId: "mcp-reorder",
+          threadId,
+          runId: third,
+          beforeRunId: second,
+        })).isError ?? false,
+      ).toBe(false);
+      const snapshot = yield* call("threads.get", { threadId });
+      const value = yield* decodeJson(snapshot.content[0]!.text);
+      expect(value).toMatchObject({
+        messages: expect.arrayContaining([expect.objectContaining({ text: "Edited through MCP" })]),
+        runs: expect.arrayContaining([
+          expect.objectContaining({ id: third, status: "queued", queuePosition: 1 }),
+          expect.objectContaining({ id: second, status: "queued", queuePosition: 2 }),
+        ]),
+      });
+      yield* call("threads.queuedRun.cancel", { threadId, runId: second });
+      for (const [operation, input] of [
+        ["threads.queuedRun.edit", { threadId, runId: second, text: "Stale" }],
+        ["threads.queuedRun.reorder", { threadId, runId: second, beforeRunId: null }],
+      ] as const) {
+        const stale = yield* call(operation, input);
+        expect(stale.isError).toBe(true);
+        expect(stale.content[0]!.text).toContain("OrchestrationV2DispatchCommandError");
+      }
     }),
   );
 });

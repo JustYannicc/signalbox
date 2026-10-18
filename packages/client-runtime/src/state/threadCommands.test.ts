@@ -1,3 +1,4 @@
+import "./tests/threadCommandTestSession.ts"; // signalbox: optimistic ledger
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
