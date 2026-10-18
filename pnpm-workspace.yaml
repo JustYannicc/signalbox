@@ -348,11 +348,10 @@ packageExtensions:
   "@clerk/expo-native-components@*":
     dependencies:
       "@expo/config-plugins": 58.0.9
-  # Our patch makes @effect/vitest import vite-plus/test. A catalog: spec here
-  # resolves through the vite-plus override above.
+  # The patch imports vite-plus/test; resolve it from the host runner.
   "@effect/vitest@*":
-    dependencies:
-      vite-plus: "catalog:"
+    peerDependencies:
+      vite-plus: ^1.0.0
 
 patchedDependencies:
   "@lunora/errors@1.0.0-alpha.57": patches/@lunora__errors@1.0.0-alpha.57.patch
