@@ -387,6 +387,14 @@
       "types": "./src/state/signalboxAsks.ts",
       "default": "./src/state/signalboxAsks.ts"
     },
+    "./askHtml": {
+      "types": "./src/askHtml.ts",
+      "default": "./src/askHtml.ts"
+    },
+    "./askSlider": {
+      "types": "./src/askSlider.ts",
+      "default": "./src/askSlider.ts"
+    },
     "./state/signalboxThreadKinds": {
       "types": "./src/state/signalboxThreadKinds.ts",
       "default": "./src/state/signalboxThreadKinds.ts"
