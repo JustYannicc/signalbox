@@ -5,14 +5,14 @@ import { isLeaseToken, signLeaseToken, threadOfLeaseToken } from "../thread/runn
 /**
  * Remote tokens: what a thread's Runner presents to fetch its drive's remote
  * repository through the cloud (`DRIVE_PATHS.remote`). One per thread and
- * turn, derived from the machine's lease token like model tokens are
+ * turn or pending pull, derived from the machine's lease token like model tokens are
  * (`thread/runner/leaseToken.ts`):
  *
  *   sbr1.<base64url(thread id)>.<base64url(HMAC-SHA256(lease token, "remote\n" + run id))>
  *
- * The thread grants one only while its run is live, so a token from a turn
- * that ended, an older machine or another thread never works. The machine
- * holds no credential for the remote itself.
+ * The thread grants access only while the named turn or pull is live, so an
+ * ended operation, an older machine or another thread cannot use it. The
+ * machine holds no credential for the remote itself.
  */
 
 const PREFIX = "sbr1";
@@ -30,3 +30,13 @@ export const isRemoteToken = (
   threadId: ThreadId,
   runId: RunId,
 ) => isLeaseToken(token, remoteToken(leaseToken, threadId, runId));
+
+export const remoteOperationToken = (leaseToken: string, threadId: ThreadId, operationId: string) =>
+  signLeaseToken(PREFIX, leaseToken, threadId, `remote-operation\n${operationId}`);
+
+export const isRemoteOperationToken = (
+  token: string,
+  leaseToken: string,
+  threadId: ThreadId,
+  operationId: string,
+) => isLeaseToken(token, remoteOperationToken(leaseToken, threadId, operationId));

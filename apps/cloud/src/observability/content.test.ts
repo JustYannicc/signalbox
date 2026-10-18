@@ -110,4 +110,24 @@ describe("redactContent", () => {
     expect(event.error).toEqual({ name: "TurnFailure.usage_limit", message: REDACTED });
     expect(JSON.stringify(event)).not.toContain("canary");
   });
+
+  it("keeps a client issue class only when action and closed code agree", () => {
+    const valid = {
+      action: "client.issue.rpc.failed",
+      clientIssue: { code: "rpc.failed" },
+      error: { name: "canary-error-name", message: "canary-error-message" },
+    };
+    redactContent(valid);
+    expect(valid.error).toEqual({ name: "ClientIssue.rpc.failed", message: REDACTED });
+    expect(JSON.stringify(valid)).not.toContain("canary");
+
+    const mismatched = {
+      action: "client.issue.rpc.failed.private",
+      clientIssue: { code: "rpc.failed" },
+      error: { name: "private-error-name", message: "private-error-message" },
+    };
+    redactContent(mismatched);
+    expect(mismatched.error).toEqual({ name: REDACTED, message: REDACTED });
+    expect(JSON.stringify(mismatched)).not.toContain("private-error");
+  });
 });
