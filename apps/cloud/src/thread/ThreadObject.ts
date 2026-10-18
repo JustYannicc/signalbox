@@ -60,6 +60,7 @@ import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as RunnerLiveness from "./RunnerLiveness.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -309,6 +310,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
     this.runnerHost = {
       ctx,
+      now: () => this.now(),
       run: (effect) => this.runtime.runPromise(effect),
       holdsTurn: () =>
         this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),
@@ -639,6 +641,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
+    const now = await this.now();
+    const runnerWakeAt = await RunnerLiveness.inspect(this.runnerHost, now);
     const hasWork = await this.runtime.runPromise(
       Effect.gen(function* () {
         const engine = yield* ThreadEngine.ThreadEngine;
@@ -666,13 +670,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         );
       }),
     );
-    if (hasWork) return this.setAlarmNoLaterThan(await this.now());
+    if (hasWork) return this.setAlarmNoLaterThan(now);
+    if (runnerWakeAt !== null) await this.setAlarmNoLaterThan(runnerWakeAt);
     // An alarm that fires now sets the next pull request read and share end itself.
     const pullRequestsAt = await this.runtime.runPromise(
       PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
     );
     if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
-    const now = await this.now();
     const statusNoteAt = await this.runtime.runPromise(
       ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.dueAt(now)),
     );
@@ -918,6 +922,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   private async tick(log: Evlog.UnitLog) {
     const now = await this.now();
+    const runnerWakeAt = await RunnerLiveness.inspect(this.runnerHost, now);
     const step = await this.run(
       log,
       ThreadEngine.ThreadEngine.use((engine) => engine.step).pipe(
@@ -1009,6 +1014,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       summaryAt,
       eventsAt,
       machineWakeAt,
+      runnerWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,
       sharingWakeAt,
