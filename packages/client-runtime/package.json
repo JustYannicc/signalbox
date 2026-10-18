@@ -311,6 +311,10 @@
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"
     },
+    "./state/signalboxPoolSignIn": {
+      "types": "./src/state/signalboxPoolSignIn.ts",
+      "default": "./src/state/signalboxPoolSignIn.ts"
+    },
     "./state/signalboxSignIn": {
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"
