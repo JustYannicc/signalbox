@@ -93,7 +93,10 @@ describe("TurnDiagnostics", () => {
 
         const listed = yield* reports.list(projection);
         expect(listed).toMatchObject([
-          { status: "failed", failure: { message: "No machine came up to run this turn." } },
+          {
+            status: "failed",
+            failure: { code: "machine_backend_not_configured", class: "provider_error" },
+          },
         ]);
         const record = yield* reports.turn(projection, listed[0]!.traceId);
         if (record === null) throw new Error("expected the turn's record");
@@ -104,7 +107,7 @@ describe("TurnDiagnostics", () => {
         });
         expect(record.log.map((line) => line.message)).toEqual([
           "Asked the none backend for light machine generation 1.",
-          "Released machine generation 1 (error): No Runner connected within 60 s.",
+          expect.stringContaining("no machine backend configured"),
         ]);
       }),
     ),

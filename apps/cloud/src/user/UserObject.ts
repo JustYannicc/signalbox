@@ -154,13 +154,6 @@ const stringVars = (env: UserObjectEnv): Record<string, string> =>
  * it's built once.
  */
 const layerDrives = (env: UserObjectEnv) => {
-  if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
-    return { store: Layer.empty, services: Layer.empty };
-  }
-  const store = Layer.mergeAll(
-    DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-    DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
-  );
   const people = Layer.unwrap(
     Effect.map(makeProfileId, (profileId) =>
       DrivePeople.layerForUser(
@@ -176,8 +169,16 @@ const layerDrives = (env: UserObjectEnv) => {
       ),
     ),
   ).pipe(Layer.provide(FetchHttpClient.layer));
+  if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
+    return { store: Layer.empty, services: Layer.empty, people };
+  }
+  const store = Layer.mergeAll(
+    DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+    DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
+  );
   return {
     store,
+    people,
     services: Layer.mergeAll(DriveSharing.layer, DriveShortcuts.layer, DriveFiles.layer).pipe(
       Layer.provide(Layer.mergeAll(store, people)),
     ),
@@ -341,7 +342,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               OnePasswordAccount.layer,
             ),
           ),
-          Layer.provideMerge(drives.store),
+          Layer.provideMerge(Layer.mergeAll(drives.store, drives.people)),
           Layer.provideMerge(
             Layer.mergeAll(
               ThreadDirectory.layerDurableObjects(env.THREADS, {
@@ -640,6 +641,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   checkSignIn(input: Parameters<UserObjectApi["checkSignIn"]>[0]) {
     return this.api.checkSignIn(input);
+  }
+
+  authorizeExecutorToken(...args: Parameters<UserObjectApi["authorizeExecutorToken"]>) {
+    return this.api.authorizeExecutorToken(...args);
   }
 
   endBrowser(input: Parameters<UserObjectApi["endBrowser"]>[0]) {

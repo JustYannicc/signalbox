@@ -70,6 +70,7 @@ const setup = (
         workspace: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,
+        authorizeExecutorTurn: async () => false,
         requestPullRequestSync: async () => ({ _tag: "not_found" }),
         diagnostics: async () => null,
         previews: async () => null,

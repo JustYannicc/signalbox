@@ -162,6 +162,29 @@ it.effect(
       expect(text).toBe(JSON.stringify(answer));
     }),
 );
+it.effect("preserves partial mutation data despite a GraphQL rate-limit error", () =>
+  Effect.gen(function* () {
+    for (const error of [
+      { type: "RATE_LIMITED" },
+      { type: "RATE_LIMIT", extensions: { code: "graphql_rate_limit" } },
+    ]) {
+      const answer = {
+        data: { addPullRequestReviewThreadReply: { comment: { id: "PRRC_created" } } },
+        errors: [error],
+      };
+      const text = yield* makeGitHubApi(
+        responseClient(answer, 200, { "retry-after": "60" }),
+      ).graphql(
+        "reply",
+        "token",
+        "mutation { addPullRequestReviewThreadReply { comment { id } } }",
+        {},
+      );
+      expect(text).toBe(JSON.stringify(answer));
+    }
+  }),
+);
+
 it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers", () => {
   const token = "github-response-secret-canary";
   const lines: Array<string> = [];

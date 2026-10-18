@@ -259,6 +259,7 @@ function EnvironmentUnavailablePlaceholder({
   readonly access: Exclude<ProviderEnvironmentAccess, { kind: "editable" | "read-only" }>;
   readonly deviceTabs?: ReactNode;
 }) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox: one-environment copy for connection errors
   const isLoading = access.kind === "loading";
   const title = isLoading
     ? "Loading provider settings"
@@ -285,7 +286,7 @@ function EnvironmentUnavailablePlaceholder({
       {error ? (
         <ExpandableText
           key={environment.environmentId}
-          text={error}
+          text={environmentCopy(error)} // signalbox: one-environment copy for connection errors
           className="w-full text-left font-mono text-xs leading-relaxed text-muted-foreground"
         />
       ) : null}

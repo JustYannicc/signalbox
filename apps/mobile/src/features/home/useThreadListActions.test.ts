@@ -48,6 +48,8 @@ vi.mock("../../components/ui/Dialog", () => ({
     state.alerts.push({ title, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
+// signalbox: alert copy is the copy seam's concern; these cover the actions.
+vi.mock("./useOneEnvironmentCopy", () => ({ environmentCopy: (text: string) => text }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: () => {},
 }));
