@@ -164,12 +164,6 @@ export const makeThreads = Effect.gen(function* () {
           unsupported(),
         );
       }
-      if (
-        command.type !== "thread.create" &&
-        (PICKS_A_POOL.has(command.type) || command.type === "queue.resume")
-      ) {
-        yield* refreshRemoteWorkspace(actor, threadId);
-      }
       // Only a create can make a thread, so only a create names its place. The
       // thread object rejects a new thread without one, after replaying retries.
       const place =
@@ -193,6 +187,12 @@ export const makeThreads = Effect.gen(function* () {
           id: command.commandId,
           type: command.type,
         });
+      }
+      if (
+        command.type !== "thread.create" &&
+        (PICKS_A_POOL.has(command.type) || command.type === "queue.resume")
+      ) {
+        yield* refreshRemoteWorkspace(actor, threadId);
       }
       const creation = placed(place, threadId, turn);
       if (
@@ -232,15 +232,15 @@ export const makeThreads = Effect.gen(function* () {
 
   const launchThread: Threads.Threads["Service"]["launch"] = (actor, input) =>
     Effect.gen(function* () {
+      const place = yield* rejectTrashedFolder(threadContexts.placeOfProject(input.projectId), {
+        id: input.commandId,
+        type: "thread.launch",
+      });
       if (input.reuseExistingThread === true && input.threadId !== undefined) {
         yield* refreshRemoteWorkspace(actor, input.threadId).pipe(
           Effect.catchTags({ ThreadNotFoundError: () => Effect.void }),
         );
       }
-      const place = yield* rejectTrashedFolder(threadContexts.placeOfProject(input.projectId), {
-        id: input.commandId,
-        type: "thread.launch",
-      });
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
