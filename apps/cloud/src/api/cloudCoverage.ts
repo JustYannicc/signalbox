@@ -46,10 +46,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Pull-request reads are served by `github/CloudPullRequests.ts` (#814).
   // The later slices own writes and personal review state.
-  "pullRequests.reviewGuide": gap("#815"),
-  "pullRequests.generateReviewGuide": gap("#815"),
-  "pullRequests.filesViewed": gap("#815"),
-  "pullRequests.setFilesViewed": gap("#815"),
   "pullRequests.runAction": gap("#817"),
   "pullRequests.update": gap("#817"),
   "pullRequests.reviewerCandidates": gap("#817"),
@@ -64,13 +60,10 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),
-  "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "provider.auth.respond": gap("#205"),
-  "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
   "provider.codex.authCallback.subscribe": exempt(
     "A self-hosted server's localhost sign-in callback.",
