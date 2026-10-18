@@ -17,6 +17,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
 import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
@@ -29,6 +30,7 @@ import {
   PREVIEW_DRIVE_PACKS_BUCKET,
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
+  stageWorkerRouting,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
@@ -303,7 +305,11 @@ function deploy(
       main: here("src/models/gatewayWorker.ts"),
       compatibility,
       workersDev: false,
-      domain: { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID },
+      // Preview provider paths share the app origin; production keeps its gateway domain.
+      ...stageWorkerRouting(target, target.gatewayDomain, [
+        MODEL_GATEWAY_PATHS.anthropic,
+        MODEL_GATEWAY_PATHS.openai,
+      ]),
       observability,
       env: {
         ...telemetry,

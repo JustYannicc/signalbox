@@ -9,7 +9,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-/** Pause, resume, or remove an account a hub pools. Adding accounts happens on web and desktop. */
+/** Pause, resume, or remove an account a hub pools. Adding one is `AddPoolAccountSection`. */
 export function HubAccountActions({ account }: { readonly account: LimitAccount }) {
   const update = useAtomCommand(serverEnvironment.updateUsageLimitSourceAccount, {
     reportFailure: false,

@@ -45,6 +45,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         connectionPhase: presentation.connection.phase,
         session: Option.getOrNull(AsyncResult.value(sessionResult)),
         hasSessionError: sessionResult._tag === "Failure",
+        capabilities: presentation.serverConfig?.environment.capabilities,
       });
       if (!access.canReadDiagnostics) {
         statuses.push({

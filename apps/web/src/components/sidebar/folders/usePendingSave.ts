@@ -8,11 +8,11 @@ export function usePendingSave() {
   const run = async (save: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
-    try {
+    await (async () => {
       if ((await save()) !== null) closeFolderDialog();
-    } finally {
+    })().finally(() => {
       setPending(false);
-    }
+    });
   };
   return { pending, run };
 }

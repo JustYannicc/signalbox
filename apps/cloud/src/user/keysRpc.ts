@@ -1,4 +1,4 @@
-import { type AuthEnvironmentScope, AuthStandardClientScopes } from "@t3tools/contracts";
+import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import {
   PersonalKeyError,
   type PersonalKeyCreateInput,
@@ -9,6 +9,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 /** A key change as an RPC answers it: storage failures logged, a plain message for the person. */
 const keyCall = <A>(effect: Effect.Effect<A, SqlError | PersonalKeyError>) =>
@@ -49,7 +50,7 @@ export const makeKeysHandlers = (input: {
         const beyond = request.scopes.filter(
           (scope) =>
             !input.scopes.includes(scope) ||
-            !(AuthStandardClientScopes as ReadonlyArray<string>).includes(scope),
+            !(CLOUD_CLIENT_SCOPES as ReadonlyArray<string>).includes(scope),
         );
         if (beyond.length > 0) {
           return yield* new PersonalKeyError({
