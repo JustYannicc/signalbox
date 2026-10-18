@@ -235,7 +235,7 @@ export class KernelWebSocketHost {
     const offset = wasmU32(pointer);
     const byteLength = wasmU32(length);
     if (!hasRange(memory, offset, byteLength)) return WS_ERRNO.EFAULT;
-    const data = new Uint8Array(memory.buffer, offset, byteLength).slice();
+    const data = new Uint8Array(memory.buffer, offset, byteLength);
     return this.#resource(fd).send(opcode, data);
   }
 

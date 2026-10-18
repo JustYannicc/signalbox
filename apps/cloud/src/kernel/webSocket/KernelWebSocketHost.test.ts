@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   KernelWebSocketHost,
   type KernelWebSocketRouteRequest,
@@ -148,6 +148,49 @@ describe("KernelWebSocketHost", () => {
     expect(host.imports.ws_recv(3, 0xffff_fffc, 0, 0, 32)).toBe(WS_ERRNO.EFAULT);
     expect(host.imports.ws_send(3, 1, 0xffff_fffc, 4)).toBe(WS_ERRNO.EFAULT);
     expect(descriptors.size).toBe(0);
+  });
+
+  it("rejects oversized sends and invalid descriptors without copying guest data", async () => {
+    const memory = new WebAssembly.Memory({ initial: 2 });
+    const descriptors = new FakeDescriptors();
+    const socket = new FakeSocket();
+    const host = makeHost(memory, descriptors, () => upgrade(socket));
+    writeRequest(memory, 64, "ws://localhost/exec", [], 4, 8);
+    expect(host.imports.ws_open(64, requestLength(memory), 16)).toBe(0);
+    const fd = readU32(memory, 16);
+    await waitForResourceRead(descriptors.resource(fd));
+    expect(host.imports.ws_handshake(fd, 512, 128, 32)).toBe(0);
+
+    const copy = vi.spyOn(Uint8Array.prototype, "slice");
+    try {
+      expect(host.imports.ws_send(fd, 2, 0, 65_536)).toBe(WS_ERRNO.EMSGSIZE);
+      expect(host.imports.ws_send(99, 2, 0, 65_536)).toBe(WS_ERRNO.EBADF);
+      expect(copy).not.toHaveBeenCalled();
+    } finally {
+      copy.mockRestore();
+      host.imports.ws_drop(fd);
+    }
+  });
+
+  it("rejects an untyped bare Response and closes its native socket", async () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const descriptors = new FakeDescriptors();
+    const socket = new FakeSocket();
+    const response = Object.assign(new Response("rejected"), { webSocket: socket });
+    const host = makeHost(
+      memory,
+      descriptors,
+      () => response as unknown as KernelWebSocketRouteResult,
+    );
+    writeRequest(memory, 64, "ws://localhost/exec", []);
+    expect(host.imports.ws_open(64, requestLength(memory), 16)).toBe(0);
+    const fd = readU32(memory, 16);
+    await waitForResourceRead(descriptors.resource(fd));
+
+    expect(host.imports.ws_handshake(fd, 512, 128, 32)).toBe(WS_ERRNO.EIO);
+    expect(socket.closeCalls).toBe(1);
+    host.imports.ws_drop(fd);
+    expect(socket.closeCalls).toBe(1);
   });
 
   it("rejects an oversized guest request length before checking memory or routing", () => {
