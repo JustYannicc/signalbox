@@ -12,6 +12,47 @@ export const cpuReturnReactor = new Uint8Array([
 ]);
 
 export const cpuWasmCheckMethods = `
+  async checkDescriptorClockFailures(checks) {
+    for(const operation of ['fd_dup2','proc_closefrom']) {
+      for(const outcome of ['resolve','reject']) {
+        let fail=false,sourceCloses=0,targetCloses=0;
+        const expected=new Error('Descriptor step clock failed');
+        const accounting=new KernelCpuAccounting(()=>{
+          if(fail){fail=false;throw expected;}
+          return readClock();
+        });
+        const owner=new KernelProgramHost({registry:new KernelProgramRegistry(),wakes:this.wakes,
+          cpuAccounting:accounting}).cpuExecution.root;
+        const filesystem=new KernelFileSystem({mounts:[]});
+        const gate=Promise.withResolvers(),closing=Promise.withResolvers();
+        const spec={kind:'stdio',offset:0n,rightsBase:0n,rightsInheriting:0n,flags:0,stdio:{write:()=>0}};
+        const source=filesystem.descriptors.allocate({...spec,onLastClose:()=>{sourceCloses++;}});
+        const target=filesystem.descriptors.allocate({...spec,onLastClose:()=>{
+          targetCloses++;fail=true;closing.resolve();return gate.promise;
+        }});
+        const memory=new WebAssembly.Memory({initial:1});
+        const host=new AgentOsDescriptorHost({memory:()=>memory,descriptors:filesystem.descriptors,
+          wakes:this.wakes,asyncMode:true});
+        const pending=owner.run(()=>{
+          const leave=owner.enterUser();
+          return runCurrentKernelCpuAwaitableSystemImport(()=>operation==='fd_dup2'
+            ?host.imports.fd_dup2(source,target):host.imports.proc_closefrom(target)).finally(leave);
+        }).then(value=>({value}),error=>({error}));
+        try {
+          await closing.promise;
+          if(outcome==='reject')gate.reject(new Error('Descriptor backend failed'));
+          else gate.resolve();
+          const result=await pending;
+          const prefix=operation+outcome;
+          checks[prefix+'ClockErrorPreserved']=result.error===expected;
+          const reused=await host.imports.fd_dup2(source,target);
+          const closed=await host.imports.proc_closefrom(source);
+          checks[prefix+'OwnershipReleased']=reused===0 && closed===0 &&
+            sourceCloses===1 && targetCloses===1 && !filesystem.descriptors.has(target);
+        } finally {gate.resolve();await pending;owner.stop();filesystem.dispose();}
+      }
+    }
+  }
   async checkDescriptorWaits(checks) {
     for(const operation of ['fd_dup2','proc_closefrom']) {
       const filesystem=new KernelFileSystem({mounts:[]});

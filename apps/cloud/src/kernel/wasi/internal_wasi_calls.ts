@@ -40,18 +40,57 @@ export async function runAsync<T>(
   call: WasiCall<T>,
   runStep: <V>(step: () => V) => V = (step) => step(),
 ): Promise<T> {
-  let result = runStep(() => call.next());
-  while (!result.done) {
-    let value: unknown;
-    try {
-      value = await result.value;
-    } catch (error) {
-      result = runStep(() => call.throw(error));
-      continue;
+  let result: { value: Promise<unknown> } | undefined;
+  const advance = (step: () => IteratorResult<unknown, T>) =>
+    runStep(() => {
+      // The meter can fail after next/throw has already yielded backend work.
+      const next = step();
+      const owned = next.done
+        ? { done: true as const, value: Promise.resolve(next.value) }
+        : { done: false as const, value: Promise.resolve(next.value) };
+      result = owned;
+      void owned.value.catch(() => undefined);
+      return owned;
+    });
+  try {
+    let current = advance(() => call.next());
+    while (!current.done) {
+      let value: unknown;
+      try {
+        value = await current.value;
+      } catch (error) {
+        current = advance(() => call.throw(error));
+        continue;
+      }
+      current = advance(() => call.next(value));
     }
-    result = runStep(() => call.next(value));
+    return current.value;
+  } catch (error) {
+    // Settle started work before unwinding, without feeding its value back into
+    // the failed operation. Cleanup runs without the failing meter.
+    if (result !== undefined) {
+      try {
+        await result.value;
+      } catch {}
+    }
+    try {
+      let cleanup = call.throw(error);
+      while (!cleanup.done) {
+        let value: unknown;
+        try {
+          value = await cleanup.value;
+        } catch (cleanupError) {
+          cleanup = call.throw(cleanupError);
+          continue;
+        }
+        cleanup = call.next(value);
+      }
+      await cleanup.value;
+    } catch {
+      // Cleanup must not replace the original metering or operation failure.
+    }
+    throw error;
   }
-  return result.value;
 }
 
 export function mapErrno(error: unknown): number {

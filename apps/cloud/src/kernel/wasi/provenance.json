@@ -41,7 +41,7 @@
     },
     {
       "file": "internal_wasi_calls.ts",
-      "reason": "An optional synchronous step wrapper lets kernel CPU accounting measure generator work without charging the Promises yielded for I/O. The default step runner preserves generic WASI behavior."
+      "reason": "An optional synchronous step wrapper lets kernel CPU accounting measure generator work without charging the Promises yielded for I/O. Yielded operations stay owned across step-wrapper failures, and iterator cleanup finishes before the original failure propagates. The default step runner preserves generic WASI behavior."
     },
     {
       "file": "internal_wasi_path_calls.ts",

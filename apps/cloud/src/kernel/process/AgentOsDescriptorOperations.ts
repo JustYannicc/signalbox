@@ -142,13 +142,8 @@ export class AgentOsDescriptorOperations {
     }
   }
 
-  async #finishDuplicateToAsync(call: WasiCall<number>): Promise<number> {
-    try {
-      await this.#runAsyncCall(call);
-      return 0;
-    } catch (error) {
-      return toErrno(error);
-    }
+  #finishDuplicateToAsync(call: WasiCall<number>): Promise<number> {
+    return this.#runAsyncCalls((runCall) => runCall(call));
   }
 
   #setDescriptorFlags(fd: number, flags: number): number {
@@ -193,22 +188,60 @@ export class AgentOsDescriptorOperations {
     return firstError;
   }
 
-  async #closeFromAsync(fds: readonly number[]): Promise<number> {
-    let firstError = 0;
-    for (const fd of fds) {
-      try {
-        await this.#runAsyncCall(this.#options.descriptors.close(fd));
-      } catch (error) {
-        const errno = toErrno(error);
+  #closeFromAsync(fds: readonly number[]): Promise<number> {
+    return this.#runAsyncCalls(async (runCall) => {
+      let firstError = 0;
+      for (const fd of fds) {
+        const errno = await runCall(this.#options.descriptors.close(fd));
         if (errno !== EBADF && firstError === 0) firstError = errno;
       }
-    }
-    return firstError;
+      return firstError;
+    });
   }
 
-  #runAsyncCall<T>(call: WasiCall<T>): Promise<T> {
-    // Backend cleanup can await work that never pauses through a wake token.
-    return runCurrentKernelCpuAsyncSystemImport((runSystem) => runAsync(call, runSystem));
+  async #runAsyncCalls(
+    run: (runCall: (call: WasiCall<unknown>) => Promise<number>) => Promise<number>,
+  ): Promise<number> {
+    let fault: { error: unknown } | undefined;
+    let pending: Promise<number> | undefined;
+    try {
+      return await runCurrentKernelCpuAsyncSystemImport((runSystem) => {
+        pending = run(async (call) => {
+          try {
+            await runAsync(call, <V>(step: () => V) => {
+              if (fault) throw fault.error;
+              let result!: { value: V } | { error: unknown };
+              try {
+                runSystem(() => {
+                  // Operation exceptions cross errno mapping only after the meter leaves.
+                  try {
+                    result = { value: step() };
+                  } catch (error) {
+                    result = { error };
+                  }
+                });
+              } catch (error) {
+                fault = { error };
+                throw error;
+              }
+              if ("error" in result) throw result.error;
+              return result.value;
+            });
+            return 0;
+          } catch (error) {
+            if (fault) throw fault.error;
+            return toErrno(error);
+          }
+        });
+        return pending;
+      });
+    } catch (error) {
+      fault ??= { error };
+      // A wrapper leave can fail while a backend is pending. Stop its next step
+      // and finish its unwind before exposing the failure to the caller.
+      await pending?.catch(() => undefined);
+      throw fault.error;
+    }
   }
 
   #recordLock(

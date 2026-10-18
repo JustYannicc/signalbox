@@ -246,6 +246,76 @@ describe("AgentOS host_process descriptor imports", () => {
     }
   });
 
+  it.each(
+    (["fd_dup2", "proc_closefrom"] as const).flatMap((operation) =>
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].flatMap((boundary) =>
+        (["resolve", "reject"] as const).map((outcome) => [operation, boundary, outcome] as const),
+      ),
+    ),
+  )("preserves %s clock failure at boundary %i (%s)", async (operation, boundary, outcome) => {
+    const expected = Object.assign(new Error("clock failure"), { code: "EIO" });
+    let reads = 0;
+    let failAt = 0;
+    const execution = new KernelCpuExecution(
+      new KernelCpuAccounting(() => {
+        if (++reads === failAt) throw expected;
+        return 0n;
+      }),
+    );
+    const test = fixture(true);
+    const gate = Promise.withResolvers<void>();
+    let sourceCloses = 0;
+    let targetCloses = 0;
+    const spec = {
+      kind: "stdio",
+      offset: 0n,
+      rightsBase: 0n,
+      rightsInheriting: 0n,
+      flags: 0,
+    } as const;
+    const source = test.fileSystem.descriptors.allocate({
+      ...spec,
+      onLastClose: () => {
+        sourceCloses++;
+      },
+    });
+    const target = test.fileSystem.descriptors.allocate({
+      ...spec,
+      onLastClose: () => {
+        targetCloses++;
+        return gate.promise;
+      },
+    });
+    try {
+      const pending = execution.root.run(async () => {
+        const leave = execution.root.enterUser();
+        try {
+          return await runCurrentKernelCpuAwaitableSystemImport(() => {
+            // Initial pause/entry, step entry/leave, wrapper leave, resumed step
+            // entry/leave, completion entry/leave, and final resume are all fallible.
+            failAt = reads + boundary;
+            return operation === "fd_dup2"
+              ? test.host.imports.fd_dup2(source, target)
+              : test.host.imports.proc_closefrom(target);
+          });
+        } finally {
+          leave();
+        }
+      });
+      const observed = pending.catch((error: unknown) => error);
+      if (outcome === "resolve" || targetCloses === 0) gate.resolve();
+      else gate.reject(Object.assign(new Error("backend failure"), { code: "ECANCELED" }));
+      expect(await observed).toBe(expected);
+      expect(await test.host.imports.fd_dup2(source, target)).toBe(0);
+      expect(await test.host.imports.proc_closefrom(source)).toBe(0);
+      expect([sourceCloses, targetCloses]).toEqual([1, 1]);
+      expect(test.fileSystem.descriptors.has(target)).toBe(false);
+      execution.root.stop();
+    } finally {
+      test.dispose();
+    }
+  });
+
   it.each([
     ["fd_dup2", "resolve"],
     ["fd_dup2", "error"],
