@@ -68,7 +68,7 @@ export class KernelFilePersistenceFacet extends DurableObject {
         entrypoint: "KernelFilePersistenceFacet",
         mode: "facet",
         modules,
-        paths: ["/proof", "/read"],
+        paths: ["/proof", "/read", "/proof", "/read"],
       },
       null,
       2,

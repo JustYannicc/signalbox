@@ -1,3 +1,4 @@
+// @effect-diagnostics cryptoRandomUUID:off - repeated proof invocations need distinct durable turn identities.
 import type { ChangedInode } from "./FilePersistencePorts.ts";
 import { createFacetFilePersistence } from "./FacetFilePersistence.ts";
 import { FILE_CHUNK_BYTES, createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
@@ -75,6 +76,7 @@ function writePersistenceMarker(storage: ReturnType<typeof createFacetFilePersis
 export async function runFilePersistenceProof(database: FacetStorage) {
   const checks: { readonly name: string; readonly ok: true }[] = [];
   const record = (name: string) => checks.push({ name, ok: true });
+  const turnId = `kernel-file-persistence-proof-${crypto.randomUUID()}`;
   const at = { repository: "kernel-proof", fork: "main", commit: "proof-base" } as const;
   const source = new Uint8Array(FILE_CHUNK_BYTES + 19);
   for (let index = 0; index < source.byteLength; index++) {
@@ -203,7 +205,7 @@ export async function runFilePersistenceProof(database: FacetStorage) {
       );
     const receipt = await persistence.commitTurn({
       at,
-      turnId: "kernel-file-persistence-proof-turn",
+      turnId,
       changedInodes,
       signal: new AbortController().signal,
     });
@@ -263,7 +265,7 @@ export async function runFilePersistenceProof(database: FacetStorage) {
   try {
     const replay = await missing.commitTurn({
       at,
-      turnId: "kernel-file-persistence-proof-turn",
+      turnId,
       changedInodes: [{ inode: unavailable, paths: ["/not-yet"], removedPaths: [] }],
       signal: new AbortController().signal,
     });
