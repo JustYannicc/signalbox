@@ -31,6 +31,7 @@
     "fractional-indexing": "4.0.0",
     "fzstd": "0.1.1",
     "ignore": "7.0.12",
+    "isomorphic-git": "npm:@ashishkumar472/cf-git@1.0.5",
     "jose": "catalog:",
     "lunorash": "1.0.0-alpha.398",
     "re2js": "2.8.6",
