@@ -39,4 +39,3 @@ export function createNodeNativeAddonModules(declarations: readonly NodeNativeAd
 function invokeNativeAddon(addon: string, member: string): never {
   throw new NodeCapabilityNeedsMachineError(addon, member);
 }
-
