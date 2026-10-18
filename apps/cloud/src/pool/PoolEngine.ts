@@ -688,9 +688,15 @@ const make = Effect.gen(function* () {
       }
       const names = new Set(live.map((account) => account.name));
       for (const account of cached) {
-        if (!names.has(account.name))
+        if (!names.has(account.name)) {
+          // The account lock excludes DELETE, so absence confirms a pending logout completed.
+          yield* sql`UPDATE accounts SET signed_out = 1 WHERE name = ${account.name}
+            AND name IN (SELECT name FROM logged_out_accounts WHERE pending = 1)`;
+          yield* sql`UPDATE logged_out_accounts SET pending = 0
+            WHERE name = ${account.name} AND pending = 1`;
           yield* sql`DELETE FROM accounts WHERE name = ${account.name}
             AND name NOT IN (SELECT name FROM logged_out_accounts)`;
+        }
       }
     });
 

@@ -27,18 +27,19 @@ const engineOf = (object: ReturnType<typeof makeMemoryPoolObject>) =>
   );
 
 describe("pool account logout", () => {
-  it.effect("retains an applied logout with a lost reply until a retry reconciles it", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const filename = path.join(directory, "pool.sqlite");
-      const backend = makeFakeCliProxyApi();
-      backend.accounts.set(target, account());
-      backend.accounts.set(other, account());
-      const deletions: string[] = [];
-      const object = makeMemoryPoolObject(
-        async (request) => {
+  it.effect.each(["refresh", "restart"])(
+    "reconciles an applied logout with a lost reply on %s without a logout retry",
+    (mode) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const filename = path.join(directory, "pool.sqlite");
+        const backend = makeFakeCliProxyApi();
+        backend.accounts.set(target, account());
+        backend.accounts.set(other, account());
+        const deletions: string[] = [];
+        const serve = async (request: Request) => {
           if (
             request.method === "DELETE" &&
             new URL(request.url).pathname.endsWith("/credentials")
@@ -48,54 +49,61 @@ describe("pool account logout", () => {
             throw new Error("The DELETE applied but its reply was lost");
           }
           return backend.serve(request);
-        },
-        undefined,
-        { filename },
-      );
-      yield* Effect.addFinalizer(() => Effect.promise(() => object.runtime.dispose()));
-      const engine = yield* engineOf(object);
-      yield* TestClock.setTime(T0);
-      yield* engine.create(actor, { name: "Work", personal: false });
-      yield* engine.setBacking(actor, backing);
-      yield* Effect.promise(() =>
-        object.runtime.runPromise(
-          SqlClient.SqlClient.use(
-            (sql) =>
-              sql`UPDATE accounts SET contributed_by = 'original-contributor', added_at = 123 WHERE name = ${target}`,
-          ),
-        ),
-      );
-      expect((yield* Effect.flip(engine.logoutAccount(actor, "claude", target)))._tag).toBe(
-        "PoolBackendError",
-      );
-      expect([...backend.accounts.keys()]).toEqual([other]);
-      yield* Effect.promise(() => object.runtime.dispose());
-      const next = makeMemoryPoolObject(backend.serve, undefined, { filename });
-      yield* Effect.addFinalizer(() => Effect.promise(() => next.runtime.dispose()));
-      const restarted = yield* engineOf(next);
-      // The normal refresh must not discard the row needed to reconcile this logout.
-      yield* TestClock.setTime(T0 + PoolEngine.ACCOUNTS_FRESH_MS + 1);
-      expect((yield* restarted.accounts(actor)).accounts).toEqual([
-        expect.objectContaining({ name: target, signedOut: false }),
-        expect.objectContaining({ name: other, signedOut: false }),
-      ]);
-      yield* restarted.logoutAccount(actor, "claude", target);
-      expect(deletions).toEqual([target]);
-      expect((yield* restarted.accounts(actor)).accounts).toEqual([
-        expect.objectContaining({ name: target, signedOut: true }),
-        expect.objectContaining({ name: other, signedOut: false }),
-      ]);
-      expect(
+        };
+        const object = makeMemoryPoolObject(serve, undefined, { filename });
+        yield* Effect.addFinalizer(() => Effect.promise(() => object.runtime.dispose()));
+        const engine = yield* engineOf(object);
+        yield* TestClock.setTime(T0);
+        yield* engine.create(actor, { name: "Work", personal: false });
+        yield* engine.setBacking(actor, backing);
+        const unrelated = (yield* engine.accounts(actor)).accounts.find(
+          (entry) => entry.name === other,
+        );
         yield* Effect.promise(() =>
-          next.runtime.runPromise(
+          object.runtime.runPromise(
             SqlClient.SqlClient.use(
-              (sql) => sql`SELECT contributed_by, added_at FROM accounts WHERE name = ${target}`,
+              (sql) =>
+                sql`UPDATE accounts SET contributed_by = 'original-contributor', added_at = 123 WHERE name = ${target}`,
             ),
           ),
-        ),
-      ).toEqual([{ contributed_by: "original-contributor", added_at: 123 }]);
-      expect([...backend.accounts.keys()]).toEqual([other]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        );
+        expect((yield* Effect.flip(engine.logoutAccount(actor, "claude", target)))._tag).toBe(
+          "PoolBackendError",
+        );
+        expect([...backend.accounts.keys()]).toEqual([other]);
+        const next =
+          mode === "restart" ? makeMemoryPoolObject(serve, undefined, { filename }) : object;
+        if (mode === "restart") {
+          yield* Effect.promise(() => object.runtime.dispose());
+          yield* Effect.addFinalizer(() => Effect.promise(() => next.runtime.dispose()));
+        }
+        const refreshed = mode === "restart" ? yield* engineOf(next) : engine;
+        yield* TestClock.setTime(T0 + PoolEngine.ACCOUNTS_FRESH_MS + 1);
+        expect((yield* refreshed.accounts(actor)).accounts).toEqual([
+          expect.objectContaining({ name: target, signedOut: true }),
+          unrelated,
+        ]);
+        expect(
+          yield* Effect.promise(() =>
+            next.runtime.runPromise(
+              SqlClient.SqlClient.use(
+                (sql) => sql`SELECT contributed_by, added_at, signed_out, pending FROM accounts
+                JOIN logged_out_accounts USING (name) WHERE name = ${target}`,
+              ),
+            ),
+          ),
+        ).toEqual([
+          { contributed_by: "original-contributor", added_at: 123, signed_out: 1, pending: 0 },
+        ]);
+        expect(yield* Effect.flip(refreshed.updateAccount(actor, target, "pause"))).toMatchObject({
+          _tag: "PoolRejectedError",
+          reason: "Sign in to this account again first.",
+        });
+        yield* refreshed.updateAccount(actor, target, "remove");
+        expect((yield* refreshed.accounts(actor)).accounts).toEqual([unrelated]);
+        expect(deletions).toEqual([target]);
+        expect([...backend.accounts.keys()]).toEqual([other]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -119,6 +127,7 @@ describe("pool account logout", () => {
         });
         yield* Effect.addFinalizer(() => Effect.promise(() => object.runtime.dispose()));
         const engine = yield* engineOf(object);
+        yield* TestClock.setTime(T0);
         yield* engine.create(actor, { name: "Work", personal: false });
         yield* engine.setBacking(actor, backing);
         const denied = yield* Effect.flip(
@@ -136,6 +145,7 @@ describe("pool account logout", () => {
         expect((yield* Effect.flip(engine.logoutAccount(actor, "claude", target)))._tag).toBe(
           "PoolBackendError",
         );
+        yield* TestClock.setTime(T0 + PoolEngine.ACCOUNTS_FRESH_MS + 1);
         expect((yield* engine.accounts(actor)).accounts.every((entry) => !entry.signedOut)).toBe(
           true,
         );
