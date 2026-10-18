@@ -182,6 +182,16 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     }
     if (ts.isCallExpression(expression) && isBunLoader(expression, scope)) return bunRoot;
     if (ts.isAwaitExpression(expression)) return valueOf(expression.expression, scope);
+    if (
+      ts.isBinaryExpression(expression) &&
+      (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken ||
+        expression.operatorToken.kind === ts.SyntaxKind.CommaToken)
+    ) {
+      return valueOf(expression.right, scope);
+    }
+    if (ts.isBinaryExpression(expression) && isLogicalAssignment(expression.operatorToken.kind)) {
+      return mergeValues([valueOf(expression.left, scope), valueOf(expression.right, scope)]);
+    }
     if (ts.isBinaryExpression(expression) && isShortCircuit(expression.operatorToken.kind)) {
       return mergeValues([valueOf(expression.left, scope), valueOf(expression.right, scope)]);
     }

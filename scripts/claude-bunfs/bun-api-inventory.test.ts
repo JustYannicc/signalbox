@@ -799,6 +799,29 @@ describe("inventoryBunApis", () => {
     }
   });
 
+  it("preserves Bun values returned by assignments and comma expressions", () => {
+    for (const source of [
+      "let a, b; a = b = Bun.fs; a.readFile();",
+      "let a = (0, Bun.fs); a.readFile();",
+      "let a; a ||= (a = Bun.fs); a.readFile();",
+      "let a; a ??= (a = Bun.fs); a.readFile();",
+      "let a, b; a ??= b ??= Bun.fs; a.readFile();",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "assignment-value.js", source }]);
+
+      assert.ok(
+        inventory.members.some(
+          ({ path, occurrences }) =>
+            path === "fs.readFile" && occurrences.some(({ access }) => access === "call"),
+        ) ||
+          inventory.dynamicAccesses.some(
+            ({ basePath, access }) => basePath === "" && access === "call",
+          ),
+        source,
+      );
+    }
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {
