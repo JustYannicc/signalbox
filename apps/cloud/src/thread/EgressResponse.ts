@@ -98,17 +98,25 @@ const looksLikeTextPrefix = (chunks: ReadonlyArray<Uint8Array>, complete: boolea
   }
 };
 
-const transformLazily = (
+const transformBody = async (
   source: ReadableStream<Uint8Array<ArrayBuffer>>,
   transform: (source: ReadableStream<Uint8Array<ArrayBuffer>>) => ReadableStream<Uint8Array>,
+  preflight: boolean,
 ) => {
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let first: ReadableStreamReadResult<Uint8Array> | null = null;
+  // Refuse an initial binary match before the transport can commit a success status.
+  if (preflight) {
+    reader = transform(source).getReader();
+    first = await reader.read();
+  }
   return new ReadableStream<Uint8Array>(
     {
       async pull(controller) {
         try {
           reader ??= transform(source).getReader();
-          const item = await reader.read();
+          const item = first ?? (await reader.read());
+          first = null;
           if (item.done) controller.close();
           else controller.enqueue(item.value);
         } catch (cause) {
@@ -259,20 +267,29 @@ export async function redactEgressResponse(
       return refuse();
     }
   }
-  const redactedBody = transformLazily(response.body, (original) => {
-    let body = original;
-    for (const encoding of encodings.toReversed()) {
-      body = body.pipeThrough(makeContentDecoder(encoding));
-    }
-    if (textDecoder !== null) {
-      const rawSecrets = egressRawTextSecrets(secrets, textDecoder);
-      const inspected =
-        rawSecrets.length > 0 ? body.pipeThrough(scanSecretBytes(rawSecrets)) : body;
-      return inspected.pipeThrough(scrubEgressText(scrubber, textDecoder));
-    }
-    if (kind === "binary") return body.pipeThrough(scanSecretBytes(secrets));
-    return sniffUnknownBody(body, scrubber, secrets);
+  const redactedBody = await transformBody(
+    response.body,
+    (original) => {
+      let body = original;
+      for (const encoding of encodings.toReversed()) {
+        body = body.pipeThrough(makeContentDecoder(encoding));
+      }
+      if (textDecoder !== null) {
+        const rawSecrets = egressRawTextSecrets(secrets, textDecoder);
+        const inspected =
+          rawSecrets.length > 0 ? body.pipeThrough(scanSecretBytes(rawSecrets)) : body;
+        return inspected.pipeThrough(scrubEgressText(scrubber, textDecoder));
+      }
+      if (kind === "binary")
+        return body.pipeThrough(scanSecretBytes(secrets, { refuseBeforeFirstOutput: true }));
+      return sniffUnknownBody(body, scrubber, secrets);
+    },
+    kind === "binary",
+  ).catch(async () => {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
   });
+  if (redactedBody === null) return refuse();
   const unchangedIdentityBinary = kind === "binary" && encodings.length === 0;
   if (!unchangedIdentityBinary || representationHeaderChanged) {
     for (const name of REPRESENTATION_HEADERS) headers.delete(name);

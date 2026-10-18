@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { redactEgressResponse } from "../EgressResponse.ts";
+import { REFUSED_HEADER } from "../Egress.ts";
+import { serveWithFakeNetwork as serveEgress } from "../tests/egressTestKit.ts";
 
 const secret = "sk-throwaway-response-fixture";
 const secretBytes = new TextEncoder().encode(secret);
@@ -43,6 +45,40 @@ const streamChunks = (chunks: ReadonlyArray<Uint8Array>) =>
   });
 
 describe("redactEgressResponse", () => {
+  it.each(["", '{"proof":"'])(
+    "refuses an initial binary secret before serveEgress returns a success response: %s",
+    async (prefix) => {
+      let approved = false;
+      const response = await serveEgress(
+        new Request("https://echo.example.test/binary?proof={{secret:KEY}}"),
+        {
+          ownHosts: new Set(),
+          thread: {
+            secrets: async () => ({
+              current: secretValue,
+              values: secretValue,
+              registered: 1,
+              registeredRunId: "binary-refusal",
+              revision: 1,
+            }),
+            authorize: async () => {
+              approved = true;
+              return { _tag: "allowed" };
+            },
+          },
+          send: async () =>
+            new Response(streamChunks([new TextEncoder().encode(`${prefix}${secret}`)]), {
+              headers: { "content-type": "application/octet-stream", proof: secret },
+            }),
+        },
+      );
+
+      expect(approved).toBe(true);
+      expect(response.status).toBe(403);
+      expect(response.headers.get(REFUSED_HEADER)).toBe("secret");
+      expect((await response.text()).includes(secret)).toBe(false);
+    },
+  );
   it("preserves clean binary bytes and scrubs headers", async () => {
     const body = new Uint8Array([0x50, 0x41, 0x43, 0x4b, 0x00, 0xff, 0x80, 0x01]);
     const response = await redactEgressResponse(
@@ -210,13 +246,9 @@ describe("redactEgressResponse", () => {
           }),
           values,
         );
-        const result = await readToFailure(response);
-        const message = result.error instanceof Error ? result.error.message : "";
-
-        expect(response.status).toBe(200);
-        expect(message.includes(name) || message.includes(otherName)).toBe(true);
-        expect(message.includes(value)).toBe(false);
-        expect(new TextDecoder().decode(result.bytes).includes(value)).toBe(false);
+        expect(response.status).toBe(403);
+        expect(response.headers.get(REFUSED_HEADER)).toBe("secret");
+        expect((await response.text()).includes(value)).toBe(false);
       }
     },
   );
@@ -241,16 +273,12 @@ describe("redactEgressResponse", () => {
       }),
       secretValue,
     );
-    const result = await readToFailure(response);
-    const message = result.error instanceof Error ? result.error.message : "";
-
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(403);
+    expect(response.headers.get(REFUSED_HEADER)).toBe("secret");
     expect(response.headers.get("content-encoding")).toBeNull();
     expect(response.headers.get("content-length")).toBeNull();
     expect(response.headers.get("etag")).toBeNull();
-    expect(message.includes("KEY")).toBe(true);
-    expect(message.includes(secret)).toBe(false);
-    expect(new TextDecoder().decode(result.bytes).includes(secret)).toBe(false);
+    expect((await response.text()).includes(secret)).toBe(false);
   });
 
   it.each(["gzip", "deflate", "br"])("preserves a clean decoded %s entity", async (encoding) => {
@@ -281,9 +309,10 @@ describe("redactEgressResponse", () => {
     );
     const result = await readToFailure(response);
 
-    expect(result.error).toBeDefined();
-    expect(result.bytes.length).toBe(0);
-    expect(String(result.error).includes(secret)).toBe(false);
+    expect(response.status).toBe(403);
+    expect(response.headers.get(REFUSED_HEADER)).toBe("secret");
+    expect(result.error).toBeUndefined();
+    expect(new TextDecoder().decode(result.bytes).includes(secret)).toBe(false);
   });
 
   it("fails closed on unsupported content encodings", async () => {
@@ -296,51 +325,142 @@ describe("redactEgressResponse", () => {
     expect((await response.text()).includes(secret)).toBe(false);
   });
 
-  it("leaves response bodies lazy and forwards cancellation", async () => {
-    let pulls = 0;
-    let cancelled = false;
-    const source = new ReadableStream<Uint8Array>(
-      {
-        pull(controller) {
-          pulls++;
-          controller.enqueue(new Uint8Array(secretBytes.length + 128).fill(0x41));
+  it.each([false, true])(
+    "primes one binary chunk and forwards cancellation after replay=%s",
+    async (replay) => {
+      let pulls = 0;
+      let cancelled = false;
+      const source = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(new Uint8Array(secretBytes.length + 128).fill(0x41));
+          },
+          cancel() {
+            cancelled = true;
+          },
         },
-        cancel() {
-          cancelled = true;
-        },
-      },
-      { highWaterMark: 0 },
-    );
-    expect(pulls).toBe(0);
-    const response = await redactEgressResponse(
-      new Response(source, { headers: { "content-type": "application/octet-stream" } }),
-      secretValue,
-    );
-    expect(pulls).toBe(0);
+        { highWaterMark: 0 },
+      );
+      expect(pulls).toBe(0);
+      const response = await redactEgressResponse(
+        new Response(source, { headers: { "content-type": "application/octet-stream" } }),
+        secretValue,
+      );
+      expect(pulls).toBe(1);
 
-    const reader = response.body!.getReader();
-    const first = await reader.read();
-    expect(first.done).toBe(false);
-    await reader.cancel();
-    expect(cancelled).toBe(true);
-  });
+      const reader = response.body!.getReader();
+      if (replay) {
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        expect(first.value).toEqual(new Uint8Array(129).fill(0x41));
+      }
+      await reader.cancel();
+      expect(cancelled).toBe(true);
+    },
+  );
 
-  it("preserves upstream body errors", async () => {
-    const failure = new Error("upstream failed");
+  it("refuses an initial upstream binary error without exposing its message", async () => {
     const source = new ReadableStream<Uint8Array>({
       pull(controller) {
-        controller.error(failure);
+        controller.error(new Error(`upstream failed: ${secret}`));
       },
     });
     const response = await redactEgressResponse(
       new Response(source, { headers: { "content-type": "application/octet-stream" } }),
       secretValue,
     );
-    const error = await response
-      .body!.getReader()
-      .read()
-      .catch((cause: unknown) => cause);
 
+    expect(response.status).toBe(403);
+    expect(response.headers.get(REFUSED_HEADER)).toBe("secret");
+    expect((await response.text()).includes(secret)).toBe(false);
+  });
+
+  it("preserves a late upstream binary error after replaying the primed chunk", async () => {
+    const failure = new Error("late upstream failure");
+    let fail: (() => void) | undefined;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(secretBytes.length + 128).fill(0x41));
+        fail = () => controller.error(failure);
+      },
+    });
+    const response = await redactEgressResponse(
+      new Response(source, { headers: { "content-type": "application/octet-stream" } }),
+      secretValue,
+    );
+    const reader = response.body!.getReader();
+    expect(response.status).toBe(200);
+    expect((await reader.read()).value).toEqual(new Uint8Array(129).fill(0x41));
+    if (fail === undefined) throw new Error("expected the upstream failure control");
+    fail();
+    const error = await reader.read().catch((cause: unknown) => cause);
     expect(error === failure).toBe(true);
   });
+
+  it("keeps a late secret failure after a safe prefix without returning matched bytes", async () => {
+    let append: (() => void) | undefined;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(secretBytes.length + 128).fill(0x41));
+        append = () => {
+          controller.enqueue(new TextEncoder().encode(`public-tail:${secret}`));
+          controller.close();
+        };
+      },
+    });
+    const response = await redactEgressResponse(
+      new Response(source, { headers: { "content-type": "application/octet-stream" } }),
+      secretValue,
+    );
+    const reader = response.body!.getReader();
+    expect(response.status).toBe(200);
+    const first = await reader.read();
+    expect(first.value).toEqual(new Uint8Array(129).fill(0x41));
+    if (append === undefined) throw new Error("expected the upstream chunk control");
+    append();
+    let delivered = new TextDecoder().decode(first.value);
+    let failure: unknown;
+    try {
+      for (;;) {
+        const item = await reader.read();
+        if (item.done) break;
+        delivered += new TextDecoder().decode(item.value);
+      }
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("KEY");
+    expect(delivered.startsWith("A".repeat(129))).toBe(true);
+    expect(delivered.includes(secret)).toBe(false);
+    expect(String(failure).includes(secret)).toBe(false);
+  });
+
+  it.each(["text/plain", "application/x-unknown"])(
+    "keeps %s response bodies lazy and cancellation connected",
+    async (contentType) => {
+      let pulls = 0;
+      let cancelled = false;
+      const source = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(new TextEncoder().encode("safe text"));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const response = await redactEgressResponse(
+        new Response(source, { headers: { "content-type": contentType } }),
+        secretValue,
+      );
+      expect(pulls).toBe(0);
+      await response.body!.cancel();
+      expect(cancelled).toBe(true);
+    },
+  );
 });

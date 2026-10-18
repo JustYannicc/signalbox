@@ -43,7 +43,11 @@ const redactBinaryChunks = async (
     }),
     secrets,
   );
-  return readToFailure(response.body!);
+  return {
+    ...(await readToFailure(response.body!)),
+    status: response.status,
+    refused: response.headers.get("x-signalbox-refused"),
+  };
 };
 
 describe("binary egress response", () => {
@@ -59,11 +63,10 @@ describe("binary egress response", () => {
       [...bytes].map((byte) => new Uint8Array([byte])),
       [{ name: "BOUNDARY", value }],
     );
-    const message = result.error instanceof Error ? result.error.message : "";
-
     if (blocked) {
-      expect(message.includes("BOUNDARY")).toBe(true);
-      expect(message.includes(value)).toBe(false);
+      expect(result.status).toBe(403);
+      expect(result.refused).toBe("secret");
+      expect(result.error).toBeUndefined();
       expect(new TextDecoder().decode(result.bytes).includes(value)).toBe(false);
     } else {
       expect(result.error).toBeUndefined();

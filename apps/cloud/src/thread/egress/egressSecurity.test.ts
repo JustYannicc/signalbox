@@ -222,19 +222,9 @@ describe("egress security boundary", () => {
         }),
     });
 
-    const received: Array<Uint8Array> = [];
-    let failure: unknown;
-    try {
-      for await (const chunk of response.body!) received.push(chunk);
-    } catch (error) {
-      failure = error;
-    }
-    expect(failure).toBeInstanceOf(Error);
-    expect(String(failure)).toContain("KEY");
-    expect(String(failure)).not.toContain(value);
-    expect(
-      new TextDecoder().decode(Uint8Array.from(received.flatMap((chunk) => [...chunk]))),
-    ).not.toContain(value);
+    expect(response.status).toBe(403);
+    expect(response.headers.get("x-signalbox-refused")).toBe("secret");
+    expect((await response.text()).includes(value)).toBe(false);
   });
 
   it("does not fetch a second secret snapshot before production dispatch", async () => {

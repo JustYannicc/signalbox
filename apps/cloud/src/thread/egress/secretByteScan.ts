@@ -92,6 +92,7 @@ const buildMachine = (secrets: Iterable<SecretValue>) => {
  */
 export function scanSecretBytes(
   secrets: Iterable<SecretValue>,
+  options?: { readonly refuseBeforeFirstOutput?: boolean },
 ): TransformStream<Uint8Array, Uint8Array> {
   const { nodes, maxPatternBytes } = buildMachine(secrets);
   if (maxPatternBytes === 0) return new TransformStream<Uint8Array, Uint8Array>();
@@ -100,6 +101,7 @@ export function scanSecretBytes(
   let pendingLength = 0;
   let state = 0;
   let totalBytes = 0;
+  let emitted = false;
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -116,9 +118,12 @@ export function scanSecretBytes(
         const end = totalBytes + index + 1;
         const firstStart = end - match.length;
         const matchOffset = firstStart - (totalBytes - pendingLength);
-        enqueuePrefix(controller, pending, Math.min(matchOffset, pendingLength));
-        const chunkPart = matchOffset - pendingLength;
-        if (chunkPart > 0) controller.enqueue(chunk.subarray(0, chunkPart));
+        // Releasing this prefix would let preflight commit HTTP 200 before the same chunk fails.
+        if (options?.refuseBeforeFirstOutput !== true || emitted) {
+          enqueuePrefix(controller, pending, Math.min(matchOffset, pendingLength));
+          const chunkPart = matchOffset - pendingLength;
+          if (chunkPart > 0) controller.enqueue(chunk.subarray(0, chunkPart));
+        }
         const matchedNames = [...match.names].toSorted();
         throw new Error(
           `Signalbox refused a response containing registered secret${matchedNames.length === 1 ? "" : "s"}: ${matchedNames.join(", ")}.`,
@@ -128,6 +133,7 @@ export function scanSecretBytes(
       const totalPendingLength = pendingLength + chunk.length;
       const releaseLength = Math.max(0, totalPendingLength - (maxPatternBytes - 1));
       pending = enqueuePrefix(controller, [...pending, chunk], releaseLength);
+      emitted ||= releaseLength > 0;
       pendingLength = totalPendingLength - releaseLength;
       totalBytes += chunk.length;
     },
