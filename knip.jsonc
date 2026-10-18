@@ -88,7 +88,7 @@
         "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
         "infra/claudeTurnProof/ClaudeTurnProof.ts", // signalbox: imported by the generated proof entry.
         "infra/kernelPrograms/*/*.{ts,mjs}",
-        "src/kernel/tests/coreutilsProgramProof.mjs", // Standalone real-WASM proof runner.
+        "src/kernel/tests/coreutilsProgramProof.mjs", // signalbox: standalone real-WASM proof runner.
         "src/kernel/KernelPipeProof.ts", // Loaded by the static pipe fixture's generated entry.
         "src/kernel/KernelRuntimeProof.ts", // Loaded by the static runtime fixture's generated entry.
         "src/kernel/KernelWasi.ts", // Public integration entry for executable personalities.
