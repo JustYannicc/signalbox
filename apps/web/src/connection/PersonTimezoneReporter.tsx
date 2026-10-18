@@ -7,11 +7,12 @@ import {
 } from "@t3tools/client-runtime/personTimezone";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironments } from "../state/environments";
 import { personTimezone } from "../state/personTimezone";
+import { useStableCallback } from "../hooks/useStableCallback";
 
 export function PersonTimezoneReporter() {
   const { environments } = useEnvironments();
@@ -20,29 +21,18 @@ export function PersonTimezoneReporter() {
     reportDefect: false,
   });
   const coordinator = useRef(new PersonTimezoneReportCoordinator<EnvironmentId>());
-  const connectedEnvironmentIds = useMemo(
-    () => connectedPersonTimezoneEnvironmentIds(environments),
-    [environments],
-  );
-  const reportPermissionsAtom = useMemo(
-    () =>
-      createPersonTimezoneReportPermissionsAtom(
-        connectedEnvironmentIds,
-        personTimezone.report.permissionAtom,
-      ),
-    [connectedEnvironmentIds],
+  const connectedEnvironmentIds = connectedPersonTimezoneEnvironmentIds(environments);
+  const reportPermissionsAtom = createPersonTimezoneReportPermissionsAtom(
+    connectedEnvironmentIds,
+    personTimezone.report.permissionAtom,
   );
   const reportPermissions = useAtomValue(reportPermissionsAtom);
-  const permittedEnvironmentIds = useMemo(
-    () => permittedPersonTimezoneEnvironmentIds(connectedEnvironmentIds, reportPermissions),
-    [connectedEnvironmentIds, reportPermissions],
+  const permittedEnvironmentIds = permittedPersonTimezoneEnvironmentIds(
+    connectedEnvironmentIds,
+    reportPermissions,
   );
-  const sendReport = useCallback(
-    (environmentId: EnvironmentId, timezone: string) =>
-      report({ environmentId, input: { timezone } }).then(
-        (result) => !AsyncResult.isFailure(result),
-      ),
-    [report],
+  const sendReport = useStableCallback((environmentId: EnvironmentId, timezone: string) =>
+    report({ environmentId, input: { timezone } }).then((result) => !AsyncResult.isFailure(result)),
   );
 
   useEffect(() => {

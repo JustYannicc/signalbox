@@ -11,7 +11,7 @@ import type { PersonTimezoneSettings } from "@t3tools/contracts/personTimezone";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { CheckIcon } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { personTimezone } from "../../state/personTimezone";
@@ -60,62 +60,60 @@ function TimezoneSettingsRow({ environmentId }: { readonly environmentId: Enviro
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const choices = useMemo<ReadonlyArray<TimezoneChoice>>(() => {
-    const zones = supportedTimezones(settings?.timezone ?? detectDeviceTimezone());
-    return [
-      AUTOMATIC_CHOICE,
-      ...zones.map((zone): TimezoneChoice => ({ kind: "manual", value: zone, label: zone })),
-    ];
-  }, [settings?.timezone]);
+  const choices: ReadonlyArray<TimezoneChoice> = [
+    AUTOMATIC_CHOICE,
+    ...supportedTimezones(settings?.timezone ?? detectDeviceTimezone()).map(
+      (zone): TimezoneChoice => ({ kind: "manual", value: zone, label: zone }),
+    ),
+  ];
   const selectedChoice =
     settings?.source === "manual"
       ? (choices.find((choice) => choice.kind === "manual" && choice.value === settings.timezone) ??
         AUTOMATIC_CHOICE)
       : AUTOMATIC_CHOICE;
-  const filteredChoices = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return needle
-      ? choices.filter((choice) => choice.label.toLocaleLowerCase().includes(needle))
-      : choices;
-  }, [choices, query]);
+  const needle = query.trim().toLocaleLowerCase();
+  const filteredChoices = needle
+    ? choices.filter((choice) => choice.label.toLocaleLowerCase().includes(needle))
+    : choices;
+
+  const saveChoice = async (choice: TimezoneChoice) => {
+    if (choice.kind === "automatic") {
+      const timezone = detectDeviceTimezone();
+      if (!timezone) {
+        setError("Couldn't detect this device's time zone. Try again when it is available.");
+        return;
+      }
+      const report = await reportTimezone({ environmentId, input: { timezone } });
+      if (AsyncResult.isFailure(report)) {
+        setError(
+          personTimezoneErrorMessage(
+            report.cause,
+            "Couldn't report this device's time zone. Try again.",
+          ),
+        );
+        return;
+      }
+      const result = await setTimezone({ environmentId, input: { timezone: null } });
+      if (AsyncResult.isFailure(result)) {
+        setError(personTimezoneErrorMessage(result.cause, "Couldn't restore automatic time zone."));
+      }
+      return;
+    }
+
+    const result = await setTimezone({ environmentId, input: { timezone: choice.value } });
+    if (AsyncResult.isFailure(result)) {
+      setError(personTimezoneErrorMessage(result.cause, "Couldn't save this time zone."));
+    }
+  };
 
   const choose = async (choice: TimezoneChoice) => {
     if (!settings || saving || !canSet || !canReport) return;
     setSaving(true);
     setError(null);
-    try {
-      if (choice.kind === "automatic") {
-        const timezone = detectDeviceTimezone();
-        if (!timezone) {
-          setError("Couldn't detect this device's time zone. Try again when it is available.");
-          return;
-        }
-        const report = await reportTimezone({ environmentId, input: { timezone } });
-        if (AsyncResult.isFailure(report)) {
-          setError(
-            personTimezoneErrorMessage(
-              report.cause,
-              "Couldn't report this device's time zone. Try again.",
-            ),
-          );
-          return;
-        }
-        const result = await setTimezone({ environmentId, input: { timezone: null } });
-        if (AsyncResult.isFailure(result)) {
-          setError(
-            personTimezoneErrorMessage(result.cause, "Couldn't restore automatic time zone."),
-          );
-        }
-        return;
-      }
-
-      const result = await setTimezone({ environmentId, input: { timezone: choice.value } });
-      if (AsyncResult.isFailure(result)) {
-        setError(personTimezoneErrorMessage(result.cause, "Couldn't save this time zone."));
-      }
-    } finally {
-      setSaving(false);
-    }
+    await saveChoice(choice).catch(() => {
+      setError("Couldn't save this time zone. Try again.");
+    });
+    setSaving(false);
   };
 
   const description = settings
