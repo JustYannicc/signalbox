@@ -69,7 +69,7 @@ export async function extractRelease(version: string, directory: string, platfor
   const output = NodePath.join(directory, `graph-${version}-${platform}`);
   const result = await extract(binary, output);
   await NodeFSP.writeFile(
-    NodePath.join(output, "release.json"),
+    NodePath.join(output, ".bun-data/release.json"),
     `${JSON.stringify({ version, platform, source: `${releaseBase}/${version}/${platform}/${artifact.binary}`, manifest }, null, 2)}\n`,
   );
   console.log(
