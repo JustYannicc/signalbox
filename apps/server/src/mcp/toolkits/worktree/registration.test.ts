@@ -34,6 +34,7 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine"; // signalbox: automations
+import { ProjectAutomations } from "../../../workflows/ProjectAutomations.ts"; // signalbox: automations
 import * as AccountPools from "../../../accountHub/AccountPools.ts"; // signalbox
 import * as Sections from "../../../sections/Sections.ts"; // signalbox
 import * as UsageLimitSources from "../../../usage/UsageLimitSources.ts"; // signalbox
@@ -61,6 +62,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
+  Layer.mock(ProjectAutomations)({}), // signalbox: Supply the fork automation service required by the shared toolkit graph.
   Layer.mock(WorkflowEngine)({
     validate: () => ({ ok: true, graph: { nodes: [] } }),
     registerBuiltinTools: () => Effect.void,

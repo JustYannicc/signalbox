@@ -16,11 +16,11 @@ on:
 permissions:
   contents: read
 
-# A PR and main each keep only their newest run: main takes a merge every few
-# minutes, and a full run per merge commit queued every PR behind it.
+# Let main finish a run while newer merges replace its single pending run.
+# PRs still cancel superseded runs.
 concurrency:
   group: signalbox-ci-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
 
 jobs:
   lint:
@@ -94,6 +94,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 2
           sparse-checkout: |
             /*
             !/.repos/
@@ -111,6 +112,19 @@ jobs:
 
       - name: Typecheck
         run: vpr typecheck
+
+      # Compiler upgrades must preserve the declared TS version and Effect diagnostics.
+      - name: Compiler parity and memory
+        if: github.event_name == 'pull_request'
+        run: |
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if grep -Eq '(^|/)package\.json$|(^|/)tsconfig[^/]*\.json$|^pnpm-workspace\.yaml$|^scripts/(typecheck-parity|typecheck-benchmark|prepare-effect-sdk|tsc-rs-lsp-smoke|lib/(lsp-smoke-client|typecheck-))|^\.codex/lsp-client\.json$|^\.vscode/settings\.json$' <<< "$changed"; then
+            node scripts/typecheck-parity.ts --all
+            node scripts/typecheck-benchmark.ts HEAD^1
+            node scripts/tsc-rs-lsp-smoke.ts
+          else
+            node scripts/typecheck-parity.ts apps/cloud/tsconfig.json apps/cloud/tsconfig.infra.json
+          fi
 
   build:
     name: Build
@@ -188,6 +202,16 @@ jobs:
       - name: Test preview certificate wait
         run: node --test .github/scripts/wait-own-certificate.test.cjs
 
+      - name: Test preview Worker domain verification
+        run: node --test .github/scripts/cloudflare-preview-domains.test.cjs
+
+      - name: Test preview deploy cancellation
+        run: node --test .github/scripts/cancel-preview-deploys.test.cjs
+
+      # Use Node directly so workflow and infra-only changes still exercise these checks without Vitest discovery.
+      - name: Check deploy workflow script sources
+        run: node --test scripts/deploy-workflow-policy.tests.mjs scripts/deploy-plan.tests.mjs
+
       - name: Test CI change selection
         run: node --test .github/scripts/ci-changes.test.cjs
 
@@ -223,6 +247,29 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      - name: Resolve web browser test requirements
+        id: web_browser
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const web = require('./apps/web/package.json');
+          if (/--project(?:=|\s+)browser(?:\s|$)/.test(web.scripts.test)) {
+            const { version } = require('./apps/web/node_modules/playwright/package.json');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `playwright_version=${version}\n`);
+          }
+          NODE
+
+      - name: Cache web Chromium
+        if: steps.web_browser.outputs.playwright_version != ''
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: web-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.web_browser.outputs.playwright_version }}
+
+      - name: Install Chromium for web browser tests
+        if: steps.web_browser.outputs.playwright_version != ''
+        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
 
       - name: Test
         run: vp run --filter @t3tools/web test

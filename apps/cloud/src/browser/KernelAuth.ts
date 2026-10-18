@@ -90,6 +90,8 @@ export interface KernelAuth {
   ) => Effect.Effect<AuthConnection, KernelApiError>;
   /** Null once Kernel deleted it. */
   readonly getConnection: (id: string) => Effect.Effect<AuthConnection | null, KernelApiError>;
+  /** Removes every Managed Auth workflow attached to this profile before it is cleared. */
+  readonly clearConnections: (profileName: string) => Effect.Effect<void, KernelApiError>;
   /** Turns credential saving off on a connection made before, or by someone else. */
   readonly stopSavingCredentials: (id: string) => Effect.Effect<void, KernelApiError>;
   /** Starts a login; one already running is followed instead, since a new one would cancel it. */
@@ -146,6 +148,33 @@ export const makeKernelAuth = (
         Effect.flatMap(decoded("getAuthConnection", AuthConnection)),
         Effect.catchIf(status(404), () => Effect.succeed(null)),
       ),
+    clearConnections: (profileName) =>
+      Effect.gen(function* () {
+        const ids: Array<string> = [];
+        const limit = 100;
+        // Collect before deleting so shrinking pages cannot skip connections.
+        for (let offset = 0; ; offset += limit) {
+          const connections = yield* send(
+            "listAuthConnections",
+            HttpClientRequest.get(url("/auth/connections")).pipe(
+              HttpClientRequest.setUrlParams({ profile_name: profileName, limit, offset }),
+            ),
+          ).pipe(Effect.flatMap(decoded("listAuthConnections", Schema.Array(AuthConnection))));
+          for (const connection of connections) {
+            if (connection.profile_name === profileName) ids.push(connection.id);
+          }
+          if (connections.length < limit) break;
+        }
+        yield* Effect.forEach(
+          ids,
+          (id) =>
+            send("deleteAuthConnection", HttpClientRequest.make("DELETE")(connectionPath(id))).pipe(
+              Effect.asVoid,
+              Effect.catchIf(status(404), () => Effect.void),
+            ),
+          { discard: true, concurrency: 1 },
+        );
+      }),
     stopSavingCredentials: (id) =>
       send(
         "updateAuthConnection",

@@ -1,7 +1,6 @@
 import * as Option from "effect/Option";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
-  ANTIGRAVITY_DEFAULT_MODEL,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type AssetCreateUrlInput,
   type AssetCreateUrlResult,
@@ -16,7 +15,6 @@ import {
   type PreviewAnnotationPayload,
   type ProviderInteractionMode,
   ProviderDriverKind,
-  type ProviderInstanceId,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -62,11 +60,8 @@ import { derivePhase, type TimelineEntry } from "../session-logic";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
-import {
-  NO_PROVIDER_MODEL_SELECTION,
-  resolveSelectableProviderInstanceEntry,
-  type ProviderInstanceEntry,
-} from "../providerInstances";
+export { getAntigravitySendBlockReason } from "../lib/antigravityModelPolicy"; // signalbox: keep ChatView callers stable after extracting pool-aware send rules.
+export { resolveComposerProviderSelection } from "../lib/composerProviderSelection"; // signalbox: keep composer callers stable after extracting provider selection.
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -553,61 +548,6 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
-export function resolveComposerProviderSelection(input: {
-  entries: ReadonlyArray<ProviderInstanceEntry>;
-  candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
-  lockedProvider: ProviderDriverKind | null;
-  lockedInstanceId: ProviderInstanceId | null | undefined;
-}) {
-  const requestedInstanceId = input.candidateInstanceIds.find(
-    (candidate) => candidate != null && candidate !== NO_PROVIDER_MODEL_SELECTION.instanceId,
-  );
-  const requestedDriverKind =
-    input.lockedProvider ??
-    input.entries.find((entry) => entry.instanceId === requestedInstanceId)?.driverKind ??
-    input.entries[0]?.driverKind ??
-    ProviderDriverKind.make("unconfigured");
-  const lockedContinuationGroupKey = input.lockedProvider
-    ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
-        ?.continuationGroupKey ?? null)
-    : null;
-  // Missing metadata must not move Antigravity history into another Google profile.
-  const requiresExactInstance =
-    input.lockedProvider === "antigravity" &&
-    input.lockedInstanceId != null &&
-    lockedContinuationGroupKey === null;
-  const compatibleEntries = input.entries.filter(
-    (entry) =>
-      (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
-      (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey) &&
-      (!requiresExactInstance || entry.instanceId === input.lockedInstanceId),
-  );
-  const selectedProviderEntry =
-    input.candidateInstanceIds
-      .map((candidate) =>
-        compatibleEntries.find(
-          (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
-        ),
-      )
-      .find((entry) => entry !== undefined) ??
-    resolveSelectableProviderInstanceEntry(
-      compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
-      undefined,
-    ) ??
-    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined);
-  const unavailableProviderInstanceId = selectedProviderEntry
-    ? undefined
-    : input.lockedProvider
-      ? (input.lockedInstanceId ?? requestedInstanceId)
-      : requestedInstanceId;
-  return {
-    selectedProviderEntry,
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-  };
-}
-
 export function resolveComposerInteractionMode(input: {
   planModeEnabled: boolean;
   provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;
@@ -621,37 +561,6 @@ export function resolveComposerInteractionMode(input: {
     enabled,
     interactionMode: enabled ? input.interactionMode : "default",
   };
-}
-
-export function getAntigravitySendBlockReason(
-  provider:
-    | Pick<ServerProvider, "driver" | "installed" | "auth" | "models" | "status">
-    | null
-    | undefined,
-  model: string,
-): string | null {
-  if (provider?.driver !== "antigravity") return null;
-  if (!provider.installed) {
-    return "Install Antigravity in provider settings before sending.";
-  }
-  if (provider.auth.status === "unauthenticated") {
-    // signalbox: accounts live in pools.
-    return "Add an Antigravity account to its pool from Usage → Limits before sending.";
-  }
-  const slug = model.trim();
-  if (slug.length === 0) return "Choose an Antigravity model before sending.";
-  if (provider.auth.status === "unknown") return null;
-  if (provider.models.length === 0) {
-    return "Refresh Antigravity models in provider settings before sending.";
-  }
-  if (
-    provider.status === "ready" &&
-    slug !== ANTIGRAVITY_DEFAULT_MODEL &&
-    !provider.models.some((entry) => entry.slug === slug || entry.aliases?.includes(slug))
-  ) {
-    return "That Antigravity model is no longer available. Choose another model.";
-  }
-  return null;
 }
 
 export function reconcileMountedTerminalThreadIds(input: {
@@ -785,11 +694,6 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
     previewUrls.push(attachment.previewUrl);
   }
   return previewUrls;
-}
-
-export interface PullRequestDialogState {
-  initialReference: string | null;
-  key: number;
 }
 
 export { readFileAsDataUrl } from "../lib/imageCompression";

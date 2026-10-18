@@ -1,4 +1,5 @@
 import type {
+  DependencyProgress,
   MachineUsage,
   RunnerItem,
   RunnerTurn,
@@ -22,8 +23,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as PlatformError from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -38,6 +41,7 @@ import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { DriveTooLargeError } from "./RunnerDriveClient.ts";
+import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -96,6 +100,10 @@ const label = (item: RunnerItem) => {
       return `log ${item.runId} ${item.level}`;
     case "machine.drained":
       return `${item.kind} ${item.id}`;
+    case "git.pull.result":
+      return `${item.kind} ${item.result.id}`;
+    case "git.pull.interrupted":
+      return `${item.kind} ${item.id}`;
     default:
       return `${item.kind} ${item.runId}`;
   }
@@ -129,6 +137,8 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
 const makeFakeAdapter = Effect.gen(function* () {
   const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
   const loaded = yield* Deferred.make<void>();
+  const secondStarted = yield* Deferred.make<void>();
+  const interrupted = yield* Deferred.make<void>();
   const calls: Array<string> = [];
   /** What each `startTurn` got, beyond what `calls` names. */
   const started: Array<{
@@ -150,7 +160,7 @@ const makeFakeAdapter = Effect.gen(function* () {
       readonly message?: { readonly text: string };
       readonly providerThread: { readonly nativeThreadRef: unknown };
     }) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         started.push({
           providerTurnOrdinal: input.providerTurnOrdinal,
           text: input.message?.text,
@@ -161,9 +171,13 @@ const makeFakeAdapter = Effect.gen(function* () {
             ? `start ${input.runId}`
             : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
         );
+        if (input.runId === "run-2") yield* Deferred.succeed(secondStarted, undefined);
       }),
     interruptTurn: (input: { readonly providerTurnId: string }) =>
-      Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
+      Effect.gen(function* () {
+        calls.push(`interrupt ${input.providerTurnId}`);
+        yield* Deferred.succeed(interrupted, undefined);
+      }),
     steerTurn: (input: {
       readonly providerTurnId: string;
       readonly message: { readonly messageId: string };
@@ -177,10 +191,246 @@ const makeFakeAdapter = Effect.gen(function* () {
     driver,
     openSession: () => Effect.sync(() => (opened.count++, session)),
   } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, started, opened };
+  return { adapter, events, loaded, calls, started, opened, secondStarted, interrupted };
 });
 
+const startWithDependencies = (input: {
+  readonly machineClass: "light" | "heavy";
+  readonly resume?: boolean;
+}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = yield* makeFakeAdapter;
+      const order: Array<string> = [];
+      const emitted: Array<RunnerItem> = [];
+      const drive = {
+        prepare: () =>
+          Effect.sync(() => {
+            order.push("drive prepare");
+            return { instructions: "", notices: [] } satisfies PreparedDrive;
+          }),
+        autosave: Effect.void,
+        flush: Effect.void,
+        restoreDependencyEdits: Effect.sync(() => void order.push("restore dependency edits")),
+        saveNow: Effect.void,
+        changed: Effect.succeed(false),
+      } as unknown as RunnerDrive;
+      const dependencies: RunnerDependencies = {
+        prepare: (_notify, progress) =>
+          Effect.gen(function* () {
+            order.push("dependencies prepare");
+            if (progress !== undefined) {
+              const updates: ReadonlyArray<DependencyProgress> = [
+                {
+                  root: "",
+                  status: "installing",
+                  reason: "new",
+                  message: "Installing dependencies in this folder from package-lock.json.",
+                },
+                {
+                  root: "",
+                  status: "installed",
+                  reason: "new",
+                  durationMs: 5,
+                  message: "Dependencies in this folder are ready.",
+                },
+              ];
+              for (const update of updates) yield* progress(update);
+            }
+            return [];
+          }),
+        trees: Effect.succeed([]),
+      };
+      const adapter: ProviderAdapterV2["Service"] = {
+        ...fake.adapter,
+        openSession: (openInput) =>
+          fake.adapter.openSession(openInput).pipe(
+            Effect.map((session) => ({
+              ...session,
+              ...(input.resume === true
+                ? {
+                    resumeThread: (
+                      resumeInput: Parameters<
+                        NonNullable<ProviderAdapterV2SessionRuntime["resumeThread"]>
+                      >[0],
+                    ) =>
+                      Effect.sync(() => void order.push("resume thread")).pipe(
+                        Effect.as(resumeInput.providerThread),
+                      ),
+                  }
+                : {}),
+            })),
+            Effect.tap(() => Effect.sync(() => void order.push("open session"))),
+          ),
+      };
+      const turns = yield* makeRunnerTurns({
+        threadId,
+        adapters: new Map([[instanceId, adapter]]),
+        cwd: "/tmp",
+        useModelToken: () => Effect.void,
+        usage: Effect.succeed(unmeasured),
+        emit: (item) => Effect.sync(() => void emitted.push(item)),
+        openDrive: () => Effect.succeed(drive),
+        dependencies,
+        machineClass: input.machineClass,
+      });
+      yield* Deferred.succeed(fake.loaded, undefined);
+      yield* turns.start({
+        turn: turnFor(
+          1,
+          input.resume === true
+            ? ({
+                ...providerThread,
+                nativeThreadRef: { nativeId: "native-1" },
+              } as typeof providerThread)
+            : providerThread,
+        ),
+        modelToken: "token-1",
+        drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+      });
+      yield* settle;
+      return { fake, order, emitted };
+    }),
+  );
+
 describe("RunnerTurns", () => {
+  it.effect("reports an interrupted pull when its drive cannot be opened yet", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reported: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map(),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+          openDrive: () => Effect.die(new Error("drive is not ready")),
+        });
+        const operation = {
+          id: "pull-before-open",
+          target: "a".repeat(40),
+          expectedThread: "b".repeat(40),
+          expectedWip: null,
+          revision: null,
+          branch: "threads/thread-1",
+        } as const;
+
+        yield* turns.pull({
+          operation,
+          drive: { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" },
+        });
+
+        expect(reported).toEqual([{ kind: "git.pull.interrupted", id: operation.id }]);
+      }),
+    ),
+  );
+
+  it.effect("refuses a pull while the machine still owns an active turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const reported: Array<RunnerItem> = [];
+        const blocked: Array<string | undefined> = [];
+        const pull: RunnerDrive["pull"] = (operation, _remoteToken, blockedReason) => {
+          blocked.push(blockedReason);
+          return Effect.succeed({
+            id: operation.id,
+            target: operation.target,
+            head: operation.expectedThread,
+            wip: operation.expectedWip,
+            outcome: "refused",
+            reason: blockedReason ?? null,
+            hasWorkingTreeChanges: false,
+          });
+        };
+        const drive = { pull } as unknown as RunnerDrive;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+          openDrive: () => Effect.succeed(drive),
+        });
+        const operation = {
+          id: "pull-while-running",
+          target: "a".repeat(40),
+          expectedThread: "b".repeat(40),
+          expectedWip: null,
+          revision: null,
+          branch: "threads/thread-1",
+        } as const;
+
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* turns.pull({
+          operation,
+          drive: { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" },
+        });
+
+        expect(blocked).toEqual([
+          "This thread is busy; wait for its current turn to finish before pulling.",
+        ]);
+        expect(reported.map(label)).toContain(`git.pull.result ${operation.id}`);
+      }),
+    ),
+  );
+
+  it.effect(
+    "starts on a light machine without preparing dependencies or restoring node_modules edits",
+    () =>
+      Effect.gen(function* () {
+        const { fake, order, emitted } = yield* startWithDependencies({
+          machineClass: "light",
+        });
+
+        expect(order).toEqual(["drive prepare", "open session"]);
+        expect(fake.calls).toContain("start run-1");
+        expect(emitted.some((item) => item.kind === "dependencies.progress")).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "prepares dependencies and restores node_modules edits before native resume on heavy",
+    () =>
+      Effect.gen(function* () {
+        const { fake, order, emitted } = yield* startWithDependencies({
+          machineClass: "heavy",
+          resume: true,
+        });
+
+        expect(order).toEqual([
+          "drive prepare",
+          "dependencies prepare",
+          "restore dependency edits",
+          "open session",
+          "resume thread",
+        ]);
+        expect(fake.calls).toContain("start run-1");
+        expect(emitted.filter((item) => item.kind === "dependencies.progress")).toEqual([
+          {
+            kind: "dependencies.progress",
+            runId: RunId.make("run-1"),
+            root: "",
+            status: "installing",
+            reason: "new",
+            message: "Installing dependencies in this folder from package-lock.json.",
+          },
+          {
+            kind: "dependencies.progress",
+            runId: RunId.make("run-1"),
+            root: "",
+            status: "installed",
+            reason: "new",
+            durationMs: 5,
+            message: "Dependencies in this folder are ready.",
+          },
+        ]);
+      }),
+  );
+
   it.effect(
     "interrupts a stopped turn once the harness names it, even after the next one starts",
     () =>
@@ -443,6 +693,16 @@ describe("RunnerTurns", () => {
             abandonMerge: Effect.die(new Error("not in this test")),
             saveBranch: () => Effect.die(new Error("not in this test")),
             published: () => Effect.void,
+            pull: (operation) =>
+              Effect.succeed({
+                id: operation.id,
+                target: operation.target,
+                head: operation.expectedThread,
+                wip: operation.expectedWip,
+                outcome: "up_to_date",
+                reason: null,
+                hasWorkingTreeChanges: false,
+              }),
           };
           const turns = yield* makeRunnerTurns({
             threadId,
@@ -556,6 +816,16 @@ describe("RunnerTurns", () => {
             }),
             saveBranch: () => Effect.die(new Error("not in this test")),
             published: () => Effect.void,
+            pull: (operation) =>
+              Effect.succeed({
+                id: operation.id,
+                target: operation.target,
+                head: operation.expectedThread,
+                wip: operation.expectedWip,
+                outcome: "up_to_date",
+                reason: null,
+                hasWorkingTreeChanges: false,
+              }),
           };
           const reported: Array<RunnerItem> = [];
           const turns = yield* makeRunnerTurns({
@@ -737,6 +1007,16 @@ describe("RunnerTurns", () => {
           }),
           saveBranch: () => Effect.die(new Error("not in this test")),
           published: () => Effect.void,
+          pull: (operation) =>
+            Effect.succeed({
+              id: operation.id,
+              target: operation.target,
+              head: operation.expectedThread,
+              wip: operation.expectedWip,
+              outcome: "up_to_date",
+              reason: null,
+              hasWorkingTreeChanges: false,
+            }),
         };
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
@@ -909,6 +1189,16 @@ describe("RunnerTurns", () => {
           }),
           saveBranch: () => Effect.die(new Error("not in this test")),
           published: () => Effect.void,
+          pull: (operation) =>
+            Effect.succeed({
+              id: operation.id,
+              target: operation.target,
+              head: operation.expectedThread,
+              wip: operation.expectedWip,
+              outcome: "up_to_date",
+              reason: null,
+              hasWorkingTreeChanges: false,
+            }),
         };
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
@@ -1286,6 +1576,7 @@ describe("RunnerTurns", () => {
         abandonMerge: Effect.die(new Error("not in this test")),
         saveBranch: () => Effect.die(new Error("not in this test")),
         published: () => Effect.void,
+        pull: () => Effect.die(new Error("not in this test")),
       }) as RunnerDrive;
     const access = { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" };
     const withMessage = (turn: RunnerTurn): RunnerTurn =>
@@ -1511,6 +1802,150 @@ describe("RunnerTurns", () => {
     );
   });
 
+  describe("draining preview work", () => {
+    const emptyDrive = (saveNow: Effect.Effect<void, RunnerDriveError>) =>
+      ({ saveNow }) as RunnerDrive;
+
+    it.effect("refuses a pull until the preview drive's drain finishes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const reported: Array<RunnerItem> = [];
+          const pull: RunnerDrive["pull"] = (operation, _token, reason) =>
+            Effect.succeed({
+              id: operation.id,
+              target: operation.target,
+              head: operation.expectedThread,
+              wip: operation.expectedWip,
+              outcome: "refused",
+              reason: reason ?? null,
+              hasWorkingTreeChanges: false,
+            });
+          const drive = {
+            ...emptyDrive(
+              Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(release)),
+            ),
+            pull,
+          };
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map(),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            openDrive: () => Effect.succeed(drive),
+            previewDrive: () => drive,
+          });
+          const request = {
+            operation: {
+              id: "pull-during-drain",
+              target: "a".repeat(40),
+              expectedThread: "b".repeat(40),
+              expectedWip: null,
+              revision: null,
+              branch: "threads/thread-1",
+            },
+            drive: { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" },
+          };
+          const drain = yield* Effect.forkChild(turns.drain);
+          yield* Deferred.await(entered);
+          yield* turns.pull(request);
+          expect(reported).toMatchObject([
+            {
+              kind: "git.pull.result",
+              result: {
+                outcome: "refused",
+                reason:
+                  "This thread is saving before its machine leaves; try the pull again after it reconnects.",
+              },
+            },
+          ]);
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(drain)).toEqual([]);
+          yield* turns.pull(request);
+          expect(reported[1]).toMatchObject({ kind: "git.pull.result", result: { reason: null } });
+        }),
+      ),
+    );
+
+    it.effect("saves the preview-opened drive after checkout preparation finishes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const preparing = yield* Semaphore.make(1);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          let saves = 0;
+          const drive = emptyDrive(Effect.sync(() => void saves++));
+          const fake = yield* makeFakeAdapter;
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: () => Effect.void,
+            preparing,
+            previewDrive: () => drive,
+          });
+
+          const preparation = yield* preparing
+            .withPermits(1)(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+              }),
+            )
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          const drain = yield* Effect.forkChild(turns.drain);
+          yield* Effect.yieldNow;
+          expect(saves).toBe(0);
+
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(drain)).toEqual([]);
+          yield* Fiber.join(preparation);
+          expect(saves).toBe(1);
+          expect(fake.calls).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("reports an unsaved preview drive and retries its save on the next drain", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          let saves = 0;
+          const drive = emptyDrive(
+            Effect.suspend(() => {
+              saves += 1;
+              return saves === 1
+                ? Effect.fail(new RunnerGitError({ message: "upload failed" }))
+                : Effect.void;
+            }),
+          );
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: () => Effect.void,
+            previewDrive: () => drive,
+          });
+
+          expect(yield* turns.drain).toEqual([
+            "Saving this thread's files failed: Signalbox couldn't reach this thread's storage.",
+          ]);
+          expect(yield* turns.drain).toEqual([]);
+          expect(saves).toBe(2);
+          expect(fake.calls).toEqual([]);
+        }),
+      ),
+    );
+  });
+
   describe("sessions", () => {
     /** Sessions that record what the turn asked of them, in `log`. */
     const makeFakeSessions = (log: Array<string>) =>
@@ -1720,19 +2155,77 @@ describe("RunnerTurns", () => {
           },
         } as ProviderAdapterV2Event;
       };
+      const subagentCommand = () => {
+        const event = command("running", "npm test");
+        if (event.type !== "turn_item.updated") throw new Error("Expected a command item");
+        return {
+          ...event,
+          turnItem: { ...event.turnItem, runId: null, providerTurnId: null },
+        };
+      };
+      const previewServiceStart = (
+        status: "pending" | "running" | "completed",
+        toolName: string,
+      ) => {
+        const now = DateTime.makeUnsafe(0);
+        return {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make("preview-service-start"),
+            threadId,
+            runId: RunId.make("run-1"),
+            nodeId: null,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make("native-1"),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status,
+            title: null,
+            startedAt: now,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
+            type: "dynamic_tool",
+            toolName,
+            input: { port: 5173, command: "npm run dev" },
+          },
+        } as ProviderAdapterV2Event;
+      };
 
       /** A light machine's turn with a drive, and everything it did in order. */
-      const lightTurn = (machineClass: "light" | "heavy") =>
+      const lightTurn = (machineClass: "light" | "heavy", saveFailure?: "drive" | "session") =>
         Effect.gen(function* () {
           const fake = yield* makeFakeAdapter;
           const log: Array<string> = [];
-          const { sessions } = yield* makeFakeSessions(log);
+          const reported: Array<RunnerItem> = [];
+          const started = yield* Deferred.make<void>();
+          const handedOff = yield* Deferred.make<void>();
+          const failed = yield* Deferred.make<void>();
+          const original = yield* makeFakeSessions(log);
+          const sessions: RunnerSessions = {
+            ...original.sessions,
+            flush: (kind) =>
+              original.sessions
+                .flush(kind)
+                .pipe(
+                  Effect.map(() =>
+                    saveFailure === "session" ? "session store unavailable" : null,
+                  ),
+                ),
+          };
           const drive = {
             prepare: () => Effect.void,
             autosave: Effect.sync(() => void log.push("autosave")),
             flush: Effect.sync(() => void log.push("drive flush")),
             restoreDependencyEdits: Effect.void,
-            saveNow: Effect.sync(() => void log.push("drive save")),
+            saveNow: Effect.sync(() => void log.push("drive save")).pipe(
+              Effect.andThen(
+                saveFailure === "drive"
+                  ? Effect.fail(new RunnerGitError({ message: "file store unavailable" }))
+                  : Effect.void,
+              ),
+            ),
             changed: Effect.succeed(false),
           } as unknown as RunnerDrive;
           const turns = yield* makeRunnerTurns({
@@ -1742,11 +2235,20 @@ describe("RunnerTurns", () => {
             useModelToken: () => Effect.void,
             usage: Effect.succeed(unmeasured),
             emit: (item) =>
-              Effect.sync(
-                () =>
-                  void log.push(
-                    item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind,
-                  ),
+              Effect.sync(() => {
+                reported.push(item);
+                log.push(item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind);
+              }).pipe(
+                Effect.andThen(() =>
+                  item.kind === "turn.started"
+                    ? Deferred.succeed(started, undefined)
+                    : item.kind === "machine.outgrown"
+                      ? Deferred.succeed(handedOff, undefined)
+                      : item.kind === "turn.failed"
+                        ? Deferred.succeed(failed, undefined)
+                        : Effect.void,
+                ),
+                Effect.asVoid,
               ),
             openDrive: () => Effect.succeed(drive),
             sessions,
@@ -1759,20 +2261,269 @@ describe("RunnerTurns", () => {
             drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
             sessions: { token: "sbs1.t.1" },
           });
-          yield* settle;
+          yield* Deferred.await(started);
           log.length = 0;
-          return { fake, log };
+          return { fake, log, reported, turns, handedOff, failed };
         });
+
+      it.effect.each(["drive", "session"] as const)(
+        "does not hand off when the %s cannot be saved",
+        (saveFailure) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, log, reported, failed } = yield* lightTurn("light", saveFailure);
+              yield* Queue.offer(fake.events, providerTurnStarted(1));
+              yield* Queue.offer(fake.events, command("running", "npm run build"));
+              yield* Deferred.await(failed);
+              yield* Deferred.await(fake.interrupted);
+
+              expect(log).not.toContain("machine.outgrown");
+              expect(reported).toContainEqual({
+                kind: "turn.failed",
+                runId: RunId.make("run-1"),
+                message: expect.stringContaining(
+                  saveFailure === "drive"
+                    ? "Signalbox couldn't reach this thread's storage."
+                    : "session store unavailable",
+                ),
+              });
+              expect(fake.calls).toContain("interrupt native-1");
+            }),
+          ),
+      );
+
+      it.effect(
+        "drops a failed handoff's late events while the next turn winds down its provider",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, reported, turns, failed } = yield* lightTurn("light", "session");
+              yield* Queue.offer(fake.events, providerTurnStarted(1));
+              yield* Queue.offer(fake.events, command("running", "npm run build"));
+              yield* Deferred.await(failed);
+              yield* turns.start({
+                turn: turnFor(2),
+                modelToken: "token-2",
+                drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+                sessions: { token: "sbs1.t.2" },
+              });
+              yield* Queue.offer(fake.events, command("running", "npm run-script lint"));
+              yield* Queue.offer(fake.events, {
+                type: "message.updated",
+                driver,
+                message: {
+                  id: MessageId.make("late-old-message"),
+                  threadId,
+                  runId: RunId.make("run-1"),
+                  nodeId: null,
+                  createdBy: "agent",
+                  creationSource: "provider",
+                  role: "assistant",
+                  text: "A late reply from the failed turn.",
+                  attachments: [],
+                  streaming: false,
+                  createdAt: DateTime.makeUnsafe(0),
+                  updatedAt: DateTime.makeUnsafe(0),
+                },
+              });
+              yield* Queue.offer(fake.events, turnEnded(1));
+              yield* Deferred.await(fake.secondStarted);
+
+              expect(
+                reported.filter((item) => item.kind === "turn.failed").map((item) => item.runId),
+              ).toEqual([RunId.make("run-1")]);
+              expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+              expect(
+                reported.some(
+                  (item) => item.kind === "provider" && item.event.type === "message.updated",
+                ),
+              ).toBe(false);
+              expect(fake.calls).toContain("start run-2");
+            }),
+          ),
+      );
+
+      it.effect.each(["identified", "subagent"] as const)(
+        "does not move the current provider's run for a stopped provider's late %s command",
+        (source) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const first = yield* makeFakeAdapter;
+              const second = yield* makeFakeAdapter;
+              const secondInstance = ProviderInstanceId.make("second-codex");
+              const started = yield* Deferred.make<void>();
+              const oldTerminal = yield* Deferred.make<void>();
+              const reported: Array<RunnerItem> = [];
+              const turns = yield* makeRunnerTurns({
+                threadId,
+                adapters: new Map([
+                  [instanceId, first.adapter],
+                  [secondInstance, { ...second.adapter, instanceId: secondInstance }],
+                ]),
+                cwd: "/tmp",
+                useModelToken: () => Effect.void,
+                usage: Effect.succeed(unmeasured),
+                machineClass: "light",
+                emit: (item) =>
+                  Effect.gen(function* () {
+                    reported.push(item);
+                    if (item.kind === "turn.started" && item.runId === RunId.make("run-1")) {
+                      yield* Deferred.succeed(started, undefined);
+                    }
+                    if (item.kind === "provider" && item.event.type === "turn.terminal") {
+                      yield* Deferred.succeed(oldTerminal, undefined);
+                    }
+                  }),
+              });
+              yield* Deferred.succeed(first.loaded, undefined);
+              yield* Deferred.succeed(second.loaded, undefined);
+              yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+              yield* Deferred.await(started);
+              yield* Queue.offer(first.events, providerTurnStarted(1));
+              yield* turns.interrupt(RunId.make("run-1"));
+              const next = turnFor(2);
+              yield* turns.start({
+                turn: {
+                  ...next,
+                  modelSelection: { ...next.modelSelection, instanceId: secondInstance },
+                },
+                modelToken: "token-2",
+              });
+              yield* Deferred.await(second.secondStarted);
+
+              yield* Queue.offer(
+                first.events,
+                source === "subagent" ? subagentCommand() : command("running", "npm test"),
+              );
+              yield* Queue.offer(first.events, turnEnded(1));
+              yield* Deferred.await(oldTerminal);
+              expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+              expect(second.calls).toEqual(["start run-2"]);
+            }),
+          ),
+      );
+
+      it.effect("moves up for a current subagent's command without run identifiers", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, reported, handedOff } = yield* lightTurn("light");
+            yield* Queue.offer(fake.events, subagentCommand());
+            yield* Deferred.await(handedOff);
+            expect(reported).toContainEqual({
+              kind: "machine.outgrown",
+              runId: RunId.make("run-1"),
+              reason: expect.stringContaining("npm test"),
+            });
+          }),
+        ),
+      );
+
+      it.effect(
+        "clears usage attribution when a failed handoff leaves drive notices for the next run",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const fake = yield* makeFakeAdapter;
+              const reported: Array<RunnerItem> = [];
+              const started = yield* Deferred.make<void>();
+              const failedHandoff = yield* Deferred.make<void>();
+              const idleUsage = yield* Deferred.make<void>();
+              const nextNotice = yield* Deferred.make<void>();
+              let changed = false;
+              const drive = {
+                prepare: () =>
+                  Effect.succeed({ instructions: "", notices: [] } satisfies PreparedDrive),
+                autosave: Effect.void,
+                flush: Effect.void,
+                restoreDependencyEdits: Effect.void,
+                saveNow: Effect.fail(new RunnerGitError({ message: "file store unavailable" })),
+                changed: Effect.sync(() => changed),
+              } as unknown as RunnerDrive;
+              const turns = yield* makeRunnerTurns({
+                threadId,
+                adapters: new Map([[instanceId, fake.adapter]]),
+                cwd: "/tmp",
+                useModelToken: () => Effect.void,
+                usage: countingUsage(),
+                emit: (item) =>
+                  Effect.gen(function* () {
+                    reported.push(item);
+                    if (item.kind === "turn.started") yield* Deferred.succeed(started, undefined);
+                    if (item.kind === "turn.failed")
+                      yield* Deferred.succeed(failedHandoff, undefined);
+                    if (item.kind === "usage" && item.runId === null) {
+                      yield* Deferred.succeed(idleUsage, undefined);
+                    }
+                    if (item.kind === "drive.notice" && item.runId === RunId.make("run-2")) {
+                      yield* Deferred.succeed(nextNotice, undefined);
+                    }
+                  }),
+                openDrive: () => Effect.succeed(drive),
+                machineClass: "light",
+              });
+              yield* Deferred.succeed(fake.loaded, undefined);
+              yield* turns.start({
+                turn: turnFor(1),
+                modelToken: "token-1",
+                drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+              });
+              yield* Deferred.await(started);
+              yield* Queue.offer(fake.events, providerTurnStarted(1));
+              yield* Queue.offer(
+                fake.events,
+                previewServiceStart("running", "mcp__signalbox__preview_service_start"),
+              );
+              yield* Deferred.await(failedHandoff);
+
+              const failed = reported.find((item) => item.kind === "turn.failed");
+              expect(failed?.kind === "turn.failed" ? failed.runId : null).toBe(
+                RunId.make("run-1"),
+              );
+              expect(failed?.kind === "turn.failed" ? failed.message : "").toContain(
+                "could not move to a larger machine because its state could not be saved",
+              );
+              expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+
+              yield* Queue.offer(fake.events, turnEnded(1));
+              changed = true;
+              yield* TestClock.adjust("5 minutes");
+              yield* Deferred.await(idleUsage);
+
+              expect(reported.map(label)).toContain("usage null 2");
+              expect(reported.map(label)).not.toContain("usage run-1 2");
+              expect(
+                reported.some(
+                  (item) => item.kind === "drive.notice" && item.runId === RunId.make("run-1"),
+                ),
+              ).toBe(false);
+
+              yield* turns.start({
+                turn: turnFor(2),
+                modelToken: "token-2",
+                drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+              });
+              yield* Deferred.await(nextNotice);
+
+              const notice = reported.find((item) => item.kind === "drive.notice");
+              expect(notice?.kind === "drive.notice" ? notice.runId : null).toBe(
+                RunId.make("run-2"),
+              );
+              expect(notice?.kind === "drive.notice" ? notice.message : "").toContain(
+                "Saving this thread's latest changes failed",
+              );
+            }),
+          ),
+      );
 
       it.effect("saves everything, then hands a build to a heavy machine and drops the rest", () =>
         Effect.scoped(
           Effect.gen(function* () {
-            const { fake, log } = yield* lightTurn("light");
+            const { fake, log, handedOff } = yield* lightTurn("light");
             yield* Queue.offer(fake.events, command("running", "sed -n 1,5p notes.md"));
             yield* Queue.offer(fake.events, command("running", "/bin/bash -lc 'npm run build'"));
             yield* Queue.offer(fake.events, command("completed", "npm run build"));
             yield* Queue.offer(fake.events, turnEnded(1));
-            for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+            yield* Deferred.await(handedOff);
 
             expect(log).toEqual([
               "settle turn_item.updated",
@@ -1781,6 +2532,27 @@ describe("RunnerTurns", () => {
               // The build shows as started, so the thread can report it interrupted.
               "emit turn_item.updated",
               // Everything saved, as for any machine about to go (#493).
+              "drive save",
+              "flush codex",
+              "machine.outgrown",
+            ]);
+          }),
+        ),
+      );
+
+      it.effect("saves before handing a preview service start to a heavy machine", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, log, handedOff } = yield* lightTurn("light");
+            yield* Queue.offer(
+              fake.events,
+              previewServiceStart("running", "mcp__signalbox__preview_service_start"),
+            );
+            yield* Deferred.await(handedOff);
+
+            expect(log).toEqual([
+              "settle turn_item.updated",
+              "emit turn_item.updated",
               "drive save",
               "flush codex",
               "machine.outgrown",

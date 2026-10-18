@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord } from "./ModelRecords.ts";
 import type { PoolObjectNamespace } from "../pool/PoolDirectory.ts";
 import type { ThreadObjectNamespace } from "../thread/ThreadDirectory.ts";
 import type { UserObjectNamespace } from "../user/UserDirectory.ts";
@@ -158,7 +158,13 @@ describe("Cloudflare ModelAccess", () => {
         expect(f.forwards).toEqual([
           {
             name: "pool-owner:work",
-            args: [{ userId: "requester" }, "/v1/messages?stream=true", request, undefined],
+            args: [
+              { userId: "requester" },
+              "/v1/messages?stream=true",
+              request,
+              undefined,
+              undefined,
+            ],
           },
         ]);
         expect(f.lookups).toEqual(["users:requester", "pools:pool-owner:work"]);
@@ -183,7 +189,13 @@ describe("Cloudflare ModelAccess", () => {
         expect(f.forwards).toEqual([
           {
             name: "pool-owner:work",
-            args: [{ userId: "requester" }, "/v1/messages", request, "thread-a"],
+            args: [
+              { userId: "requester" },
+              "/v1/messages",
+              request,
+              "thread-a",
+              { runId, traceId: "trace-1" },
+            ],
           },
         ]);
         expect(

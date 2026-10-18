@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 
-import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
+import type { ModelUsage } from "../models/ModelRecords.ts";
 import { poolObjectName } from "../pool/PoolDirectory.ts";
 import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
 import { resolvePool } from "../user/poolChain.ts";

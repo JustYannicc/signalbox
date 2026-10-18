@@ -4,6 +4,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+import { resolveEarlyMacKeychainName } from "./DesktopEarlyElectronStartup.ts";
+
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
   "DesktopUserDataInitializationError",
   {
@@ -34,11 +36,35 @@ export class DesktopUserDataInitializationError extends Schema.TaggedError<Deskt
 export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPath")(
   function* (input: {
     readonly appDataDirectory: string;
+    readonly dirname: string;
     readonly isDevelopment: boolean;
+    readonly isPackaged: boolean;
     readonly platform: NodeJS.Platform;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const macKeychainName = resolveEarlyMacKeychainName({
+      platform: input.platform,
+      isPackaged: input.isPackaged,
+      runtimeDirectory: input.dirname,
+      isDevelopment: input.isDevelopment,
+    });
+    if (macKeychainName !== null) {
+      const macProfilePath = path.join(input.appDataDirectory, macKeychainName);
+      // signalbox: local macOS Keychain keys and Chromium cookies must share one runtime identity.
+      yield* fs
+        .makeDirectory(macProfilePath, { recursive: true })
+        .pipe(
+          Effect.mapError((cause) =>
+            DesktopUserDataInitializationError.fromFileSystem(
+              cause,
+              "create-directory",
+              macProfilePath,
+            ),
+          ),
+        );
+      return macProfilePath;
+    }
     const names = input.isDevelopment
       ? { current: "signalbox-dev", legacy: "Signalbox (Dev)" }
       : { current: "signalbox-v2", legacy: "Signalbox (Alpha)" };

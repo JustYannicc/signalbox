@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
+import * as Evlog from "../observability/Evlog.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { deliverAccess } from "./driveAccessOutbox.ts";
 import { deliverDriveEvents } from "./driveEventOutbox.ts";
@@ -34,19 +35,32 @@ export interface DriveObjectEnv {
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
 
 // The whole storage, not just `storage.sql`: writes and migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage, driveId: string, env: DriveObjectEnv) =>
+const makeRuntime = (ctx: DurableObjectState, driveId: string, env: DriveObjectEnv) =>
   ManagedRuntime.make(
     DriveStore.layer(driveId).pipe(
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
       ),
-      Layer.provideMerge(SqliteClient.layer({ storage })),
+      Layer.provideMerge(SqliteClient.layer({ storage: ctx.storage })),
+      Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil(ctx))),
     ),
   );
 
 type OutboxServices = ManagedRuntime.ManagedRuntime.Services<ReturnType<typeof makeRuntime>>;
 
 export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveObjectApi {
+  packStorage(...args: Parameters<DriveObjectApi["packStorage"]>) {
+    return this.api.packStorage(...args);
+  }
+  history(...args: Parameters<DriveObjectApi["history"]>) {
+    return this.api.history(...args);
+  }
+  historyOrigin(...args: Parameters<DriveObjectApi["historyOrigin"]>) {
+    return this.api.historyOrigin(...args);
+  }
+  startFromHistory(...args: Parameters<DriveObjectApi["startFromHistory"]>) {
+    return this.api.startFromHistory(...args);
+  }
   private readonly api: DriveObjectApi;
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly driveId: string;
@@ -60,7 +74,7 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     const driveId = ctx.id.name;
     if (driveId === undefined) throw new Error("Drive objects are always named by their drive id.");
     this.driveId = driveId;
-    this.runtime = makeRuntime(ctx.storage, driveId, env);
+    this.runtime = makeRuntime(ctx, driveId, env);
     this.api = makeDriveObjectApi(
       (effect) => this.runtime.runPromise(effect),
       () => this.armAlarm(),
@@ -93,7 +107,7 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
           outbox("event", deliverDriveEvents(this.driveId)),
         ],
         { concurrency: "unbounded" },
-      ),
+      ).pipe(Evlog.withUnit("drive.alarm", { drive: { id: this.driveId } })),
     );
     const delivered = access && events;
     this.deliveryFailures = delivered ? 0 : this.deliveryFailures + 1;
@@ -130,6 +144,14 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
 
   updateRefs(...args: Parameters<DriveObjectApi["updateRefs"]>) {
     return this.api.updateRefs(...args);
+  }
+
+  savePull(...args: Parameters<DriveObjectApi["savePull"]>) {
+    return this.api.savePull(...args);
+  }
+
+  pullReceipt(...args: Parameters<DriveObjectApi["pullReceipt"]>) {
+    return this.api.pullReceipt(...args);
   }
 
   reconcile(...args: Parameters<DriveObjectApi["reconcile"]>) {

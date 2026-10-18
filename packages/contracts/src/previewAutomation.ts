@@ -89,6 +89,30 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  /** Server-wide aggregate only; never includes another thread's tab ids or owners. */
+  serverTabCapacity: Schema.optional(
+    Schema.Struct({
+      used: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      limit: Schema.Int.check(Schema.isGreaterThan(0)),
+      agentOwned: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      humanControlled: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      unclaimed: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      pendingOpens: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      lastCleanupClosed: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      lastCleanupUnreadableThreads: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      lastCleanupBlocked: Schema.Struct({
+        humanControlled: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        visible: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        activeOperation: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        loading: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        pendingInteraction: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        recording: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        lifecycleUnavailable: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        activeThread: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        idleWindow: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      }),
+    }),
+  ),
   control: Schema.optional(
     Schema.Struct({
       owner: PreviewAutomationTabOwner,
@@ -983,7 +1007,7 @@ export class PreviewAutomationControlInterruptedError extends Schema.TaggedError
     if (this.reason === "dialogPending")
       return "A browser dialog is pending. Read preview_status and resolve it with preview_dialog.";
     if (this.reason === "tabLimit")
-      return "Too many server browser tabs are open. Close one with t3_preview_close, or reuse a tabId from preview_status tabs.";
+      return "Too many server browser tabs are open after automatic cleanup. Reuse or close a tab you own with t3_preview_close, or inspect serverTabCapacity in preview_status.";
     if (this.reason === "closed") return "This browser tab is closed. Call preview_open.";
     if (this.reason === "interrupted")
       return "Browser control changed. Take a fresh snapshot before trying again.";
