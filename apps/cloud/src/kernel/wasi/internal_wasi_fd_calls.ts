@@ -7,7 +7,7 @@
 
 import type { DirectoryEntry, Inode, Stat, Times } from "../storage.ts";
 import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
-import { complete, type WasiCall } from "./internal_wasi_calls.ts";
+import { complete, mapErrno, type WasiCall } from "./internal_wasi_calls.ts";
 import type { WasiMountedStorage } from "./internal_wasi_paths.ts";
 import {
   FDFLAGS,
@@ -168,7 +168,11 @@ export class WasiFdCalls {
     if (!Number.isInteger(flags) || flags < 0 || (flags & ~31) !== 0) {
       throw new WasiError(EINVAL);
     }
-    if ((flags & FDFLAGS.NONBLOCK) !== 0) throw new WasiError(ENOTSUP);
+    if (
+      (flags & FDFLAGS.NONBLOCK) !== 0 &&
+      (descriptor.kind !== "stdio" || descriptor.stdio?.supportsNonblocking !== true)
+    )
+      throw new WasiError(ENOTSUP);
     descriptor.flags = flags;
     return 0;
   }
@@ -342,7 +346,11 @@ export class WasiFdCalls {
 
   *fdRead(fd: number, iovs: number, iovsLen: number, nread: number): WasiCall<number> {
     const descriptor = this.#descriptors.get(fd);
-    return yield* descriptor.withOffset(() => this.#fdRead(descriptor, iovs, iovsLen, nread));
+    const operation = () => this.#fdRead(descriptor, iovs, iovsLen, nread);
+    if (descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0) {
+      return yield* operation();
+    }
+    return yield* descriptor.withOffset(operation);
   }
 
   *#fdRead(
@@ -448,7 +456,11 @@ export class WasiFdCalls {
 
   *fdWrite(fd: number, iovs: number, iovsLen: number, nwritten: number): WasiCall<number> {
     const descriptor = this.#descriptors.get(fd);
-    return yield* descriptor.withOffset(() => this.#fdWrite(descriptor, iovs, iovsLen, nwritten));
+    const operation = () => this.#fdWrite(descriptor, iovs, iovsLen, nwritten);
+    if (descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0) {
+      return yield* operation();
+    }
+    return yield* descriptor.withOffset(operation);
   }
 
   *#fdWrite(
@@ -528,7 +540,14 @@ export class WasiFdCalls {
       while (offset < vector.length && total < limit) {
         const size = Math.min(vector.length - offset, limit - total, IO_CHUNK_BYTES);
         const scratch = new Uint8Array(size);
-        const count = yield* complete(readInto.call(descriptor.stdio, scratch));
+        let count: number;
+        try {
+          const result = readInto.call(descriptor.stdio, scratch, descriptor.flags);
+          count = yield* complete(nonblockingResult(result, descriptor.flags));
+        } catch (error) {
+          if (total > 0 && mapErrno(error) === 6) return total;
+          throw error;
+        }
         validateCount(count, size);
         if (count === 0) return total;
         this.#memory.range(vector.pointer + offset, count).set(scratch.subarray(0, count));
@@ -544,7 +563,8 @@ export class WasiFdCalls {
     const write = descriptor.stdio?.write;
     if (write === undefined) throw new WasiError(EIO);
     if (source.byteLength === 0) return 0;
-    const count = yield* complete(write.call(descriptor.stdio, source));
+    const result = write.call(descriptor.stdio, source, descriptor.flags);
+    const count = yield* complete(nonblockingResult(result, descriptor.flags));
     validateCount(count, source.byteLength);
     return count;
   }
@@ -780,4 +800,12 @@ function encodeDirectoryEntries(
     index++;
   }
   return offset;
+}
+
+function nonblockingResult(result: number | Promise<number>, flags: number) {
+  if ((flags & FDFLAGS.NONBLOCK) !== 0 && typeof result !== "number") {
+    void Promise.resolve(result).catch(() => undefined);
+    throw new WasiError(ENOTSUP);
+  }
+  return result;
 }

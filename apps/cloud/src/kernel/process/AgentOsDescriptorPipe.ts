@@ -1,9 +1,4 @@
-import {
-  FDFLAGS,
-  RIGHTS,
-  type WasiDescriptor,
-  type WasiDescriptorSpec,
-} from "../wasi/internal_wasi_descriptors.ts";
+import { FDFLAGS, RIGHTS, type WasiDescriptorSpec } from "../wasi/internal_wasi_descriptors.ts";
 import type { WasiStdio } from "../wasi/internal_wasi_fs.ts";
 import { KernelPipe } from "../KernelPipe.ts";
 import { mapErrno, runSync } from "../wasi/internal_wasi_calls.ts";
@@ -36,13 +31,11 @@ export function allocateAgentOsPipe(
   if (!validRange(memory, readPointer, 4) || !validRange(memory, writePointer, 4)) return EFAULT;
 
   const pipe = new KernelPipe(options.wakes, PIPE_CAPACITY_BYTES);
-  let reader: WasiDescriptor | undefined;
-  let writer: WasiDescriptor | undefined;
   const readEnd: PollableStdio = {
-    readInto: (target) =>
-      options.asyncMode
+    supportsNonblocking: true,
+    readInto: (target, flags) =>
+      options.asyncMode && (flags & FDFLAGS.NONBLOCK) === 0
         ? pipe.readInto(target, {
-            nonblocking: ((reader?.flags ?? 0) & FDFLAGS.NONBLOCK) !== 0,
             signal: options.currentSignal?.(),
           })
         : pipe.tryReadInto(target),
@@ -52,10 +45,10 @@ export function allocateAgentOsPipe(
     },
   };
   const writeEnd: PollableStdio = {
-    write: (source) =>
-      options.asyncMode
+    supportsNonblocking: true,
+    write: (source, flags) =>
+      options.asyncMode && (flags & FDFLAGS.NONBLOCK) === 0
         ? pipe.write(source, {
-            nonblocking: ((writer?.flags ?? 0) & FDFLAGS.NONBLOCK) !== 0,
             signal: options.currentSignal?.(),
           })
         : pipe.tryWrite(source),
@@ -71,11 +64,9 @@ export function allocateAgentOsPipe(
     readFd = options.descriptors.allocate(
       pipeDescriptor(readEnd, RIGHTS.FD_READ, () => pipe.closeReader()),
     );
-    reader = options.descriptors.get(readFd);
     writeFd = options.descriptors.allocate(
       pipeDescriptor(writeEnd, RIGHTS.FD_WRITE, () => pipe.closeWriter()),
     );
-    writer = options.descriptors.get(writeFd);
   } catch (error) {
     pipe.closeReader();
     pipe.closeWriter();
