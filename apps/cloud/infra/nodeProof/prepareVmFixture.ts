@@ -37,12 +37,14 @@ import primordialModule from './node/vm/interpreter-primordials.js';
 import interpreterModule from './node/vm/interpreter.js';
 import hostOps from './node/vm/host-ops.js';
 import moduleHelpers from './node/vm/module-helpers.js';
+import expressionAnalysis from './node/vm/expression-analysis.js';
 
 const vm = createNodeVm(nativeVm, {
   createInterpreter: interpreterModule.createInterpreter,
   primordials: primordialModule.LAUNCH_PRIMORDIALS,
   hostOps,
   moduleHelpers,
+  hasSyntheticArgumentsReference: expressionAnalysis.hasSyntheticArgumentsReference,
 });
 function assert(value, message) { if (!value) throw new Error(message); }
 export class NodeVmFacet extends DurableObject {
@@ -95,6 +97,35 @@ export class NodeVmFacet extends DurableObject {
       finally { installation.restore(); }
       assert(globalThis.Function === previous, 'Global Function was not restored');
       checks.globalInstallation = true;
+      let executions = 0;
+      globalThis.__signalboxVmGuestError = () => {
+        executions++;
+        throw Object.assign(new Error('guest refusal-shaped error'), {code:'ERR_METHOD_NOT_IMPLEMENTED'});
+      };
+      let guestError;
+      try { vm.module.runInThisContext('globalThis.__signalboxVmGuestError()'); }
+      catch(error) { guestError = error; }
+      delete globalThis.__signalboxVmGuestError;
+      assert(executions === 1 && guestError?.code === 'ERR_METHOD_NOT_IMPLEMENTED', 'Guest code was retried after execution');
+      checks.guestExecutesOnce = true;
+      let coercions = 0;
+      const body = {toString(){coercions++; return coercions === 1 ? 'return 59' : 'return 61';}};
+      const coerced = Reflect.apply(vm.functionConstructors.Function, undefined, [body]);
+      assert(coercions === 1 && coerced() === 59, 'Function arguments were coerced more than once');
+      checks.constructorCoercion = true;
+      for (const name of ['AsyncFunction','GeneratorFunction','AsyncGeneratorFunction']) {
+        assert(Object.getPrototypeOf(vm.functionConstructors[name]) === vm.functionConstructors.Function, 'Sibling constructor bypasses Function shim');
+      }
+      checks.constructorParents = true;
+      for (const source of ['typeof arguments','(() => arguments)()']) {
+        let refused = false;
+        try { vm.module.runInThisContext(source); }
+        catch(error) { refused = error.code === 'ERR_NODE_VM_UNSUPPORTED_SYNTAX'; }
+        assert(refused, 'Synthetic script arguments binding was exposed');
+      }
+      assert(vm.module.runInThisContext('(arguments => arguments)(7)') === 7, 'Local arguments binding was incorrectly refused');
+      assert(vm.module.runInThisContext('({arguments:7}).arguments') === 7, 'Property name was mistaken for an arguments reference');
+      checks.scriptArguments = true;
       this.ctx.storage.sql.exec('INSERT INTO vm_calls VALUES (1)');
       const calls = this.ctx.storage.sql.exec('SELECT count(*) AS n FROM vm_calls').one().n;
       return Response.json({ok:true,checks,calls,note:'Local synchronous interpreter fallback only. Async generated Workers and next-boot code staging are separate.'});

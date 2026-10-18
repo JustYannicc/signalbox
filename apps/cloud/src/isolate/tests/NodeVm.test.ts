@@ -37,6 +37,7 @@ beforeAll(async () => {
     hostOps: load(NODE_VM_PREPARED_MODULES.hostOps),
     primordials: primordials.LAUNCH_PRIMORDIALS,
     moduleHelpers: load(NODE_VM_PREPARED_MODULES.moduleHelpers),
+    hasSyntheticArgumentsReference: load(NODE_VM_PREPARED_MODULES.expressionAnalysis).hasSyntheticArgumentsReference,
   } as unknown as NodeVmRuntimeModules;
 
   fallback = createNodeVm(refusingVm(), runtimeModules, refusingFunctionConstructors());
@@ -94,6 +95,53 @@ describe("Node vm interpreter fallback", () => {
     }
   });
 
+  it("does not rerun guest code when it throws a code-generation-shaped error", () => {
+    const refusal = new Error("guest error with a native refusal code");
+    Object.defineProperty(refusal, "code", { value: "ERR_METHOD_NOT_IMPLEMENTED" });
+    let executions = 0;
+    const key = "__signalboxNodeVmGuestThrowsRefusal";
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, {
+      value: () => {
+        executions++;
+        throw refusal;
+      },
+      configurable: true,
+    });
+    try {
+      const native = createNodeVm({ ...NodeVM }, runtimeModulesForTest());
+      expect(() => native.module.runInThisContext(`globalThis.${key}()`)).toThrow(refusal);
+      expect(executions).toBe(1);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, key, previous);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+
+  it("refuses parser-identified synthetic script arguments references", () => {
+    const guarded = createNodeVm(
+      refusingVm(),
+      {
+        ...runtimeModulesForTest(),
+      },
+      refusingFunctionConstructors(),
+    );
+
+    expect(() => guarded.module.runInThisContext("typeof arguments")).toThrow(
+      expect.objectContaining({
+        code: "ERR_NODE_VM_UNSUPPORTED_SYNTAX",
+        feature: "script-scoped arguments",
+      }),
+    );
+    expect(() => guarded.module.runInThisContext("(() => arguments)()")).toThrow(
+      expect.objectContaining({ code: "ERR_NODE_VM_UNSUPPORTED_SYNTAX" }),
+    );
+    expect(guarded.module.runInThisContext("'arguments'")).toBe("arguments");
+    expect(guarded.module.runInThisContext("({ arguments: 7 }).arguments")).toBe(7);
+    expect(guarded.module.runInThisContext("(arguments => arguments)(7)")).toBe(7);
+    expect(guarded.module.runInThisContext("(function () { return arguments.length; })(1)")).toBe(1);
+  });
+
   it("keeps strict and sloppy function semantics for the function constructor", () => {
     const sloppyThis = new fallback.functionConstructors.Function("return this") as () => unknown;
     const strictThis = new fallback.functionConstructors.Function(
@@ -118,6 +166,39 @@ describe("Node vm interpreter fallback", () => {
     expect(await asyncFunction()).toBe(23);
     expect(generatorFunction().next()).toEqual({ value: 29, done: false });
     expect(await asyncGeneratorFunction().next()).toEqual({ value: 31, done: false });
+  });
+
+  it("coerces function constructor parameters and body once before fallback", () => {
+    let parameterCoercions = 0;
+    let bodyCoercions = 0;
+    const parameter = {
+      toString() {
+        parameterCoercions++;
+        return parameterCoercions === 1 ? "value" : "wrong";
+      },
+    };
+    const body = {
+      toString() {
+        bodyCoercions++;
+        return bodyCoercions === 1 ? "return value" : "return 2";
+      },
+    };
+    const construct = fallback.functionConstructors.Function as (...args: unknown[]) => Function;
+    const fn = construct(parameter, body) as (value: string) => string;
+
+    expect(fn("once")).toBe("once");
+    expect(parameterCoercions).toBe(1);
+    expect(bodyCoercions).toBe(1);
+    expect(() => construct(Symbol("body"))).toThrow(TypeError);
+
+    const coercionError = new Error("parameter conversion failed");
+    expect(() =>
+      construct({
+        toString: () => {
+          throw coercionError;
+        },
+      }),
+    ).toThrow(coercionError);
   });
 
   it("limits runInThisContext to checked single-expression scripts", () => {
@@ -207,18 +288,57 @@ describe("Node vm interpreter fallback", () => {
     expect(FunctionShim.prototype).toBe(Function.prototype);
   });
 
-  it("installs and restores the global Function constructor under explicit ownership", () => {
+  it("installs and restores the global Function constructor under explicit ownership", async () => {
     const originalFunction = Object.getOwnPropertyDescriptor(globalThis, "Function");
     const originalConstructor = Object.getOwnPropertyDescriptor(Function.prototype, "constructor");
+    const nativeAsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const nativeGeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;
+    const nativeAsyncGeneratorFunction = Object.getPrototypeOf(async function* () {}).constructor;
+    const nativeAsyncParent = Object.getPrototypeOf(nativeAsyncFunction);
+    const nativeGeneratorParent = Object.getPrototypeOf(nativeGeneratorFunction);
+    const nativeAsyncGeneratorParent = Object.getPrototypeOf(nativeAsyncGeneratorFunction);
     const shims = createNodeVm(refusingVm(), runtimeModules).functionConstructors;
     const installation = shims.install();
     try {
       expect(globalThis.Function).toBe(shims.Function);
       expect(Function.prototype.constructor).toBe(shims.Function);
-      expect(Object.getPrototypeOf(async function () {}).constructor).toBe(shims.AsyncFunction);
+      expect((async function () {}).constructor).toBe(shims.AsyncFunction);
+      expect((function* () {}).constructor).toBe(shims.GeneratorFunction);
+      expect((async function* () {}).constructor).toBe(shims.AsyncGeneratorFunction);
+      expect(Object.getPrototypeOf((async function () {}).constructor)).toBe(globalThis.Function);
+      expect(Object.getPrototypeOf((function* () {}).constructor)).toBe(globalThis.Function);
+      expect(Object.getPrototypeOf((async function* () {}).constructor)).toBe(globalThis.Function);
+      expect(Object.getPrototypeOf(shims.AsyncFunction)).toBe(shims.Function);
+      expect(Object.getPrototypeOf(shims.GeneratorFunction)).toBe(shims.Function);
+      expect(Object.getPrototypeOf(shims.AsyncGeneratorFunction)).toBe(shims.Function);
+      const generatedAsync = ((async function () {}).constructor as (...args: string[]) => Function)(
+        "return 43",
+      ) as () => Promise<number>;
+      const generatedGenerator = ((function* () {}).constructor as (...args: string[]) => Function)(
+        "yield 47",
+      ) as () => Generator<number, void, unknown>;
+      const generatedAsyncGenerator = ((async function* () {}).constructor as (
+        ...args: string[]
+      ) => Function)("yield 53") as () => AsyncGenerator<number, void, unknown>;
+      expect(await generatedAsync()).toBe(43);
+      expect(generatedGenerator().next().value).toBe(47);
+      expect((await generatedAsyncGenerator().next()).value).toBe(53);
+      expect(Object.getPrototypeOf(nativeAsyncFunction)).toBe(nativeAsyncParent);
+      expect(Object.getPrototypeOf(nativeGeneratorFunction)).toBe(nativeGeneratorParent);
+      expect(Object.getPrototypeOf(nativeAsyncGeneratorFunction)).toBe(
+        nativeAsyncGeneratorParent,
+      );
     } finally {
       installation.restore();
     }
+    expect((async function () {}).constructor).toBe(nativeAsyncFunction);
+    expect((function* () {}).constructor).toBe(nativeGeneratorFunction);
+    expect((async function* () {}).constructor).toBe(nativeAsyncGeneratorFunction);
+    expect(Object.getPrototypeOf(nativeAsyncFunction)).toBe(nativeAsyncParent);
+    expect(Object.getPrototypeOf(nativeGeneratorFunction)).toBe(nativeGeneratorParent);
+    expect(Object.getPrototypeOf(nativeAsyncGeneratorFunction)).toBe(
+      nativeAsyncGeneratorParent,
+    );
     expect(Object.getOwnPropertyDescriptor(globalThis, "Function")).toEqual(originalFunction);
     expect(Object.getOwnPropertyDescriptor(Function.prototype, "constructor")).toEqual(
       originalConstructor,
@@ -241,7 +361,13 @@ function refusingVm(): NodeVmNativeSurface {
 
 function refusingFunctionConstructors(): NodeVmNativeFunctionConstructors {
   const refuse = (native: Function): NodeVmFunctionConstructor => {
-    const constructor = function (_code?: unknown) {
+    const constructor = function (...args: unknown[]) {
+      for (const arg of args) {
+        if (typeof arg === "symbol") {
+          throw new TypeError("Cannot convert a Symbol value to a string");
+        }
+        String(arg);
+      }
       const error = new EvalError("Code generation from strings disallowed for this context");
       throw error;
     };

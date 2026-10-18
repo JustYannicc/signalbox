@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { parse, version as acornVersion } from "acorn";
 import * as Esbuild from "esbuild";
-import { primordialAcorn } from "../../src/isolate/NodeVmBuild.ts";
+import { primordialAcorn, NODE_VM_EXPRESSION_ANALYSIS_SOURCE } from "../../src/isolate/NodeVmBuild.ts";
 
 const CORE_SRC = NodeURL.fileURLToPath(
   new URL("../../src/isolate/node/vm/vendor/nimbus/core/src/", import.meta.url),
@@ -16,9 +16,10 @@ export const NODE_VM_PREPARED_MODULES = Object.freeze({
   interpreter: "node/vm/interpreter.js",
   hostOps: "node/vm/host-ops.js",
   moduleHelpers: "node/vm/module-helpers.js",
+  expressionAnalysis: "node/vm/expression-analysis.js",
 });
 
-// Canonical runtime builder, shared by release preparation, tests and the workerd proof.
+// Canonical runtime builder, shared by tests and the workerd proof.
 export async function prepareNodeVmModules(
   destination: string,
 ): Promise<Readonly<Record<string, string>>> {
@@ -114,6 +115,18 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
       },
     ],
   });
+  const analysisBuild = await Esbuild.build({
+    ...common,
+    entryPoints: [NodeURL.fileURLToPath(NODE_VM_EXPRESSION_ANALYSIS_SOURCE)],
+    format: "esm",
+    plugins: [{
+      name: "nimbus-expression-analysis-parser",
+      setup(build) {
+        externalizePrimordials(build);
+        build.onResolve({ filter: /^acorn$/ }, () => ({ path: "./parser.js", external: true }));
+      },
+    }],
+  });
   const interpreterMetafile = interpreterBuild.metafile;
   if (!interpreterMetafile) {
     throw new Error("[node-vm] interpreter bundle did not return a metafile");
@@ -179,6 +192,10 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
     [NODE_VM_PREPARED_MODULES.interpreter]: interpreter.text,
     [NODE_VM_PREPARED_MODULES.hostOps]: hostOpsSource,
     [NODE_VM_PREPARED_MODULES.moduleHelpers]: `module.exports = ${moduleHelpersSource};`,
+    [NODE_VM_PREPARED_MODULES.expressionAnalysis]: asCommonJs(
+      analysisBuild.outputFiles?.[0]?.text,
+      "expression analysis",
+    ).text,
   });
 }
 

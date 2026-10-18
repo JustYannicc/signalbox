@@ -22,6 +22,7 @@ export type {
 
 // Capture before guest code can replace the operations used by fallback execution.
 const NativeTypeError = TypeError;
+const NativeError = Error;
 const apply = Reflect.apply;
 const getPrototypeOf = Object.getPrototypeOf;
 const ownKeys = Reflect.ownKeys;
@@ -45,6 +46,16 @@ export class NodeVmUnsupportedOptionError extends NativeTypeError {
   }
 }
 
+export class NodeVmUnsupportedSyntaxError extends NativeError {
+  readonly code = "ERR_NODE_VM_UNSUPPORTED_SYNTAX";
+  readonly feature = "script-scoped arguments";
+
+  constructor() {
+    super("vm.runInThisContext fallback cannot preserve a script-scoped arguments binding");
+    this.name = "NodeVmUnsupportedSyntaxError";
+  }
+}
+
 /** Load the primordial module before guest code; all prepared modules share its `LAUNCH_PRIMORDIALS`. */
 export interface NodeVmRuntimeModules {
   /** `createInterpreter` from `node/vm/interpreter.js`. */
@@ -58,6 +69,8 @@ export interface NodeVmRuntimeModules {
   readonly primordials: object;
   /** The CJS `node/vm/module-helpers.js` export generated from `ESM_MODULE_HELPERS`. */
   readonly moduleHelpers: NodeVmModuleHelpers;
+  /** Scope-aware prepared parse: true only when a reference resolves to wrapper-synthetic `arguments`. */
+  readonly hasSyntheticArgumentsReference: (source: string) => boolean;
 }
 
 export type NodeVmNativeSurface = {
@@ -96,14 +109,24 @@ export function createNodeVm<T extends NodeVmNativeSurface>(
   const nativeRunInThisContext = nativeVm.runInThisContext;
   const nativeCompileFunction = nativeVm.compileFunction;
   const runInThisContext = (code: string, options?: string | object): unknown => {
+    let codegenRefused = false;
     try {
-      return apply(nativeRunInThisContext, nativeVm, [code, options]);
+      apply(nativeCompileFunction, nativeVm, ["", []]);
     } catch (error) {
       if (!isCodegenRefusal(error)) throw error;
-      assertNoFallbackOptions("runInThisContext", options);
-      const compiled = interpreter.compileExpression(stringOf(code), vmOrigin);
-      return apply(compiled, nodeGlobal, []);
+      codegenRefused = true;
     }
+    if (!codegenRefused) {
+      return apply(nativeRunInThisContext, nativeVm, [code, options]);
+    }
+
+    assertNoFallbackOptions("runInThisContext", options);
+    const source = stringOf(code);
+    if (modules.hasSyntheticArgumentsReference(source)) {
+      throw new NodeVmUnsupportedSyntaxError();
+    }
+    const compiled = interpreter.compileExpression(source, vmOrigin);
+    return apply(compiled, nodeGlobal, []);
   };
   const compileFunction = (
     code: string,

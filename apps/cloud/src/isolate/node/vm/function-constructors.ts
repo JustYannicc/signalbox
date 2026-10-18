@@ -14,6 +14,7 @@ const createObject = Object.create;
 const NativeArray = Array;
 const stringOf = String;
 const NativeError = Error;
+const NativeTypeError = TypeError;
 const NativeFunction = Function;
 
 const NativeAsyncFunction = getPrototypeOf(async function () {}).constructor as Function;
@@ -69,16 +70,19 @@ export function createNodeVmFunctionConstructorShims(
     "async",
     nativeConstructors.AsyncFunction,
     interpreter,
+    FunctionShim,
   );
   const GeneratorFunctionShim = routedConstructor(
     "generator",
     nativeConstructors.GeneratorFunction,
     interpreter,
+    FunctionShim,
   );
   const AsyncGeneratorFunctionShim = routedConstructor(
     "asyncGenerator",
     nativeConstructors.AsyncGeneratorFunction,
     interpreter,
+    FunctionShim,
   );
 
   return Object.freeze({
@@ -100,21 +104,23 @@ function routedConstructor(
   kind: NodeVmRuntimeFunctionKind,
   native: NodeVmFunctionConstructor,
   interpreter: Pick<NodeVmInterpreter, "compileFunction">,
+  parent: object | null = getPrototypeOf(native),
 ): NodeVmFunctionConstructor {
   const nativeToString = get(native, "toString");
   const routed = function (...args: unknown[]) {
     const target = new.target;
+    const sourceArgs = stringifyFunctionArguments(args);
     try {
       return target === undefined
-        ? apply(native, undefined, args)
-        : construct(native, args, target);
+        ? apply(native, undefined, sourceArgs)
+        : construct(native, sourceArgs, target);
     } catch (error) {
       if (!isCodegenRefusal(error)) throw error;
-      const paramCount = args.length === 0 ? 0 : args.length - 1;
+      const paramCount = sourceArgs.length === 0 ? 0 : sourceArgs.length - 1;
       const params = new NativeArray<string>(paramCount);
       setPrototypeOf(params, null);
-      for (let i = 0; i < params.length; i++) params[i] = stringOf(args[i]);
-      const body = args.length === 0 ? "" : stringOf(args[args.length - 1]);
+      for (let i = 0; i < params.length; i++) params[i] = sourceArgs[i]!;
+      const body = sourceArgs.length === 0 ? "" : sourceArgs[sourceArgs.length - 1]!;
       const compiled = interpreter.compileFunction(kind, params, body, vmOrigin);
       if (target !== undefined && target !== routed) {
         const prototype = get(target, "prototype");
@@ -132,8 +138,21 @@ function routedConstructor(
     configurable: true,
     writable: true,
   });
-  setPrototypeOf(routed, getPrototypeOf(native));
+  setPrototypeOf(routed, parent);
   return routed as unknown as NodeVmFunctionConstructor;
+}
+
+function stringifyFunctionArguments(args: readonly unknown[]): string[] {
+  const strings = new NativeArray<string>(args.length);
+  setPrototypeOf(strings, null);
+  for (let i = 0; i < args.length; i++) {
+    const value = args[i];
+    if (typeof value === "symbol") {
+      throw new NativeTypeError("Cannot convert a Symbol value to a string");
+    }
+    strings[i] = stringOf(value);
+  }
+  return strings;
 }
 
 function installFunctionConstructors(
