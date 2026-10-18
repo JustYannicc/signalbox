@@ -13,6 +13,8 @@ export const prepareStorageProof = async (destination: string) => {
     "sqlite/SqliteDatabase",
     "sqlite/SqliteInodes",
     "sqlite/SqliteChunks",
+    "sqlite/SqliteFileSystem",
+    "sqlite/SqliteHydration",
   ]) {
     const source = await NodeFSP.readFile(
       new URL(`../../src/kernel/${name}.ts`, import.meta.url),

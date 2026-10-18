@@ -26,6 +26,10 @@
     {
       "file": "internal_wasi_paths.ts",
       "reason": "Optional internal per-component guard lets the Node personality enforce configured mount masking before intermediate symlink traversal. Public WASI behavior and Storage contract are unchanged."
+    },
+    {
+      "file": "internal_wasi_stdio.ts",
+      "reason": "Shared stdio types moved unchanged into a leaf module to avoid a type-only descriptor/open-description cycle. Original descriptor exports remain available."
     }
   ]
 }
