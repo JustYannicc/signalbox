@@ -70,6 +70,22 @@ describe("kernel host extension ABI", () => {
     expect(child.terminate).not.toHaveBeenCalled();
   });
 
+  it("takes exactly one resource when a caller handle has a changing identity getter", () => {
+    const resources = new KernelResourceTable();
+    const first = ok(resources.allocate("process", "first"));
+    const second = ok(resources.allocate("process", "second"));
+    let reads = 0;
+    const handle = {
+      kind: "process" as const,
+      get id() {
+        return ++reads === 1 ? first.id : second.id;
+      },
+    };
+    expect(ok(resources.take(handle, "process"))).toBe("first");
+    expect(resources.drain()).toEqual([{ kind: "process", value: "second" }]);
+    expect(reads).toBe(1);
+  });
+
   it("bounds resource allocation without invalidating live capabilities", () => {
     const resources = new KernelResourceTable(1);
     const handle = ok(resources.allocate("secret", "opaque-reference"));
