@@ -44,3 +44,31 @@ export function hasSyntheticArgumentsReference(source) {
     releaseScopes(root);
   }
 }
+
+// The pinned factory captures the CJS globals and introduces a named `anonymous` binding.
+// Keep their free reads/writes interpreted so the original global lookup stays observable.
+export function canStageFunction(kind, params, body) {
+  const parsed = parseRuntimeFunction(kind, params, body, realm);
+  const node = ownFunctionExpression(parsed.node);
+  const analysis = analyzeFunction(node);
+  const root = analysis.functionScopeOf(node);
+  let stageable = true;
+  try {
+    analysis.refs.forEach((reference, identifier) => {
+      if (reference.binding !== null) return;
+      const name = identifier.name;
+      if (
+        name === "require" ||
+        name === "module" ||
+        name === "exports" ||
+        name === "__filename" ||
+        name === "__dirname" ||
+        name === "anonymous"
+      )
+        stageable = false;
+    });
+    return stageable;
+  } finally {
+    releaseScopes(root);
+  }
+}
