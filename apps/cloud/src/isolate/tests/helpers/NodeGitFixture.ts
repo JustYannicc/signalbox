@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - isolated SQLite fixtures, never live userdata.
 import * as NodeBuffer from "node:buffer";
+import * as NodeCrypto from "node:crypto";
 import { ABI_VERSION, callKernel, KernelProgramRegistry } from "../../../kernel/KernelAbi.ts";
 import { createFacetSqliteStorage } from "../../../kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
@@ -35,7 +36,7 @@ export function gitFixturePack(): Uint8Array {
 export function packWithOversizedDeclaredObject(): Uint8Array {
   const oversized = gitFixturePack();
   oversized[13] = 0x7f;
-  return oversized;
+  return withPackChecksum(oversized.subarray(0, -20));
 }
 
 export function packWithOversizedInflatedObject(): Uint8Array {
@@ -44,13 +45,13 @@ export function packWithOversizedInflatedObject(): Uint8Array {
   output.set(malformed.subarray(0, 12));
   output[12] = 0x11;
   output.set(malformed.subarray(14), 13);
-  return output;
+  return withPackChecksum(output.subarray(0, -20));
 }
 
 export function malformedGitPack(): Uint8Array {
   const malformed = gitFixturePack();
   malformed[12] = 0;
-  return malformed;
+  return withPackChecksum(malformed.subarray(0, -20));
 }
 
 export function createNodeGitFixture(readOnly = false) {
@@ -155,6 +156,7 @@ export function createSmartHttpServer(options: {
   readonly authenticate: boolean;
   readonly commit?: string;
   readonly pack?: Uint8Array;
+  readonly fatalSideband?: string;
 }) {
   const requests: {
     readonly method: string;
@@ -188,13 +190,21 @@ export function createSmartHttpServer(options: {
       });
     }
     if (method === "POST" && url.pathname.endsWith("/git-upload-pack")) {
-      const sidebandPack = joinBytes(new Uint8Array([1]), options.pack ?? pack);
-      return new Response(
-        responseBuffer(joinBytes(packet("NAK\n"), packet(sidebandPack), encoder.encode("0000"))),
-        {
-          headers: { "content-type": "application/x-git-upload-pack-result" },
-        },
-      );
+      const body =
+        options.fatalSideband === undefined
+          ? joinBytes(
+              packet("NAK\n"),
+              packet(joinBytes(new Uint8Array([1]), options.pack ?? pack)),
+              encoder.encode("0000"),
+            )
+          : joinBytes(
+              packet("NAK\n"),
+              packet(joinBytes(new Uint8Array([3]), encoder.encode(options.fatalSideband))),
+              encoder.encode("0000"),
+            );
+      return new Response(responseBuffer(body), {
+        headers: { "content-type": "application/x-git-upload-pack-result" },
+      });
     }
     return new Response("not found", { status: 404 });
   };
@@ -261,5 +271,12 @@ function joinBytes(...chunks: readonly Uint8Array[]): Uint8Array {
 function responseBuffer(bytes: Uint8Array): ArrayBuffer {
   const output = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(output).set(bytes);
+  return output;
+}
+
+function withPackChecksum(body: Uint8Array): Uint8Array {
+  const output = new Uint8Array(body.byteLength + 20);
+  output.set(body);
+  output.set(NodeCrypto.createHash("sha1").update(body).digest(), body.byteLength);
   return output;
 }

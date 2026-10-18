@@ -56,23 +56,21 @@ export const runNodeGitHttpCommand = Object.freeze({
                 awaitWithAbort(Promise.resolve(options.onAuth!(url, current)), context.signal);
 
         if (route.kind === "clone") {
-          const destinationIsNonEmpty = await hasExistingEntries(fs, route.dir);
-          if (destinationIsNonEmpty) {
-            return this.fail(context, 128, `destination path '${route.dir}' already exists`);
-          }
-          await cloneWithPackBudgets({
-            fs,
-            http: http.http,
-            url: route.url,
-            dir: route.dir,
-            ...(route.depth === undefined ? {} : { depth: route.depth }),
-            ...(route.ref === undefined ? {} : { ref: route.ref }),
-            ...(route.singleBranch === undefined ? {} : { singleBranch: route.singleBranch }),
-            noCheckout: route.noCheckout,
-            noTags: route.noTags,
-            ...(auth === undefined ? {} : { onAuth: auth }),
-            maxObjectBytes: budgets.maxObjectBytes,
-            maxTotalObjectBytes: budgets.maxTotalObjectBytes,
+          await withCloneGitDirectoryClaim(fs, route.dir, async () => {
+            await cloneWithPackBudgets({
+              fs,
+              http: http.http,
+              url: route.url,
+              dir: route.dir,
+              ...(route.depth === undefined ? {} : { depth: route.depth }),
+              ...(route.ref === undefined ? {} : { ref: route.ref }),
+              ...(route.singleBranch === undefined ? {} : { singleBranch: route.singleBranch }),
+              noCheckout: route.noCheckout,
+              noTags: route.noTags,
+              ...(auth === undefined ? {} : { onAuth: auth }),
+              maxObjectBytes: budgets.maxObjectBytes,
+              maxTotalObjectBytes: budgets.maxTotalObjectBytes,
+            });
           });
         } else {
           const target = await resolveFetchTarget(fs, context.filesystem.cwd, route);
@@ -138,6 +136,19 @@ async function hasExistingEntries(fs: NodeGitFsClient, path: string): Promise<bo
     }
     throw error;
   }
+}
+
+export async function withCloneGitDirectoryClaim<T>(
+  fs: NodeGitFsClient,
+  path: string,
+  clone: () => Promise<T>,
+): Promise<T> {
+  if (await hasExistingEntries(fs, path)) {
+    throw new Error(`destination path '${path}' already exists`);
+  }
+  await fs.promises.mkdir(path, { recursive: true });
+  await fs.promises.mkdir(`${path}/.git`);
+  return clone();
 }
 
 function resolveBudgets(options: NodeGitProgramOptions):

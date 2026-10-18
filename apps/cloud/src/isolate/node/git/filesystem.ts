@@ -3,7 +3,7 @@ import type { KernelAsyncProgramContext } from "../../../kernel/KernelAsyncProgr
 import { createNodeFs, type AsyncLeafRunner } from "../../NodeFs.ts";
 
 export type NodeGitFsClient = FsClient & {
-  readonly promises: {
+  readonly promises: ReturnType<typeof createNodeFs>["fs"]["promises"] & {
     readonly lstat: (
       path: string,
       options?: { bigint?: boolean },
