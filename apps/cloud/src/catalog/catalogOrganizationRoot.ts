@@ -4,6 +4,14 @@ import * as Schema from "effect/Schema";
 
 import { CatalogSetGrant, setCatalogGrant } from "./adapters/catalogGrant.ts";
 import {
+  CatalogChildren,
+  CatalogCreatedFolder,
+  CatalogCreateFolder,
+  CatalogFolderLifecycle,
+  CatalogListChildren,
+  catalogLifecycle,
+} from "./adapters/catalogLifecycle.ts";
+import {
   CatalogMoveFolder,
   CatalogRenameFolder,
   catalogTopology,
@@ -13,6 +21,7 @@ import {
   CatalogMembershipDelivery,
   CatalogOrganizationBootstrap,
   CatalogOrganizationRoot,
+  type CatalogOrganizationReadContext,
   type CatalogOrganizationWriteContext,
   resolveOrganizationAccess,
   syncOrganizationMembership,
@@ -26,6 +35,7 @@ import {
 } from "./catalogPolicy.ts";
 
 const topology = catalogTopology<CatalogOrganizationWriteContext>(resolveOrganizationAccess);
+const lifecycle = catalogLifecycle<CatalogOrganizationReadContext>(resolveOrganizationAccess);
 const Changed = Schema.Struct({ changed: Schema.Boolean });
 
 /**
@@ -43,8 +53,33 @@ export const catalogOrganizationRoot = defineHome(
         run: (ctx, target) =>
           resolveOrganizationAccess(ctx, target).pipe(Effect.map(({ role }) => ({ role }))),
       }),
+      children: view({
+        input: CatalogListChildren,
+        output: CatalogChildren,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.listChildren,
+      }),
     },
     changes: {
+      // The runtime provisions the returned level's home after this logical commit.
+      createFolder: change({
+        input: CatalogCreateFolder,
+        output: CatalogCreatedFolder,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.createFolder,
+      }),
+      retireFolder: change({
+        input: CatalogFolderLifecycle,
+        output: Changed,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.retireFolder,
+      }),
+      reopenFolder: change({
+        input: CatalogFolderLifecycle,
+        output: Changed,
+        failure: CatalogPolicyFailure,
+        run: lifecycle.reopenFolder,
+      }),
       renameFolder: change({
         input: CatalogRenameFolder,
         output: Changed,
