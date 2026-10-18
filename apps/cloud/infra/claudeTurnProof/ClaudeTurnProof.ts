@@ -25,11 +25,13 @@ import {
   type ContextTokenEquivalent,
 } from "./proofScenario.ts";
 import { TOOL_SCENARIO } from "./toolScenario.ts";
+import { verifySeededAssets } from "./proofAssets.ts";
 
 export interface ClaudeTurnProofConfig {
   readonly assets: Readonly<Record<string, { bytes: number; sha256: string }>>;
   readonly pins: Readonly<Record<string, unknown>>;
   readonly requireSeed: boolean;
+  readonly assetsOnly?: boolean;
   readonly scenario: ProofScenario;
   readonly contextTokenEquivalent?: ContextTokenEquivalent;
   readonly loadRelease: () => Promise<unknown>;
@@ -51,6 +53,12 @@ export function createClaudeTurnProofClass(
       try {
         const path = new URL(request.url).pathname;
         if (path === "/seed-assets") return await this.seedAssets(request);
+        if (path === "/verify-assets") {
+          if (request.method !== "GET") return new Response("GET required", { status: 405 });
+          if (!this.assetsSeeded) throw new Error("ERR_DIAGNOSTIC_ASSETS_NOT_SEEDED");
+          return Response.json(await verifySeededAssets(this.filesystem().fs, config.assets));
+        }
+        if (config.assetsOnly) return new Response("Asset verification only", { status: 404 });
         if (path !== "/boot")
           return Response.json({ ok: false, error: "Unknown proof endpoint" }, { status: 404 });
         if (config.requireSeed && !this.assetsSeeded)

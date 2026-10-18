@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - isolated in-memory SQLite, never live userdata.
 import * as NodeSqlite from "node:sqlite";
+import * as NodeCrypto from "node:crypto";
 
 import { describe, expect, it } from "@effect/vitest";
 
@@ -9,6 +10,7 @@ import { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createFacetFilePersistence } from "../../src/kernel/FacetFilePersistence.ts";
 import { createMemoryFilePersistencePorts } from "../../src/kernel/MemoryFilePersistencePorts.ts";
+import { verifySeededAssets } from "./proofAssets.ts";
 import { seedToolScenario, verifyCommittedToolScenario } from "./proofScenario.ts";
 import type { GuestObservation } from "./proofObservation.ts";
 import { SCENARIO_EXPECTED_FILES, TOOL_SCENARIO } from "./toolScenario.ts";
@@ -135,6 +137,18 @@ function applyExpectedToolWrites(fs: ReturnType<typeof createNodeFs>) {
   fs.fs.writeFileSync("/work/shell.txt", SCENARIO_EXPECTED_FILES["/work/shell.txt"]);
 }
 
+function assetCatalog(assets: Readonly<Record<string, Uint8Array>>) {
+  return Object.fromEntries(
+    Object.entries(assets).map(([path, bytes]) => [
+      path,
+      {
+        bytes: bytes.byteLength,
+        sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+      },
+    ]),
+  );
+}
+
 describe("Claude committed tool scenario", () => {
   it("commits actual SQLite bytes and verifies the receipt tree", async () => {
     const fixture = filesystemFixture();
@@ -225,6 +239,70 @@ describe("Claude committed tool scenario", () => {
       expect(evidence.ok).toBe(false);
       expect(evidence.commitReceipt).toBeUndefined();
       expect(fixture.ports.committedTurns).toHaveLength(0);
+    } finally {
+      fixture.close();
+    }
+  });
+});
+
+describe("Claude seeded asset verification", () => {
+  it("verifies binary assets read back from the SQLite filesystem", async () => {
+    const fixture = filesystemFixture();
+    try {
+      const assets = {
+        "/assets/claude.bin": new Uint8Array([0, 255, 1, 2, 128]),
+        "/assets/runtime.bin": new Uint8Array([9, 0, 9, 255]),
+      };
+      fixture.host.fs.fs.mkdirSync("/assets", { recursive: true });
+      for (const [path, bytes] of Object.entries(assets))
+        fixture.host.fs.fs.writeFileSync(path, bytes);
+
+      const result = await verifySeededAssets(fixture.host.fs, assetCatalog(assets));
+
+      expect(result).toMatchObject({
+        ok: true,
+        source: "sqlite-filesystem",
+        expectedAssets: 2,
+        readAssets: 2,
+        verifiedAssets: 2,
+        verifiedBytes: 9,
+        errors: [],
+      });
+      expect(result.expectedCatalogSha256).toBe(result.actualCatalogSha256);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("rejects same-size corruption and a missing asset while counting only verified bytes", async () => {
+    const fixture = filesystemFixture();
+    try {
+      const good = new Uint8Array([0, 255, 1]);
+      const expectedCorrupt = new Uint8Array([10, 20, 30, 40]);
+      const assets = {
+        "/assets/good.bin": good,
+        "/assets/corrupt.bin": expectedCorrupt,
+        "/assets/missing.bin": new Uint8Array([4, 5]),
+      };
+      fixture.host.fs.fs.mkdirSync("/assets", { recursive: true });
+      fixture.host.fs.fs.writeFileSync("/assets/good.bin", good);
+      fixture.host.fs.fs.writeFileSync("/assets/corrupt.bin", new Uint8Array([10, 20, 31, 40]));
+
+      const result = await verifySeededAssets(fixture.host.fs, assetCatalog(assets));
+
+      expect(result).toMatchObject({
+        ok: false,
+        source: "sqlite-filesystem",
+        expectedAssets: 3,
+        readAssets: 2,
+        verifiedAssets: 1,
+        verifiedBytes: good.byteLength,
+      });
+      expect(result.errors).toEqual([
+        { path: "/assets/corrupt.bin", reason: expect.stringContaining("SHA-256 mismatch") },
+        { path: "/assets/missing.bin", reason: expect.any(String) },
+      ]);
+      expect(result.expectedCatalogSha256).not.toBe(result.actualCatalogSha256);
     } finally {
       fixture.close();
     }

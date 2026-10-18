@@ -102,6 +102,7 @@ export async function prepareClaudeTurnProof(options: {
   releaseDir: string;
   outputDir: string;
   seedAssets?: boolean;
+  assetsOnly?: boolean;
   scenario?: "boot" | "tools";
   contextTokenEquivalent?: 50_000 | 200_000;
 }) {
@@ -122,9 +123,13 @@ export async function prepareClaudeTurnProof(options: {
     releaseManifestSha256: sha256(manifestBytes),
     esbuildVersion,
   };
+  const seedAssets = options.seedAssets === true || options.assetsOnly === true;
+  const loadRelease = options.assetsOnly
+    ? 'async()=>{throw new Error("ERR_DIAGNOSTIC_ASSETS_ONLY");}'
+    : `()=>import(${JSON.stringify(`./${manifest.mainModule}`)})`;
   const runtime = NodePath.join(import.meta.dirname, "ClaudeTurnProof.ts");
   const source = `import {createClaudeTurnProofClass} from ${JSON.stringify(runtime)};
-export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${options.seedAssets === true},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:()=>import(${JSON.stringify(`./${manifest.mainModule}`)})});`;
+export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}});`;
   const bundled = await build({
     stdin: {
       contents: source,
@@ -174,7 +179,7 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
   await NodeFSP.writeFile(NodePath.join(outputRoot, "assets.bundle"), assetBundle);
   await NodeFSP.writeFile(NodePath.join(outputRoot, "proof-host.js"), host.contents);
   modules["proof-host.js"] = { path: "proof-host.js", type: "js" };
-  const requests = options.seedAssets
+  const requests = seedAssets
     ? {
         requests: [
           {
@@ -183,7 +188,7 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
             bodyFile: "assets.bundle",
             contentType: "application/vnd.signalbox.claude-assets.v1",
           },
-          { path: "/boot", method: "GET" },
+          { path: options.assetsOnly ? "/verify-assets" : "/boot", method: "GET" },
         ],
       }
     : { paths: ["/boot"] };
@@ -214,7 +219,8 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     assetBytes: bundleEntries.reduce((sum, entry) => sum + entry.bytes.byteLength, 0),
     assetBundleBytes: assetBundle.byteLength,
     assetBundleSha256: sha256(assetBundle),
-    seeded: options.seedAssets === true,
+    seeded: seedAssets,
+    assetsOnly: options.assetsOnly === true,
   };
   await NodeFSP.writeFile(
     NodePath.join(outputRoot, "preparation.json"),
@@ -229,6 +235,7 @@ if (process.argv[1] === import.meta.filename) {
       release: { type: "string" },
       output: { type: "string" },
       "seed-assets": { type: "boolean", default: false },
+      "assets-only": { type: "boolean", default: false },
       scenario: { type: "string", default: "boot" },
       "context-token-equivalent": { type: "string" },
     },
@@ -247,6 +254,7 @@ if (process.argv[1] === import.meta.filename) {
         releaseDir: values.release,
         outputDir: values.output,
         seedAssets: values["seed-assets"],
+        assetsOnly: values["assets-only"],
         scenario,
         ...(tokens === undefined
           ? {}
