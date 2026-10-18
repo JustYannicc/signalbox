@@ -5256,9 +5256,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
   const [revealedFindKey, setRevealedFindKey] = useState<string | null>(null);
-  if (findEntryId === workEntry.id && revealedFindKey !== findRevealKey) {
-    setRevealedFindKey(findRevealKey);
-    setExpanded(true);
+  const selectedFindKey = findEntryId === workEntry.id ? findRevealKey : null;
+  if (revealedFindKey !== selectedFindKey) {
+    setRevealedFindKey(selectedFindKey);
+    if (selectedFindKey !== null) setExpanded(true);
   }
   const expandedEntries = groupView?.state.expandedEntries;
   useEffect(() => {

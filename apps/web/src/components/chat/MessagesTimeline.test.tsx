@@ -473,6 +473,24 @@ it("Find opens the selected tool group and item details without expanding its si
     expect(target.props["aria-expanded"]).toBe(true);
     await act(() => target.props.onClick());
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("second_output");
+    await act(() => {
+      renderer!.update(<MessagesTimeline {...buildProps()} timelineEntries={entries} />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("second_output");
+    await act(() => {
+      renderer!.update(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={entries}
+          findExpanded
+          findQuery="needle"
+          findNavigationId={1}
+          activeFindMatch={{ entryId: "second", runId: null, occurrence: 0 }}
+        />,
+      );
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("second_output");
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("first_output");
   } finally {
     await act(() => renderer?.unmount());
   }
