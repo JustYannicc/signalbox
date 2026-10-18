@@ -8,7 +8,7 @@ import {
   lookupRate,
   parseRateTable,
   priceUsage,
-} from "./usagePricing.ts";
+} from "@t3tools/provider-core/server/usagePricing";
 
 const rate = (input: number, cacheRead?: number) => ({
   input_cost_per_token: input,

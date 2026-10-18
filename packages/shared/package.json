@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./waitingCost": {
+      "types": "./src/waitingCost.ts",
+      "import": "./src/waitingCost.ts"
+    },
     "./keywordSearch": {
       "types": "./src/keywordSearch.ts",
       "import": "./src/keywordSearch.ts"

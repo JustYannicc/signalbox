@@ -10,7 +10,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "../usage/UsageService.ts";
-import { lookupRate, type RateTable } from "../usage/usagePricing.ts";
+import { lookupRate, type RateTable } from "@t3tools/provider-core/server/usagePricing";
 
 const openCodeDriver = ProviderDriverKind.make("opencode");
 
