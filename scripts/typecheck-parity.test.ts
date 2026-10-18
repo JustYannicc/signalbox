@@ -30,6 +30,15 @@ test("parity rejects unknown commands and the Cloud prerequisite in other worksp
   expect(() => compilerProjects("apps/cloud", "node other-check.mjs && tsc-rs --noEmit")).toThrow(
     "Unrecognized typecheck",
   );
+  for (const command of [
+    "node infra/automationCompiler/prepare.js",
+    "node infra/automationCompiler/prepare.ts --other",
+  ]) {
+    expect(() => compilerProjects("apps/cloud", command)).toThrow("Unrecognized typecheck");
+  }
+  expect(() => compilerProjects("apps/web", "node infra/automationCompiler/prepare.ts")).toThrow(
+    "Unrecognized typecheck",
+  );
   expect(() => compilerProjects("apps/web", "node infra/syncProbe/prepare.mjs")).toThrow(
     "Unrecognized typecheck",
   );

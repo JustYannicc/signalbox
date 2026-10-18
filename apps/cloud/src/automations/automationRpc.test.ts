@@ -20,18 +20,20 @@ import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import { makeAutomationHandlers } from "./automationRpc.ts";
+import type { CloudSourceCompiler } from "./cloudCompiler.ts";
 
 const userId = "user_automation_rpc";
 
 type Resolver = (projectId?: ProjectId) => Effect.Effect<ModelSelection | null>;
 type Handlers = Effect.Success<ReturnType<typeof makeAutomationHandlers>>;
 
-const setup = Effect.gen(function* () {
-  const cloud = makeMemoryCloud();
-  yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
-  return cloud;
-});
-type Cloud = Effect.Success<typeof setup>;
+const setup = (automationCompiler?: CloudSourceCompiler) =>
+  Effect.gen(function* () {
+    const cloud = makeMemoryCloud(automationCompiler === undefined ? {} : { automationCompiler });
+    yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+    return cloud;
+  });
+type Cloud = Effect.Success<ReturnType<typeof setup>>;
 
 const settingsClient = (cloud: Cloud) =>
   RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
@@ -91,9 +93,76 @@ const runNow = (cloud: Cloud, automationId: string, newThreadModel: Resolver) =>
 const failIfResolved: Resolver = () => Effect.die("unexpected default-model resolution");
 
 describe("automation RPC model defaults", () => {
+  it.effect("validates and saves source-only automation, returning compiler diagnostics", () =>
+    Effect.gen(function* () {
+      const cloud = yield* setup(async (source) => compileForCloud(source));
+      const source = `export const meta = { name: "Compiled in cloud" } as const;
+export default workflow(async (w) => "saved");`;
+      const validated = yield* withHandlers(cloud, failIfResolved, (handlers) =>
+        handlers[AUTOMATION_WS_METHODS.automationsValidate]({ source }),
+      );
+      expect(validated.ok).toBe(true);
+      if (!validated.ok) return;
+
+      const saved = yield* withHandlers(cloud, failIfResolved, (handlers) =>
+        handlers[AUTOMATION_WS_METHODS.automationsSave]({
+          source,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+        }),
+      );
+      expect(saved.ok).toBe(true);
+      if (!saved.ok) return;
+      expect(saved.graph).toEqual(validated.graph);
+
+      const invalidSource = "export default 1;";
+      const invalid = compileForCloud(invalidSource);
+      if (invalid.ok) return expect.unreachable();
+      const invalidValidation = yield* withHandlers(cloud, failIfResolved, (handlers) =>
+        handlers[AUTOMATION_WS_METHODS.automationsValidate]({ source: invalidSource }),
+      );
+      const invalidSave = yield* withHandlers(cloud, failIfResolved, (handlers) =>
+        handlers[AUTOMATION_WS_METHODS.automationsSave]({
+          source: invalidSource,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+        }),
+      );
+      expect(invalidValidation).toEqual({ ok: false, diagnostics: invalid.diagnostics });
+      expect(invalidSave).toEqual({ ok: false, diagnostics: invalid.diagnostics });
+    }),
+  );
+
+  it.effect("keeps accepting caller-compiled validation and save", () =>
+    Effect.gen(function* () {
+      let compileCalls = 0;
+      const cloud = yield* setup(async () => {
+        compileCalls += 1;
+        return {
+          ok: false,
+          diagnostics: [{ line: 1, column: 1, message: "The caller should have compiled this." }],
+        };
+      });
+      const source = `export const meta = { name: "Caller compiled" } as const;
+export default workflow(async (w) => "saved");`;
+      const compiled = compile(source);
+      const validated = yield* withHandlers(cloud, failIfResolved, (handlers) =>
+        handlers[AUTOMATION_WS_METHODS.automationsValidate]({ source, compiled }),
+      );
+      expect(validated.ok).toBe(true);
+      const saved = yield* withHandlers(cloud, failIfResolved, (handlers) =>
+        handlers[AUTOMATION_WS_METHODS.automationsSave]({
+          source,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          compiled,
+        }),
+      );
+      expect(saved.ok).toBe(true);
+      expect(compileCalls).toBe(0);
+    }),
+  );
+
   it.effect("saves and runs a plain workflow when no provider is configured", () =>
     Effect.gen(function* () {
-      const cloud = yield* setup;
+      const cloud = yield* setup();
       const source = `export const meta = { name: "No model needed" } as const;
 export default workflow(async (w) => "hello");`;
 
@@ -112,7 +181,7 @@ export default workflow(async (w) => "hello");`;
 
   it.effect("saves and runs an agent step that names its own model", () =>
     Effect.gen(function* () {
-      const cloud = yield* setup;
+      const cloud = yield* setup();
       const source = `export const meta = { name: "Explicit model" } as const;
 export default workflow(async (w) => await w.agent("Echo", {
   prompt: "hello",
@@ -136,7 +205,7 @@ export default workflow(async (w) => await w.agent("Echo", {
 
   it.effect("reports a missing model only when an implicit agent step runs", () =>
     Effect.gen(function* () {
-      const cloud = yield* setup;
+      const cloud = yield* setup();
       const source = `export const meta = { name: "Implicit model" } as const;
 export default workflow(async (w) => await w.agent("Echo", { prompt: "hello" }));`;
 
@@ -158,7 +227,7 @@ export default workflow(async (w) => await w.agent("Echo", { prompt: "hello" }))
 
   it.effect("resolves an implicit model from the current context when the step runs", () =>
     Effect.gen(function* () {
-      const cloud = yield* setup;
+      const cloud = yield* setup();
       const source = `export const meta = { name: "Default added later" } as const;
 export default workflow(async (w) => await w.agent("Echo", { prompt: "hello" }));`;
 
@@ -192,7 +261,7 @@ export default workflow(async (w) => await w.agent("Echo", { prompt: "hello" }))
 
   it.effect("keeps the model defaults captured by the first save when editing", () =>
     Effect.gen(function* () {
-      const cloud = yield* setup;
+      const cloud = yield* setup();
       const source = `export const meta = { name: "Keep my model" } as const;
 export default workflow(async (w) => await w.agent("Echo", { prompt: "hello" }));`;
       const savedModel: ModelSelection = {

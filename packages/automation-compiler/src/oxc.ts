@@ -20,6 +20,7 @@ export const parseSync = (...args: Parameters<OxcParser["parseSync"]>) =>
   oxcParser().parseSync(...args);
 export const transformSync = (...args: Parameters<OxcTransform["transformSync"]>) =>
   oxcTransform().transformSync(...args);
-/** The child keys oxc's visitor walks for a node type. */
+
+/** Uses the lazy native loader so packaged CLIs need no external ES-module import. */
 export const visitorKeysOf = (type: string): ReadonlyArray<string> | undefined =>
   oxcParser().visitorKeys[type];

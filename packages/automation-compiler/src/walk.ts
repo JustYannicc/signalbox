@@ -1,6 +1,6 @@
 import type { Node } from "oxc-parser";
 
-import { visitorKeysOf } from "./oxc.ts";
+import { visitorKeysOf } from "#parserKeys";
 
 /** Keys that hold types, decorators or labels: never values the workflow computes. */
 const SKIPPED_KEYS = new Set([

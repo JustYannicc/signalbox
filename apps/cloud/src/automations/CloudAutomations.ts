@@ -3,6 +3,7 @@ import type {
   AutomationError,
   AutomationSaveInput,
   AutomationSaveResult,
+  AutomationValidateResult,
   ModelSelection,
   OrchestrationV2DomainEvent,
   ProjectId,
@@ -67,6 +68,11 @@ export interface CloudAutomationsShape {
   readonly listBlocks: (
     projectId: ProjectId,
   ) => Effect.Effect<AutomationBlockLibraryResult, AutomationError>;
+  /** Compiles source when the caller did not compile it, then returns its graph or diagnostics. */
+  readonly validate: (input: {
+    readonly source: string;
+    readonly compiled?: unknown;
+  }) => Effect.Effect<AutomationValidateResult, AutomationError>;
   /** Verifies and durably accepts a request before the Worker acknowledges it. */
   readonly receiveHook: (request: HookRequest) => Effect.Effect<HookAnswer, AutomationError>;
   readonly answerAsk: (

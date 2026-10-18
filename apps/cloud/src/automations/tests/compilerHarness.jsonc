@@ -1,0 +1,7 @@
+{
+  "name": "signalbox-automation-compiler-proof",
+  "main": "compilerHarnessWorker.ts",
+  "compatibility_date": "2026-10-01",
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "rules": [{ "type": "Data", "globs": ["**/*.bin"], "fallthrough": true }],
+}

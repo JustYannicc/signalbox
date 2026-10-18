@@ -61,10 +61,11 @@ export function compareDiagnostics(declared: string, effect: string, rust: strin
 export function compilerProjects(directory: string, command: string) {
   const result = [];
   for (const part of command.split(" && ")) {
-    // Cloud generates its probes before parity compares the two compiler configs.
+    // Cloud generates compiler assets and probes before checking both compiler configs.
     if (
       directory === "apps/cloud" &&
       [
+        "node infra/automationCompiler/prepare.ts",
         "node infra/syncProbe/prepare.mjs",
         "node --experimental-strip-types infra/isolateProbe/prepare.ts",
       ].includes(part)

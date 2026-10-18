@@ -6,6 +6,8 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "signalbox-cloud",
   "main": "src/worker.ts",
+  "build": { "command": "node infra/automationCompiler/prepare.ts" },
+  "rules": [{ "type": "Data", "globs": ["**/*.bin"], "fallthrough": true }],
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   // Local dev only; deployed Workers take theirs from alchemy.run.ts (`limits` there too).

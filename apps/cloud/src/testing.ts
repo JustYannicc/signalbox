@@ -104,6 +104,7 @@ import * as LoginService from "./signIn/LoginService.ts";
 import * as SignInGrants from "./signIn/SignInGrants.ts";
 import * as LegacySections from "./user/legacySections.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
+import type { CloudSourceCompiler } from "./automations/cloudCompiler.ts";
 import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
 import { makeMemoryWorkflows } from "./automations/memoryWorkflows.ts";
 import * as UserFolders from "./user/UserFolders.ts";
@@ -250,6 +251,7 @@ const makeUserRuntime = (
   observe: Layer.Layer<never>,
   alarm: Layer.Layer<CloudAutomations.AutomationAlarm>,
   runner: Layer.Layer<AutomationRunner>,
+  automationCompiler: CloudSourceCompiler | undefined,
   /** Replaces the real automations, for tests that watch what they're handed. */
   automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
   kernel: KernelApi | null,
@@ -257,9 +259,13 @@ const makeUserRuntime = (
   noteReader: Layer.Layer<NoteReader.NoteReader>,
   modelCompletion: Layer.Layer<ModelCompletion.ModelCompletion>,
 ) => {
+  const automationsLayer =
+    automationCompiler === undefined
+      ? CloudEngine.layer
+      : CloudEngine.layerWithCompiler(automationCompiler);
   const services =
     // The user's automations, on the same services the object gives them.
-    CloudEngine.layer.pipe(
+    automationsLayer.pipe(
       Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
@@ -395,6 +401,8 @@ export const makeMemoryCloud = (
     readonly classifier?: Layer.Layer<KindClassifier.KindClassifier>;
     /** Loggers or a tracer every object here runs with, to see what they log and trace. */
     readonly observe?: Layer.Layer<never>;
+    /** Compiles source-only automation RPCs in this in-memory cloud. */
+    readonly automationCompiler?: CloudSourceCompiler;
     /** Every user object's automations; none unless given, so thread events are dropped. */
     readonly automations?: Layer.Layer<CloudAutomations.CloudAutomations>;
     /** Kernel for every person's browser (#574); none unless given, so it's `unconfigured`. */
@@ -489,6 +497,7 @@ export const makeMemoryCloud = (
       options.observe ?? Layer.empty,
       layerRecordedAlarm(alarms, userId),
       workflows.layerFor(userId),
+      options.automationCompiler,
       options.automations ?? Layer.empty,
       options.kernel ?? null,
       { kernel: options.kernelAuth ?? null, executor: options.executorLogins ?? null },
