@@ -5,7 +5,10 @@ import {
 } from "@t3tools/client-runtime/automations/blockContract";
 import {
   BLOCK_LIBRARY_EMPTY,
+  BLOCK_LIBRARY_RECONNECTING,
+  blockLibraryQueryInput,
   blockLibraryStatuses,
+  blockLibraryView,
   blockPermissionsLabel,
   groupBlockLibrary,
   type BlockLibraryTarget,
@@ -17,6 +20,7 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { automationState } from "../../state/automations";
+import { useEnvironments } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
@@ -27,22 +31,33 @@ export function BlockLibraryBlocks({ target }: { readonly target: BlockLibraryTa
   const query = useEnvironmentQuery(
     automationState.blocks({
       environmentId: target.environmentId,
-      input: { projectId: target.projectId },
+      input: blockLibraryQueryInput(target),
     }),
   );
-  const blocks = query.data?.blocks;
+  const connected =
+    useEnvironments().environments.find(
+      (environment) => environment.environmentId === target.environmentId,
+    )?.connection.phase === "connected";
+  const view = blockLibraryView(query, connected);
+  const blocks = view._tag === "Ready" ? view.blocks : null;
   const groups = useMemo(
-    () => (blocks === undefined ? [] : groupBlockLibrary(target, blocks)),
+    () => (blocks === null ? [] : groupBlockLibrary(target, blocks)),
     [blocks, target],
   );
 
-  if (query.data === null) {
-    return query.error === null ? (
-      <Text className="px-2 text-foreground-muted">Loading blocks…</Text>
-    ) : (
-      <SettingsSection title="Could not load blocks" footer={query.error}>
+  if (view._tag === "Failed") {
+    return (
+      <SettingsSection title="Could not load blocks" footer={view.error}>
         <SettingsActionRow label="Try again" onPress={query.refresh} />
       </SettingsSection>
+    );
+  }
+  if (view._tag === "Loading") {
+    return <Text className="px-2 text-foreground-muted">Loading blocks…</Text>;
+  }
+  if (view._tag === "Reconnecting") {
+    return (
+      <Text className="px-2 text-foreground-muted">{`Reconnecting… ${BLOCK_LIBRARY_RECONNECTING}`}</Text>
     );
   }
   if (groups.length === 0) {

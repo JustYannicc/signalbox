@@ -26,6 +26,9 @@ export const BLOCK_LIBRARY_DISCONNECTED =
 export const BLOCK_LIBRARY_NO_TARGET =
   "Blocks live in a folder's files. Give a folder files of its own to see what its automations can call.";
 
+export const BLOCK_LIBRARY_RECONNECTING =
+  "Blocks show again once the connection is back and it's confirmed you can still call them.";
+
 export const BLOCK_LIBRARY_EMPTY =
   "No blocks here. Automations saved in this folder or the levels above it show up here.";
 
@@ -194,4 +197,49 @@ export function blockLibraryStatuses(
     ...(availability.enabled ? [] : ["Paused" as const]),
     ...(availability.hasLiveVersion ? [] : ["Not published" as const]),
   ];
+}
+
+/**
+ * What the library asks for one target. Only `projectId` goes to the server;
+ * the chain above it is part of the key, so a folder moved under other levels
+ * asks again instead of showing what the old levels resolved to.
+ */
+export interface BlockLibraryQueryInput {
+  readonly projectId: ProjectId;
+  readonly chain: ReadonlyArray<ProjectId>;
+}
+
+export function blockLibraryQueryInput(
+  target: Pick<BlockLibraryTarget, "projectId" | "ancestors">,
+): BlockLibraryQueryInput {
+  return {
+    projectId: target.projectId,
+    chain: target.ancestors.map((ancestor) => ancestor.projectId),
+  };
+}
+
+export type BlockLibraryView =
+  | { readonly _tag: "Loading" }
+  /** The last answer can't be trusted any more; its blocks stay hidden until a retry succeeds. */
+  | { readonly _tag: "Failed"; readonly error: string }
+  /** Offline or reconnecting: whether you can still call these blocks isn't known. */
+  | { readonly _tag: "Reconnecting" }
+  | { readonly _tag: "Ready"; readonly blocks: ReadonlyArray<AutomationBlockLibraryEntry> };
+
+/**
+ * What the library can show. Queries keep their last answer through failures
+ * and reconnects, but blocks say who may call them and whether they run, so
+ * an answer the server can't currently confirm isn't shown as current.
+ */
+export function blockLibraryView(
+  query: {
+    readonly data: { readonly blocks: ReadonlyArray<AutomationBlockLibraryEntry> } | null;
+    readonly error: string | null;
+  },
+  connected: boolean,
+): BlockLibraryView {
+  if (query.error !== null) return { _tag: "Failed", error: query.error };
+  if (query.data === null) return { _tag: "Loading" };
+  if (!connected) return { _tag: "Reconnecting" };
+  return { _tag: "Ready", blocks: query.data.blocks };
 }
