@@ -10,7 +10,9 @@ import {
   fakeTools,
   monitorsOf,
   pullRequestSynced,
+  PROJECT,
   receiveCallback,
+  saveOk,
   threadEvent,
   withEngine,
 } from "./WorkflowEngine.testkit.ts";
@@ -44,6 +46,89 @@ const settle = (engine: WorkflowEngine["Service"]) =>
     yield* engine.tick;
     yield* engine.drain;
   });
+
+it.effect("event cursors start at zero and reject a cursor from another run", () =>
+  withEngine(
+    {},
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const capture = yield* saveOk(`export const meta = { name: "Capture event cursor" } as const;
+export default workflow(async (w) => await w.eventCursor("Capture inbox boundary"));`);
+      const capturedRun = yield* engine.startRun({
+        automationId: capture.id,
+        trigger: "manual",
+      });
+      yield* engine.drain;
+      const cursor = (yield* engine.getRun(capturedRun.id)).output as {
+        readonly runId: string;
+        readonly sequence: number;
+      };
+      expect(cursor).toEqual({ runId: capturedRun.id, sequence: 0 });
+
+      const wait = yield* saveOk(`export const meta = { name: "Use another run's cursor" } as const;
+export default workflow(async (w, input: { after: { runId: string; sequence: number } }) => {
+  await w.waitFor("Wait for the merge", { on: "pr.merged", after: input.after });
+});`);
+      const waitingRun = yield* engine.startRun({
+        automationId: wait.id,
+        input: { after: cursor },
+        trigger: "manual",
+      });
+      yield* engine.drain;
+      const failed = yield* engine.getRun(waitingRun.id);
+      expect(failed.run.status).toBe("failed");
+      expect(failed.run.error).toContain("event cursor captured by this run");
+    }),
+  ),
+);
+
+it.effect("a nonzero cursor skips older matching inbox events and accepts a fresh one", () =>
+  withEngine(
+    {},
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const saved =
+        yield* saveOk(`export const meta = { name: "Wait after an event cursor" } as const;
+export default workflow(async (w) => {
+  await w.waitFor("Wait for the PR to open", { on: "pr.opened" });
+  const after = await w.eventCursor("Capture the current inbox boundary");
+  const fresh = await w.waitFor("Wait for a later check", { on: "pr.checks.passed", after });
+  return fresh.id;
+});`);
+      const run = yield* engine.startRun({ automationId: saved.id, trigger: "manual" });
+      const deliver = (id: string, event: "pr.opened" | "pr.checks.passed") =>
+        engine.deliverEvent({
+          event,
+          id,
+          at: "2026-10-17T20:16:20.000Z",
+          projectId: PROJECT,
+          fields: Effect.succeed({ repository: "acme/app", number: 12 }),
+        });
+
+      yield* engine.drain;
+      yield* deliver("old-check", "pr.checks.passed");
+      yield* deliver("opened", "pr.opened");
+      yield* engine.drain;
+
+      const waiting = yield* engine.getRun(run.id);
+      expect(waiting.run.status).toBe("running");
+      expect(waiting.steps.find((step) => step.verb === "eventCursor")?.result).toEqual({
+        runId: run.id,
+        sequence: 2,
+      });
+      expect(waiting.steps.find((step) => step.label === "Wait for a later check")?.status).toBe(
+        "waiting",
+      );
+
+      yield* deliver("fresh-check", "pr.checks.passed");
+      yield* engine.drain;
+      expect(yield* engine.getRun(run.id)).toMatchObject({
+        run: { status: "succeeded" },
+        output: "fresh-check",
+      });
+    }),
+  ),
+);
 
 it.effect(
   "wait_for on an event wakes the thread once, and the thread shows the wait meanwhile",
