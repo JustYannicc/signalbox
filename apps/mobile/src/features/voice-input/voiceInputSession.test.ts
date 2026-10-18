@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { PreparedVoiceTranscription } from "@t3tools/client-runtime/voice-input";
+import type {
+  PreparedVoiceTranscription,
+  VoiceRecordingSink,
+  VoiceTranscriber,
+} from "@t3tools/client-runtime/voice-input";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { resetVoiceInputGlobalsForTests } from "../../../../../packages/client-runtime/src/voice-input/controller";
 
@@ -14,11 +18,15 @@ function createTarget(
   readText: () => string | null,
   commit: VoiceInputTarget["commitDraft"],
   selection: { start: number; end: number },
+  onRecording?: VoiceRecordingSink,
 ) {
-  return createVoiceInputTarget(ownerKey, readText, commit, selection, () => () => {});
+  return {
+    ...createVoiceInputTarget(ownerKey, readText, commit, selection, () => () => {}),
+    ...(onRecording ? { onRecording } : {}),
+  };
 }
 
-function createSession() {
+function createSession(getTranscriber?: () => VoiceTranscriber | null) {
   const recorder = {
     uri: "file:///voice.m4a",
     prepareToRecordAsync: vi.fn(async () => {}),
@@ -29,16 +37,17 @@ function createSession() {
     locale: "en-US",
     transcribe: async () => "spoken text",
   }));
+  const deleteRecording = vi.fn();
   const session = new VoiceInputSession({
     recorder,
-    getTranscriber: () => ({ prepare }),
+    getTranscriber: getTranscriber ?? (() => ({ prepare })),
     requestPermission: async () => ({ granted: true, canAskAgain: true }),
     configureRecording: async () => {},
     releaseRecording: vi.fn(async () => {}),
-    deleteRecording: vi.fn(),
+    deleteRecording,
     onStateChange: vi.fn(),
   });
-  return { session, recorder, prepare };
+  return { session, recorder, prepare, deleteRecording };
 }
 
 describe("global voice input", () => {
@@ -88,6 +97,76 @@ describe("global voice input", () => {
     expect(drafts.get("first")).toBe("original prompt spoken text");
     expect(drafts.get(visibleDraft)).toBe("other prompt");
     expect(session.controller.currentState.phase).toBe("idle");
+  });
+
+  it("forwards a target's recording sink when no local transcriber is available", async () => {
+    const sink = vi.fn(async () => undefined);
+    const { session, recorder } = createSession(() => null);
+    const commit = vi.fn();
+
+    await session.start(
+      createTarget("capture", () => "a thought", commit, { start: 8, end: 8 }, sink),
+    );
+    expect(recorder.record).toHaveBeenCalledTimes(1);
+    await session.controller.stop();
+
+    expect(sink).toHaveBeenCalledWith(
+      "file:///voice.m4a",
+      expect.objectContaining({
+        expectedDraft: {
+          ownerKey: "capture",
+          text: "a thought",
+          selection: { start: 8, end: 8 },
+          revision: 0,
+        },
+        readDraft: expect.any(Function),
+      }),
+    );
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed recording with its owner and retries it without attaching to another", async () => {
+    let attempts = 0;
+    const originalSink: VoiceRecordingSink = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("Attachment copy failed");
+    });
+    const otherOwnerSink = vi.fn(async () => undefined);
+    const { session, recorder, deleteRecording } = createSession(() => null);
+    const originalTarget = createTarget(
+      "capture-a",
+      () => "first thought",
+      vi.fn(),
+      { start: 13, end: 13 },
+      originalSink,
+    );
+
+    await session.start(originalTarget);
+    await session.controller.stop();
+    expect(deleteRecording).not.toHaveBeenCalled();
+    expect(session.pendingRecordingOwnerKey).toBe("capture-a");
+
+    await session.start(
+      createTarget(
+        "capture-b",
+        () => "another thought",
+        vi.fn(),
+        { start: 15, end: 15 },
+        otherOwnerSink,
+      ),
+    );
+    expect(session.ownerKey).toBe("capture-a");
+    expect(session.pendingRecordingOwnerKey).toBe("capture-a");
+    expect(recorder.record).toHaveBeenCalledTimes(1);
+    expect(otherOwnerSink).not.toHaveBeenCalled();
+
+    await session.retry();
+
+    expect(originalSink).toHaveBeenCalledTimes(2);
+    expect(otherOwnerSink).not.toHaveBeenCalled();
+    expect(deleteRecording).toHaveBeenCalledWith("file:///voice.m4a");
+    expect(session.pendingRecordingOwnerKey).toBeNull();
+    expect(recorder.record).toHaveBeenCalledTimes(1);
   });
 
   it.each(["preparing", "recording", "transcribing"] as const)(

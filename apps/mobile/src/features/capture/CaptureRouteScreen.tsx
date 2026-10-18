@@ -12,7 +12,10 @@ import {
 } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+} from "@t3tools/contracts";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardAvoidingView,
@@ -47,6 +50,9 @@ import {
 import { CaptureAttachmentButton } from "./CaptureAttachmentButton";
 import { resolveCaptureTargetSelection, resolveCaptureTargets } from "./destinations";
 import { useCaptureDraft } from "./useCaptureDraft";
+import { useCaptureVoiceNote } from "./useCaptureVoiceNote";
+import { CaptureVoiceButton } from "./CaptureVoiceButton";
+import { uuidv4 } from "../../lib/uuid";
 
 export function CaptureRouteScreen() {
   const navigation = useNavigation();
@@ -62,9 +68,14 @@ export function CaptureRouteScreen() {
   const persistenceRef = useRef<Promise<boolean> | null>(null);
   const [selectedDestinationKey, setSelectedDestinationKey] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
+  const [voiceSelection, setVoiceSelection] = useState<ComposerEditorSelection>({
+    start: 0,
+    end: 0,
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [allowRemoval, setAllowRemoval] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [voiceOwnerKey] = useState(() => `capture:${uuidv4()}`);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const { targets, personal } = useMemo(
@@ -108,9 +119,7 @@ export function CaptureRouteScreen() {
   }, [draftKey, prepare, selectedTarget]);
   const selectedConfig = useEnvironmentServerConfig(selectedTarget?.start.environmentId ?? null);
   const hasContent = draft.text.length > 0 || draft.attachments.length > 0;
-  const hasCapture = hasContent || isImporting;
   const draftEnvironmentId = selectedTarget?.start.environmentId ?? draft.project?.environmentId;
-  const saveDisabled = !hasCapture || selectedTarget === null || isSaving;
   const activeTrigger = useMemo(() => findFolderTrigger(draft.text, caret), [caret, draft.text]);
   const suggestions = activeTrigger
     ? rankByLabel(labeledTargets, activeTrigger.query, 5)
@@ -118,6 +127,32 @@ export function CaptureRouteScreen() {
       ? rankByLabel(labeledTargets, "", labeledTargets.length)
       : [];
   const selectedLabel = selectedTarget?.destination.label ?? "Choose a destination";
+
+  const handleSelectionChange = useCallback(
+    (selection: ComposerEditorSelection) => {
+      selectionRef.current = selection;
+      setVoiceSelection(selection);
+      setCaret(selection.start);
+      if (draftKey) rememberComposerDraftSelection(draftKey, draft.text, selection);
+    },
+    [draft.text, draftKey],
+  );
+
+  const voice = useCaptureVoiceNote({
+    ownerKey: voiceOwnerKey,
+    prepare,
+    selection: voiceSelection,
+    onSelectionChange: handleSelectionChange,
+    disabled:
+      selectedTarget === null ||
+      isSaving ||
+      draft.attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+    maxBytes:
+      selectedConfig?.environment.capabilities.fileAttachments?.maxUploadBytes ??
+      PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  });
+  const hasCapture = hasContent || voice.isBusy || voice.hasPendingAudio || isImporting;
+  const saveDisabled = !hasCapture || selectedTarget === null || isSaving;
 
   const persistDraft = useCallback((): Promise<boolean> => {
     if (persistenceRef.current) return persistenceRef.current;
@@ -127,6 +162,7 @@ export function CaptureRouteScreen() {
       setErrorMessage(null);
       try {
         await awaitImports();
+        await voice.beforeSave();
         const key = prepare() ?? draftKey;
         if (!key) return false;
         const current = getComposerDraftSnapshot(key);
@@ -146,7 +182,7 @@ export function CaptureRouteScreen() {
     })();
     persistenceRef.current = operation;
     return operation;
-  }, [awaitImports, draftKey, hasCapture, prepare]);
+  }, [awaitImports, draftKey, hasCapture, prepare, voice]);
 
   const requestDismiss = useCallback(() => navigation.goBack(), [navigation]);
 
@@ -198,6 +234,7 @@ export function CaptureRouteScreen() {
 
   const selectDestination = useCallback(
     (target: (typeof targets)[number]) => {
+      if (voice.isBusy) return;
       setSelectedDestinationKey(target.destination.key);
       setSaved(false);
       setErrorMessage(null);
@@ -207,6 +244,7 @@ export function CaptureRouteScreen() {
           : { text: draft.text, caret };
         setText(text);
         selectionRef.current = { start: nextCaret, end: nextCaret };
+        setVoiceSelection(selectionRef.current);
         setCaret(nextCaret);
         if (draftKey) {
           rememberComposerDraftSelection(draftKey, text, selectionRef.current);
@@ -217,7 +255,7 @@ export function CaptureRouteScreen() {
         });
       }
     },
-    [activeTrigger, caret, draft.text, draftKey, retarget, setText],
+    [activeTrigger, caret, draft.text, draftKey, retarget, setText, voice.isBusy],
   );
 
   const handleTextChange = useCallback(
@@ -228,15 +266,6 @@ export function CaptureRouteScreen() {
       setCaret(Math.min(selectionRef.current.start, text.length));
     },
     [setText],
-  );
-
-  const handleSelectionChange = useCallback(
-    (selection: ComposerEditorSelection) => {
-      selectionRef.current = selection;
-      setCaret(selection.start);
-      if (draftKey) rememberComposerDraftSelection(draftKey, draft.text, selection);
-    },
-    [draft.text, draftKey],
   );
 
   const handlePasteImages = useCallback(
@@ -291,7 +320,7 @@ export function CaptureRouteScreen() {
       style={{ paddingBottom: footerBottomPadding }}
     >
       <CaptureAttachmentButton
-        disabled={personal === null || isSaving || isImporting || !selectedTarget}
+        disabled={personal === null || isSaving || isImporting || voice.isBusy || !selectedTarget}
         existingCount={draft.attachments.length}
         supportsFiles={Boolean(selectedConfig?.environment.capabilities.fileAttachments)}
         maxFileBytes={selectedConfig?.environment.capabilities.fileAttachments?.maxUploadBytes}
@@ -303,6 +332,15 @@ export function CaptureRouteScreen() {
           return addAttachments(attachments, { text: draft.text, ...selectionRef.current });
         }}
         onError={setErrorMessage}
+      />
+      <CaptureVoiceButton
+        voice={voice}
+        disabled={
+          isSaving ||
+          (!voice.isBusy &&
+            (selectedTarget === null ||
+              draft.attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS))
+        }
       />
       <View className="min-w-0 flex-1 flex-row items-center gap-2">
         <SymbolView
@@ -401,7 +439,7 @@ export function CaptureRouteScreen() {
               environmentId={draftEnvironmentId}
               ref={inputRef}
               autoFocus
-              readOnly={isSaving || draftKey === null}
+              readOnly={isSaving || voice.freezesEditor || draftKey === null}
               multiline
               onChangeText={handleTextChange}
               onSelectionChange={handleSelectionChange}
@@ -465,6 +503,11 @@ export function CaptureRouteScreen() {
               />
             ) : null}
 
+            {voice.state.error ? (
+              <Text accessibilityLiveRegion="polite" className="text-sm text-danger-foreground">
+                {voice.state.error}
+              </Text>
+            ) : null}
             {errorMessage ? (
               <Toast
                 message="Capture needs attention"

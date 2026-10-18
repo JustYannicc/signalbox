@@ -166,6 +166,351 @@ describe("VoiceInputController", () => {
     expect(denied.recorder.record).not.toHaveBeenCalled();
   });
 
+  it("records an audio note when no transcriber is available", async () => {
+    const sink = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getTranscriber: () => null,
+      getRecordingSink: () => sink,
+    });
+
+    await harness.controller.start();
+    expect(harness.controller.currentState.phase).toBe("recording");
+    expect(harness.recorder.record).toHaveBeenCalledWith({
+      forDuration: VOICE_RECORDING_LIMIT_SECONDS,
+    });
+
+    await harness.controller.stop();
+
+    expect(sink).toHaveBeenCalledWith(
+      "file:///voice.m4a",
+      expect.objectContaining({ expectedDraft: draft(), readDraft: expect.any(Function) }),
+    );
+    expect(harness.commits).toEqual([]);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("persists audio before committing an available transcript", async () => {
+    const events: string[] = [];
+    const harness = createHarness({
+      getRecordingSink: () => async () => {
+        events.push("saved");
+      },
+      commitDraft: () => events.push("transcript"),
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(events).toEqual(["saved", "transcript"]);
+  });
+
+  it("uses the sink's post-marker draft snapshot for transcript insertion", async () => {
+    let setHarnessDraft: (next: VoiceDraftSnapshot | null) => void = () => {};
+    const harness = createHarness(
+      {
+        getRecordingSink: () => async (_uri, context) => {
+          const before = context.readDraft();
+          if (!before) throw new Error("Draft disappeared before attachment.");
+          const text = `${context.expectedDraft.text} [audio]`;
+          setHarnessDraft({
+            ...context.expectedDraft,
+            text,
+            revision: context.expectedDraft.revision + 1,
+          });
+          const saved = context.readDraft();
+          if (!saved) throw new Error("Draft disappeared after attachment.");
+          return {
+            before,
+            after: { ...saved, selection: { start: text.length, end: text.length } },
+          };
+        },
+      },
+    );
+    setHarnessDraft = harness.setDraft;
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(harness.commits).toEqual([
+      { text: "hello world [audio] new text", selection: { start: 28, end: 28 } },
+    ]);
+  });
+
+  it("does not accept a marker snapshot after an intervening draft edit", async () => {
+    const initialDraft = draft({
+      text: "a thought",
+      selection: { start: "a thought".length, end: "a thought".length },
+    });
+    const editedDraft = {
+      ...initialDraft,
+      text: "a newer thought",
+      revision: initialDraft.revision + 1,
+    };
+    let setHarnessDraft: (next: VoiceDraftSnapshot | null) => void = () => {};
+    const harness = createHarness(
+      {
+        getRecordingSink: () => async (_uri, context) => {
+          const before = context.readDraft();
+          if (!before) throw new Error("Draft disappeared before attachment.");
+          const text = `${editedDraft.text} [audio]`;
+          const after = {
+            ...editedDraft,
+            text,
+            selection: { start: text.length, end: text.length },
+            revision: editedDraft.revision + 1,
+          };
+          setHarnessDraft(after);
+          const saved = context.readDraft();
+          if (!saved) throw new Error("Draft disappeared after attachment.");
+          return { before, after: saved };
+        },
+      },
+      initialDraft,
+    );
+    setHarnessDraft = harness.setDraft;
+
+    await harness.controller.start();
+    setHarnessDraft(editedDraft);
+    await harness.controller.stop();
+
+    expect(harness.commits).toEqual([]);
+    expect(harness.controller.currentState.error).toContain("draft changed");
+  });
+
+  it("rejects an out-of-bounds caret in the attachment snapshot", async () => {
+    let setHarnessDraft: (next: VoiceDraftSnapshot | null) => void = () => {};
+    const harness = createHarness({
+      getRecordingSink: () => async (_uri, context) => {
+        const before = context.readDraft();
+        if (!before) throw new Error("Draft disappeared before attachment.");
+        const text = `${context.expectedDraft.text} [audio]`;
+        setHarnessDraft({
+          ...context.expectedDraft,
+          text,
+          revision: context.expectedDraft.revision + 1,
+        });
+        const after = context.readDraft();
+        if (!after) throw new Error("Draft disappeared after attachment.");
+        const invalidSelection = text.length + 1;
+        return {
+          before,
+          after: {
+            ...after,
+            selection: { start: invalidSelection, end: invalidSelection },
+          },
+        };
+      },
+    });
+    setHarnessDraft = harness.setDraft;
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(harness.commits).toEqual([]);
+    expect(harness.controller.currentState.error).toContain("draft changed");
+  });
+
+  it("keeps the saved audio note when optional transcription fails", async () => {
+    const sink = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getRecordingSink: () => sink,
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedTranscription(async () => {
+            throw new Error("Transcription failed");
+          }),
+      }),
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(sink).toHaveBeenCalledWith(
+      "file:///voice.m4a",
+      expect.objectContaining({ expectedDraft: draft(), readDraft: expect.any(Function) }),
+    );
+    expect(harness.commits).toEqual([]);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.currentState.error).toContain("Audio note saved");
+  });
+
+  it("continues audio capture when optional transcription preparation fails", async () => {
+    const sink = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getRecordingSink: () => sink,
+      getTranscriber: () => ({
+        prepare: async () => {
+          throw new Error("On-device transcription unavailable");
+        },
+      }),
+    });
+
+    await harness.controller.start();
+    expect(harness.controller.currentState.phase).toBe("recording");
+    await harness.controller.stop();
+
+    expect(sink).toHaveBeenCalledWith(
+      "file:///voice.m4a",
+      expect.objectContaining({ expectedDraft: draft(), readDraft: expect.any(Function) }),
+    );
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("does not delete a recording when its attachment sink fails", async () => {
+    const sink = vi.fn(async () => {
+      throw new Error("Attachment copy failed");
+    });
+    const harness = createHarness({ getRecordingSink: () => sink });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(sink).toHaveBeenCalledWith(
+      "file:///voice.m4a",
+      expect.objectContaining({ expectedDraft: draft(), readDraft: expect.any(Function) }),
+    );
+    expect(harness.deleted).toEqual([]);
+    expect(harness.controller.currentState.error).toBe("Could not save this voice note.");
+  });
+
+  it("discards a canceled recording when its attachment sink rejects", async () => {
+    const sinkEntered = deferred<void>();
+    const sinkResult = deferred<void>();
+    let attempts = 0;
+    const sink = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        sinkEntered.resolve(undefined);
+        return sinkResult.promise;
+      }
+    });
+    const harness = createHarness({
+      getTranscriber: () => null,
+      getRecordingSink: () => sink,
+    });
+
+    await harness.controller.start();
+    const stopping = harness.controller.stop();
+    await sinkEntered.promise;
+    harness.controller.cancel();
+    sinkResult.reject(new Error("Attachment copy failed"));
+    await stopping;
+
+    expect(harness.controller.currentState.phase).toBe("idle");
+    expect(harness.controller.pendingRecordingOwnerKey).toBeNull();
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+
+    harness.setDraft(draft({ ownerKey: "environment:other-thread" }));
+    await harness.controller.start();
+    expect(harness.controller.currentState.phase).toBe("recording");
+    expect(harness.recorder.record).toHaveBeenCalledTimes(2);
+    await harness.controller.interruptRecording();
+  });
+
+  it.each(["empty", "stale"] as const)(
+    "reports saved audio when the optional transcript is %s",
+    async (transcriptResult) => {
+      let setDraft: (next: VoiceDraftSnapshot | null) => void = () => {};
+      const sink = vi.fn(async () => undefined);
+      const harness = createHarness({
+        getRecordingSink: () => sink,
+        getTranscriber: () => ({
+          prepare: async () =>
+            preparedTranscription(async () => {
+              if (transcriptResult === "stale") {
+                setDraft(draft({ text: "edited while recording", revision: 2 }));
+                return "spoken text";
+              }
+              return "   ";
+            }),
+        }),
+      });
+      setDraft = harness.setDraft;
+
+      await harness.controller.start();
+      await harness.controller.stop();
+
+      expect(sink).toHaveBeenCalledTimes(1);
+      expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+      expect(harness.controller.currentState.error).toBe(
+        transcriptResult === "stale"
+          ? "Audio note saved. The draft changed while voice input was running. The transcript was not added."
+          : "Audio note saved. No speech was detected.",
+      );
+    },
+  );
+
+  it("retries the failed sink with the same recording before deleting it", async () => {
+    let attempts = 0;
+    const sink = vi.fn(async (_uri: string) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("Attachment copy failed");
+    });
+    const harness = createHarness({
+      getTranscriber: () => null,
+      getRecordingSink: () => sink,
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.deleted).toEqual([]);
+    expect(harness.controller.pendingRecordingOwnerKey).toBe("environment:thread");
+
+    await harness.controller.start();
+
+    expect(harness.recorder.record).toHaveBeenCalledTimes(1);
+    expect(sink).toHaveBeenNthCalledWith(
+      1,
+      "file:///voice.m4a",
+      expect.objectContaining({ expectedDraft: draft(), readDraft: expect.any(Function) }),
+    );
+    expect(sink).toHaveBeenNthCalledWith(
+      2,
+      "file:///voice.m4a",
+      expect.objectContaining({ expectedDraft: draft(), readDraft: expect.any(Function) }),
+    );
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.pendingRecordingOwnerKey).toBeNull();
+  });
+
+  it("deletes a failed pending recording only after explicit cancel", async () => {
+    const harness = createHarness({
+      getRecordingSink: () =>
+        vi.fn(async () => {
+          throw new Error("Attachment copy failed");
+        }),
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.deleted).toEqual([]);
+
+    harness.controller.cancel();
+
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.pendingRecordingOwnerKey).toBeNull();
+  });
+
+  it("persists an interrupted capture recording before cleanup", async () => {
+    const sink = vi.fn(async () => undefined);
+    const harness = createHarness({
+      getTranscriber: () => null,
+      getRecordingSink: () => sink,
+    });
+
+    await harness.controller.start();
+    await harness.controller.interruptRecording("Voice recording was interrupted.");
+
+    expect(sink).toHaveBeenCalledWith(
+      "file:///voice.m4a",
+      expect.objectContaining({ expectedDraft: draft(), readDraft: expect.any(Function) }),
+    );
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.currentState.error).toContain("Voice note saved");
+  });
+
   it.each(["permission", "transcription"] as const)(
     "clears %s errors when switching to another draft",
     async (failure) => {
@@ -295,6 +640,108 @@ describe("VoiceInputController", () => {
       { text: "hello new text", selection: { start: 14, end: 14 } },
     ]);
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("waits for startup and repeated stop calls until the attachment sink finishes", async () => {
+    const permission = deferred<{ granted: boolean; canAskAgain: boolean }>();
+    const permissionEntered = deferred<void>();
+    const sinkEntered = deferred<void>();
+    const sinkCompletion = deferred<void>();
+    const sink = vi.fn(async () => {
+      sinkEntered.resolve(undefined);
+      await sinkCompletion.promise;
+    });
+    const harness = createHarness({
+      getRecordingSink: () => sink,
+      requestPermission: () => {
+        permissionEntered.resolve(undefined);
+        return permission.promise;
+      },
+    });
+
+    const starting = harness.controller.start();
+    const stopping = harness.controller.stop();
+    let firstStopFinished = false;
+    const observedFirstStop = stopping.then(() => {
+      firstStopFinished = true;
+    });
+    await permissionEntered.promise;
+    permission.resolve({ granted: true, canAskAgain: true });
+    await starting;
+    await sinkEntered.promise;
+
+    const secondStop = harness.controller.stop();
+    let secondStopFinished = false;
+    const observedSecondStop = secondStop.then(() => {
+      secondStopFinished = true;
+    });
+    expect(firstStopFinished).toBe(false);
+    expect(secondStopFinished).toBe(false);
+
+    sinkCompletion.resolve(undefined);
+    await Promise.all([observedFirstStop, observedSecondStop]);
+
+    expect(firstStopFinished).toBe(true);
+    expect(secondStopFinished).toBe(true);
+  });
+
+  it.each(["auto-limit", "interruption"] as const)(
+    "returns the active $0 finish promise from stop",
+    async (finishCause) => {
+      const sinkEntered = deferred<void>();
+      const sinkCompletion = deferred<void>();
+      const sink = vi.fn(async () => {
+        sinkEntered.resolve(undefined);
+        await sinkCompletion.promise;
+      });
+      const harness = createHarness({
+        getTranscriber: () => null,
+        getRecordingSink: () => sink,
+      });
+      await harness.controller.start();
+
+      const finishing =
+        finishCause === "auto-limit"
+          ? harness.controller.handleRecorderStatus({
+              isFinished: true,
+              hasError: false,
+              error: null,
+              url: "file:///voice.m4a",
+            })
+          : harness.controller.interruptRecording();
+      if (!finishing) throw new Error("Recording finish did not start.");
+      await sinkEntered.promise;
+
+      const stopping = harness.controller.stop();
+      expect(stopping).toBe(finishing);
+      sinkCompletion.resolve(undefined);
+      await stopping;
+    },
+  );
+
+  it("handles a synchronous recorder-finished callback during start", async () => {
+    const sink = vi.fn(async () => undefined);
+    const finished = deferred<void>();
+    const harness = createHarness({
+      getTranscriber: () => null,
+      getRecordingSink: () => sink,
+    });
+    harness.recorder.record.mockImplementation(() => {
+      const result = harness.controller.handleRecorderStatus({
+        isFinished: true,
+        hasError: false,
+        error: null,
+        url: "file:///voice.m4a",
+      });
+      if (result) void result.then(() => finished.resolve(undefined));
+    });
+
+    await harness.controller.start();
+    await finished.promise;
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.currentState.phase).toBe("idle");
   });
 
   it.each(["cancel", "dispose", "ownerChanged"] as const)(

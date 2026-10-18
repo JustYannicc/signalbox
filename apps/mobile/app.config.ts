@@ -378,7 +378,7 @@ const config: ExpoConfig = {
       "expo-audio",
       {
         microphonePermission: "Allow Signalbox to use your microphone for voice input.",
-        recordAudioAndroid: false,
+        recordAudioAndroid: true,
         enableBackgroundPlayback: false,
         enableBackgroundRecording: false,
       },
@@ -392,7 +392,14 @@ const config: ExpoConfig = {
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        // signalbox: false removes RECORD_AUDIO even when expo-audio enables it.
+        microphonePermission: "Allow Signalbox to use your microphone for voice notes.",
+      },
+    ],
     [
       "expo-splash-screen",
       {

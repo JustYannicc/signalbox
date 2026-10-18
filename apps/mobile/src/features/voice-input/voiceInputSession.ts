@@ -3,6 +3,7 @@ import {
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
+  type VoiceRecordingSink,
 } from "@t3tools/client-runtime/voice-input";
 
 export type VoiceInputTarget = {
@@ -10,6 +11,7 @@ export type VoiceInputTarget = {
   readonly label?: string;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: VoiceInputControllerDependencies["commitDraft"];
+  readonly onRecording?: VoiceRecordingSink;
   readonly subscribe: () => () => void;
 };
 
@@ -47,9 +49,15 @@ export class VoiceInputSession {
   private target: VoiceInputTarget | null = null;
   private unsubscribe: (() => void) | null = null;
 
-  constructor(dependencies: Omit<VoiceInputControllerDependencies, "readDraft" | "commitDraft">) {
+  constructor(
+    dependencies: Omit<
+      VoiceInputControllerDependencies,
+      "readDraft" | "commitDraft" | "getRecordingSink"
+    >,
+  ) {
     this.controller = new VoiceInputController({
       ...dependencies,
+      getRecordingSink: () => this.target?.onRecording ?? null,
       onStateChange: (state) => {
         if (!voiceInputBlocksSubmission(state)) {
           this.unsubscribe?.();
@@ -70,6 +78,10 @@ export class VoiceInputSession {
     return this.target?.label ?? null;
   }
 
+  get pendingRecordingOwnerKey(): string | null {
+    return this.controller.pendingRecordingOwnerKey;
+  }
+
   cancel(ownerKey: string | null): void {
     if (ownerKey !== null && this.ownerKey === ownerKey) this.controller.cancel();
   }
@@ -79,6 +91,12 @@ export class VoiceInputSession {
   }
 
   start(target: VoiceInputTarget): Promise<void> {
+    if (
+      this.controller.pendingRecordingOwnerKey !== null &&
+      this.controller.pendingRecordingOwnerKey !== target.ownerKey
+    ) {
+      return Promise.resolve();
+    }
     if (voiceInputBlocksSubmission(this.controller.currentState)) return Promise.resolve();
     this.target = target;
     this.unsubscribe = target.subscribe();

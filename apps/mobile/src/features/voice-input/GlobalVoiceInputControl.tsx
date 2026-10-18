@@ -150,13 +150,24 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
             style={[{ width: expandedWidth }, expandedStyle]}
           >
             <Pressable
-              accessibilityLabel={isError ? "Dismiss voice input error" : "Cancel dictation"}
+              accessibilityLabel={
+                voice.session.pendingRecordingOwnerKey !== null
+                  ? "Discard unsaved voice note"
+                  : isError
+                    ? "Dismiss voice input error"
+                    : "Cancel dictation"
+              }
+              accessibilityHint={
+                voice.session.pendingRecordingOwnerKey !== null
+                  ? "Deletes the unsaved audio. Your draft is kept."
+                  : undefined
+              }
               accessibilityRole="button"
               className="size-[30px] items-center justify-center active:opacity-70"
               onPress={voice.cancel}
             >
               <SymbolView
-                name="xmark"
+                name={voice.session.pendingRecordingOwnerKey !== null ? "trash" : "xmark"}
                 size={13}
                 tintColorClassName="accent-icon-muted"
                 type="monochrome"
