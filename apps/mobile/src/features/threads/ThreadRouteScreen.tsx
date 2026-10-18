@@ -3,6 +3,7 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
+import { resolveComposerStop } from "./worktree-setup-state";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { AppBar } from "../../components/ui/AppBar";
 import {
@@ -855,7 +856,15 @@ function ThreadRouteContent(
     );
   }, [navigation, routeThreadIdentity, selectedThreadCreation, selectedThreadProject]);
   const setupTurnStartedAt = composer.selectedThreadActivityRun?.startedAt ?? null;
-  const { snapshot: worktreeSetupSnapshot, visible: worktreeSetup } = useWorktreeSetup({
+  const {
+    snapshot: worktreeSetupSnapshot,
+    visible: worktreeSetup,
+    awaitingSnapshot: awaitingWorktreeSetupSnapshot,
+    cancelStatus: worktreeSetupCancelStatus,
+    retryStatus: worktreeSetupRetryStatus,
+    cancel: cancelWorktreeSetup,
+    retry: retryWorktreeSetup,
+  } = useWorktreeSetup({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
     preparing:
@@ -864,6 +873,7 @@ function ThreadRouteContent(
       selectedThread?.worktreePath != null ||
       (selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
         selectedThreadCreation.outcome == null),
+    run: composer.selectedThreadActivityRun,
     turnStarted: setupTurnStartedAt !== null,
     followUpSent:
       composer.selectedThreadFeed.filter(
@@ -876,14 +886,20 @@ function ThreadRouteContent(
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
       : (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
-  const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup);
+  // Stop belongs to setup until the handoff, including before its first
+  // snapshot; a null or failed stream hands it back to the run.
+  const setupHoldsStop =
+    worktreeSetup !== null
+      ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
+      : awaitingWorktreeSetupSnapshot;
+  const composerStop = resolveComposerStop({
+    awaitingSetup: setupHoldsStop,
+    setupCancel: worktreeSetupCancelStatus,
+    interruptible: composer.interruptibleRunId !== null,
+  });
   const handleCancelWorktreeSetup = useCallback(() => {
-    if (!selectedThread) return;
-    void cancelWorktreeSetup({
-      environmentId: selectedThread.environmentId,
-      input: { threadId: selectedThread.id },
-    });
-  }, [cancelWorktreeSetup, selectedThread]);
+    void cancelWorktreeSetup();
+  }, [cancelWorktreeSetup]);
   const startLocalThread = useAtomCommand(threadEnvironment.startTurn, "work locally");
   const localResendBusy = useRef(false);
   const setupMessage = selectedThreadDetail?.messages.find((message) => message.role === "user");
@@ -892,11 +908,9 @@ function ThreadRouteContent(
       return;
     localResendBusy.current = true;
     try {
-      const result = await cancelWorktreeSetup({
-        environmentId: selectedThread.environmentId,
-        input: { threadId: selectedThread.id },
-      });
-      if (result._tag !== "Success" || !result.value.cancelled) return;
+      // Resend locally only once the server confirms setup stopped; an error or
+      // timeout leaves the thread with the setup that may still be running.
+      if ((await cancelWorktreeSetup()) !== "stopped") return;
       // V2 accepts the launch before setup runs, so cancellation never rejects
       // the original outbox delivery. Reuse the server-owned prompt and uploads.
       const metadata = makeTurnCommandMetadata();
@@ -1025,8 +1039,17 @@ function ThreadRouteContent(
                   turnStartedAt: setupTurnStartedAt,
                   working: composer.activeWorkStartedAt !== null,
                   turnStarted: setupTurnStartedAt !== null,
+                  cancel: worktreeSetupCancelStatus,
                   onCancel: handleCancelWorktreeSetup,
-                  onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
+                  retry: worktreeSetupRetryStatus,
+                  onRetry: retryWorktreeSetup,
+                  // Working locally cancels first, so it needs the same stop the card offers.
+                  onWorkLocally:
+                    setupMessage &&
+                    selectedThreadProject &&
+                    worktreeSetupCancelStatus === "available"
+                      ? handleWorkLocally
+                      : null,
                 }
               : null
           }
@@ -1042,7 +1065,7 @@ function ThreadRouteContent(
           threadSyncStatus={selectedThreadDetailState.status}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
-          canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
+          canStopThread={composerStop !== null}
           queuedRunEdit={composer.queuedRunEdit}
           composerDraftKey={composer.composerDraftKey}
           followUpBehavior={composer.followUpBehavior}
@@ -1066,7 +1089,9 @@ function ThreadRouteContent(
           onNativePasteText={composer.onNativePasteText}
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
-          onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          onStopThread={
+            composerStop === "cancel-setup" ? handleCancelWorktreeSetup : handleStopThread
+          }
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}

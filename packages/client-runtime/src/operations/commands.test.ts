@@ -50,6 +50,7 @@ import {
   promoteQueuedRun,
   reorderActiveThread,
   reorderQueuedRun,
+  retryWorkspacePreparation,
   revertThreadCheckpoint,
   settleThread,
   startThreadTurn,
@@ -153,6 +154,52 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect(
+    "forwards a cloud preparation generation through the real retry command transport",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [] });
+        const result = yield* retryWorkspacePreparation({
+          commandId: CommandId.make("retry-cloud-attempt"),
+          threadId: v2ThreadId,
+          runId: RunId.make("same-cloud-run"),
+          preparationGeneration: 7,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        expect(result).toEqual({ sequence: 1 });
+        expect(commands).toEqual([
+          {
+            type: "prepared-run.retry",
+            commandId: CommandId.make("retry-cloud-attempt"),
+            threadId: v2ThreadId,
+            runId: RunId.make("same-cloud-run"),
+            preparationGeneration: 7,
+          },
+        ]);
+      }).pipe(Effect.provide(layerTestCommandRuntime)),
+  );
+
+  it.effect("keeps legacy self-hosted retry commands free of an implicit preparation guard", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      yield* retryWorkspacePreparation({
+        commandId: CommandId.make("retry-self-hosted"),
+        threadId: v2ThreadId,
+        runId: RunId.make("self-hosted-run"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      expect(commands).toEqual([
+        {
+          type: "prepared-run.retry",
+          commandId: CommandId.make("retry-self-hosted"),
+          threadId: v2ThreadId,
+          runId: RunId.make("self-hosted-run"),
+        },
+      ]);
+      expect(commands[0]).not.toHaveProperty("preparationGeneration");
+    }).pipe(Effect.provide(layerTestCommandRuntime)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];

@@ -140,6 +140,7 @@ import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRoute
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsThreadsRouteScreen } from "./features/settings/SettingsThreadsRouteScreen";
+import { SettingsPersonTimezoneRouteScreen } from "./features/settings/SettingsPersonTimezoneRouteScreen"; // signalbox: person timezone
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
@@ -349,6 +350,12 @@ const SettingsContentStack = createV5SheetStackNavigator({
         title: "Scheduled Tasks",
         headerTitleStyle: { fontSize: 16, fontWeight: "800" },
       },
+    }),
+    SettingsTimeZone: createNativeStackScreen({
+      // signalbox: person timezone
+      screen: SettingsPersonTimezoneRouteScreen,
+      linking: "time-zone",
+      options: { title: "Time zone" },
     }),
     ...automationSettingsScreens(), // signalbox: automations
     ...signInSettingsScreens(), // signalbox: sign-in grants

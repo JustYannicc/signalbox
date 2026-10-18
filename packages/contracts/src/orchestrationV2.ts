@@ -2851,6 +2851,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    preparationGeneration: Schema.optional(PositiveInt),
   }),
   Schema.Struct({
     type: Schema.Literal("subagent.stop"),

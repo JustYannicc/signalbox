@@ -42,7 +42,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.mergeBack": gap("#439"),
   "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
-  "threads.retryPreparation": gap("#439"),
   "threads.getTurnItem": gap("#439"),
   "threads.rollback": gap("#398"),
   "threads.search": gap("#334"),
@@ -93,6 +92,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "backgroundPolicy.subscribe": noHost,
   "device.*": noHost,
   "deviceState.subscribe": noHost,
+  "deviceAgentDiagnostics.subscribe": noHost,
   "diagnostics.*": noHost,
   "discoveredLocalServers.subscribe": noHost,
   "filesystem.*": noHost,
@@ -113,7 +113,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "vcs.createWorktree": ownBranch,
   "vcs.removeWorktree": ownBranch,
   "vcs.init": githubImports,
-  "worktreeSetup.*": ownBranch,
 };
 
 /** Whether `name` falls under `key`, an operation name or a `prefix.*`. */

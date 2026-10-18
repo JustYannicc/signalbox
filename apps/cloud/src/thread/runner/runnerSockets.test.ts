@@ -1,6 +1,9 @@
 import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
+import { RUNNER_PROTOCOL_VERSION } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { requestCancellation } from "../preparationTesting.ts";
 
 import type * as ThreadRunner from "./ThreadRunner.ts";
 import {
@@ -121,6 +124,96 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect(
+    "sends addressed cancellation and a fresh same-run generation, granting handoff only after ready",
+    () =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const plan = yield* runner.reconcile;
+          if (plan.ensure === null) throw new Error("No machine request");
+          const sockets: Array<WebSocket> = [];
+          const host = yield* hostFor(runner, sockets);
+          const socket = fakeSocket();
+          sockets.push(socket.socket);
+          yield* say(host, socket, {
+            ...hello(plan.ensure.generation, plan.ensure.token),
+            protocolVersion: RUNNER_PROTOCOL_VERSION,
+            takenRunIds: [],
+          });
+          const start = socket.sent.find((frame) => frame.type === "turn.start");
+          if (start?.type !== "turn.start" || start.turn.preparationGeneration === undefined)
+            throw new Error("No addressed start");
+          const target = {
+            threadId,
+            runId: start.turn.runId,
+            preparationGeneration: start.turn.preparationGeneration,
+          };
+          socket.sent.length = 0;
+          const cancelled = yield* requestCancellation(engine, target);
+          yield* Effect.promise(() => pushRunnerWork(host));
+          expect(socket.sent).toEqual([
+            {
+              type: "preparation.cancel",
+              runId: target.runId,
+              preparationGeneration: target.preparationGeneration,
+            },
+          ]);
+          socket.sent.length = 0;
+          yield* say(host, socket, {
+            type: "batch",
+            sequence: 1,
+            items: [{ kind: "preparation.cancelled", ...target }],
+          });
+          expect(yield* Fiber.join(cancelled)).toEqual({ cancelled: true });
+          expect(
+            socket.sent.some((frame) => frame.type === "interrupt" || frame.type === "end"),
+          ).toBe(false);
+          yield* engine.dispatch(
+            owner,
+            {
+              type: "prepared-run.retry",
+              commandId: CommandId.make("retry-preparation"),
+              ...target,
+            },
+            personal,
+          );
+          yield* Effect.promise(() => pushRunnerWork(host));
+          const retry = socket.sent.find((frame) => frame.type === "turn.start");
+          if (retry?.type !== "turn.start") throw new Error("No retry start");
+          expect(retry.turn.runId).toBe(target.runId);
+          expect(retry.turn.message).toEqual(start.turn.message);
+          expect(retry.turn.preparationGeneration).toBe(target.preparationGeneration + 1);
+          expect(socket.sent.some((frame) => frame.type === "preparation.handoff")).toBe(false);
+          socket.sent.length = 0;
+          yield* say(host, socket, {
+            type: "batch",
+            sequence: 2,
+            items: [
+              {
+                kind: "preparation.ready",
+                ...target,
+                preparationGeneration: retry.turn.preparationGeneration,
+              },
+            ],
+          });
+          expect(socket.sent).toContainEqual({
+            type: "preparation.handoff",
+            runId: target.runId,
+            preparationGeneration: retry.turn.preparationGeneration,
+          });
+          expect(
+            yield* engine
+              .cancelPreparation(owner, {
+                ...target,
+                preparationGeneration: target.preparationGeneration + 1,
+              })
+              .pipe(Effect.flip),
+          ).toMatchObject({ _tag: "WorktreeSetupError" });
+        }),
+      ),
+  );
+
   it.effect("holds a waiting turn back while its pull requests are being read (#495)", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
