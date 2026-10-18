@@ -773,22 +773,25 @@ const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const endpoint = endpointOf(row, options);
       yield* ensureManagedConfig(endpoint);
-      const live = yield* CliProxyApi.listAccounts(endpoint).pipe(
-        Effect.catchTags({
-          PoolBackendError: (error) =>
-            sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
-              WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
-        }),
-      );
-      const cached = yield* cachedAccounts;
+      const live = yield* Effect.gen(function* () {
+        const live = yield* CliProxyApi.listAccounts(endpoint).pipe(
+          Effect.catchTags({
+            PoolBackendError: (error) =>
+              sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
+                WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
+          }),
+        );
+        const cached = yield* cachedAccounts;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* storeAccountRows(live, cached.accounts, now, contributors);
+            yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+          }),
+        );
+        return live;
+      }).pipe(accountChanges.withPermits(1));
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* storeAccountRows(live, cached.accounts, now, contributors);
-          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
-        }),
-      );
       // Account freshness must not wait for model discovery or provider usage probes.
       yield* CliProxyApi.listModels(endpoint).pipe(
         Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
@@ -801,7 +804,7 @@ const make = Effect.gen(function* () {
       );
       yield* refreshLimits(endpoint, live, now, mode);
       return live;
-    }).pipe(accountChanges.withPermits(1));
+    });
 
   const create: PoolEngine["Service"]["create"] = (actor, input) =>
     Effect.gen(function* () {
@@ -1177,15 +1180,17 @@ const make = Effect.gen(function* () {
       // Unlike foreground snapshots, the quarter-hourly sample may wake a sleeping pool.
       const endpoint = endpointOf(row, { models: true });
       yield* ensureManagedConfig(endpoint);
-      const live = yield* CliProxyApi.listAccounts(endpoint);
-      const cached = yield* cachedAccounts;
-      // Login/import must discover new accounts so their contributor is recorded on insertion.
-      const known = new Set(cached.accounts.map((account) => account.name));
-      const held = live.filter((account) => known.has(account.name));
-      yield* sql.withTransaction(storeAccountRows(held, cached.accounts, now));
+      const live = yield* Effect.gen(function* () {
+        const live = yield* CliProxyApi.listAccounts(endpoint);
+        const cached = yield* cachedAccounts;
+        // Login/import must discover new accounts so their contributor is recorded on insertion.
+        const known = new Set(cached.accounts.map((account) => account.name));
+        const held = live.filter((account) => known.has(account.name));
+        yield* sql.withTransaction(storeAccountRows(held, cached.accounts, now));
+        return live;
+      }).pipe(accountChanges.withPermits(1));
       yield* refreshLimits(endpoint, live, now, "probe");
     }).pipe(
-      accountChanges.withPermits(1),
       samplingUsage.withPermits(1),
       Effect.timeoutOrElse({
         duration: ACCOUNTS_REFRESH_TIMEOUT_MS,
