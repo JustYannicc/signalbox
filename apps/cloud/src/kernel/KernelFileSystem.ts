@@ -176,6 +176,11 @@ export class KernelFileSystem {
     });
   }
 
+  assertWasiPathVisible(mount: WasiMountedStorage, pathComponents: readonly string[]): void {
+    this.#assertOpen();
+    this.#paths.resolver.assertPathVisible(mount, pathComponents);
+  }
+
   open(path: string, flags: number, mode?: number): number {
     return this.#system(() => {
       this.#assertOpen();

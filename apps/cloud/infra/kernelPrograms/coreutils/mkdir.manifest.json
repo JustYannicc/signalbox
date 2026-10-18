@@ -1,0 +1,500 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/rivet-dev/agentos",
+    "commit": "63ae3b256749d47c7b3a7c463128d5deda57d1bb",
+    "archiveSha256": "2c95943fdad51df8a269344c6cc6dad1ee316b216340ff281d3d8a636bd5257e",
+    "command": "software/coreutils/native/crates/cmd-mkdir",
+    "uutilsVersion": "0.7.0",
+    "patch": {
+      "path": "patches/0001-use-proc-umask-on-wasi.patch",
+      "sha256": "4cd5d5e30ca7bf4f2e0fc21b0327100009711046bb3e3de579f68b12869f653a"
+    },
+    "commandPatch": {
+      "path": "patches/0002-mkdir-wasi-mode.patch",
+      "sha256": "7bbc65b2f027a96297c4307f2c6f9014056b5f929285aca6acd92609962b346b"
+    },
+    "cargoLockSha256": "fd79973e2c84314051e3776acb915a560a366b0cf1c143003804d82c264aa055",
+    "inputCargoLockSha256": "d802e679dd3d82781f3caa07a71441fc039efc385f5b2af6c2420ebe4010fdf5",
+    "recipeSha256": "7619d4395df21437a890f4fce632db8b048bc9f3f9ab37caa9eeb9f236356ffc"
+  },
+  "wasiLibc": {
+    "commit": "574b88da481569b65a237cb80daf9a2d5aeaf82d",
+    "archiveSha256": "7d11a801570972e7f32639eed3f8f7d0e997f276b3c85b7aa03283e1265e4b8e",
+    "patches": [
+      {
+        "path": "toolchain/std-patches/wasi-libc/0001-pipe-dup.patch",
+        "sha256": "994794089102aa67a967e3d629c2b2c020347614a07a05349126f8585b4660b3"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0002-spawn-wait.patch",
+        "sha256": "4ae533165fe3df623ef5b3bb7bd9dca907de65c85f8edea67ef25a24dcf9af87"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0003-kill.patch",
+        "sha256": "83b0e6d0b391831c38d57b50055ca6bedd9bc1ad710a91637451079ddb99749b"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0004-getpid.patch",
+        "sha256": "3dc4a2da44a09c76fe8a85a800058ca2fdb67018c1d916afc37812a8ec89ead7"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0005-user-identity.patch",
+        "sha256": "72dd3c70960f628b1da859b6f80258d3509e83295682545f496937f327c52aa7"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0006-isatty.patch",
+        "sha256": "0f213880d7c1a0de9d62d1eb01242cbdc84b0e230263256f953b04d1de470c40"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0007-getpwuid.patch",
+        "sha256": "118a5a1824c84c906f6fee46ca3650701968ab57cb4cf10f577864d341c926bb"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0008-sockets.patch",
+        "sha256": "bb20de1894865c8b49b87f55c866ca30fc75282dd5985fb71da6ecf68f515c0f"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0009-realloc-glibc-semantics.patch",
+        "sha256": "820b757d39f3f0754b83e3274b06be6319b240c460eebb8bf66f373b8ed6a51b"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0010-pthread-condattr-getclock.patch",
+        "sha256": "899e3e817299a6a5cf10a82abc4b4f0d6096dad05407ed51ea2a6a4573410f0d"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0011-sigaction.patch",
+        "sha256": "0458aaff9ce76cb8780c3c58aa99dd763465a7a6d6d6c9003d406b1b024a7a34"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0013-posix-socket-header-surface.patch",
+        "sha256": "e932cdc6e17ac8b9eb3bef0f5fb7ca5cafc923d85e2d9a28cc9acd9823b40cd6"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0014-initialize-cwd-from-pwd.patch",
+        "sha256": "2cad8f9288dfda518ad522feb1c36a6666a90f6f890e24a146377a21b3a57b05"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0015-always-link-cwd-relative-path-resolution.patch",
+        "sha256": "6a0578ce7fee175ae14c51e2f3638bc537f13cb8ded2c17aab0e25933760e416"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0016-host-fs-mode-and-chmod.patch",
+        "sha256": "a759d4e33a81f74f88235cddb0d9461e905af0792ee2dc2cfa3513ba207536e7"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0017-resource-limits-and-groups.patch",
+        "sha256": "81f12d9f2a49971f154e29378c2bdc2eae8d95fd9ff7847f01e8b4ee0af5c3d8"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0018-posix-spawn-and-terminal-headers.patch",
+        "sha256": "5272b76c244b57c240645c7d007dd51efd05a0389106dcd054f08e5d5d823165"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0019-standard-signal-count.patch",
+        "sha256": "6cfd609a216b706934801567981730fec2a7787d34a782b2962038d09197ba98"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0020-process-signal-mask.patch",
+        "sha256": "a9abba0869526e5767e3a04c5cee7753276e914490c5721bc8c7c9f2d7738120"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0021-utc-timezone-compat.patch",
+        "sha256": "75140e6c4a621ccc6e0b3075efef59be5a6625841afd88b5d3a280acf69e5d5d"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0022-overrideable-fd-set-size.patch",
+        "sha256": "a3a339003cd53077d4f506d5683e25e99457d9863b62ad87ceebd963d4a738a5"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0023-host-net-read-write-sockets.patch",
+        "sha256": "bb55c81e2bc3b21ca4df7a4a4c3b717fa0ca9f5e9be7da1638385b22b656b58d"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0024-install-group-header.patch",
+        "sha256": "98631cdc6a7c133426d4ddfe19fd03cba2575f27b53bcd7b6e065feef069cc29"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0025-group-lookup-compat.patch",
+        "sha256": "14828658147205aec516d22f6c1763aadfe40d4164476ccf9e7cb941c1d3535b"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0026-hide-nonstandard-opendirat.patch",
+        "sha256": "9212ee3b87a6bbc2a8fd1d1402ac01065e3613941f4eb0cef8b7852f7ce3cd9e"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0027-temp-and-ownership-header-surface.patch",
+        "sha256": "d3e7aca22693928df50fc78b4b081c509dd78c6885c298c6ccb4aa20603c4801"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0028-git-compat-header-surface.patch",
+        "sha256": "822da82c199773a23b7a93cb917284985c9aa2a2dc02cb470863106f03029045"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0029-openssh-compat-header-surface.patch",
+        "sha256": "eab318ef0a038c207ae4ef107e93b3bc99145953d25060f0803d2ce813d0bcd4"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0030-hidden-preopen-path-alias.patch",
+        "sha256": "8de53feb46fc5197b5bc193ff2e56db7b461c2dadc8c0aa8f20d329d3c040f33"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0031-linux-poll-abi.patch",
+        "sha256": "84ee74ff7ae521527f25fcb26af6db65051c407dcb1a77369664d3ac09d5c735"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0032-fdopendir-no-prefetch.patch",
+        "sha256": "28c36753732039e90c473087175624b34214dab3532d1a70e8c9f8730fe73806"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0033-user-credentials.patch",
+        "sha256": "363465eefb49d4b2dac571209c74a025cfcc41a562a2c07cc5601cba57f5b542"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0034-posix-ownership-and-access.patch",
+        "sha256": "ac3bde51c6e687a6d6f4469a0d784749196f7c5a00959a8e36ad7696b0711da1"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0035-preserve-absolute-chown-paths.patch",
+        "sha256": "e25340ed85c6729f9a5894e22794678c12e8895d4401661d8a08dbe7f2dc8f7f"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0036-open-create-mode.patch",
+        "sha256": "24f96ab2b48b56001704df20ff1552c6eba97789040aaa7d01f3401745cf215e"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0037-user-account-database.patch",
+        "sha256": "862da06769114d7fe9e5fb4cfc054eabad2e2469fab169e3dcdd91bf4209412f"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0038-extended-attributes.patch",
+        "sha256": "6bfa5718335534e05e80ac05531757a98936c0ea7ede74924eaa9f997b64040a"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0039-openat-read-rights.patch",
+        "sha256": "b17118f0bed940f26091de265a15f9e72f69b563cd91e661d27954e2197485b9"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0040-sync-declaration.patch",
+        "sha256": "64883b4696522af14c5144e38830a80396a106da96bc452b7b1d0bdf9094d9fd"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0041-agentos-mman-header.patch",
+        "sha256": "8b12aaa0d1fec40fbccc46ec978e17a76575bccc98d7c628e65c0d1305e783b4"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0042-preserve-linkat-source-path.patch",
+        "sha256": "0f4d6ddd3d9bf7a224a830de503d98505d524b3b5ba04dc88efda00601c0a9cd"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0043-linux-eloop-strerror.patch",
+        "sha256": "a50a3f50b664601e5fd799c615fbc63fd422c00b66728f7a2a267f3861caf609"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0044-open-direct-io.patch",
+        "sha256": "3dc535157f1ecbe0c77f198af5a4a4dc7bdf4e3c3fb985f19e7170ee30f3ed09"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0045-unnamed-temporary-files.patch",
+        "sha256": "46a704c67147f6ab3ca6d02e50c7bcbdb3c3e59e9e8291ce8341c0dc21a4f7f4"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc/0046-renameat2.patch",
+        "sha256": "8efd67c5aa324bc251725380ba0f69d30c75501fd732517bfb8255aaacc0fee1"
+      }
+    ],
+    "overrides": [
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/fcntl.c",
+        "sha256": "f51bac5f260e17231db3f3600578f6488dabbb3c6ced966451a371a4b2b2888e"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/fd_renumber.c",
+        "sha256": "4398cfbde570a365d17e0eb493eae3c5f3a8cddaf89d30aae73b596a8f96ade6"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/flock.c",
+        "sha256": "2abdc21c5fc9d52b3ca5ab7fd936c75a626549bfdb12f3129296d0952c3a3395"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/fmtmsg.c",
+        "sha256": "2197f1a983e7ff1b2d18b5322ac7f9002b2af60dc60dad12b55ca995162185ed"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/git_compat.c",
+        "sha256": "c784a0de999d594fe9b97abfd1328ac3e954694dc9a3285778b1054bd0735ec2"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/ifaddrs.c",
+        "sha256": "7b33196fab479601a2b3690505e23e12d4e0dbffc47c855b20795fe77fb52644"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/inet_ntop.c",
+        "sha256": "22233b90001353f83fb890c37c3dd5829580d27053b0cecfd30a202a51a14093"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/mlock.c",
+        "sha256": "f080d4b26276f9107cbcb05ce35c4d325662493a0396063d42196be73327ccd1"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/mman.c",
+        "sha256": "7d759d86e367ddbb040f6d713b1be52de204a195b309fb0a98ffcd4765a301f3"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/open_wmemstream.c",
+        "sha256": "3799ddce0601a8566c1401d5a5d3ca779e6f5c9989c7fa63747666e2aa21b05a"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/openssh_compat.c",
+        "sha256": "a5770e24478bc1e2a84c50a59f113f8837a78b64e9d94778436b63dc89d45f92"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/pthread_attr.c",
+        "sha256": "9d1c877669944b5ce157694f068c29ee106993a87a3d415de6cb348121b4ac8b"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/pthread_key.c",
+        "sha256": "0c15815397f61d9bb0e577c20751611f45b1b24755d035b0619a5c122b533851"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/pthread_mutex.c",
+        "sha256": "d285c4266d7f6006775c4f8e007df975dbf808f9a8ee249c417b5ad04d3691e1"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/renameat2.c",
+        "sha256": "f71b1b22bc15539fdf46b90615f7e7cfcaa0dae92312980fd17d3072116bc756"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/sched.c",
+        "sha256": "ec3b71d7692de06b916c376815abe8a7c9900a0defab4ecd91f970241783bcbf"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/strfmon.c",
+        "sha256": "c188552f6d4e914be07519d6931b04e849fdb0b88c6d5cf2a358d26d28193b0d"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/swprintf.c",
+        "sha256": "4dc3e473d7f0c3f63e0d5c960330637762f9544b631a11f900293332650d2179"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/sync.c",
+        "sha256": "ab5025c4e5e52ca38b318788f8a9163d1a755b62ba3fb9e0d42b24e3d48c6f2e"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/system.c",
+        "sha256": "82b2239c3c4fe808408ecbf3277ae1fd36739c9e9e582615c520c9449ff269f1"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/tempfile.c",
+        "sha256": "e80f791593092740d9af03e75304a3457097e5689150dda9989b3bd66bf575c9"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/umask.c",
+        "sha256": "64354173e28505c2433773873f799bcc4ff4fc6f70365a1e51051d7533dc6585"
+      },
+      {
+        "path": "toolchain/std-patches/wasi-libc-overrides/unix_socket_ancillary.c",
+        "sha256": "e3b0b159c21c27453caffc7e6b9f02b992207fad7f42e3c02634f10c6b206a50"
+      }
+    ],
+    "compiledOverride": "toolchain/std-patches/wasi-libc-overrides/umask.c",
+    "compiledOverrideSha256": "64354173e28505c2433773873f799bcc4ff4fc6f70365a1e51051d7533dc6585",
+    "libcArchiveSha256": "d37e187e1988e07f076f244ed339eeaeda0405efbab4611328ad4b265ee9f992"
+  },
+  "toolchain": {
+    "rustChannel": "nightly-2026-03-01",
+    "rustc": "1.96.0-nightly (38c0de8dc 2026-02-28)",
+    "rustcCommit": "38c0de8dcb14d42290042521be9958d37f3fa390",
+    "cargo": "1.96.0-nightly (f298b8c82 2026-02-24)",
+    "target": "wasm32-wasip1",
+    "wasiSdk": "25.0 arm64 macOS, clang 19.1.5",
+    "wasiSdkArchiveSha256": "e1e529ea226b1db0b430327809deae9246b580fa3cae32d31c82dfe770233587",
+    "jobs": 1
+  },
+  "artifact": {
+    "file": "mkdir.wasm",
+    "sha256": "6b539389e2e33634bface241c668ae9c03b1eb39a0fb0aedc54dc67fe4eb4521",
+    "bytes": 568532,
+    "imports": [
+      {
+        "module": "host_fs",
+        "name": "chmod",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "fd_blocks",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "fd_mode",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "fd_owner",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "fd_size",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "open_tmpfile",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "path_blocks",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "path_mode",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "path_owner",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "path_size",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "set_open_direct",
+        "kind": "function"
+      },
+      {
+        "module": "host_fs",
+        "name": "set_open_mode",
+        "kind": "function"
+      },
+      {
+        "module": "host_net",
+        "name": "net_recv",
+        "kind": "function"
+      },
+      {
+        "module": "host_net",
+        "name": "net_send",
+        "kind": "function"
+      },
+      {
+        "module": "host_process",
+        "name": "proc_umask",
+        "kind": "function"
+      },
+      {
+        "module": "host_user",
+        "name": "isatty",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "args_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "args_sizes_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "environ_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "environ_sizes_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_close",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_fdstat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_filestat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_prestat_dir_name",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_prestat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_read",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_write",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "path_create_directory",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "path_filestat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "path_open",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "path_readlink",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "proc_exit",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "random_get",
+        "kind": "function"
+      }
+    ],
+    "exports": [
+      {
+        "name": "__main_void",
+        "kind": "function"
+      },
+      {
+        "name": "_start",
+        "kind": "function"
+      },
+      {
+        "name": "memory",
+        "kind": "memory"
+      }
+    ]
+  }
+}
