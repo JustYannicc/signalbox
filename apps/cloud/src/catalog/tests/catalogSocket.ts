@@ -1,8 +1,4 @@
 import * as Schema from "effect/Schema";
-import { resolveShard, type ShardNamespaceLike } from "lunorash/runtime";
-
-import type { CatalogHomeNamespace } from "../catalogObjects.ts";
-
 const Frame = Schema.Struct({
   type: Schema.String,
   id: Schema.optional(Schema.String),
@@ -12,25 +8,20 @@ const Frame = Schema.Struct({
 const decodeFrame = Schema.decodeUnknownSync(Frame);
 
 /** Drives the native namespace protocol without exposing a public Catalog socket route. */
-export const openCatalogSocket = async (
-  namespace: CatalogHomeNamespace,
-  homeKey: string,
-  userId: string,
-) => {
-  const response = await resolveShard(namespace as unknown as ShardNamespaceLike, homeKey).fetch(
-    new Request("https://catalog.internal/ws", {
-      headers: {
-        Upgrade: "websocket",
-        "x-lunora-userid": userId,
-        "x-lunora-identity": JSON.stringify({ catalogHomeKey: homeKey }),
-      },
-    }),
-  );
-  if (response.status !== 101 || response.webSocket === null) {
-    throw new Error(`Catalog socket upgrade failed: ${response.status}`);
-  }
-  const socket = response.webSocket;
-  if (socket === undefined) throw new Error("Catalog socket was not returned.");
+export const openCatalogSocket = async (origin: string, homeKey: string, userId: string) => {
+  const url = new URL("/test/socket", origin);
+  url.protocol = "ws:";
+  url.searchParams.set("homeKey", homeKey);
+  url.searchParams.set("userId", userId);
+  const socket = new WebSocket(url);
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener("open", () => resolve(), { once: true });
+    socket.addEventListener(
+      "error",
+      () => reject(new Error("Catalog test socket failed to open.")),
+      { once: true },
+    );
+  });
   const frames: Array<typeof Frame.Type> = [];
   const waiters = new Set<() => void>();
   const notify = () => {
@@ -42,7 +33,6 @@ export const openCatalogSocket = async (
     notify();
   };
   socket.addEventListener("message", onMessage);
-  socket.accept();
 
   return {
     frames,

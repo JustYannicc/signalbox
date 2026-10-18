@@ -79,6 +79,7 @@ describe("Catalog physical home identity and delivery", () => {
       currentEpoch: () => 3,
       install: async () => {},
       client: () => client,
+      readPermit: (args) => client.call("catalogRuntime:deliveryPermit", args),
     };
     const authorize = makeCatalogDeliveryAuthorization(ports);
 
@@ -107,6 +108,14 @@ describe("Catalog physical home identity and delivery", () => {
     ).resolves.toBeUndefined();
     await expect(authorize(request({ admin: true }))).resolves.toBeUndefined();
     await expect(
+      authorize(request({ functionPath: "catalogRuntime:deliveryPermit" })),
+    ).resolves.toBeUndefined();
+    await expect(
+      authorize(
+        request({ transport: "subscription", functionPath: "catalogRuntime:deliveryPermit" }),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
       authorize(request({ functionPath: "personal:project_initialize" })),
     ).resolves.toBeUndefined();
     await expect(
@@ -127,6 +136,7 @@ describe("Catalog physical home identity and delivery", () => {
       currentEpoch: () => 3,
       install: async () => {},
       client: () => client,
+      readPermit: (args) => client.call("catalogRuntime:deliveryPermit", args),
     };
 
     await expect(makeCatalogDeliveryAuthorization(ports)(request())).resolves.toBeUndefined();
@@ -139,6 +149,7 @@ describe("Catalog physical home identity and delivery", () => {
       currentEpoch: () => 0,
       install: async () => {},
       client: () => client,
+      readPermit: (args) => client.call("catalogRuntime:deliveryPermit", args),
     };
     const authorize = makeCatalogDeliveryAuthorization(ports);
     const allowSystem = (functionPath: string, args: Record<string, unknown>) =>
@@ -150,7 +161,7 @@ describe("Catalog physical home identity and delivery", () => {
         functionPath: "personal:view_access",
         args: { input: { defined: true, value: { folderId: null, incarnation: 1 } } },
       }),
-    ).resolves.toEqual({ scope: await nativeCatalogScope(homeKey), epoch: 0 });
+    ).resolves.toBeUndefined();
     await expect(
       allowSystem("catalogRuntime:deliveryPermit", { userId: "person_1" }),
     ).resolves.toBeUndefined();

@@ -117,6 +117,21 @@ export class HomeObject extends CatalogHomeObject {
 export default {
   fetch: (request: Request, env: CatalogSchedulerEnv) => {
     const path = new URL(request.url).pathname;
+    if (path === "/test/socket") {
+      const url = new URL(request.url);
+      const homeKey = url.searchParams.get("homeKey");
+      const userId = url.searchParams.get("userId");
+      if (homeKey === null || userId === null) return new Response(null, { status: 400 });
+      return env.HOMES.get(env.HOMES.idFromName(homeKey)).fetch(
+        new Request("https://test/ws", {
+          headers: {
+            Upgrade: "websocket",
+            "x-lunora-userid": userId,
+            "x-lunora-identity": JSON.stringify({ catalogHomeKey: homeKey }),
+          },
+        }),
+      );
+    }
     if (path === "/test/recovery/pause" || path === "/test/recovery/resume") {
       return env.CATALOG_SCHEDULER.get(env.CATALOG_SCHEDULER.idFromName("default")).fetch(
         new Request(`https://test/test/${path.endsWith("pause") ? "pause" : "resume"}`),

@@ -10,6 +10,11 @@ export interface CatalogRuntimePorts {
   readonly currentEpoch: () => number;
   readonly install: (fence: AuthorizationFence) => Promise<void>;
   readonly client: () => ShardClient;
+  readonly readPermit: (request: {
+    readonly userId: string;
+    readonly functionPath: string;
+    readonly args: Record<string, unknown>;
+  }) => Promise<unknown>;
 }
 
 /** The DO constructor injects this private port object into Lunora's handler env. */
@@ -23,7 +28,8 @@ const isCatalogRuntimePorts = (value: unknown): value is CatalogRuntimePorts =>
   typeof value.home === "function" &&
   typeof value.currentEpoch === "function" &&
   typeof value.install === "function" &&
-  typeof value.client === "function";
+  typeof value.client === "function" &&
+  typeof value.readPermit === "function";
 
 export const runtimePorts = (environment: unknown): CatalogRuntimePorts => {
   const ports = isRecord(environment) ? environment.CATALOG_RUNTIME : undefined;

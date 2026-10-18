@@ -117,7 +117,7 @@ const authorityPermit = (scope: string, epoch: number): DeliveryPermit => ({ sco
 
 /**
  * Native Lunora checks every RPC and subscription before receipt replay. System calls are
- * limited to the home bootstrap, fence recovery, and the one recursive authority lookup.
+ * limited to the home bootstrap and fence recovery. Policy reads stay inside the object.
  */
 export const makeCatalogDeliveryAuthorization =
   (ports: CatalogRuntimePorts): DeliveryAuthorization =>
@@ -137,17 +137,6 @@ export const makeCatalogDeliveryAuthorization =
     const nativeScope = await nativeCatalogScope(homeKey);
     if (request.system) {
       if (request.transport !== "rpc") return undefined;
-      if (request.functionPath === "catalogRuntime:deliveryPermit") {
-        if (
-          !isRecord(request.args) ||
-          typeof request.args.userId !== "string" ||
-          typeof request.args.functionPath !== "string" ||
-          !isRecord(request.args.args)
-        ) {
-          return undefined;
-        }
-        return authorityPermit(nativeScope, ports.currentEpoch());
-      }
       if (
         request.functionPath === "personal:project_initialize" &&
         home.owner._tag === "person" &&
@@ -177,7 +166,7 @@ export const makeCatalogDeliveryAuthorization =
       return undefined;
     }
 
-    const result = await ports.client().call("catalogRuntime:deliveryPermit", {
+    const result = await ports.readPermit({
       userId,
       functionPath: request.functionPath,
       args: request.args,
@@ -196,12 +185,14 @@ export const catalogRuntimePorts = (options: {
   readonly getHomeKey: () => string;
   readonly getEpoch: () => number;
   readonly install: (fence: { readonly scope: string; readonly epoch: number }) => Promise<void>;
+  readonly readPermit: CatalogRuntimePorts["readPermit"];
 }): CatalogRuntimePorts => {
   const localWorkerd = options.env.LOCAL_WORKERD === "1";
   return {
     home: options.getHome,
     currentEpoch: options.getEpoch,
     install: options.install,
+    readPermit: options.readPermit,
     client: () => {
       const homeKey = options.getHomeKey();
       return createShardClient(options.env.HOMES as unknown as ShardNamespaceLike, {

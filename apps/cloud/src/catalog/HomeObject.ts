@@ -134,6 +134,14 @@ export class HomeObject extends makeShard {
       getHomeKey,
       getEpoch: () => objectState.installedEpoch,
       install,
+      // Keep policy reads in-object: loopback RPC stalls responses during subscription refresh.
+      readPermit: async (args) => {
+        const outcome = await this.executeSubscription("catalogRuntime:deliveryPermit", args, {
+          userId: args.userId,
+        });
+        if (outcome === null) throw new Error("Catalog policy reader is unavailable.");
+        return outcome.result;
+      },
     });
     super(state, { ...runtimeEnv, CATALOG_RUNTIME: ports });
 

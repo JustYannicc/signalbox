@@ -38,7 +38,10 @@ const harness = createTestHarness({
   ],
 });
 
-beforeAll(() => harness.listen(), 60_000);
+let socketOrigin: string;
+beforeAll(async () => {
+  socketOrigin = (await harness.listen()).url.href;
+}, 60_000);
 afterAll(() => harness.close());
 
 const decodePersonalRoot = Schema.decodeUnknownSync(CatalogPersonalRoot);
@@ -133,6 +136,19 @@ describe("Catalog HomeObject in workerd", () => {
     const env = await environment();
     const homes = catalogHomes(env.HOMES, env);
     expect(() => homes.personal({ ...homeFor("owner"), legacySource: "owner" })).toThrow();
+    const home = homeFor("private-reader-owner");
+    await homes.personal(home).initialize();
+    const client = createShardClient(env.HOMES as unknown as ShardNamespaceLike, {
+      shardKey: catalogHomeKey(home),
+      system: false,
+    }).as({ userId: "private-reader-owner", claims: { catalogHomeKey: catalogHomeKey(home) } });
+    await expect(
+      client.call("catalogRuntime:deliveryPermit", {
+        userId: "private-reader-owner",
+        functionPath: "personal:view_access",
+        args: { input: { defined: true, value: root } },
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("keeps a failed fence pending across eviction and commits only after native recovery", async () => {
@@ -235,7 +251,7 @@ describe("Catalog HomeObject in workerd", () => {
     });
   });
 
-  it("fences an open guest subscription and denies subscribing again after revocation", async () => {
+  it("denies an open guest subscription after revocation and installs its native fence", async () => {
     const env = await environment();
     await harness.fetch("/test/recovery/resume");
     const home = homeFor("socket-owner");
@@ -253,7 +269,7 @@ describe("Catalog HomeObject in workerd", () => {
       "socket-grant",
     );
     await waitForFenceAck(env, homeKey);
-    const socket = await openCatalogSocket(env.HOMES, homeKey, guest.userId);
+    const socket = await openCatalogSocket(socketOrigin, homeKey, guest.userId);
     try {
       socket.subscribe("access");
       expect((await socket.waitFor("access", "data")).data).toMatchObject({
