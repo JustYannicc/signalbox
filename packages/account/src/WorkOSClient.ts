@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -298,6 +299,11 @@ export const findUserByEmail = Effect.fn("WorkOS.findUserByEmail")(function* (
 export interface WorkOSOrganization {
   readonly id: string;
   readonly name: string;
+  /**
+   * The member's role slugs in the organization, sorted. Absent means none
+   * known, which grants nothing beyond membership.
+   */
+  readonly roleSlugs?: ReadonlyArray<string>;
 }
 
 export class WorkOSOrganizationsError extends Schema.TaggedError<WorkOSOrganizationsError>()(
@@ -314,10 +320,41 @@ export class WorkOSOrganizationsError extends Schema.TaggedError<WorkOSOrganizat
 
 const MembershipsPage = Schema.Struct({
   data: Schema.Array(
-    Schema.Struct({ organization_id: Schema.String, organization_name: Schema.String }),
+    Schema.Struct({
+      organization_id: Schema.String,
+      organization_name: Schema.String,
+      // Checked by `membershipRoleSlugs`, so a bad role never fails the listing.
+      role: Schema.optional(Schema.Unknown),
+      roles: Schema.optional(Schema.Unknown),
+    }),
   ),
   list_metadata: Schema.Struct({ after: Schema.optional(Schema.NullOr(Schema.String)) }),
 });
+
+const RoleBody = Schema.Struct({ slug: Schema.NonEmptyString });
+const decodeRole = Schema.decodeUnknownOption(RoleBody);
+const decodeRoles = Schema.decodeUnknownOption(Schema.Array(RoleBody));
+
+/**
+ * WorkOS sends `role` and, since Multiple Roles, `roles`, which holds every
+ * role (https://workos.com/docs/reference/authkit/organization-membership).
+ * When `roles` is there it is the whole answer: malformed means no roles,
+ * never a fall back to `role`, which may be stale. Bad data can only withhold
+ * a role, never grant one.
+ */
+const membershipRoleSlugs = (membership: {
+  readonly role?: unknown;
+  readonly roles?: unknown;
+}): ReadonlyArray<string> => {
+  const roles =
+    membership.roles === undefined
+      ? Option.map(decodeRole(membership.role), (role) => [role])
+      : decodeRoles(membership.roles);
+  return Option.match(roles, {
+    onNone: () => [],
+    onSome: (all) => [...new Set(all.map((role) => role.slug))].toSorted(),
+  });
+};
 
 /** WorkOS's page size limit. */
 const MEMBERSHIPS_PAGE_SIZE = 100;
@@ -326,7 +363,7 @@ const MAX_MEMBERSHIP_PAGES = 20;
 
 /**
  * `GET /user_management/organization_memberships`: the organizations the user
- * is an active member of. Needs the API key.
+ * is an active member of, with their roles there. Needs the API key.
  */
 export const listOrganizations = Effect.fn("WorkOS.listOrganizations")(function* (
   config: WorkOSConfig & { readonly apiKey: Redacted.Redacted<string> },
@@ -356,7 +393,12 @@ export const listOrganizations = Effect.fn("WorkOS.listOrganizations")(function*
       Effect.mapError(() => new WorkOSOrganizationsError({ status: response.status })),
     );
     for (const membership of body.data) {
-      organizations.push({ id: membership.organization_id, name: membership.organization_name });
+      const roleSlugs = membershipRoleSlugs(membership);
+      organizations.push({
+        id: membership.organization_id,
+        name: membership.organization_name,
+        ...(roleSlugs.length > 0 ? { roleSlugs } : {}),
+      });
     }
     after = body.list_metadata.after ?? undefined;
     if (!after || body.data.length === 0) return organizations;
