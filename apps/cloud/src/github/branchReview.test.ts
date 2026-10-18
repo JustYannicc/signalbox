@@ -311,6 +311,32 @@ describe("reviewing a thread's branch in the cloud", () => {
     ),
   );
 
+  it.effect("keeps autosaved changes visible when GitHub is disconnected", () =>
+    run(({ remote, commitTurn, autosave, status, github, cloud }) =>
+      Effect.gen(function* () {
+        const turn = yield* commitTurn(remote.head, "src/app.ts", "export const hi = 1;\n");
+        yield* autosave(turn, "draft.md", "unsaved idea\n");
+        yield* cloud.userDirectory.forUser(userId).disconnectGitHub();
+        const calls = github.calls.length;
+
+        const result = yield* status();
+        expect(result).toMatchObject({
+          value: {
+            local: {
+              hasWorkingTreeChanges: true,
+              workingTree: { files: [{ path: "draft.md" }] },
+              branchChangesError: "Connect GitHub first: Settings › Source Control.",
+            },
+            remote: null,
+          },
+        });
+        if (result._tag === "None") return expect.unreachable();
+        expect(result.value.local).not.toHaveProperty("branchChanges");
+        expect(github.calls).toHaveLength(calls);
+      }),
+    ),
+  );
+
   it.effect("leaves out what main gained after the branch forked, pushed or not", () =>
     run(({ remote, rpc, cwd, commitTurn, preview, source }) =>
       Effect.gen(function* () {

@@ -98,6 +98,10 @@ const label = (item: RunnerItem) => {
       return `log ${item.runId} ${item.level}`;
     case "machine.drained":
       return `${item.kind} ${item.id}`;
+    case "git.pull.result":
+      return `${item.kind} ${item.result.id}`;
+    case "git.pull.interrupted":
+      return `${item.kind} ${item.id}`;
     default:
       return `${item.kind} ${item.runId}`;
   }
@@ -288,6 +292,90 @@ const startWithDependencies = (input: {
   );
 
 describe("RunnerTurns", () => {
+  it.effect("reports an interrupted pull when its drive cannot be opened yet", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reported: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map(),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+          openDrive: () => Effect.die(new Error("drive is not ready")),
+        });
+        const operation = {
+          id: "pull-before-open",
+          target: "a".repeat(40),
+          expectedThread: "b".repeat(40),
+          expectedWip: null,
+          revision: null,
+          branch: "threads/thread-1",
+        } as const;
+
+        yield* turns.pull({
+          operation,
+          drive: { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" },
+        });
+
+        expect(reported).toEqual([{ kind: "git.pull.interrupted", id: operation.id }]);
+      }),
+    ),
+  );
+
+  it.effect("refuses a pull while the machine still owns an active turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const reported: Array<RunnerItem> = [];
+        const blocked: Array<string | undefined> = [];
+        const pull: RunnerDrive["pull"] = (operation, _remoteToken, blockedReason) => {
+          blocked.push(blockedReason);
+          return Effect.succeed({
+            id: operation.id,
+            target: operation.target,
+            head: operation.expectedThread,
+            wip: operation.expectedWip,
+            outcome: "refused",
+            reason: blockedReason ?? null,
+            hasWorkingTreeChanges: false,
+          });
+        };
+        const drive = { pull } as unknown as RunnerDrive;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+          openDrive: () => Effect.succeed(drive),
+        });
+        const operation = {
+          id: "pull-while-running",
+          target: "a".repeat(40),
+          expectedThread: "b".repeat(40),
+          expectedWip: null,
+          revision: null,
+          branch: "threads/thread-1",
+        } as const;
+
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* turns.pull({
+          operation,
+          drive: { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" },
+        });
+
+        expect(blocked).toEqual([
+          "This thread is busy; wait for its current turn to finish before pulling.",
+        ]);
+        expect(reported.map(label)).toContain(`git.pull.result ${operation.id}`);
+      }),
+    ),
+  );
+
   it.effect(
     "starts on a light machine without preparing dependencies or restoring node_modules edits",
     () =>
@@ -603,6 +691,16 @@ describe("RunnerTurns", () => {
             abandonMerge: Effect.die(new Error("not in this test")),
             saveBranch: () => Effect.die(new Error("not in this test")),
             published: () => Effect.void,
+            pull: (operation) =>
+              Effect.succeed({
+                id: operation.id,
+                target: operation.target,
+                head: operation.expectedThread,
+                wip: operation.expectedWip,
+                outcome: "up_to_date",
+                reason: null,
+                hasWorkingTreeChanges: false,
+              }),
           };
           const turns = yield* makeRunnerTurns({
             threadId,
@@ -716,6 +814,16 @@ describe("RunnerTurns", () => {
             }),
             saveBranch: () => Effect.die(new Error("not in this test")),
             published: () => Effect.void,
+            pull: (operation) =>
+              Effect.succeed({
+                id: operation.id,
+                target: operation.target,
+                head: operation.expectedThread,
+                wip: operation.expectedWip,
+                outcome: "up_to_date",
+                reason: null,
+                hasWorkingTreeChanges: false,
+              }),
           };
           const reported: Array<RunnerItem> = [];
           const turns = yield* makeRunnerTurns({
@@ -897,6 +1005,16 @@ describe("RunnerTurns", () => {
           }),
           saveBranch: () => Effect.die(new Error("not in this test")),
           published: () => Effect.void,
+          pull: (operation) =>
+            Effect.succeed({
+              id: operation.id,
+              target: operation.target,
+              head: operation.expectedThread,
+              wip: operation.expectedWip,
+              outcome: "up_to_date",
+              reason: null,
+              hasWorkingTreeChanges: false,
+            }),
         };
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
@@ -1069,6 +1187,16 @@ describe("RunnerTurns", () => {
           }),
           saveBranch: () => Effect.die(new Error("not in this test")),
           published: () => Effect.void,
+          pull: (operation) =>
+            Effect.succeed({
+              id: operation.id,
+              target: operation.target,
+              head: operation.expectedThread,
+              wip: operation.expectedWip,
+              outcome: "up_to_date",
+              reason: null,
+              hasWorkingTreeChanges: false,
+            }),
         };
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
@@ -1446,6 +1574,7 @@ describe("RunnerTurns", () => {
         abandonMerge: Effect.die(new Error("not in this test")),
         saveBranch: () => Effect.die(new Error("not in this test")),
         published: () => Effect.void,
+        pull: () => Effect.die(new Error("not in this test")),
       }) as RunnerDrive;
     const access = { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" };
     const withMessage = (turn: RunnerTurn): RunnerTurn =>

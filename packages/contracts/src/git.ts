@@ -117,6 +117,9 @@ export type VcsStatusSubscriptionInput = typeof VcsStatusSubscriptionInput.Type;
 
 export const VcsPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  // signalbox: retries keep one pull's durable operation id when its caller loses the response.
+  /** Reused when retrying the same pull after its caller lost the response. */
+  operationId: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(200))),
 });
 export type VcsPullInput = typeof VcsPullInput.Type;
 
