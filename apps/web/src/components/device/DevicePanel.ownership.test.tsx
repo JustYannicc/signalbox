@@ -632,22 +632,26 @@ describe("DevicePanel lease ownership", () => {
       platform: runtimeDevice.platform,
       openedAt: "2026-10-18T00:02:00.000Z",
     };
-    owners.set(externalObserver.sessionId, externalObserver);
-    publish([...owners.values()]);
+    await act(async () => {
+      owners.set(externalObserver.sessionId, externalObserver);
+      publish([...owners.values()]);
+    });
 
     const existingSource = usePreviewMiniPlayerStore.getState().byThreadKey[threadKey]?.source;
     expect(existingSource).toMatchObject({
       kind: "device",
       hostId: LOCAL_DEVICE_HOST_ID,
       deviceId: runtimeDevice.id,
-      sessionId: undefined,
-      leaseId: undefined,
     });
+    expect(existingSource).not.toHaveProperty("sessionId");
+    expect(existingSource).not.toHaveProperty("leaseId");
     expect(container.querySelector('[aria-label="Floating device preview"]')).toBeNull();
     if (!existingSource || existingSource.kind !== "device")
       throw new Error("Expected the hidden same-device mini-player source.");
     const sourceKey = previewMiniPlayerSourceKey(existingSource);
-    usePreviewMiniPlayerStore.getState().resize(threadRef, sourceKey, 480, { x: 36, y: 52 });
+    await act(async () => {
+      usePreviewMiniPlayerStore.getState().resize(threadRef, sourceKey, 480, { x: 36, y: 52 });
+    });
 
     const floatButton = container.querySelector<HTMLButtonElement>('[aria-label="Float device"]');
     if (!floatButton) throw new Error("Expected the active device float control.");
