@@ -20,6 +20,18 @@
       "import": "./src/pnpmVirtualStore.ts",
       "require": "./src/pnpmVirtualStore.ts"
     },
+    "./signalboxAsks": {
+      "types": "./src/signalboxAsks.ts",
+      "import": "./src/signalboxAsks.ts"
+    },
+    "./signalboxNativeAsks": {
+      "types": "./src/signalboxNativeAsks.ts",
+      "import": "./src/signalboxNativeAsks.ts"
+    },
+    "./nativeElicitation": {
+      "types": "./src/nativeElicitation.ts",
+      "import": "./src/nativeElicitation.ts"
+    },
     "./agentProcesses": {
       "types": "./src/agentProcesses/registry.ts",
       "import": "./src/agentProcesses/registry.ts"

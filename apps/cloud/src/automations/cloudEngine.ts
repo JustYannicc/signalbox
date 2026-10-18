@@ -173,20 +173,18 @@ const make = Effect.gen(function* () {
     yield* engine.drain;
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
   });
-  /**
-   * The alarm goes off for the next cron, or sooner to tell an instance an
-   * outcome again or to read a step's run on GitHub Actions.
-   */
+  /** The next scheduled work, including outcome delivery, ask sync and external runs. */
   const nextAlarmAt = Effect.all([
     runs.nextCronAt,
     runs.nextRedeliveryAt,
+    engine.nextAskSyncAt,
     engine.nextExternalPollAt,
     inbox.nextAt,
     githubHooks.nextAt,
   ]).pipe(
     Effect.map((times) => {
-      const due = times.filter((at) => at !== null);
-      return due.length === 0 ? null : Math.min(...due);
+      const pending = times.filter((at): at is number => at !== null);
+      return pending.length ? Math.min(...pending) : null;
     }),
   );
   const reconcileGitHubHooks = githubHooks.reconcile.pipe(
@@ -261,6 +259,8 @@ const make = Effect.gen(function* () {
     )(...call.args);
 
   return CloudAutomations.of({
+    answerAsk: (command, ask) =>
+      engine.answerSignalboxAsk(command, ask).pipe(Effect.andThen(flush)),
     save: (input, newThreadModel) =>
       Effect.gen(function* () {
         if (input.compiled === undefined) {
