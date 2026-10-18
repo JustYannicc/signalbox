@@ -40,6 +40,7 @@ import {
   runtimeRequestContext,
   runtimeResponses,
 } from "./runtimeRequests.ts";
+import { secretSendRequestId } from "./secretSendIdentity.ts";
 import { ThreadStore } from "./ThreadStore.ts";
 import { ThreadSecretRequests } from "./ThreadSecrets.ts";
 import {
@@ -345,9 +346,7 @@ describe("cloud native runtime requests", () => {
 
           const before = (yield* snapshot(engine)).projection;
           const run = before.runs.find((candidate) => candidate.id === turn.runId)!;
-          const sendRequestId = RuntimeRequestId.make(
-            `runtime-request:secret-send:${turn.runId}:1`,
-          );
+          const sendRequestId = secretSendRequestId(turn.runId, 1);
           const events = sendApprovalEvents(before, turn.runId, sendRequestId);
           yield* engine.apply(() => Effect.succeed({ events, result: undefined }));
 
