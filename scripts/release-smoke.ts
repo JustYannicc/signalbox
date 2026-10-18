@@ -21,18 +21,18 @@ const workspaceFiles = [
   "apps/mobile/modules/t3-review-diff/package.json",
   "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",
-  "apps/cloud/package.json",
+  "apps/cloud/package.json", // signalbox: keep cloud dependencies in release smoke coverage.
   "infra/relay/package.json",
   "oxlint-plugin-t3code/package.json",
   "packages/account/package.json",
-  "packages/api/package.json",
+  "packages/api/package.json", // signalbox: keep generated API dependencies in release smoke coverage.
   "packages/automation-compiler/package.json",
   "packages/automations/package.json",
   "packages/runner-protocol/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json",
-  "packages/sync/package.json",
+  "packages/sync/package.json", // signalbox: keep live sync dependencies in release smoke coverage.
   "packages/ssh/package.json",
   "packages/tailscale/package.json",
   "packages/provider-core/package.json",
