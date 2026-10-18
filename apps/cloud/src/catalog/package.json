@@ -1,0 +1,9 @@
+{
+  "name": "@signalbox/catalog-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@lunora/scheduler": "1.0.0-alpha.130",
+    "lunorash": "1.0.0-alpha.398"
+  }
+}

@@ -829,7 +829,7 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
 After each deploy, CI sends one `release` event naming the stage and commit
 (`apps/cloud/infra/release-event.ts`).
 
-User objects report `durableObject.storage` at most hourly during normal
+User and activated Catalog home objects report `durableObject.storage` at most hourly during normal
 activity. Sampling reads Cloudflare's database-size counter, never rows, and
 does not wake idle objects. In Sentry Logs, filter by that action, group by
 `durableObject.id`, `durableObject.kind` and `durableObject.level`, and sort
@@ -846,8 +846,7 @@ threshold. To verify production alerting, temporarily lower it, redeploy,
 trigger normal object activity, verify the exact release and the alert's
 trigger time in Sentry, then
 restore the variable and redeploy. An hour between samples can delay an
-alert after a large write. Home storage is not sampled until Catalog
-provisions home objects; legacy catalog copies stay inactive.
+alert after a large write. Legacy catalog copies stay inactive.
 
 ### Usage analytics
 

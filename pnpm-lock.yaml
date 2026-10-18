@@ -250,6 +250,9 @@ importers:
       '@effect/sql-sqlite-do':
         specifier: 'catalog:'
         version: 4.0.5(effect@4.0.5)
+      '@lunora/scheduler':
+        specifier: 1.0.0-alpha.130
+        version: 1.0.0-alpha.130(patch_hash=9d212c1f828cd82b5f48642e40c5d9454d2aa674f4f0e326da061bab88cea42d)
       '@signalbox/account':
         specifier: workspace:*
         version: link:../../packages/account
