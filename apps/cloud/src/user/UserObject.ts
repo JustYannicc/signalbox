@@ -34,6 +34,8 @@ import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as AgentPullRequests from "../github/AgentPullRequests.ts";
 import * as CloudPullRequests from "../github/CloudPullRequests.ts";
+import * as PullRequestGuideGeneration from "../github/PullRequestGuideGeneration.ts";
+import { PullRequestGuideAlarm } from "../github/PullRequestReviewGuides.ts";
 import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
@@ -242,6 +244,13 @@ const layerAlarm = (storage: DurableObjectStorage) =>
 const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
   const { storage } = ctx;
   const drives = layerDrives(env);
+  const modelCompletion = layerModelCompletion(
+    { pools: env.POOLS },
+    { localWorkerd: env.LOCAL_WORKERD === "1" },
+  );
+  const guideAlarm = Layer.succeed(PullRequestGuideAlarm, {
+    armBy: (at) => Effect.promise(() => armBy(storage, at)),
+  });
   const searchBackfill = SearchBackfillLive.layer.pipe(
     Layer.provide(
       Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
@@ -256,7 +265,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
-          layerModelCompletion({ pools: env.POOLS }, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+          modelCompletion,
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),
@@ -267,7 +276,11 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           GitHubBranches.layer,
           AgentPullRequests.layer,
           GitHubActions.layer,
-          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
+          CloudPullRequests.layer.pipe(
+            Layer.provideMerge(PullRequestRepository.layer),
+            Layer.provide(PullRequestGuideGeneration.layer.pipe(Layer.provide(modelCompletion))),
+            Layer.provide(guideAlarm),
+          ),
           UserPreviewSetup.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
@@ -818,6 +831,9 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           ),
           CloudAutomations.use((automations) => automations.wake).pipe(
             Effect.catchCause((cause) => Effect.logError("automation crons failed", { cause })),
+          ),
+          CloudPullRequests.CloudPullRequests.use((requests) => requests.wakeReviewGuides).pipe(
+            Effect.catchCause((cause) => Effect.logError("review guide jobs failed", { cause })),
           ),
           LoginService.LoginService.use((logins) => logins.sweep).pipe(
             Effect.catchCause((cause) => Effect.logError("re-login sweep failed", { cause })),

@@ -679,7 +679,7 @@ function PullRequestCodeTab({
     });
 
   const setFileViewed = (fileKey: string, path: string, viewed: boolean) => {
-    setViewed(path, viewed);
+    setViewed(path, viewed, displayedRevision);
     setToggledFiles((current) =>
       toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
     );

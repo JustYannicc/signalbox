@@ -1,7 +1,7 @@
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { PullRequestDetail } from "@t3tools/contracts";
+import type { PullRequestDetail, PullRequestDiffRevision } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -9,7 +9,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 
-export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullRequestDetail | null) {
+export function usePullRequestFilesViewed(
+  params: PullRequestParams,
+  pr: PullRequestDetail | null,
+  displayedRevision?: PullRequestDiffRevision,
+) {
   const target = pullRequestTarget(params);
   const scopeKey = pullRequestReviewKey(params);
   const supported = Boolean(pr?.capabilities.viewedFiles);
@@ -92,7 +96,11 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     setError(null);
     const response = await write({
       ...target,
-      input: { ...target.input, files: [{ path, viewed }] },
+      input: {
+        ...target.input,
+        ...(displayedRevision === undefined ? {} : { displayedRevision }),
+        files: [{ path, viewed }],
+      },
     });
     if (scope.current !== scopeKey) return;
     if (response._tag === "Failure" && versions.current.get(path) === version) {

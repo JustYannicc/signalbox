@@ -1,5 +1,6 @@
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewGuideStop } from "@t3tools/contracts";
-import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
+import type { ReviewGuideGenerationResult } from "./textGeneration.ts";
 
 const MAX_EXCERPT_LINES = 25;
 
@@ -20,6 +21,32 @@ export interface ReviewGuideChange {
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+const sidePath = (token: string, side: "a" | "b"): string | null => {
+  const path = unquoteGitPatchPath(token);
+  if (path === "/dev/null") return null;
+  return path.startsWith(`${side}/`) ? path.slice(2) : null;
+};
+
+function patchPaths(patch: string): Array<string> {
+  const paths: Array<string> = [];
+  let oldPath: string | null = null;
+  let inHunks = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      oldPath = null;
+      inHunks = false;
+    } else if (!inHunks && line.startsWith("--- ")) {
+      oldPath = sidePath(line.slice(4), "a");
+    } else if (!inHunks && line.startsWith("+++ ")) {
+      const path = sidePath(line.slice(4), "b") ?? oldPath;
+      if (path !== null) paths.push(path);
+    } else if (HUNK_HEADER.test(line)) {
+      inHunks = true;
+    }
+  }
+  return paths;
+}
+
 const hunkRange = (start: string, count: string | undefined): LineRange | null => {
   const lines = count === undefined ? 1 : Number(count);
   return lines === 0 ? null : { start: Number(start), end: Number(start) + lines - 1 };
@@ -37,9 +64,9 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
       current = null;
       inHunks = false;
     } else if (!inHunks && line.startsWith("--- ")) {
-      oldPath = line.startsWith("--- a/") ? line.slice(6) : null;
+      oldPath = sidePath(line.slice(4), "a");
     } else if (!inHunks && line.startsWith("+++ ")) {
-      const path = line.startsWith("+++ b/") ? line.slice(6) : oldPath;
+      const path = sidePath(line.slice(4), "b") ?? oldPath;
       if (path === null) continue;
       current = hunks.get(path) ?? { new: [], old: [] };
       hunks.set(path, current);
@@ -54,6 +81,11 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
     }
   }
   return { files: nameOnly.split("\0").filter((path) => path !== ""), hunks };
+}
+
+/** Parse GitHub's assembled unified patch, whose file list is carried by its `+++` headers. */
+export function parseReviewGuidePatch(patch: string): ReviewGuideChange {
+  return parseReviewGuideChange(patchPaths(patch).join("\0"), patch);
 }
 
 function clampExcerpt(

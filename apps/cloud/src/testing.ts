@@ -39,6 +39,8 @@ import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as NoteReader from "./notes/NoteReader.ts";
 import * as ModelCompletion from "./models/ModelCompletion.ts";
+import * as PullRequestGuideGeneration from "./github/PullRequestGuideGeneration.ts";
+import { PullRequestGuideAlarm } from "./github/PullRequestReviewGuides.ts";
 import * as UserNotes from "./notes/UserNotes.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
@@ -263,7 +265,11 @@ const makeUserRuntime = (
           GitHubBranches.layer,
           AgentPullRequests.layer,
           GitHubActions.layer,
-          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
+          CloudPullRequests.layer.pipe(
+            Layer.provideMerge(PullRequestRepository.layer),
+            Layer.provide(PullRequestGuideGeneration.layer.pipe(Layer.provide(modelCompletion))),
+            Layer.provide(Layer.succeed(PullRequestGuideAlarm, { armBy: () => Effect.void })),
+          ),
           UserPreviewSetup.layer,
           CloudAssets.layer,
           LoginService.layer(logins),

@@ -42,6 +42,9 @@ import { makePullRequestCollaboration } from "./PullRequestCollaboration.ts";
 import { makePullRequestDiscussion } from "./PullRequestDiscussion.ts";
 import { folderCanWritePullRequests } from "./pullRequestCollaborationSupport.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
+import { makePullRequestViewedFiles } from "./PullRequestViewedFiles.ts";
+import { makePullRequestReviewGuides } from "./PullRequestReviewGuides.ts";
+import { makePullRequestFileRevisions } from "./GitHubFileRevisions.ts";
 
 export { CloudPullRequests };
 
@@ -61,6 +64,7 @@ const capabilities: PullRequestCapabilities = {
   edit: { changeRequest: false, comment: true },
   reviewers: { request: false, listCandidates: false },
   stacks: true,
+  viewedFiles: "environment",
 };
 const provider = SourceControlProviderKind.make("github");
 const scopeOf = (target: ResolvedPullRequestRepository) =>
@@ -152,12 +156,20 @@ const make = Effect.gen(function* () {
   );
   const summary = (input: PullRequestRef) =>
     summaryRead(input).pipe(Effect.flatMap((value) => requireData("summary", value)));
-  const detail = (input: PullRequestRef) =>
+  const detail = (input: PullRequestRef, fresh = false) =>
     Effect.gen(function* () {
       const target = yield* repositories.resolve(input);
-      const core = yield* readCore(input, target).pipe(
-        Effect.flatMap((value) => requireData("detail", value)),
-      );
+      const source = fresh
+        ? Review.pullRequestDetail(github.api, target.token, target.repository, input.number).pipe(
+            Effect.mapError(failed("detail")),
+            Effect.flatMap((value) =>
+              Clock.currentTimeMillis.pipe(
+                Effect.map((observedAt) => (value === null ? null : { ...value, observedAt })),
+              ),
+            ),
+          )
+        : readCore(input, target);
+      const core = yield* source.pipe(Effect.flatMap((value) => requireData("detail", value)));
       const writable = yield* folderCanWritePullRequests(drives, input.projectId);
       return {
         ...core,
@@ -416,10 +428,39 @@ const make = Effect.gen(function* () {
 
   const collaboration = yield* makePullRequestCollaboration(invalidate);
   const discussion = yield* makePullRequestDiscussion(invalidate);
+  const freshDetail = (input: PullRequestRef) => detail(input, true);
+  const freshDiff = (input: PullRequestDiffInput) =>
+    repositories.resolve(input).pipe(
+      Effect.flatMap((target) =>
+        Review.pullRequestDiff(
+          github.api,
+          target.token,
+          target.repository,
+          input.number,
+          input,
+        ).pipe(
+          Effect.mapError(failed("diff")),
+          Effect.flatMap((value) => requireData("diff", value)),
+        ),
+      ),
+    );
+  const viewed = yield* makePullRequestViewedFiles({
+    invalidate,
+    diff: freshDiff,
+    fileRevisions: makePullRequestFileRevisions(github.api),
+  });
+  const guides = yield* makePullRequestReviewGuides({
+    detail: freshDetail,
+    activity,
+    diff: freshDiff,
+    invalidate,
+  });
 
   return {
     ...collaboration,
     ...discussion,
+    ...viewed,
+    ...guides,
     ...listings,
     summary,
     detail,
