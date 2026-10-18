@@ -1,5 +1,5 @@
 import type { Schema, OutputUnit } from "@cfworker/json-schema";
-import type { AjvCompatibleError, AjvMetaValidators } from "./ajv-precompile-interpreter.ts";
+import type { AjvCompatibleError, AjvMetaValidators } from "./ajv-precompile-runtime.ts";
 import { canonicalSchema, UnsupportedAjvSchemaError } from "./ajv-precompile-runtime.ts";
 
 const schemaValues = new Set([

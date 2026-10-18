@@ -8,25 +8,17 @@ import { Validator, format } from "@cfworker/json-schema";
 import type { SchemaDraft } from "@cfworker/json-schema";
 import { canonicalSchema, UnsupportedAjvSchemaError } from "./ajv-precompile-runtime.ts";
 
-export interface AjvCompatibleError {
-  keyword: string;
-  instancePath: string;
-  schemaPath: string;
-  params: Record<string, unknown>;
-  // The interpreter keeps cfworker's wording; callers must not depend on AJV's exact message text.
-  message: string;
-}
-export interface AjvCompatibleValidator {
-  (data: unknown): boolean;
-  errors: AjvCompatibleError[] | null;
-  schema: unknown;
-}
-export interface AjvMetaValidator {
-  (schema: unknown): boolean;
-  errors?: readonly AjvCompatibleError[] | null;
-  schema?: unknown;
-}
-export type AjvMetaValidators = Record<"draft7" | "2019" | "2020", AjvMetaValidator>;
+import type {
+  AjvCompatibleError,
+  AjvCompatibleValidator,
+  AjvMetaValidators,
+} from "./ajv-precompile-runtime.ts";
+export type {
+  AjvCompatibleError,
+  AjvCompatibleValidator,
+  AjvMetaValidator,
+  AjvMetaValidators,
+} from "./ajv-precompile-runtime.ts";
 type Format =
   | RegExp
   | ((value: string) => boolean)
