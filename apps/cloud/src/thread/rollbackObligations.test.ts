@@ -13,10 +13,11 @@ import {
   type OrchestrationV2TurnItem,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { SignalboxAsk, SignalboxAskSource } from "@t3tools/contracts/signalboxAsks";
+import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import { applyAskCommand, compactAskEvents } from "@t3tools/shared/signalboxAsks";
 import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import { describe, expect, it } from "@effect/vitest";
+import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -28,7 +29,12 @@ import { workflowFixture } from "./workflowTestKit.ts";
 import { threadEvent } from "./threadEvents.ts";
 import { freshDatabase, launch, owner, snapshot, withObject } from "./runnerTesting.ts";
 
-const makeAsk = (threadId: ThreadId, askId: string, source: SignalboxAskSource, now: string) => {
+const makeAsk = (
+  threadId: ThreadId,
+  askId: string,
+  source: SignalboxAsk["source"],
+  now: string,
+) => {
   const raised = applyAskCommand(
     [],
     {
@@ -169,7 +175,7 @@ describe("rollback thread obligations", () => {
                   ? ({
                       ...ask,
                       status: "archived",
-                      rounds: ask.rounds.map((round) => ({ ...round, closedAt: nowIso })),
+                      rounds: Array.map(ask.rounds, (round) => ({ ...round, closedAt: nowIso })),
                     } satisfies SignalboxAsk)
                   : ask,
               ),
