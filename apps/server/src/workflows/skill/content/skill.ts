@@ -8,7 +8,7 @@ description: Use when work should happen without anyone supervising it in Signal
 
 An automation is one TypeScript file. Signalbox draws its diagram from the code and runs it durably: every step's result is journaled, the code replays from the top after each step, and a run survives restarts and can wait days for a person. You write only the code.
 
-Automations run only in Signalbox Cloud. For code steps, use \`w.run(label, { on: "github-actions" }, fn, ...args)\` after the repository setup in \`references/github-actions.md\`. Direct host \`w.run\` and external-service \`w.call\` are unavailable. Use \`w.http\` for HTTP APIs or \`w.agent\` for work that needs connected tools. \`w.call\` supports Signalbox tools. Adapt older examples to these available steps.
+Automations run only in Signalbox Cloud. For code steps, use \`w.run(label, { on: "github-actions" }, fn, ...args)\` after the repository setup in \`references/github-actions.md\`. Direct host \`w.run\`, external-service \`w.call\` and connected-service \`watch\` / \`source.item.*\` triggers are unavailable. Use \`w.http\` for HTTP APIs or \`w.agent\` for work that needs connected tools. \`w.call\` supports Signalbox tools.
 
 **The code is the supervisor.** When the user wants a process — build these tickets in order, triage every email, react whenever a turn fails — write an automation that does it instead of doing the supervising yourself turn by turn. Agents do the judgment-heavy work inside steps; the automation decides order, retries, merges and when to alert someone, deterministically.
 
@@ -62,7 +62,7 @@ The validator enforces each one; breaking it fails with the quoted message.
 |---|---|---|
 | Every step is \`await w.<verb>("Label", …)\`; the label is a string or template literal | The label is the box a non-developer reads | "The first argument must be a label" |
 | Workflow code has no \`fetch\`, timers, \`process\` or packages; use \`w.http\`, \`w.sleep\`, \`w.run\` | Workflow code replays; side effects must be journaled steps | "fetch isn't available" |
-| Packages and the machine only inside top-level functions passed to \`w.run\` (and helpers only they call) | \`w.run\` executes in Node with the file's imports installed | "… is an imported package" |
+| Packages and the machine only inside top-level functions passed to \`w.run\` (and helpers only they call) | \`w.run\` executes in Node on GitHub Actions with the file's imports installed | "… is an imported package" |
 | No steps inside \`.map\`/\`.forEach\`/other callbacks; use \`w.each\`, \`w.parallel\`, \`w.repeat\` or a \`for\` loop | Steps need a stable place in the diagram | "Steps can't run inside a callback" |
 | Inside \`each\`/\`parallel\`/\`repeat\`, use the receiver the callback gets | Each iteration is tracked on its own | "Pass w, the receiver this callback gets" |
 | \`concurrency\` and \`max\` are literal numbers; \`meta\` is a plain literal | The diagram and scheduler read them without running code | "must be a literal" |

@@ -22,7 +22,7 @@ Cancel a run with \`automation_cancel_run\`: it stops its agent threads and GitH
 ## Limits worth knowing
 
 - Steps retry transient failures (\`http\`/\`call\` 3 attempts, \`judge\`/\`extract\` 2) before failing.
-- Agent steps time out after 2 hours, model steps after 10 minutes, GitHub Actions steps after 6 hours; set \`timeout\` for longer.
+- Agent steps time out after 2 hours and model steps after 10 minutes; set \`timeout\` for longer. GitHub Actions steps time out after 6 hours, GitHub's job limit; \`timeout\` can set a shorter limit.
 - \`meta.timeout\` fails a run still going after that long; by default runs have no limit.
 - Finished runs older than 30 days are deleted, always keeping the latest 50 per automation.
 `;

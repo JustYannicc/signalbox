@@ -25,7 +25,7 @@ The workflow gets \`(w, input, trigger)\`. \`trigger.type\` is \`"manual"\`, \`"
 
 ## Webhooks
 
-\`{ webhook: true }\` gives the automation a URL (\`webhook.url\` in \`automation_read\`, public in the cloud, or when Signalbox Connect is linked); every request to it starts a run with the body as \`input\` (parsed JSON or form, else text, null when empty). The third argument has \`trigger.method\`, \`trigger.headers\` and \`trigger.query\` (credential-looking ones redacted) and \`trigger.rawBody\`. Requests with the same \`X-GitHub-Delivery\` in the cloud, or \`Idempotency-Key\` or \`X-Request-Id\` within 24 hours start one run. Rotating the URL on the automation's page stops the old one.
+\`{ webhook: true }\` gives the automation a URL (\`webhook.url\` in \`automation_read\`, public in Signalbox Cloud); every request to it starts a run with the body as \`input\` (parsed JSON or form, else text, null when empty). The third argument has \`trigger.method\`, \`trigger.headers\` and \`trigger.query\` (credential-looking ones redacted) and \`trigger.rawBody\`. Requests with the same \`X-GitHub-Delivery\` in the cloud, or \`Idempotency-Key\` or \`X-Request-Id\` within 24 hours start one run. Rotating the URL on the automation's page stops the old one.
 
 For a sender that signs requests, let the server check them instead of doing it in code:
 
@@ -51,24 +51,7 @@ PR events include current state, mergeability, checks, review decision, unresolv
 ${EVENTS_SECTION}
 ## Changes in a connected source
 
-Anything an Executor operation lists can be watched: a GitHub Actions run list, Stripe invoices, a Linear project's issues, a sheet's rows. Add \`watch\` to a \`source.item.*\` trigger:
-
-\`\`\`ts
-triggers: [{
-  on: "source.item.added",          // or source.item.changed, source.item.removed, source.item.*
-  watch: {
-    operation: "github.actions.listWorkflowRunsForRepo", // as w.call names it
-    args: { owner: "acme", repo: "app", branch: "main" },
-    key: "id",                      // what identifies an item; a dotted path reaches in
-    items: "workflow_runs",         // where the list is; optional when the answer is a list or has one list
-    fields: ["status", "conclusion"], // optional: only these count for source.item.changed
-    every: { minutes: 2 },          // optional, default 5 minutes, at least 1
-    connection: "work",             // optional, when the service is connected more than once
-  },
-}]
-\`\`\`
-
-The run's input is the event: \`item\` as the operation returns it, its \`key\`, and for \`source.item.changed\` the item \`before\` and the top-level fields that \`changed\`. Signalbox reads each source once for everyone watching it (automations and waiting runs alike), so don't keep your own list of seen ids for it. The first read only records what's there; a restart picks up where it left off. A quiet source is read less often; one that fails backs off, and after 5 failures in a row it stops and the owner is told; saving the automation again retries. \`source.item.removed\` means the operation stopped listing it, which for a paged list can also mean it scrolled off. \`automation_read\` shows each watched source's \`watching\` status and when it was last checked.
+Connected-service \`watch\` and \`source.item.*\` triggers are unavailable in cloud automations. Use a service webhook to start a run, or a cron trigger with \`w.http\` or \`w.agent\` and keep a cursor with \`w.recall\` / \`w.remember\`. GitHub repository events use the integration above.
 
 ## From another automation
 
