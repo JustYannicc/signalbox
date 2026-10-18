@@ -4,6 +4,8 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import { applyAskCommand } from "@t3tools/shared/signalboxAsks";
+import * as DateTime from "effect/DateTime";
 
 import { parseCheckpointRange } from "./driveEvents.ts";
 import type { RollbackOperation } from "./rollbackState.ts";
@@ -11,6 +13,7 @@ import {
   nodeEvent,
   providerThreadEvent,
   runEvent,
+  threadEvent,
   type DecisionContext,
   unstampedEventId,
 } from "./threadEvents.ts";
@@ -24,12 +27,59 @@ export function rollbackEvents(
   const removed = new Set(
     projection.runs.filter((run) => run.ordinal > operation.targetOrdinal).map((run) => run.id),
   );
+  const originalAsks = projection.thread.asks ?? [];
+  let asks = originalAsks;
+  const runtimeRequests = new Map(
+    projection.runtimeRequests.map((request) => [request.id, request]),
+  );
+  const nodes = new Map(projection.nodes.map((node) => [node.id, node]));
   for (const run of projection.runs) {
     if (removed.has(run.id) && run.status !== "rolled_back") {
       events.push(
         runEvent(ctx, "run.updated", { ...run, status: "rolled_back", completedAt: ctx.now }),
       );
     }
+  }
+  // Expiring a native callback leaves its durable ask answerable unless rollback withdraws it.
+  for (const ask of originalAsks) {
+    if ((ask.status !== "pending" && ask.status !== "archived") || ask.source.kind !== "native")
+      continue;
+    const request = runtimeRequests.get(ask.source.requestId);
+    if (!request) continue;
+    const item = projection.turnItems.find(
+      (candidate) => candidate.type === "user_input_request" && candidate.requestId === request.id,
+    );
+    const runId = item?.runId ?? nodes.get(request.nodeId)?.runId;
+    if (runId == null || !removed.has(runId)) continue;
+    if (ask.status === "archived") {
+      // Reopening the thread must not revive a discarded turn's suspended question.
+      asks = asks.map((candidate) =>
+        candidate.id === ask.id
+          ? { ...candidate, status: "withdrawn", updatedAt: DateTime.formatIso(ctx.now) }
+          : candidate,
+      );
+      continue;
+    }
+    const withdrawn = applyAskCommand(
+      asks,
+      {
+        type: "thread.ask.withdraw",
+        commandId: operation.commandId,
+        threadId: operation.threadId,
+        askId: ask.id,
+      },
+      DateTime.formatIso(ctx.now),
+    );
+    if (withdrawn.ok) asks = withdrawn.asks;
+  }
+  if (asks !== originalAsks) {
+    events.push(
+      threadEvent(ctx, "thread.metadata-updated", {
+        ...projection.thread,
+        asks,
+        updatedAt: ctx.now,
+      }),
+    );
   }
   const roots = new Set(
     projection.runs.filter((run) => removed.has(run.id)).map((run) => run.rootNodeId),

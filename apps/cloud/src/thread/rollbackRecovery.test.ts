@@ -8,9 +8,10 @@ import { firstCommit, finish, fixture, undo } from "./rollbackTesting.ts";
 import { connect, freshDatabase, launch, owner, send, withObject } from "./runnerTesting.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import { hasImmediateWork } from "./threadAlarm.ts";
+import * as ThreadTerminals from "./terminal/ThreadTerminals.ts";
 
 describe("cloud rollback recovery", () => {
-  it.effect("arms cold-object recovery before asking a fenced runner for work", () => {
+  it.effect("arms cold-object recovery before terminal reconciliation or runner work", () => {
     const f = fixture();
     const filename = freshDatabase();
     return Effect.gen(function* () {
@@ -42,6 +43,8 @@ describe("cloud rollback recovery", () => {
           Effect.gen(function* () {
             const store = Context.get(context, ThreadStore.ThreadStore);
             expect((yield* store.pendingRollback)?.stage).toBe("prepared");
+            const terminals = Context.get(context, ThreadTerminals.ThreadTerminals);
+            expect((yield* Effect.exit(terminals.reconcile))._tag).toBe("Failure");
             // This is the same work check the Durable Object runs inside blockConcurrencyWhile.
             expect(yield* hasImmediateWork().pipe(Effect.provide(context))).toBe(true);
             f.state.stopping = false;

@@ -6,6 +6,7 @@ import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
 import * as TerminalOutbox from "./terminal/TerminalOutbox.ts";
+import * as ThreadTerminals from "./terminal/ThreadTerminals.ts";
 
 /** Work that must resume immediately when an object wakes or rehydrates. */
 export const hasImmediateWork = (work?: ThreadRunner.RunnerWork) =>
@@ -13,6 +14,7 @@ export const hasImmediateWork = (work?: ThreadRunner.RunnerWork) =>
     const engine = yield* ThreadEngine.ThreadEngine;
     // Undo recovery must run before runner callbacks, which remain fenced until it completes.
     if (yield* engine.hasTurnWork) return true;
+    yield* (yield* ThreadTerminals.ThreadTerminals).reconcile;
     const runner = work ?? (yield* (yield* ThreadRunner.ThreadRunner).work);
     if (
       runner.needsUpkeep ||

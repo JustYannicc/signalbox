@@ -93,6 +93,9 @@ export function threadShellFromProjection(
   const activeRun = runs.find((run) => isLiveRun(run) && run.status !== "waiting") ?? null;
   const activityRun = runs.find(isLiveRun) ?? null;
   const liveRunIds = new Set(runs.filter(isLiveRun).map((run) => run.id));
+  const rolledBackRunIds = new Set(
+    runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
   const secretRequests = projection.turnItems.flatMap((item) =>
     item.type === "secret_request" &&
     item.secretStatus === "pending" &&
@@ -173,7 +176,10 @@ export function threadShellFromProjection(
           ...monitors.map((monitor) => ({ ...monitor, kind: "monitor" as const })),
           ...projection.subagents
             .filter(
-              (task) => task.workflow !== undefined && isOrchestrationV2WorkActive(task.status),
+              (task) =>
+                task.workflow !== undefined &&
+                isOrchestrationV2WorkActive(task.status) &&
+                (task.runId === null || !rolledBackRunIds.has(task.runId)),
             )
             .map((task) => ({
               taskId: task.id,

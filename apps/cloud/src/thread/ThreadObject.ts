@@ -271,6 +271,8 @@ const makeRuntime = (
         ),
 
         Layer.provideMerge(CloudflareSearchIndex.layerFromEnv(env)),
+      )
+      .pipe(
         Layer.provideMerge(
           TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
             Layer.provide(
@@ -834,9 +836,6 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
-    await this.runtime.runPromise(
-      ThreadTerminals.ThreadTerminals.use((terminals) => terminals.reconcile),
-    );
     const now = await this.now();
     const runnerWakeAt = await this.tendRunnerLiveness(now);
     const hasWork = await this.runtime.runPromise(hasImmediateWork(work));

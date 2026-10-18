@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import { canWrite } from "../drive/driveAccess.ts";
 import { parseCheckpointRange } from "./driveEvents.ts";
-import { isLiveRun } from "./runLifecycle.ts";
+import { isLiveRun } from "./runState.ts";
 import type { RollbackOperation } from "./rollbackState.ts";
 import { ThreadCommandRejectedError } from "./ThreadAccess.ts";
 import type { ThreadOwner } from "./ThreadStore.ts";

@@ -114,7 +114,10 @@ describe("ThreadRunner", () => {
               "claude-session-1",
             );
             expect(adopted.projection.checkpoints).toEqual(before.projection.checkpoints);
-            expect(adopted.projection.checkpoints).toHaveLength(1);
+            expect(adopted.projection.checkpoints).toHaveLength(2);
+            expect(
+              adopted.projection.checkpoints.map((checkpoint) => checkpoint.ordinalWithinScope),
+            ).toEqual([0, 1]);
             expect(adopted.projection.messages).toEqual(before.projection.messages);
             yield* send(engine, 2, "Continue after publication");
             yield* connect(runner);
