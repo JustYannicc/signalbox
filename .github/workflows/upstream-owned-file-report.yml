@@ -91,7 +91,6 @@ jobs:
           name: upstream-owned-file-report-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
           path: ${{ steps.generate.outputs.report-path }}
           if-no-files-found: error
-          retention-days: 14
 
       - name: Publish report comment
         uses: actions/github-script@v8
