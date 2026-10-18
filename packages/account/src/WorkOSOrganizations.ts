@@ -28,7 +28,11 @@ export class WorkOSPersonalOrganizationError extends Schema.TaggedError<WorkOSPe
   }
 }
 
-const OrganizationBody = Schema.Struct({ id: Schema.String, external_id: Schema.String });
+// Callers hide the personal organization by this ID, so a blank or padded one must not pass.
+const OrganizationBody = Schema.Struct({
+  id: Schema.NonEmptyString.check(Schema.isTrimmed()),
+  external_id: Schema.String,
+});
 const MembershipBody = Schema.Struct({
   id: Schema.String,
   organization_id: Schema.String,

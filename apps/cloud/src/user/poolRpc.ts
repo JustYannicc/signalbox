@@ -109,6 +109,9 @@ const settingsKey = (config: ReturnType<typeof Environment.serverConfig>) =>
     config.settings.defaultModelSelection,
     config.settings.favorites,
     config.settings.providerModelPreferences,
+    config.settings.reviewGuidesEnabled,
+    config.settings.reviewGuideModelSelection,
+    config.settings.reviewGuideInstructions,
   ]);
 
 /** Up to 30 seconds between reads of pools that can't be read right now. */
@@ -183,6 +186,10 @@ export const makePoolHandlers = (input: {
           providerModelPreferences: filtered.providerModelPreferences,
           defaultModelSelection:
             saved.defaultModelSelection ?? config.settings.defaultModelSelection,
+          reviewGuidesEnabled: saved.reviewGuidesEnabled,
+          reviewGuideModelSelection:
+            saved.reviewGuideModelSelection ?? config.settings.reviewGuideModelSelection,
+          reviewGuideInstructions: saved.reviewGuideInstructions,
         },
       };
     };

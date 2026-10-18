@@ -3,9 +3,10 @@ import type { Node } from "oxc-parser";
 
 import { WORKER_MODULE_START, type WorkflowCompileResult } from "@signalbox/automations/compiled";
 import { WorkflowAnalyzer, type Edit, type FunctionNode } from "./analyze.ts";
-import { unwrap } from "./literals.ts";
+import { objectProperties, unwrap } from "./literals.ts";
 import { readMeta } from "./meta.ts";
 import { parseSync, transformSync } from "./oxc.ts";
+import { schemaNamespaceImports } from "./schemaContract.ts";
 import { WorkflowSource } from "./source.ts";
 import { SDK_MODULE } from "./verbs.ts";
 import { declaredNames, isFunctionNode, someNode } from "./walk.ts";
@@ -125,8 +126,10 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
   source.setComments(parsed.comments);
 
   const program = parsed.program;
+  const schemaImports = schemaNamespaceImports(program.body);
   const imported = new Set<string>();
   const removals: Edit[] = [];
+  const contractEdits: Edit[] = [];
   const sdkImports: Edit[] = [];
   /** Turns `meta` and the default export into plain declarations, for the worker module. */
   const unexports: Edit[] = [];
@@ -161,7 +164,21 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
           declarator.init
         ) {
           sawMeta = true;
-          meta = readMeta(source, declarator.init);
+          meta = readMeta(source, declarator.init, schemaImports);
+          if (meta) {
+            const properties = objectProperties(declarator.init);
+            for (const field of ["input", "output"] as const) {
+              const contract = meta[field];
+              const node = properties?.get(field);
+              if (contract !== undefined && node) {
+                contractEdits.push({
+                  start: node.start,
+                  end: node.end,
+                  text: JSON.stringify(contract),
+                });
+              }
+            }
+          }
           unexports.push({ start: statement.start, end: declaration.start, text: "" });
         } else {
           source.error(statement, "Only meta and the default workflow can be exported.");
@@ -235,7 +252,7 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
   }
   if (source.diagnostics.length > 0 || !meta || !workflowExport) return failure(source.diagnostics);
 
-  const scriptEdits = [...analyzer.edits.values(), ...removals];
+  const scriptEdits = [...analyzer.edits.values(), ...removals, ...contractEdits];
   const transformed = transformSync(FILENAME, applyEdits(text, scriptEdits), {
     lang: "ts",
     sourceType: "module",
@@ -259,6 +276,7 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
     const exportsList = [...analyzer.runFunctions].join(", ");
     const withoutWorkflow = applyEdits(text, [
       ...sdkImports,
+      ...contractEdits,
       { start: workflowExport.start, end: workflowExport.end, text: "" },
     ]);
     const runTransformed = transformSync(

@@ -1,6 +1,7 @@
 import type {
   OrchestrationV2Checkpoint,
   ProjectEntry,
+  ProjectSearchContentsInput,
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import { GitHub } from "../github/GitHub.ts";
 import { GitHubConnection } from "../github/GitHubConnection.ts";
 import { isBinary } from "./drivePatch.ts";
 import type { Oid } from "./git/gitObjects.ts";
+import { scanDriveContents, type DriveContentScanState } from "./DriveContentScan.ts";
 
 /**
  * A drive as clients browse it, with no machine running: the files on its
@@ -75,6 +77,17 @@ const lineCounts = (patch: string) => {
 export class DriveFiles extends Context.Service<
   DriveFiles,
   {
+    readonly contentSearchSnapshot: (
+      driveId: string,
+      at?: ReadAt,
+    ) => Effect.Effect<Oid | null, Failure>;
+    readonly searchContents: (
+      driveId: string,
+      input: Omit<ProjectSearchContentsInput, "cwd">,
+      commit: Oid | null,
+      state?: DriveContentScanState,
+      excludePaths?: ReadonlyArray<string>,
+    ) => ReturnType<typeof scanDriveContents>;
     readonly listEntries: (
       driveId: string,
       directoryPath: string,
@@ -324,6 +337,18 @@ const make = Effect.gen(function* () {
     });
 
   return DriveFiles.of({
+    contentSearchSnapshot: (driveId, at) =>
+      Effect.flatMap(readerOf(driveId), (reader) => resolveAt(reader, at)),
+    searchContents: (driveId, input, commit, state, excludePaths) =>
+      Effect.flatMap(readerOf(driveId), (reader) =>
+        scanDriveContents(
+          reader,
+          commit,
+          input,
+          state ?? null,
+          excludePaths === undefined ? {} : { excludePaths },
+        ),
+      ),
     listEntries,
     readFile,
     diffFileContents,

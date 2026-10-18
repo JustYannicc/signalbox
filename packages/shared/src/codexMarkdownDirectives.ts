@@ -8,6 +8,12 @@ import {
 import type { Construct, Extension, Tokenizer } from "micromark-util-types";
 import remarkParse from "remark-parse";
 import { unified, type Processor } from "unified";
+import {
+  applyTextSourceEdits,
+  identityTextSourceMap,
+  sliceTextSourceMap,
+  type TextSourceMap,
+} from "./textSourceMap.ts";
 
 import {
   codexArtifactTemplatePresentationLabel,
@@ -345,6 +351,31 @@ export function renderCodexInlineDirectivesAsMarkdown(markdown: string): string 
   }
 
   return renderDirectiveMatches(markdown, (match) => match.markdown);
+}
+
+// signalbox: generated directive labels need original directive ownership after expansion.
+export function renderCodexInlineDirectivesWithSourceMap(markdown: string): TextSourceMap {
+  const matches: DirectiveMatch[] = [];
+  collectDirectiveMatches(parseCodexMarkdown(markdown), matches);
+  return applyTextSourceEdits(
+    markdown,
+    matches
+      .sort((a, b) => a.start - b.start)
+      .flatMap((match) => {
+        if (match.labelRange) {
+          const [start, end] = match.labelRange;
+          const source = markdown.slice(match.start, match.end);
+          const map = sliceTextSourceMap(identityTextSourceMap(source), {
+            start: start - match.start,
+            end: end - match.start,
+          });
+          return [{ start: match.start, end: match.end, text: map.text, map }];
+        }
+        return match.markdown === undefined
+          ? []
+          : [{ start: match.start, end: match.end, text: match.markdown }];
+      }),
+  );
 }
 
 export function renderCodexDirectivesForCopy(markdown: string): string {

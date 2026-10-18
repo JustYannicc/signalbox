@@ -247,11 +247,13 @@ Conversations already resolved in review are left out. For a pull request in a s
 covers that layer only, and may point out what a lower layer introduced or what a higher one uses.
 
 Choose **Write guide** to have the review guide model from Settings → Source Control read the
-change in a temporary checkout; without one set, the source control writer model is used. Nothing
-in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
-the app. On web, you are told when the guide is ready; on mobile, return to the guide to check
-its progress. Claude and Codex can write guides. The guide is
-kept for everyone using this server. To write it again, for example after a push or after changing
+change. In the cloud, it uses the folder's pool, follows the folder's instructions, and keeps your
+guide across your devices. Without a guide model set, it uses your default model on that pool.
+A self-hosted server reads a temporary checkout and uses its source control writer model as the
+default; its guide is shared by everyone on that server. Nothing in the checkout is changed.
+A large pull request takes a few minutes; you can go elsewhere in the app. On web, you are told
+when the guide is ready; on mobile, return to the guide to check its progress. Claude and Codex
+can write guides. To write it again, for example after a push or after changing
 the model or instructions, choose **Rewrite guide** from the pull request's **⋯** menu.
 
 On web, while reading a stop, select lines in an excerpt to add a comment to your review or ask an agent
@@ -260,25 +262,29 @@ suggested question, or **Ask about this stop**, to open a thread that already kn
 are on. **Finish review** on the last stop opens the review with everything you collected.
 
 Agents can write guides too: ask one to prepare guides for a set of pull requests, and it starts
-them for you. Each is read through the project whose checkout has that repository.
+them through the repository's folder.
 
 To shape guides to your taste, write **Review guide instructions** in Settings → Source Control,
-such as what to show first or what to skip; projects can override them. They change emphasis and
+such as what to show first or what to skip; self-hosted projects can override them. They change emphasis and
 ordering, not the guide's layout or which files it covers.
 
 ### Mark files as viewed
 
 Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a
 running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
-single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
+single commit keeps them. In the cloud you tick files off with the whole pull request in view;
+while the tab shows a single commit, your ticks show but can't be changed. A file pushed to after
+you cleared it comes back marked **Changed**.
 
-On GitHub these are GitHub's own viewed marks, so a review carries between Signalbox and github.com
-in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record Signalbox can read, so the
+In the cloud, viewed marks belong to you and follow you across Signalbox devices. They do not
+change GitHub's viewed marks. On a self-hosted server, GitHub's own viewed marks carry between
+Signalbox and github.com in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record Signalbox can read, so the
 server you are connected to keeps them instead: they follow you across the apps connected to that
 server, but the host's own site will not show them, and the count reads **viewed in Signalbox**.
 
-On mobile, open a changed file and mark it viewed from its header. Viewed files collapse,
-and their marks follow the same rules as on web and desktop.
+On mobile, open a changed file and mark it viewed from its header. Viewed files collapse. With
+the whole pull request in view, marks follow the same rules as on web and desktop. While you view a
+single commit, ticks only collapse files on that screen: they start empty and aren't saved.
 
 ## Troubleshooting
 

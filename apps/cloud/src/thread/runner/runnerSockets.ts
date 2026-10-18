@@ -159,12 +159,6 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     starting && work.secrets.length > 0
       ? await host.run(runner.use((service) => service.secretsToken))
       : null;
-  // Asked the same way, and only for a turn that resumes its harness session.
-  const handed = turn?.turn ?? null;
-  const freshSessionText =
-    starting && handed !== null && handed.providerThread.nativeThreadRef !== null
-      ? await host.run(runner.use((service) => service.freshSessionText(handed)))
-      : null;
   const drive: DriveAccess | null =
     work.drive === null || author === null ? work.drive : { ...work.drive, author };
   const terminalWork =
@@ -231,7 +225,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     ) {
       send(socket, {
         type: "turn.start",
-        turn: freshSessionText === null ? turn.turn : { ...turn.turn, freshSessionText },
+        turn: turn.turn,
         modelToken: turn.modelToken,
         drive,
         sessions: turn.sessions,

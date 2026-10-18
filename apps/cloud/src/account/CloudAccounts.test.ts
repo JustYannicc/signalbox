@@ -74,6 +74,59 @@ const locationOf = (result: CloudAccounts.SignInResult) => new URL(result.locati
 const withKey = { ...CLOUD_TEST_ENV, T3CODE_WORKOS_API_KEY: "sk_test" };
 
 describe("CloudAccounts", () => {
+  it.effect("uses a trusted caller's WorkOS realm for the sign-in membership sync", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ url: string; authorization: string | undefined }> = [];
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push({ url: request.url, authorization: request.headers.authorization });
+          const { pathname } = new URL(request.url);
+          return HttpClientResponse.fromWeb(
+            request,
+            pathname === "/user_management/organization_memberships"
+              ? Response.json({
+                  data: [{ organization_id: "org_sandbox", organization_name: "Test company" }],
+                  list_metadata: { after: null },
+                })
+              : pathname === "/organizations/external_id/personal%3Auser_sandbox"
+                ? Response.json({ code: "entity_not_found" }, { status: 404 })
+                : Response.json({ error: "unexpected request" }, { status: 500 }),
+          );
+        }),
+      );
+      yield* CloudAccounts.CloudAccounts.use((service) =>
+        service.finishSignIn(
+          { origin: ORIGIN, codeVerifier: "", target: { mode: "browser", returnTo: "/" } },
+          { id: "user_sandbox", email: "richard@piedpiper.example" },
+          {
+            clientId: "client_sandbox",
+            apiKey: Redacted.make("sk_test_sandbox"),
+            apiBaseUrl: "https://sandbox.workos.test",
+          },
+        ),
+      ).pipe(
+        Effect.provide(
+          Layer.fresh(CloudAccounts.layer).pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+          ),
+        ),
+      );
+      // The listing and the personal organization come from the same realm and key.
+      expect(requests.toSorted((a, b) => a.url.localeCompare(b.url))).toEqual([
+        {
+          url: "https://sandbox.workos.test/organizations/external_id/personal%3Auser_sandbox",
+          authorization: "Bearer sk_test_sandbox",
+        },
+        {
+          url: "https://sandbox.workos.test/user_management/organization_memberships",
+          authorization: "Bearer sk_test_sandbox",
+        },
+      ]);
+      const users = yield* UserDirectory.UserDirectory;
+      const shell = yield* users.forUser("user_sandbox").shellSnapshot();
+      expect(JSON.stringify(shell)).toContain("org_sandbox");
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
+  );
   const multiMemberships = {
     user_multi: [
       { id: "org_work", name: "Work" },

@@ -2,23 +2,20 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
-import * as WorkOSOrganizations from "./WorkOSOrganizations.ts";
+import * as WorkOSOrganizations from "@signalbox/account/WorkOSOrganizations";
 
-const config = {
-  apiKey: Redacted.make("sk_test_personal_org"),
-  apiBaseUrl: "https://workos.test",
-};
+const apiKey = "sk_test_personal_org";
+const config = { apiKey: Redacted.make(apiKey), apiBaseUrl: "https://workos.test" };
 const userId = "user_123";
 const externalId = `personal:${userId}`;
 const organizationId = "org_personal_123";
 
 interface HttpCall {
   readonly method: string;
-  readonly url: URL;
+  readonly url: string;
   readonly authorization: string | undefined;
-  readonly body: unknown;
 }
 
 const json = (body: unknown, status = 200) =>
@@ -27,312 +24,152 @@ const json = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
-const page = (memberships: ReadonlyArray<Record<string, unknown>>) =>
-  json({ object: "list", data: memberships, list_metadata: { after: null } });
-
-const capture = (request: Parameters<Parameters<typeof HttpClient.make>[0]>[0]): HttpCall => {
-  const query = UrlParams.toString(request.urlParams);
-  const url = new URL(query ? `${request.url}?${query}` : request.url);
-  const bytes = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array();
-  return {
-    method: request.method,
-    url,
-    authorization: request.headers.authorization,
-    body: bytes.length === 0 ? undefined : JSON.parse(new TextDecoder().decode(bytes)),
-  };
-};
-
-const fakeWorkOS = (respond: (call: HttpCall) => Effect.Effect<Response>) => {
+const fakeWorkOS = (respond: () => Response | "network-failure") => {
   const calls: Array<HttpCall> = [];
-  const client = HttpClient.make((request) =>
-    Effect.gen(function* () {
-      const call = capture(request);
-      calls.push(call);
-      return HttpClientResponse.fromWeb(request, yield* respond(call));
-    }),
-  );
+  const client = HttpClient.make((request) => {
+    calls.push({
+      method: request.method,
+      url: request.url,
+      authorization: request.headers.authorization,
+    });
+    const response = respond();
+    return response === "network-failure"
+      ? Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, description: "offline" }),
+          }),
+        )
+      : Effect.succeed(HttpClientResponse.fromWeb(request, response));
+  });
   return { calls, layer: Layer.succeed(HttpClient.HttpClient, client) };
 };
 
+const resolveFailure = (respond: () => Response | "network-failure", user = userId) => {
+  const http = fakeWorkOS(respond);
+  return Effect.flip(WorkOSOrganizations.resolvePersonalOrganization(config, user)).pipe(
+    Effect.provide(http.layer),
+  );
+};
+
+const expectNoLeak = (
+  failure: WorkOSOrganizations.WorkOSPersonalOrganizationError,
+  raw: string,
+) => {
+  for (const rendered of [failure.message, String(failure), JSON.stringify(failure)]) {
+    expect(rendered).not.toContain(raw);
+    expect(rendered).not.toContain(apiKey);
+  }
+};
+
 describe("WorkOSOrganizations.resolvePersonalOrganization", () => {
-  it.effect("returns null only for a real external-ID 404", () => {
-    const http = fakeWorkOS(() => Effect.succeed(json({ message: "ignored" }, 404)));
+  it.effect("returns the organization WorkOS keeps under the exact external ID", () => {
+    const http = fakeWorkOS(() => json({ id: organizationId, external_id: externalId }));
+    return Effect.gen(function* () {
+      expect(yield* WorkOSOrganizations.resolvePersonalOrganization(config, userId)).toBe(
+        organizationId,
+      );
+      expect(http.calls).toEqual([
+        {
+          method: "GET",
+          url: "https://workos.test/organizations/external_id/personal%3Auser_123",
+          authorization: `Bearer ${apiKey}`,
+        },
+      ]);
+    }).pipe(Effect.provide(http.layer));
+  });
+
+  it.effect("escapes the external ID into a single path segment", () => {
+    const awkwardUser = "user/../x?y#z";
+    const http = fakeWorkOS(() =>
+      json({ id: organizationId, external_id: `personal:${awkwardUser}` }),
+    );
+    return Effect.gen(function* () {
+      expect(yield* WorkOSOrganizations.resolvePersonalOrganization(config, awkwardUser)).toBe(
+        organizationId,
+      );
+      expect(http.calls.map((call) => call.url)).toEqual([
+        "https://workos.test/organizations/external_id/personal%3Auser%2F..%2Fx%3Fy%23z",
+      ]);
+    }).pipe(Effect.provide(http.layer));
+  });
+
+  it.effect("returns null for a 404", () => {
+    const http = fakeWorkOS(() => json({ message: "Organization not found" }, 404));
     return Effect.gen(function* () {
       expect(yield* WorkOSOrganizations.resolvePersonalOrganization(config, userId)).toBeNull();
       expect(http.calls).toHaveLength(1);
-      expect(http.calls[0]?.method).toBe("GET");
-      expect(decodeURIComponent(http.calls[0]!.url.pathname)).toBe(
-        `/organizations/external_id/${externalId}`,
-      );
-      expect(http.calls[0]?.authorization).toBe("Bearer sk_test_personal_org");
     }).pipe(Effect.provide(http.layer));
   });
 
-  it.effect("keeps WorkOS error bodies and credentials out of the typed error", () => {
-    const secret = "sk_live_do_not_leak";
-    const http = fakeWorkOS(() => Effect.succeed(json({ message: secret }, 401)));
-    return Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        WorkOSOrganizations.resolvePersonalOrganization(config, userId),
-      );
+  it.effect("fails without a status when the request never gets a response", () =>
+    Effect.gen(function* () {
+      const failure = yield* resolveFailure(() => "network-failure");
       expect(failure._tag).toBe("WorkOSPersonalOrganizationError");
-      expect(failure.operation).toBe("resolve");
-      expect(failure.status).toBe(401);
-      expect(failure.message).not.toContain(secret);
-      expect(failure.message).not.toContain("sk_test_personal_org");
-    }).pipe(Effect.provide(http.layer));
-  });
+      expect(failure.message).toBe("WorkOS personal organization resolve failed (no response).");
+      expect(failure.status).toBeUndefined();
+    }),
+  );
 
-  it.effect("rejects a successful response that does not match the requested external ID", () => {
-    const http = fakeWorkOS(() =>
-      Effect.succeed(json({ id: organizationId, external_id: "personal:someone_else" })),
-    );
-    return Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        WorkOSOrganizations.resolvePersonalOrganization(config, userId),
-      );
-      expect(failure._tag).toBe("WorkOSPersonalOrganizationError");
-      expect(failure.status).toBe(200);
-    }).pipe(Effect.provide(http.layer));
-  });
-});
-
-describe("WorkOSOrganizations.ensurePersonalOrganization", () => {
-  it.effect("uses the exact external-ID organization and existing active membership", () => {
-    const http = fakeWorkOS((call) => {
-      if (call.method === "GET" && call.url.pathname.startsWith("/organizations/external_id/")) {
-        return Effect.succeed(json({ id: organizationId, external_id: externalId }));
-      }
-      if (
-        call.method === "GET" &&
-        call.url.pathname === "/user_management/organization_memberships"
-      ) {
-        return Effect.succeed(
-          page([
-            {
-              id: "om_1",
-              organization_id: organizationId,
-              user_id: userId,
-              status: "active",
-            },
-          ]),
-        );
-      }
-      return Effect.die(new Error(`Unexpected request: ${call.method} ${call.url.pathname}`));
-    });
-
-    return Effect.gen(function* () {
-      expect(yield* WorkOSOrganizations.ensurePersonalOrganization(config, userId)).toBe(
-        organizationId,
-      );
-      expect(http.calls.map((call) => call.method)).toEqual(["GET", "GET"]);
-      const membershipList = http.calls[1]!;
-      expect(membershipList.url.searchParams.get("organization_id")).toBe(organizationId);
-      expect(membershipList.url.searchParams.get("user_id")).toBe(userId);
-      expect(membershipList.url.searchParams.get("statuses")).toBe("active");
-    }).pipe(Effect.provide(http.layer));
-  });
-
-  it.effect("creates the organization with its external ID, then creates active membership", () => {
-    let organizationCreated = false;
-    let membershipCreated = false;
-    const http = fakeWorkOS((call) => {
-      if (call.method === "GET" && call.url.pathname.startsWith("/organizations/external_id/")) {
-        return Effect.succeed(
-          organizationCreated
-            ? json({ id: organizationId, external_id: externalId })
-            : json({ message: "missing" }, 404),
-        );
-      }
-      if (call.method === "POST" && call.url.pathname === "/organizations") {
-        organizationCreated = true;
-        return Effect.succeed(json({ id: organizationId, external_id: externalId }, 201));
-      }
-      if (
-        call.method === "GET" &&
-        call.url.pathname === "/user_management/organization_memberships"
-      ) {
-        return Effect.succeed(
-          page(
-            membershipCreated
-              ? [
-                  {
-                    id: "om_1",
-                    organization_id: organizationId,
-                    user_id: userId,
-                    status: "active",
-                  },
-                ]
-              : [],
-          ),
-        );
-      }
-      if (
-        call.method === "POST" &&
-        call.url.pathname === "/user_management/organization_memberships"
-      ) {
-        membershipCreated = true;
-        return Effect.succeed(
-          json(
-            {
-              object: "organization_membership",
-              id: "om_1",
-              organization_id: organizationId,
-              user_id: userId,
-              status: "active",
-            },
-            201,
-          ),
-        );
-      }
-      return Effect.die(new Error(`Unexpected request: ${call.method} ${call.url.pathname}`));
-    });
-
-    return Effect.gen(function* () {
-      expect(yield* WorkOSOrganizations.ensurePersonalOrganization(config, userId)).toBe(
-        organizationId,
-      );
-      const createOrganization = http.calls.find(
-        (call) => call.method === "POST" && call.url.pathname === "/organizations",
-      );
-      expect(createOrganization?.body).toEqual({ name: "Personal", external_id: externalId });
-      const list = http.calls.find(
-        (call) =>
-          call.method === "GET" &&
-          call.url.pathname === "/user_management/organization_memberships",
-      );
-      expect(list?.url.searchParams.get("organization_id")).toBe(organizationId);
-      expect(list?.url.searchParams.get("user_id")).toBe(userId);
-      expect(list?.url.searchParams.get("statuses")).toBe("active");
-      const createMembership = http.calls.find(
-        (call) =>
-          call.method === "POST" &&
-          call.url.pathname === "/user_management/organization_memberships",
-      );
-      expect(createMembership?.body).toEqual({ organization_id: organizationId, user_id: userId });
-    }).pipe(Effect.provide(http.layer));
-  });
-
-  it.effect(
-    "converges concurrent organization and membership creates through authoritative reads",
-    () => {
-      let organization: { readonly id: string; readonly external_id: string } | null = null;
-      let activeMembership = false;
-      let organizationReadCount = 0;
-      let membershipReadCount = 0;
-      let releaseOrganizationReads = () => {};
-      let releaseMembershipReads = () => {};
-      const bothOrganizationReads = new Promise<void>((resolve) => {
-        releaseOrganizationReads = resolve;
-      });
-      const bothMembershipReads = new Promise<void>((resolve) => {
-        releaseMembershipReads = resolve;
-      });
-
-      const http = fakeWorkOS((call) => {
-        if (call.method === "GET" && call.url.pathname.startsWith("/organizations/external_id/")) {
-          if (!organization && organizationReadCount < 2) {
-            organizationReadCount++;
-            if (organizationReadCount === 2) releaseOrganizationReads();
-            return Effect.promise(() => bothOrganizationReads).pipe(
-              Effect.as(json({ message: "missing" }, 404)),
-            );
-          }
-          return Effect.succeed(
-            organization ? json(organization) : json({ message: "missing" }, 404),
-          );
-        }
-        if (call.method === "POST" && call.url.pathname === "/organizations") {
-          if (organization) return Effect.succeed(json({ message: "duplicate" }, 409));
-          organization = { id: organizationId, external_id: externalId };
-          return Effect.succeed(json(organization, 201));
-        }
-        if (
-          call.method === "GET" &&
-          call.url.pathname === "/user_management/organization_memberships"
-        ) {
-          if (!activeMembership && membershipReadCount < 2) {
-            membershipReadCount++;
-            if (membershipReadCount === 2) releaseMembershipReads();
-            return Effect.promise(() => bothMembershipReads).pipe(Effect.as(page([])));
-          }
-          return Effect.succeed(
-            page(
-              activeMembership
-                ? [
-                    {
-                      id: "om_1",
-                      organization_id: organizationId,
-                      user_id: userId,
-                      status: "active",
-                    },
-                  ]
-                : [],
-            ),
-          );
-        }
-        if (
-          call.method === "POST" &&
-          call.url.pathname === "/user_management/organization_memberships"
-        ) {
-          if (activeMembership) return Effect.succeed(json({ message: "duplicate" }, 409));
-          activeMembership = true;
-          return Effect.succeed(
-            json(
-              {
-                object: "organization_membership",
-                id: "om_1",
-                organization_id: organizationId,
-                user_id: userId,
-                status: "active",
-              },
-              201,
-            ),
-          );
-        }
-        return Effect.die(new Error(`Unexpected request: ${call.method} ${call.url.pathname}`));
-      });
-
+  it.effect.each([400, 401, 403, 409, 422, 429, 500, 503])(
+    "fails on %s without the response body or API key",
+    (status) => {
+      const raw = `workos-body-secret-${status}`;
       return Effect.gen(function* () {
-        const ids = yield* Effect.all(
-          [
-            WorkOSOrganizations.ensurePersonalOrganization(config, userId),
-            WorkOSOrganizations.ensurePersonalOrganization(config, userId),
-          ],
-          { concurrency: 2 },
-        );
-        expect(ids).toEqual([organizationId, organizationId]);
-        expect(
-          http.calls.filter(
-            (call) => call.method === "POST" && call.url.pathname === "/organizations",
-          ),
-        ).toHaveLength(2);
-        expect(
-          http.calls.filter(
-            (call) =>
-              call.method === "POST" &&
-              call.url.pathname === "/user_management/organization_memberships",
-          ),
-        ).toHaveLength(2);
-        expect(
-          http.calls.filter(
-            (call) =>
-              call.method === "GET" && call.url.pathname.startsWith("/organizations/external_id/"),
-          ).length,
-        ).toBeGreaterThanOrEqual(3);
-      }).pipe(Effect.provide(http.layer));
+        const failure = yield* resolveFailure(() => json({ message: raw, code: raw }, status));
+        expect(failure.message).toBe(`WorkOS personal organization resolve failed (${status}).`);
+        expect(failure.status).toBe(status);
+        expectNoLeak(failure, raw);
+      });
     },
   );
 
-  it.effect("returns a safe typed error for malformed successful responses", () => {
-    const http = fakeWorkOS(() => Effect.succeed(json({ access_token: "secret-response-token" })));
-    return Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        WorkOSOrganizations.ensurePersonalOrganization(config, userId),
-      );
-      expect(failure._tag).toBe("WorkOSPersonalOrganizationError");
-      expect(failure.message).not.toContain("secret-response-token");
-      expect(failure.operation).toBe("resolve");
-    }).pipe(Effect.provide(http.layer));
-  });
+  const malformed: ReadonlyArray<readonly [string, () => Response]> = [
+    [
+      "a non-JSON body",
+      () =>
+        new Response("<html>raw-response-secret</html>", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    ],
+    ["a body without an id", () => json({ external_id: externalId, token: "raw-response-secret" })],
+    ["a blank id", () => json({ id: "", external_id: externalId, token: "raw-response-secret" })],
+    [
+      "a whitespace id",
+      () => json({ id: "   ", external_id: externalId, token: "raw-response-secret" }),
+    ],
+    [
+      "a padded id",
+      () =>
+        json({ id: ` ${organizationId} `, external_id: externalId, token: "raw-response-secret" }),
+    ],
+    [
+      "a non-string id",
+      () => json({ id: 7, external_id: externalId, token: "raw-response-secret" }),
+    ],
+    [
+      "another user's external ID",
+      () =>
+        json({
+          id: organizationId,
+          external_id: "personal:someone_else",
+          token: "raw-response-secret",
+        }),
+    ],
+    [
+      "a near-miss external ID",
+      () =>
+        json({ id: organizationId, external_id: `${externalId} `, token: "raw-response-secret" }),
+    ],
+    ["a missing external ID", () => json({ id: organizationId, token: "raw-response-secret" })],
+  ];
+
+  it.effect.each(malformed)("fails on %s without the response body or API key", ([, respond]) =>
+    Effect.gen(function* () {
+      const failure = yield* resolveFailure(respond);
+      expect(failure.message).toBe("WorkOS personal organization resolve failed (200).");
+      expect(failure.status).toBe(200);
+      expectNoLeak(failure, "raw-response-secret");
+    }),
+  );
 });

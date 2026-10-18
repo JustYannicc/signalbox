@@ -147,6 +147,7 @@ export class CloudAccounts extends Context.Service<
     ) => Effect.Effect<
       void,
       | WorkOSClient.WorkOSOrganizationsError
+      | WorkOSOrganizations.WorkOSPersonalOrganizationError
       | UserDirectory.UserObjectError
       | IdentityProvider.IdentityProviderUnavailable
     >;
@@ -181,7 +182,15 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
-  /** Without an API key there are no WorkOS contexts to refresh. */
+  /**
+   * Makes the user's work contexts their WorkOS memberships now, minus their
+   * personal organization: Personal is already a context of its own. Without
+   * the API key there are no work contexts to refresh.
+   *
+   * The sequence is reserved before WorkOS is asked, so of two refreshes that
+   * overlap only the later one writes, whichever finishes first (see
+   * `user/organizationRefresh.ts`). A failed read writes nothing.
+   */
   const refreshContexts: CloudAccounts["Service"]["refreshContexts"] = Effect.fn(
     "CloudAccounts.refreshContexts",
   )(function* (userId, override) {
@@ -189,26 +198,36 @@ const make = Effect.gen(function* () {
     const identityProvider = override ?? resolved;
     const { apiKey } = identityProvider;
     if (apiKey === undefined) return;
+    const userObject = users.forUser(userId);
+    const sequence = yield* userObject.reserveOrganizationRefresh();
+    // Both reads go to the same WorkOS realm, so the personal id matches the listing.
+    const realm = { ...identityProvider, apiKey };
     const [organizations, personalId] = yield* Effect.all(
       [
-        WorkOSClient.listOrganizations({ ...identityProvider, apiKey }, userId),
-        WorkOSOrganizations.resolvePersonalOrganization(
-          { ...identityProvider, apiKey },
-          userId,
-        ).pipe(Effect.mapError(() => new WorkOSClient.WorkOSOrganizationsError({}))),
+        WorkOSClient.listOrganizations(realm, userId).pipe(
+          // Sign-in waits for this, so a slow WorkOS must not hold it up.
+          Effect.timeoutOrElse({
+            duration: CONTEXTS_SYNC_TIMEOUT,
+            orElse: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
+          }),
+        ),
+        WorkOSOrganizations.resolvePersonalOrganization(realm, userId).pipe(
+          Effect.timeoutOrElse({
+            duration: CONTEXTS_SYNC_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new WorkOSOrganizations.WorkOSPersonalOrganizationError({ operation: "resolve" }),
+              ),
+          }),
+        ),
       ],
       { concurrency: 2 },
-    ).pipe(
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      // Sign-in waits for this, so a slow WorkOS must not hold it up.
-      Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
-      }),
+    ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+    const applied = yield* userObject.completeOrganizationRefresh(
+      sequence,
+      organizations.filter((organization) => organization.id !== personalId),
     );
-    yield* users
-      .forUser(userId)
-      .syncOrganizations(organizations.filter((org) => org.id !== personalId));
+    yield* Effect.annotateCurrentSpan({ sequence, applied });
   });
 
   /** At sign-in: best effort, so a failure keeps the contexts from the previous one. */
@@ -217,7 +236,10 @@ const make = Effect.gen(function* () {
       Effect.catch((error) =>
         Effect.logWarning("cloud contexts sync failed", {
           errorTag: error._tag,
-          ...(error._tag === "WorkOSOrganizationsError" ? { status: error.status } : {}),
+          ...(error._tag === "WorkOSOrganizationsError" ||
+          error._tag === "WorkOSPersonalOrganizationError"
+            ? { status: error.status }
+            : {}),
         }),
       ),
     );
