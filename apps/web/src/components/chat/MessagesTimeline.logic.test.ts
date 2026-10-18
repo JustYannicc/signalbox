@@ -1695,6 +1695,37 @@ describe("deriveMessagesTimelineRows", () => {
     expect(foldRow?.label).toBe("Worked for 12s");
   });
 
+  it("keeps the completed duration on the durable work start after reload", () => {
+    const runId = RunId.make("run-durable-timer");
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-durable-timer",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:35Z",
+          entry: {
+            id: "work-durable-timer",
+            createdAt: "2026-01-01T00:00:35Z",
+            runId,
+            label: "Ran command",
+            tone: "tool",
+          },
+        },
+      ],
+      latestRun: {
+        runId,
+        status: "completed",
+        workStartedAt: "2026-01-01T00:00:00Z",
+        startedAt: "2026-01-01T00:00:35Z",
+        completedAt: "2026-01-01T00:01:00Z",
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows).toEqual([expect.objectContaining({ kind: "turn-fold", label: "Worked for 1m" })]);
+  });
+
   it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

@@ -59,6 +59,9 @@ function summarizeThreadRun(
     status: run.status,
     requestedAt: DateTime.formatIso(run.requestedAt),
     startedAt: run.startedAt === null ? null : DateTime.formatIso(run.startedAt),
+    ...(run.workStartedAt === undefined
+      ? {}
+      : { workStartedAt: DateTime.formatIso(run.workStartedAt) }),
     completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
     assistantMessageId:
       projection.messages.findLast(

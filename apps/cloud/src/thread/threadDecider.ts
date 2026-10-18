@@ -196,6 +196,10 @@ function dispatchMessage(
     nodeId: null,
     role: "user",
     text: command.text,
+    ...(command.notification === undefined ? {} : { notification: command.notification }),
+    ...(command.delegatedCompletion === undefined
+      ? {}
+      : { delegatedCompletion: command.delegatedCompletion }),
     ...(command.context === undefined ? {} : { context: command.context }),
     attachments: command.attachments,
     streaming: false,
@@ -225,6 +229,9 @@ function dispatchMessage(
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(command.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
   };
   const recorded = messageEvent(ctx, message);
   if (live !== undefined) {

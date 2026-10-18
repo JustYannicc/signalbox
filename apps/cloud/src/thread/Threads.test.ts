@@ -3,12 +3,14 @@ import {
   MessageId,
   type OrchestrationV2ThreadStreamItem,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -22,11 +24,73 @@ import { scriptedModelSelection } from "./scriptedProvider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import * as Threads from "./Threads.ts";
 import * as ThreadsLive from "./ThreadsLive.ts";
+import { jsonLine, wire } from "./threadWire.ts";
 
 const actor = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
 const threadId = ThreadId.make("thread-1");
 
 describe("Threads", () => {
+  it.effect("fails a lost output stream but completes after its final frame", () =>
+    Effect.gen(function* () {
+      const cloud = makeMemoryCloud();
+      for (const running of [true, false]) {
+        const transport = ThreadDirectory.handleFor({
+          commandOutput: async () =>
+            new ReadableStream({
+              start: (controller) => {
+                controller.enqueue(
+                  jsonLine(wire.commandOutputFrame)({
+                    kind: "replace",
+                    text: "retained output",
+                    truncated: false,
+                    running,
+                    sequence: 7,
+                  }),
+                );
+                controller.close();
+              },
+            }),
+        } as Partial<ThreadDirectory.ThreadObjectApi> as ThreadDirectory.ThreadObjectApi);
+        const service = yield* Threads.Threads.pipe(
+          Effect.provide(
+            Layer.fresh(ThreadsLive.layer).pipe(
+              Layer.provide(
+                Layer.succeed(ThreadDirectory.ThreadDirectory, {
+                  forThread: (id) => ({
+                    ...cloud.threadDirectory.forThread(id),
+                    commandOutput: transport.commandOutput,
+                  }),
+                }),
+              ),
+              Layer.provide(layerPersonalThreadContexts("user_1")),
+              Layer.provide(Platform.layerCrypto),
+              Layer.provide(layerAttachments(makeMemoryObjects())),
+            ),
+          ),
+        );
+        const received: Array<string> = [];
+        const result = yield* service
+          .commandOutput(actor, {
+            threadId,
+            itemId: TurnItemId.make("command-1"),
+          })
+          .pipe(
+            Stream.runForEach((frame) => Effect.sync(() => received.push(frame.text))),
+            Effect.exit,
+          );
+        expect(received).toEqual(["retained output"]);
+        expect(Exit.isFailure(result)).toBe(running);
+        if (Exit.isFailure(result)) {
+          expect(Exit.findErrorOption(result)).toMatchObject({
+            value: {
+              _tag: "OrchestrationV2CommandOutputError",
+              message: "Lost the command output stream. Reopen it to read the retained output.",
+            },
+          });
+        }
+      }
+    }),
+  );
   it.effect("resumes a subscription whose thread object went away, with no gap or repeat", () =>
     Effect.gen(function* () {
       const cloud = makeMemoryCloud();

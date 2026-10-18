@@ -440,10 +440,11 @@ export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
 
 /**
  * Where the Runner keeps threads' working directories and machine state
- * (`workspaces/<thread>/drive`, `machines/<thread>/home`) on every machine
- * class. A thread moves between classes mid-run, and its agent must find its
- * checkout, home and folder instructions at the paths it already knows
- * (#620). The Runner image creates it; a boat VM mounts its disk there.
+ * (`workspaces/<thread-key>/drive`, `machines/<thread-key>/home`) on every
+ * machine class. A thread moves between classes mid-run, and its agent must
+ * find its checkout, home and folder instructions at the paths it already
+ * knows (#620). Unsafe IDs use an encoded key; legacy aliases keep saved
+ * absolute paths working. The Runner image creates it; a boat VM mounts its disk there.
  */
 export const MACHINE_HOME = "/home/user/signalbox";
 

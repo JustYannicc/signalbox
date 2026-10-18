@@ -470,7 +470,7 @@ export interface TimelineDurationMessage {
 
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
-  "runId" | "status" | "startedAt" | "completedAt"
+  "runId" | "status" | "startedAt" | "workStartedAt" | "completedAt"
 > & {
   /**
    * signalbox: the thread's settled runs, each with its own status and times
@@ -1144,9 +1144,10 @@ function deriveTurnFolds(input: {
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
+    const workStartedAt = run?.workStartedAt ?? run?.startedAt;
     const elapsedMs =
-      run?.startedAt && run.completedAt
-        ? computeElapsedMs(run.startedAt, run.completedAt)
+      workStartedAt && run?.completedAt
+        ? computeElapsedMs(workStartedAt, run.completedAt)
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??

@@ -1,11 +1,14 @@
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ProviderThread,
-  OrchestrationV2Run,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
-  OrchestrationV2UserMessageInputIntent,
+import {
+  orchestrationV2RunWorkStartedAt,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  type OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { driverFor, runnerInstanceFor } from "../models/ModelRouting.ts";
 import { expireRuntimeRequests } from "./runtimeRequests.ts";
@@ -31,6 +34,29 @@ import {
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = OrchestrationV2Run;
+
+function wakeWorkStartedAt(
+  runs: ReadonlyArray<Run>,
+  run: Run,
+  message: OrchestrationV2ConversationMessage | undefined,
+): DateTime.Utc | undefined {
+  if (
+    message?.notification === undefined &&
+    message?.delegatedCompletion === undefined &&
+    run.restartContinuationOfRunId === undefined
+  ) {
+    return undefined;
+  }
+  const previous = runs
+    .flatMap((candidate) =>
+      candidate.startedAt === null ? [] : [{ run: candidate, startedAt: candidate.startedAt }],
+    )
+    .toSorted(
+      (left, right) =>
+        DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
+    )[0]?.run;
+  return previous === undefined ? undefined : orchestrationV2RunWorkStartedAt(previous);
+}
 
 /** The run the provider is working on, if any. */
 export const activeRun = (projection: Projection): Run | undefined =>
@@ -112,10 +138,13 @@ export function startRunEvents(
   const rootNodeId = ids.rootNode(run.id);
   const providerThreadId = ids.providerThread(threadId);
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  // The timer starts on activation, after any queue wait, and before provider startup.
+  const workStartedAt =
+    run.workStartedAt ?? wakeWorkStartedAt(projection.runs, run, message) ?? ctx.now;
   const started: Run = {
     ...run,
     status: "starting",
-    workStartedAt: run.workStartedAt ?? ctx.now,
+    workStartedAt,
     providerThreadId,
     rootNodeId,
     activeAttemptId: attemptId,
