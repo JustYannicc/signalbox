@@ -57,7 +57,7 @@ const COMMAND_RULES: ReadonlyArray<Rule> = [
   // Package runners name the npm package; the bin it installs is `signalbox`.
   {
     pattern:
-      /\b(npx|bunx|pnpm dlx|npm (?:i|install|uninstall|remove|rm) -g) t3(?=[@\s`'".,;:)]|$)/gm,
+      /\b(npx|bunx|pnpm dlx|npm (?:i|install|uninstall|remove|rm) (?:-g|--global)(?: --prefix (?:'[^']*'|"[^"]*"|\S+))?) t3(?=[@\s`'".,;:)]|$)/gm,
     replace: "$1 signalbox-cli",
   },
   {

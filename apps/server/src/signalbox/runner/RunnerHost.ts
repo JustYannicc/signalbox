@@ -4,6 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import {
@@ -36,7 +37,7 @@ import { makeRunnerDrive } from "./RunnerDrive.ts";
 import { makeRunnerDependencies } from "./RunnerDependencies.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { outsideFolders } from "./RunnerMachineFolders.ts";
-import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
+import { machineLayout, runnerEnvironments, writeModelToken } from "./RunnerModelAccess.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import {
   previewTunnelTransport,
@@ -59,15 +60,17 @@ import { makeRunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import { makePreviewServices } from "./RunnerPreviewServices.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
+import { prepareRunnerPaths } from "./RunnerPaths.ts";
 
 /**
  * Runs threads' Runners on this machine. `ensure` starts a thread's Runner at
  * a generation and keeps it until the thread lets it go; asking again for the
  * same generation is a no-op, and a higher generation replaces the thread's
  * older Runner. Each thread gets a machine directory of its own
- * (`machines/<thread>`: home, harness config, model token) so no thread's
+ * (`machines/<thread-key>`: home, harness config, model token) so no thread's
  * harnesses see this machine's own logins or another thread's token, and a
- * working directory (`workspaces/<thread>/drive`).
+ * working directory (`workspaces/<thread-key>/drive`). Unsafe IDs use an
+ * encoded key, with a legacy symlink kept for saved absolute paths.
  *
  * Each Runner also runs the PreviewGateway's tunnel for its thread, which
  * starts and stops with that generation and mirrors the agent's browser.
@@ -141,21 +144,45 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           yield* existing.session.replaced;
           yield* stop(request.threadId, existing);
         }
+        const paths = yield* prepareRunnerPaths(config.home, request.threadId);
         // The checkout sits one folder down: the folder above holds the instructions
         // its shortcuts bring, outside the drive (`RunnerInstructions.ts`).
-        const cwd = path.join(config.home, "workspaces", request.threadId, "drive");
+        const { cwd, machineRoot: root } = paths;
         yield* fs.makeDirectory(cwd, { recursive: true });
         const scope = yield* Scope.fork(hostScope);
         const session = yield* Effect.gen(function* () {
-          const root = path.join(config.home, "machines", request.threadId);
           // The harnesses' sessions leave the machine as they are written (#132).
           const sessions = yield* makeRunnerSessions({
             cloudUrl,
             codexHome: machineLayout(path, root).codexHome,
+            ...(paths.legacyCwd === undefined
+              ? {}
+              : { codexCwdMigration: { from: paths.legacyCwd, to: cwd } }),
             mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
-          // Every drive the user can read, for the harnesses (#141).
-          const previewServices = yield* makePreviewServices({ cwd });
+          // What the harness environment sets itself; known once the adapters are made.
+          let harnessVariables: ReadonlySet<string> = new Set();
+          const secrets = makeRunnerSecrets({
+            onePassword: config.onePassword ?? onePasswordSdk,
+            mask,
+            reserved: () => harnessVariables,
+          });
+          const runnerLayout = machineLayout(path, root);
+          const hostEnvironment = yield* HostProcess.Environment;
+          const previewEnvironment = () =>
+            runnerEnvironments(
+              hostEnvironment,
+              runnerLayout,
+              request.modelGatewayUrl,
+              caches.environment,
+              cwd,
+              secrets.environment(),
+            ).toolEnvironment;
+          // Preview commands use the same local tools and current folder secrets as agent shells.
+          const previewServices = yield* makePreviewServices({
+            cwd,
+            environment: previewEnvironment,
+          });
           const previewServicesPublisher = yield* Deferred.make<PreviewTunnel>();
           const persistPreviewServices = (services: ReadonlyArray<PreviewService>) =>
             Deferred.await(previewServicesPublisher).pipe(
@@ -175,15 +202,9 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               return yield* tunnel.previewHosts;
             }),
           });
-          // What the harness environment sets itself; known once the adapters are made.
-          let harnessVariables: ReadonlySet<string> = new Set();
-          const secrets = makeRunnerSecrets({
-            onePassword: config.onePassword ?? onePasswordSdk,
-            mask,
-            reserved: () => harnessVariables,
-          });
           const made = yield* makeRunnerAdapters({
             root,
+            cwd,
             gatewayUrl: request.modelGatewayUrl,
             claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
               withContextServer(runner, context.mcpServers),
@@ -193,9 +214,13 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             sessionEnvironment: secrets.environment,
             mask: mask.text,
           });
-          const { adapters, layout, stderr, environment, attachmentsDir } = made;
+          const { adapters, layout, stderr, attachmentsDir } = made;
           harnessVariables = made.harnessVariables;
-          const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
+          const dependencies = yield* makeRunnerDependencies({
+            cwd,
+            caches,
+            environment: made.dependencyEnvironment,
+          });
           const preparing = yield* Semaphore.make(1);
           const openingDrive = yield* Semaphore.make(1);
           let filesPrepared = false;
@@ -298,6 +323,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 emit,
                 dependencies,
                 preparing,
+                previewDrive: () => openedDrive?.drive ?? null,
                 secrets,
                 registerSecrets,
                 openDrive,

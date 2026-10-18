@@ -59,7 +59,7 @@ import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
-import { outgrownBy } from "./RunnerMachineClass.ts";
+import { type OutgrownCommandDecision, outgrownCommandDecision } from "./RunnerMachineClass.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
@@ -280,6 +280,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly preparing?: Semaphore.Semaphore;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
+  /** A drive opened by preview before this Runner has started a turn. */
+  readonly previewDrive?: () => RunnerDrive | null;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
   /** Brings the thread's attachments to this machine, with the turn's session token (`RunnerAttachments.ts`). */
@@ -359,24 +361,32 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const outgrown = new Set<RunId>();
   /** Classified commands and dev-server tools, by item and phase. */
   const classified = new Set<string>();
-  /** Checks commands once at start/end and a declared dev server once when it starts. */
-  const outgrownByOnce = (event: ProviderAdapterV2Event) => {
+  /** Moves eligible current-session commands or tools once in each execution phase. */
+  const outgrownByOnce = (
+    event: ProviderAdapterV2Event,
+    runId: RunId | null,
+    runtime: ProviderAdapterV2SessionRuntime,
+    decision: OutgrownCommandDecision,
+  ) => {
     if (event.type !== "turn_item.updated") return null;
     const item = event.turnItem;
-    if (item.type === "dynamic_tool") {
-      const reason = outgrownBy(event);
-      if (reason === null) return null;
-      const key = `${item.id}:start`;
-      if (classified.has(key)) return null;
-      classified.add(key);
-      return reason;
+    if (item.type !== "command_execution" && item.type !== "dynamic_tool") return null;
+    if (
+      input.machineClass !== "light" ||
+      decision.reason === null ||
+      runId === null ||
+      runId !== latestRunId ||
+      runId !== runningRunId
+    ) {
+      return null;
     }
-    if (item.type !== "command_execution") return null;
+    const owner = turns.get(runId);
+    if (owner === undefined || owner.status !== "running" || owner.session !== runtime) return null;
     const { id, status } = item;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
-    return outgrownBy(event);
+    return { runId, reason: decision.reason };
   };
 
   /**
@@ -404,16 +414,24 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     );
   };
 
+  /** Turns and preview restoration must not race while preparing the checkout. */
+  const preparing = input.preparing ?? (yield* Semaphore.make(1));
+
   const drain: RunnerTurns["drain"] = Effect.suspend(() => {
     draining = true;
     return Effect.gen(function* () {
       const unsaved: Array<string> = [];
-      if (drive !== null) {
-        const saved = yield* Effect.result(drive.drive.saveNow);
-        if (saved._tag === "Failure") {
-          unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
-        }
-      }
+      yield* preparing.withPermits(1)(
+        Effect.gen(function* () {
+          // Preview can open the writable checkout before a turn has claimed it.
+          const currentDrive = drive?.drive ?? input.previewDrive?.() ?? null;
+          if (currentDrive === null) return;
+          const saved = yield* Effect.result(currentDrive.saveNow);
+          if (saved._tag === "Failure") {
+            unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
+          }
+        }),
+      );
       if (input.sessions !== undefined) {
         for (const driver of new Set(
           [...input.adapters.values()].map((adapter) => adapter.driver),
@@ -454,8 +472,6 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       }
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
-  /** One turn readies the working directory at a time, even after a stop left one installing. */
-  const preparing = input.preparing ?? (yield* Semaphore.make(1));
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
@@ -811,12 +827,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       runId: RunId | null = event.type === "subagent.updated"
         ? (event.subagent.runId ?? latestRunId)
         : latestRunId,
+      suppressTranscript = false,
     ) =>
       Effect.gen(function* () {
         const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
         if (delivered === null || runId === null) return;
         // Complete only once the rows behind it would survive this machine.
         if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
+        if (suppressTranscript) return;
         const observed = yield* workflows.observe(
           delivered,
           runtime,
@@ -854,26 +872,19 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     return runtime.events.pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
-          const originatingRunId = eventRunId(event);
-          if (originatingRunId !== null && outgrown.has(originatingRunId)) {
+          const runIdBeforeDriveHold = eventRunId(event);
+          if (runIdBeforeDriveHold !== null && outgrown.has(runIdBeforeDriveHold)) {
             // Its terminal still releases the next run's wait for this provider.
             yield* track(event);
             return;
           }
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
+          const originatingRunId = eventRunId(event);
+          const commandDecision = outgrownCommandDecision(event);
           yield* track(event);
-          yield* deliver(event);
-          const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
-          const owner = originatingRunId === null ? undefined : turns.get(originatingRunId);
-          if (
-            reason !== null &&
-            originatingRunId !== null &&
-            originatingRunId === latestRunId &&
-            owner?.status === "running" &&
-            owner.session === runtime
-          ) {
-            yield* moveUp(originatingRunId, reason);
-          }
+          yield* deliver(event, originatingRunId, commandDecision.suppressTranscript);
+          const upgrade = outgrownByOnce(event, originatingRunId, runtime, commandDecision);
+          if (upgrade !== null) yield* moveUp(upgrade.runId, upgrade.reason);
         }),
       ),
       Effect.catchCause((cause) =>
@@ -1103,6 +1114,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         cwd: input.cwd,
       };
       latestRunId = turn.runId;
+      classified.clear();
       latestTraceId = turn.traceId;
       // `/drives` and the context tool read one version of everything for the whole
       // turn; the view is taken while the checkout and session load.

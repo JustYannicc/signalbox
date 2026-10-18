@@ -184,6 +184,63 @@ describe("Signalbox's MCP", () => {
       expect(missing.content[0]!.text).not.toContain("final line");
     }),
   );
+  it.effect(
+    "runs cloud lifecycle actions and reversals through the generated API with receipts",
+    () =>
+      Effect.gen(function* () {
+        const { tool, cloud } = yield* connect;
+        const threadId = ThreadId.make("mcp-lifecycle");
+        const actor = { userId, contextIds: [PERSONAL_CONTEXT_ID] };
+        const call = (operation: string, input: object) =>
+          tool("signalbox_call", { operation, input });
+        const created = yield* call("threads.create", {
+          commandId: "create-lifecycle",
+          threadId,
+          projectId: "scratch",
+          title: "Lifecycle via MCP",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+        });
+        expect(created.isError ?? false).toBe(false);
+        const snapshot = () => cloud.threadDirectory.forThread(threadId).snapshot(actor);
+        for (const [operation, input] of [
+          ["threads.pin", { orderKey: "a" }],
+          ["threads.pin.reorder", { orderKey: "b" }],
+        ] as const) {
+          expect(
+            (yield* call(operation, { commandId: operation, threadId, ...input })).isError ?? false,
+          ).toBe(false);
+        }
+        expect((yield* snapshot()).projection.thread).toMatchObject({ pinOrderKey: "b" });
+        expect((yield* snapshot()).projection.thread.pinnedAt).not.toBeNull();
+        yield* call("threads.unpin", { commandId: "unpin", threadId });
+        expect((yield* snapshot()).projection.thread.pinnedAt).toBeNull();
+        yield* call("threads.autoSettle.set", { commandId: "disable", threadId, enabled: false });
+        expect((yield* snapshot()).projection.thread.autoSettleDisabledAt).not.toBeNull();
+        yield* call("threads.autoSettle.set", { commandId: "enable", threadId, enabled: true });
+        expect((yield* snapshot()).projection.thread.autoSettleDisabledAt).toBeNull();
+        const settled = yield* call("threads.settle", { commandId: "settle", threadId });
+        expect(settled.isError ?? false).toBe(false);
+        expect((yield* snapshot()).projection.thread.settledOverride).toBe("settled");
+        yield* call("threads.unsettle", { commandId: "unsettle", threadId, reason: "user" });
+        expect((yield* snapshot()).projection.thread.settledOverride).toBe("active");
+        expect(yield* call("threads.settle", { commandId: "settle", threadId })).toEqual(settled);
+        expect((yield* snapshot()).projection.thread.settledOverride).toBe("active");
+        yield* call("threads.archive", { commandId: "archive", threadId });
+        yield* cloud.settle;
+        const archived = yield* call("threads.subscribeArchived", {});
+        expect(archived.isError ?? false).toBe(false);
+        expect(archived.content[0]!.text).toContain("Lifecycle via MCP");
+        yield* call("threads.unarchive", { commandId: "unarchive", threadId });
+        yield* cloud.settle;
+        expect((yield* call("threads.subscribeArchived", {})).content[0]!.text).not.toContain(
+          "Lifecycle via MCP",
+        );
+      }),
+  );
+
   it.effect("says where clients get a token for this cloud", () =>
     Effect.gen(function* () {
       const response = yield* protectedResourceMetadata(

@@ -1,5 +1,4 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
 import { useSidebar } from "../ui/sidebar";
@@ -16,13 +15,10 @@ import {
 export function useOpenAutomation() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  return useCallback(
-    (target: AutomationRouteTarget, runId?: string | null, view?: AutomationView) => {
-      if (isMobile) setOpenMobile(false);
-      void navigate(automationRoute(target, runId, view));
-    },
-    [isMobile, navigate, setOpenMobile],
-  );
+  return (target: AutomationRouteTarget, runId?: string | null, view?: AutomationView) => {
+    if (isMobile) setOpenMobile(false);
+    void navigate(automationRoute(target, runId, view));
+  };
 }
 
 /**

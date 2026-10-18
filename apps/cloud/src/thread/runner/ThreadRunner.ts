@@ -62,6 +62,7 @@ import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
+import { REQUEST_HEAVY_MACHINE_INSTRUCTIONS } from "./machineInstructions.ts";
 import { isModelToken, type ModelGrant, modelToken } from "../ModelTokens.ts";
 import { freshSessionText, freshSessionTurn } from "./freshSession.ts";
 import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
@@ -693,9 +694,7 @@ const make = Effect.gen(function* () {
       {
         events: [
           ...events,
-          ...(after === null || run === undefined
-            ? []
-            : recoverRunEvents(after, run, ctx, moves ? { reason: detail } : undefined)),
+          ...(after === null || run === undefined ? [] : recoverRunEvents(after, run, ctx, moves)),
         ],
         machine: { ...released(lease), movedUp: lease.movedUp === true || moves },
       },
@@ -748,6 +747,7 @@ const make = Effect.gen(function* () {
         projection === null ||
         lease.generation !== generation ||
         lease.status !== "connected" ||
+        lease.disconnectedAt !== null ||
         (lease.connection ?? 0) !== connection
       ) {
         return Effect.succeed(keep(undefined));
@@ -867,7 +867,14 @@ const make = Effect.gen(function* () {
           needsUpkeep:
             pending?.retry_at != null ||
             (pending !== null && pending.attempts >= PullState.MAX_PULL_FAILURES) ||
-            needsUpkeep(lease, run !== undefined || pending !== null, yield* previews.held),
+            needsUpkeep(
+              lease,
+              run !== undefined || pending !== null,
+              projection?.thread.archivedAt != null ||
+                projection?.thread.settledOverride === "settled"
+                ? false
+                : yield* previews.held,
+            ),
           drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
           turn,
           modelToken:
@@ -884,9 +891,10 @@ const make = Effect.gen(function* () {
                   remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
                   // Its folders' `AGENTS.md`, as the turn was started with (#227), also
                   // when this run continues it on another machine (#620).
-                  instructions: yield* Effect.orDie(
-                    store.instructions(continuedRun(projection, run).id),
-                  ),
+                  instructions: [
+                    ...(yield* Effect.orDie(store.instructions(continuedRun(projection, run).id))),
+                    ...(classOf(lease) === "light" ? [REQUEST_HEAVY_MACHINE_INSTRUCTIONS] : []),
+                  ],
                 },
           sessions:
             turn === null || lease.token === null || projection === null
@@ -990,8 +998,8 @@ const make = Effect.gen(function* () {
       const owner = yield* Effect.orDie(store.owner);
       if (owner === null) return deny("This thread has no drive.");
       const driveId = driveIdOf(owner);
+      const pending = yield* Effect.orDie(pullState.pending);
       if (drives._tag === "Some") {
-        const pending = yield* Effect.orDie(pullState.pending);
         if (
           pending !== null &&
           !(yield* drives.value
@@ -1014,6 +1022,7 @@ const make = Effect.gen(function* () {
         driveId,
         generation: current.generation,
         live: harnessRun(projection) !== undefined,
+        pullOperationId: pending?.generation === current.generation ? pending.id : null,
       } satisfies DriveAuthorization;
     });
 
@@ -1116,6 +1125,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
+        const closing =
+          projection !== null &&
+          (projection.thread.archivedAt !== null ||
+            projection.thread.settledOverride === "settled");
         let pending = projection === null ? null : yield* Effect.orDie(pullState.pending);
         if (
           pending !== null &&
@@ -1131,9 +1144,18 @@ const make = Effect.gen(function* () {
           pending.phase === "selected" &&
           pending.attempts >= PullState.MAX_PULL_FAILURES
         ) {
-          yield* pulls.exhausted(pending.id, lease.generation);
-          pending = yield* Effect.orDie(pullState.pending);
-          exhausted = pending === null;
+          if (
+            closing &&
+            lease.status !== "none" &&
+            !(lease.drain?._tag === "answered" && lease.drain.unsaved.length === 0)
+          ) {
+            // Exhaustion fences the drive's writer. Drain this closing machine before that fence.
+            pending = null;
+          } else {
+            yield* pulls.exhausted(pending.id, lease.generation);
+            pending = yield* Effect.orDie(pullState.pending);
+            exhausted = pending === null;
+          }
         }
         let revoked = false;
         if (pending !== null && drives._tag === "Some") {
@@ -1194,7 +1216,7 @@ const make = Effect.gen(function* () {
             } satisfies ThreadEngine.EngineDecision<MachinePlan>,
           );
         };
-        if (revoked || exhausted) {
+        if (exhausted || (revoked && !closing)) {
           return yield* release({
             reason: "idle",
             detail: exhausted
@@ -1203,7 +1225,7 @@ const make = Effect.gen(function* () {
           });
         }
         if (lease.status === "none") {
-          const previewHeld = yield* previews.held;
+          const previewHeld = !closing && (yield* previews.held);
           if ((run === undefined && pending === null && !previewHeld) || projection === null) {
             return keep(UNNEEDED);
           }
@@ -1239,8 +1261,19 @@ const make = Effect.gen(function* () {
           };
         }
         if (lease.status === "requested") {
+          // A preview can open its writable checkout before the main hello.
+          // Let that Runner connect and drain before closing its machine.
+          if (closing) {
+            const token = lease.ensuredAt === null ? lease.token : null;
+            return keep<MachinePlan>({
+              ...IDLE,
+              ensure: token === null ? null : { generation: lease.generation, token },
+              wakeAt: now + (token === null ? DRAIN_TIMEOUT_MS : ENSURE_RETRY_MS),
+              runId,
+            });
+          }
           // A preview can keep the request alive without a run to fail.
-          const previewHeld = yield* previews.held;
+          const previewHeld = !closing && (yield* previews.held);
           if (run === undefined && pending === null && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
@@ -1267,6 +1300,12 @@ const make = Effect.gen(function* () {
         if (lease.disconnectedAt !== null) {
           const deadline = lease.disconnectedAt + RECONNECT_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline, runId });
+          // A lost socket says nothing about the machine's last writes. Closing
+          // work waits for its Runner to reconnect and confirm those saves.
+          const saved = lease.drain?._tag === "answered" && lease.drain.unsaved.length === 0;
+          if (closing && !saved) {
+            return keep({ ...IDLE, wakeAt: now + DRAIN_TIMEOUT_MS, runId });
+          }
           return yield* release({
             reason: "error",
             detail: `The Runner did not reconnect within ${RECONNECT_TIMEOUT_MS / 1000} s.`,
@@ -1274,7 +1313,7 @@ const make = Effect.gen(function* () {
             recover: run !== undefined,
           });
         }
-        if (run !== undefined || pending !== null || (yield* previews.held)) {
+        if (run !== undefined || pending !== null || (!closing && (yield* previews.held))) {
           const busy = { ...BUSY, runId, wakeAt: pending?.retry_at ?? null };
           // Needed again: a drain under way no longer leads anywhere.
           return lease.idleSince === null && lease.drain === undefined
@@ -1288,15 +1327,33 @@ const make = Effect.gen(function* () {
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
-        if (now - tailFrom >= backend.idleTailMs) {
+        if (closing || now - tailFrom >= backend.idleTailMs) {
           const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
-          // The machine saves everything it wrote before its tokens go (#493);
-          // a Runner from before drains is let go as it always was.
+          // The machine saves everything it wrote before its tokens go (#493).
           if (lease.drains !== true) {
+            if (closing)
+              return {
+                events: [],
+                machine: { ...lease, idleSince },
+                result: { ...IDLE, wakeAt: now + DRAIN_TIMEOUT_MS },
+              };
             return yield* release({ reason: "idle", detail: idle, idleSince: tailFrom });
           }
           if (lease.drain?._tag === "answered") {
             const unsaved = lease.drain.unsaved;
+            if (closing && unsaved.length > 0) {
+              const retryAt = lease.drain.id + DRAIN_TIMEOUT_MS;
+              if (now < retryAt) return keep({ ...IDLE, wakeAt: retryAt });
+              return {
+                events: [],
+                machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
+                result: {
+                  ...IDLE,
+                  drain: { generation: lease.generation, id: now },
+                  wakeAt: now + DRAIN_TIMEOUT_MS,
+                },
+              };
+            }
             return yield* release({
               reason: "idle",
               detail:
@@ -1319,6 +1376,17 @@ const make = Effect.gen(function* () {
           }
           const deadline = lease.drain.id + DRAIN_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
+          if (closing) {
+            return {
+              events: [],
+              machine: { ...lease, drain: { _tag: "asked", id: now } as const },
+              result: {
+                ...IDLE,
+                drain: { generation: lease.generation, id: now },
+                wakeAt: now + DRAIN_TIMEOUT_MS,
+              },
+            };
+          }
           return yield* release({
             reason: "idle",
             detail: `${idle} It didn't confirm its last saves within ${DRAIN_TIMEOUT_MS / 1000} s, so anything it wrote after its last save may be lost.`,
