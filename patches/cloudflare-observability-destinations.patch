@@ -1,0 +1,24 @@
+diff --git a/src/services/workers.ts b/src/services/workers.ts
+--- a/src/services/workers.ts
++++ b/src/services/workers.ts
+@@ -37465,7 +37465,7 @@
+     errors: [Forbidden, CloudflareRateLimited, CloudflareError],
+     protocol: CloudflarePaginatedProtocol,
+     retry: Retry.Retry,
+-    pagination: { mode: "single", items: "result" } as const,
++    pagination: { mode: "page", inputToken: "page", items: "result" } as const,
+   }),
+   cloudflarePaginate,
+ ) as any;
+diff --git a/lib/services/workers.js b/lib/services/workers.js
+--- a/lib/services/workers.js
++++ b/lib/services/workers.js
+@@ -13354,7 +13354,7 @@
+     errors: [Forbidden, CloudflareRateLimited, CloudflareError],
+     protocol: CloudflarePaginatedProtocol,
+     retry: Retry.Retry,
+-    pagination: { mode: "single", items: "result" },
++    pagination: { mode: "page", inputToken: "page", items: "result" },
+ }), cloudflarePaginate);
+ /** List saved queries. */
+ export const listObservabilityQueries = /*@__PURE__*/ API.makePaginated(() => ({

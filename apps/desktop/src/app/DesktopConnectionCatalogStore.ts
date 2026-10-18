@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { resolveEarlyMacKeychainName } from "./DesktopEarlyElectronStartup.ts";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -384,7 +385,19 @@ export const make = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-  const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  const isolatedKeychainName = resolveEarlyMacKeychainName({
+    platform: environment.platform,
+    isPackaged: environment.isPackaged,
+    runtimeDirectory: environment.dirname,
+    isDevelopment: environment.isDevelopment,
+  });
+  // signalbox: separate runtime keys must never read or overwrite the same ciphertext file.
+  const catalogPath = path.join(
+    environment.stateDir,
+    isolatedKeychainName === null
+      ? "connection-catalog.json"
+      : `connection-catalog.${isolatedKeychainName}.json`,
+  );
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -431,9 +444,6 @@ export const make = Effect.gen(function* () {
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
-    if (!(yield* encryptionAvailable)) {
-      return Option.none<string>();
-    }
     const records = yield* savedEnvironments.getRegistry.pipe(
       Effect.mapError(
         (cause) =>
@@ -444,7 +454,11 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // signalbox: an empty profile has nothing to migrate, and Keychain can stall bootstrap.
     if (records.length === 0) {
+      return Option.none<string>();
+    }
+    if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
     }
     const catalog = yield* migrateSavedEnvironmentRecords(records, savedEnvironments, catalogPath);
@@ -475,6 +489,8 @@ export const make = Effect.gen(function* () {
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
       if (Option.isNone(document)) {
+        // signalbox: shared legacy credentials belong to the old key, not this isolated runtime.
+        if (isolatedKeychainName !== null) return Option.none<string>();
         return yield* migrateLegacyCatalog;
       }
       if (!(yield* encryptionAvailable)) {
