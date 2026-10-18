@@ -24,7 +24,12 @@ export const askHandlers = {
           commandId,
           threadId,
           askId,
-          ask: { kind: input.kind, questions: input.questions, source: { kind: "agent" } },
+          ask: {
+            kind: input.kind,
+            questions: input.questions,
+            source: { kind: "agent" },
+            ...(input.kind === "considering" ? { considering: input.considering } : {}),
+          },
         })
         .pipe(Effect.mapError(dispatchFailure));
       return { askId, round: 1, sequence: result.sequence };

@@ -106,6 +106,24 @@ it.effect("forces agent source and assistant answer provenance, with stable retr
       type: "thread.ask.raise",
       ask: { source: { kind: "agent" } },
     });
+    expect((yield* call("t3_ask_raise", { ...input, kind: "considering" })).isError).toBe(true);
+    const considering = yield* call("t3_ask_raise", {
+      ...input,
+      clientRequestId: "considering",
+      kind: "considering",
+      considering: {
+        exit: { kind: "evidence", reference: "support ticket update" },
+        preparationAttachmentIds: [],
+      },
+    });
+    expect(considering.isError).not.toBe(true);
+    expect(dispatched[2]).toMatchObject({
+      type: "thread.ask.raise",
+      ask: {
+        kind: "considering",
+        considering: { exit: { kind: "evidence" }, preparationAttachmentIds: [] },
+      },
+    });
     const answered = yield* call("t3_ask_answer", {
       askId: "ask",
       round: 1,
@@ -113,7 +131,7 @@ it.effect("forces agent source and assistant answer provenance, with stable retr
       answeredBy: { kind: "person", personId: "spoofed" },
     });
     expect(answered.isError).not.toBe(true);
-    expect(dispatched[2]).toMatchObject({
+    expect(dispatched[3]).toMatchObject({
       type: "thread.ask.answer",
       deferredQuestionIds: [],
       answeredBy: { kind: "assistant", personId: "local-user", assistantThreadId: threadId },

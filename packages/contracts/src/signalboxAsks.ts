@@ -1,9 +1,17 @@
+import {
+  SignalboxAskConsidering,
+  SignalboxAskConsideringDraft,
+  SignalboxAskConsideringFireProof,
+  SignalboxAskConsideringHome,
+  type SignalboxAskConsideringCloudHome,
+} from "./signalboxConsidering.ts";
 import * as Schema from "effect/Schema";
 import { ProviderUserInputAnswers } from "./providerPolicy.ts";
 
 import {
   CommandId,
   IsoDateTime,
+  PositiveInt,
   RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -62,6 +70,27 @@ export const SignalboxAskDraft = Schema.Struct({
 });
 export type SignalboxAskDraft = typeof SignalboxAskDraft.Type;
 
+/** New Considering raises name an exit; public raises cannot impersonate native or automation asks. */
+export const SignalboxAskRaiseDraft = Schema.Union([
+  Schema.Struct({
+    ...SignalboxAskDraft.fields,
+    source: Schema.Struct({ kind: Schema.Literal("agent") }),
+    kind: Schema.Literal("blocker"),
+  }),
+  Schema.Struct({
+    ...SignalboxAskDraft.fields,
+    source: Schema.Struct({ kind: Schema.Literal("agent") }),
+    kind: Schema.Literal("ready"),
+  }),
+  Schema.Struct({
+    ...SignalboxAskDraft.fields,
+    source: Schema.Struct({ kind: Schema.Literal("agent") }),
+    kind: Schema.Literal("considering"),
+    considering: SignalboxAskConsideringDraft,
+  }),
+]);
+export type SignalboxAskRaiseDraft = typeof SignalboxAskRaiseDraft.Type;
+
 export const SignalboxAskAnswerer = Schema.Struct({
   kind: Schema.Literals(["person", "assistant"]),
   /** The person answering, or represented by the assistant. */
@@ -95,6 +124,8 @@ export const SignalboxAskRound = Schema.Struct({
 
 export const SignalboxAsk = Schema.Struct({
   ...SignalboxAskDraft.fields,
+  /** Optional so records written before Considering exits still decode. */
+  considering: Schema.optional(SignalboxAskConsidering),
   id: TrimmedNonEmptyString,
   status: Schema.Literals(["pending", "answered", "withdrawn", "archived"]),
   rounds: Schema.NonEmptyArray(SignalboxAskRound),
@@ -107,6 +138,12 @@ export const SignalboxAskThreadFields = { asks: Schema.optional(Schema.Array(Sig
 
 const target = { commandId: CommandId, threadId: ThreadId, askId: TrimmedNonEmptyString };
 export const SignalboxAskRaiseCommand = Schema.Struct({
+  type: Schema.Literal("thread.ask.raise"),
+  ...target,
+  ask: SignalboxAskRaiseDraft,
+});
+/** Trusted mirrors may raise a native record internally; this schema is never in the public command union. */
+export const SignalboxAskTrustedRaiseCommand = Schema.Struct({
   type: Schema.Literal("thread.ask.raise"),
   ...target,
   ask: SignalboxAskDraft,
@@ -125,6 +162,31 @@ export const SignalboxAskWithdrawCommand = Schema.Struct({
   type: Schema.Literal("thread.ask.withdraw"),
   ...target,
 });
+export const SignalboxAskConsideringResumeCommand = Schema.Struct({
+  type: Schema.Literal("thread.ask.considering.resume"),
+  ...target,
+  expectedRevision: PositiveInt,
+  whatChanged: TrimmedNonEmptyString,
+});
+export const SignalboxAskConsideringReDeferCommand = Schema.Struct({
+  type: Schema.Literal("thread.ask.considering.redefer"),
+  ...target,
+  /** Null only initializes a legacy Considering ask without an exit record. */
+  expectedRevision: Schema.NullOr(PositiveInt),
+  considering: SignalboxAskConsideringDraft,
+});
+/** Only server code fires a saved exit after checking live state and home identity. */
+export const SignalboxAskConsideringFireCommand = Schema.Struct({
+  type: Schema.Literal("thread.ask.considering.fire"),
+  ...target,
+  expectedRevision: PositiveInt,
+  proof: SignalboxAskConsideringFireProof,
+  expectedHome: SignalboxAskConsideringHome,
+});
+export type SignalboxAskConsideringCloudFireCommand = Omit<
+  typeof SignalboxAskConsideringFireCommand.Type,
+  "expectedHome"
+> & { readonly expectedHome: SignalboxAskConsideringCloudHome };
 /** Automation engines synchronize their journaled ask after validating a step's answer. */
 export const SignalboxAskSyncCommand = Schema.Struct({
   type: Schema.Literal("thread.ask.sync"),
@@ -136,13 +198,17 @@ export const SignalboxAskCommands = [
   SignalboxAskRaiseCommand,
   SignalboxAskAnswerCommand,
   SignalboxAskWithdrawCommand,
+  SignalboxAskConsideringResumeCommand,
+  SignalboxAskConsideringReDeferCommand,
 ] as const;
 export const SignalboxAskCommand = Schema.Union(SignalboxAskCommands);
 export type SignalboxAskCommand = typeof SignalboxAskCommand.Type;
 
 export const SignalboxAskServerCommand = Schema.Union([
   ...SignalboxAskCommands,
+  SignalboxAskTrustedRaiseCommand,
   SignalboxAskSyncCommand,
+  SignalboxAskConsideringFireCommand,
 ]);
 export type SignalboxAskServerCommand = typeof SignalboxAskServerCommand.Type;
 

@@ -1,4 +1,6 @@
 import { type ThreadCommand } from "./threadCommands.ts";
+import type { SignalboxAskConsideringCloudFireCommand } from "@t3tools/contracts/signalboxAsks";
+import type { SignalboxAskConsideringHome } from "@t3tools/contracts/signalboxConsidering";
 import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
 import { compactAskEvents } from "@t3tools/shared/signalboxAsks";
 import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
@@ -74,6 +76,7 @@ import { commandOutputStream } from "./commandOutput/outputStream.ts";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { decide, decideLaunch, type Decision, type ThreadWorktree } from "./threadDecider.ts";
+import { decideConsideringFire } from "./threadAsks.ts";
 import { threadEvent, type DecisionContext } from "./threadEvents.ts";
 import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
 import { activeRun } from "./runLifecycle.ts";
@@ -209,6 +212,14 @@ export class ThreadEngine extends Context.Service<
       actor: Actor,
       command: ThreadCommand,
       creation: ThreadCreation,
+    ) => Effect.Effect<
+      OrchestrationV2DispatchCommandResult,
+      ThreadNotFoundError | ThreadCommandRejectedError
+    >;
+    /** Internal automation/service hook; live owner and home checks run under the command lock. */
+    readonly fireConsideringAsk: (
+      actor: Actor,
+      command: SignalboxAskConsideringCloudFireCommand,
     ) => Effect.Effect<
       OrchestrationV2DispatchCommandResult,
       ThreadNotFoundError | ThreadCommandRejectedError
@@ -786,6 +797,8 @@ const make = Effect.gen(function* () {
       readonly createsThread: boolean;
       /** The project a command that creates the thread names. */
       readonly projectId?: string;
+      /** Server fire commands are tied to the exact home that observed the exit. */
+      readonly expectedHome?: SignalboxAskConsideringHome;
     },
     decideWith: (
       projection: OrchestrationV2ThreadProjection | null,
@@ -800,6 +813,21 @@ const make = Effect.gen(function* () {
         const current = yield* Ref.get(state);
         if (current.thread === null ? !command.createsThread : !visibleTo(current, actor)) {
           return yield* new ThreadNotFoundError();
+        }
+        if (command.expectedHome !== undefined) {
+          const expectedHome = command.expectedHome;
+          if (
+            current.thread === null ||
+            expectedHome.kind !== "cloud" ||
+            current.thread.projection.thread.projectId !== expectedHome.projectId ||
+            current.thread.owner.contextId !== expectedHome.contextId ||
+            current.thread.owner.driveId !== expectedHome.driveId
+          ) {
+            return yield* ThreadCommandRejectedError.forCommand(
+              command,
+              "This Considering ask's home changed.",
+            );
+          }
         }
         // Only a thread that exists has receipts: its creation writes the owner.
         const receipt =
@@ -999,6 +1027,29 @@ const make = Effect.gen(function* () {
         Effect.map(Effect.orDie(store.outbox), ({ revision }) => ({
           sequence,
           // Replays confirm against the current summary, including later replacements.
+          summaryRevision: revision,
+        })),
+      ),
+    );
+
+  const fireConsideringAsk: ThreadEngine["Service"]["fireConsideringAsk"] = (actor, command) =>
+    runCommand(
+      actor,
+      { place: null, pools: null },
+      {
+        id: command.commandId,
+        type: command.type,
+        createsThread: false,
+        expectedHome: command.expectedHome,
+      },
+      (projection, ctx) =>
+        projection === null
+          ? { _tag: "rejected", message: "This thread does not exist." }
+          : decideConsideringFire(projection, command, ctx),
+    ).pipe(
+      Effect.flatMap(({ sequence }) =>
+        Effect.map(Effect.orDie(store.outbox), ({ revision }) => ({
+          sequence,
           summaryRevision: revision,
         })),
       ),
@@ -1628,6 +1679,7 @@ const make = Effect.gen(function* () {
     getWorkflowScript,
     stopWorkflow,
     dispatch,
+    fireConsideringAsk,
     launch,
     trash,
     restoreTrash,

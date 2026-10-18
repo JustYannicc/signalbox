@@ -5,6 +5,11 @@ import type {
   SignalboxAskAnswerInput,
   SignalboxAskServerCommand,
 } from "@t3tools/contracts/signalboxAsks";
+import type {
+  SignalboxAskConsidering,
+  SignalboxAskConsideringFireProof,
+  SignalboxAskConsideringProof,
+} from "@t3tools/contracts/signalboxConsidering";
 
 export function pendingAskQuestions(ask: SignalboxAsk) {
   if (ask.status !== "pending") return [];
@@ -17,6 +22,92 @@ export function blockingAsk(asks: readonly SignalboxAsk[] | undefined) {
     (ask) =>
       ask.kind === "blocker" && pendingAskQuestions(ask).some((question) => question.blocking),
   );
+}
+
+/** A fired Considering exit is eligible for the pipeline; other ask kinds use their own rules. */
+export function consideringAskHasFiredExit(ask: SignalboxAsk) {
+  return (
+    ask.kind === "considering" && ask.status === "pending" && ask.considering?.fired !== undefined
+  );
+}
+
+const WEEKLY_REVIEW_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const instant = (value: string) => {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+function eventWhereMatches(
+  where: Readonly<Record<string, unknown>> | undefined,
+  proof: Extract<SignalboxAskConsideringFireProof, { kind: "event" }>,
+) {
+  if (where === undefined) return true;
+  return Object.entries(where).every(([field, expected]) => {
+    const actual = field === "event" ? proof.name : proof.matchedFields[field];
+    if (field !== "event" && !Object.hasOwn(proof.matchedFields, field)) return false;
+    const githubRepository = field === "repository" && /^(pr|release|issue)\./.test(proof.name);
+    const canonical = (value: unknown) =>
+      githubRepository && typeof value === "string" ? value.toLowerCase() : value;
+    const canonicalActual = canonical(actual);
+    return Array.isArray(expected)
+      ? expected.some((value) => canonical(value) === canonicalActual)
+      : canonical(expected) === canonicalActual;
+  });
+}
+
+function consideringFireProofMatches(
+  considering: SignalboxAskConsidering,
+  proof: SignalboxAskConsideringFireProof,
+  now: string,
+) {
+  const nowMs = instant(now);
+  if (nowMs === undefined) return false;
+  const exit = considering.exit;
+  switch (proof.kind) {
+    case "date": {
+      const dueAt = instant(exit.kind === "date" ? exit.at : "");
+      return dueAt !== undefined && instant(proof.at) === dueAt && nowMs >= dueAt;
+    }
+    case "event":
+      return (
+        exit.kind === "event" && proof.name === exit.name && eventWhereMatches(exit.where, proof)
+      );
+    case "evidence":
+      return exit.kind === "evidence" && exit.sourceKinds.includes(proof.source);
+    case "weekly-review": {
+      const revisionAt = instant(considering.revisionAt);
+      const staleSince = instant(proof.staleSince);
+      const reviewedAt = instant(proof.reviewedAt);
+      return (
+        revisionAt !== undefined &&
+        staleSince === revisionAt &&
+        reviewedAt !== undefined &&
+        reviewedAt - staleSince >= WEEKLY_REVIEW_AGE_MS &&
+        nowMs >= reviewedAt
+      );
+    }
+  }
+}
+
+function consideringProofWhatChanged(proof: SignalboxAskConsideringProof) {
+  switch (proof.kind) {
+    case "date":
+      return `Date exit reached at ${proof.at}.`;
+    case "event": {
+      const matched = Object.entries(proof.matchedFields)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([field, value]) => `${field}=${JSON.stringify(value)}`)
+        .join(", ");
+      return `Event "${proof.name}" matched${matched ? ` (${matched})` : ""}.`;
+    }
+    case "evidence":
+      return `Evidence item ${proof.eventId} from ${proof.source} materially changed this decision.`;
+    case "weekly-review":
+      return `Weekly review at ${proof.reviewedAt} found this exit open since ${proof.staleSince}.`;
+    case "owner":
+      return proof.whatChanged;
+  }
 }
 
 /** Older shells without a linked ask retain their native waiting state. */
@@ -82,6 +173,8 @@ export function applyAskCommand(
           previous.source.stepKey !== incoming.source.stepKey))
     )
       return { ok: false, error: "Only the owning automation can sync this ask." };
+    if (incoming.considering !== undefined || previous?.considering !== undefined)
+      return { ok: false, error: "Automation asks do not own Considering exits." };
     if (
       new Set(incoming.questions.map((question) => question.id)).size !== incoming.questions.length
     )
@@ -109,8 +202,13 @@ export function applyAskCommand(
     const ids = command.ask.questions.map((question) => question.id);
     if (new Set(ids).size !== ids.length)
       return { ok: false, error: "Question IDs must be unique within an ask." };
+    const considering =
+      command.ask.kind === "considering" && "considering" in command.ask
+        ? { ...command.ask.considering, revision: 1, revisionAt: now }
+        : undefined;
     const raised: SignalboxAsk = {
       ...command.ask,
+      ...(considering === undefined ? {} : { considering }),
       id: command.askId,
       status: "pending",
       createdAt: now,
@@ -129,6 +227,66 @@ export function applyAskCommand(
     return { ok: true, asks: [...asks, raised] };
   }
   if (!ask) return { ok: false, error: "The ask was not found." };
+  if (
+    command.type === "thread.ask.considering.fire" ||
+    command.type === "thread.ask.considering.resume" ||
+    command.type === "thread.ask.considering.redefer"
+  ) {
+    if (ask.source.kind !== "agent")
+      return { ok: false, error: "This ask source owns its Considering lifecycle." };
+    if (ask.status !== "pending" || ask.kind !== "considering")
+      return { ok: false, error: "This Considering ask is no longer active." };
+    const current = ask.considering;
+    if (current === undefined) {
+      if (command.type !== "thread.ask.considering.redefer" || command.expectedRevision !== null)
+        return { ok: false, error: "Set an exit condition before resuming this older ask." };
+      const considering = { ...command.considering, revision: 1, revisionAt: now };
+      return {
+        ok: true,
+        asks: asks.map((entry) =>
+          entry.id === ask.id ? { ...entry, considering, updatedAt: now } : entry,
+        ),
+      };
+    }
+    if (command.expectedRevision === null || current.revision !== command.expectedRevision)
+      return { ok: false, error: "This Considering exit changed. Reload before continuing." };
+    if (command.type === "thread.ask.considering.redefer") {
+      const considering = {
+        ...command.considering,
+        revision: current.revision + 1,
+        revisionAt: now,
+      };
+      return {
+        ok: true,
+        asks: asks.map((entry) =>
+          entry.id === ask.id ? { ...entry, considering, updatedAt: now } : entry,
+        ),
+      };
+    }
+    if (current.fired !== undefined) return { ok: true, asks };
+    const proof =
+      command.type === "thread.ask.considering.resume"
+        ? { kind: "owner" as const, whatChanged: command.whatChanged }
+        : command.proof;
+    if (
+      command.type === "thread.ask.considering.fire" &&
+      !consideringFireProofMatches(current, command.proof, now)
+    )
+      return { ok: false, error: "This proof does not satisfy the current exit condition." };
+    const fired = {
+      at: now,
+      source: proof.kind,
+      whatChanged: consideringProofWhatChanged(proof),
+      proof,
+    };
+    const considering = { ...current, fired };
+    return {
+      ok: true,
+      asks: asks.map((entry) =>
+        entry.id === ask.id ? { ...entry, considering, updatedAt: now } : entry,
+      ),
+    };
+  }
   if (command.type === "thread.ask.withdraw") {
     if (ask.status !== "pending") return { ok: true, asks };
     return {

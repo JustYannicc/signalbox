@@ -48,7 +48,12 @@ export const askTool = (
             : fresh,
           threadId,
           askId,
-          ask: { kind: params.kind, questions: params.questions, source: { kind: "agent" } },
+          ask: {
+            kind: params.kind,
+            questions: params.questions,
+            source: { kind: "agent" },
+            ...(params.kind === "considering" ? { considering: params.considering } : {}),
+          },
         });
         return { askId, round: 1, sequence: result.sequence };
       }

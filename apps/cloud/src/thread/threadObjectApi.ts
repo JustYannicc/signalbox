@@ -209,6 +209,21 @@ export const makeThreadObjectApi = (
       await afterChange();
       return result;
     },
+    fireConsideringAsk: async (actor, command) => {
+      const decoded = wire.consideringFireCommand.decode(command);
+      if (decoded.expectedHome.kind !== "cloud")
+        return {
+          _tag: "rejected",
+          commandId: decoded.commandId,
+          commandType: decoded.type,
+          reason: "This Considering ask's home changed.",
+        };
+      const result = await reply(
+        engine.use((service) => service.fireConsideringAsk(actor, decoded)),
+      );
+      await afterChange();
+      return result;
+    },
     launch: async (actor, input, creation) => {
       const result = await reply(
         engine.use((service) =>

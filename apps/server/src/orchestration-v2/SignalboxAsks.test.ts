@@ -1,5 +1,7 @@
 import { expect, it } from "@effect/vitest";
-import { CommandId, MessageId } from "@t3tools/contracts";
+import { ChatAttachmentId, CommandId, EventId, MessageId, ProjectId } from "@t3tools/contracts";
+import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { applyAskCommand } from "@t3tools/shared/signalboxAsks";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import * as DateTime from "effect/DateTime";
@@ -9,8 +11,28 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { layer, threadId, create, raise, answer } from "./SignalboxAsks.testkit.ts";
+
+const automationAsk = (now: string): SignalboxAsk => ({
+  ...raise.ask,
+  id: raise.askId,
+  status: "pending",
+  source: { kind: "automation", runId: "run", stepKey: "gate" },
+  rounds: [
+    {
+      number: 1,
+      questionIds: raise.ask.questions.map((question) => question.id),
+      answers: [],
+      deferredQuestionIds: [],
+      openedAt: now,
+      closedAt: null,
+    },
+  ],
+  createdAt: now,
+  updatedAt: now,
+});
 
 it.effect(
   "keeps work active, queues a partial answer and restores pending rounds from events",
@@ -76,6 +98,303 @@ it.effect(
     }).pipe(Effect.provide(layer)),
 );
 
+it.effect("re-defers, resumes and fires Considering through the server-only command path", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* create;
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    const projectId = ProjectId.make("project:asks");
+    yield* projects.apply({
+      sequence: 1,
+      eventId: EventId.make("event:project-asks-created"),
+      aggregateKind: "project",
+      aggregateId: projectId,
+      occurredAt: "2026-10-16T10:00:00.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.created",
+      payload: {
+        projectId,
+        title: "Asks",
+        workspaceRoot: "/tmp/project-asks",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-10-16T10:00:00.000Z",
+        updatedAt: "2026-10-16T10:00:00.000Z",
+      },
+    });
+    const raised = yield* orchestrator.dispatch({
+      ...raise,
+      commandId: CommandId.make("considering-raise"),
+      askId: "considering-ask",
+      ask: {
+        kind: "considering",
+        source: { kind: "agent" },
+        questions: [
+          {
+            id: "choice",
+            question: "Which option?",
+            why: "The tradeoff needs time.",
+            unblocks: "The next step.",
+            recommendation: "A",
+            options: [],
+            blocking: false,
+            decisionOwner: "Owner",
+            surface: { kind: "kit", component: "text" },
+          },
+        ],
+        considering: {
+          exit: { kind: "event", name: "The customer replies" },
+          preparationAttachmentIds: [],
+        },
+      },
+    });
+    const changedAsks = (result: typeof raised) =>
+      result.storedEvents.flatMap(({ event }) =>
+        event.type === "thread.ask-updated" ? [event.payload] : [],
+      );
+    expect(changedAsks(raised)).toHaveLength(1);
+    expect(changedAsks(raised)[0]).toMatchObject({
+      id: "considering-ask",
+      kind: "considering",
+      considering: {
+        revision: 1,
+        exit: { kind: "event", name: "The customer replies" },
+      },
+    });
+    const invalidRedeferAttachment = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.ask.considering.redefer",
+        commandId: CommandId.make("considering-invalid-attachment"),
+        threadId,
+        askId: "considering-ask",
+        expectedRevision: 1,
+        considering: {
+          exit: { kind: "event", name: "The customer replies" },
+          preparationAttachmentIds: [
+            ChatAttachmentId.make("pending-00000000-0000-4000-8000-000000000000"),
+          ],
+        },
+      }),
+    );
+    expect(Exit.isFailure(invalidRedeferAttachment)).toBe(true);
+    const redeferred = yield* orchestrator.dispatch({
+      type: "thread.ask.considering.redefer",
+      commandId: CommandId.make("considering-redefer"),
+      threadId,
+      askId: "considering-ask",
+      expectedRevision: 1,
+      considering: {
+        exit: {
+          kind: "evidence",
+          reference: "support case",
+          relatednessCriteria: "The item concerns this customer's case.",
+          materialChangeCriteria: "It changes the decision about the option.",
+          sourceKinds: ["message.sent"],
+        },
+        preparationAttachmentIds: [],
+      },
+    });
+    expect(changedAsks(redeferred)).toHaveLength(1);
+    expect(changedAsks(redeferred)[0]).toMatchObject({
+      id: "considering-ask",
+      considering: {
+        revision: 2,
+        exit: { kind: "evidence", reference: "support case" },
+        fired: undefined,
+      },
+    });
+    const resumed = yield* orchestrator.dispatch({
+      type: "thread.ask.considering.resume",
+      commandId: CommandId.make("considering-resume"),
+      threadId,
+      askId: "considering-ask",
+      expectedRevision: 2,
+      whatChanged: "The owner has time to revisit this now.",
+    });
+    expect(changedAsks(resumed)).toHaveLength(1);
+    expect(changedAsks(resumed)[0]).toMatchObject({
+      id: "considering-ask",
+      considering: {
+        revision: 2,
+        fired: {
+          source: "owner",
+          whatChanged: "The owner has time to revisit this now.",
+          proof: { kind: "owner", whatChanged: "The owner has time to revisit this now." },
+        },
+      },
+    });
+    const redeferredAgain = yield* orchestrator.dispatch({
+      type: "thread.ask.considering.redefer",
+      commandId: CommandId.make("considering-redefer-after-resume"),
+      threadId,
+      askId: "considering-ask",
+      expectedRevision: 2,
+      considering: {
+        exit: {
+          kind: "evidence",
+          reference: "support case",
+          relatednessCriteria: "The item concerns this customer's case.",
+          materialChangeCriteria: "It changes the decision about the option.",
+          sourceKinds: ["message.sent"],
+        },
+        preparationAttachmentIds: [],
+      },
+    });
+    expect(changedAsks(redeferredAgain)).toHaveLength(1);
+    expect(changedAsks(redeferredAgain)[0]).toMatchObject({
+      id: "considering-ask",
+      considering: { revision: 3, fired: undefined },
+    });
+    const previousHome = {
+      kind: "server" as const,
+      projectId,
+      workspaceRoot: "/tmp/project-asks",
+    };
+    yield* projects.apply({
+      sequence: 2,
+      eventId: EventId.make("event:project-asks-moved"),
+      aggregateKind: "project",
+      aggregateId: projectId,
+      occurredAt: "2026-10-16T10:01:00.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.meta-updated",
+      payload: {
+        projectId,
+        workspaceRoot: "/tmp/project-asks-moved",
+        updatedAt: "2026-10-16T10:01:00.000Z",
+      },
+    });
+    const expectedHome = {
+      kind: "server" as const,
+      projectId,
+      workspaceRoot: "/tmp/project-asks-moved",
+    };
+    const wrongHome = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.ask.considering.fire",
+        commandId: CommandId.make("considering-wrong-home"),
+        threadId,
+        askId: "considering-ask",
+        expectedRevision: 3,
+        proof: {
+          kind: "evidence",
+          source: "message.sent",
+          eventId: "event:message-support-case",
+          judgment: "materially_changes",
+        },
+        expectedHome: previousHome,
+      }),
+    );
+    expect(Exit.isFailure(wrongHome)).toBe(true);
+    const wrongHost = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.ask.considering.fire",
+        commandId: CommandId.make("considering-wrong-host"),
+        threadId,
+        askId: "considering-ask",
+        expectedRevision: 3,
+        proof: {
+          kind: "evidence",
+          source: "message.sent",
+          eventId: "event:message-support-case",
+          judgment: "materially_changes",
+        },
+        expectedHome: {
+          kind: "cloud",
+          projectId,
+          contextId: SignalboxContextId.make("personal"),
+          driveId: "local:asks",
+        },
+      }),
+    );
+    expect(Exit.isFailure(wrongHost)).toBe(true);
+    const wrongProof = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.ask.considering.fire",
+        commandId: CommandId.make("considering-wrong-proof"),
+        threadId,
+        askId: "considering-ask",
+        expectedRevision: 3,
+        proof: {
+          kind: "evidence",
+          source: "drive.changed",
+          eventId: "event:unrelated-drive-change",
+          judgment: "materially_changes",
+        },
+        expectedHome,
+      }),
+    );
+    expect(Exit.isFailure(wrongProof)).toBe(true);
+    const fireCommand = {
+      type: "thread.ask.considering.fire" as const,
+      commandId: CommandId.make("considering-fire"),
+      threadId,
+      askId: "considering-ask",
+      expectedRevision: 3,
+      proof: {
+        kind: "evidence" as const,
+        source: "message.sent" as const,
+        eventId: "event:message-support-case",
+        judgment: "materially_changes" as const,
+      },
+      expectedHome,
+    };
+    const fired = yield* orchestrator.dispatch(fireCommand);
+    expect(changedAsks(fired)).toHaveLength(1);
+    expect(changedAsks(fired)[0]).toMatchObject({
+      id: "considering-ask",
+      considering: {
+        revision: 3,
+        fired: { source: "evidence", proof: fireCommand.proof },
+      },
+    });
+    const afterFire = yield* orchestrator.getThreadProjection(threadId);
+    expect(afterFire.thread.asks?.find((ask) => ask.id === "considering-ask")).toMatchObject({
+      considering: {
+        revision: 3,
+        fired: {
+          source: "evidence",
+          whatChanged:
+            "Evidence item event:message-support-case from message.sent materially changed this decision.",
+          proof: fireCommand.proof,
+        },
+      },
+    });
+    const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+    const retried = yield* orchestrator.dispatch({
+      ...fireCommand,
+      commandId: CommandId.make("considering-fire-retry"),
+    });
+    expect(retried.sequence).toBe(fired.sequence);
+    expect(changedAsks(retried)).toEqual([]);
+    expect(yield* orchestrator.getThreadEventSequence(threadId)).toBe(sequence);
+    yield* projects.apply({
+      sequence: 3,
+      eventId: EventId.make("event:project-asks-moved-again"),
+      aggregateKind: "project",
+      aggregateId: projectId,
+      occurredAt: "2026-10-16T10:02:00.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.meta-updated",
+      payload: {
+        projectId,
+        workspaceRoot: "/tmp/project-asks-moved-again",
+        updatedAt: "2026-10-16T10:02:00.000Z",
+      },
+    });
+    const staleReceiptHome = yield* Effect.exit(orchestrator.dispatch(fireCommand));
+    expect(Exit.isFailure(staleReceiptHome)).toBe(true);
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "commits answer, message and provider outbox together, rolling back if enqueue fails",
   () =>
@@ -106,8 +425,10 @@ it.effect(
     Effect.gen(function* () {
       const orchestrator = yield* create;
       yield* orchestrator.dispatch({
-        ...raise,
-        ask: { ...raise.ask, source: { kind: "automation", runId: "run", stepKey: "gate" } },
+        type: "thread.ask.sync",
+        commandId: CommandId.make("automation-ask-sync"),
+        threadId,
+        ask: automationAsk(DateTime.formatIso(yield* DateTime.now)),
       });
       const threads = yield* ThreadManagement.ThreadManagementService;
       let calls = 0;
@@ -145,8 +466,10 @@ it.effect("syncs a workflow outcome while archived and rejects withdrawing its w
   Effect.gen(function* () {
     const orchestrator = yield* create;
     yield* orchestrator.dispatch({
-      ...raise,
-      ask: { ...raise.ask, source: { kind: "automation", runId: "run", stepKey: "gate" } },
+      type: "thread.ask.sync",
+      commandId: CommandId.make("automation-ask-sync-archived"),
+      threadId,
+      ask: automationAsk(DateTime.formatIso(yield* DateTime.now)),
     });
     const withdraw = yield* Effect.exit(
       orchestrator.dispatch({

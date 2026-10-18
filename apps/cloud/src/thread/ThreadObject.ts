@@ -452,6 +452,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.dispatch(...args);
   }
 
+  fireConsideringAsk(...args: Parameters<ThreadObjectApi["fireConsideringAsk"]>) {
+    return this.api.fireConsideringAsk(...args);
+  }
+
   launch(...args: Parameters<ThreadObjectApi["launch"]>) {
     return this.api.launch(...args);
   }

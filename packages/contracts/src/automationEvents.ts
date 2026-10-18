@@ -130,6 +130,21 @@ export const AUTOMATION_EVENTS = [
     fields: { title: "", runtimeMode: "", interactionMode: "" },
   },
   {
+    name: "ask.changed",
+    when: "When an ask changes",
+    description: "A Signalbox ask was raised or its lifecycle changed.",
+    fields: {
+      askId: "the ask's id",
+      kind: "blocker | ready | considering",
+      status: "pending | answered | withdrawn | archived",
+      sourceKind: "agent | native | automation",
+      round: "the current round number",
+      revision: "the Considering deferral revision, or null for legacy and non-Considering asks",
+      exitKind: "date | event | evidence, or null when there is no Considering exit",
+      fired: "whether the current Considering exit has fired",
+    },
+  },
+  {
     name: "pr.opened",
     when: "When a pull request opens",
     description: "A pull request opened or reopened in a connected GitHub repository.",

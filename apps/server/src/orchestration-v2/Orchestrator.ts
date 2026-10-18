@@ -460,6 +460,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.ask.answer":
     case "thread.ask.withdraw":
     case "thread.ask.sync":
+    case "thread.ask.considering.resume":
+    case "thread.ask.considering.redefer":
+    case "thread.ask.considering.fire":
     case "message.dispatch":
     case "notification.delivery.accept":
     case "prepared-run.release":
@@ -10750,7 +10753,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.ask.raise": // signalbox: scope durable ask commands to their thread
       case "thread.ask.answer":
       case "thread.ask.withdraw":
-      case "thread.ask.sync": {
+      case "thread.ask.sync":
+      case "thread.ask.considering.resume":
+      case "thread.ask.considering.redefer":
+      case "thread.ask.considering.fire": {
         yield* dispatchSignalboxAskCommand({
           // signalbox: commit ask answers and message delivery together
           command,
@@ -10758,10 +10764,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             projectionStore
               .getThreadRecords(
                 command.threadId,
-                ["runtimeRequests", "providerSessions", "turnItems"],
+                ["runtimeRequests", "providerSessions", "turnItems", "messages"],
                 { turnItemTypes: ["user_input_request"] },
               )
               .pipe(mapDispatchError(command)),
+          loadCurrentHome: (projectId) =>
+            projects.get(projectId).pipe(
+              Effect.map(Option.getOrNull),
+              Effect.map((project) =>
+                project === null
+                  ? null
+                  : { projectId: project.projectId, workspaceRoot: project.workspaceRoot },
+              ),
+              mapDispatchError(command),
+            ),
           now: DateTime.now,
           dispatchDelivery: (delivery) =>
             delivery.type === "message.dispatch"
@@ -11084,6 +11100,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+
+    if (command.type === "thread.ask.considering.fire") {
+      const homeChanged = () =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: new Error("This Considering ask's home changed."),
+        });
+      const expectedHome = command.expectedHome;
+      if (expectedHome.kind !== "server") return yield* homeChanged();
+      const project = yield* projects.get(expectedHome.projectId).pipe(mapDispatchError(command));
+      if (Option.isNone(project) || project.value.workspaceRoot !== expectedHome.workspaceRoot)
+        return yield* homeChanged();
+      const projection = yield* projectionStore
+        .getThreadProjection(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (projection.thread.projectId !== expectedHome.projectId) return yield* homeChanged();
+    }
 
     const existingReceipt = yield* commandReceipts.getByCommandId(command.commandId).pipe(
       Effect.mapError(

@@ -130,6 +130,10 @@
     "./signalboxAsks": {
       "types": "./src/signalboxAsks.ts",
       "import": "./src/signalboxAsks.ts"
+    },
+    "./signalboxConsidering": {
+      "types": "./src/signalboxConsidering.ts",
+      "import": "./src/signalboxConsidering.ts"
     }
   },
   "scripts": {

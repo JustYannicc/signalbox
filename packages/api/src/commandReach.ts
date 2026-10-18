@@ -27,6 +27,16 @@ export const COMMAND_REACH = {
     name: "threads.asks.withdraw",
     summary: "Withdraw an ask that is no longer needed.",
   }),
+  "thread.ask.considering.resume": write({
+    name: "threads.asks.considering.resume",
+    humanOnly: true,
+    summary: "Bring a Considering ask back to the pipeline.",
+  }),
+  "thread.ask.considering.redefer": write({
+    name: "threads.asks.considering.redefer",
+    humanOnly: true,
+    summary: "Change when a Considering ask returns to the pipeline.",
+  }),
   "thread.archive": write(),
   "thread.unarchive": write(),
   "thread.delete": write({ destructive: true }),
