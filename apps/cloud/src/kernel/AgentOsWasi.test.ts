@@ -20,6 +20,7 @@ describe("AgentOS WASI hidden preopen arguments", () => {
       const transform = createAgentOsWasiArgumentTransform(filesystem);
       const tagged = HIDDEN_PREOPEN_TAG | preopenFd;
       const positions: Readonly<Record<string, readonly number[]>> = {
+        fd_fdstat_get: [0],
         fd_prestat_get: [0],
         fd_prestat_dir_name: [0],
         path_create_directory: [0],
@@ -42,7 +43,9 @@ describe("AgentOS WASI hidden preopen arguments", () => {
         expect(transform(name, args), name).toEqual(expected);
       }
       const untouched = [tagged, 1, 2, 3];
-      expect(transform("fd_close", untouched)).toBe(untouched);
+      for (const name of ["fd_close", "fd_dup", "fd_fdstat_set_rights"]) {
+        expect(transform(name, untouched), name).toBe(untouched);
+      }
       expect(transform("path_open", [0x8000_0000 | preopenFd])).toEqual([0x8000_0000 | preopenFd]);
       expect(transform("fd_prestat_get", [HIDDEN_PREOPEN_TAG | 0x3fff_ffff])).toEqual([
         HIDDEN_PREOPEN_TAG | 0x3fff_ffff,
@@ -114,10 +117,13 @@ describe("AgentOS WASI hidden preopen arguments", () => {
 
       const getStat = await wasiRunner(filesystem, wakes, "fd_fdstat_get", ["i32", "i32"], true);
       runners.push(getStat);
+      expect(await getStat.run(taggedPreopen, 64)).toBe(0);
       expect(await getStat.run(preopenFd, 64)).toBe(0);
       const descriptorStat = new DataView(getStat.memory.buffer);
       const rightsBase = descriptorStat.getBigUint64(72, true);
       const rightsInheriting = descriptorStat.getBigUint64(80, true);
+      expect(await getStat.run(ordinaryFd, 64)).toBe(0);
+      expect(await getStat.run(HIDDEN_PREOPEN_TAG | ordinaryFd, 64)).toBe(8);
       const setRights = await wasiRunner(
         filesystem,
         wakes,
@@ -126,6 +132,7 @@ describe("AgentOS WASI hidden preopen arguments", () => {
         true,
       );
       runners.push(setRights);
+      expect(await setRights.run(taggedPreopen, rightsBase, rightsInheriting)).toBe(8);
       expect(await setRights.run(preopenFd, rightsBase & ~(1n << 18n), rightsInheriting)).toBe(0);
       expect(await stat.run(taggedPreopen, 0, 64, 1, 128)).toBe(76);
 

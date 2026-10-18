@@ -262,7 +262,6 @@ export class WasiPathCalls {
     const directory = this.#requireDirectory(fd, RIGHTS.PATH_OPEN);
     validateDirFlags(dirflags);
     validateOpenFlags(oflags, fdflags);
-    if ((fdflags & FDFLAGS.NONBLOCK) !== 0) throw new WasiError(ENOTSUP);
     if ((oflags & OFLAGS.CREATE) !== 0 && (oflags & OFLAGS.DIRECTORY) !== 0) {
       throw new WasiError(EINVAL);
     }
