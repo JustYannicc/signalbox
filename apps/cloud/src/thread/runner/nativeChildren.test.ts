@@ -31,6 +31,7 @@ import {
 } from "../ThreadTestKit.ts";
 import type { NativeChildBatchInput } from "../NativeChildProtocol.ts";
 import { runnerBatchEvents } from "../ThreadRunnerProof.ts";
+import { commandItem, delta, firstFrame, reportCommand } from "../commandOutputTestKit.ts";
 
 const encodeThread = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2AppThread));
 const encodeMessage = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2ConversationMessage));
@@ -281,6 +282,8 @@ describe("provider-native child history", () => {
               });
               return {
                 generation: machine.generation,
+                runId: turn.runId,
+                command: commandItem(turn),
                 attestation: item({
                   type: "subagent.updated",
                   subagent: yield* encodeSubagent(attestation),
@@ -310,7 +313,11 @@ describe("provider-native child history", () => {
               const batch = {
                 generation: first.generation,
                 sequence: 3,
-                items: [first.attestation],
+                items: [
+                  reportCommand(first.runId, first.command),
+                  delta(first.runId, "PARENT_OUTPUT\n"),
+                  first.attestation,
+                ],
               };
               expect(Exit.isFailure(yield* Effect.exit(runner.batch(batch)))).toBe(true);
               const saved = yield* withObject(childDatabase, (child) => snapshot(child));
@@ -318,6 +325,7 @@ describe("provider-native child history", () => {
                 "Partial answer",
               ]);
               expect(yield* runner.batch(batch)).toEqual({ _tag: "ack", sequence: 3 });
+              expect((yield* firstFrame(engine)).text).toBe("PARENT_OUTPUT\n");
               expect((yield* withObject(childDatabase, (child) => snapshot(child))).head).toBe(
                 saved.head,
               );

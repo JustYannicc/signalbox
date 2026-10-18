@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -46,6 +47,7 @@ import {
 } from "./RunnerPreviewTunnel.ts";
 import { onePasswordSdk, type OnePassword } from "./RunnerOnePassword.ts";
 import { makeRunnerSecrets, makeSecretsRegistrar } from "./RunnerSecrets.ts";
+import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 import { makeRunnerSession, RunnerConnectionError, type RunnerSession } from "./RunnerSession.ts";
 import { makeRunnerSessions } from "./RunnerSessions.ts";
 import {
@@ -160,6 +162,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               : { codexCwdMigration: { from: paths.legacyCwd, to: cwd } }),
             mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
+          // Every drive the user can read, for the harnesses (#141).
+          // Native HTTP has no fetch headers timeout while a person answers the card.
+          const secretRequests = yield* makeRunnerSecretRequests(cloudUrl).pipe(
+            Effect.provide(NodeHttpClient.layerNodeHttp),
+          );
           // What the harness environment sets itself; known once the adapters are made.
           let harnessVariables: ReadonlySet<string> = new Set();
           const secrets = makeRunnerSecrets({
@@ -191,6 +198,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
             threadId: request.threadId,
+            secretRequests,
             previewServices,
             persistPreviewServices,
             previewServicesReady: Deferred.await(previewServicesPublisher).pipe(
@@ -325,6 +333,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 previewDrive: () => openedDrive?.drive ?? null,
                 secrets,
                 registerSecrets,
+                secretRequests,
                 openDrive,
                 sessions,
                 attachments,

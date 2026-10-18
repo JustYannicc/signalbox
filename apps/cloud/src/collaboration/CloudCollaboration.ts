@@ -21,12 +21,8 @@ import * as Stream from "effect/Stream";
 import { threadShellFromProjection as threadShell } from "../thread/threadProjection.ts";
 import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import { UserShell } from "../user/UserShell.ts";
-import {
-  activeRun,
-  isLiveRun,
-  isTerminalRunStatus,
-  isRunWaitBoundary,
-} from "../thread/runLifecycle.ts";
+import { activeRun, isTerminalRunStatus, isRunWaitBoundary } from "../thread/runLifecycle.ts";
+import { isLiveRun } from "../thread/runState.ts";
 import { makeAccess, refuse } from "./access.ts";
 import { listItem, readPage } from "./threadReads.ts";
 import { makeCapabilities } from "./capabilities.ts";

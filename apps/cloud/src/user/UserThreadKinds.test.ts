@@ -54,6 +54,7 @@ const setup = (
   const directory = Layer.succeed(ThreadDirectory.ThreadDirectory, {
     forThread: (threadId) =>
       ThreadDirectory.handleFor({
+        answerSecret: async () => "not_found",
         dispatch: async (_actor, command, creation) => {
           options.onArchive?.();
           if (threadId === options.failing) throw new Error("object down");
@@ -63,6 +64,7 @@ const setup = (
         },
         launch: async () => ({ _tag: "not_found" }),
         recordNativeChildBatch: async () => ({ _tag: "saved" }),
+        commandOutput: async () => null,
         snapshot: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,

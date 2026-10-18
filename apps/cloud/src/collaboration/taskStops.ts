@@ -2,7 +2,7 @@ import { CommandId, type OrchestrationV2Run, type ThreadId } from "@t3tools/cont
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { isLiveRun } from "../thread/runLifecycle.ts";
+import { isLiveRun } from "../thread/runState.ts";
 import type { CollaborationAccess } from "./access.ts";
 import type { TaskRecords } from "./taskRecords.ts";
 import { CollaborationError } from "./errors.ts";

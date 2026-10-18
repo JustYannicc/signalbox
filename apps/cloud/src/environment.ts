@@ -111,6 +111,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     threadAutoSettleOptOut: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    commandOutputStreaming: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
     usageHistory: false,

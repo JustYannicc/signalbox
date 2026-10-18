@@ -13,8 +13,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "../models/ModelRouting.ts";
 import { decideLifecycleCommand } from "./lifecycleCommands.ts";
+import { respondToRuntimeRequest } from "./runtimeRequests.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
   activeRun,
@@ -35,15 +35,6 @@ import { applyEvents } from "./threadProjection.ts";
  * followed here rather than its code.
  */
 
-export type Decision =
-  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | {
-      readonly _tag: "rejected";
-      readonly message: string;
-      readonly record?: boolean;
-      readonly code?: "run_changed";
-    };
-
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",
   events,
@@ -54,14 +45,20 @@ const reject = (message: string, record = true): Decision => ({
   ...(record ? {} : { record }),
 });
 
+export type Decision =
+  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
+  | {
+      readonly _tag: "rejected";
+      readonly message: string;
+      readonly record?: boolean;
+      readonly code?: "run_changed";
+    };
+
 type Projection = OrchestrationV2ThreadProjection;
 type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
   OrchestrationV2Command,
   { readonly type: T }
 >;
-
-export const HARNESS_MODES_UNSUPPORTED =
-  "Claude and Codex in the cloud run with full access and without plan mode for now: approvals can't reach cloud machines yet.";
 
 /** A thread's own branch, and the path clients address its working tree by. */
 export interface ThreadWorktree {
@@ -70,8 +67,7 @@ export interface ThreadWorktree {
 }
 
 /** The rejection for a command the cloud does not serve yet. */
-export const unsupported = (commandType: string) =>
-  `${commandType} is not available in the cloud yet.`;
+export const unsupported = () => "This action isn't available in the cloud yet.";
 
 const CLOUD_COMMAND_TYPES = [
   "thread.create",
@@ -90,6 +86,8 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request-link.sync",
   "thread.archive",
   "thread.unarchive",
+  "runtime-request.respond",
+  "thread.user-input.dismiss",
   "thread.settle",
   "thread.auto-settle",
   "thread.unsettle",
@@ -193,15 +191,6 @@ function dispatchMessage(
     updates.push(threadEvent(ctx, "thread.model-selection-updated", current));
   }
 
-  // Cloud machines have no way to answer an approval or a question yet, so a
-  // harness turn that could stop to ask would wait until someone pressed Stop.
-  if (
-    isHarnessInstance(current.providerInstanceId) &&
-    (current.runtimeMode !== "full-access" || current.interactionMode === "plan")
-  ) {
-    return reject(HARNESS_MODES_UNSUPPORTED);
-  }
-
   const ordinal = projection.runs.length + 1;
   const runId = ids.run(thread.id, ordinal);
   const live = activeRun(projection);
@@ -284,7 +273,7 @@ export function decide(
     readonly run?: Pick<OrchestrationV2Run, "id" | "status"> | null;
   } = {},
 ): Decision {
-  if (!isCloudCommand(command)) return reject(unsupported(command.type));
+  if (!isCloudCommand(command)) return reject(unsupported());
   if (command.type === "thread.create") {
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
   }
@@ -308,7 +297,7 @@ export function decide(
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
-      return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported(command.type));
+      return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported());
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {
@@ -398,6 +387,54 @@ export function decide(
     case "thread.unarchive":
       if (projection.thread.archivedAt === null) return reject("This thread is not archived.");
       return updateThread(projection, "thread.unarchived", { archivedAt: null }, ctx);
+    case "runtime-request.respond":
+    case "thread.user-input.dismiss": {
+      const resolved = respondToRuntimeRequest(projection, command, ctx);
+      if (
+        resolved._tag === "rejected" ||
+        command.type === "thread.user-input.dismiss" ||
+        command.decision === "cancel" ||
+        command.decision === "decline"
+      )
+        return resolved;
+      const request = projection.runtimeRequests.find(
+        (candidate) => candidate.id === command.requestId,
+      );
+      if (request?.responseCapability.type !== "message") return resolved;
+      const item = projection.turnItems.find(
+        (candidate) =>
+          candidate.type === "user_input_request" && candidate.requestId === command.requestId,
+      );
+      if (item?.type !== "user_input_request")
+        return reject("The question for this request was not found.");
+      const replies = item.questions.flatMap((question) => {
+        const answer = command.answers?.[question.id];
+        return typeof answer === "string" && answer.trim().length > 0
+          ? [`${question.question}\n${answer.trim()}`]
+          : [];
+      });
+      const live = activeRun(projection);
+      const answered = applyEvents(projection, resolved.events) ?? projection;
+      const sent = dispatchMessage(
+        answered,
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: MessageId.make(`async-answer:${command.requestId}`),
+          text: replies.join("\n\n"),
+          attachments: [],
+          createdBy: "user",
+          creationSource: "server",
+          dispatchMode:
+            live !== undefined && canSteer(projection, live)
+              ? { type: "steer_active", targetRunId: live.id }
+              : { type: "queue_after_active" },
+        },
+        ctx,
+      );
+      return sent._tag === "rejected" ? sent : accept([...resolved.events, ...sent.events]);
+    }
     case "thread.model-selection.set":
       return updateThread(
         projection,
