@@ -21,6 +21,7 @@ import { serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
+import * as ClientActionTimings from "./observability/ClientActionTimings.ts";
 import type { KernelApi } from "./browser/KernelApi.ts";
 import type { KernelAuth } from "./browser/KernelAuth.ts";
 import * as PersonBrowsers from "./browser/PersonBrowsers.ts";
@@ -353,7 +354,7 @@ const makeUserRuntime = (
               layerUserObjectTokens,
             ),
           ),
-          Layer.provideMerge(observe),
+          Layer.provideMerge(Layer.mergeAll(observe, ClientActionTimings.layerOff)),
         ),
       ),
       Layer.merge(automations),

@@ -31,7 +31,10 @@ export const makeSignalboxAnalyticsWsHandlers = Effect.fn("makeSignalboxAnalytic
         event,
         ...properties
       }: ProductAnalyticsClientEvent) =>
-        analytics.record(`signalbox.${event}`, { ...clientAnalyticsProps, ...properties }),
+        // Operational timing goes to trace intake. Product analytics stays off until #358.
+        event === "interaction.timings"
+          ? Effect.void
+          : analytics.record(`signalbox.${event}`, { ...clientAnalyticsProps, ...properties }),
     };
   },
 );

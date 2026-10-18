@@ -21,6 +21,7 @@ export interface Launch {
   readonly automation: AutomationRow;
   readonly input: unknown;
   readonly trigger: AutomationRunTrigger;
+  readonly originThreadId?: string | undefined;
   /** The run whose `w.start` started this one. */
   readonly parent?: RunRow;
   readonly runId?: string;

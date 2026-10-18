@@ -1,3 +1,4 @@
+import { ThreadCommand } from "./threadCommands.ts";
 import {
   ModelSelection,
   NonNegativeInt,
@@ -7,7 +8,6 @@ import {
   OrchestrationV2StopWorkflowInput,
   OrchestrationV2StopWorkflowError,
   SecretRequestAnswerInput,
-  OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DomainEventJson,
@@ -125,7 +125,7 @@ export const wire = {
   ),
   secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
-  command: jsonCodec(OrchestrationV2Command),
+  command: jsonCodec(ThreadCommand),
   launchInput: jsonCodec(LaunchInputWire),
   launchResult: jsonCodec(OrchestrationV2ThreadLaunchResult),
   snapshot: jsonCodec(ThreadSnapshotWire),

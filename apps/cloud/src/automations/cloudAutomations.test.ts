@@ -29,6 +29,7 @@ import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import { PERSON_TIMEZONE_WS_METHODS } from "@t3tools/contracts/personTimezone";
+import { SIGNALBOX_TRASH_WS_METHODS } from "@t3tools/contracts/signalboxTrash";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 import { CloudCompiler } from "./cloudCompiler.ts";
@@ -125,6 +126,41 @@ const setup = Effect.gen(function* () {
 });
 
 describe("cloud automations", () => {
+  it.effect("restoring a trashed thread keeps its cancelled automation ask withdrawn", () =>
+    Effect.gen(function* () {
+      const { cloud, thread, save, rpc, engine } = yield* setup;
+      const writer = yield* thread("thread-trashed-ask", "Prepare a decision");
+      yield* save(
+        writer,
+        `export const meta = { name: "Trash decision" } as const;
+export default workflow(async (w) => w.ask("Continue?", { options: ["yes", "no"] }));`,
+      );
+      const automation = (yield* engine((engine) => engine.list())).find(
+        (entry) => entry.name === "Trash decision",
+      )!;
+      const started = yield* engine((engine) =>
+        engine.startRun({
+          automationId: automation.id,
+          trigger: "manual",
+          attach: { threadId: writer },
+        }),
+      );
+      yield* cloud.settle;
+      const pending = (yield* engine((engine) => engine.getRun(started.id))).steps[0]!.commonAsk!;
+      expect(pending.status).toBe("pending");
+      const trashed = yield* rpc[SIGNALBOX_TRASH_WS_METHODS.thread]({ threadId: writer });
+      yield* cloud.settle;
+      expect(
+        (yield* engine((engine) => engine.getRun(started.id))).steps[0]!.commonAsk?.status,
+      ).toBe("withdrawn");
+      yield* rpc[SIGNALBOX_TRASH_WS_METHODS.restore]({ id: trashed.entries[0]!.id });
+      const restored = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: writer,
+      });
+      expect(restored.thread.asks?.find((ask) => ask.id === pending.id)?.status).toBe("withdrawn");
+      expect(restored.thread.asks?.filter((ask) => ask.status === "pending")).toEqual([]);
+    }),
+  );
   it.effect("snapshots the saved zone for cron versions and drafts", () =>
     Effect.gen(function* () {
       vi.useFakeTimers({ toFake: ["Date"] });
@@ -612,6 +648,64 @@ export default workflow(async (w) => {
       yield* cloud.settle;
       const done = yield* engine((engine) => engine.getRun(runId));
       expect([done.run.status, done.output]).toEqual(["succeeded", "ship"]);
+    }),
+  );
+
+  it.effect("a common ask answer resumes the same cloud workflow with its form intact", () =>
+    Effect.gen(function* () {
+      const { cloud, thread, save, rpc, engine, start } = yield* setup;
+      const writer = yield* thread("thread-common-ask", "Prepare a decision");
+      yield* save(
+        writer,
+        `export const meta = { name: "Pick supplies" } as const;
+export default workflow(async (w) => w.ask("Bring what?", {
+  options: ["tea", "cake"], multi: true,
+  fields: { count: { type: "number", required: true } },
+}));`,
+      );
+      const runId = yield* start(writer, "Pick supplies");
+      const pending = (yield* engine((engine) => engine.getRun(runId))).steps[0]!.commonAsk!;
+      expect(pending.source).toMatchObject({ kind: "automation", runId });
+      expect(pending.questions[0].surface).toMatchObject({
+        kind: "kit",
+        component: "automation",
+        props: { fields: [{ name: "count", required: true }] },
+      });
+      const projected = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: writer,
+      });
+      const ask = projected.thread.asks!.find(
+        (entry) => entry.source.kind === "automation" && entry.source.runId === runId,
+      )!;
+      const command = {
+        type: "thread.ask.answer" as const,
+        commandId: CommandId.make("common-automation-answer"),
+        threadId: writer,
+        askId: ask.id,
+        round: 1,
+        answers: [
+          {
+            questionId: ask.questions[0].id,
+            value: { choice: ["cake", "tea"], values: { count: 2 } },
+          },
+        ],
+        deferredQuestionIds: [],
+        answeredBy: { kind: "person" as const, personId: userId },
+      };
+      yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](command);
+      yield* rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](command);
+      yield* cloud.settle;
+      const done = yield* engine((engine) => engine.getRun(runId));
+      expect(done).toMatchObject({
+        run: { status: "succeeded" },
+        output: { choice: ["tea", "cake"], values: { count: 2 } },
+      });
+      const latest = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: writer,
+      });
+      expect(latest.thread.asks!.find((entry) => entry.id === ask.id)).toEqual(
+        done.steps[0]!.commonAsk,
+      );
     }),
   );
 
