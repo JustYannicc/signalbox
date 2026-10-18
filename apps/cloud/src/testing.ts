@@ -53,6 +53,7 @@ import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as ThreadSecretRequests from "./thread/ThreadSecrets.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as LearnerService from "./learner/LearnerService.ts";
 import * as LearnerJev from "./learner/LearnerJev.ts";
@@ -488,6 +489,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore
         | TerminalTesting.TerminalOutboxRequirement
         | ThreadPulls.ThreadPulls

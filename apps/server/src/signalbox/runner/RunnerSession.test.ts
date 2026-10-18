@@ -10,7 +10,13 @@ import type {
   TerminalCommandMessage,
   TerminalReport,
 } from "@signalbox/runner-protocol/TerminalProtocol";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import {
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -43,6 +49,7 @@ const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   const terminalProcessIds = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   const terminalReports = yield* Ref.make<ReadonlyArray<TerminalReport>>([]);
@@ -71,6 +78,10 @@ const makeFakeThread = Effect.gen(function* () {
               yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
               yield* Ref.update(terminalProcessIds, (all) => [...all, message.terminalProcessId]);
+              yield* Ref.update(runtimeResponseCapabilities, (all) => [
+                ...all,
+                message.runtimeResponses,
+              ]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
@@ -116,6 +127,7 @@ const makeFakeThread = Effect.gen(function* () {
     terminalProcessIds,
     terminalReports,
     dropOnTerminalReport,
+    runtimeResponseCapabilities,
     helloRuns,
     dropAfterCommit,
     toCurrent,
@@ -126,6 +138,9 @@ const makeFakeThread = Effect.gen(function* () {
 const makeFakeTurns = Effect.gen(function* () {
   const emitRef = yield* Deferred.make<(item: RunnerItem) => Effect.Effect<void>>();
   const startedTurns = yield* Ref.make<ReadonlyArray<RunId>>([]);
+  const runtimeResponses = yield* Ref.make<
+    ReadonlyArray<Extract<ThreadMessage, { type: "runtime-request.respond" }>>
+  >([]);
   /** How often everything was saved for a drain, and what each drain says it couldn't save. */
   const drains = yield* Ref.make(0);
   const unsaved = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -138,6 +153,8 @@ const makeFakeTurns = Effect.gen(function* () {
       keepOnly: () => Effect.void,
       steer: () => Effect.void,
       watchDrive: () => Effect.void,
+      respondRuntimeRequest: (response) =>
+        Ref.update(runtimeResponses, (all) => [...all, response]),
       pull: ({ operation }) =>
         Deferred.succeed(pullEntered, operation.id).pipe(
           Effect.andThen(Deferred.await(finishPull)),
@@ -162,7 +179,16 @@ const makeFakeTurns = Effect.gen(function* () {
     } satisfies RunnerTurns);
   const emit = (reported: RunnerItem) =>
     Effect.flatMap(Deferred.await(emitRef), (send) => send(reported));
-  return { make, emit, startedTurns, drains, unsaved, pullEntered, finishPull };
+  return {
+    make,
+    emit,
+    startedTurns,
+    runtimeResponses,
+    drains,
+    unsaved,
+    pullEntered,
+    finishPull,
+  };
 });
 
 const makeFakeTerminals = Effect.gen(function* () {
@@ -409,6 +435,37 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
           "snapshot",
           "event",
         ]);
+      }),
+    ),
+  );
+
+  it.effect("advertises and forwards runtime responses to the live turn driver", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        yield* sessionOf(thread, turns);
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
+          "hello",
+        );
+        const response = {
+          type: "runtime-request.respond",
+          runId,
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId: ProviderSessionId.make("provider-session-1"),
+          requestId: RuntimeRequestId.make("request-1"),
+          answers: { "question-1": "answer" },
+        } as const;
+
+        yield* thread.toCurrent(response);
+        yield* settle(
+          Effect.map(Ref.get(turns.runtimeResponses), (all) => all.length === 1),
+          "runtime response",
+        );
+
+        expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(turns.runtimeResponses)).toEqual([response]);
       }),
     ),
   );

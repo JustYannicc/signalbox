@@ -1,6 +1,7 @@
 import {
   ModelSelection,
   NonNegativeInt,
+  SecretRequestAnswerInput,
   OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
@@ -91,6 +92,7 @@ const PullInputWire = Schema.Struct({
 export type PullInput = typeof PullInputWire.Type;
 
 export const wire = {
+  secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),
   launchInput: jsonCodec(LaunchInputWire),

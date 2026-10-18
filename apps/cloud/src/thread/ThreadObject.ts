@@ -67,6 +67,7 @@ import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadSecretRequests from "./secrets/ThreadSecretRequests.ts";
 import * as RunnerLiveness from "./RunnerLiveness.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
@@ -199,6 +200,7 @@ const makeRuntime = (
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
+  secretChanged: () => Promise<void>,
 ) => {
   const settings = machineSettings(env);
   return ManagedRuntime.make(
@@ -231,8 +233,14 @@ const makeRuntime = (
           ),
         ),
       ),
+      Layer.provideMerge(
+        ThreadSecretRequests.layer.pipe(
+          Layer.provide(
+            Layer.succeed(ThreadSecretRequests.SecretRequestChanged, Effect.promise(secretChanged)),
+          ),
+        ),
+      ),
       Layer.provideMerge(ThreadEngine.layer),
-      Layer.provideMerge(Layer.mergeAll(TerminalStore.layer, TerminalOutbox.layer)),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
           Layer.provide(
@@ -246,7 +254,14 @@ const makeRuntime = (
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),
       Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
-      Layer.provideMerge(Layer.mergeAll(DiagnosticsStore.layer, ThreadStore.layerMachineRecords)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          TerminalStore.layer,
+          TerminalOutbox.layer,
+          DiagnosticsStore.layer,
+          ThreadStore.layerMachineRecords,
+        ),
+      ),
       Layer.provideMerge(
         Layer.mergeAll(
           ThreadStore.layer,
@@ -324,6 +339,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           ),
       },
       () => this.threadId(),
+      () => this.armAlarm(),
     );
     this.runnerHost = {
       ctx,
@@ -390,6 +406,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
+  answerSecret(...args: Parameters<ThreadObjectApi["answerSecret"]>) {
+    return this.api.answerSecret(...args);
+  }
   dispatch(...args: Parameters<ThreadObjectApi["dispatch"]>) {
     return this.api.dispatch(...args);
   }

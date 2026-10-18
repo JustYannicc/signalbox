@@ -113,6 +113,10 @@ export interface MachineLease {
   readonly drains?: boolean | undefined;
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
   readonly steers?: boolean | undefined;
+  /** This generation's Runner can receive committed native answers. */
+  readonly runtimeResponses?: boolean | undefined;
+  /** Already replaced an older Runner for this capability; don't loop on a stale image. */
+  readonly runtimeResponsesUpgrade?: boolean | undefined;
   readonly pulls?: boolean | undefined;
   readonly terminals?: boolean | undefined;
   /**
@@ -405,6 +409,8 @@ const MachineLeaseJson = Schema.fromJsonString(
     movedUp: Schema.optional(Schema.Boolean),
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
+    runtimeResponses: Schema.optional(Schema.Boolean),
+    runtimeResponsesUpgrade: Schema.optional(Schema.Boolean),
     pulls: Schema.optional(Schema.Boolean),
     terminals: Schema.optional(Schema.Boolean),
     drain: Schema.optional(
@@ -524,7 +530,9 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
-    yield* advanceCommandOutputSequence.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    if (input.events.length > 0 || (input.commandOutput?.length ?? 0) > 0) {
+      yield* advanceCommandOutputSequence.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    }
     yield* writeCommandOutput(input.commandOutputSeeds ?? [], input.commandOutput ?? []).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     );

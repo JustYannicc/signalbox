@@ -20,6 +20,7 @@ import * as SessionRows from "./session/SessionRows.ts";
 import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadSecretRequests from "./ThreadSecrets.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as MachineBackends from "./runner/machineBackends.ts";
 import type * as MachineBackend from "./runner/MachineBackend.ts";
@@ -82,6 +83,7 @@ export const layerThreadObject = (
         Layer.provide(options.statusNoteModel ?? StatusNoteModel.layerNone),
       ),
     ),
+    Layer.provideMerge(ThreadSecretRequests.layer),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(Layer.mergeAll(TerminalStore.layer, TerminalOutbox.layer)),
     Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
