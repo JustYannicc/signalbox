@@ -7,6 +7,10 @@
   ],
   "type": "module",
   "exports": {
+    "./clientIssues": {
+      "types": "./src/clientIssues.ts",
+      "import": "./src/clientIssues.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
@@ -30,6 +34,10 @@
     "./sections": {
       "types": "./src/sections.ts",
       "import": "./src/sections.ts"
+    },
+    "./personTimezone": {
+      "types": "./src/personTimezone.ts",
+      "import": "./src/personTimezone.ts"
     },
     "./signalboxAnalytics": {
       "types": "./src/signalboxAnalytics.ts",

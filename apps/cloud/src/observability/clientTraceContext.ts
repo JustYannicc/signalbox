@@ -9,6 +9,7 @@ import * as UserStore from "../user/UserStore.ts";
 const GENERATED_THREAD_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ORGANIZATION_CONTEXT_ID = /^org_[0-9A-HJKMNP-TV-Z]{26}$/;
+const GENERATED_FOLDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Resolve only UUID threads in this user's currently accessible contexts. */
 export const clientTraceDimensions = (threadIds: ReadonlyArray<string>) =>
@@ -45,4 +46,23 @@ export const clientTraceDimensions = (threadIds: ReadonlyArray<string>) =>
       });
     }
     return dimensions;
+  });
+
+/** Resolve folder-only telemetry context from the user's current accessible tree. */
+export const clientFolderDimensions = (folderIds: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const requested = new Set(folderIds.filter((id) => GENERATED_FOLDER_ID.test(id)));
+    if (requested.size === 0) return [];
+
+    const folderState = yield* UserFolders.UserFolders.use((folders) => folders.state);
+    return folderState.tree.folders.flatMap((folder) =>
+      requested.has(folder.id)
+        ? [
+            {
+              folderId: folder.id,
+              orgId: ORGANIZATION_CONTEXT_ID.test(folder.ownerId) ? folder.ownerId : null,
+            },
+          ]
+        : [],
+    );
   });
