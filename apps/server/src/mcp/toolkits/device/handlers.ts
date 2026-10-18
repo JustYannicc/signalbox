@@ -6,8 +6,10 @@ import {
   type DeviceSummary,
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
+  ProviderSessionId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../../../config.ts";
@@ -153,50 +155,96 @@ const handlers = {
       }
       const target = yield* pickDevice(state.devices, input);
       // Resolve consent and agent connectivity before booting or registering a session.
-      const agentArgs = yield* devices.agentTarget({
-        threadId: scope.thread.threadId,
-        hostId: target.hostId,
-        deviceId: target.id,
-      });
-      const session = yield* devices.open({
-        threadId: scope.thread.threadId,
-        hostId: target.hostId,
-        deviceId: target.id,
-        platform: target.platform,
-      });
-      const after = yield* devices.state;
-      const device =
-        after.devices.find(
+      const agentReady = yield* devices.agentReadinessIfSupported(target.hostId);
+      if (!agentReady) {
+        return yield* new DeviceToolUnavailableError({
+          reason:
+            "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
+        });
+      }
+      const providerSessionId = ProviderSessionId.make(scope.thread.providerSessionId);
+      const owner = { kind: "agent" as const, providerSessionId };
+      const session = yield* devices.open(
+        {
+          threadId: scope.thread.threadId,
+          hostId: target.hostId,
+          deviceId: target.id,
+          platform: target.platform,
+        },
+        owner,
+      );
+      return yield* Effect.gen(function* () {
+        const agentArgs = yield* devices.agentTarget({
+          threadId: scope.thread.threadId,
+          hostId: target.hostId,
+          deviceId: session.deviceId,
+          sessionId: session.sessionId,
+          leaseId: session.leaseId,
+          providerSessionId,
+        });
+        if (agentArgs.sessionId !== session.sessionId) {
+          return yield* new DeviceToolUnavailableError({
+            reason: "The device session changed while preparing agent access. Open it again.",
+          });
+        }
+        const after = yield* devices.state;
+        const device = after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
-        ) ?? target;
-      const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
-      const config = yield* ServerConfig.ServerConfig;
-      const path = yield* Path.Path;
-      const platform = yield* HostProcess.Platform;
-      const shimDir = yield* ensureAgentDeviceShim({
-        entryPath: yield* devices.agentCli,
-        stateDir: config.stateDir,
+        ) ?? { ...target, id: session.deviceId };
+        const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs.args];
+        const sessionFlag = targetArgs.findIndex((argument) => argument === "--session");
+        if (sessionFlag < 0 || targetArgs[sessionFlag + 1] !== session.sessionId) {
+          return yield* new DeviceToolUnavailableError({
+            reason: "The returned device launcher does not match its device session.",
+          });
+        }
+        const config = yield* ServerConfig.ServerConfig;
+        const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
+        const shimDir = yield* ensureAgentDeviceShim({
+          entryPath: yield* devices.agentCli,
+          stateDir: config.stateDir,
+        }).pipe(
+          Effect.mapError(
+            (error) =>
+              new DeviceToolUnavailableError({
+                reason:
+                  error._tag === "NodeRuntimeUnavailableError"
+                    ? nodeRuntimeUnavailableMessage("Device automation")
+                    : "Could not prepare the agent-device launcher.",
+                cause: error,
+              }),
+          ),
+        );
+        const command = path.join(
+          shimDir,
+          platform === "win32" ? "agent-device.cmd" : "agent-device",
+        );
+        return {
+          sessionId: session.sessionId,
+          leaseId: session.leaseId,
+          device,
+          agentDevice: { command, targetArgs },
+          quickStart: agentDeviceQuickStart(device, targetArgs, command),
+        };
       }).pipe(
-        Effect.mapError(
-          (error) =>
-            new DeviceToolUnavailableError({
-              reason:
-                error._tag === "NodeRuntimeUnavailableError"
-                  ? nodeRuntimeUnavailableMessage("Device automation")
-                  : "Could not prepare the agent-device launcher.",
-              cause: error,
-            }),
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? devices
+                .close(
+                  {
+                    threadId: scope.thread.threadId,
+                    hostId: session.hostId,
+                    deviceId: session.deviceId,
+                    sessionId: session.sessionId,
+                    leaseId: session.leaseId,
+                  },
+                  owner,
+                )
+                .pipe(Effect.ignore)
+            : Effect.void,
         ),
       );
-      const command = path.join(
-        shimDir,
-        platform === "win32" ? "agent-device.cmd" : "agent-device",
-      );
-      return {
-        device,
-        agentDevice: { command, targetArgs },
-        quickStart: agentDeviceQuickStart(device, targetArgs, command),
-      };
     }).pipe(Effect.mapError(toolError)),
   ),
   device_screenshot: McpToolAccess.readsAsCaller((input) =>
@@ -234,12 +282,18 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
-      yield* devices.close({
-        threadId: scope.thread.threadId,
-        ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
-        ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
-        ...(input.shutdown === undefined ? {} : { shutdown: input.shutdown }),
-      });
+      yield* devices.close(
+        {
+          threadId: scope.thread.threadId,
+          ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
+          ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
+          ...(input.shutdown === undefined ? {} : { shutdown: input.shutdown }),
+        },
+        {
+          kind: "agent",
+          providerSessionId: ProviderSessionId.make(scope.thread.providerSessionId),
+        },
+      );
       return {};
     }).pipe(Effect.mapError(toolError)),
   ),

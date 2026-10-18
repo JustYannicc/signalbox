@@ -78,6 +78,10 @@ import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as DeviceAgentLiveness from "./device/DeviceAgentLiveness.ts";
+import * as DeviceAgentDiagnostics from "./device/DeviceAgentDiagnostics.ts";
+import * as AgentDeviceProxy from "./device/AgentDeviceProxy.ts";
+import * as AgentDeviceProxyRegistry from "./device/AgentDeviceProxyRegistry.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -436,6 +440,11 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(layerServerSettings),
   Layer.provide(ProcessRunner.layer),
   Layer.provide(NetService.layer),
+  Layer.provideMerge(AgentDeviceProxyRegistry.layer),
+);
+
+const layerDeviceWithDiagnostics = DeviceAgentDiagnostics.layer.pipe(
+  Layer.provideMerge(layerDevice),
 );
 
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
@@ -496,17 +505,21 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
-const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
-  Layer.provide(layerScheduledTaskWebhookOrigin),
-  Layer.provide(ProviderEventIngestor.layerAnalytics),
-  Layer.provide(layerCheckpointStore),
-  Layer.provide(layerGitWorkflow),
-  Layer.provide(ResourceCleanupService.layer),
-  Layer.provide(
-    RunFinalizationService.layerObserver.pipe(
-      Layer.provide(ProjectionStoreV2.layer),
-      Layer.provide(layerPullRequestService),
-      Layer.provide(RuntimeLayer.layerProjectService),
+const layerOrchestrationV2Runtime = DeviceAgentLiveness.layerBindProviderSessionManager.pipe(
+  Layer.provideMerge(
+    RuntimeLayer.layerProduction.pipe(
+      Layer.provide(layerScheduledTaskWebhookOrigin),
+      Layer.provide(ProviderEventIngestor.layerAnalytics),
+      Layer.provide(layerCheckpointStore),
+      Layer.provide(layerGitWorkflow),
+      Layer.provide(ResourceCleanupService.layer),
+      Layer.provide(
+        RunFinalizationService.layerObserver.pipe(
+          Layer.provide(ProjectionStoreV2.layer),
+          Layer.provide(layerPullRequestService),
+          Layer.provide(RuntimeLayer.layerProjectService),
+        ),
+      ),
     ),
   ),
 );
@@ -620,7 +633,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDeviceWithDiagnostics)),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
@@ -695,6 +708,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
+  Layer.provideMerge(DeviceAgentLiveness.layer),
 );
 
 const layerCommandReadiness = HttpRouter.middleware(
@@ -728,6 +742,7 @@ const layerMakeRoutes = Layer.mergeAll(
     AccountHttp.layer, // signalbox: accounts routes
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    AgentDeviceProxy.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

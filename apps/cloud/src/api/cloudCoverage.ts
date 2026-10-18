@@ -103,6 +103,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "backgroundPolicy.subscribe": noHost,
   "device.*": noHost,
   "deviceState.subscribe": noHost,
+  "deviceAgentDiagnostics.subscribe": noHost,
   "diagnostics.*": noHost,
   "discoveredLocalServers.subscribe": noHost,
   "filesystem.*": noHost,
