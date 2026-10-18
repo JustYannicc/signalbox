@@ -1,0 +1,25 @@
+{
+  "repository": "https://github.com/JustYannicc/workerd",
+  "contractCommit": "aefdc2f614973efb9507eb59996ad4c654189c5a",
+  "upstreamBase": "2c34e935cea3c8c81412b3ff7a08285db551d6e4",
+  "candidateDigest": "c57565a9a73db3a54b93870d2bc1374c2d9ca7c21f0bfccab3d433b3f57eda31",
+  "sourceStatus": "frozen v4 source checks and independent upstream review passed; workerd/JSPI runtime unverified; runtime commit pending",
+  "files": {
+    "src/node/internal/internal_wasi_calls.ts": "7a16209659bb42e70f4b6f5815bede97cde385b297b3b320fec9700f8b3d2791",
+    "src/node/internal/internal_wasi_clock.ts": "c90a26557ad8b2b6aed25adff6600341a2ba06af03767c3423f292693a48b4ad",
+    "src/node/internal/internal_wasi_descriptors.ts": "c37e324655d576b150ba7eb23446959be625e2bb5687db9c6d58d9ba952a67ae",
+    "src/node/internal/internal_wasi_fd_calls.ts": "63dc15085f9677940e28c23182c88055f5599508236836220134765820e0341a",
+    "src/node/internal/internal_wasi_fs.ts": "3aa5809d55cdcea81c895491b4082df19fe32293e0fa08b29932e28df09d4085",
+    "src/node/internal/internal_wasi_host.ts": "d69e57e554592a8fac06034ca12deb821c8fc18426e88cba4ecaf4c741970f56",
+    "src/node/internal/internal_wasi_lifecycle.ts": "d1d0a213d22c4bdccb951d144c22535823414af0de942172bee5c7f6ceebb63d",
+    "src/node/internal/internal_wasi_memory.ts": "a693866199bae2a78e759c75bbfb11526e47cbeba7f3135d844b640895f1bc8f",
+    "src/node/internal/internal_wasi_open_description.ts": "80952400b3126ee304825041890404f044b4cdfcd1657d122d77ab52b05d0c7b",
+    "src/node/internal/internal_wasi_options.ts": "50dafae4f6eb9d61747173cb71488128137e8ca0741a5b3b7cf02e8af1d06692",
+    "src/node/internal/internal_wasi_path_calls.ts": "0942d8b76cd338c61c0f54fc20ca43279e6729b2b0be94296b12f77332249933",
+    "src/node/internal/internal_wasi_paths.ts": "ad7dc3f67761fa4d713a409ba54e5304f4f4f95ba50d4b84031fff29641d8118",
+    "src/node/internal/internal_wasi_poll.ts": "31cfcde88b54bf6e81200c67dca15fefedb2f1855ed26916944d9d811551864d",
+    "src/node/wasi.ts": "abd4dbcc2e04a3c1b2bef2fdf5f91c5c43bbe4cf22b4ffbeac596143877057ce"
+  },
+  "deltaSha256": "6212dc7cf19a53dc66d47186462a115505ac20a4c2b93da08e01ddeaf0d378ad",
+  "v3ToV4DeltaSha256": "8b397753ed562cbaf742e35ef81ea528071fe27458a01449936883d9c056d13d"
+}
