@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -117,24 +118,31 @@ describe("fork server migration check", () => {
   });
 
   // Windows forbids the filename characters needed to reproduce Actions command injection.
-  it.skipIf(process.platform === "win32")("escapes filenames in CLI workflow annotations", () => {
-    const path = `${MIGRATIONS}/063_Fork%\r\n::notice title=filename::injected-notice\n,colon:.ts`;
-    write(path);
-    const script = NodePath.join(repo, "scripts/fork-migrations/check.ts");
-    NodeFS.mkdirSync(NodePath.dirname(script), { recursive: true });
-    NodeFS.copyFileSync(NodePath.join(import.meta.dirname, "check.ts"), script);
-    commit("add a migration with workflow command characters");
+  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "escapes filenames in CLI workflow annotations",
+    () => {
+      const path = `${MIGRATIONS}/063_Fork%\r\n::notice title=filename::injected-notice\n,colon:.ts`;
+      write(path);
+      const script = NodePath.join(repo, "scripts/fork-migrations/check.ts");
+      NodeFS.mkdirSync(NodePath.dirname(script), { recursive: true });
+      NodeFS.copyFileSync(NodePath.join(import.meta.dirname, "check.ts"), script);
+      commit("add a migration with workflow command characters");
 
-    const result = NodeChildProcess.spawnSync(process.execPath, [script, "--base", "origin/main"], {
-      cwd: repo,
-      encoding: "utf8",
-    });
+      const result = NodeChildProcess.spawnSync(
+        process.execPath,
+        [script, "--base", "origin/main"],
+        {
+          cwd: repo,
+          encoding: "utf8",
+        },
+      );
 
-    expect(result.status).toBe(1);
-    const annotations = result.stderr.split(/\r?\n/).filter((line) => line.startsWith("::"));
-    expect(annotations).toHaveLength(1);
-    expect(annotations[0]).toContain("063_Fork%25%0D%0A%3A%3Anotice title=filename%3A%3A");
-    expect(annotations[0]).toContain("%0A%2Ccolon%3A.ts,title=");
-    expect(annotations[0]).toContain("063_Fork%25%0D%0A::notice title=filename::");
-  });
+      expect(result.status).toBe(1);
+      const annotations = result.stderr.split(/\r?\n/).filter((line) => line.startsWith("::"));
+      expect(annotations).toHaveLength(1);
+      expect(annotations[0]).toContain("063_Fork%25%0D%0A%3A%3Anotice title=filename%3A%3A");
+      expect(annotations[0]).toContain("%0A%2Ccolon%3A.ts,title=");
+      expect(annotations[0]).toContain("063_Fork%25%0D%0A::notice title=filename::");
+    },
+  );
 });
