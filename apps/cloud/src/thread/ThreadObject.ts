@@ -381,6 +381,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     void ctx.blockConcurrencyWhile(() => this.armAlarm());
   }
 
+  getWorkflowScript(...args: Parameters<ThreadObjectApi["getWorkflowScript"]>) {
+    return this.api.getWorkflowScript(...args);
+  }
+
+  stopWorkflow(...args: Parameters<ThreadObjectApi["stopWorkflow"]>) {
+    return this.api.stopWorkflow(...args);
+  }
+
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
   answerSecret(...args: Parameters<ThreadObjectApi["answerSecret"]>) {
     return this.api.answerSecret(...args);
