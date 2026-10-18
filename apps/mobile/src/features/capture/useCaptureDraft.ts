@@ -13,7 +13,7 @@ import {
   type ComposerDraftInsertion,
 } from "../../state/use-composer-drafts";
 import type { CaptureTarget } from "./destinations";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type CaptureAddAttachments = (
   attachments: ReadonlyArray<DraftComposerAttachment>,
@@ -24,7 +24,9 @@ export function useCaptureDraft(target: CaptureTarget | null) {
   const [draftKey, setDraftKey] = useState<string | null>(null);
   const draftKeyRef = useRef<string | null>(null);
   const targetRef = useRef(target);
-  targetRef.current = target;
+  useLayoutEffect(() => {
+    targetRef.current = target;
+  }, [target]);
   const draft = useComposerDraft(draftKey);
 
   const ensureDraft = useCallback(() => {
@@ -113,15 +115,18 @@ export function useCaptureDraft(target: CaptureTarget | null) {
     [ensureDraft],
   );
 
-  const removeAttachment = useCallback((attachmentId: string) => {
-    const key = draftKeyRef.current;
-    if (!key) return;
-    removeComposerDraftAttachment(key, attachmentId);
-    const { text, attachments } = getComposerDraftSnapshot(key);
-    if (text.length === 0 && attachments.length === 0) {
-      clearEmptyDraft(key);
-    }
-  }, [clearEmptyDraft]);
+  const removeAttachment = useCallback(
+    (attachmentId: string) => {
+      const key = draftKeyRef.current;
+      if (!key) return;
+      removeComposerDraftAttachment(key, attachmentId);
+      const { text, attachments } = getComposerDraftSnapshot(key);
+      if (text.length === 0 && attachments.length === 0) {
+        clearEmptyDraft(key);
+      }
+    },
+    [clearEmptyDraft],
+  );
 
   const prepare = useCallback(() => ensureDraft(), [ensureDraft]);
 

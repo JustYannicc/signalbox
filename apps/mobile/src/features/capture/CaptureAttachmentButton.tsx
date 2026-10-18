@@ -3,7 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Pressable } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -40,8 +40,10 @@ export function CaptureAttachmentButton(props: {
   const [isPicking, setIsPicking] = useState(false);
   const onAddAttachmentsRef = useRef(props.onAddAttachments);
   const onErrorRef = useRef(props.onError);
-  onAddAttachmentsRef.current = props.onAddAttachments;
-  onErrorRef.current = props.onError;
+  useLayoutEffect(() => {
+    onAddAttachmentsRef.current = props.onAddAttachments;
+    onErrorRef.current = props.onError;
+  }, [props.onAddAttachments, props.onError]);
   const actions: MenuAction[] = [
     PHOTO_ACTION,
     CAMERA_ACTION,
@@ -62,8 +64,9 @@ export function CaptureAttachmentButton(props: {
       const errors = [
         result.error,
         rejected > 0 ? `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items.` : null,
-      ].filter((message, index, all): message is string =>
-        message !== null && all.indexOf(message) === index,
+      ].filter(
+        (message, index, all): message is string =>
+          message !== null && all.indexOf(message) === index,
       );
       if (errors.length > 0) onErrorRef.current(errors.join(" "));
     } catch (error) {
