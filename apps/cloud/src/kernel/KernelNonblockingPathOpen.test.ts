@@ -4,10 +4,10 @@ import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
 import { createKernelAsyncWasi } from "./KernelWasi.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
-import { RIGHTS } from "./wasi/internal_wasi_descriptors.ts";
 import { wasmImportReactor } from "./tests/wasmGuest.ts";
 
 const NONBLOCK = 4;
+const RIGHTS = { FD_READ: 1n << 1n, FD_FDSTAT_SET_FLAGS: 1n << 3n };
 const rootFd = 3;
 const pathPointer = 64;
 const openedFdPointer = 256;
