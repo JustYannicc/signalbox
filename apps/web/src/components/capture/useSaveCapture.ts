@@ -21,8 +21,8 @@ import {
   type CaptureFile,
   type PreparedCaptureAttachments,
 } from "./captureAttachments";
-import type { CaptureDestination } from "./captureDestinations";
-import { captureTitle } from "./captureText";
+import type { CaptureDestination } from "@t3tools/client-runtime/capture/destinations";
+import { captureTitle } from "@t3tools/client-runtime/capture/text";
 import { restoreQuickCapture } from "./quickCaptureStore";
 
 export interface Capture {

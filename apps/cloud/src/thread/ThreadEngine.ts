@@ -1,3 +1,7 @@
+import { type ThreadCommand } from "./threadCommands.ts";
+import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
+import { compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import type { RetainedWorkflowScript } from "@signalbox/runner-protocol/RunnerProtocol";
 import { workflowEvent, stoppedWorkflowEvents } from "./workflowControl.ts";
 import {
@@ -13,7 +17,6 @@ import {
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2SubscribeCommandOutputInput,
   EventId,
-  type OrchestrationV2Command,
   type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2SearchThreadInput,
@@ -204,7 +207,7 @@ export class ThreadEngine extends Context.Service<
   {
     readonly dispatch: (
       actor: Actor,
-      command: OrchestrationV2Command,
+      command: ThreadCommand,
       creation: ThreadCreation,
     ) => Effect.Effect<
       OrchestrationV2DispatchCommandResult,
@@ -553,7 +556,18 @@ const make = Effect.gen(function* () {
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
-    const decidedEvents = yield* stamp(input.events);
+    const decidedEvents = yield* stamp(
+      current.thread === null
+        ? input.events
+        : compactAskEvents(
+            current.thread.projection.thread.id,
+            current.thread.projection.thread.asks,
+            mirrorNativeAskEvents(
+              current.thread.projection,
+              expireRuntimeRequests(current.thread.projection, input.events),
+            ),
+          ),
+    );
     const candidate = applyEvents(current.thread?.projection ?? null, decidedEvents);
     if (owner === undefined || candidate === null) {
       return yield* Effect.die("A thread's first commit must create it.");
@@ -794,7 +808,11 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
         }
-        if (current.thread !== null && current.thread.projection.thread.deletedAt !== null) {
+        if (
+          current.thread !== null &&
+          current.thread.projection.thread.deletedAt !== null &&
+          command.type !== "thread.ask.sync"
+        ) {
           return yield* ThreadCommandRejectedError.forCommand(command, "This thread is in Trash.");
         }
         const { place } = creation;
@@ -956,7 +974,9 @@ const make = Effect.gen(function* () {
       },
       (projection, ctx, pool, preparation) => {
         const onItsPool =
-          typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
+          typeof pool === "string" && command.type !== "thread.ask.sync"
+            ? commandOnPool(command, projection, pool)
+            : command;
         return decide(
           projection,
           onItsPool.type === "thread.create"
@@ -969,6 +989,7 @@ const make = Effect.gen(function* () {
           ctx,
           {
             ...(creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs }),
+            personId: actor.userId,
             preparation,
           },
         );
