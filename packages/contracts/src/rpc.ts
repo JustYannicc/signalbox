@@ -72,6 +72,7 @@ import {
   ProviderAuthState,
   ProviderAuthStartInput,
   ProviderAuthRespondInput,
+  ProviderAuthLogoutInput,
   ProviderInstallCancelInput,
   ProviderInstallState,
   ProviderSetupError,
@@ -841,7 +842,7 @@ const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
 });
 
 const WsProviderAuthLogoutRpc = Rpc.make(WS_METHODS.providerAuthLogout, {
-  payload: ProviderSetupInput,
+  payload: ProviderAuthLogoutInput,
   success: ProviderAuthState,
   error: ProviderSetupRpcError,
 });

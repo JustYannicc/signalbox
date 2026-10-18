@@ -202,6 +202,10 @@ export class PoolObject
     return this.api.loginStatus(...args);
   }
 
+  logoutAccount(...args: Parameters<PoolObjectApi["logoutAccount"]>) {
+    return this.api.logoutAccount(...args);
+  }
+
   completeLogin(...args: Parameters<PoolObjectApi["completeLogin"]>) {
     return this.api.completeLogin(...args);
   }
