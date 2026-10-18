@@ -26,6 +26,7 @@
       // worktree setup (from t3.json) run directly.
       "entry": [
         "knip-schemas.ts",
+        "knip-declarations.ts",
         "claude-bunfs/prepare-bun-proof.ts", // signalbox: standalone isolate proof builder
         "mobile-native-client.ts",
         "setup-worktree.ts",

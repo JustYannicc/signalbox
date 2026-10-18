@@ -3,9 +3,12 @@ import type {
   NodeVmInterpreter,
   NodeVmInterpreterHost,
   NodeVmModuleHelpers,
+  NodeVmRuntimeFunctionKind,
 } from "./node/vm/runtime-contract.ts";
+import { generatedCodePromise } from "./node/generated/generation-realm.ts";
 import { nativeCodeGenerationRefused } from "./node/vm/codegen-refusal.ts";
 import { rejectedDynamicImport, vmOrigin } from "./node/vm/code-origin.ts";
+import { createLearnedFunctions, type NodeVmFunctionOptions } from "./node/vm/learned-functions.ts";
 import {
   createNodeVmFunctionConstructorShims,
   type NodeVmFunctionConstructorShims,
@@ -13,6 +16,10 @@ import {
 } from "./node/vm/function-constructors.ts";
 
 export { NodeVmFunctionInstallError } from "./node/vm/function-constructors.ts";
+export type {
+  NodeVmFunctionOptions,
+  NodeVmPreparedFunctionFactory,
+} from "./node/vm/learned-functions.ts";
 export type {
   NodeVmFunctionConstructor,
   NodeVmFunctionConstructorInstallation,
@@ -71,6 +78,12 @@ export interface NodeVmRuntimeModules {
   readonly moduleHelpers: NodeVmModuleHelpers;
   /** Scope-aware prepared parse: true only when a reference resolves to wrapper-synthetic `arguments`. */
   readonly hasSyntheticArgumentsReference: (source: string) => boolean;
+  /** Prepared scope analysis. Without it generated functions stay interpreted and unlearned. */
+  readonly canStageFunction?: (
+    kind: NodeVmRuntimeFunctionKind,
+    params: readonly string[],
+    body: string,
+  ) => boolean;
 }
 
 export type NodeVmNativeSurface = {
@@ -89,6 +102,8 @@ export type NodeVmModule<T extends NodeVmNativeSurface> = Omit<
 export interface NodeVm<T extends NodeVmNativeSurface> {
   readonly module: NodeVmModule<T>;
   readonly functionConstructors: NodeVmFunctionConstructorShims;
+  /** Await before preparing the next boot. Rejects with all observed persistence failures. */
+  flushLearning(): Promise<void>;
 }
 
 /**
@@ -99,19 +114,27 @@ export function createNodeVm<T extends NodeVmNativeSurface>(
   nativeVm: T,
   modules: NodeVmRuntimeModules,
   nativeConstructors?: NodeVmNativeFunctionConstructors,
+  functions?: NodeVmFunctionOptions,
 ): NodeVm<T> {
+  const nativeRunInThisContext = nativeVm.runInThisContext;
+  const nativeCompileFunction = nativeVm.compileFunction;
+  // Probe native vm before guest mutation. Its argument validators can reach
+  // live realm helpers even when string compilation will be refused.
+  const codegenRefused = nativeCodeGenerationRefused(() =>
+    apply(nativeCompileFunction, nativeVm, ["return 0", []]),
+  );
   const interpreter = modules.createInterpreter(modules.hostOps, {
     dynamicImport: () => rejectedDynamicImport(),
     primordials: modules.primordials,
     moduleHelpers: modules.moduleHelpers,
   });
+  const learned =
+    functions === undefined
+      ? undefined
+      : createLearnedFunctions(interpreter, functions, modules.canStageFunction);
+  const functionCompiler = learned ?? interpreter;
 
-  const nativeRunInThisContext = nativeVm.runInThisContext;
-  const nativeCompileFunction = nativeVm.compileFunction;
   const runInThisContext = (code: string, options?: string | object): unknown => {
-    const codegenRefused = nativeCodeGenerationRefused(() =>
-      apply(nativeCompileFunction, nativeVm, ["return 0", []]),
-    );
     if (!codegenRefused) {
       return apply(nativeRunInThisContext, nativeVm, [code, options]);
     }
@@ -129,13 +152,11 @@ export function createNodeVm<T extends NodeVmNativeSurface>(
     params?: readonly string[],
     options?: object,
   ): Function => {
-    if (
-      !nativeCodeGenerationRefused(() => apply(nativeCompileFunction, nativeVm, ["return 0", []]))
-    ) {
+    if (!codegenRefused) {
       return apply(nativeCompileFunction, nativeVm, [code, params, options]) as Function;
     }
     assertNoFallbackOptions("compileFunction", options);
-    return interpreter.compileFunction(
+    return functionCompiler.compileFunction(
       "function",
       normalizeParameters(params),
       stringOf(code),
@@ -150,7 +171,11 @@ export function createNodeVm<T extends NodeVmNativeSurface>(
 
   return Object.freeze({
     module,
-    functionConstructors: createNodeVmFunctionConstructorShims(interpreter, nativeConstructors),
+    functionConstructors: createNodeVmFunctionConstructorShims(
+      functionCompiler,
+      nativeConstructors,
+    ),
+    flushLearning: learned?.flushLearning ?? (() => generatedCodePromise((async () => {})())),
   });
 }
 
