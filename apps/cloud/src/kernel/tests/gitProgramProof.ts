@@ -3,18 +3,20 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
-import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage.ts";
-import { callKernel, KernelProgramRegistry } from "../../../src/kernel/KernelAbi.ts";
-import { KernelFileSystem, KernelOpenFlags } from "../../../src/kernel/KernelFileSystem.ts";
-import { KernelProgramHost } from "../../../src/kernel/KernelProgramHost.ts";
-import { KernelWakeRegistry } from "../../../src/kernel/KernelWakeRegistry.ts";
+import { createFacetSqliteStorage } from "../FacetSqliteStorage.ts";
+import { callKernel, KernelProgramRegistry } from "../KernelAbi.ts";
+import { KernelFileSystem, KernelOpenFlags } from "../KernelFileSystem.ts";
+import { KernelProgramHost } from "../KernelProgramHost.ts";
+import { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import {
   createKernelGitProgram,
   KERNEL_GIT_ARTIFACT,
   KERNEL_GIT_PROGRAM_MANIFEST,
-} from "../../../src/kernel/KernelGitProgram.ts";
-import { sqliteFixture } from "../../../src/kernel/tests/sqliteFixture.ts";
-import { gitArtifactPath } from "./prepare.ts";
+} from "../KernelGitProgram.ts";
+import { sqliteFixture } from "./sqliteFixture.ts";
+const gitArtifactPath = NodeURL.fileURLToPath(
+  new URL("../../../infra/kernelPrograms/git/git.wasm", import.meta.url),
+);
 
 const rootMetadata = { mode: 0o755, uid: 1001, gid: 1002 } as const;
 const credentials = { uid: 1001, gid: 1002, euid: 1001, egid: 1002 } as const;
