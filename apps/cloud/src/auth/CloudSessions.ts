@@ -1,6 +1,5 @@
 import {
   AuthSessionId,
-  AuthStandardClientScopes,
   type AuthEnvironmentScope,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
@@ -10,9 +9,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import * as Evlog from "../observability/Evlog.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import type { SessionRecord } from "../user/UserStore.ts";
 import * as CloudTokens from "./CloudTokens.ts";
+import { CLOUD_CLIENT_SCOPES } from "./CloudScopes.ts";
 
 /**
  * Environment sessions for the cloud: the same model a self-hosted server
@@ -32,7 +33,7 @@ export const CREDENTIAL_TTL_MS = 2 * 60 * 1000;
  * device list and pairing links) is not served by the cloud yet, so no session
  * may claim its scopes.
  */
-export const CLOUD_SESSION_SCOPES: ReadonlyArray<AuthEnvironmentScope> = AuthStandardClientScopes;
+export const CLOUD_SESSION_SCOPES: ReadonlyArray<AuthEnvironmentScope> = CLOUD_CLIENT_SCOPES;
 
 /** Session subjects follow the self-hosted account convention. */
 export const ACCOUNT_SUBJECT_PREFIX = "account:";
@@ -136,18 +137,28 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId.make(claims.sid),
   });
 
+  // Whoever a request turns out to be is its wide event's person.
+  const annotatePerson = (claims: SessionClaims) =>
+    Evlog.annotate({ person: { id: claims.userId } });
+
   const claims: CloudSessions["Service"]["claims"] = ({ cookie, bearer }) => {
     const token = cookie ?? bearer;
     if (!token) return Effect.fail(new CloudCredentialError({ reason: "missing_credential" }));
     return tokens
       .verify("session", token)
-      .pipe(Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }));
+      .pipe(
+        Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }),
+        Effect.tap(annotatePerson),
+      );
   };
 
   const ticketClaims: CloudSessions["Service"]["ticketClaims"] = (ticket) =>
     tokens
       .verify("ticket", ticket)
-      .pipe(Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }));
+      .pipe(
+        Effect.mapBoth({ onFailure: invalid, onSuccess: toClaims }),
+        Effect.tap(annotatePerson),
+      );
 
   const authenticate: CloudSessions["Service"]["authenticate"] = Effect.fn(
     "CloudSessions.authenticate",

@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { ModelUsage } from "../../modelGateway/modelGatewayRecord.ts";
+import { ModelUsage } from "../../models/ModelRecords.ts";
 import { BACKEND_KINDS, WAKE_KINDS } from "../runner/MachineBackend.ts";
 
 /**

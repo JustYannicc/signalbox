@@ -8,7 +8,7 @@ import {
   type SignalboxDriveMember,
   type SignalboxDriveRole,
 } from "@t3tools/contracts/signalboxDrives";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { environmentDrivesAtom, signalboxDrives } from "../../state/signalboxDrives";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -64,12 +64,9 @@ export function ShareDriveDialog(props: {
   const unshareCommand = useAtomCommand(signalboxDrives.unshare, { reportFailure: false });
   const shareFolderCommand = useAtomCommand(signalboxDrives.shareFolder, { reportFailure: false });
 
-  const fetchMembers = useCallback(
-    (driveId: SignalboxDrive["id"]) =>
-      membersCommand({ environmentId: props.environmentId, input: { driveId } }),
-    [membersCommand, props.environmentId],
-  );
-  const showMembers = useCallback((result: Awaited<ReturnType<typeof fetchMembers>>) => {
+  const fetchMembers = (driveId: SignalboxDrive["id"]) =>
+    membersCommand({ environmentId: props.environmentId, input: { driveId } });
+  const showMembers = (result: Awaited<ReturnType<typeof fetchMembers>>) => {
     if (result._tag === "Failure") {
       const message = driveCommandFailure(result);
       if (message !== null) setError(message);
@@ -78,7 +75,7 @@ export function ShareDriveDialog(props: {
     }
     setMembers(result.value.members);
     setMembersStatus("loaded");
-  }, []);
+  };
   const loadMembers = async (driveId: SignalboxDrive["id"]) =>
     showMembers(await fetchMembers(driveId));
 
@@ -110,7 +107,7 @@ export function ShareDriveDialog(props: {
     if (!email || adding || !canAddPeople) return false;
     setAdding(true);
     setError(null);
-    try {
+    return await (async () => {
       if (activeDrive === null && props.folderShare !== undefined) {
         const result = await shareFolderCommand({
           environmentId: props.environmentId,
@@ -142,9 +139,9 @@ export function ShareDriveDialog(props: {
       }
       await loadMembers(activeDrive.id);
       return true;
-    } finally {
+    })().finally(() => {
       setAdding(false);
-    }
+    });
   };
 
   const changeRole = async (member: SignalboxDriveMember, role: SignalboxDriveRole) => {

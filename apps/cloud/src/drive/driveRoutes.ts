@@ -13,6 +13,7 @@ import {
   type RefWriteResult,
   REMOTE_HEAD_HEADER,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import { pullJson } from "@signalbox/runner-protocol/PullProtocol";
 import { ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -44,6 +45,7 @@ import {
   machineRef,
 } from "./DriveStore.ts";
 import { isAutomationApiPath, serveAutomationRequest } from "./automationRoutes.ts";
+import { isLearnerApiPath, serveLearnerRequest } from "./learnerRoutes.ts";
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
 import { isBrowserApiPath, serveBrowserRequest } from "./browserRoutes.ts";
 import { isStatusLineApiPath, serveStatusLineRequest } from "./statusLineRoutes.ts";
@@ -272,6 +274,11 @@ async function route(
       ),
     );
   }
+  // The thread's agent using its level's learner (#668).
+  if (isLearnerApiPath(new URL(request.url).pathname)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    return await runtime!.runPromise(serveLearnerRequest(auth, await request.text()));
+  }
   // The person's browser for the thread's agent, opened as its owner (#574).
   const browserPath = new URL(request.url).pathname;
   if (isBrowserApiPath(browserPath)) {
@@ -291,6 +298,30 @@ async function route(
   const drive = DriveDirectory.DriveDirectory.use((directory) =>
     Effect.succeed(directory.forDrive(auth.driveId)),
   );
+
+  if (pathname === DRIVE_PATHS.pullSave) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    const body = decodeBody(pullJson.save.decode, await request.text());
+    if (body === null) return text("Unreadable request.", 400);
+    if (auth.pullOperationId !== body.operation.id) {
+      return text("This pull is no longer running on this machine.", 403);
+    }
+    const result = await run(Effect.flatMap(drive, (handle) => handle.savePull(writer, body)));
+    return json(pullJson.result.encode(result));
+  }
+  if (pathname.startsWith(`${DRIVE_PATHS.pullReceipts}/`)) {
+    if (request.method !== "GET") return text("Method not allowed.", 405);
+    const encodedId = pathname.slice(DRIVE_PATHS.pullReceipts.length + 1);
+    if (encodedId.length === 0 || encodedId.includes("/")) return text("Unknown path.", 404);
+    let id: string;
+    try {
+      id = decodeURIComponent(encodedId);
+    } catch {
+      return text("Unknown path.", 404);
+    }
+    const receipt = await run(Effect.flatMap(drive, (handle) => handle.pullReceipt(writer, id)));
+    return json(pullJson.receipt.encode(receipt));
+  }
 
   // Shortcut targets, read-only (#142): the thread's user's access to each, asked now.
   if (pathname === DRIVE_PATHS.shortcuts || pathname.startsWith(`${DRIVE_PATHS.shortcuts}/`)) {
