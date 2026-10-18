@@ -845,7 +845,8 @@ export const layerHandlers = (input: {
           ),
         [WS_METHODS.vcsListRefs]: (request) =>
           Effect.flatMap(actorNow, (actor) => branches.listRefs(actor, request)),
-        [WS_METHODS.reviewGetDiffPreview]: (request) => drives.reviewPreview(request),
+        [WS_METHODS.reviewGetDiffPreview]: (request) =>
+          Effect.flatMap(actorNow, (actor) => branches.review(actor, request)),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (request) =>
           drives
             .turnDiff(request)

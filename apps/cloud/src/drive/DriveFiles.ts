@@ -50,6 +50,28 @@ export type DriveFile =
 
 type Failure = Effect.Error<ReturnType<DriveReader["object"]>>;
 
+/** One changed file between two commits: its patch and how many lines it adds and removes. */
+export interface ComparedFile {
+  readonly path: string;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly patch: string;
+}
+
+/** `git diff --numstat`'s counts, read off a file's patch: binary and too-large files count 0. */
+const lineCounts = (patch: string) => {
+  let additions = 0;
+  let deletions = 0;
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) inHunk = true;
+    else if (!inHunk) continue;
+    else if (line.startsWith("+")) additions++;
+    else if (line.startsWith("-")) deletions++;
+  }
+  return { additions, deletions };
+};
+
 export class DriveFiles extends Context.Service<
   DriveFiles,
   {
@@ -79,6 +101,17 @@ export class DriveFiles extends Context.Service<
       { readonly entries: ReadonlyArray<ProjectEntry>; readonly truncated: boolean },
       Failure
     >;
+    /**
+     * Every file that differs from commit `from` (null: nothing) to commit `to`,
+     * or only `paths`. Both must be commits anyone with the drive can read, so
+     * a commit named by a client reads nothing a thread keeps private.
+     */
+    readonly compare: (
+      driveId: string,
+      from: Oid | null,
+      to: Oid,
+      options: { readonly ignoreWhitespace: boolean; readonly paths?: ReadonlyArray<string> },
+    ) => Effect.Effect<ReadonlyArray<ComparedFile>, Failure>;
     /**
      * The diff over turns `from` (exclusive) to `to` (inclusive): from where the
      * first checkpointed turn after `from` started to where turn `to` ended.
@@ -255,6 +288,19 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const compare: DriveFiles["Service"]["compare"] = (driveId, from, to, options) =>
+    Effect.gen(function* () {
+      const reader = yield* readerOf(driveId);
+      const commits = from === null ? [to] : [from, to];
+      if ((yield* reader.drive.missing(commits, null)).length > 0) {
+        return yield* new DriveReadError({
+          message: "The compared commits are not available in this drive.",
+        });
+      }
+      const files = yield* reader.patches(from, to, options);
+      return files.map((file) => ({ ...file, ...lineCounts(file.patch) }));
+    });
+
   const turnDiff: DriveFiles["Service"]["turnDiff"] = (driveId, checkpoints, range) =>
     Effect.gen(function* () {
       if (range.from >= range.to) return "";
@@ -277,7 +323,14 @@ const make = Effect.gen(function* () {
       });
     });
 
-  return DriveFiles.of({ listEntries, readFile, diffFileContents, searchEntries, turnDiff });
+  return DriveFiles.of({
+    listEntries,
+    readFile,
+    diffFileContents,
+    searchEntries,
+    compare,
+    turnDiff,
+  });
 });
 
 export const layer = Layer.effect(DriveFiles, make);
