@@ -9,7 +9,7 @@ import { checkBaseline, unrecordedBaseCycles, violationKey } from "./baseline.mj
 import { scanBase } from "./base.mjs";
 import { mergedHead } from "../upstream-sync/mergeTree.ts";
 import { scanGraph } from "./graph.mjs";
-import { readUpstreamSource } from "./upstream.mjs";
+import { readUpstreamSource, sourceOwnership } from "./upstream.mjs";
 
 const ROOT = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
 const BASELINE = "scripts/boundaries/baseline.json";
@@ -41,10 +41,12 @@ export async function checkBoundaries(root, values, legacyBase = LEGACY_CYCLE_BA
     );
   }
   const graph = candidate ? await scanBase(root, candidate) : await scanGraph(root, files);
-  const violations = graph.violations.map((violation) => ({
-    ...violation,
-    severity: upstream.files.has(violation.from) ? "warn" : "error",
-  }));
+  const violations = graph.violations
+    .filter((violation) => sourceOwnership(upstream, violation.from) !== "vendored")
+    .map((violation) => ({
+      ...violation,
+      severity: sourceOwnership(upstream, violation.from) === "upstream" ? "warn" : "error",
+    }));
   const errors = violations.filter((violation) => violation.severity === "error");
   const hasBaseline = git(["ls-tree", "--name-only", base, "--", BASELINE]).length > 0;
   const previousText = hasBaseline ? git(["show", `${base}:${BASELINE}`]) : undefined;
@@ -58,7 +60,9 @@ export async function checkBoundaries(root, values, legacyBase = LEGACY_CYCLE_BA
       // and deleting a recorded exemption still requires fixing its violation.
       for (const violation of baseGraph.violations) {
         const key = violationKey(violation);
-        if (!upstream.files.has(violation.from) && !previous.includes(key)) inherited.add(key);
+        if (sourceOwnership(upstream, violation.from) === "fork" && !previous.includes(key)) {
+          inherited.add(key);
+        }
       }
     }
     const legacyGraph = base === legacyBase ? baseGraph : await scanBase(root, legacyBase);
