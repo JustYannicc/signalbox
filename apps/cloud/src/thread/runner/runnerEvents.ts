@@ -1,3 +1,4 @@
+import { workflowNodes } from "../workflowControl.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   type OrchestrationV2DomainEvent,
@@ -152,7 +153,7 @@ export function recordedEvents(
   // `turn.started` keeps it, or the next turn takes it for a provider switch and
   // starts over without the harness's session.
   const recordedPayload =
-    recorded.type === "provider-thread.updated"
+    recorded.type === "provider-thread.updated" || recorded.type === "subagent.updated"
       ? { ...payload, providerInstanceId: runInstance }
       : payload;
   const decoded = decodeDomainEvent({
@@ -171,7 +172,7 @@ export function recordedEvents(
     payload: recordedPayload,
   });
   if (Exit.isFailure(decoded)) return "undecodable";
-  const domainEvent = decoded.value;
+  let domainEvent = decoded.value;
   if (domainEvent.type === "runtime-request.updated") {
     if (liveRunId !== item.runId) return [];
     return runtimeRequestEvents(projection, domainEvent, ctx);
@@ -187,6 +188,76 @@ export function recordedEvents(
   if (requestId !== null) {
     const request = projection.runtimeRequests.find((request) => request.id === requestId);
     if (request !== undefined && request.status !== "pending") return [];
+  }
+  const stopped = new Set<string>();
+  const nativeStopped = new Set<string>();
+  for (const coordinator of projection.subagents) {
+    if (coordinator.workflow?.stop?.status !== "stopped") continue;
+    for (const id of workflowNodes(projection, coordinator.id)) stopped.add(id);
+  }
+  if (domainEvent.type === "node.updated" || domainEvent.type === "subagent.updated") {
+    const payload = domainEvent.payload;
+    if (
+      stopped.has(payload.id) ||
+      (payload.parentNodeId !== null && stopped.has(payload.parentNodeId))
+    )
+      return [];
+  }
+  for (const task of projection.subagents) {
+    if (stopped.has(task.id) && task.nativeTaskRef?.nativeId)
+      nativeStopped.add(task.nativeTaskRef.nativeId);
+  }
+  if (domainEvent.type === "provider-thread.updated") {
+    domainEvent = {
+      ...domainEvent,
+      payload: {
+        ...domainEvent.payload,
+        pendingBackgroundTasks: (domainEvent.payload.pendingBackgroundTasks ?? []).filter(
+          (task) => !stopped.has(task.taskId) && !nativeStopped.has(task.taskId),
+        ),
+      },
+    };
+  }
+  if (domainEvent.type === "turn-item.updated") {
+    const item = domainEvent.payload;
+    if (
+      (item.nodeId !== null && stopped.has(item.nodeId)) ||
+      (item.type === "subagent" && stopped.has(item.subagentId))
+    ) {
+      domainEvent = {
+        ...domainEvent,
+        payload: { ...item, status: "cancelled", completedAt: item.completedAt ?? ctx.now },
+      };
+    }
+  }
+  if (domainEvent.type === "subagent.updated") {
+    const task = domainEvent.payload;
+    const previous = projection.subagents.find((each) => each.id === task.id);
+    const { stop: _runnerStop, ...workflow } = task.workflow ?? { phases: [], agents: [] };
+    const retained = previous?.workflow?.runHandles;
+    domainEvent = {
+      ...domainEvent,
+      payload: {
+        ...task,
+        ...(task.workflow === undefined && previous?.workflow === undefined
+          ? {}
+          : {
+              workflow: {
+                ...(task.workflow === undefined ? previous!.workflow! : workflow),
+                ...(previous?.workflow?.stop === undefined ? {} : { stop: previous.workflow.stop }),
+                ...(retained?.scriptRevision === undefined
+                  ? {}
+                  : {
+                      runHandles: {
+                        ...task.workflow?.runHandles,
+                        scriptPath: retained.scriptPath,
+                        scriptRevision: retained.scriptRevision,
+                      },
+                    }),
+              },
+            }),
+      },
+    };
   }
   return domainEvent.type === "turn-item.updated"
     ? [{ ...domainEvent, payload: positionTurnItem(projection, domainEvent.payload) }]
