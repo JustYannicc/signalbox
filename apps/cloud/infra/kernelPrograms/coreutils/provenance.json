@@ -1,0 +1,2875 @@
+{
+  "package": "@agentos-software/coreutils",
+  "version": "0.3.5",
+  "packageUrl": "https://registry.npmjs.org/@agentos-software/coreutils/-/coreutils-0.3.5.tgz",
+  "tarballSha512": "0ebc6ad10b18608471c11bd9e6893874a8d7f0547564a2130a37a8a7dca814770037b35563d5e6e22aba7c2eec5f91580fe6facaa1b528aae0d1b9a0f6fefd84",
+  "tarballSha256": "6dbfa3aa16077e697d71897adc1c6634c3045dae891c9c06264c751fe18fe7bc",
+  "containerPath": "package/dist/package.aospkg",
+  "containerSha256": "a291a48ce90b0ad12d3937e771d9aaec37b289c1f5b047fe3d1d61151dbeee51",
+  "containerFormatVersion": 1,
+  "agentOsAbiContractCommit": "63ae3b256749d47c7b3a7c463128d5deda57d1bb",
+  "npmBuildSourceCommit": "63ae3b256749d47c7b3a7c463128d5deda57d1bb",
+  "commandOverrides": {
+    "mkdir": {
+      "packageArtifact": {
+        "path": "bin/mkdir.wasm",
+        "bytes": 520804,
+        "sha256": "8cc154374ed8c68073684076c18f24d32d9db214b3944edea41edcd031fdaab2",
+        "imports": [
+          {
+            "module": "host_user",
+            "name": "isatty",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "host_fs",
+            "name": "set_open_mode",
+            "kind": "function",
+            "signature": "(i32)->(i32)"
+          },
+          {
+            "module": "host_fs",
+            "name": "path_mode",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "args_sizes_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "args_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "random_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "host_fs",
+            "name": "fd_mode",
+            "kind": "function",
+            "signature": "(i32)->(i32)"
+          },
+          {
+            "module": "host_fs",
+            "name": "fd_size",
+            "kind": "function",
+            "signature": "(i32)->(i64)"
+          },
+          {
+            "module": "host_fs",
+            "name": "fd_blocks",
+            "kind": "function",
+            "signature": "(i32)->(i64)"
+          },
+          {
+            "module": "host_fs",
+            "name": "fd_owner",
+            "kind": "function",
+            "signature": "(i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "host_net",
+            "name": "net_recv",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "host_net",
+            "name": "net_send",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "environ_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "environ_sizes_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "fd_close",
+            "kind": "function",
+            "signature": "(i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "fd_fdstat_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "fd_filestat_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "fd_prestat_get",
+            "kind": "function",
+            "signature": "(i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "fd_prestat_dir_name",
+            "kind": "function",
+            "signature": "(i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "fd_read",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "fd_write",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "path_create_directory",
+            "kind": "function",
+            "signature": "(i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "path_filestat_get",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "path_open",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "path_readlink",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "wasi_snapshot_preview1",
+            "name": "proc_exit",
+            "kind": "function",
+            "signature": "(i32)->()"
+          },
+          {
+            "module": "host_fs",
+            "name": "open_tmpfile",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+          },
+          {
+            "module": "host_fs",
+            "name": "set_open_direct",
+            "kind": "function",
+            "signature": "(i32)->(i32)"
+          },
+          {
+            "module": "host_fs",
+            "name": "path_size",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32)->(i64)"
+          },
+          {
+            "module": "host_fs",
+            "name": "path_blocks",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32)->(i64)"
+          },
+          {
+            "module": "host_fs",
+            "name": "path_owner",
+            "kind": "function",
+            "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+          }
+        ]
+      },
+      "buildManifest": {
+        "path": "mkdir.manifest.json",
+        "sha256": "2cb6b44f114761f22ea06751b2856f695ecafbaaebe75bf6291afe2819fed768"
+      }
+    }
+  },
+  "extraction": "The selected static WASM binaries are loaded directly; the package container is not mounted at runtime.",
+  "totalBytes": 8245543,
+  "commands": {
+    "cat": {
+      "path": "bin/cat.wasm",
+      "bytes": 523871,
+      "sha256": "188e28158623b356950750cfb340d435bc44ffd42301dc75b40e1eaffb2ee416",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "echo": {
+      "path": "bin/echo.wasm",
+      "bytes": 443719,
+      "sha256": "da7c7455ccecd3ab149505d554f442936cb78b292002c56b03a157bbc899fdec",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "printf": {
+      "path": "bin/printf.wasm",
+      "bytes": 650512,
+      "sha256": "2b108bbdc0463083d1bf12f86e6fcca5617a04957a213f8f2a249e82ed248b80",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "ls": {
+      "path": "bin/ls.wasm",
+      "bytes": 1207309,
+      "sha256": "3df491a8207e7ae05806a2300d87060e8558e4408dce19a5f6eb30ac9838ddcf",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_user",
+          "name": "getpwuid",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_user",
+          "name": "getgrgid",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "clock_time_get",
+          "kind": "function",
+          "signature": "(i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_readdir",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_seek",
+          "kind": "function",
+          "signature": "(i32,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "mkdir": {
+      "path": "bin/mkdir.wasm",
+      "bytes": 568532,
+      "sha256": "6b539389e2e33634bface241c668ae9c03b1eb39a0fb0aedc54dc67fe4eb4521",
+      "imports": [
+        {
+          "module": "host_fs",
+          "name": "chmod",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_process",
+          "name": "proc_umask",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_create_directory",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        }
+      ]
+    },
+    "rm": {
+      "path": "bin/rm.wasm",
+      "bytes": 601860,
+      "sha256": "54b64c173a0df5eafc23acd024afe79d3285715938c199f770eecd1b14c55061",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "clock_time_get",
+          "kind": "function",
+          "signature": "(i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_readdir",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_remove_directory",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_unlink_file",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "cp": {
+      "path": "bin/cp.wasm",
+      "bytes": 704016,
+      "sha256": "85f9b5ba5b2e859e0a8edbe04bb99aef762b24dbdfefb314016faa4154dfc5ca",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "ftruncate",
+          "kind": "function",
+          "signature": "(i32,i64)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "clock_time_get",
+          "kind": "function",
+          "signature": "(i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_set_size",
+          "kind": "function",
+          "signature": "(i32,i64)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_readdir",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_create_directory",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_set_times",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i64,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_link",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_rename",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_symlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_unlink_file",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "chmod",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "mv": {
+      "path": "bin/mv.wasm",
+      "bytes": 644169,
+      "sha256": "ff85b3359e52e5dbde6fc97500b5a59cdd7afcff66ef08533cf04fa08339f82f",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "clock_time_get",
+          "kind": "function",
+          "signature": "(i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_readdir",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_create_directory",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_remove_directory",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_rename",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_symlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_unlink_file",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "chmod",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "pwd": {
+      "path": "bin/pwd.wasm",
+      "bytes": 500806,
+      "sha256": "c14e0cb31944b46b46989c89135055e14094ee8cf692b4be6c55b6af0fe80f0d",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "head": {
+      "path": "bin/head.wasm",
+      "bytes": 550818,
+      "sha256": "1e6b62eb337c19a4e355af4f86f8fbef65b78b7cee3bce664394e0e210bf3d44",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_seek",
+          "kind": "function",
+          "signature": "(i32,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "tail": {
+      "path": "bin/tail.wasm",
+      "bytes": 699395,
+      "sha256": "20103a24f150553899bf10db8096cc73952d32c7932c1beaba83a2ae1530b975",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "clock_time_get",
+          "kind": "function",
+          "signature": "(i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_readdir",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i64,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_seek",
+          "kind": "function",
+          "signature": "(i32,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "sched_yield",
+          "kind": "function",
+          "signature": "()->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "wc": {
+      "path": "bin/wc.wasm",
+      "bytes": 602334,
+      "sha256": "21b4656d6782ba7f217b2c8fb59631bb0a700f52316a941bf2a4a268be548e0a",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    },
+    "uniq": {
+      "path": "bin/uniq.wasm",
+      "bytes": 548202,
+      "sha256": "d302717c0b67510348130915ec1f10dff281c9b06ac661d46e079998a99da7ca",
+      "imports": [
+        {
+          "module": "host_user",
+          "name": "isatty",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_mode",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_mode",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "args_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "random_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_size",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_blocks",
+          "kind": "function",
+          "signature": "(i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "fd_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_recv",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_net",
+          "name": "net_send",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "environ_sizes_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_close",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_fdstat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_get",
+          "kind": "function",
+          "signature": "(i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_prestat_dir_name",
+          "kind": "function",
+          "signature": "(i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_read",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_seek",
+          "kind": "function",
+          "signature": "(i32,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "fd_write",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_filestat_get",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_open",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "path_readlink",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "wasi_snapshot_preview1",
+          "name": "proc_exit",
+          "kind": "function",
+          "signature": "(i32)->()"
+        },
+        {
+          "module": "host_fs",
+          "name": "open_tmpfile",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "set_open_direct",
+          "kind": "function",
+          "signature": "(i32)->(i32)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_size",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_blocks",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32)->(i64)"
+        },
+        {
+          "module": "host_fs",
+          "name": "path_owner",
+          "kind": "function",
+          "signature": "(i32,i32,i32,i32,i32,i32)->(i32)"
+        }
+      ]
+    }
+  },
+  "unavailable": {
+    "find": "Not included in this coreutils package; GNU find is distributed by findutils.",
+    "sort": "Omitted from this first set because it imports host_process process-spawn and pipe operations.",
+    "bash": "Omitted: the package's bin/bash is an sh alias, not GNU Bash."
+  }
+}
