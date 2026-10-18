@@ -117,4 +117,16 @@ describe("client trace dimensions", () => {
       ]);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("resolves folder-only context only from the current user's folder tree", () =>
+    Effect.gen(function* () {
+      const { user, folderId } = yield* setup;
+      expect(
+        yield* user.clientFolderDimensions([folderId, "90f2a4bd-1178-4ebf-832f-642695d2a8e1"]),
+      ).toEqual([{ folderId, orgId: activeOrg }]);
+
+      yield* user.syncOrganizations([]);
+      expect(yield* user.clientFolderDimensions([folderId])).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
 });

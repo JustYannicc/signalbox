@@ -82,6 +82,7 @@ import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserPools from "./UserPools.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
@@ -304,6 +305,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
             Layer.mergeAll(
               LearnerService.layer,
@@ -580,6 +582,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
     return this.api.clientTraceDimensions(threadIds);
+  }
+
+  clientFolderDimensions(folderIds: Parameters<UserObjectApi["clientFolderDimensions"]>[0]) {
+    return this.api.clientFolderDimensions(folderIds);
   }
 
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {

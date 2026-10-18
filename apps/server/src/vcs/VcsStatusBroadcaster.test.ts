@@ -1210,6 +1210,51 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
+  it.effect.each(["getStatus", "refreshPullRequestStatus"] as const)(
+    "retries %s after getStatus discards a lookup during a branch switch",
+    (retry) => {
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: remoteStatusWithPr,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const remoteLookupStarted = yield* Deferred.make<void>();
+        const releaseRemoteLookup = yield* Deferred.make<void>();
+        state.beforeRemoteStatus = Deferred.succeed(remoteLookupStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRemoteLookup)),
+        );
+        const lookup = yield* broadcaster.getStatus({ cwd: "/repo" }).pipe(Effect.forkScoped);
+        yield* Deferred.await(remoteLookupStarted);
+        state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/next-status" };
+        yield* Deferred.succeed(releaseRemoteLookup, undefined);
+        const discarded = yield* Fiber.join(lookup);
+        assert.equal(discarded.refName, state.currentLocalStatus.refName);
+        assert.isNull(discarded.pr);
+
+        state.beforeRemoteStatus = Effect.void;
+        state.currentRemoteStatus = {
+          ...remoteStatusWithPr,
+          aheadCount: 2,
+        };
+        if (retry === "getStatus") {
+          yield* broadcaster.getStatus({ cwd: "/repo" });
+        } else {
+          yield* broadcaster.refreshPullRequestStatus("/repo");
+        }
+        const recovered = yield* broadcaster.getStatus({ cwd: "/repo" });
+        assert.deepStrictEqual(recovered.pr, state.currentRemoteStatus.pr);
+        assert.equal(recovered.aheadCount, 2);
+        assert.equal(state.remoteStatusCalls, 2);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    },
+  );
+
   it.effect("treats a remote result for another cached branch as unknown", () => {
     const policyReadStarted = Deferred.makeUnsafe<void>();
     const releasePolicyRead = Deferred.makeUnsafe<void>();
