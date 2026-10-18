@@ -56,9 +56,14 @@ export const UPSTREAM_RPC_REACH = {
   "provider.auth.start": write({ summary: "Start signing in a provider account." }),
   // The final provider sign-in step is the person's (#335 decision 4).
   "provider.auth.complete": write({ humanOnly: true }),
-  "provider.auth.respond": write({ humanOnly: true }),
+  "provider.auth.respond": write({
+    humanOnly: true,
+    summary: "Answer the current provider sign-in interaction.",
+  }),
   "provider.auth.cancel": write(),
-  "provider.auth.logout": write(),
+  "provider.auth.logout": write({
+    summary: "Sign out of a provider. Cloud pools require the exact accountId.",
+  }),
   "provider.auth.subscribe": read(),
   "provider.chatgpt.reconnect-profile": write({ humanOnly: true }),
   "provider.chatgpt.import-profile": write({ humanOnly: true }),

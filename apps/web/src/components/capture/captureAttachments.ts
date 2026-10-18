@@ -38,7 +38,18 @@ type Prepared =
   | { readonly kind: "file"; readonly file: ComposerFileAttachment }
   | { readonly kind: "skipped"; readonly name: string };
 
-async function prepareOne(file: File): Promise<Prepared> {
+export type CaptureAttachmentIdFactory = (
+  capture: CaptureFile,
+  kind: "file" | "image",
+  index: number,
+) => string;
+
+async function prepareOne(
+  capture: CaptureFile,
+  index: number,
+  idFor?: CaptureAttachmentIdFactory,
+): Promise<Prepared> {
+  const { file } = capture;
   const kind = classifyComposerAttachmentFile(file);
   if (kind === "unsupported-image" || file.size <= 0) return { kind: "skipped", name: file.name };
   if (kind === "image") {
@@ -55,7 +66,7 @@ async function prepareOne(file: File): Promise<Prepared> {
         dataUrl,
         image: {
           type: "image",
-          id: randomUUID(),
+          id: idFor?.(capture, "image", index) ?? randomUUID(),
           name: prepared.file.name || "image",
           mimeType: prepared.file.type,
           sizeBytes: prepared.file.size,
@@ -72,7 +83,7 @@ async function prepareOne(file: File): Promise<Prepared> {
     kind: "file",
     file: {
       type: "file",
-      id: randomUUID(),
+      id: idFor?.(capture, "file", index) ?? randomUUID(),
       name: file.name || "file",
       mimeType,
       sizeBytes: file.size,
@@ -86,8 +97,11 @@ async function prepareOne(file: File): Promise<Prepared> {
 
 export async function prepareCaptureAttachments(
   captured: ReadonlyArray<CaptureFile>,
+  idFor?: CaptureAttachmentIdFactory,
 ): Promise<PreparedCaptureAttachments> {
-  const prepared = await Promise.all(captured.map(({ file }) => prepareOne(file)));
+  const prepared = await Promise.all(
+    captured.map((capture, index) => prepareOne(capture, index, idFor)),
+  );
   return {
     images: prepared.flatMap((entry) => (entry.kind === "image" ? [entry.image] : [])),
     files: prepared.flatMap((entry) => (entry.kind === "file" ? [entry.file] : [])),

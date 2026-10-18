@@ -15,6 +15,14 @@ describe("cloud API coverage", () => {
     }
   });
 
+  it("serves provider auth actions while keeping responses human-only", () => {
+    for (const name of ["provider.auth.respond", "provider.auth.logout"]) {
+      const operation = operations.find((entry) => entry.name === name)!;
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+      expect(operation.humanOnly).toBe(name === "provider.auth.respond");
+    }
+  });
   it("serves provider switching through the generated API and MCP command reach", () => {
     const operation = operations.find((candidate) => candidate.name === "threads.switchProvider")!;
     expect(operation.command).toBe("provider.switch");
@@ -152,6 +160,19 @@ describe("cloud API coverage", () => {
       "pullRequests.setReaction",
       "pullRequests.replyToThread",
       "pullRequests.setThreadResolution",
+    ]) {
+      const operation = operations.find((entry) => entry.name === name)!;
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
+  it("serves review guides and personal viewed-file state through the public API", () => {
+    for (const name of [
+      "pullRequests.reviewGuide",
+      "pullRequests.generateReviewGuide",
+      "pullRequests.filesViewed",
+      "pullRequests.setFilesViewed",
     ]) {
       const operation = operations.find((entry) => entry.name === name)!;
       expect(cloudServes(operation)).toBe(true);
