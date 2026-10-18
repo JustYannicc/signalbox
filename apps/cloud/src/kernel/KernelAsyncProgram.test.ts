@@ -243,6 +243,93 @@ describe("KernelAsyncProgram", () => {
     }
   });
 
+  it("does not leak a nested exec admission error across a committed replacement", async () => {
+    let nestedCallWasAdmission = false;
+    let outerSawAdmission = false;
+    let outerSawErrno: unknown;
+    let closeOnExecWasSwept = false;
+    let continuedAfterExec = false;
+    const context = setup(
+      new Map([
+        [
+          "/bin/outer",
+          {
+            manifest: manifest("outer"),
+            implementation: {
+              kind: "async",
+              run: async (program) => {
+                const removed = program.filesystem.open(
+                  "/removed-on-exec",
+                  KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_CLOEXEC,
+                );
+                try {
+                  const result = await program.exec({
+                    filesystem: program.filesystem,
+                    identity: program.identity,
+                    args: [],
+                    env: program.env,
+                    signal: program.signal,
+                    path: "/bin/replacement",
+                    ...(program.home === undefined ? {} : { home: program.home }),
+                  });
+                  continuedAfterExec = true;
+                  return result;
+                } catch (error) {
+                  outerSawAdmission = error instanceof KernelProgramExecAdmissionError;
+                  outerSawErrno =
+                    error instanceof Error && "code" in error ? error.code : undefined;
+                  closeOnExecWasSwept = !program.filesystem.descriptors.has(removed);
+                  throw error;
+                }
+              },
+            },
+          } satisfies KernelProgramBinding,
+        ],
+        [
+          "/bin/replacement",
+          {
+            manifest: manifest("replacement"),
+            implementation: {
+              kind: "async",
+              run: async (program) => {
+                try {
+                  return await program.exec({
+                    filesystem: program.filesystem,
+                    identity: program.identity,
+                    args: [],
+                    env: program.env,
+                    signal: program.signal,
+                    path: "/bin/missing",
+                    ...(program.home === undefined ? {} : { home: program.home }),
+                  });
+                } catch (error) {
+                  nestedCallWasAdmission = error instanceof KernelProgramExecAdmissionError;
+                  throw error;
+                }
+              },
+            },
+          } satisfies KernelProgramBinding,
+        ],
+      ]),
+    );
+    const prepared = context.host.prepare({ filesystem: context.filesystem });
+    try {
+      const child = spawn(context.host, prepared);
+      await expect(context.host.exitStatus(child)).resolves.toMatchObject({
+        status: "error",
+        error: { code: "IO_ERROR" },
+      });
+      expect(nestedCallWasAdmission).toBe(true);
+      expect(outerSawAdmission).toBe(false);
+      expect(outerSawErrno).toBe("ENOENT");
+      expect(closeOnExecWasSwept).toBe(true);
+      expect(continuedAfterExec).toBe(false);
+      expect(context.host.processes.reap(child).status).toBe("error");
+    } finally {
+      await context.close();
+    }
+  });
+
   it("lets an async program signal itself before its first await", async () => {
     let selfSignalAccepted = false;
     const context = setup(

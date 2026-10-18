@@ -87,44 +87,67 @@ export function execKernelProgram(
         }),
       );
       try {
-        sweepCloseOnExec(request);
-        const exitCode = await runtime.lifecycle.startAsync(runtime.instance);
-        return status(exitCode);
+        return await afterExecCommit(async () => {
+          sweepCloseOnExec(request);
+          const exitCode = await runtime.lifecycle.startAsync(runtime.instance);
+          return status(exitCode);
+        });
       } finally {
         await runtime.lifecycle.closeAsync();
       }
     }
 
     if (implementation.kind === "javascript") {
-      sweepCloseOnExec(request);
-      const exitCode = runKernelInlineExecution(request.signal, () =>
-        runInlineJavaScript(
-          implementation.runInline,
-          prepared,
-          request.args,
-          environmentWithHome(request.home, request.env),
-        ),
-      );
-      if (request.signal.aborted) {
-        throw new KernelProcessCancelledError("Program execution cancelled");
-      }
-      return status(exitCode);
+      return afterExecCommit(() => {
+        sweepCloseOnExec(request);
+        const exitCode = runKernelInlineExecution(request.signal, () =>
+          runInlineJavaScript(
+            implementation.runInline,
+            prepared,
+            request.args,
+            environmentWithHome(request.home, request.env),
+          ),
+        );
+        if (request.signal.aborted) {
+          throw new KernelProcessCancelledError("Program execution cancelled");
+        }
+        return status(exitCode);
+      });
     }
 
-    sweepCloseOnExec(request);
-    const context: KernelAsyncProgramBaseContext = Object.freeze({
-      filesystem: request.filesystem,
-      home: request.home,
-      args: Object.freeze([...request.args]),
-      env: Object.freeze({ ...environmentWithHome(request.home, request.env) }),
-      identity: request.identity,
-      signal: request.signal,
-      processes: options.processes,
-      wakes: options.wakes,
-      spawn,
+    return afterExecCommit(async () => {
+      sweepCloseOnExec(request);
+      const context: KernelAsyncProgramBaseContext = Object.freeze({
+        filesystem: request.filesystem,
+        home: request.home,
+        args: Object.freeze([...request.args]),
+        env: Object.freeze({ ...environmentWithHome(request.home, request.env) }),
+        identity: request.identity,
+        signal: request.signal,
+        processes: options.processes,
+        wakes: options.wakes,
+        spawn,
+      });
+      return runKernelAsyncProgram(implementation.run, context, options);
     });
-    return runKernelAsyncProgram(implementation.run, context, options);
   });
+}
+
+function afterExecCommit<T>(run: () => T | Promise<T>): Promise<T> {
+  let result: T | Promise<T>;
+  try {
+    result = run();
+  } catch (error) {
+    return Promise.reject(committedFailure(error));
+  }
+  return Promise.resolve(result).catch((error: unknown) => {
+    throw committedFailure(error);
+  });
+}
+
+function committedFailure(error: unknown): unknown {
+  if (!(error instanceof KernelProgramExecAdmissionError)) return error;
+  return Object.assign(new Error(error.message, { cause: error }), { code: error.code });
 }
 
 function sweepCloseOnExec(request: KernelAsyncProgramExecRequest): void {
