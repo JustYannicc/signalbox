@@ -9,7 +9,7 @@ import {
   nativeCatalogScope,
 } from "./catalogObjects.ts";
 import type { CatalogHomeNamespace } from "./catalogObjects.ts";
-import type { CatalogRuntimePorts } from "./lunora/env.ts";
+import type { CatalogRuntimePorts } from "./catalogObjects.ts";
 
 const home = { owner: { _tag: "person", id: "person_1" }, level: { _tag: "top" } } as const;
 const homeKey = catalogHomeKey(home);

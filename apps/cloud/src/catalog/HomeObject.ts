@@ -100,13 +100,7 @@ export class HomeObject extends makeShard {
       }
 
       objectState.installedEpoch = Math.max(objectState.installedEpoch, fence.epoch);
-      const namespace = catalogHomeNamespace(runtimeEnv.HOMES, localWorkerd);
-      await installDeliveryFence(namespace.get(ctx.id), {
-        env: runtimeEnv,
-        fence: { scope: await nativeCatalogScope(homeKey), epoch: fence.epoch },
-        shardKey: homeKey,
-      });
-
+      // Recovery permits must never reload an epoch below an already-installed native fence.
       const next = await ctx.storage.transaction(async (transaction) => {
         const current = await transaction.get<unknown>(HOME_RECORD_KEY);
         const persisted = current === undefined ? objectState.record : readRecord(current);
@@ -125,7 +119,13 @@ export class HomeObject extends makeShard {
         return nextRecord;
       });
       objectState.record = next;
-      objectState.installedEpoch = next.installedEpoch;
+      objectState.installedEpoch = Math.max(objectState.installedEpoch, next.installedEpoch);
+      const namespace = catalogHomeNamespace(runtimeEnv.HOMES, localWorkerd);
+      await installDeliveryFence(namespace.get(ctx.id), {
+        env: runtimeEnv,
+        fence: { scope: await nativeCatalogScope(homeKey), epoch: fence.epoch },
+        shardKey: homeKey,
+      });
     };
 
     const ports = catalogRuntimePorts({

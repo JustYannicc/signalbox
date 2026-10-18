@@ -6,6 +6,7 @@ import { catalogHomeKey } from "./catalogHome.ts";
 import { CatalogRootHome } from "./catalogHomeSchema.ts";
 import type { DurableObjectStorageObserverEnv } from "../observability/DurableObjectStorage.ts";
 import type { CatalogRuntimePorts } from "./lunora/env.ts";
+export type { CatalogRuntimePorts } from "./lunora/env.ts";
 
 export const CATALOG_HOME_JURISDICTION = "eu" as const;
 export const CATALOG_HOME_BIND_PATH = "/_catalog/bind";

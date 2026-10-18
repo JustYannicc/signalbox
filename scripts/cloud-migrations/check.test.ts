@@ -6,11 +6,26 @@ import * as NodePath from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { check, gitTree, type Tree } from "./check.ts";
+import { check, gitTree, parseJsonc, type Tree } from "./check.ts";
 
 const STORE = "apps/cloud/src/user/UserStore.ts";
 const TABLES = "apps/cloud/src/user/UserTables.ts";
 const WRANGLER = "apps/cloud/wrangler.jsonc";
+
+it("preserves class separators and string commas while removing JSONC trailing commas", () => {
+  expect(
+    parseJsonc(`{
+    // Two classes belong to one migration.
+    "new_sqlite_classes": ["HomeObject", "CatalogScheduler",],
+    "without_trailing_comma": ["HomeObject", "CatalogScheduler"],
+    "literal": "keep,]",
+  }`),
+  ).toEqual({
+    new_sqlite_classes: ["HomeObject", "CatalogScheduler"],
+    without_trailing_comma: ["HomeObject", "CatalogScheduler"],
+    literal: "keep,]",
+  });
+});
 
 const tree = (files: Record<string, string>): Tree => ({
   files: Object.keys(files),
