@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import { redactEgressResponse } from "../EgressResponse.ts";
 import { REFUSED_HEADER } from "../Egress.ts";
@@ -326,7 +327,7 @@ describe("redactEgressResponse", () => {
   });
 
   it.each([false, true])(
-    "primes one binary chunk and forwards cancellation after replay=%s",
+    "bounds binary preflight read-ahead and forwards cancellation after replay=%s",
     async (replay) => {
       let pulls = 0;
       let cancelled = false;
@@ -347,16 +348,25 @@ describe("redactEgressResponse", () => {
         new Response(source, { headers: { "content-type": "application/octet-stream" } }),
         secretValue,
       );
-      expect(pulls).toBe(1);
+      // pipeThrough can queue one write beyond the primed chunk. Assert the
+      // settled backpressure bound, not which microtask finishes prefetching.
+      await NodeTimersPromises.setImmediate();
+      expect(pulls).toBeGreaterThanOrEqual(1);
+      expect(pulls).toBeLessThanOrEqual(2);
+      const primedPulls = pulls;
 
       const reader = response.body!.getReader();
       if (replay) {
         const first = await reader.read();
         expect(first.done).toBe(false);
         expect(first.value).toEqual(new Uint8Array(129).fill(0x41));
+        await NodeTimersPromises.setImmediate();
+        expect(pulls).toBe(primedPulls);
       }
       await reader.cancel();
       expect(cancelled).toBe(true);
+      await NodeTimersPromises.setImmediate();
+      expect(pulls).toBe(primedPulls);
     },
   );
 
