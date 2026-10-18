@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2024", "WebWorker"],
+    "types": ["@cloudflare/workers-types", "node"],
+    "typeRoots": ["../../node_modules/@types", "../../apps/cloud/node_modules"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        "diagnosticSeverity": {
+          "nodeBuiltinImport": "off",
+          "globalFetch": "off",
+          "globalConsole": "off",
+          "globalTimers": "off",
+          "globalDate": "off"
+        }
+      }
+    ]
+  },
+  "include": ["./**/*.ts", "./**/*.mts"]
+}

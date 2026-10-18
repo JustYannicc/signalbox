@@ -1,0 +1,214 @@
+name: Bun standalone format canary
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - scripts/claude-bunfs/**
+      - .github/workflows/bun-format-canary.yml
+      - pnpm-lock.yaml
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+  WRANGLER_SEND_METRICS: "false"
+  NO_COLOR: "1"
+
+jobs:
+  format:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.user.login == 'JustYannicc' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: cloud-preview
+    concurrency:
+      group: bun-format-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+              - --filter=@t3tools/scripts...
+
+      - name: Check the parser and comparison fixtures
+        run: |
+          vp test run scripts/claude-bunfs --maxWorkers=2
+          ./node_modules/.bin/tsc-rs --noEmit -p scripts/claude-bunfs/tsconfig.proof.json
+
+      - name: Download official releases and prepare the facet fixture
+        env:
+          CANARY_SELECTION: ${{ github.event_name == 'schedule' && 'latest' || '' }}
+        run: node --experimental-strip-types scripts/claude-bunfs/run-canary.ts "$RUNNER_TEMP/bun-format" "$CANARY_SELECTION"
+
+      - name: Measure the shared isolate probe locally
+        run: >-
+          node --experimental-strip-types apps/cloud/infra/isolateProbe/measure.ts
+          --fixture "$RUNNER_TEMP/bun-format/fixture"
+          --output "$RUNNER_TEMP/bun-format/local-measure.json"
+          --measure-only
+
+      - name: Choose an isolated probe stage
+        id: stage
+        run: echo "stage=isolate-probe-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(10).toString("hex"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Make a short-lived probe credential
+        shell: bash
+        run: |
+          secret="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
+          echo "::add-mask::$secret"
+          echo "PROBE_SECRET=$secret" >> "$GITHUB_ENV"
+
+      - name: Deploy the shared isolate probe
+        id: deploy
+        working-directory: apps/cloud
+        env:
+          STAGE: ${{ steps.stage.outputs.stage }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
+          deploy_log="$RUNNER_TEMP/bun-format/alchemy-deploy.log"
+          if ! ./node_modules/.bin/alchemy deploy infra/isolateProbe/alchemy.run.ts --stage "$STAGE" --yes --no-input > "$deploy_log" 2>&1; then
+            node --input-type=module - "$deploy_log" <<'NODE' >&2
+          import { readFileSync } from "node:fs";
+          const log = readFileSync(process.argv[2], "utf8");
+          process.stderr.write(log.replace(/https:\/\/[^\s"']+\.workers\.dev[^\s"']*/gu, "[worker-url]"));
+          NODE
+            exit 1
+          fi
+          node --input-type=module - "$deploy_log" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const log = readFileSync(process.argv[2], "utf8");
+          const urls = [...log.matchAll(/\burl:\s*(['"])(https:\/\/[^'"\s]+)\1/gu)];
+          const workerUrl = urls.at(-1)?.[2];
+          if (workerUrl === undefined) throw new Error("Alchemy output did not contain the probe Worker URL.");
+          const url = new URL(workerUrl);
+          const expectedName = `sb-${process.env.STAGE}`;
+          if (
+            url.protocol !== "https:" ||
+            !url.hostname.endsWith(".workers.dev") ||
+            url.hostname.split(".")[0] !== expectedName
+          ) {
+            throw new Error("Alchemy returned a URL outside the isolated probe Worker.");
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${url.toString()}\n`);
+          NODE
+
+      - name: Measure the deployed isolate probe
+        env:
+          PROBE_URL: ${{ steps.deploy.outputs.worker_url }}
+        run: >-
+          node --experimental-strip-types apps/cloud/infra/isolateProbe/measure.ts
+          --url "$PROBE_URL"
+          --fixture "$RUNNER_TEMP/bun-format/fixture"
+          --output "$RUNNER_TEMP/bun-format/deployed-measure.json"
+          --measure-only
+
+      - name: Compare parser results with extracted release manifests
+        id: compare
+        run: |
+          node --experimental-strip-types --input-type=module - <<'NODE'
+          import { spawnSync } from "node:child_process";
+          import { readFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const directory = join(process.env.RUNNER_TEMP, "bun-format");
+          const index = JSON.parse(readFileSync(join(directory, "canary-index.json"), "utf8"));
+          const args = [
+            "--experimental-strip-types",
+            "scripts/claude-bunfs/prove.ts",
+            "compare",
+            "--local",
+            join(directory, "local-measure.json"),
+            "--deployed",
+            join(directory, "deployed-measure.json"),
+            "--evidence",
+            join(directory, "proof.json"),
+          ];
+          for (const item of index.cases) {
+            args.push("--case", item.version, item.platform, join(directory, item.manifest));
+          }
+          const result = spawnSync(process.execPath, args, { stdio: "inherit" });
+          if (result.error) throw result.error;
+          process.exitCode = result.status ?? 1;
+          NODE
+
+      - name: Destroy the isolated probe stack
+        if: ${{ always() && steps.deploy.outputs.attempted == 'true' }}
+        working-directory: apps/cloud
+        env:
+          STAGE: ${{ steps.stage.outputs.stage }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { spawnSync } from "node:child_process";
+
+          const command = "./node_modules/.bin/alchemy";
+          const args = ["destroy", "infra/isolateProbe/alchemy.run.ts", "--stage", process.env.STAGE, "--yes", "--no-input"];
+          const transientReason = /\b(?:429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|ENETUNREACH|socket hang up|fetch failed|timed? out|temporarily unavailable|rate limit|too many requests|service unavailable|gateway timeout|internal server error/giu;
+          const redact = value => value.replace(/https:\/\/[^\s"']+\.workers\.dev[^\s"']*/gu, "[worker-url]");
+
+          let previousFailure;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const result = spawnSync(command, args, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+            const output = `${result.stdout ?? ""}${result.stderr ?? ""}${result.error ? `\n${result.error.message}` : ""}`;
+            process.stdout.write(redact(result.stdout ?? ""));
+            process.stderr.write(redact(result.stderr ?? ""));
+            if (result.error) process.stderr.write(`${result.error.message}\n`);
+            if (result.status === 0 && !result.error) process.exit(0);
+
+            const reasons = [...output.matchAll(transientReason)]
+              .map(([reason]) => reason.toUpperCase().replace(/\s+/gu, " "));
+            const signature = [...new Set(reasons)].sort().join("|");
+            if (!signature) throw new Error("Destroy failed for a non-transient reason; stopping without retry.");
+            if (signature === previousFailure) throw new Error("Destroy repeated the same transient failure; stopping without a blind retry.");
+            if (attempt === 3) throw new Error("Destroy kept failing with changed transient reasons after three attempts.");
+
+            previousFailure = signature;
+            await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+          }
+          NODE
+
+      - name: Upload proof and release pins
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bun-format-proof
+          path: |
+            ${{ runner.temp }}/bun-format/proof.json
+            ${{ runner.temp }}/bun-format/release-pins.json
+          if-no-files-found: warn
+
+      - name: Report a broken scheduled release
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          title="Bun standalone format canary is red"
+          body="The hourly format canary failed. Check the failed job and proof artifact before publishing a new Claude release. This blocks the extraction gate for #1058 and the update-proof pipeline in #1072. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number,title --jq '.[] | select(.title == "Bun standalone format canary is red") | .number' | head -1)"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
