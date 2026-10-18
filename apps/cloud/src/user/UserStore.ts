@@ -139,6 +139,14 @@ export class UserStore extends Context.Service<
       SqlError
     >;
     readonly threadMembers: Effect.Effect<ReadonlyArray<ThreadId>, SqlError>;
+    /** Membership rows are append-only; their SQLite rowids order durable registrations. */
+    readonly threadRegistrations: (
+      after: number,
+      limit: number,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly sequence: number; readonly threadId: ThreadId }>,
+      SqlError
+    >;
     /**
      * Replaces every indexed summary (not membership) with `summaries`, in one
      * transaction, so readers see the old index or the new one, never a part.
@@ -470,6 +478,13 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => decodeMemberRows(rows).map((row) => row.thread_id)),
     );
 
+  const threadRegistrations: UserStore["Service"]["threadRegistrations"] = (after, limit) =>
+    sql<{ readonly sequence: number; readonly threadId: string }>`
+      SELECT rowid AS sequence, thread_id AS threadId FROM thread_members
+      WHERE rowid > ${after} ORDER BY rowid LIMIT ${limit}`.pipe(
+      Effect.map((rows) => rows.map((row) => ({ ...row, threadId: ThreadId.make(row.threadId) }))),
+    );
+
   const replaceThreadIndex: UserStore["Service"]["replaceThreadIndex"] = Effect.fn(
     "UserStore.replaceThreadIndex",
   )(function* (summaries) {
@@ -486,6 +501,7 @@ const make = Effect.gen(function* () {
     recordThreadSummary,
     threadIndex,
     threadMembers,
+    threadRegistrations,
     replaceThreadIndex,
     recordSignIn,
     profile,
