@@ -229,6 +229,8 @@ minimumReleaseAgeExclude:
   - lunorash@1.0.0-alpha.398
 
 overrides:
+  # Fresh resolution must keep the exact release our errors patch applies to.
+  "@lunora/errors": 1.0.0-alpha.57
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
