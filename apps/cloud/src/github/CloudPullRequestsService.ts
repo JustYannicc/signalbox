@@ -32,6 +32,10 @@ import type {
   PullRequestThreadCommentsInput,
   PullRequestThreadCommentsResult,
   PullRequestUnavailableError,
+  PullRequestGenerateReviewGuideInput,
+  PullRequestReviewGuideResult,
+  PullRequestFilesViewedResult,
+  PullRequestSetFilesViewedInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -100,6 +104,19 @@ export class CloudPullRequests extends Context.Service<
     readonly setThreadResolution: (
       input: PullRequestThreadResolutionInput,
     ) => Effect.Effect<void, PullRequestReadError>;
+    readonly reviewGuide: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestReviewGuideResult, PullRequestReadError>;
+    readonly generateReviewGuide: (
+      input: PullRequestGenerateReviewGuideInput,
+    ) => Effect.Effect<PullRequestReviewGuideResult, PullRequestReadError>;
+    readonly filesViewed: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestFilesViewedResult, PullRequestReadError>;
+    readonly setFilesViewed: (
+      input: PullRequestSetFilesViewedInput,
+    ) => Effect.Effect<void, PullRequestReadError>;
+    readonly wakeReviewGuides: Effect.Effect<void, PullRequestReadError>;
     readonly invalidate: (input: PullRequestInvalidateInput) => Effect.Effect<void>;
     readonly subscribeRefreshes: Stream.Stream<number>;
     readonly resolvePullRequest: (
