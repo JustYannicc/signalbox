@@ -149,6 +149,14 @@ function scanContainer(text: string, start: number): ValueScan {
     const character = text[offset]!;
     const frame = frames[frames.length - 1]!;
     if (frame.kind === "object") {
+      if (
+        (frame.state === "key" || frame.state === "value") &&
+        character === "}" &&
+        frames.length === 1
+      ) {
+        return { status: "incomplete", end: offset + 1 };
+      }
+
       if (frame.state === "keyOrEnd" || frame.state === "key") {
         if (frame.state === "keyOrEnd" && character === "}") {
           offset++;
@@ -186,6 +194,10 @@ function scanContainer(text: string, start: number): ValueScan {
 
       frame.state = "separator";
     } else {
+      if (frame.state === "value" && character === "]" && frames.length === 1) {
+        return { status: "incomplete", end: offset + 1 };
+      }
+
       if (frame.state === "valueOrEnd" && character === "]") {
         offset++;
         frames.pop();
@@ -278,8 +290,9 @@ function parseChunk(input: BunJsonlInput, start?: number, end?: number): BunJson
   while (cursor < text.length) {
     const scanned = scanValue(text, cursor);
     if (scanned.status === "incomplete") {
-      const tail = skipWhitespace(text, scanned.end ?? text.length);
-      if (tail.lineFeed) return { values, read, done: false, error: syntaxError() };
+      if (scanned.end !== undefined && scanned.end < text.length) {
+        return { values, read, done: false, error: syntaxError() };
+      }
       return { values, read, done: false, error: null };
     }
     if (scanned.status === "invalid") return { values, read, done: false, error: syntaxError() };

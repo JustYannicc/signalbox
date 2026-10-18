@@ -145,6 +145,12 @@ export async function runBunShimProof(files = memoryFileHost()) {
     bun.JSONL.parseChunk('{bad\n{"ok":1}\n').error instanceof SyntaxError,
     true,
   );
+  const incomplete = bun.JSONL.parseChunk('{"a":1,}');
+  check(
+    "jsonl-eof-closer",
+    [incomplete.values, incomplete.done, incomplete.error],
+    [[], false, null],
+  );
   check("ansi-width", bun.stringWidth("\u001b[31m中e\u0301😀\u001b[39m"), 5);
   check("ansi-strip", bun.stripANSI("\u001b[31mred\u001b[39m"), "red");
   check("ansi-slice", bun.stripANSI(bun.sliceAnsi("\u001b[31mabc\u001b[39m", 1, 3)), "bc");
