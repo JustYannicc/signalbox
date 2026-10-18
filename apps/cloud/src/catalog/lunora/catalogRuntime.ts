@@ -105,10 +105,11 @@ const organizationPermitOperations: Readonly<Record<string, PermitOperation>> = 
   },
 };
 
-const permitOperationFor = (home: ReturnType<typeof decodeRuntimeHome>, functionPath: string) =>
-  home.owner._tag === "person"
-    ? personalPermitOperations[functionPath]
-    : organizationPermitOperations[functionPath];
+const permitOperationFor = (home: ReturnType<typeof decodeRuntimeHome>, functionPath: string) => {
+  const operations =
+    home.owner._tag === "person" ? personalPermitOperations : organizationPermitOperations;
+  return Object.hasOwn(operations, functionPath) ? operations[functionPath] : undefined;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

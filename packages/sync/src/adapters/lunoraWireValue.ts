@@ -158,8 +158,7 @@ export async function encodeWireValue<S extends SyncSchema>(
   reason: SyncFailure["reason"] = "unavailable",
 ): Promise<WireValue<S>> {
   try {
-    const encoded = await Schema.encodePromise(wireValueCodec(schema))(value);
-    return cloneMutableWireJson(encoded) as WireValue<S>;
+    return await Schema.encodePromise(wireValueCodec(schema))(value);
   } catch {
     throw new SyncFailure({ reason });
   }

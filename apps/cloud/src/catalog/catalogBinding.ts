@@ -58,9 +58,7 @@ const targetFromRequest = (request: Request<CatalogRuntimeHome>): Target | null 
         ? input.target
         : isRecord(input) && Object.hasOwn(input, "parent")
           ? input.parent
-          : isRecord(input) && Object.hasOwn(input, "filedUnder")
-            ? input.filedUnder
-            : input;
+          : input;
   try {
     return decodeTarget(candidate);
   } catch {
