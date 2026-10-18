@@ -1,9 +1,12 @@
-import type {
-  DependencyProgress,
-  MachineUsage,
-  RunnerItem,
-  RunnerTurn,
+import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
+  REQUEST_HEAVY_MACHINE_REASON,
+  type DependencyProgress,
+  type MachineUsage,
+  type RunnerItem,
+  type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import { secretRequestJson } from "@signalbox/runner-protocol/SecretRequestProtocol";
 import {
   MessageId,
   NodeId,
@@ -14,6 +17,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -25,10 +29,13 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type {
   ProviderAdapterV2Event,
@@ -43,21 +50,33 @@ import type { RunnerSessions } from "./RunnerSessions.ts";
 import { DriveTooLargeError } from "./RunnerDriveClient.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
+const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+const claudeDriver = ProviderDriverKind.make("claudeAgent");
 const providerThread = {
   id: ProviderThreadId.make("pt-1"),
   nativeThreadRef: null,
 } as unknown as OrchestrationV2ProviderThread;
+const providerSessionId = ProviderSessionId.make("session-1");
+const claudeProviderThread = {
+  id: ProviderThreadId.make("pt-claude"),
+  nativeThreadRef: null,
+} as unknown as OrchestrationV2ProviderThread;
 
-const turnFor = (n: number, thread = providerThread): RunnerTurn =>
+const turnFor = (
+  n: number,
+  thread = providerThread,
+  selectedInstanceId: typeof instanceId | typeof claudeInstanceId = instanceId,
+): RunnerTurn =>
   ({
     runId: RunId.make(`run-${n}`),
     traceId: `trace-${n}`,
     attemptId: RunAttemptId.make(`attempt-${n}`),
-    modelSelection: { instanceId, model: "m" },
+    modelSelection: { instanceId: selectedInstanceId, model: "m" },
     providerThread: thread,
     appThread: { pullRequests: [] },
   }) as unknown as RunnerTurn;
@@ -130,69 +149,162 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
     },
   }) as unknown as ProviderAdapterV2Event;
 
+const runtimeRequestPending = (
+  requestId: RuntimeRequestId,
+  providerTurnId = ProviderTurnId.make("native-1"),
+): ProviderAdapterV2Event =>
+  ({
+    type: "runtime_request.updated",
+    driver,
+    runtimeRequest: {
+      id: requestId,
+      nodeId: NodeId.make(`node-${requestId}`),
+      providerTurnId,
+      nativeRequestRef: null,
+      kind: "permission",
+      status: "pending",
+      responseCapability: { type: "live", providerSessionId },
+      createdAt: DateTime.makeUnsafe(0),
+      resolvedAt: null,
+    },
+  }) as unknown as ProviderAdapterV2Event;
+
 /**
  * An adapter whose session the test drives: `ensureThread` waits until the
  * test lets it finish, and every call is recorded.
  */
-const makeFakeAdapter = Effect.gen(function* () {
-  const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-  const loaded = yield* Deferred.make<void>();
-  const secondStarted = yield* Deferred.make<void>();
-  const interrupted = yield* Deferred.make<void>();
-  const calls: Array<string> = [];
-  /** What each `startTurn` got, beyond what `calls` names. */
-  const started: Array<{
-    readonly providerTurnOrdinal: number;
-    readonly text: string | undefined;
-    readonly nativeThreadRef: unknown;
-  }> = [];
-  const opened = { count: 0 };
-  const session = {
-    providerSessionId: ProviderSessionId.make("session-1"),
-    providerSession: {},
-    events: Stream.fromQueue(events),
-    ensureThread: () => Effect.as(Deferred.await(loaded), providerThread),
-    resumeThread: () => Effect.die(new Error("no rollout for Bearer sk-live-resume-secret")),
-    startTurn: (input: {
-      readonly runId: string;
-      readonly restartContinuationOfRunId?: string;
+const makeFakeAdapterFor = (selection: {
+  readonly instanceId: typeof instanceId | typeof claudeInstanceId;
+  readonly driver: typeof driver | typeof claudeDriver;
+  readonly providerThread: OrchestrationV2ProviderThread;
+}) =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+    const loaded = yield* Deferred.make<void>();
+    const failNextResponse = yield* Ref.make(false);
+    const secondStarted = yield* Deferred.make<void>();
+    const interrupted = yield* Deferred.make<void>();
+    const calls: Array<string> = [];
+    const responses: Array<{ readonly requestId: string; readonly decision?: string }> = [];
+    /** What each `startTurn` got, beyond what `calls` names. */
+    const started: Array<{
       readonly providerTurnOrdinal: number;
-      readonly message?: { readonly text: string };
-      readonly providerThread: { readonly nativeThreadRef: unknown };
-    }) =>
-      Effect.gen(function* () {
-        started.push({
-          providerTurnOrdinal: input.providerTurnOrdinal,
-          text: input.message?.text,
-          nativeThreadRef: input.providerThread.nativeThreadRef,
-        });
-        calls.push(
-          input.restartContinuationOfRunId === undefined
-            ? `start ${input.runId}`
-            : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
-        );
-        if (input.runId === "run-2") yield* Deferred.succeed(secondStarted, undefined);
-      }),
-    interruptTurn: (input: { readonly providerTurnId: string }) =>
-      Effect.gen(function* () {
-        calls.push(`interrupt ${input.providerTurnId}`);
-        yield* Deferred.succeed(interrupted, undefined);
-      }),
-    steerTurn: (input: {
-      readonly providerTurnId: string;
-      readonly message: { readonly messageId: string };
-    }) =>
-      Effect.sync(
-        () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
-      ),
-  } as unknown as ProviderAdapterV2SessionRuntime;
-  const adapter = {
-    instanceId,
-    driver,
-    openSession: () => Effect.sync(() => (opened.count++, session)),
-  } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls, started, opened, secondStarted, interrupted };
+      readonly text: string | undefined;
+      readonly nativeThreadRef: unknown;
+    }> = [];
+    const startedRuns = yield* Queue.unbounded<string>();
+    const opened = { count: 0 };
+    const session = {
+      providerSessionId,
+      providerSession: {},
+      events: Stream.fromQueue(events),
+      ensureThread: () => Effect.as(Deferred.await(loaded), selection.providerThread),
+      resumeThread: () => Effect.die(new Error("no rollout for Bearer sk-live-resume-secret")),
+      startTurn: (input: {
+        readonly runId: string;
+        readonly restartContinuationOfRunId?: string;
+        readonly providerTurnOrdinal: number;
+        readonly message?: { readonly text: string };
+        readonly providerThread: { readonly nativeThreadRef: unknown };
+      }) =>
+        Effect.gen(function* () {
+          started.push({
+            providerTurnOrdinal: input.providerTurnOrdinal,
+            text: input.message?.text,
+            nativeThreadRef: input.providerThread.nativeThreadRef,
+          });
+          calls.push(
+            input.restartContinuationOfRunId === undefined
+              ? `start ${input.runId}`
+              : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
+          );
+          yield* Queue.offer(startedRuns, input.runId);
+          if (input.runId === "run-2") yield* Deferred.succeed(secondStarted, undefined);
+        }),
+      interruptTurn: (input: { readonly providerTurnId: string }) =>
+        Effect.gen(function* () {
+          calls.push(`interrupt ${input.providerTurnId}`);
+          yield* Deferred.succeed(interrupted, undefined);
+        }),
+      steerTurn: (input: {
+        readonly providerTurnId: string;
+        readonly message: { readonly messageId: string };
+      }) =>
+        Effect.sync(
+          () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
+        ),
+      respondToRuntimeRequest: (input: {
+        readonly requestId: string;
+        readonly decision?: string;
+      }) =>
+        Effect.gen(function* () {
+          if (yield* Ref.getAndSet(failNextResponse, false)) {
+            return yield* Effect.fail({ _tag: "ResponseFailed" as const });
+          }
+          responses.push(input);
+        }),
+    } as unknown as ProviderAdapterV2SessionRuntime;
+    const adapter = {
+      instanceId: selection.instanceId,
+      driver: selection.driver,
+      openSession: () => Effect.sync(() => (opened.count++, session)),
+    } as unknown as ProviderAdapterV2["Service"];
+    return {
+      adapter,
+      events,
+      loaded,
+      calls,
+      started,
+      startedRuns,
+      opened,
+      responses,
+      failNextResponse,
+      secondStarted,
+      interrupted,
+    };
+  });
+const makeFakeAdapter = makeFakeAdapterFor({
+  instanceId,
+  driver,
+  providerThread,
 });
+const makeFakeClaudeAdapter = makeFakeAdapterFor({
+  instanceId: claudeInstanceId,
+  driver: claudeDriver,
+  providerThread: claudeProviderThread,
+});
+
+/** The cloud accepts only the run attempt it issued, never a local conflict step's id. */
+const secretRequestsFor = (run: RunnerTurn, laterRuns: ReadonlyArray<RunnerTurn> = []) =>
+  makeRunnerSecretRequests("https://cloud.test").pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          if (request.body._tag !== "Uint8Array") throw new Error("Expected request metadata");
+          const binding = secretRequestJson.request.decode(
+            new TextDecoder().decode(request.body.body),
+          );
+          const accepted =
+            [run, ...laterRuns].some(
+              (candidate) =>
+                binding.runId === candidate.runId && binding.attemptId === candidate.attemptId,
+            ) && request.headers.authorization === "Bearer session-token";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              accepted
+                ? secretRequestJson.result.encode({ status: "declined" })
+                : "Stopped attempt.",
+              { status: accepted ? 200 : 403 },
+            ),
+          );
+        }),
+      ),
+    ),
+  );
+
+const requestSecret = { label: "Token", reason: "For this task.", clientRequestId: "request-1" };
 
 const startWithDependencies = (input: {
   readonly machineClass: "light" | "heavy";
@@ -294,6 +406,66 @@ const startWithDependencies = (input: {
   );
 
 describe("RunnerTurns", () => {
+  it.effect("only answers a request observed on the matching live attempt and session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: () => Effect.void,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* settle;
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* settle;
+
+        const requestId = RuntimeRequestId.make("request-1");
+        const response = {
+          type: "runtime-request.respond",
+          runId: RunId.make("run-1"),
+          attemptId: RunAttemptId.make("attempt-1"),
+          providerSessionId,
+          requestId,
+          decision: "accept",
+        } as const;
+
+        // A response frame cannot create permission to answer a request the harness never raised.
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([]);
+
+        yield* Queue.offer(fake.events, runtimeRequestPending(requestId));
+        yield* settle;
+        yield* turns.respondRuntimeRequest({
+          ...response,
+          attemptId: RunAttemptId.make("attempt-2"),
+        });
+        yield* turns.respondRuntimeRequest({ ...response, runId: RunId.make("run-2") });
+        yield* turns.respondRuntimeRequest({
+          ...response,
+          providerSessionId: ProviderSessionId.make("another-session"),
+        });
+        expect(fake.responses).toEqual([]);
+
+        yield* Ref.set(fake.failNextResponse, true);
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([]);
+
+        // A failed adapter call remains eligible for the cloud's committed replay.
+        yield* turns.respondRuntimeRequest(response);
+        yield* turns.respondRuntimeRequest(response);
+        yield* Queue.offer(fake.events, runtimeRequestPending(requestId));
+        yield* settle;
+        yield* turns.respondRuntimeRequest(response);
+        expect(fake.responses).toEqual([{ requestId, decision: "accept" }]);
+      }),
+    ),
+  );
+
   it.effect("reports an interrupted pull when its drive cannot be opened yet", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -373,7 +545,7 @@ describe("RunnerTurns", () => {
         expect(blocked).toEqual([
           "This thread is busy; wait for its current turn to finish before pulling.",
         ]);
-        expect(reported.map(label)).toContain(`git.pull.result ${operation.id}`);
+        expect(reported.map(label)).toContain("git.pull.result " + operation.id);
       }),
     ),
   );
@@ -828,6 +1000,7 @@ describe("RunnerTurns", () => {
               }),
           };
           const reported: Array<RunnerItem> = [];
+          const secretRequests = yield* secretRequestsFor(turnFor(1));
           const turns = yield* makeRunnerTurns({
             threadId,
             adapters: new Map([[instanceId, fake.adapter]]),
@@ -836,6 +1009,7 @@ describe("RunnerTurns", () => {
             usage: Effect.succeed(unmeasured),
             emit: (item) => Effect.sync(() => void reported.push(item)),
             openDrive: () => Effect.succeed(drive),
+            secretRequests,
           });
           const settle = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
             discard: true,
@@ -854,6 +1028,7 @@ describe("RunnerTurns", () => {
           yield* turns.start({
             turn,
             modelToken: "token-1",
+            sessions: { token: "session-token" },
             drive: {
               driveId: "my/personal/user_1",
               token: "sbd1.x.y",
@@ -903,6 +1078,7 @@ describe("RunnerTurns", () => {
           expect(driveCalls).toEqual(["prepare sbr1.x.y", "autosave", "finish"]);
           expect(prompts).toHaveLength(2);
           expect(prompts[1]).toContain("notes.md");
+          expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
           const kinds = () =>
             reported.map((item) => (item.kind === "provider" ? `${item.event.type}` : item.kind));
           expect(kinds()).toEqual([
@@ -943,6 +1119,9 @@ describe("RunnerTurns", () => {
             "provider_turn.updated",
             "turn.terminal",
           ]);
+          expect(yield* secretRequests.request(requestSecret).pipe(Effect.result)).toMatchObject({
+            _tag: "Failure",
+          });
         }),
       ),
   );
@@ -1200,6 +1379,14 @@ describe("RunnerTurns", () => {
               hasWorkingTreeChanges: false,
             }),
         };
+        const turn = {
+          ...turnFor(1),
+          appThread: { pullRequests: [{ number: 7 }] },
+          message: { messageId: MessageId.make("message-1"), text: "Next thing", attachments: [] },
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+        } as unknown as RunnerTurn;
+        const secretRequests = yield* secretRequestsFor(turn, [turnFor(2)]);
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
           threadId,
@@ -1209,18 +1396,13 @@ describe("RunnerTurns", () => {
           usage: Effect.succeed(unmeasured),
           emit: (item) => Effect.sync(() => void reported.push(item)),
           openDrive: () => Effect.succeed(drive),
+          secretRequests,
         });
         yield* Deferred.succeed(fake.loaded, undefined);
-        const turn = {
-          ...turnFor(1),
-          appThread: { pullRequests: [{ number: 7 }] },
-          message: { messageId: MessageId.make("message-1"), text: "Next thing", attachments: [] },
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-        } as unknown as RunnerTurn;
         yield* turns.start({
           turn,
           modelToken: "token-1",
+          sessions: { token: "session-token" },
           drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: "sbr1.x.y" },
         });
         yield* settle;
@@ -1264,8 +1446,119 @@ describe("RunnerTurns", () => {
           mergeStepNamed,
           mergeStepEnded,
           notices,
+          secretRequests,
         };
       });
+
+    it.effect(
+      "keeps secret requests bound to the cloud attempt during conflict resolution and the original turn",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { turns, secretRequests, prompts, mergeStepNamed, mergeStepEnded } =
+              yield* conflicted();
+            expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+            yield* mergeStepNamed();
+            yield* mergeStepEnded("completed");
+            yield* settle;
+            expect(prompts).toHaveLength(2);
+            expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+            yield* turns.interrupt(RunId.make("run-1"));
+            expect(yield* secretRequests.request(requestSecret).pipe(Effect.result)).toMatchObject({
+              _tag: "Failure",
+            });
+          }),
+        ),
+    );
+
+    it.effect("answers a runtime request from a native helper using the cloud attempt", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fake, turns, mergeStepNamed } = yield* conflicted();
+          const requestId = RuntimeRequestId.make("helper-request");
+          yield* mergeStepNamed();
+          yield* settle;
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(requestId, ProviderTurnId.make("native-sync-1")),
+          );
+          yield* settle;
+
+          yield* turns.respondRuntimeRequest({
+            type: "runtime-request.respond",
+            runId: RunId.make("run-1"),
+            attemptId: RunAttemptId.make("attempt-1"),
+            providerSessionId,
+            requestId,
+            decision: "accept",
+          });
+
+          expect(fake.responses).toEqual([{ requestId, decision: "accept" }]);
+        }),
+      ),
+    );
+
+    it.effect("drops a helper response after a newer helper becomes current", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fake, turns, mergeStepNamed, mergeStepEnded } = yield* conflicted(false);
+          const staleRequestId = RuntimeRequestId.make("stale-helper-request");
+          const response = {
+            type: "runtime-request.respond" as const,
+            runId: RunId.make("run-1"),
+            attemptId: RunAttemptId.make("attempt-1"),
+            providerSessionId,
+            requestId: staleRequestId,
+            decision: "accept" as const,
+          };
+
+          yield* mergeStepNamed(1);
+          yield* settle;
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(staleRequestId, ProviderTurnId.make("native-sync-1")),
+          );
+          yield* settle;
+          yield* mergeStepEnded("completed", 1);
+          yield* settle;
+
+          // The response for helper 1 keeps the cloud attempt id, which also names helper 2.
+          yield* turns.respondRuntimeRequest(response);
+          expect(fake.responses).toEqual([]);
+
+          yield* mergeStepNamed(2);
+          yield* settle;
+          const currentRequestId = RuntimeRequestId.make("current-helper-request");
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(currentRequestId, ProviderTurnId.make("native-sync-2")),
+          );
+          yield* settle;
+          yield* turns.respondRuntimeRequest({ ...response, requestId: currentRequestId });
+
+          expect(fake.responses).toEqual([{ requestId: currentRequestId, decision: "accept" }]);
+        }),
+      ),
+    );
+
+    it.effect("an old conflict turn ending cannot clear a newer run's secret binding", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { turns, secretRequests, mergeStepNamed, mergeStepEnded } = yield* conflicted();
+          yield* turns.interrupt(RunId.make("run-1"));
+          const next = turnFor(2);
+          secretRequests.pin({
+            runId: next.runId,
+            attemptId: next.attemptId,
+            sessions: { token: "session-token" },
+          });
+          yield* mergeStepNamed();
+          yield* mergeStepEnded("interrupted");
+          yield* settle;
+          expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+        }),
+      ),
+    );
 
     it.effect("has the agent resolve a conflict with main before the turn's own message", () =>
       Effect.scoped(
@@ -1948,13 +2241,20 @@ describe("RunnerTurns", () => {
 
   describe("sessions", () => {
     /** Sessions that record what the turn asked of them, in `log`. */
-    const makeFakeSessions = (log: Array<string>) =>
+    const makeFakeSessions = (
+      log: Array<string>,
+      onSettle?: (event: ProviderAdapterV2Event) => Effect.Effect<void>,
+    ) =>
       Effect.map(Queue.unbounded<string>(), (failures) => ({
         failures,
         sessions: {
           use: (access) => Effect.sync(() => void log.push(`use ${access.token}`)),
           prepare: (kind) => Effect.sync(() => void log.push(`prepare ${kind}`)),
-          settle: (_kind, event) => Effect.sync(() => void log.push(`settle ${event.type}`)),
+          settle: (_kind, event) =>
+            Effect.gen(function* () {
+              log.push(`settle ${event.type}`);
+              if (onSettle !== undefined) yield* onSettle(event);
+            }),
           failures,
           claude: undefined as never,
           flush: (kind) =>
@@ -2129,17 +2429,24 @@ describe("RunnerTurns", () => {
     );
 
     describe("on a light machine", () => {
-      const command = (status: "running" | "completed", input: string, exitCode?: number) => {
+      const command = (
+        status: "running" | "completed",
+        input: string,
+        exitCode?: number,
+        runId: RunId | null = RunId.make("run-1"),
+        eventDriver: typeof driver | typeof claudeDriver = driver,
+        selectedThread: OrchestrationV2ProviderThread = providerThread,
+      ) => {
         const now = DateTime.makeUnsafe(0);
         return {
           type: "turn_item.updated",
-          driver,
+          driver: eventDriver,
           turnItem: {
             id: TurnItemId.make(`item-${input}`),
             threadId,
-            runId: RunId.make("run-1"),
+            runId,
             nodeId: null,
-            providerThreadId: providerThread.id,
+            providerThreadId: selectedThread.id,
             providerTurnId: ProviderTurnId.make("native-1"),
             nativeItemRef: null,
             parentItemId: null,
@@ -2154,14 +2461,6 @@ describe("RunnerTurns", () => {
             ...(exitCode === undefined ? {} : { exitCode }),
           },
         } as ProviderAdapterV2Event;
-      };
-      const subagentCommand = () => {
-        const event = command("running", "npm test");
-        if (event.type !== "turn_item.updated") throw new Error("Expected a command item");
-        return {
-          ...event,
-          turnItem: { ...event.turnItem, runId: null, providerTurnId: null },
-        };
       };
       const previewServiceStart = (
         status: "pending" | "running" | "completed",
@@ -2193,12 +2492,51 @@ describe("RunnerTurns", () => {
         } as ProviderAdapterV2Event;
       };
 
+      const providerCommand = (input: string, harness: "codex" | "claude") =>
+        harness === "claude" ? input : `/bin/bash -lc '${input.replaceAll("'", "'\\''")}'`;
+
+      const emittedCommand = (item: RunnerItem, input: string) =>
+        item.kind === "provider" &&
+        item.event.type === "turn_item.updated" &&
+        JSON.stringify(item.event).includes(input);
+
+      const subagentCommand = (
+        input = "npm test",
+        harness: "codex" | "claude" = "codex",
+      ): ProviderAdapterV2Event => {
+        const selectedDriver = harness === "claude" ? claudeDriver : driver;
+        const selectedThread = harness === "claude" ? claudeProviderThread : providerThread;
+        const event = command(
+          "running",
+          providerCommand(input, harness),
+          undefined,
+          null,
+          selectedDriver,
+          selectedThread,
+        );
+        if (event.type !== "turn_item.updated") throw new Error("Expected a command item");
+        return { ...event, turnItem: { ...event.turnItem, runId: null, providerTurnId: null } };
+      };
+
       /** A light machine's turn with a drive, and everything it did in order. */
-      const lightTurn = (machineClass: "light" | "heavy", saveFailure?: "drive" | "session") =>
-        Effect.gen(function* () {
-          const fake = yield* makeFakeAdapter;
-          const log: Array<string> = [];
+      const lightTurn = (
+        machineClass: "light" | "heavy",
+        harnessOrSaveFailure: "codex" | "claude" | "drive" | "session" = "codex",
+        observe?: (item: RunnerItem) => Effect.Effect<void>,
+      ) => {
+        const harness = harnessOrSaveFailure === "claude" ? "claude" : "codex";
+        const saveFailure =
+          harnessOrSaveFailure === "drive" || harnessOrSaveFailure === "session"
+            ? harnessOrSaveFailure
+            : undefined;
+        return Effect.gen(function* () {
+          const fakeAdapter = harness === "claude" ? makeFakeClaudeAdapter : makeFakeAdapter;
+          const fake = yield* fakeAdapter;
+          const selectedInstance = harness === "claude" ? claudeInstanceId : instanceId;
+          const selectedDriver = harness === "claude" ? claudeDriver : driver;
+          const selectedThread = harness === "claude" ? claudeProviderThread : providerThread;
           const reported: Array<RunnerItem> = [];
+          const log: Array<string> = [];
           const started = yield* Deferred.make<void>();
           const handedOff = yield* Deferred.make<void>();
           const failed = yield* Deferred.make<void>();
@@ -2230,41 +2568,90 @@ describe("RunnerTurns", () => {
           } as unknown as RunnerDrive;
           const turns = yield* makeRunnerTurns({
             threadId,
-            adapters: new Map([[instanceId, fake.adapter]]),
+            adapters: new Map([[selectedInstance, fake.adapter]]),
             cwd: "/tmp",
             useModelToken: () => Effect.void,
             usage: Effect.succeed(unmeasured),
             emit: (item) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 reported.push(item);
                 log.push(item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind);
-              }).pipe(
-                Effect.andThen(() =>
-                  item.kind === "turn.started"
-                    ? Deferred.succeed(started, undefined)
-                    : item.kind === "machine.outgrown"
-                      ? Deferred.succeed(handedOff, undefined)
-                      : item.kind === "turn.failed"
-                        ? Deferred.succeed(failed, undefined)
-                        : Effect.void,
-                ),
-                Effect.asVoid,
-              ),
+                if (observe !== undefined) yield* observe(item);
+                if (item.kind === "turn.started") yield* Deferred.succeed(started, undefined);
+                if (item.kind === "machine.outgrown") {
+                  yield* Deferred.succeed(handedOff, undefined);
+                }
+                if (item.kind === "turn.failed") yield* Deferred.succeed(failed, undefined);
+              }),
             openDrive: () => Effect.succeed(drive),
             sessions,
             machineClass,
           });
           yield* Deferred.succeed(fake.loaded, undefined);
           yield* turns.start({
-            turn: turnFor(1),
+            turn: turnFor(1, selectedThread, selectedInstance),
             modelToken: "token-1",
             drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
             sessions: { token: "sbs1.t.1" },
           });
           yield* Deferred.await(started);
           log.length = 0;
-          return { fake, log, reported, turns, handedOff, failed };
+          return {
+            fake,
+            log,
+            reported,
+            selectedDriver,
+            selectedThread,
+            turns,
+            handedOff,
+            failed,
+          };
         });
+      };
+
+      it.effect.each(["codex", "claude"] as const)(
+        "lets %s request a heavy machine through the outgrown path",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, log, reported, selectedDriver, selectedThread, handedOff } =
+                yield* lightTurn("light", harness);
+              const input = providerCommand(REQUEST_HEAVY_MACHINE_COMMAND, harness);
+              yield* Queue.offer(
+                fake.events,
+                command(
+                  "running",
+                  input,
+                  undefined,
+                  RunId.make("run-1"),
+                  selectedDriver,
+                  selectedThread,
+                ),
+              );
+              yield* Deferred.await(handedOff);
+
+              expect(reported.filter((item) => item.kind === "log")).toEqual([]);
+              expect(log).toEqual([
+                "settle turn_item.updated",
+                "drive save",
+                "flush " + selectedDriver,
+                "machine.outgrown",
+              ]);
+              expect(
+                reported.some(
+                  (item) =>
+                    item.kind === "provider" &&
+                    item.event.type === "turn_item.updated" &&
+                    JSON.stringify(item.event).includes(REQUEST_HEAVY_MACHINE_COMMAND),
+                ),
+              ).toBe(false);
+              expect(reported.find((item) => item.kind === "machine.outgrown")).toMatchObject({
+                runId: RunId.make("run-1"),
+                reason: REQUEST_HEAVY_MACHINE_REASON,
+              });
+            }),
+          ),
+      );
 
       it.effect.each(["drive", "session"] as const)(
         "does not hand off when the %s cannot be saved",
@@ -2288,6 +2675,36 @@ describe("RunnerTurns", () => {
                 ),
               });
               expect(fake.calls).toContain("interrupt native-1");
+            }),
+          ),
+      );
+
+      it.effect.each(["codex", "claude"] as const)(
+        "moves up for a runless %s subagent request",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, reported, handedOff } = yield* lightTurn("light", harness);
+              yield* Queue.offer(
+                fake.events,
+                subagentCommand(REQUEST_HEAVY_MACHINE_COMMAND, harness),
+              );
+              yield* Deferred.await(handedOff);
+
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toMatchObject([
+                {
+                  runId: RunId.make("run-1"),
+                  reason: REQUEST_HEAVY_MACHINE_REASON,
+                },
+              ]);
+              expect(
+                reported.some(
+                  (item) =>
+                    item.kind === "provider" &&
+                    item.event.type === "turn_item.updated" &&
+                    JSON.stringify(item.event).includes(REQUEST_HEAVY_MACHINE_COMMAND),
+                ),
+              ).toBe(false);
             }),
           ),
       );
@@ -2343,6 +2760,36 @@ describe("RunnerTurns", () => {
           ),
       );
 
+      it.effect.each(["codex", "claude"] as const)(
+        "leaves a displayed %s request command on the light machine",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const sentinel = "printf runner-sentinel";
+              const sentinelEmitted = yield* Deferred.make<void>();
+              const { fake, reported, handedOff } = yield* lightTurn("light", harness, (item) =>
+                emittedCommand(item, sentinel)
+                  ? Deferred.succeed(sentinelEmitted, undefined)
+                  : Effect.void,
+              );
+              const input = "printf '%s\\n' '" + REQUEST_HEAVY_MACHINE_COMMAND + "'";
+              yield* Queue.offer(fake.events, subagentCommand(input, harness));
+              yield* Queue.offer(fake.events, subagentCommand(sentinel, harness));
+
+              const progress = yield* Effect.race(
+                Deferred.await(sentinelEmitted).pipe(Effect.as("sentinel")),
+                Deferred.await(handedOff).pipe(Effect.as("moved")),
+              );
+
+              expect(progress).toBe("sentinel");
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+              expect(
+                reported.some((item) => emittedCommand(item, REQUEST_HEAVY_MACHINE_COMMAND)),
+              ).toBe(true);
+            }),
+          ),
+      );
+
       it.effect.each(["identified", "subagent"] as const)(
         "does not move the current provider's run for a stopped provider's late %s command",
         (source) =>
@@ -2351,8 +2798,11 @@ describe("RunnerTurns", () => {
               const first = yield* makeFakeAdapter;
               const second = yield* makeFakeAdapter;
               const secondInstance = ProviderInstanceId.make("second-codex");
+              const secondRunSentinel = "printf after-old-terminal-sentinel";
               const started = yield* Deferred.make<void>();
               const oldTerminal = yield* Deferred.make<void>();
+              const secondRunUpgrade = yield* Deferred.make<void>();
+              const secondRunSentinelEmitted = yield* Deferred.make<void>();
               const reported: Array<RunnerItem> = [];
               const turns = yield* makeRunnerTurns({
                 threadId,
@@ -2372,6 +2822,12 @@ describe("RunnerTurns", () => {
                     }
                     if (item.kind === "provider" && item.event.type === "turn.terminal") {
                       yield* Deferred.succeed(oldTerminal, undefined);
+                    }
+                    if (item.kind === "machine.outgrown" && item.runId === RunId.make("run-2")) {
+                      yield* Deferred.succeed(secondRunUpgrade, undefined);
+                    }
+                    if (emittedCommand(item, secondRunSentinel)) {
+                      yield* Deferred.succeed(secondRunSentinelEmitted, undefined);
                     }
                   }),
               });
@@ -2398,9 +2854,163 @@ describe("RunnerTurns", () => {
               yield* Queue.offer(first.events, turnEnded(1));
               yield* Deferred.await(oldTerminal);
               expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+              expect(
+                reported.filter(
+                  (item) => item.kind === "provider" && item.event.type === "turn.terminal",
+                ),
+              ).toMatchObject([{ runId: RunId.make("run-1") }]);
               expect(second.calls).toEqual(["start run-2"]);
+
+              yield* Queue.offer(
+                second.events,
+                command("running", REQUEST_HEAVY_MACHINE_COMMAND, undefined, RunId.make("run-2")),
+              );
+              yield* Queue.offer(
+                second.events,
+                command("running", secondRunSentinel, undefined, RunId.make("run-2")),
+              );
+              const secondRunProgress = yield* Effect.race(
+                Deferred.await(secondRunUpgrade).pipe(Effect.as("moved")),
+                Deferred.await(secondRunSentinelEmitted).pipe(Effect.as("processed")),
+              );
+              expect(secondRunProgress).toBe("moved");
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toMatchObject([
+                { runId: RunId.make("run-2") },
+              ]);
             }),
           ),
+      );
+
+      it.effect("ignores a runless request from an older provider session", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const codex = yield* makeFakeAdapter;
+            const claude = yield* makeFakeClaudeAdapter;
+            const sentinel = "printf older-session-sentinel";
+            const sentinelEmitted = yield* Deferred.make<void>();
+            const handedOff = yield* Deferred.make<void>();
+            const reported: Array<RunnerItem> = [];
+            const { sessions } = yield* makeFakeSessions([]);
+            const turns = yield* makeRunnerTurns({
+              threadId,
+              adapters: new Map([
+                [instanceId, codex.adapter],
+                [claudeInstanceId, claude.adapter],
+              ]),
+              cwd: "/tmp",
+              machineClass: "light",
+              useModelToken: () => Effect.void,
+              usage: Effect.succeed(unmeasured),
+              emit: (item) =>
+                Effect.gen(function* () {
+                  reported.push(item);
+                  if (item.kind === "machine.outgrown") {
+                    yield* Deferred.succeed(handedOff, undefined);
+                  }
+                  if (emittedCommand(item, sentinel)) {
+                    yield* Deferred.succeed(sentinelEmitted, undefined);
+                  }
+                }),
+              sessions,
+            });
+
+            yield* Deferred.succeed(codex.loaded, undefined);
+            yield* turns.start({
+              turn: turnFor(1, providerThread, instanceId),
+              modelToken: "token-1",
+              sessions: { token: "sbs1.t.1" },
+            });
+            expect(yield* Queue.take(codex.startedRuns)).toBe("run-1");
+
+            yield* Deferred.succeed(claude.loaded, undefined);
+            yield* turns.start({
+              turn: turnFor(2, claudeProviderThread, claudeInstanceId),
+              modelToken: "token-2",
+              sessions: { token: "sbs1.t.2" },
+            });
+            expect(yield* Queue.take(claude.startedRuns)).toBe("run-2");
+
+            yield* Queue.offer(
+              codex.events,
+              subagentCommand(REQUEST_HEAVY_MACHINE_COMMAND, "codex"),
+            );
+            yield* Queue.offer(codex.events, subagentCommand(sentinel, "codex"));
+
+            const progress = yield* Effect.race(
+              Deferred.await(sentinelEmitted).pipe(Effect.as("sentinel")),
+              Deferred.await(handedOff).pipe(Effect.as("moved")),
+            );
+
+            expect(progress).toBe("sentinel");
+            expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+          }),
+        ),
+      );
+
+      it.effect("ignores an explicit request from a stale run", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const sentinel = "printf stale-run-sentinel";
+            const sentinelEmitted = yield* Deferred.make<void>();
+            const { fake, reported, selectedDriver, selectedThread, handedOff } = yield* lightTurn(
+              "light",
+              "codex",
+              (item) =>
+                emittedCommand(item, sentinel)
+                  ? Deferred.succeed(sentinelEmitted, undefined)
+                  : Effect.void,
+            );
+            yield* Queue.offer(
+              fake.events,
+              command(
+                "running",
+                providerCommand(REQUEST_HEAVY_MACHINE_COMMAND, "codex"),
+                undefined,
+                RunId.make("run-old"),
+                selectedDriver,
+                selectedThread,
+              ),
+            );
+            yield* Queue.offer(
+              fake.events,
+              command(
+                "running",
+                providerCommand(sentinel, "codex"),
+                undefined,
+                RunId.make("run-1"),
+                selectedDriver,
+                selectedThread,
+              ),
+            );
+            const progress = yield* Effect.race(
+              Deferred.await(sentinelEmitted).pipe(Effect.as("sentinel")),
+              Deferred.await(handedOff).pipe(Effect.as("moved")),
+            );
+            expect(progress).toBe("sentinel");
+            expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+
+            yield* Queue.offer(
+              fake.events,
+              command(
+                "running",
+                providerCommand(REQUEST_HEAVY_MACHINE_COMMAND, "codex"),
+                undefined,
+                RunId.make("run-1"),
+                selectedDriver,
+                selectedThread,
+              ),
+            );
+            yield* Deferred.await(handedOff);
+            const outgrown = reported.filter((item) => item.kind === "machine.outgrown");
+            expect(outgrown).toHaveLength(1);
+            expect(outgrown).toMatchObject([
+              {
+                runId: RunId.make("run-1"),
+                reason: REQUEST_HEAVY_MACHINE_REASON,
+              },
+            ]);
+          }),
+        ),
       );
 
       it.effect("moves up for a current subagent's command without run identifiers", () =>
@@ -2416,6 +3026,130 @@ describe("RunnerTurns", () => {
             });
           }),
         ),
+      );
+
+      it.effect.each(["codex", "claude"] as const)(
+        "treats a heavy-machine request from %s as a no-op",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const sentinel = "printf heavy-sentinel";
+              const sentinelEmitted = yield* Deferred.make<void>();
+              const { fake, reported, selectedDriver, selectedThread, handedOff } =
+                yield* lightTurn("heavy", harness, (item) =>
+                  emittedCommand(item, sentinel)
+                    ? Deferred.succeed(sentinelEmitted, undefined)
+                    : Effect.void,
+                );
+              for (const status of ["running", "completed"] as const) {
+                yield* Queue.offer(
+                  fake.events,
+                  command(
+                    status,
+                    providerCommand(REQUEST_HEAVY_MACHINE_COMMAND, harness),
+                    undefined,
+                    RunId.make("run-1"),
+                    selectedDriver,
+                    selectedThread,
+                  ),
+                );
+              }
+              yield* Queue.offer(fake.events, subagentCommand(sentinel, harness));
+              const progress = yield* Effect.race(
+                Deferred.await(sentinelEmitted).pipe(Effect.as("sentinel")),
+                Deferred.await(handedOff).pipe(Effect.as("moved")),
+              );
+              expect(progress).toBe("sentinel");
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+              expect(
+                reported.filter(
+                  (item) =>
+                    item.kind === "provider" &&
+                    item.event.type === "turn_item.updated" &&
+                    JSON.stringify(item.event).includes(REQUEST_HEAVY_MACHINE_COMMAND),
+                ),
+              ).toEqual([]);
+            }),
+          ),
+      );
+
+      it.effect.each(["codex", "claude"] as const)(
+        "shows a compound %s request on a heavy machine",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const sentinel = "printf compound-heavy-sentinel";
+              const sentinelEmitted = yield* Deferred.make<void>();
+              const { fake, reported, selectedDriver, selectedThread, handedOff } =
+                yield* lightTurn("heavy", harness, (item) =>
+                  emittedCommand(item, sentinel)
+                    ? Deferred.succeed(sentinelEmitted, undefined)
+                    : Effect.void,
+                );
+              const input = providerCommand(
+                `${REQUEST_HEAVY_MACHINE_COMMAND} && npm test`,
+                harness,
+              );
+              for (const status of ["running", "completed"] as const) {
+                yield* Queue.offer(
+                  fake.events,
+                  command(
+                    status,
+                    input,
+                    undefined,
+                    RunId.make("run-1"),
+                    selectedDriver,
+                    selectedThread,
+                  ),
+                );
+              }
+              yield* Queue.offer(fake.events, subagentCommand(sentinel, harness));
+
+              const progress = yield* Effect.race(
+                Deferred.await(sentinelEmitted).pipe(Effect.as("sentinel")),
+                Deferred.await(handedOff).pipe(Effect.as("moved")),
+              );
+
+              expect(progress).toBe("sentinel");
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toEqual([]);
+              expect(reported.filter((item) => emittedCommand(item, input))).toHaveLength(2);
+            }),
+          ),
+      );
+
+      it.effect.each(["codex", "claude"] as const)(
+        "shows a compound %s request while moving a light machine",
+        (harness) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const { fake, reported, selectedDriver, selectedThread, handedOff } =
+                yield* lightTurn("light", harness);
+              const input = providerCommand(
+                `${REQUEST_HEAVY_MACHINE_COMMAND} && npm test`,
+                harness,
+              );
+              yield* Queue.offer(
+                fake.events,
+                command(
+                  "running",
+                  input,
+                  undefined,
+                  RunId.make("run-1"),
+                  selectedDriver,
+                  selectedThread,
+                ),
+              );
+              yield* Deferred.await(handedOff);
+
+              expect(reported.filter((item) => emittedCommand(item, input))).toHaveLength(1);
+              expect(reported.filter((item) => item.kind === "machine.outgrown")).toMatchObject([
+                {
+                  runId: RunId.make("run-1"),
+                  reason: REQUEST_HEAVY_MACHINE_REASON,
+                },
+              ]);
+            }),
+          ),
       );
 
       it.effect(

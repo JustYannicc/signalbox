@@ -7,6 +7,7 @@ import {
   type RunnerLogLevel,
   type RunnerMessageInput,
   type RunnerTurn,
+  type ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
@@ -20,6 +21,7 @@ import {
   type ProviderTurnId,
   RunAttemptId,
   type RunId,
+  RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
@@ -57,7 +59,8 @@ import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
-import { outgrownBy } from "./RunnerMachineClass.ts";
+import type { RunnerSecretRequests } from "./RunnerSecretTools.ts";
+import { type OutgrownCommandDecision, outgrownCommandDecision } from "./RunnerMachineClass.ts";
 import {
   FILE_CHANGING_ITEMS,
   finishDriveTurn,
@@ -134,6 +137,10 @@ export interface RunnerTurns {
    * has named it. Each message is taken once, so the thread can repeat itself.
    */
   readonly steer: (runId: RunId, message: RunnerMessageInput) => Effect.Effect<void>;
+  /** Applies a committed response only to the observed request on its live attempt. */
+  readonly respondRuntimeRequest: (
+    response: Extract<ThreadMessage, { type: "runtime-request.respond" }>,
+  ) => Effect.Effect<void>;
   /** Applies one selected remote pull, or reports a durable refusal/result. */
   readonly pull: (message: {
     readonly operation: PullOperation;
@@ -179,10 +186,14 @@ interface Turn {
   session: ProviderAdapterV2SessionRuntime | null;
   providerThread: OrchestrationV2ProviderThread | null;
   providerTurnId: ProviderTurnId | null;
+  /** Native turns this exact attempt has named, including later turns in a Codex goal. */
+  readonly providerTurnIds: Set<ProviderTurnId>;
   /** Done once the run is off this machine: its turn ended, or it never reached the harness. */
   readonly ended: Deferred.Deferred<void>;
   /** The turn's session token, to bring a steer's attachments. */
   readonly sessionToken: string | null;
+  /** The cloud session token used to bind request_secret to this attempt. */
+  readonly sessionAccess: SessionAccess | null;
   /** Messages steered in, by id, and the ones waiting for the harness to name its turn. */
   readonly steered: Set<string>;
   readonly steers: Array<RunnerMessageInput>;
@@ -292,20 +303,64 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     token: string,
     secrets: ReadonlyArray<SecretValue>,
   ) => Effect.Effect<void, SecretsRegisterError>;
+  /** Routes request_secret through the cloud, bound to the active run attempt. */
+  readonly secretRequests?: RunnerSecretRequests;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
   const turns = new Map<RunId, Turn>();
+  const pendingRuntimeRequests = new Map<
+    RuntimeRequestId,
+    {
+      readonly runId: RunId;
+      readonly localAttemptId: RunAttemptId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly providerTurnId: ProviderTurnId;
+      readonly runtime: ProviderAdapterV2SessionRuntime;
+    }
+  >();
+  const answeredRuntimeRequests = new Set<RuntimeRequestId>();
+  const respondingRuntimeRequests = new Set<RuntimeRequestId>();
   /** Drains hold the drive while the machine saves before it leaves. */
   let draining = false;
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
   const taken = new Set<RunId>();
+  const clearRuntimeRequests = (runId: RunId, attemptId?: RunAttemptId) => {
+    for (const [requestId, request] of pendingRuntimeRequests) {
+      if (
+        request.runId === runId &&
+        (attemptId === undefined || request.localAttemptId === attemptId)
+      ) {
+        pendingRuntimeRequests.delete(requestId);
+      }
+    }
+  };
+  const pinSecretRequestTurn = (
+    runId: RunId,
+    attemptId: RunAttemptId,
+    sessions: SessionAccess | null,
+  ) => {
+    if (sessions !== null) input.secretRequests?.pin({ runId, attemptId, sessions });
+  };
+  const clearSecretRequestTurn = (runId: RunId, attemptId: RunAttemptId) =>
+    input.secretRequests?.clear({ runId, attemptId });
   /** `turn` is off this machine: whatever waits for it to wind down goes on. */
   const forget = (runId: RunId, turn: Turn) => {
-    if (turns.get(runId) === turn) turns.delete(runId);
+    if (turns.get(runId) === turn) {
+      turns.delete(runId);
+      clearSecretRequestTurn(runId, turn.turn.attemptId);
+    }
+    clearRuntimeRequests(runId, turn.attemptId);
     Deferred.doneUnsafe(turn.ended, Exit.void);
   };
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const turn of turns.values()) {
+        clearSecretRequestTurn(turn.turn.runId, turn.turn.attemptId);
+      }
+    }),
+  );
   /** The run adapter events belong to: the latest one started. */
   let latestRunId: RunId | null = null;
   let latestTraceId: string | null = null;
@@ -354,24 +409,32 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const outgrown = new Set<RunId>();
   /** Classified commands and dev-server tools, by item and phase. */
   const classified = new Set<string>();
-  /** Checks commands once at start/end and a declared dev server once when it starts. */
-  const outgrownByOnce = (event: ProviderAdapterV2Event) => {
+  /** Moves eligible current-session commands or tools once in each execution phase. */
+  const outgrownByOnce = (
+    event: ProviderAdapterV2Event,
+    runId: RunId | null,
+    runtime: ProviderAdapterV2SessionRuntime,
+    decision: OutgrownCommandDecision,
+  ) => {
     if (event.type !== "turn_item.updated") return null;
     const item = event.turnItem;
-    if (item.type === "dynamic_tool") {
-      const reason = outgrownBy(event);
-      if (reason === null) return null;
-      const key = `${item.id}:start`;
-      if (classified.has(key)) return null;
-      classified.add(key);
-      return reason;
+    if (item.type !== "command_execution" && item.type !== "dynamic_tool") return null;
+    if (
+      input.machineClass !== "light" ||
+      decision.reason === null ||
+      runId === null ||
+      runId !== latestRunId ||
+      runId !== runningRunId
+    ) {
+      return null;
     }
-    if (item.type !== "command_execution") return null;
+    const owner = turns.get(runId);
+    if (owner === undefined || owner.status !== "running" || owner.session !== runtime) return null;
     const { id, status } = item;
     const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
     if (classified.has(key)) return null;
     classified.add(key);
-    return outgrownBy(event);
+    return { runId, reason: decision.reason };
   };
 
   /**
@@ -537,7 +600,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         );
 
   /** Learns each turn's native id, stops one asked to stop before then, and forgets ended ones. */
-  const track = (event: ProviderAdapterV2Event) =>
+  const track = (event: ProviderAdapterV2Event, runtime?: ProviderAdapterV2SessionRuntime) =>
     Effect.gen(function* () {
       if (event.type === "turn.terminal") {
         for (const [runId, turn] of turns) {
@@ -545,11 +608,48 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         }
         return;
       }
+      if (event.type === "runtime_request.updated") {
+        const { runtimeRequest } = event;
+        if (answeredRuntimeRequests.has(runtimeRequest.id)) {
+          pendingRuntimeRequests.delete(runtimeRequest.id);
+          return;
+        }
+        if (respondingRuntimeRequests.has(runtimeRequest.id)) return;
+        if (
+          runtime === undefined ||
+          runtimeRequest.status !== "pending" ||
+          runtimeRequest.providerTurnId === null ||
+          runtimeRequest.responseCapability.type !== "live" ||
+          runtimeRequest.responseCapability.providerSessionId !== runtime.providerSessionId
+        ) {
+          pendingRuntimeRequests.delete(runtimeRequest.id);
+          return;
+        }
+        for (const turn of turns.values()) {
+          if (
+            turn.status !== "running" ||
+            turn.session !== runtime ||
+            !turn.providerTurnIds.has(runtimeRequest.providerTurnId)
+          ) {
+            continue;
+          }
+          pendingRuntimeRequests.set(runtimeRequest.id, {
+            runId: turn.turn.runId,
+            localAttemptId: turn.attemptId,
+            providerSessionId: runtimeRequest.responseCapability.providerSessionId,
+            providerTurnId: runtimeRequest.providerTurnId,
+            runtime,
+          });
+          return;
+        }
+        pendingRuntimeRequests.delete(runtimeRequest.id);
+        return;
+      }
       if (event.type !== "provider_turn.updated") return;
       for (const turn of turns.values()) {
-        if (turn.providerTurnId !== null || event.providerTurn.runAttemptId !== turn.attemptId) {
-          continue;
-        }
+        if (event.providerTurn.runAttemptId !== turn.attemptId) continue;
+        turn.providerTurnIds.add(event.providerTurn.id);
+        if (turn.providerTurnId !== null) continue;
         turn.providerTurnId = event.providerTurn.id;
         yield* turn.status === "stopped" ? interruptNow(turn) : deliverSteers(turn);
       }
@@ -633,11 +733,15 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         attemptId,
         status: "running",
         providerTurnId: null,
+        providerTurnIds: new Set(),
         ended: Deferred.makeUnsafe<void>(),
       };
       held.waiting = ended;
       mergeAttempts.add(attemptId);
       turns.set(runId, continuation);
+      yield* Effect.sync(() =>
+        pinSecretRequestTurn(runId, state.turn.attemptId, state.sessionAccess),
+      );
       yield* state.session
         .startTurn({
           appThread: turn.appThread,
@@ -807,12 +911,17 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
     );
     /** Sends `event` as `runId`'s; a held end goes out under its own run, whatever runs since. */
-    const deliver = (event: ProviderAdapterV2Event, runId: RunId | null = latestRunId) =>
+    const deliver = (
+      event: ProviderAdapterV2Event,
+      runId: RunId | null = latestRunId,
+      suppressTranscript = false,
+    ) =>
       Effect.gen(function* () {
         const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
         if (delivered === null || runId === null) return;
         // Complete only once the rows behind it would survive this machine.
         if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
+        if (suppressTranscript) return;
         const stored =
           delivered.type === "turn_item.updated"
             ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
@@ -835,26 +944,19 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     return runtime.events.pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
-          const originatingRunId = eventRunId(event);
-          if (originatingRunId !== null && outgrown.has(originatingRunId)) {
+          const runIdBeforeDriveHold = eventRunId(event);
+          if (runIdBeforeDriveHold !== null && outgrown.has(runIdBeforeDriveHold)) {
             // Its terminal still releases the next run's wait for this provider.
-            yield* track(event);
+            yield* track(event, runtime);
             return;
           }
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
-          yield* track(event);
-          yield* deliver(event);
-          const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
-          const owner = originatingRunId === null ? undefined : turns.get(originatingRunId);
-          if (
-            reason !== null &&
-            originatingRunId !== null &&
-            originatingRunId === latestRunId &&
-            owner?.status === "running" &&
-            owner.session === runtime
-          ) {
-            yield* moveUp(originatingRunId, reason);
-          }
+          const originatingRunId = eventRunId(event);
+          const commandDecision = outgrownCommandDecision(event);
+          yield* track(event, runtime);
+          yield* deliver(event, originatingRunId, commandDecision.suppressTranscript);
+          const upgrade = outgrownByOnce(event, originatingRunId, runtime, commandDecision);
+          if (upgrade !== null) yield* moveUp(upgrade.runId, upgrade.reason);
         }),
       ),
       Effect.catchCause((cause) =>
@@ -1084,6 +1186,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         cwd: input.cwd,
       };
       latestRunId = turn.runId;
+      classified.clear();
       latestTraceId = turn.traceId;
       // `/drives` and the context tool read one version of everything for the whole
       // turn; the view is taken while the checkout and session load.
@@ -1217,6 +1320,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (conflict !== undefined && opened !== null) {
         if (!(yield* resolveBeforeTurn(state, conflict, opened))) return;
       }
+      yield* Effect.sync(() => pinSecretRequestTurn(turn.runId, turn.attemptId, sessionAccess));
       yield* session.startTurn({
         appThread: turn.appThread,
         threadId: input.threadId,
@@ -1272,8 +1376,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         session: null,
         providerThread: null,
         providerTurnId: null,
+        providerTurnIds: new Set(),
         ended: Deferred.makeUnsafe<void>(),
         sessionToken: sessionAccess?.token ?? null,
+        sessionAccess,
         steered: new Set(),
         steers: [],
         pinnedContext: null,
@@ -1301,6 +1407,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (turn === undefined || turn.status === "stopped") return Effect.void;
       const wasRunning = turn.status === "running";
       turn.status = "stopped";
+      clearRuntimeRequests(runId, turn.attemptId);
+      clearSecretRequestTurn(runId, turn.turn.attemptId);
       // Before the harness names its turn, `track` interrupts once it does. The
       // harness may take seconds to stop; the socket meanwhile reads on.
       return wasRunning ? Effect.asVoid(Effect.forkIn(interruptNow(turn), scope)) : Effect.void;
@@ -1319,6 +1427,65 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       turn.steered.add(message.messageId);
       turn.steers.push(message);
       return deliverSteers(turn);
+    });
+
+  const respondRuntimeRequest: RunnerTurns["respondRuntimeRequest"] = (response) =>
+    Effect.suspend(() => {
+      const observed = pendingRuntimeRequests.get(response.requestId);
+      const turn = turns.get(response.runId);
+      if (
+        answeredRuntimeRequests.has(response.requestId) ||
+        respondingRuntimeRequests.has(response.requestId) ||
+        observed === undefined ||
+        observed.runId !== response.runId ||
+        turn === undefined ||
+        turn.status !== "running" ||
+        observed.localAttemptId !== turn.attemptId ||
+        observed.providerSessionId !== response.providerSessionId ||
+        runningRunId !== response.runId ||
+        // Cloud responses name the active attempt; the adapter request is bound to its local child.
+        turn.turn.attemptId !== response.attemptId ||
+        turn.session !== observed.runtime ||
+        !turn.providerTurnIds.has(observed.providerTurnId) ||
+        observed.runtime.providerSessionId !== response.providerSessionId
+      ) {
+        return Effect.void;
+      }
+
+      // Suppress concurrent duplicates; a failed answer can replay after the socket reconnects.
+      respondingRuntimeRequests.add(response.requestId);
+      return observed.runtime
+        .respondToRuntimeRequest({
+          requestId: response.requestId,
+          ...(response.decision === undefined ? {} : { decision: response.decision }),
+          ...(response.answers === undefined ? {} : { answers: response.answers }),
+        })
+        .pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              pendingRuntimeRequests.delete(response.requestId);
+              answeredRuntimeRequests.add(response.requestId);
+            }),
+          ),
+          Effect.catchCause(() =>
+            Effect.logWarning("the harness didn't take a committed runtime response", {
+              runId: response.runId,
+              requestId: response.requestId,
+            }).pipe(
+              Effect.andThen(
+                input.emit(
+                  log(
+                    response.runId,
+                    "warning",
+                    `the provider could not take the committed response for request ${response.requestId}`,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Effect.ensuring(Effect.sync(() => respondingRuntimeRequests.delete(response.requestId))),
+          withTrace(turn.turn.traceId),
+        );
     });
 
   const keepOnly: RunnerTurns["keepOnly"] = (runId) =>
@@ -1371,6 +1538,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     start,
     interrupt,
     steer,
+    respondRuntimeRequest,
     pull,
     keepOnly,
     drain,

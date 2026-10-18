@@ -80,6 +80,7 @@ const reportsCompletion = (event: ProviderAdapterV2Event) => {
 export const makeRunnerSessions = Effect.fn("makeRunnerSessions")(function* (input: {
   readonly cloudUrl: string;
   readonly codexHome: string;
+  readonly codexCwdMigration?: { readonly from: string; readonly to: string };
   readonly mask?: SecretMask;
 }): Effect.fn.Return<
   RunnerSessions,
@@ -104,7 +105,12 @@ export const makeRunnerSessions = Effect.fn("makeRunnerSessions")(function* (inp
     onFailure: report,
   });
   const claude = yield* makeClaudeSessions({ client, outbox, onFailure: report });
-  const codex = yield* makeCodexRollouts({ codexHome: input.codexHome, client, outbox });
+  const codex = yield* makeCodexRollouts({
+    codexHome: input.codexHome,
+    client,
+    outbox,
+    ...(input.codexCwdMigration === undefined ? {} : { cwdMigration: input.codexCwdMigration }),
+  });
 
   const notSaved = (cause: { readonly message: string }) =>
     new RunnerSessionError({ message: `The session could not be restored: ${cause.message}` });

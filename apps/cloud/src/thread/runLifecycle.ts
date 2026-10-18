@@ -1,13 +1,18 @@
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ProviderThread,
-  OrchestrationV2Run,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
-  OrchestrationV2UserMessageInputIntent,
+import {
+  orchestrationV2RunWorkStartedAt,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  type OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { driverFor, runnerInstanceFor } from "../models/ModelRouting.ts";
+import { expireRuntimeRequests } from "./runtimeRequests.ts";
+import { isLiveRun } from "./runState.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -30,14 +35,28 @@ import {
 type Projection = OrchestrationV2ThreadProjection;
 type Run = OrchestrationV2Run;
 
-type LiveRun = Run & { readonly status: "preparing" | "starting" | "running" | "waiting" };
-
-/** A run the provider is (or is about to be) working on. */
-export const isLiveRun = (run: Run): run is LiveRun =>
-  run.status === "preparing" ||
-  run.status === "starting" ||
-  run.status === "running" ||
-  run.status === "waiting";
+function wakeWorkStartedAt(
+  runs: ReadonlyArray<Run>,
+  run: Run,
+  message: OrchestrationV2ConversationMessage | undefined,
+): DateTime.Utc | undefined {
+  if (
+    message?.notification === undefined &&
+    message?.delegatedCompletion === undefined &&
+    run.restartContinuationOfRunId === undefined
+  ) {
+    return undefined;
+  }
+  const previous = runs
+    .flatMap((candidate) =>
+      candidate.startedAt === null ? [] : [{ run: candidate, startedAt: candidate.startedAt }],
+    )
+    .toSorted(
+      (left, right) =>
+        DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
+    )[0]?.run;
+  return previous === undefined ? undefined : orchestrationV2RunWorkStartedAt(previous);
+}
 
 /** The run the provider is working on, if any. */
 export const activeRun = (projection: Projection): Run | undefined =>
@@ -119,10 +138,13 @@ export function startRunEvents(
   const rootNodeId = ids.rootNode(run.id);
   const providerThreadId = ids.providerThread(threadId);
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  // The timer starts on activation, after any queue wait, and before provider startup.
+  const workStartedAt =
+    run.workStartedAt ?? wakeWorkStartedAt(projection.runs, run, message) ?? ctx.now;
   const started: Run = {
     ...run,
     status: "starting",
-    workStartedAt: run.workStartedAt ?? ctx.now,
+    workStartedAt,
     providerThreadId,
     rootNodeId,
     activeAttemptId: attemptId,
@@ -190,7 +212,10 @@ export function startRunEvents(
       completedAt: null,
     }),
     ...(message === undefined ? [] : [messageEvent(ctx, { ...message, nodeId: rootNodeId })]),
-    turnItemEvent(ctx, userItem),
+    // The system prompt for a machine continuation is provider input, not a transcript row.
+    ...(run.restartContinuationOfRunId !== undefined && message?.role === "system"
+      ? []
+      : [turnItemEvent(ctx, userItem)]),
   ];
 }
 
@@ -224,6 +249,7 @@ export function finishRunEvents(
       : [];
   return [
     ...(options.leading ?? []),
+    ...expireRuntimeRequests(projection, run.id, ctx, status === "completed"),
     ...projection.turnItems.flatMap((item) =>
       item.runId === run.id &&
       item.id.startsWith(`turn-item:${run.id}:dependencies:`) &&

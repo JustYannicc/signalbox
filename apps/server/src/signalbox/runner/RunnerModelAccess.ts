@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - PATH needs the host path-list delimiter.
+import * as NodePath from "node:path";
+
 import type { ClaudeSettings, CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,6 +14,7 @@ import {
   codexGatewayConfig,
   tomlString,
 } from "./RunnerGatewayPins.ts";
+import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
 import { INSTRUCTIONS_MAX_BYTES, ROOT_MARKER } from "./RunnerInstructions.ts";
 
 /**
@@ -71,6 +75,9 @@ const INHERITED = [
   "NODE_EXTRA_CA_CERTS",
 ];
 
+const agentToolBashEnvironmentFile = (home: string) =>
+  NodePath.join(home, ".signalbox-agent-bash-env");
+
 export function harnessEnvironment(
   host: NodeJS.ProcessEnv,
   layout: MachineLayout,
@@ -86,8 +93,55 @@ export function harnessEnvironment(
   return { ...environment, ...caches, HOME: layout.home, ...claudeGateway(gatewayUrl) };
 }
 
+/** Makes project-installed commands available to provider shells, including Bash login shells. */
+const agentToolEnvironment = (environment: NodeJS.ProcessEnv, cwd: string): NodeJS.ProcessEnv => {
+  const home = environment.HOME;
+  return {
+    ...environment,
+    PATH: [NodePath.join(cwd, "node_modules", ".bin"), environment.PATH]
+      .filter((entry): entry is string => entry !== undefined && entry.length > 0)
+      .join(NodePath.delimiter),
+    PWD: cwd,
+    ...(home === undefined ? {} : { BASH_ENV: agentToolBashEnvironmentFile(home) }),
+  };
+};
+
+/** The Runner environment split: installers get dependency caches; agent tools also get the drive bin. */
+export const runnerEnvironments = (
+  host: NodeJS.ProcessEnv,
+  layout: MachineLayout,
+  gatewayUrl: string,
+  caches: Readonly<Record<string, string>> = {},
+  cwd: string,
+  extra: Readonly<Record<string, string>> = {},
+) => {
+  const dependencyEnvironment = harnessEnvironment(host, layout, gatewayUrl, caches);
+  return {
+    dependencyEnvironment,
+    toolEnvironment: agentToolEnvironment({ ...dependencyEnvironment, ...extra }, cwd),
+  };
+};
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+const agentToolBashEnvironment = (cwd: string) =>
+  [
+    `_signalbox_agent_tool_bin=${shellQuote(NodePath.join(cwd, "node_modules", ".bin"))}`,
+    'case ":${PATH-}:" in',
+    '  *":${_signalbox_agent_tool_bin}:"*) ;;',
+    '  *) PATH="${_signalbox_agent_tool_bin}${PATH:+:$PATH}" ;;',
+    "esac",
+    "export PATH",
+    "unset _signalbox_agent_tool_bin",
+    "",
+  ].join("\n");
+
 /** Longer than the login service's 4-minute budget for one sign-in. */
 export const MCP_TOOL_TIMEOUT_SEC = 300;
+
+/** Secret cards allow an hour; browser sign-in keeps its four-minute service budget. */
+export const mcpToolTimeoutSec = (serverName: string) =>
+  serverName === CONTEXT_SERVER_NAME ? 3605 : MCP_TOOL_TIMEOUT_SEC;
 
 /** The Runner's loopback MCP servers, by the name the harnesses know each as. */
 export type RunnerMcpServers = Readonly<Record<string, string>>;
@@ -105,8 +159,7 @@ const codexConfig = (layout: MachineLayout, gatewayUrl: string, mcpServers: Runn
     ...Object.entries(mcpServers).flatMap(([name, url]) => [
       `[mcp_servers.${tomlString(name)}]`,
       `url = ${tomlString(url)}`,
-      // Codex gives a tool call 60 seconds; a sign-in (#576) can take minutes.
-      `tool_timeout_sec = ${MCP_TOOL_TIMEOUT_SEC}`,
+      `tool_timeout_sec = ${mcpToolTimeoutSec(name)}`,
       "",
     ]),
   ].join("\n");
@@ -150,11 +203,19 @@ export const prepareMachine = Effect.fn("prepareMachine")(function* (
   layout: MachineLayout,
   gatewayUrl: string,
   mcpServers: RunnerMcpServers = {},
+  cwd?: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   for (const directory of [layout.home, layout.claudeHome, layout.codexHome]) {
     yield* fs.makeDirectory(directory, { recursive: true });
+  }
+  if (cwd !== undefined) {
+    // Bash login profiles can replace PATH after the provider process starts.
+    yield* fs.writeFileString(
+      agentToolBashEnvironmentFile(layout.home),
+      agentToolBashEnvironment(cwd),
+    );
   }
   const settings = yield* encodeClaudeUserSettings({
     apiKeyHelper: claudeKeyHelper(layout),

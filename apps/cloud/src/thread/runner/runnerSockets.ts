@@ -38,6 +38,8 @@ export interface RunnerSocketAttachment {
   readonly steers?: boolean | undefined;
   /** How many of `sentRunId`'s steers this socket's Runner was handed; absent: none. */
   readonly sentSteers?: number | undefined;
+  readonly runtimeResponses?: boolean | undefined;
+  readonly sentRuntimeResponses?: ReadonlyArray<string> | undefined;
 }
 
 type Attachment = RunnerSocketAttachment;
@@ -144,10 +146,12 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     let sentRunId = attachment.sentRunId;
     let sentPullId = attachment.sentPullId;
     let sentSteers = attachment.sentSteers ?? 0;
+    let sentRuntimeResponses = attachment.sentRuntimeResponses ?? [];
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
       send(socket, { type: "interrupt", runId: sentRunId });
       sentRunId = null;
       sentSteers = 0;
+      sentRuntimeResponses = [];
     }
     if (turn !== null && sentRunId !== turn.turn.runId) {
       send(socket, {
@@ -163,6 +167,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       });
       sentRunId = turn.turn.runId;
       sentSteers = 0;
+      sentRuntimeResponses = [];
     }
     if (
       work.pull != null &&
@@ -179,6 +184,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       }
       sentSteers = Math.max(sentSteers, work.steers.length);
     }
+    if (attachment.runtimeResponses === true && sentRunId === work.activeRunId) {
+      for (const response of work.runtimeResponses) {
+        if (response.runId !== sentRunId || sentRuntimeResponses.includes(response.requestId))
+          continue;
+        send(socket, response);
+        sentRuntimeResponses = [...sentRuntimeResponses, response.requestId];
+      }
+    }
     // A drain asked for and not answered yet, once per connection (#493).
     let sentDrainId = attachment.sentDrainId;
     if (work.drain !== null && sentDrainId !== work.drain) {
@@ -189,7 +202,8 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentRunId !== attachment.sentRunId ||
       sentPullId !== attachment.sentPullId ||
       sentDrainId !== attachment.sentDrainId ||
-      sentSteers !== (attachment.sentSteers ?? 0)
+      sentSteers !== (attachment.sentSteers ?? 0) ||
+      sentRuntimeResponses !== attachment.sentRuntimeResponses
     ) {
       socket.serializeAttachment({
         ...attachment,
@@ -197,6 +211,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         ...(sentPullId === undefined ? {} : { sentPullId }),
         sentDrainId,
         sentSteers,
+        sentRuntimeResponses,
       } satisfies Attachment);
     }
   }
@@ -247,6 +262,7 @@ export async function onRunnerMessage(
         lastActivityAt: receivedAt,
         sentRunId: result.heldRunId,
         steers: message.steers === true,
+        runtimeResponses: message.runtimeResponses === true,
       } satisfies Attachment);
       send(socket, {
         type: "welcome",

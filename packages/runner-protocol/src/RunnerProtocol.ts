@@ -8,10 +8,13 @@ import {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
+  OrchestrationV2RuntimeRequest,
   PositiveInt,
   ProviderInteractionMode,
+  ProviderSessionId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -317,6 +320,8 @@ export const RunnerHello = Schema.Struct({
   takenRunIds: Schema.optional(Schema.Array(RunId)),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** The Runner can answer a pending native provider request. */
+  runtimeResponses: Schema.optional(Schema.Boolean),
   /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
   pulls: Schema.optional(Schema.Boolean),
 });
@@ -359,6 +364,16 @@ export const ThreadMessage = Schema.Union([
     message: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
+  /** A committed response to a native request this live run observed on its harness session. */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    runId: RunId,
+    attemptId: RunAttemptId,
+    providerSessionId: ProviderSessionId,
+    requestId: RuntimeRequestId,
+    decision: OrchestrationV2RuntimeRequest.fields.decision,
+    answers: OrchestrationV2RuntimeRequest.fields.answers,
+  }),
   Schema.Struct({
     type: Schema.Literal("turn.start"),
     turn: RunnerTurn,
@@ -399,6 +414,10 @@ export type ThreadMessage = typeof ThreadMessage.Type;
 export const MachineClass = Schema.Literals(["light", "heavy"]);
 export type MachineClass = typeof MachineClass.Type;
 
+/** A harmless shell command that asks a light Runner to move the turn to heavy. */
+export const REQUEST_HEAVY_MACHINE_COMMAND = ": request-heavy-machine";
+export const REQUEST_HEAVY_MACHINE_REASON = "The agent requested a heavy machine.";
+
 /**
  * What a thread asks a machine backend for: a Runner for this thread at this
  * generation, holding this token, whose harnesses reach their models through
@@ -421,10 +440,11 @@ export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
 
 /**
  * Where the Runner keeps threads' working directories and machine state
- * (`workspaces/<thread>/drive`, `machines/<thread>/home`) on every machine
- * class. A thread moves between classes mid-run, and its agent must find its
- * checkout, home and folder instructions at the paths it already knows
- * (#620). The Runner image creates it; a boat VM mounts its disk there.
+ * (`workspaces/<thread-key>/drive`, `machines/<thread-key>/home`) on every
+ * machine class. A thread moves between classes mid-run, and its agent must
+ * find its checkout, home and folder instructions at the paths it already
+ * knows (#620). Unsafe IDs use an encoded key; legacy aliases keep saved
+ * absolute paths working. The Runner image creates it; a boat VM mounts its disk there.
  */
 export const MACHINE_HOME = "/home/user/signalbox";
 

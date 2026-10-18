@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the context server is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodePath from "@effect/platform-node/NodePath";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -18,6 +20,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { automationCaller, layerAutomationTools } from "./RunnerAutomationTools.ts";
+import { layerRunnerPullRequestTools } from "./RunnerPullRequestTools.ts";
 import { layerLearnerTools } from "./RunnerLearnerTools.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
@@ -44,12 +47,13 @@ import {
 import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
-import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
+import { mcpToolTimeoutSec, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 import { layerPreviewServiceTools } from "./RunnerPreviewServiceTools.ts";
 import * as RunnerPreviewServiceCommands from "./RunnerPreviewServiceCommands.ts";
 import * as RunnerPreviewServices from "./RunnerPreviewServices.ts";
 import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
+import { layerSecretTools, type RunnerSecretRequests } from "./RunnerSecretTools.ts";
 import type { RunnerConnectionError } from "./RunnerSession.ts";
 
 /**
@@ -121,6 +125,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
   readonly threadId?: string;
+  readonly secretRequests?: RunnerSecretRequests;
 }) {
   const view = makeDrivesView();
   let drive: BranchDrive | null = null;
@@ -193,10 +198,14 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerContextTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
+    layerRunnerPullRequestTools(view).pipe(
+      Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+    ),
     layerLearnerTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
     previewServiceTools,
     layerStatusLineTools(view),
+    input.secretRequests === undefined ? Layer.empty : layerSecretTools(input.secretRequests),
   ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({
@@ -288,8 +297,7 @@ export const withContextServer = (
           ...Object.fromEntries(
             Object.entries(mcpServers).map(
               ([name, url]) =>
-                // Claude gives an HTTP server's request 60 seconds; a sign-in (#576) can take minutes.
-                [name, { type: "http", url, timeout: MCP_TOOL_TIMEOUT_SEC * 1000 }] as const,
+                [name, { type: "http", url, timeout: mcpToolTimeoutSec(name) * 1000 }] as const,
             ),
           ),
         },
