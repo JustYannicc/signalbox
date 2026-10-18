@@ -83,20 +83,86 @@ describe("isolate fixture outbound access", () => {
   });
 });
 
-const framedRun = async (input: unknown, modules: readonly ModuleDescriptor[] = []) => {
+const framedRun = async (
+  input: unknown,
+  modules: readonly ModuleDescriptor[] = [],
+  body = encodeModuleTransport(input, modules),
+) => {
   const init: RequestInit & { duplex: "half" } = {
     method: "POST",
     headers: {
       authorization: "Bearer local-probe-only",
       "content-type": MODULE_TRANSPORT_CONTENT_TYPE,
     },
-    body: encodeModuleTransport(input, modules),
+    body,
     duplex: "half",
   };
   return fetch(new URL("/run?session=framed-fixture", endpoint), init);
 };
 
 describe("framed fixtures over workerd HTTP", () => {
+  it("validates every warm upload even when native WorkerLoader skips its source callback", async () => {
+    const input = { id: "framed-warm-validation", mode: "worker" };
+    const source = (text: string): ModuleDescriptor[] => [
+      { name: "main.js", type: "js", bytes: new TextEncoder().encode(text) },
+    ];
+    const modules = source("export default {fetch(){return Response.json({value:42})}}");
+    expect(await (await framedRun(input, modules)).json()).toMatchObject({
+      status: 200,
+      result: { value: 42 },
+    });
+    // A warm native worker ignores replacement source, but its upload still has to be well framed.
+    expect(
+      await (await framedRun(input, source("this is not valid JavaScript!"))).json(),
+    ).toMatchObject({ status: 200, result: { value: 42 } });
+    const invalidUtf8 = await framedRun(input, [
+      { name: "main.js", type: "js", bytes: new Uint8Array([255]) },
+    ]);
+    const invalidBody = await invalidUtf8.text();
+    expect(invalidUtf8.status, invalidBody).toBe(400);
+    const packet = new Uint8Array(
+      await new Response(encodeModuleTransport(input, modules)).arrayBuffer(),
+    );
+    for (const [bytes, error] of [
+      [packet.subarray(0, -1), "Truncated module main.js"],
+      [new Uint8Array([...packet, 0]), "Trailing module transport bytes"],
+    ] as const) {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      });
+      const response = await framedRun(input, [], body);
+      const result = await response.text();
+      expect(response.status, result).toBe(400);
+      expect(result).toContain(error);
+    }
+    expect(await (await framedRun(input, modules)).json()).toMatchObject({
+      status: 200,
+      result: { value: 42 },
+    });
+  });
+
+  it("rejects malformed cold uploads and boots a fresh worker from a full map", async () => {
+    const input = { id: "framed-cold-validation", mode: "worker" };
+    const response = await framedRun(input, [
+      { name: "main.js", type: "js", bytes: new Uint8Array([255]) },
+    ]);
+    const body = await response.text();
+    expect(response.status, body).toBe(400);
+    const valid = await framedRun({ ...input, id: "framed-fresh-validation" }, [
+      {
+        name: "main.js",
+        type: "js",
+        bytes: new TextEncoder().encode(
+          "export default {fetch(){return Response.json({cold:true})}}",
+        ),
+      },
+    ]);
+    expect(await valid.json()).toMatchObject({ status: 200, result: { cold: true } });
+  });
+
   it("keeps legacy baseline, generated-code, concurrency and base64 module requests working", async () => {
     const send = async (id: string, input: object) => {
       const response = await fetch(new URL(`/run?session=${id}`, endpoint), {
@@ -235,8 +301,9 @@ describe("framed fixtures over workerd HTTP", () => {
       { id: "valid", generatedValue: {} },
     ]) {
       const response = await framedRun(input);
-      expect(response.status).toBe(400);
-      expect(await response.text()).toBe("Invalid probe input");
+      const body = await response.text();
+      expect(response.status, body).toBe(400);
+      expect(body).toBe("Invalid probe input");
     }
   });
 
