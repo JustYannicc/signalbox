@@ -4,15 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { KERNEL_RIPGREP_ARTIFACT } from "../../../src/kernel/KernelRipgrepProgram.ts";
 import { RIPGREP_PROBE_SOURCE } from "./probe-source.ts";
 
-const ARTIFACT = Object.freeze({
-  name: "ripgrep",
-  version: "15.1.0",
-  path: "rg.wasm",
-  bytes: 2_207_817,
-  sha256: "5c88ecb6dd08b1952585efc3523b397621b62db54e60572449c784c886a17006",
-});
+const ARTIFACT = Object.freeze({ ...KERNEL_RIPGREP_ARTIFACT, name: "ripgrep", path: "rg.wasm" });
 const IMPORTS = Object.freeze([
   "wasi_snapshot_preview1.args_get",
   "wasi_snapshot_preview1.args_sizes_get",
@@ -72,6 +67,7 @@ export async function prepareKernelRipgrepFacet(
       "src/kernel/FacetSqliteStorage.ts",
       "src/kernel/KernelFileSystem.ts",
       "src/kernel/KernelProgramHost.ts",
+      "src/kernel/KernelRipgrepProgram.ts",
       "src/kernel/KernelWakeRegistry.ts",
     ].map((path) => copyKernelModule(path, kernelRoot, outputDir, copied)),
   ).then((records) => records.flat());

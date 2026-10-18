@@ -1,18 +1,14 @@
 /** Cloudflare facet entry source. The WASM import is resolved as a static module. */
 export const RIPGREP_PROBE_SOURCE = String.raw`import { DurableObject } from "cloudflare:workers";
 import rg from "./bin/rg.wasm";
-import { ABI_VERSION, KernelProgramRegistry, callKernel } from "../../../src/kernel/KernelAbi.ts";
+import { KernelProgramRegistry, callKernel } from "../../../src/kernel/KernelAbi.ts";
 import { KernelFileSystem, KernelOpenFlags } from "../../../src/kernel/KernelFileSystem.ts";
 import { KernelProgramHost } from "../../../src/kernel/KernelProgramHost.ts";
+import { KERNEL_RIPGREP_ARTIFACT, KERNEL_RIPGREP_PROGRAM_MANIFEST, createKernelRipgrepProgram } from "../../../src/kernel/KernelRipgrepProgram.ts";
 import { KernelWakeRegistry } from "../../../src/kernel/KernelWakeRegistry.ts";
 import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage.ts";
 
-const artifact = {
-  name: "ripgrep",
-  version: "15.1.0",
-  bytes: 2207817,
-  sha256: "5c88ecb6dd08b1952585efc3523b397621b62db54e60572449c784c886a17006",
-};
+const artifact = KERNEL_RIPGREP_ARTIFACT;
 const sourceInventory = "__RIPGREP_FACET_SOURCE_INVENTORY__";
 const expectedImports = [
   "wasi_snapshot_preview1.args_get",
@@ -38,13 +34,7 @@ const expectedImports = [
   "wasi_snapshot_preview1.random_get",
   "wasi_snapshot_preview1.sched_yield",
 ];
-const manifest = Object.freeze({
-  name: "ripgrep",
-  version: "15.1.0",
-  abiVersion: ABI_VERSION,
-  requiredCapabilities: ["process.wait"],
-  entrypoint: "ripgrep-wasi-v1",
-});
+const manifest = KERNEL_RIPGREP_PROGRAM_MANIFEST;
 const encoder = new TextEncoder();
 
 export class ProbeFacet extends DurableObject {
@@ -72,7 +62,7 @@ export class ProbeFacet extends DurableObject {
       const host = new KernelProgramHost({
         registry,
         wakes,
-        programs: new Map([["/bin/rg", { manifest, implementation: { kind: "wasm", module: rg } }]]),
+        programs: new Map([["/bin/rg", { manifest, implementation: createKernelRipgrepProgram({ module: rg }) }]]),
       });
       const resolved = host.resolve("/bin/rg");
       if (resolved.status !== "ok") throw new Error("ripgrep resolution failed: " + JSON.stringify(resolved));
@@ -105,16 +95,18 @@ export class ProbeFacet extends DurableObject {
 
 async function runCases(host, filesystem, program, asynchronous) {
   const cases = [
-    { name: "relative", args: ["rg", "-n", "needle", "search.txt"], expected: "1:needle\n" },
+    { name: "relative", env: {}, args: ["rg", "-n", "needle", "search.txt"], expected: "1:needle\n" },
     {
-      name: "absolute",
+      name: "absolute", env: { PWD: "/", KEEP_EXACT: "proof-value" },
       args: ["rg", "-n", "--with-filename", "--no-heading", "absolute_needle", "/outside/absolute.txt"],
       expected: "/outside/absolute.txt:1:absolute_needle\n",
     },
-    { name: "version", args: ["rg", "--version"], expected: "ripgrep 15.1.0" },
+    { name: "version", env: { PWD: "/stale" }, args: ["rg", "--version"], expected: "ripgrep 15.1.0" },
   ];
   const results = [];
+  cases.splice(1, 0, { ...cases[0], name: "relative-stale-pwd", env: { PWD: "/outside", KEEP_EXACT: "proof-value" } });
   for (const item of cases) {
+    const originalEnv = JSON.stringify(item.env);
     const piped = host.preparePiped({ filesystem }, { cwd: "/work" });
     const stdoutPromise = readStream(piped.stdout);
     const stderrPromise = readStream(piped.stderr);
@@ -128,7 +120,7 @@ async function runCases(host, filesystem, program, asynchronous) {
         const spawned = callKernel(host.backend(piped.prepared), "process.spawn", {
           program,
           args: item.args,
-          env: { PWD: cwd },
+          env: item.env,
         });
         if (spawned.status !== "ok") throw new Error("ripgrep spawn failed: " + JSON.stringify(spawned));
         const status = await host.exitStatus(spawned.value);
@@ -138,7 +130,7 @@ async function runCases(host, filesystem, program, asynchronous) {
         const reaped = host.reap(spawned.value);
         if (reaped.status !== "ok") throw new Error("ripgrep reap failed: " + JSON.stringify(reaped));
       } else {
-        exit = host.runInline(piped.prepared, program, item.args, { PWD: cwd });
+        exit = host.runInline(piped.prepared, program, item.args, item.env);
       }
     } finally {
       await piped.prepared.release();
@@ -151,7 +143,10 @@ async function runCases(host, filesystem, program, asynchronous) {
     if (item.name === "relative" && stdout.includes("root_needle_decoy")) {
       throw new Error("relative path searched the root decoy");
     }
-    results.push({ name: item.name, args: item.args, cwd, env: { PWD: cwd }, exit, stdout, stderr });
+    assert(JSON.stringify(item.env) === originalEnv, "Caller environment was mutated");
+    assert(host.processes.size === 0, "Process records remain");
+    assert(host.wakes.size === 0, "Wake registrations remain");
+    results.push({ name: item.name, args: item.args, cwd, env: item.env, exit, stdout, stderr });
   }
   return results;
 }
