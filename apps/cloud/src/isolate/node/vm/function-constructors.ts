@@ -1,7 +1,4 @@
-import type {
-  NodeVmInterpreter,
-  NodeVmRuntimeFunctionKind,
-} from "./runtime-contract.ts";
+import type { NodeVmInterpreter, NodeVmRuntimeFunctionKind } from "./runtime-contract.ts";
 import { isCodegenRefusal } from "./codegen-refusal.ts";
 import { vmOrigin } from "./code-origin.ts";
 
