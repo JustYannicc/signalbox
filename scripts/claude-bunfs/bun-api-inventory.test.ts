@@ -507,6 +507,54 @@ describe("inventoryBunApis", () => {
     }
   });
 
+  it("evaluates destructuring defaults after the right-hand side", () => {
+    for (const pattern of [
+      "[x = (api = Bun.fs)]",
+      "{value: x = (api = Bun.fs)}",
+      "{x = (api = Bun.fs)}",
+    ]) {
+      const inventory = inventoryBunApis([
+        {
+          name: "default-order.js",
+          source: `let api; let x; (${pattern} = (api = other, values)); api.newAPI();`,
+        },
+      ]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        pattern,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        pattern,
+      );
+    }
+  });
+
+  it("evaluates ordinary assignment targets before the right-hand side", () => {
+    const inventory = inventoryBunApis([
+      {
+        name: "ordinary-order.js",
+        source: "let api; target[(api = other, key)] = (api = Bun.fs); api.readFile();",
+      },
+    ]);
+
+    assert.deepStrictEqual(
+      inventory.members.map(({ path, occurrences }) => ({
+        path,
+        accesses: occurrences.map(({ access }) => access),
+      })),
+      [
+        { path: "fs", accesses: ["read"] },
+        { path: "fs.readFile", accesses: ["call"] },
+      ],
+    );
+    assert.deepStrictEqual(inventory.dynamicAccesses, []);
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {

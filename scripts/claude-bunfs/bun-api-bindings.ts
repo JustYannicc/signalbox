@@ -374,14 +374,16 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       return;
     }
     if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) {
+      const target = unwrap(node.left);
+      const destructuring =
+        ts.isObjectLiteralExpression(target) || ts.isArrayLiteralExpression(target);
+      if (destructuring) visit(node.right, scope);
+      const patternValue = destructuring ? valueOf(node.right, scope) : undefined;
       visitAssignmentTarget(node.left, scope, visit);
-      visit(node.right, scope);
+      if (!destructuring) visit(node.right, scope);
       if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        const value = valueOf(node.right, scope);
-        if (
-          value?.kind === "member" &&
-          (ts.isObjectLiteralExpression(node.left) || ts.isArrayLiteralExpression(node.left))
-        ) {
+        const value = destructuring ? patternValue : valueOf(node.right, scope);
+        if (value?.kind === "member" && destructuring) {
           addMember(node.right, value.path, "read");
         }
         bindAssignmentPattern(node.left, value, scope);
