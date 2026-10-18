@@ -15,6 +15,7 @@ import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import { makeTerminalObjectApi } from "./terminal/terminalObjectApi.ts";
 import type * as ThreadTerminals from "./terminal/ThreadTerminals.ts";
+import * as ThreadFeedback from "./ThreadFeedback.ts";
 import type { ThreadLifecycleReceipt, ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
@@ -44,6 +45,7 @@ export const makeThreadObjectApi = (
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
       | ThreadTerminals.ThreadTerminals
+      | ThreadFeedback.ThreadFeedback
       | ThreadRunner.ThreadRunner
     >,
   ) => Promise<A>,
@@ -61,6 +63,7 @@ export const makeThreadObjectApi = (
       | ThreadBrowsing
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -81,6 +84,8 @@ export const makeThreadObjectApi = (
   const engine = ThreadEngine.ThreadEngine;
   return {
     ...makeTerminalObjectApi(run, afterChange),
+    uploadFeedback: (actor, input) =>
+      reply(ThreadFeedback.ThreadFeedback.use((service) => service.upload(actor, input))),
     trash: async (actor, input) => {
       const result = await reply(
         engine.use((service) =>

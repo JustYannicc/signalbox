@@ -54,6 +54,7 @@ const setup = (
   const directory = Layer.succeed(ThreadDirectory.ThreadDirectory, {
     forThread: (threadId) =>
       ThreadDirectory.handleFor({
+        uploadFeedback: async () => ({ _tag: "not_found" }),
         trash: async () => ({ _tag: "not_found" }),
         restore: async () => ({ _tag: "not_found" }),
         purge: async () => ({ _tag: "not_found" }),

@@ -58,6 +58,7 @@ import * as SearchIndex from "./search/SearchIndex.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as ThreadFeedback from "./thread/ThreadFeedback.ts";
 import * as ThreadSecretRequests from "./thread/ThreadSecrets.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as LearnerService from "./learner/LearnerService.ts";
@@ -413,6 +414,7 @@ export const makeMemoryCloud = (
           E,
           | ThreadEngine.ThreadEngine
           | TerminalTesting.ThreadRunnerRequirement
+          | ThreadFeedback.ThreadFeedback
           | ThreadStore.ThreadStore
           | TerminalTesting.TerminalOutboxRequirement
           | UserDirectory.UserDirectory
@@ -520,6 +522,7 @@ export const makeMemoryCloud = (
         E,
         | ThreadEngine.ThreadEngine
         | TerminalTesting.ThreadRunnerRequirement
+        | ThreadFeedback.ThreadFeedback
         | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore
         | TerminalTesting.TerminalOutboxRequirement

@@ -20,6 +20,7 @@ import * as SessionRows from "./session/SessionRows.ts";
 import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadFeedback from "./ThreadFeedback.ts";
 import * as ThreadSecretRequests from "./ThreadSecrets.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as MachineBackends from "./runner/machineBackends.ts";
@@ -60,6 +61,7 @@ export const layerThreadObject = (
     >;
     readonly models?: Layer.Layer<TurnModels.TurnModels>;
     readonly statusNoteModel?: Layer.Layer<StatusNoteModel.StatusNoteModel>;
+    readonly feedback?: ThreadFeedback.FeedbackTransport["Service"];
   } = {},
 ) =>
   ThreadTerminals.layer.pipe(
@@ -79,6 +81,18 @@ export const layerThreadObject = (
       }),
     ),
     Layer.provideMerge(ThreadBrowsing.layer),
+    Layer.provideMerge(
+      ThreadFeedback.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            ThreadFeedback.FeedbackTransport,
+            options.feedback ?? {
+              upload: () => Effect.succeed({ _tag: "failed", failure: "runner_unavailable" }),
+            },
+          ),
+        ),
+      ),
+    ),
     Layer.provideMerge(
       ThreadStatusNotes.layer.pipe(
         Layer.provide(options.statusNoteModel ?? StatusNoteModel.layerNone),
