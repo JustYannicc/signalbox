@@ -12,6 +12,7 @@ import {
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
   WS_METHODS,
   type AuthSessionState,
@@ -117,6 +118,35 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("guards dispatch commands with the target orchestration grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const dispatch = createCommandPermissions(
+          runtime,
+          ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+        );
+        expect(dispatch.requiredScopes()).toEqual([AuthOrchestrationOperateScope]);
+
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        const permissionChanges: boolean[] = [];
+        const unsubscribe = registry.subscribe(
+          dispatch.permissionAtom(env),
+          (allowed) => permissionChanges.push(allowed),
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        expect(permissionChanges).toEqual([true]);
+        yield* dispatch.authorize(registry, env);
+
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(permissionChanges).toEqual([true, false]);
+        const denied = yield* dispatch.authorize(registry, env).pipe(Effect.flip);
+        expect(denied._tag).toBe("EnvironmentAuthorizationError");
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -179,6 +209,26 @@ describe("command permissions", () => {
       }),
     ),
   );
+  it.effect(
+    "uses the same refusal before and after authorization while allowing unknown grants to load",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          expect(permissions.check(registry, env)).toBeNull();
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          const known = permissions.check(registry, env);
+          const awaited = yield* permissions.authorize(registry, env).pipe(Effect.flip);
+          expect(known).not.toBeNull();
+          expect(known?.requiredScope).toBe(awaited.requiredScope);
+          expect(known?.requiredPermission).toBe(awaited.requiredPermission);
+          expect(known?.message).toBe(awaited.message);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(permissions.check(registry, env)).toBeNull();
+        }),
+      ),
+  );
+
   it.effect("waits for an initial grant", () =>
     Effect.scoped(
       Effect.gen(function* () {

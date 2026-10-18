@@ -7,6 +7,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 
 import { withThreadDismissal } from "./thread-dismissal";
+import { beginLedgerThreadMove } from "./ledgerThreadMove"; // signalbox: optimistic ledger
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
@@ -30,6 +31,7 @@ import {
 import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 import { threadCanArchive } from "./threadArchive";
 import { resolveThreadTitleRename } from "../threads/thread-title-rename";
+import { environmentCopy } from "./useOneEnvironmentCopy"; // signalbox: one-environment copy for thread action alerts
 
 /** Version skew: never send settle/unsettle to a server that predates them
     (capability defaults false on decode for older servers). */
@@ -142,7 +144,9 @@ function useThreadActionExecutor(
         ) {
           Dialog.alert(
             actionFailureTitle(action),
-            "This environment's server does not support settling yet. Update the server to use Settle.",
+            environmentCopy(
+              "This environment's server does not support settling yet. Update the server to use Settle.",
+            ), // signalbox: one-environment copy for thread action alerts
           );
           return false;
         }
@@ -281,7 +285,9 @@ export function useThreadListActions(): {
         if (!environmentSupportsSnooze(thread.environmentId)) {
           Dialog.alert(
             "Could not snooze thread",
-            "This environment's server does not support snoozing yet. Update the server to use Snooze.",
+            environmentCopy(
+              "This environment's server does not support snoozing yet. Update the server to use Snooze.",
+            ), // signalbox: one-environment copy for thread action alerts
           );
           return false;
         }
@@ -339,7 +345,9 @@ export function useThreadListActions(): {
         if (!environmentSupportsSnooze(thread.environmentId)) {
           Dialog.alert(
             "Could not wake thread",
-            "This environment's server does not support snoozing yet. Update the server to wake this thread.",
+            environmentCopy(
+              "This environment's server does not support snoozing yet. Update the server to wake this thread.",
+            ), // signalbox: one-environment copy for thread action alerts
           );
           return false;
         }
@@ -381,7 +389,9 @@ export function useThreadListActions(): {
       if (!environmentSupportsPinning(thread.environmentId)) {
         Dialog.alert(
           "Could not pin thread",
-          "This environment's server does not support pinning yet. Update the server to use Pin.",
+          environmentCopy(
+            "This environment's server does not support pinning yet. Update the server to use Pin.",
+          ), // signalbox: one-environment copy for thread action alerts
         );
         return false;
       }
@@ -422,7 +432,9 @@ export function useThreadListActions(): {
       if (!environmentSupportsPinning(thread.environmentId)) {
         Dialog.alert(
           "Could not unpin thread",
-          "This environment's server does not support pinning yet. Update the server to use Pin.",
+          environmentCopy(
+            "This environment's server does not support pinning yet. Update the server to use Pin.",
+          ), // signalbox: one-environment copy for thread action alerts
         );
         return false;
       }
@@ -450,7 +462,9 @@ export function useThreadListActions(): {
       if (!environmentSupportsAutoSettleOptOut(thread.environmentId)) {
         Dialog.alert(
           "Could not update auto-settle",
-          "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.",
+          environmentCopy(
+            "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.",
+          ), // signalbox: one-environment copy for thread action alerts
         );
         return false;
       }
@@ -486,7 +500,9 @@ export function useThreadListActions(): {
       if (!environmentSupportsTitleRegeneration(thread.environmentId)) {
         Dialog.alert(
           "Could not regenerate title",
-          "This environment's server does not support title regeneration yet. Update the server to regenerate thread titles.",
+          environmentCopy(
+            "This environment's server does not support title regeneration yet. Update the server to regenerate thread titles.",
+          ), // signalbox: one-environment copy for thread action alerts
         );
         return false;
       }
@@ -592,7 +608,9 @@ export function useThreadListActions(): {
       if (!supportsReorder(thread.environmentId)) {
         Dialog.alert(
           "Could not move thread",
-          "This environment's server does not support reordering these threads. Update the server to arrange them.",
+          environmentCopy(
+            "This environment's server does not support reordering these threads. Update the server to arrange them.",
+          ), // signalbox: one-environment copy for thread action alerts
         );
         return false;
       }
@@ -642,6 +660,23 @@ export function useThreadListActions(): {
           return false;
       }
       selectionHaptic();
+      // signalbox: the optimistic ledger owns pin moves
+      const ledgerMove = beginLedgerThreadMove({
+        thread,
+        section,
+        crossSection,
+        lifecycle,
+        assignments,
+        shellByKey,
+        commands: {
+          pin: pinMutation,
+          unpin: unpinMutation,
+          reorder: section === "pinned" ? reorderPinnedMutation : reorderActiveMutation,
+          unsettleThread,
+          unsnoozeThread,
+        },
+      });
+      if (ledgerMove !== null) return ledgerMove;
       appAtomRegistry.set(threadDropBusyAtom, true);
       const pending = crossSection
         ? null
@@ -716,6 +751,7 @@ export function useThreadListActions(): {
       reorderActiveMutation,
       reorderPinnedMutation,
       pinMutation,
+      unpinMutation,
       unpinThread,
       unsettleThread,
       unsnoozeThread,

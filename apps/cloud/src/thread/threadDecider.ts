@@ -13,6 +13,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { decideLifecycleCommand } from "./lifecycleCommands.ts";
+import { decideQueuedRunCommand } from "./queuedRunCommands.ts";
 import { respondToRuntimeRequest } from "./runtimeRequests.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import {
@@ -68,6 +69,8 @@ const CLOUD_COMMAND_TYPES = [
   "run.interrupt",
   "queue.resume",
   "queued-run.cancel",
+  "queued-run.edit",
+  "queued-run.reorder",
   "queued-message.promote-to-steer",
   "thread.visit",
   "thread.metadata.update",
@@ -210,7 +213,13 @@ function dispatchMessage(
   if (steered !== undefined) {
     return accept([...updates, ...steerEvents(projection, steered, message, "steer", ctx)]);
   }
-  const queuePosition = projection.runs.filter((run) => run.status === "queued").length + 1;
+  const queuePosition =
+    Math.max(
+      0,
+      ...projection.runs
+        .filter((run) => run.status === "queued")
+        .map((run) => run.queuePosition ?? run.ordinal),
+    ) + 1;
   const run: OrchestrationV2Run = {
     id: runId,
     threadId: thread.id,
@@ -285,6 +294,9 @@ export function decide(
       }
       return accept(interruptRunEvents(projection, run, ctx, command.holdQueue === true));
     }
+    case "queued-run.edit":
+    case "queued-run.reorder":
+      return decideQueuedRunCommand(projection, command, ctx);
     case "queued-run.cancel": {
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
       if (run?.status !== "queued") return reject("That message is no longer queued.");

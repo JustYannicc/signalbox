@@ -79,6 +79,7 @@
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
+        "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
@@ -154,6 +155,10 @@
     "packages/*": {
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
+    },
+    "packages/client-runtime": {
+      // signalbox: retain upstream's lifecycle adapter so its patches merge cleanly.
+      "ignore": ["src/state/threadLifecycle.ts"],
     },
     "packages/sync": {
       "entry": [

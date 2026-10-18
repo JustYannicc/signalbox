@@ -9,7 +9,7 @@ import {
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 
-import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
+import { createOptimisticThreadLifecycle } from "./optimisticThreadLifecycle.ts"; // signalbox: optimistic ledger
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -94,6 +94,8 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
+
+export type { OptimisticEntry, OptimisticKey, OptimisticStatus } from "./optimisticLedger.ts"; // signalbox: optimistic ledger
 
 export type LoadEarlierThreadHistoryInput = {
   readonly threadId: ThreadId;
@@ -405,10 +407,14 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency,
     }),
   };
-  const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
+  const optimistic = createOptimisticThreadLifecycle(runtime, snapshotAtom, commands); // signalbox: optimistic ledger
   return {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
+    optimistic: {
+      entriesAtom: optimistic.entriesAtom, // signalbox: optimistic ledger
+      dismissRejection: optimistic.dismissRejection, // signalbox: optimistic ledger
+    },
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
       (thread.pendingRuntimeRequest !== null ||

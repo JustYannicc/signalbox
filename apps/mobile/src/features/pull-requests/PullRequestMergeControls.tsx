@@ -25,6 +25,7 @@ import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequ
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import type { PullRequestStackState } from "./usePullRequestStack";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox: one-environment copy for merge blockers
 
 export function PullRequestMergeControls(props: {
   readonly pr: PullRequestDetail;
@@ -34,6 +35,7 @@ export function PullRequestMergeControls(props: {
   const { pr, stack } = props;
   const target = pullRequestTarget(props.params);
   const permissions = usePullRequestPermissions(props.params, pr);
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox: one-environment copy for merge blockers
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const runAction = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
@@ -273,7 +275,9 @@ export function PullRequestMergeControls(props: {
       reason !== MERGE_CONFLICT_REASON &&
       reason !== "Checking stack membership…" &&
       !(checkingStack && reason === "Refresh the stack before merging.") ? (
-        <Text className="px-1 text-xs text-foreground-muted">{reason}</Text>
+        <Text className="px-1 text-xs text-foreground-muted">
+          {environmentCopy(reason) /* signalbox: one-environment copy for merge blockers */}
+        </Text>
       ) : null}
       {pr.autoMergeEnabled ? (
         <Text className="px-1 text-xs text-foreground-muted">

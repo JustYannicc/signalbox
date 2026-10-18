@@ -1,5 +1,6 @@
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import { withEnvironmentCommandPermissions } from "../rpc/commandBoundary.ts"; // signalbox: optimistic ledger
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 import { reuseUnchanged } from "./serverConfigProjection.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
@@ -29,7 +30,6 @@ import {
   EnvironmentRpcUnavailableError,
   request,
   requestGuarded,
-  RpcPermissionGuard,
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -716,7 +716,7 @@ export function createEnvironmentCommand<R, ER, Input, A, E>(
       runInEnvironment(
         target.environmentId,
         options.execute(target.input, registry, target.environmentId),
-      ),
+      ).pipe(withEnvironmentCommandPermissions(runtime, registry)), // signalbox: optimistic ledger
   });
 }
 
@@ -859,10 +859,6 @@ export function createEnvironmentRpcCommand<
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
         Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
-        Effect.provideService(RpcPermissionGuard, {
-          authorize: (id, method, payload) =>
-            createCommandPermissions(runtime, method).authorize(registry, id, payload),
-        }),
         Effect.tap((result) => options.onSuccess?.(target, registry, result) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );

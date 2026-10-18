@@ -4,6 +4,7 @@ import { ExternalLinkIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox: one-environment copy for unavailable pull requests
 
 export function PullRequestsUnavailableState({
   title = "Could not load pull requests",
@@ -18,6 +19,7 @@ export function PullRequestsUnavailableState({
   refreshing?: boolean;
   gitHubUrl?: string;
 }) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox: one-environment copy for unavailable pull requests
   return (
     <Empty className="scrollbar-gutter-both min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
@@ -27,7 +29,13 @@ export function PullRequestsUnavailableState({
         <EmptyTitle>{title}</EmptyTitle>
         {/* The caller names the fix — update the environment, install gh, sign in — so this
             shows its message rather than trying to infer one from the failure text. */}
-        <EmptyDescription>{error}</EmptyDescription>
+        <EmptyDescription>
+          {
+            environmentCopy(
+              error,
+            ) /* signalbox: one-environment copy for unavailable pull requests */
+          }
+        </EmptyDescription>
       </EmptyHeader>
       {onRetry || gitHubUrl ? (
         <div className="flex flex-wrap justify-center gap-2">

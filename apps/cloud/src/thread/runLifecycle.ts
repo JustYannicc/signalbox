@@ -11,6 +11,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { driverFor, runnerInstanceFor } from "../models/ModelRouting.ts";
+import { queuedRunsInDeliveryOrder } from "./queuedRunCommands.ts";
 import { expireRuntimeRequests } from "./runtimeRequests.ts";
 import { isLiveRun } from "./runState.ts";
 import {
@@ -62,10 +63,7 @@ function wakeWorkStartedAt(
 export const activeRun = (projection: Projection): Run | undefined =>
   projection.runs.filter(isLiveRun).toSorted((left, right) => right.ordinal - left.ordinal)[0];
 
-const queuedRuns = (projection: Projection): ReadonlyArray<Run> =>
-  projection.runs
-    .filter((run) => run.status === "queued")
-    .toSorted((left, right) => left.ordinal - right.ordinal);
+const queuedRuns = queuedRunsInDeliveryOrder;
 
 /** The first queued run that may start once nothing is live. */
 export const nextQueuedRun = (projection: Projection): Run | undefined =>
@@ -243,10 +241,10 @@ export function finishRunEvents(
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const queued = queuedRuns(projection);
   const holdQueue = options.queue === "hold";
-  const [next, ...rest] =
-    (options.queue ?? "advance") === "advance"
-      ? queued.filter((candidate) => candidate.queueHeld !== true)
-      : [];
+  const advanceQueue = (options.queue ?? "advance") === "advance";
+  const next = advanceQueue ? queued.find((candidate) => candidate.queueHeld !== true) : undefined;
+  // Held runs keep their place when a newer unheld run leaves the queue.
+  const remaining = advanceQueue ? queued.filter((candidate) => candidate.id !== next?.id) : [];
   return [
     ...(options.leading ?? []),
     ...expireRuntimeRequests(projection, run.id, ctx, status === "completed"),
@@ -286,7 +284,7 @@ export function finishRunEvents(
       ? queued.map((candidate) => runEvent(ctx, "run.updated", { ...candidate, queueHeld: true }))
       : []),
     ...(next === undefined ? [] : startRunEvents(projection, next, "queued_turn", ctx)),
-    ...rest.map((candidate, index) =>
+    ...remaining.map((candidate, index) =>
       runEvent(ctx, "run.updated", { ...candidate, queuePosition: index + 1 }),
     ),
   ];
