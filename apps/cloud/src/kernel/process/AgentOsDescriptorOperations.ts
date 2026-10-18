@@ -1,4 +1,5 @@
 import { mapErrno, runAsync, runSync, type WasiCall } from "../wasi/internal_wasi_calls.ts";
+import { runCurrentKernelCpuAsyncSystemImport } from "../KernelCpuExecution.ts";
 import type { AgentOsDescriptorHostOptions } from "./AgentOsDescriptorSupport.ts";
 import { validRange, writeU32 } from "./AgentOsDescriptorSupport.ts";
 
@@ -143,7 +144,7 @@ export class AgentOsDescriptorOperations {
 
   async #finishDuplicateToAsync(call: WasiCall<number>): Promise<number> {
     try {
-      await runAsync(call);
+      await this.#runAsyncCall(call);
       return 0;
     } catch (error) {
       return toErrno(error);
@@ -196,13 +197,18 @@ export class AgentOsDescriptorOperations {
     let firstError = 0;
     for (const fd of fds) {
       try {
-        await runAsync(this.#options.descriptors.close(fd));
+        await this.#runAsyncCall(this.#options.descriptors.close(fd));
       } catch (error) {
         const errno = toErrno(error);
         if (errno !== EBADF && firstError === 0) firstError = errno;
       }
     }
     return firstError;
+  }
+
+  #runAsyncCall<T>(call: WasiCall<T>): Promise<T> {
+    // Backend cleanup can await work that never pauses through a wake token.
+    return runCurrentKernelCpuAsyncSystemImport((runSystem) => runAsync(call, runSystem));
   }
 
   #recordLock(

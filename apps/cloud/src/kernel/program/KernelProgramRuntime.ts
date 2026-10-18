@@ -158,6 +158,7 @@ export function runInlineJavaScript(
 ): number {
   const leaveUser = enterCurrentKernelCpuUser();
   let result: unknown;
+  let returnedAsync = false;
   try {
     result = runInline({
       filesystem: prepared.filesystem,
@@ -165,11 +166,15 @@ export function runInlineJavaScript(
       args: Object.freeze([...args]),
       env: Object.freeze({ ...env }),
     });
+    returnedAsync = isPromiseLike(result);
+    if (returnedAsync) {
+      // Inline work is invalid, but a failed leave must still observe its rejection.
+      void Promise.resolve(result).catch(() => undefined);
+    }
   } finally {
     leaveUser();
   }
-  if (isPromiseLike(result)) {
-    void Promise.resolve(result).catch(() => undefined);
+  if (returnedAsync) {
     throw Object.assign(new Error("Inline program returned asynchronous work"), {
       code: "ERR_KERNEL_INLINE_ASYNC_UNSUPPORTED",
     });

@@ -2,6 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { AgentOsDescriptorHost } from "./AgentOsDescriptorHost.ts";
 import { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
+import { KernelCpuAccounting } from "./KernelCpuAccounting.ts";
+import {
+  KernelCpuExecution,
+  runCurrentKernelCpuAwaitableSystemImport,
+} from "./KernelCpuExecution.ts";
 import type { WasiStdio } from "./Wasi.ts";
 
 const NONBLOCK_FLAG = 4;
@@ -238,6 +243,85 @@ describe("AgentOS host_process descriptor imports", () => {
     } finally {
       synchronous.dispose();
       asynchronous.dispose();
+    }
+  });
+
+  it.each([
+    ["fd_dup2", "resolve"],
+    ["fd_dup2", "error"],
+    ["fd_dup2", "cancel"],
+    ["proc_closefrom", "resolve"],
+    ["proc_closefrom", "error"],
+    ["proc_closefrom", "cancel"],
+  ] as const)("excludes async %s backend waits (%s)", async (operation, outcome) => {
+    let now = 0n;
+    const execution = new KernelCpuExecution(new KernelCpuAccounting(() => now));
+    const gate = Promise.withResolvers<void>();
+    const test = fixture(true);
+    let closing = false;
+    const targetFd = test.fileSystem.descriptors.allocate({
+      kind: "stdio",
+      offset: 0n,
+      rightsBase: 0n,
+      rightsInheriting: 0n,
+      flags: 0,
+      onLastClose: () => {
+        closing = true;
+        now += 11n;
+        return gate.promise;
+      },
+    });
+    if (operation === "proc_closefrom") {
+      test.fileSystem.descriptors.allocate({
+        kind: "stdio",
+        offset: 0n,
+        rightsBase: 0n,
+        rightsInheriting: 0n,
+        flags: 0,
+        onLastClose: () => {
+          now += 5n;
+        },
+      });
+    }
+
+    try {
+      const pending = execution.root.run(() => {
+        const leaveUser = execution.root.enterUser();
+        now += 7n;
+        return runCurrentKernelCpuAwaitableSystemImport(() =>
+          operation === "fd_dup2"
+            ? test.host.imports.fd_dup2(1, targetFd)
+            : test.host.imports.proc_closefrom(targetFd),
+        ).then(
+          (errno) => {
+            now += 13n;
+            leaveUser();
+            return errno;
+          },
+          (error: unknown) => {
+            leaveUser();
+            throw error;
+          },
+        );
+      });
+
+      expect(closing).toBe(true);
+      now += 100_000n;
+      if (outcome === "resolve") gate.resolve();
+      else
+        gate.reject(
+          Object.assign(new Error(outcome), {
+            code: outcome === "cancel" ? "ECANCELED" : "EIO",
+          }),
+        );
+
+      expect(await pending).toBe(outcome === "resolve" ? 0 : outcome === "cancel" ? 11 : 29);
+      expect(execution.root.stop()).toEqual({
+        userNs: 20n,
+        systemNs: operation === "proc_closefrom" ? 16n : 11n,
+      });
+    } finally {
+      test.dispose();
     }
   });
 });

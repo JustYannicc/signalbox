@@ -12,6 +12,66 @@ export const cpuReturnReactor = new Uint8Array([
 ]);
 
 export const cpuWasmCheckMethods = `
+  async checkDescriptorWaits(checks) {
+    for(const operation of ['fd_dup2','proc_closefrom']) {
+      const filesystem=new KernelFileSystem({mounts:[]});
+      const gate=Promise.withResolvers();
+      const closing=Promise.withResolvers();
+      let closeCalls=0;
+      const stream={write:bytes=>bytes.byteLength};
+      const spec={kind:'stdio',offset:0n,rightsBase:0n,rightsInheriting:0n,flags:0};
+      const source=filesystem.descriptors.allocate({...spec,stdio:stream});
+      const target=filesystem.descriptors.allocate({...spec,stdio:{write:()=>0},onLastClose:()=>{
+        closeCalls++;closing.resolve();return gate.promise;
+      }});
+      const memory=new WebAssembly.Memory({initial:1});
+      const host=new AgentOsDescriptorHost({memory:()=>memory,descriptors:filesystem.descriptors,
+        wakes:this.wakes,asyncMode:true});
+      const pending=this.root.run(()=>{
+        const leave=this.root.enterUser();
+        return runCurrentKernelCpuAwaitableSystemImport(()=>operation==='fd_dup2'
+          ?host.imports.fd_dup2(source,target):host.imports.proc_closefrom(source)).finally(leave);
+      });
+      try {
+        await closing.promise;
+        const blocked=this.process.cpuUsage();
+        await new Promise(resolve=>setTimeout(resolve,10));
+        checks[operation+'WaitExcluded']=equal(blocked,this.process.cpuUsage());
+        gate.resolve();
+        const result=await pending;
+        checks[operation+'AsyncCloseCompleted']=result===0 && closeCalls===1 && (operation==='fd_dup2'
+          ?filesystem.descriptors.get(target).stdio===stream
+          :!filesystem.descriptors.has(source) && !filesystem.descriptors.has(target));
+      } finally {gate.resolve();await pending.catch(()=>{});filesystem.dispose();}
+    }
+  }
+  async checkInlineRejectionFailure(checks) {
+    let fail=false;
+    const expected=new Error('CPU inline leave failed');
+    const accounting=new KernelCpuAccounting(()=>{
+      if(fail){fail=false;throw expected;}
+      return readClock();
+    });
+    const registry=new KernelProgramRegistry();
+    const manifest={name:'cpu-inline',version:'1',abiVersion:ABI_VERSION,
+      requiredCapabilities:['process.wait'],entrypoint:'cpu-inline'};
+    assert(registry.register(manifest).status==='ok','CPU inline registration');
+    const programs=new Map([['/bin/cpu-inline',{manifest,implementation:{kind:'javascript',runInline(){
+      fail=true;return Promise.reject(new Error('Invalid async inline operation'));
+    }}}]]);
+    const host=new KernelProgramHost({registry,programs,wakes:this.wakes,cpuAccounting:accounting});
+    const owner=host.cpuExecution.root;
+    const filesystem=new KernelFileSystem({mounts:[{path:'/',storage:createFacetSqliteStorage(this.ctx.storage,readClock)}]});
+    const prepared=host.prepare({filesystem});
+    try {
+      const resolved=host.resolve('/bin/cpu-inline');
+      assert(resolved.status==='ok','CPU inline resolution');
+      let received;
+      try {owner.run(()=>host.runInline(prepared,resolved.value,[],{}));}
+      catch(error){received=error;}
+      checks.inlineClockErrorPreserved=received===expected;
+    } finally {await prepared.release();owner.stop();filesystem.dispose();}
+  }
   async checkAsyncRejectionFailure(checks) {
     let fail=false;
     const expected=new Error('CPU leave failed after async work started');

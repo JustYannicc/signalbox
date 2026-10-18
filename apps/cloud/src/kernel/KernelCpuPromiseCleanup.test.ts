@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeProcess from "node:process";
 import { expect, it } from "@effect/vitest";
 
-it("handles started async work when CPU leave fails in imports and program launch", () => {
+it("handles started async work when CPU leave fails in imports and async or inline program launch", () => {
   const kernelUrl = new URL("./", import.meta.url).href;
   const result = NodeChildProcess.spawnSync(
     NodeProcess.execPath,
@@ -21,7 +21,7 @@ import { sqliteFixture } from "${kernelUrl}tests/sqliteFixture.ts";
 const unhandled = [];
 process.on("unhandledRejection", (e) => unhandled.push(String(e)));
 const results = [];
-for (const scenario of ["import", "program"]) {
+for (const scenario of ["import", "program", "inline"]) {
   let fail = false;
   const expected = new Error("clock-" + scenario);
   const accounting = new KernelCpuAccounting(() => {
@@ -55,19 +55,32 @@ for (const scenario of ["import", "program"]) {
     const registry = new KernelProgramRegistry();
     const manifest = { name: "fail", version: "1", abiVersion: ABI_VERSION, requiredCapabilities: ["process.wait"], entrypoint: "fail" };
     registry.register(manifest);
-    const programs = new Map([["/bin/fail", { manifest, implementation: { kind: "async", run() {
+    const operation = () => {
       fail = true;
       return Promise.reject(new Error("operation-" + scenario));
-    } } }]]);
+    };
+    const implementation = scenario === "inline"
+      ? {kind: "javascript", runInline: operation}
+      : {kind: "async", run: operation};
+    const programs = new Map([["/bin/fail", {manifest, implementation}]]);
     const host = new KernelProgramHost({ registry, programs, wakes: new KernelWakeRegistry(), cpuAccounting: accounting });
     try {
       const prepared = host.prepare({ filesystem });
       const resolved = host.resolve("/bin/fail");
       if (resolved.status !== "ok") throw new Error("resolution");
-      const child = callKernel(host.backend(prepared), "process.spawn", { program: resolved.value, args: [], env: {} });
-      if (child.status !== "ok") throw new Error("admission");
-      const status = await host.exitStatus(child.value);
-      results.push({ scenario, status });
+      if (scenario === "inline") {
+        let received;
+        try {
+          host.cpuExecution.root.run(() => host.runInline(prepared, resolved.value, [], {}));
+        } catch(error) {received = error;}
+        finally {await prepared.release();host.cpuExecution.root.stop();}
+        results.push({scenario, clockPreserved: received === expected});
+      } else {
+        const child = callKernel(host.backend(prepared), "process.spawn", { program: resolved.value, args: [], env: {} });
+        if (child.status !== "ok") throw new Error("admission");
+        const status = await host.exitStatus(child.value);
+        results.push({ scenario, status });
+      }
     } finally {
       await host.processes.dispose();
       host.wakes.dispose();
@@ -95,6 +108,7 @@ if (unhandled.length) process.exitCode = 1;
           error: { code: "IO_ERROR", message: "Child process completion failed" },
         },
       },
+      { scenario: "inline", clockPreserved: true },
     ],
     unhandled: [],
   });
