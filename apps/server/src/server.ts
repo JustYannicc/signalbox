@@ -29,8 +29,6 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
 import * as AutomationHttp from "./workflows/http.ts"; // signalbox: automations
-import * as AutomationPush from "./workflows/AutomationPush.ts"; // signalbox: automations
-import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalbox: automations
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
 import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import * as PoolUsageHistory from "./accountHub/PoolUsageHistory.ts"; // signalbox: pool usage history
@@ -574,8 +572,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   PoolUsageHistory.layer, // signalbox: pool usage history
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
-  AutomationPush.layer, // signalbox: automations
-  AutomationSkill.layer, // signalbox: automations
   layerThreadSettlementWorker,
   StorageCleanup.layer.pipe(
     Layer.provide(WorktreeCleanupGuard.layer),
@@ -733,7 +729,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(
         WebhookRoute.layer.pipe(
           Layer.provide(RelayDeliveryProof.layer),
-          Layer.provide(AutomationHttp.layerWebhookReceiver), // signalbox: automation webhooks
+          Layer.provide(AutomationHttp.automationWebhookMiddleware.layer), // signalbox: automation webhooks
         ),
       ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),

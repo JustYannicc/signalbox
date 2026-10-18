@@ -11,9 +11,9 @@ Each agent step has a thread the user can open; link it when you report. Cloud m
 
 1. Read the failed step's \`error\` and \`errorDetail.fix\`. Most failures say exactly what to change.
 2. Fix the code, \`automation_validate\`, \`automation_save\`.
-3. \`automation_run_retry\` with \`version: "latest"\` replays the failed run on the fixed code: steps that already succeeded keep their recorded results (as long as the code up to them is unchanged) and the run continues from the failure. \`version: "same"\` retries on the old code, for a failure that was outside the code (a service was down).
+3. \`automation_run_retry\` with \`version: "latest"\` starts a fresh run on the fixed code with the original input. Steps can run again, so check for effects that must not be repeated before retrying. \`version: "same"\` retries on the old code, for a failure that was outside the code (a service was down).
 
-Cancel a run with \`automation_cancel_run\`: it stops its agent threads and \`w.run\` processes.
+Cancel a run with \`automation_cancel_run\`: it stops its agent threads and GitHub Actions steps.
 
 ## Drafts
 
@@ -22,7 +22,7 @@ Cancel a run with \`automation_cancel_run\`: it stops its agent threads and \`w.
 ## Limits worth knowing
 
 - Steps retry transient failures (\`http\`/\`call\` 3 attempts, \`judge\`/\`extract\` 2) before failing.
-- Agent steps time out after 2 hours, model steps after 10 minutes, \`w.run\` after 15 minutes; set \`timeout\` for longer.
+- Agent steps time out after 2 hours, model steps after 10 minutes, GitHub Actions steps after 6 hours; set \`timeout\` for longer.
 - \`meta.timeout\` fails a run still going after that long; by default runs have no limit.
 - Finished runs older than 30 days are deleted, always keeping the latest 50 per automation.
 `;

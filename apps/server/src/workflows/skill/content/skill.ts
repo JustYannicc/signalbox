@@ -8,6 +8,8 @@ description: Use when work should happen without anyone supervising it in Signal
 
 An automation is one TypeScript file. Signalbox draws its diagram from the code and runs it durably: every step's result is journaled, the code replays from the top after each step, and a run survives restarts and can wait days for a person. You write only the code.
 
+Automations run only in Signalbox Cloud. For code steps, use \`w.run(label, { on: "github-actions" }, fn, ...args)\` after the repository setup in \`references/github-actions.md\`. Direct host \`w.run\` and external-service \`w.call\` are unavailable. Use \`w.http\` for HTTP APIs or \`w.agent\` for work that needs connected tools. \`w.call\` supports Signalbox tools. Adapt older examples to these available steps.
+
 **The code is the supervisor.** When the user wants a process — build these tickets in order, triage every email, react whenever a turn fails — write an automation that does it instead of doing the supervising yourself turn by turn. Agents do the judgment-heavy work inside steps; the automation decides order, retries, merges and when to alert someone, deterministically.
 
 This SDK is not in your training data. These files, \`automation_reference\` and the validator are the truth; habits from Temporal, Inngest, Trigger.dev or Cloudflare Workflows are wrong here.
@@ -44,7 +46,7 @@ export default workflow(async (w, email: { from: string; subject: string; body: 
     options: ["send", "skip"],
   });
   if (answer.choice === "send") {
-    await w.call("Send the reply", "gmail.users.messages.send", { userId: "me", to: email.from, text: answer.values.reply });
+    await w.agent("Send the reply", { prompt: \`Send this approved reply to \${email.from}:\\n\${answer.values.reply}\` });
   }
   if (kind === "bug") {
     await w.agent("Look into the bug", { prompt: \`A customer reported: \${email.body}\`, worktree: "main" });
@@ -73,7 +75,7 @@ The run's start time is \`trigger.at\` (an ISO string), the same on every replay
 
 | You'd write | Write instead |
 |---|---|
-| \`step.run("id", async () => …)\`, \`ctx.run\`, \`step.do\` | a verb: \`await w.http("Fetch the page", url)\` or \`await w.run("Parse it", parse, url)\` |
+| \`step.run("id", async () => …)\`, \`ctx.run\`, \`step.do\` | a verb: \`await w.http("Fetch the page", url)\` or \`await w.run("Parse it", { on: "github-actions" }, parse, url)\` |
 | \`await fetch(url)\` in the workflow | \`await w.http("Fetch …", url)\` |
 | \`setTimeout\`, or polling an agent in a loop | one \`await w.sleep(…)\`; \`w.agent\` already waits for the thread to finish |
 | \`w.sleep\` in a loop to check again later | a cron trigger, or \`w.waitFor\` with a \`timeout\` |
