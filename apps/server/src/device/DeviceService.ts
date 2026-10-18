@@ -1323,7 +1323,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           (cause) =>
             new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
         ),
-        Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
+        // The Android hub allows 30s for adb to confirm the emulator has exited.
+        Effect.flatMap((request) =>
+          hubJson(request, HubActionResult, "shutdown", Duration.seconds(60)),
+        ),
         Effect.flatMap((result) =>
           result.ok
             ? Effect.void

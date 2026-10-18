@@ -1886,6 +1886,63 @@ it.effect.each([
   }).pipe(Effect.scoped),
 );
 
+it.effect.each([
+  { replyAfter: "30 seconds", succeeds: true },
+  { replyAfter: "61 seconds", succeeds: false },
+] as const)(
+  "shutdown after $replyAfter preserves its completion and timeout outcome",
+  ({ replyAfter, succeeds }) =>
+    Effect.gen(function* () {
+      const shutdownStarted = yield* Deferred.make<void>();
+      const finishShutdown = yield* Deferred.make<void>();
+      const store = yield* makeMemoryDeviceLeaseStore;
+      const { service } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        { store, automaticCleanup: false },
+        false,
+        undefined,
+        undefined,
+        Deferred.succeed(shutdownStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(finishShutdown)),
+        ),
+      );
+      yield* service.configure({ enabled: true });
+      const threadId = ThreadId.make("slow-device-shutdown");
+      const session = yield* service.open({
+        threadId,
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+      const closing = yield* service
+        .close({
+          threadId,
+          deviceId: session.deviceId,
+          sessionId: session.sessionId,
+          leaseId: session.leaseId,
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(shutdownStarted);
+      yield* TestClock.adjust(replyAfter);
+      yield* Deferred.succeed(finishShutdown, undefined);
+      const result = yield* Fiber.join(closing);
+      expect(Exit.isSuccess(result)).toBe(succeeds);
+      expect((yield* service.state).sessions).toEqual([]);
+      const records = yield* store.list;
+      if (succeeds) {
+        expect(records).toEqual([]);
+        expect((yield* service.state).devices.every((device) => !device.booted)).toBe(true);
+      } else {
+        expect(records).toHaveLength(1);
+        expect(records[0]?.lease).toMatchObject({ state: "ready", owners: [], deviceBooted: true });
+      }
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
 it.effect("keeps shutdown successful when subsequent discovery fails", () =>
   Effect.gen(function* () {
     const { service } = yield* fixture(Effect.void, undefined, true);
