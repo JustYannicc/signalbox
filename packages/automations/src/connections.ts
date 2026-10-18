@@ -205,9 +205,9 @@ export const makeConnections = Effect.gen(function* () {
       if (Option.isNone(settings)) {
         return yield* Effect.fail(
           explained(
-            "Connected services aren't available in cloud automations yet. Use w.http for an HTTP API, or w.agent for work that needs connected tools.",
+            "Connected services aren't available in cloud automations yet. Use w.http for an HTTP API.",
             {
-              fix: "Use w.http for an HTTP API, or w.agent for work that needs connected tools.",
+              fix: "Use w.http for an HTTP API.",
             },
           ),
         );

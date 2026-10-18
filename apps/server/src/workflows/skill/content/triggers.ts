@@ -51,7 +51,7 @@ PR events include current state, mergeability, checks, review decision, unresolv
 ${EVENTS_SECTION}
 ## Changes in a connected source
 
-Connected-service \`watch\` and \`source.item.*\` triggers are unavailable in cloud automations. Use a service webhook to start a run, or a cron trigger with \`w.http\` or \`w.agent\` and keep a cursor with \`w.recall\` / \`w.remember\`. GitHub repository events use the integration above.
+Connected-service \`watch\` and \`source.item.*\` triggers are unavailable in cloud automations. Use a service webhook to start a run, or a cron trigger with \`w.http\` and keep a cursor with \`w.recall\` / \`w.remember\`. GitHub repository events use the integration above.
 
 ## From another automation
 

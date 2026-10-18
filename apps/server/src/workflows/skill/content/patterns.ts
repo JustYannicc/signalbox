@@ -67,12 +67,12 @@ await w.remember("Save handled items", "seen", [...seen, ...fresh.map((item) => 
 ## Let the user edit before it's used
 
 \`\`\`ts
-const answer = await w.ask("Send this reply?", {
+const answer = await w.ask("Keep this reply?", {
   fields: { reply: { type: "longText", default: draft, required: true } },
-  options: ["send", "skip"],
+  options: ["keep", "skip"],
 });
-if (answer.choice === "send") {
-  await w.agent("Send it", { prompt: \`Send this approved reply to \${email.from}:\\n\${answer.values.reply}\` });
+if (answer.choice === "keep") {
+  await w.notify("Reply ready to send", \`To: \${email.from}\\n\${answer.values.reply}\`);
 }
 \`\`\`
 
@@ -80,7 +80,7 @@ if (answer.choice === "send") {
 
 Run npm packages, Node APIs and command-line tools with \`w.run(label, { on: "github-actions" }, fn, ...args)\`. Set up the repository workflow and lend a GitHub account first (\`github-actions.md\`). Each step runs in its own GitHub job, so local file paths are not shared between steps. Return small JSON.
 
-Use \`w.http\` for HTTP APIs and \`w.agent\` for work that needs connected tools. External-service \`w.call\` and connected-service watches are unavailable; \`w.call\` supports Signalbox tools.
+Use \`w.http\` for HTTP APIs. Connected services other than the GitHub integration are not available in cloud automations yet. External-service \`w.call\` and connected-service watches are unavailable; \`w.call\` supports Signalbox tools.
 
 ## React to what happens in Signalbox
 

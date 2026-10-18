@@ -59,9 +59,9 @@ export default workflow(async (w) => {
 });
 `,
   "support-email.ts": `export const meta = {
-  name: "Triage support emails",
-  description: "Sort each support email, draft a reply, and ask me before sending.",
-  intent: "when a support email comes in, sort it and draft a reply I can approve",
+  name: "Draft support replies",
+  description: "Sort each support email and prepare a reply I can edit and send.",
+  intent: "when a support email comes in, sort it and prepare a reply for me to send",
   triggers: [{ webhook: true }],
 } as const;
 
@@ -70,32 +70,17 @@ export default workflow(async (w, email: { from: string; subject: string; body: 
   if (kind === "spam") return "ignored";
 
   const draft = await w.llm("Draft a reply", { prompt: \`Write a short, friendly reply to:\\n\${email.body}\` });
-  // Send it? The user can edit the draft first.
-  const answer = await w.ask("Send this reply?", {
+  // The user can edit the draft before keeping it.
+  const answer = await w.ask("Keep this reply?", {
     fields: { reply: { type: "longText", default: draft, required: true } },
-    options: ["send", "skip"],
+    options: ["keep", "skip"],
   });
-  if (answer.choice === "send") {
-    await w.agent("Send the reply", { prompt: \`Send this approved reply to \${email.from}:\\n\${answer.values.reply}\` });
+  if (answer.choice === "keep") {
+    await w.notify("Reply ready to send", \`To: \${email.from}\\n\${answer.values.reply}\`);
   }
   if (kind === "bug") {
     await w.agent("Look into the bug", { prompt: \`A customer reported: \${email.body}\`, worktree: "main" });
   }
-});
-`,
-  "sync-stripe-to-sheet.ts": `export const meta = {
-  name: "Log new Stripe payments",
-  description: "Every hour, logs missing Stripe payments in the finance sheet and flags large ones.",
-  intent: "put every new stripe payment in the finance sheet and tell me about big ones",
-  triggers: [{ cron: "15 * * * *", timezone: "Europe/Zurich" }],
-} as const;
-
-const SHEET = "1AbCdEfGhIjKlMnOpQrStUvWxYz";
-
-export default workflow(async (w) => {
-  return await w.agent("Sync payments to the sheet", {
-    prompt: \`Use the connected Stripe and Google Sheets tools to log payments in spreadsheet \${SHEET}, Payments tab. Read the existing payment IDs first. Append only missing payments with date, payment ID, amount, currency and description. Use payment IDs to avoid duplicates on retries. Tell me about newly logged payments of at least 1000 in their currency. Report how many were added.\`,
-  });
 });
 `,
   "work-through-tickets.ts": `// Requires a GitHub folder, the Signalbox step workflow, and a lent GitHub account.

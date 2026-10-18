@@ -65,7 +65,7 @@ Any HTTP API. JSON bodies are sent and parsed automatically. Any status is a res
 
 ### \`w.call(label, "integration.operation", args?, { connection?, retry? })\` → the API's data
 
-External-service calls are unavailable in Signalbox Cloud. Use \`w.http\` for an HTTP API or \`w.agent\` when the work needs connected tools.
+External-service calls are unavailable in Signalbox Cloud. Use \`w.http\` for an HTTP API. Connected services other than the GitHub integration are not available in cloud automations yet.
 
 \`"signalbox.<tool>"\` calls Signalbox's own tools, the ones you have as MCP tools, with the same arguments and results: \`w.call("Wake the agent", "signalbox.t3_thread_send", { threadId, message, mode: "queue" })\`, \`"signalbox.list_thread_pull_requests"\`, \`"signalbox.t3_thread_read"\`. The automation calls without a thread of its own, so pass \`threadId\` where a tool would default to "this thread", and it can't do more than its runtime mode allows. Tools that need a person or a thread's own session (preview, device, \`delegate_task\`, \`request_secret\`, worktree handoff, the automation tools) aren't available; use the steps instead. A \`clientRequestId\` is filled in per step, so a retried step doesn't send twice.
 

@@ -8,7 +8,7 @@ description: Use when work should happen without anyone supervising it in Signal
 
 An automation is one TypeScript file. Signalbox draws its diagram from the code and runs it durably: every step's result is journaled, the code replays from the top after each step, and a run survives restarts and can wait days for a person. You write only the code.
 
-Automations run only in Signalbox Cloud. For code steps, use \`w.run(label, { on: "github-actions" }, fn, ...args)\` after the repository setup in \`references/github-actions.md\`. Direct host \`w.run\`, external-service \`w.call\` and connected-service \`watch\` / \`source.item.*\` triggers are unavailable. Use \`w.http\` for HTTP APIs or \`w.agent\` for work that needs connected tools. \`w.call\` supports Signalbox tools.
+Automations run only in Signalbox Cloud. For code steps, use \`w.run(label, { on: "github-actions" }, fn, ...args)\` after the repository setup in \`references/github-actions.md\`. Direct host \`w.run\`, external-service \`w.call\` and connected-service \`watch\` / \`source.item.*\` triggers are unavailable. Use \`w.http\` for HTTP APIs. Connected services other than the GitHub integration are not available in cloud automations yet. \`w.call\` supports Signalbox tools.
 
 **The code is the supervisor.** When the user wants a process — build these tickets in order, triage every email, react whenever a turn fails — write an automation that does it instead of doing the supervising yourself turn by turn. Agents do the judgment-heavy work inside steps; the automation decides order, retries, merges and when to alert someone, deterministically.
 
@@ -29,9 +29,9 @@ Work through it in order. Each item is done when its check holds.
 
 \`\`\`ts
 export const meta = {
-  name: "Triage support emails",
-  description: "Sort each support email, draft a reply, and ask me before sending.",
-  intent: "when a support email comes in, sort it and draft a reply I can approve",
+  name: "Draft support replies",
+  description: "Sort each support email and prepare a reply I can edit and send.",
+  intent: "when a support email comes in, sort it and prepare a reply for me to send",
   triggers: [{ webhook: true }],
 } as const;
 
@@ -40,13 +40,13 @@ export default workflow(async (w, email: { from: string; subject: string; body: 
   if (kind === "spam") return "ignored";
 
   const draft = await w.llm("Draft a reply", { prompt: \`Write a short, friendly reply to:\\n\${email.body}\` });
-  // Send it? The user can edit the draft first.
-  const answer = await w.ask("Send this reply?", {
+  // The user can edit the draft before keeping it.
+  const answer = await w.ask("Keep this reply?", {
     fields: { reply: { type: "longText", default: draft, required: true } },
-    options: ["send", "skip"],
+    options: ["keep", "skip"],
   });
-  if (answer.choice === "send") {
-    await w.agent("Send the reply", { prompt: \`Send this approved reply to \${email.from}:\\n\${answer.values.reply}\` });
+  if (answer.choice === "keep") {
+    await w.notify("Reply ready to send", \`To: \${email.from}\\n\${answer.values.reply}\`);
   }
   if (kind === "bug") {
     await w.agent("Look into the bug", { prompt: \`A customer reported: \${email.body}\`, worktree: "main" });
