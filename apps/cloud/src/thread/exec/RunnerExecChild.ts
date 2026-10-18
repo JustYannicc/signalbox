@@ -215,10 +215,6 @@ export class RunnerExecChild implements KernelCommandChild {
     }
     this.#lastSequence = report.sequence;
     if (report.type === "output") {
-      if (this.#exitReceived) {
-        this.fail(localError("Runner emitted output after process exit"));
-        return;
-      }
       try {
         if (!this.#output[report.stream].push(base64ToBytes(report.dataBase64))) {
           this.fail(localError("Runner process output exceeded the unread stream buffer"));

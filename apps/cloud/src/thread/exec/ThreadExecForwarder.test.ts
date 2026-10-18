@@ -232,10 +232,18 @@ describe("ThreadExecForwarder", () => {
     const stdout = child.stdout.getReader();
     const stderr = child.stderr.getReader();
     fixture.report({
-      type: "output",
+      type: "exit",
       generation: 4,
       processId: start.processId,
       sequence: 1,
+      exitCode: 7,
+    });
+    await expect(child.exited).resolves.toEqual({ exitCode: 7, signal: 0, coreDumped: false });
+    fixture.report({
+      type: "output",
+      generation: 4,
+      processId: start.processId,
+      sequence: 2,
       stream: "stdout",
       dataBase64: "AP9B",
     });
@@ -243,18 +251,10 @@ describe("ThreadExecForwarder", () => {
       type: "output",
       generation: 4,
       processId: start.processId,
-      sequence: 2,
+      sequence: 3,
       stream: "stderr",
       dataBase64: "QgA=",
     });
-    fixture.report({
-      type: "exit",
-      generation: 4,
-      processId: start.processId,
-      sequence: 3,
-      exitCode: 7,
-    });
-    await expect(child.exited).resolves.toEqual({ exitCode: 7, signal: 0, coreDumped: false });
     await expect(stdout.read()).resolves.toEqual({
       done: false,
       value: new Uint8Array([0, 255, 65]),
