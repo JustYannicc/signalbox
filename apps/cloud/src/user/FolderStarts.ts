@@ -51,15 +51,6 @@ const encodeKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String])),
 );
 
-const MAX_FOLDER_NAME_LENGTH = 128;
-const copyName = (source: string, used: ReadonlySet<string>) => {
-  for (let copy = 1; ; copy++) {
-    const suffix = copy === 1 ? " (copy)" : ` (copy ${copy})`;
-    const name = `${source.slice(0, MAX_FOLDER_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
-    if (!used.has(name)) return name;
-  }
-};
-
 const traced = makeTraced(UserDrives.UserDrives.use((drives) => drives.userId));
 
 const startFrom: FolderStarts["Service"]["startFrom"] = (input) =>
@@ -128,14 +119,14 @@ const startFrom: FolderStarts["Service"]["startFrom"] = (input) =>
       return yield* folders.snapshot;
     }
 
-    const siblingNames = new Set(
-      current.tree.folders
-        .filter((folder) => folder.ownerId === source.ownerId && folder.parentId === null)
-        .map((folder) => folder.name),
-    );
-    let name = input.name?.trim() ?? copyName(source.name, siblingNames);
-    // Reserve before setup: foldDrives must not create a second row for this drive.
-    yield* folders.reserveFiles(driveId);
+    const reservation = yield* folders.reserveStart({
+      id: input.newFolderId,
+      ownerId: source.ownerId,
+      driveId,
+      source: { legacyCatalogHome, folderId: source.id, driveId: sourceDriveId, name: source.name },
+      ...(input.name === undefined ? {} : { name: input.name }),
+    });
+    let name = reservation.name;
     const target = drivesDirectory.forDrive(driveId);
     // A retry can reach here after history was imported but before the folder row committed.
     // Read the destination's immutable origin before asking the source for a newer snapshot.
@@ -172,7 +163,7 @@ const startFrom: FolderStarts["Service"]["startFrom"] = (input) =>
     const origin: FolderOrigin = {
       legacyCatalogHome,
       folderId: source.id,
-      name: source.name,
+      name: reservation.sourceName,
       driveId: sourceDriveId,
       head,
     };

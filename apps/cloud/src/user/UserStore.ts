@@ -29,6 +29,7 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as FolderTables from "./folderTables.ts";
+import * as FolderStartReservations from "./folderStartReservations.ts";
 import * as ThreadKindTables from "./threadKindTables.ts";
 import * as StatusNoteTables from "./statusNoteTables.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
@@ -235,6 +236,7 @@ const migrations = Migrator.fromRecord({
   "0022_pool_snapshots": PoolSnapshotCache.createTables,
   "0023_person_timezone": UserTimezone.createTables,
   "0023_folder_lineage": FolderTables.addLineage,
+  "0024_folder_start_reservations": FolderStartReservations.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

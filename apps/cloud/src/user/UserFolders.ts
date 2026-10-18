@@ -35,6 +35,7 @@ import { moveNotesUp } from "../notes/noteTables.ts";
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
+import * as FolderStartReservations from "./folderStartReservations.ts";
 import {
   columnsOfPhase,
   initialPhase,
@@ -125,8 +126,10 @@ export class UserFolders extends Context.Service<
     /** `states` as snapshots. */
     readonly changes: Stream.Stream<SignalboxFoldersSnapshot, SqlError>;
     readonly create: (input: FolderCreateInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
-    /** Reserves a drive so a history start cannot be folded into a second folder. */
-    readonly reserveFiles: (driveId: string) => Effect.Effect<void, SqlError>;
+    /** Reserves source identity, name and drive before preparing the history. */
+    readonly reserveStart: (
+      input: FolderStartReservations.FolderStartReservationInput,
+    ) => Effect.Effect<{ readonly name: string; readonly sourceName: string }, Failure>;
     /** Adds the prepared drive and its immutable source lineage at the tree's top level. */
     readonly createFrom: (input: {
       readonly id: FolderId;
@@ -429,9 +432,15 @@ const make = Effect.gen(function* () {
       );
     }).pipe(traced("UserFolders.create", { "folder.parent_id": input.parentId }));
 
-  const reserveFiles: UserFolders["Service"]["reserveFiles"] = (driveId) =>
-    sql`INSERT INTO folder_drives (drive_id) VALUES (${driveId})
-      ON CONFLICT (drive_id) DO NOTHING`.pipe(Effect.asVoid);
+  const reserveStart: UserFolders["Service"]["reserveStart"] = (input) =>
+    FolderStartReservations.reserve(input).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.flatMap((reservation) =>
+        reservation === null
+          ? refuse("That folder already exists with a different source.")
+          : Effect.succeed(reservation),
+      ),
+    );
 
   const createFrom: UserFolders["Service"]["createFrom"] = (input) =>
     mutate((current) =>
@@ -457,6 +466,9 @@ const make = Effect.gen(function* () {
         yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position, drive_id, origin)
           VALUES (${input.id}, ${input.ownerId}, NULL, ${input.name.trim()}, 0,
             ${input.driveId}, ${encodeOrigin(input.origin)})`;
+        yield* FolderStartReservations.complete(input.id).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
         yield* setOrder(null, order);
         return true;
       }),
@@ -897,7 +909,7 @@ const make = Effect.gen(function* () {
     threadHome,
     changes,
     create,
-    reserveFiles,
+    reserveStart,
     createFrom,
     update,
     move,
