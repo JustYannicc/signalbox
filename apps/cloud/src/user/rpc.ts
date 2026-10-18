@@ -222,6 +222,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
+  WS_METHODS.assetsPersistChatAttachments,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
   WS_METHODS.projectsListEntries,
@@ -259,6 +260,10 @@ const SERVED = [
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsComment,
+  WS_METHODS.pullRequestsUpdateComment,
+  WS_METHODS.pullRequestsSubmitReview,
+  WS_METHODS.pullRequestsSetReaction,
   WS_METHODS.pullRequestsReplyToThread,
   WS_METHODS.pullRequestsSetThreadResolution,
   WS_METHODS.pullRequestsDiffFileContents,
@@ -336,6 +341,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
+  [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
@@ -369,6 +375,10 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsUpdateComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSubmitReview]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSetReaction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsReplyToThread]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetThreadResolution]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
@@ -859,6 +869,8 @@ export const layerHandlers = (input: {
           ),
         [WS_METHODS.assetsCreateUrl]: ({ resource }) =>
           Effect.flatMap(actorNow, (actor) => assets.createUrl(actor, resource)),
+        [WS_METHODS.assetsPersistChatAttachments]: (request) =>
+          Effect.flatMap(actorNow, (actor) => assets.persistChatAttachments(actor, request)),
         // Scratch is the Personal context's project, always in the shell.
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
@@ -963,6 +975,10 @@ export const layerHandlers = (input: {
         [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
         [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
         [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
+        [WS_METHODS.pullRequestsComment]: (request) => pullRequests.comment(request),
+        [WS_METHODS.pullRequestsUpdateComment]: (request) => pullRequests.updateComment(request),
+        [WS_METHODS.pullRequestsSubmitReview]: (request) => pullRequests.submitReview(request),
+        [WS_METHODS.pullRequestsSetReaction]: (request) => pullRequests.setReaction(request),
         [WS_METHODS.pullRequestsReplyToThread]: (request) => pullRequests.replyToThread(request),
         [WS_METHODS.pullRequestsSetThreadResolution]: (request) =>
           pullRequests.setThreadResolution(request),

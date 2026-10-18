@@ -10,7 +10,7 @@ import { UserDrives } from "../user/UserDrives.ts";
 import { CloudPullRequests } from "./CloudPullRequestsService.ts";
 import { PullRequestRepository } from "./PullRequestRepository.ts";
 
-const decode = Schema.decodeUnknownEffect(Request);
+const decode = Schema.decodeUnknownEffect(Request, { onExcessProperty: "error" });
 const denied = () =>
   new PullRequestOperationError({
     operation: "pullRequestReviewTool",
@@ -63,8 +63,13 @@ export const pullRequestReviewTool = (actorThreadId: string, raw: unknown) =>
     };
     const pullRequests = service.value;
     switch (input.action) {
-      case "read":
-        return yield* pullRequests.activity(reference);
+      case "read": {
+        const [activity, detail] = yield* Effect.all([
+          pullRequests.activity(reference),
+          pullRequests.detail(reference),
+        ]);
+        return { ...activity, headSha: detail.headSha };
+      }
       case "reply":
         yield* pullRequests.replyToThread({
           ...reference,
@@ -80,6 +85,39 @@ export const pullRequestReviewTool = (actorThreadId: string, raw: unknown) =>
           resolved: input.resolved,
         });
         return { written: true, resolved: input.resolved };
+      case "comment":
+        yield* pullRequests.comment({
+          ...reference,
+          body: input.body,
+          operationId: input.operationId,
+        });
+        return { written: true };
+      case "updateComment":
+        yield* pullRequests.updateComment({
+          ...reference,
+          commentId: input.commentId,
+          kind: input.kind,
+          body: input.body,
+        });
+        return { written: true };
+      case "submitReview":
+        yield* pullRequests.submitReview({
+          ...reference,
+          operationId: input.operationId,
+          headSha: input.headSha,
+          verdict: input.verdict,
+          body: input.body,
+          comments: input.comments,
+        });
+        return { written: true };
+      case "setReaction":
+        yield* pullRequests.setReaction({
+          ...reference,
+          ...(input.subjectId === undefined ? {} : { subjectId: input.subjectId }),
+          content: input.content,
+          reacted: input.reacted,
+        });
+        return { written: true, reacted: input.reacted };
     }
   }).pipe(
     Effect.map((result): ToolResult => ({ _tag: "ok", result })),

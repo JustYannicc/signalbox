@@ -123,7 +123,14 @@ describe("cloud API coverage", () => {
   });
 
   it("serves review replies and resolution through the public API", () => {
-    for (const name of ["pullRequests.replyToThread", "pullRequests.setThreadResolution"]) {
+    for (const name of [
+      "pullRequests.comment",
+      "pullRequests.updateComment",
+      "pullRequests.submitReview",
+      "pullRequests.setReaction",
+      "pullRequests.replyToThread",
+      "pullRequests.setThreadResolution",
+    ]) {
       const operation = operations.find((entry) => entry.name === name)!;
       expect(cloudServes(operation)).toBe(true);
       expect(cloudUnserved(operation)).toBeUndefined();
