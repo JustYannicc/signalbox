@@ -467,3 +467,5 @@ export { onRunnerMessage, pushRunnerWork, type RunnerSocketHost } from "./runner
 export { ThreadRunner } from "./runner/ThreadRunner.ts";
 export { recoverRunEvents } from "./runner/runRecovery.ts";
 export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+
+export { runtimeResponseUpgrade } from "./runner/runtimeResponseUpgrade.ts";

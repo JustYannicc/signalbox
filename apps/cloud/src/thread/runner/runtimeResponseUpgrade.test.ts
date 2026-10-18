@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 
 import { approvalRequestEvents } from "../runtimeRequests.ts";
 import { applyEvents } from "../threadProjection.ts";
-import { runtimeResponseUpgrade } from "./runtimeResponseUpgrade.ts";
 
 import { ThreadStore } from "../ThreadStore.ts";
 import {
@@ -17,6 +16,7 @@ import {
   owner,
   personal,
   snapshot,
+  runtimeResponseUpgrade,
   threadId,
   withObject,
 } from "../runnerTesting.ts";
