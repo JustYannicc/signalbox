@@ -137,7 +137,7 @@ const agentToolBashEnvironment = (cwd: string) =>
   ].join("\n");
 
 /** Longer than the login service's 4-minute budget for one sign-in. */
-export const MCP_TOOL_TIMEOUT_SEC = 300;
+const MCP_TOOL_TIMEOUT_SEC = 300;
 
 /** Secret cards allow an hour; browser sign-in keeps its four-minute service budget. */
 export const mcpToolTimeoutSec = (serverName: string) =>

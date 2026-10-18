@@ -6,6 +6,7 @@ import type {
   ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
+  NodeId,
   ProviderSessionId,
   RunAttemptId,
   RunId,
@@ -41,8 +42,10 @@ const item = (label: string): RunnerItem => ({
  */
 const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
+  const welcomed = yield* Deferred.make<void>();
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   /** The runs each `hello` said its process holds. */
@@ -68,6 +71,7 @@ const makeFakeThread = Effect.gen(function* () {
             case "hello":
               yield* Deferred.succeed(helloPulls, message.pulls === true);
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(workflowStopCapabilities, (all) => [...all, message.workflowStops]);
               yield* Ref.update(runtimeResponseCapabilities, (all) => [
                 ...all,
                 message.runtimeResponses,
@@ -79,6 +83,7 @@ const makeFakeThread = Effect.gen(function* () {
                 ackedSequence: yield* Ref.get(acked),
                 activeRunId: runId,
               });
+              yield* Deferred.succeed(welcomed, undefined);
               return;
             case "batch": {
               const last = yield* Ref.get(acked);
@@ -106,9 +111,11 @@ const makeFakeThread = Effect.gen(function* () {
 
   return {
     transport,
+    welcomed,
     committed,
     acked,
     hellos,
+    workflowStopCapabilities,
     runtimeResponseCapabilities,
     helloPulls,
     helloRuns,
@@ -200,6 +207,49 @@ const sessionOf = (
   });
 
 describe("RunnerSession", () => {
+  it.effect("hands workflow stops only to the machine generation they name", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        const stopped = yield* Deferred.make<void>();
+        const requests: Array<string> = [];
+        yield* makeRunnerSession({
+          threadId,
+          generation: 1,
+          token: "token",
+          machineId: "machine",
+          imageVersion: "test",
+          build,
+          transport: thread.transport,
+          makeTurns: (emit) =>
+            Effect.map(turns.make(emit), (fake) => ({
+              ...fake,
+              stopWorkflow: (request) =>
+                Effect.sync(() => {
+                  requests.push(request.taskId);
+                }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)), Effect.asVoid),
+            })),
+        });
+        yield* Deferred.await(thread.welcomed);
+        expect(yield* Ref.get(thread.workflowStopCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        const request = {
+          type: "workflow.stop" as const,
+          generation: 2,
+          runId,
+          subagentId: NodeId.make("workflow"),
+          taskId: "stale-task",
+        };
+        yield* thread.toCurrent(request);
+        yield* thread.toCurrent({ ...request, generation: 1, taskId: "current-task" });
+        yield* Deferred.await(stopped);
+        expect(requests).toEqual(["current-task"]);
+        expect(yield* Ref.get(turns.startedTurns)).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("advertises and forwards runtime responses to the live turn driver", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -226,6 +276,7 @@ describe("RunnerSession", () => {
         );
 
         expect(yield* Ref.get(thread.runtimeResponseCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(thread.workflowStopCapabilities)).toEqual([false]);
         expect(yield* Ref.get(turns.runtimeResponses)).toEqual([response]);
       }),
     ),

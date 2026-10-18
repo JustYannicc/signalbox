@@ -1,3 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off - workflow capture uses an isolated machine config.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as PlatformNodePath from "@effect/platform-node/NodePath";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { machineLayout } from "./RunnerModelAccess.ts";
 import {
   REQUEST_HEAVY_MACHINE_COMMAND,
   REQUEST_HEAVY_MACHINE_REASON,
@@ -12,6 +21,7 @@ import {
   NodeId,
   OrchestrationV2TurnItem,
   type OrchestrationV2RuntimeRequest,
+  OrchestrationV2Subagent,
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -54,6 +64,9 @@ import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 
+const decodeWorkflowSubagent = Schema.decodeUnknownSync(
+  Schema.toCodecJson(OrchestrationV2Subagent),
+);
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
@@ -256,6 +269,7 @@ const makeFakeAdapterFor = (selection: {
       started,
       startedRuns,
       opened,
+      session,
       responses,
       failNextResponse,
       secondStarted,
@@ -603,6 +617,111 @@ describe("RunnerTurns", () => {
         expect(reported.map(label)).toContain("git.pull.result " + operation.id);
       }),
     ),
+  );
+
+  it.effect(
+    "captures workflow scripts from the machine's Claude config through the turn driver",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const home = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-workflow-config-")),
+            ),
+            (directory) =>
+              Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+          );
+          const layout = machineLayout(yield* Path.Path, NodePath.join(home, "machine"));
+          const directory = NodePath.join(layout.claudeHome, "projects", "test");
+          const scriptPath = NodePath.join(directory, "review.js");
+          NodeFS.mkdirSync(directory, { recursive: true });
+          NodeFS.mkdirSync(NodePath.join(home, ".claude", "projects"), { recursive: true });
+          NodeFS.writeFileSync(scriptPath, "await machineWorkflow();\n");
+          expect(layout.claudeHome).not.toBe(NodePath.join(home, ".claude"));
+          const fake = yield* makeFakeAdapter;
+          const claudeDriver = ProviderDriverKind.make("claudeAgent");
+          const claudeInstance = ProviderInstanceId.make("claudeAgent");
+          const thread = {
+            ...providerThread,
+            driver: claudeDriver,
+            providerInstanceId: claudeInstance,
+            appThreadId: threadId,
+          };
+          const adapter = {
+            ...fake.adapter,
+            instanceId: claudeInstance,
+            driver: claudeDriver,
+            openSession: () =>
+              Effect.succeed({ ...fake.session, ensureThread: () => Effect.succeed(thread) }),
+          };
+          const reported: Array<RunnerItem> = [];
+          const started = yield* Deferred.make<void>();
+          const forwarded = yield* Deferred.make<void>();
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[claudeInstance, adapter]]),
+            cwd: home,
+            claudeConfigDir: layout.claudeHome,
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) =>
+              Effect.gen(function* () {
+                reported.push(item);
+                if (item.kind === "turn.started") yield* Deferred.succeed(started, undefined);
+                if (item.kind === "provider" && item.event.type === "provider_turn.updated")
+                  yield* Deferred.succeed(forwarded, undefined);
+              }),
+          }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+          const turn = {
+            ...turnFor(1, thread),
+            modelSelection: { instanceId: claudeInstance, model: "m" },
+          };
+          yield* turns.start({ turn, modelToken: "token" });
+          yield* Deferred.await(started);
+          const subagent = decodeWorkflowSubagent({
+            id: "workflow",
+            threadId,
+            runId: turn.runId,
+            parentNodeId: "parent",
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: claudeDriver,
+            providerInstanceId: claudeInstance,
+            providerThreadId: thread.id,
+            childThreadId: null,
+            nativeTaskRef: { driver: claudeDriver, nativeId: "workflow", strength: "strong" },
+            prompt: "Review",
+            title: null,
+            model: null,
+            status: "running",
+            result: null,
+            startedAt: null,
+            completedAt: null,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            workflow: { phases: [], agents: [], runHandles: { scriptPath } },
+          });
+          yield* Queue.offer(fake.events, {
+            type: "subagent.updated",
+            driver: claudeDriver,
+            subagent,
+          });
+          yield* Queue.offer(fake.events, { ...providerTurnStarted(1), driver: claudeDriver });
+          yield* Deferred.await(forwarded);
+          expect(reported).toContainEqual({
+            kind: "provider",
+            runId: turn.runId,
+            event: {
+              type: "workflow.script",
+              subagentId: subagent.id,
+              runId: turn.runId,
+              scriptPath,
+              revision: expect.stringMatching(/^[a-f0-9]{64}$/),
+              contents: "await machineWorkflow();\n",
+              truncated: false,
+            },
+          });
+        }).pipe(Effect.provide(PlatformNodePath.layer)),
+      ),
   );
 
   it.effect(

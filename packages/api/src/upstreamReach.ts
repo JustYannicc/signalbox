@@ -210,8 +210,14 @@ export const UPSTREAM_RPC_REACH = {
   subscribeResourceTelemetry: read(),
 
   "orchestration.dispatchCommand": perCommand,
-  "orchestration.getWorkflowScript": read(),
-  "orchestration.stopWorkflow": write(),
+  "orchestration.getWorkflowScript": read({
+    summary:
+      "Read the script revision retained for a thread workflow. Use its coordinator subagent ID when multiple workflows share a path.",
+  }),
+  "orchestration.stopWorkflow": write({
+    summary:
+      "Stop one workflow coordinator and its children without stopping its parent thread or sibling workflows.",
+  }),
   "orchestration.getTurnItem": read(),
   "orchestration.getTurnDiff": read(),
   "orchestration.getFullThreadDiff": read(),

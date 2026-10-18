@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ThreadShell,
   RuntimeRequestId,
   orchestrationV2RunWorkStartedAt,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -79,9 +80,8 @@ const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a cloud thread can have. Its background work is `monitors`, the
- * automation runs attached to it, which show and hold it in Working exactly
- * as upstream's monitors do.
+ * everything a cloud thread can have. Native workflows and attached automation
+ * runs keep a settled thread in Working until they end.
  */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
@@ -169,7 +169,18 @@ export function threadShellFromProjection(
         providerThreads: [],
         turnItems: [],
         runs: projection.runs,
-        monitors: monitors.map((monitor) => ({ ...monitor, kind: "monitor" as const })),
+        monitors: [
+          ...monitors.map((monitor) => ({ ...monitor, kind: "monitor" as const })),
+          ...projection.subagents
+            .filter(
+              (task) => task.workflow !== undefined && isOrchestrationV2WorkActive(task.status),
+            )
+            .map((task) => ({
+              taskId: task.id,
+              kind: "subagent" as const,
+              description: task.workflow?.name ?? task.title ?? task.prompt,
+            })),
+        ],
       }),
     ],
     providerInstanceHistory:
