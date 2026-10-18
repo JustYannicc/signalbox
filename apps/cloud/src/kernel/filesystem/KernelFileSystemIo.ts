@@ -26,14 +26,24 @@ export class KernelFileSystemIo {
   read(fd: number, target: Uint8Array, position: bigint | null): number {
     return withKernelErrors(() => {
       const descriptor = this.#descriptors.get(fd);
-      return this.#run(descriptor.withOffset(() => this.#read(descriptor, target, position)));
+      const operation = () => this.#read(descriptor, target, position);
+      return this.#run(
+        descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0
+          ? operation()
+          : descriptor.withOffset(operation),
+      );
     });
   }
 
   write(fd: number, source: Uint8Array, position: bigint | null): number {
     return withKernelErrors(() => {
       const descriptor = this.#descriptors.get(fd);
-      return this.#run(descriptor.withOffset(() => this.#write(descriptor, source, position)));
+      const operation = () => this.#write(descriptor, source, position);
+      return this.#run(
+        descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0
+          ? operation()
+          : descriptor.withOffset(operation),
+      );
     });
   }
 
