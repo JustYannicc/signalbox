@@ -15,7 +15,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { contextProjectIds, projectIdForContext } from "./contextProjects.ts";
+import * as OrganizationMembershipOutbox from "./organizationMembershipOutbox.ts";
 import * as OrganizationRefresh from "./organizationRefresh.ts";
+import { encodeRoleSlugs, normalRoleSlugs, RoleSlugs } from "./organizationRoles.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 
 /**
@@ -30,6 +32,9 @@ import * as UserDriveIndex from "./UserDriveIndex.ts";
  *
  * Memberships are read from WorkOS outside this object, so writes are ordered
  * by refresh reservations (`organizationRefresh`): only the latest may land.
+ * Every accepted one also feeds the membership outbox
+ * (`organizationMembershipOutbox`) in the same transaction, so what
+ * organizations are told never drifts from what this object holds.
  */
 
 type ContextRecord = Omit<SignalboxContext, "projectIds">;
@@ -79,7 +84,12 @@ export class UserContexts extends Context.Service<
      */
     readonly syncOrganizations: (
       organizations: ReadonlyArray<WorkOSOrganization>,
-    ) => Effect.Effect<void, SqlError | OrganizationRefresh.OrganizationRefreshExhaustedError>;
+    ) => Effect.Effect<
+      void,
+      | SqlError
+      | OrganizationRefresh.OrganizationRefreshExhaustedError
+      | OrganizationMembershipOutbox.OrganizationMembershipSnapshotError
+    >;
     /** Reserves a refresh before reading WorkOS; it retires every earlier reservation. */
     readonly reserveOrganizationRefresh: Effect.Effect<
       number,
@@ -88,12 +98,16 @@ export class UserContexts extends Context.Service<
     /**
      * Applies what reservation `sequence` read, if it's still the latest.
      * False means a newer one exists and nothing was written. True includes
-     * an unchanged snapshot, which writes nothing either.
+     * an unchanged snapshot, which still reaches the outbox. A refused
+     * snapshot writes nothing.
      */
     readonly completeOrganizationRefresh: (
       sequence: number,
       organizations: ReadonlyArray<WorkOSOrganization>,
-    ) => Effect.Effect<boolean, SqlError>;
+    ) => Effect.Effect<
+      boolean,
+      SqlError | OrganizationMembershipOutbox.OrganizationMembershipSnapshotError
+    >;
     /** The user's active membership in `organizationId`, null when they are not a member. */
     readonly membership: (
       organizationId: SignalboxContextId,
@@ -132,8 +146,6 @@ export const addRoleSlugs = Effect.gen(function* () {
   yield* sql`ALTER TABLE organizations ADD COLUMN role_slugs TEXT NOT NULL DEFAULT '[]'`;
 });
 
-const RoleSlugs = Schema.fromJsonString(Schema.Array(Schema.String));
-const encodeRoleSlugs = Schema.encodeSync(RoleSlugs);
 const OrganizationRow = Schema.Struct({
   id: SignalboxContextId,
   name: Schema.String,
@@ -143,12 +155,6 @@ const decodeOrganizationRows = Schema.decodeUnknownSync(Schema.Array(Organizatio
 const decodeMembershipRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ role_slugs: Schema.NullOr(RoleSlugs), revision: Schema.Number })),
 );
-
-/** One spelling per set of slugs, so comparing them is comparing strings. */
-const normalRoleSlugs = (organization: WorkOSOrganization) =>
-  encodeRoleSlugs(
-    [...new Set(organization.roleSlugs ?? [])].filter((slug) => slug.length > 0).toSorted(),
-  );
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -236,9 +242,23 @@ const make = Effect.gen(function* () {
 
   const reserve = OrganizationRefresh.reserve.pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
+  /**
+   * Lands accepted reservation `sequence`. The outbox runs even when the
+   * memberships are unchanged: it may never have seen them. Run inside the
+   * transaction that ordered it, so a refused snapshot undoes both.
+   */
+  const acceptOrganizations = (sequence: number, orgs: ReadonlyArray<WorkOSOrganization>) =>
+    Effect.gen(function* () {
+      const changedContexts = yield* replaceOrganizations(orgs);
+      yield* OrganizationMembershipOutbox.syncSnapshot(sequence, orgs).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
+      return changedContexts;
+    });
+
   const syncOrganizations: UserContexts["Service"]["syncOrganizations"] = (orgs) =>
     sql
-      .withTransaction(Effect.andThen(reserve, replaceOrganizations(orgs)))
+      .withTransaction(Effect.flatMap(reserve, (sequence) => acceptOrganizations(sequence, orgs)))
       .pipe(Effect.flatMap(publishIf), Effect.withSpan("UserContexts.syncOrganizations"));
 
   const reserveOrganizationRefresh: UserContexts["Service"]["reserveOrganizationRefresh"] =
@@ -256,7 +276,7 @@ const make = Effect.gen(function* () {
             Effect.provideService(SqlClient.SqlClient, sql),
           );
           if (!latest) return null;
-          return yield* replaceOrganizations(orgs);
+          return yield* acceptOrganizations(sequence, orgs);
         }),
       )
       .pipe(
