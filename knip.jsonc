@@ -101,6 +101,7 @@
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
         "infra/isolateProbe/alchemy.run.ts!",
+        "infra/isolateProbe/ci.ts!",
         "infra/isolateProbe/worker.ts!",
         "infra/syncProbe/lunora/identity.ts",
       ],

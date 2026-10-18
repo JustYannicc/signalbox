@@ -1,4 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - verifies the native module supplied to the Node bridge.
+import * as NodeConsole from "node:console";
 import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
+import * as NodeTimers from "node:timers";
 import { describe, expect, it } from "@effect/vitest";
 import { createNodeBridge, installNodeBridge } from "../NodeBridge.ts";
 
@@ -51,6 +54,24 @@ describe("Node builtin routing", () => {
     );
     expect(() => bridge.require("node:unreviewed")).toThrow(
       expect.objectContaining({ code: "NODE_BUILTIN_UNKNOWN" }),
+    );
+  });
+
+  it("console routing preserves the supplied export and fails closed when absent", () => {
+    const bridge = createNodeBridge({ "node:console": NodeConsole });
+    expect(bridge.require("console")).toBe(NodeConsole);
+    expect(bridge.require("node:console")).toBe(NodeConsole);
+    expect(() => createNodeBridge({}).require("node:console")).toThrow(
+      expect.objectContaining({ code: "NODE_BUILTIN_UNAVAILABLE" }),
+    );
+  });
+
+  it("timer routing preserves native aliases and stays unavailable until installed", () => {
+    const bridge = createNodeBridge({ "node:timers": NodeTimers });
+    expect(bridge.require("timers")).toBe(NodeTimers);
+    expect(bridge.require("node:timers")).toBe(NodeTimers);
+    expect(() => createNodeBridge({}).require("node:timers")).toThrow(
+      expect.objectContaining({ code: "NODE_BUILTIN_UNAVAILABLE" }),
     );
   });
 

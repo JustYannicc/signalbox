@@ -2,6 +2,15 @@
 name: Isolate limits probe
 
 on:
+  workflow_dispatch:
+    inputs:
+      releaseTag:
+        description: Frozen pristine R4 control archive
+        required: true
+        type: choice
+        default: probe-1057-r4-5459d40b
+        options:
+          - probe-1057-r4-5459d40b
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -19,6 +28,7 @@ env:
 jobs:
   isolate-probe:
     if: >-
+      github.event_name == 'pull_request' &&
       github.event.pull_request.user.login == github.repository_owner &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -90,5 +100,76 @@ jobs:
           path: |
             ${{ runner.temp }}/isolate-local.json
             ${{ runner.temp }}/deployed.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  pristine-r4-profile:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: cloud-preview
+    permissions:
+      # Draft release assets require push visibility. This grant is limited to owner dispatch on main.
+      contents: write
+    concurrency:
+      group: isolate-probe-pristine-r4
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RELEASE_TAG: ${{ inputs.releaseTag }}
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        id: setup
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+              - --filter=@t3tools/monorepo
+
+      - name: Test CI capture lifecycle
+        working-directory: apps/cloud
+        run: ../../node_modules/.bin/vp test run --config ../../vite.config.ts infra/isolateProbe/ci*.test.ts --maxWorkers=2
+
+      - name: Typecheck CI capture
+        run: ./node_modules/.bin/tsc-rs --noEmit -p apps/cloud/infra/isolateProbe/tsconfig.ci.json
+
+      - name: Make a short-lived probe credential
+        shell: bash
+        run: |
+          secret="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
+          echo "::add-mask::$secret"
+          echo "PROBE_SECRET=$secret" >> "$GITHUB_ENV"
+
+      - name: Run five sequential pristine cold controls and capture profiles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types apps/cloud/infra/isolateProbe/ci.ts
+
+      - name: Recover cleanup of all owned Workers and namespaces
+        if: always() && steps.setup.outcome == 'success'
+        run: node --experimental-strip-types apps/cloud/infra/isolateProbe/ci.ts --cleanup
+
+      - name: Upload pristine control and supervisor profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolate-probe-pristine-r4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pristine-r4-evidence/
           if-no-files-found: warn
           retention-days: 14
