@@ -32,11 +32,6 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
 
-  // Waiting on you: approvals, questions and secret requests.
-  "threads.respond": gap("#410"),
-  "threads.dismissQuestion": gap("#410"),
-  "secrets.answer": gap("#410"),
-
   // The rest of a thread's lifecycle.
   "threads.delete": gap("#439"),
   "threads.snooze": gap("#439"),

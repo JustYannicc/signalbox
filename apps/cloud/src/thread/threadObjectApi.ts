@@ -10,6 +10,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
+import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -35,6 +36,7 @@ export const makeThreadObjectApi = (
       | ThreadEngine.ThreadEngine
       | TurnReports
       | ThreadBrowsing
+      | ThreadSecretRequests
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
     >,
@@ -72,6 +74,18 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    answerSecret: async (actor, input) => {
+      const result = await run(
+        ThreadSecretRequests.use((service) =>
+          service.answer(actor, wire.secretAnswer.decode(input)),
+        ).pipe(
+          Effect.as(null),
+          Effect.catchTags({ SecretRequestError: (error) => Effect.succeed(error.reason) }),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
     commandOutput: (actor, input) =>
       run(
         engine.use((service) =>
