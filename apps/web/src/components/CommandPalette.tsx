@@ -6,6 +6,7 @@ import { useAutomationPaletteItems } from "./automations/automationPaletteItems"
 import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
 import { useSidebarViewPaletteItems } from "./sidebar/sidebarViewCommands";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems"; // signalbox: notes
+import { useThreadPinPaletteAction } from "./chat/threadPinPaletteAction"; // signalbox: cloud pin
 import { QUICK_CAPTURE_PALETTE_ITEM } from "./capture/capturePaletteItems"; // signalbox: quick capture
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
 import {
@@ -685,6 +686,11 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const threadPinPalette = useThreadPinPaletteAction(
+    activeThread,
+    activeThreadServerConfig?.environment.capabilities.threadPinning === true,
+    setOpen,
+  ); // signalbox: cloud pin
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1967,6 +1973,8 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push(...threadPinPalette.items); // signalbox: cloud pin
 
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"
@@ -3283,6 +3291,7 @@ function OpenCommandPaletteDialog(props: {
       requestThreadFindOpen();
       return;
     }
+    if (threadPinPalette.handleKey(event, command)) return; // signalbox: cloud pin
 
     if (
       addProjectCloneFlow?.step === "repository" &&
