@@ -642,6 +642,14 @@
     "./pull-request-write-attempt": {
       "types": "./src/pullRequestWriteAttempt.ts",
       "default": "./src/pullRequestWriteAttempt.ts"
+    },
+    "./observability/action-timing": {
+      "types": "./src/observability/actionTiming.ts",
+      "default": "./src/observability/actionTiming.ts"
+    },
+    "./observability/action-timing-queue": {
+      "types": "./src/observability/actionTimingQueue.ts",
+      "default": "./src/observability/actionTimingQueue.ts"
     }
   },
   "scripts": {
