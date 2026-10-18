@@ -34,6 +34,7 @@ import * as TurnModels from "./TurnModels.ts";
 
 export type TerminalOutboxRequirement = TerminalOutbox.TerminalOutbox;
 export type ThreadTerminalsRequirement = ThreadTerminals.ThreadTerminals;
+export type ThreadRunnerRequirement = ThreadRunner.ThreadRunner;
 
 export const layerCloudTerminals = CloudTerminalsLayer.layer;
 export { CONNECT_TIMEOUT_MS };

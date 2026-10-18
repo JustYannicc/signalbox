@@ -72,7 +72,6 @@ import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
 import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
-import type * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as ThreadPulls from "./thread/ThreadPulls.ts";
 import * as ModelManifest from "./models/ModelManifest.ts";
 import * as ModelCatalog from "./models/ModelCatalog.ts";
@@ -413,7 +412,7 @@ export const makeMemoryCloud = (
           A,
           E,
           | ThreadEngine.ThreadEngine
-          | ThreadRunner.ThreadRunner
+          | TerminalTesting.ThreadRunnerRequirement
           | ThreadStore.ThreadStore
           | TerminalTesting.TerminalOutboxRequirement
           | UserDirectory.UserDirectory
@@ -520,7 +519,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
-        | ThreadRunner.ThreadRunner
+        | TerminalTesting.ThreadRunnerRequirement
         | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore
         | TerminalTesting.TerminalOutboxRequirement
@@ -614,7 +613,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
-        | ThreadRunner.ThreadRunner
+        | TerminalTesting.ThreadRunnerRequirement
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | ThreadBrowsing.ThreadBrowsing
@@ -648,8 +647,10 @@ export const makeMemoryCloud = (
         threadFor(threadId).run(ThreadStore.ThreadStore.use((store) => Effect.orDie(store.owner))),
       ),
     /** Runs an effect against one thread's actual Runner service. */
-    threadRun: <A, E>(threadId: string, effect: Effect.Effect<A, E, ThreadRunner.ThreadRunner>) =>
-      Effect.promise(() => threadFor(threadId).run(effect)),
+    threadRun: <A, E>(
+      threadId: string,
+      effect: Effect.Effect<A, E, TerminalTesting.ThreadRunnerRequirement>,
+    ) => Effect.promise(() => threadFor(threadId).run(effect)),
     /** The 1Password Environments a thread's turns get, top level first. */
     threadSecrets: (threadId: string) =>
       Effect.promise(() =>
