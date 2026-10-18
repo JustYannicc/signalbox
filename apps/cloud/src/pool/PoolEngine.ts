@@ -328,6 +328,10 @@ const migrations = Migrator.fromRecord({
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE logged_out_accounts (name TEXT PRIMARY KEY)`;
   }),
+  "0013_pending_account_logout": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE logged_out_accounts ADD COLUMN pending INTEGER NOT NULL DEFAULT 0`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -662,7 +666,7 @@ const make = Effect.gen(function* () {
       const known = new Map(cached.map((account) => [account.name, account]));
       for (const account of live) {
         // A fresh credential for this name completes reauthentication.
-        yield* sql`DELETE FROM logged_out_accounts WHERE name = ${account.name}`;
+        yield* sql`DELETE FROM logged_out_accounts WHERE name = ${account.name} AND pending = 0`;
         const before = known.get(account.name);
         if (
           before !== undefined &&
@@ -1270,11 +1274,17 @@ const make = Effect.gen(function* () {
       }
       // CLIProxyAPI invalidates its runtime session when its credential is removed.
       // Keep the pool account and attribution, so logout is distinct from removing it.
-      if (credential !== undefined) yield* CliProxyApi.removeAccount(endpoint, name);
+      if (credential !== undefined) {
+        // A lost DELETE reply must not let refresh discard the row needed for a retry.
+        yield* sql`INSERT INTO logged_out_accounts (name, pending) VALUES (${name}, 1)
+          ON CONFLICT (name) DO UPDATE SET pending = 1`;
+        yield* CliProxyApi.removeAccount(endpoint, name);
+      }
       const now = yield* Clock.currentTimeMillis;
       yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* sql`INSERT INTO logged_out_accounts (name) VALUES (${name}) ON CONFLICT DO NOTHING`;
+          yield* sql`INSERT INTO logged_out_accounts (name, pending) VALUES (${name}, 0)
+            ON CONFLICT (name) DO UPDATE SET pending = 0`;
           yield* sql`UPDATE accounts SET signed_out = 1 WHERE name = ${name}`;
           yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
           yield* audit(actor, "logout-account", name);
@@ -1287,7 +1297,8 @@ const make = Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
       yield* refuseIfLinked(row);
       const endpoint = endpointOf(row);
-      const loggedOut = yield* sql`SELECT 1 FROM logged_out_accounts WHERE name = ${name}`;
+      const loggedOut = yield* sql`SELECT 1 FROM logged_out_accounts WHERE name = ${name}
+        AND pending = 0`;
       if (loggedOut.length > 0) {
         if (action !== "remove") return yield* reject("Sign in to this account again first.");
         yield* sql.withTransaction(
@@ -1296,8 +1307,10 @@ const make = Effect.gen(function* () {
             yield* sql`DELETE FROM accounts WHERE name = ${name}`;
           }),
         );
-      } else if (action === "remove") yield* CliProxyApi.removeAccount(endpoint, name);
-      else yield* CliProxyApi.setAccountDisabled(endpoint, name, action === "pause");
+      } else if (action === "remove") {
+        yield* CliProxyApi.removeAccount(endpoint, name);
+        yield* sql`DELETE FROM logged_out_accounts WHERE name = ${name}`;
+      } else yield* CliProxyApi.setAccountDisabled(endpoint, name, action === "pause");
       yield* audit(actor, `${action}-account`, name);
       yield* refreshAccounts(row).pipe(Effect.ignore);
     });
