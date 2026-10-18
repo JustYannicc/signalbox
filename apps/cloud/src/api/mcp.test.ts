@@ -134,6 +134,21 @@ const connect = connectWithScopes([
 ]);
 
 describe("Signalbox's MCP", () => {
+  it.effect("refuses provider auth responses even for a provider-management agent key", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connectWithScopes(["providers:manage"]);
+      const result = yield* tool("signalbox_call", {
+        operation: "provider.auth.respond",
+        input: {
+          instanceId: "claude-pool-personal",
+          flowId: "flow",
+          interactionId: "interaction",
+          response: { type: "browser", action: "accept" },
+        },
+      });
+      expect(result.isError).toBe(true);
+    }),
+  );
   it.effect("serves pool advice through an authorized agent key", () =>
     Effect.gen(function* () {
       const { tool } = yield* connectWithScopes(["providers:manage"]);

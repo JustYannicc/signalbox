@@ -273,6 +273,7 @@ export const PullRequestCapabilities = Schema.Struct({
   search: Schema.Boolean,
   reactions: Schema.optional(Schema.Boolean),
   viewedFiles: Schema.optional(PullRequestViewedFilesStore),
+  viewedFilesInCommitDiff: Schema.optional(Schema.Boolean),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   edit: Schema.optional(PullRequestEditCapabilities),
@@ -698,6 +699,8 @@ const MAX_FILES_VIEWED_PRESSES = 500;
 
 export const PullRequestSetFilesViewedInput = Schema.Struct({
   ...PullRequestRef.fields,
+  /** The immutable diff the reader saw when marking files; cloud rejects stale marks. */
+  displayedRevision: Schema.optional(PullRequestDiffRevision),
   files: Schema.Array(
     Schema.Struct({
       path: FilePath,
@@ -734,6 +737,24 @@ export const PullRequestOperationId = TrimmedNonEmptyString.check(Schema.isMaxLe
       "Required by Cloud for comment, review, and thread-reply writes. Reuse it when retrying the exact same write.",
   },
 );
+
+/** An explicit guide generation attempt can be retried without starting another run. */
+export const PullRequestGenerateReviewGuideInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  operationId: Schema.optional(
+    PullRequestOperationId.annotate({
+      description:
+        "Required by Cloud. Reuse it when retrying the exact same guide-generation request.",
+    }),
+  ),
+  headSha: Schema.optional(
+    PullRequestReviewHeadSha.annotate({
+      description:
+        "Required by Cloud. Generate a guide for this reviewed head SHA, from pullRequests.reviewGuide or pullRequests.detail.",
+    }),
+  ),
+});
+export type PullRequestGenerateReviewGuideInput = typeof PullRequestGenerateReviewGuideInput.Type;
 
 export const PullRequestCommentInput = Schema.Struct({
   operationId: Schema.optional(PullRequestOperationId),

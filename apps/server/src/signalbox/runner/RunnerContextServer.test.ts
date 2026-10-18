@@ -349,6 +349,8 @@ describe("context server (#141)", () => {
         "drive_diff",
         "list_drives",
         "read_drive_file",
+        "t3_ask_list",
+        "t3_ask_read",
         "read_pr",
       ]);
 
@@ -521,6 +523,9 @@ describe("context server (#141)", () => {
       ).toEqual([
         "push",
         "create_pr",
+        "t3_ask_raise",
+        "t3_ask_answer",
+        "t3_ask_withdraw",
         "edit_pr",
         "comment_pr",
         "reply_to_pr_review",

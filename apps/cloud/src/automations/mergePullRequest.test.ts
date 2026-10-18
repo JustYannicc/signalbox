@@ -187,6 +187,7 @@ export default workflow(async (w) => {
         yield* cloud.settle;
         const ask = (yield* getRun(waitId)).steps.find((step) => step.verb === "ask");
         expect(ask?.status).toBe("waiting");
+        expect(ask?.commonAsk?.kind).toBe("ready");
         const [shown] = (ask?.args ?? []) as ReadonlyArray<{ readonly question?: string }>;
         expect(shown?.question).toBe(
           [

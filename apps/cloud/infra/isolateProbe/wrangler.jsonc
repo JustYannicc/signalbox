@@ -1,0 +1,14 @@
+{
+  "name": "signalbox-isolate-probe-local",
+  "main": "generated/worker.js",
+  "no_bundle": true,
+  "find_additional_modules": true,
+  "base_dir": "generated",
+  "rules": [{ "type": "ESModule", "globs": ["**/*.js"], "fallthrough": true }],
+  "compatibility_date": "2026-10-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "durable_objects": { "bindings": [{ "name": "PROBE", "class_name": "ProbeSession" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ProbeSession"] }],
+  "vars": { "PROBE_SECRET": "local-probe-only" },
+}

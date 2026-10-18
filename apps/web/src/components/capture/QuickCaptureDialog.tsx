@@ -41,13 +41,16 @@ import { shouldHandleComposerAttachmentPaste } from "../chat/composerAttachmentF
 import { Kbd, KbdGroup } from "../ui/kbd";
 import { toastManager } from "../ui/toast";
 import type { CaptureFile } from "./captureAttachments";
-import { captureDestinations, type CaptureDestination } from "./captureDestinations";
+import {
+  captureDestinations,
+  type CaptureDestination,
+} from "@t3tools/client-runtime/capture/destinations";
 import {
   findFolderTrigger,
   isOpenDraftShortcut,
   rankByLabel,
   removeTriggerText,
-} from "./captureText";
+} from "@t3tools/client-runtime/capture/text";
 import { closeQuickCapture, useQuickCaptureStore } from "./quickCaptureStore";
 import { useSaveCapture } from "./useSaveCapture";
 

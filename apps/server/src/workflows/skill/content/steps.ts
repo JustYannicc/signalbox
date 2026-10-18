@@ -94,7 +94,7 @@ Runs a top-level function from this file in Node on a GitHub Actions runner of t
 | \`w.hook(label)\` | \`{ hookId, url, path }\` | A callback link to hand to someone else (a payment provider's "notify me" URL, a form). A request to it is a \`hook.called\` event: \`w.waitFor("Wait for the payment", { on: "hook.called", where: { hookId: link.hookId } })\` gets its \`body\`, \`method\` and \`query\`. \`url\` is null until the server has a public address; \`path\` is relative to it. It stops answering when the run ends. |
 | \`w.recall(label, key)\` | the stored value or null | Memory across runs: cursors, already-handled ids. |
 | \`w.remember(label, key, value)\` | null | Store it. |
-| \`w.start(label, automationName, input?)\` | \`{ runId }\` | Start another automation in the same project (at most 5 deep), or a built-in by its name. |
+| \`w.start(automationName, input?, { wait? }?)\` | the child's output; \`{ runId }\` when \`wait: false\` | Run a block and wait for its output. Names resolve in this folder, its parents, then built-ins. \`{ wait: false }\` starts it without waiting. A child failure fails the step. Access cannot exceed the parent's; nesting stops at 5. |
 
 ## Starting over
 
