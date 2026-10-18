@@ -46,7 +46,7 @@ function resolveCommit(root: string, ref: string, label: string): string {
   } catch {
     const repair =
       label === "upstream"
-        ? "Fetch T3 Code with `git fetch t3code main:refs/remotes/upstream/main`."
+        ? "Fetch the upstream repository with `git fetch t3code main:refs/remotes/upstream/main`."
         : `Fetch the ${label} commit and pass its ref with --${label}.`;
     throw new Error(`Cannot resolve ${label} ref "${ref}" as a commit. ${repair}`);
   }
@@ -75,7 +75,7 @@ export function check(root: string, options: CheckOptions): Report {
   } catch {
     throw new Error(
       `No merge base exists between candidate "${options.head}" and upstream "${options.upstream}". ` +
-        "Fetch T3 Code into refs/remotes/upstream/main and check that the candidate shares Signalbox's upstream history.",
+        "Fetch the upstream repository into refs/remotes/upstream/main and check that the candidate shares Signalbox's upstream history.",
     );
   }
 
@@ -85,6 +85,14 @@ export function check(root: string, options: CheckOptions): Report {
   const added = [...headFiles].filter((path) => !baseFiles.has(path)).sort();
   const violations = added.filter((path) => !upstreamFiles.has(path));
   return { mergeBase, added, violations };
+}
+
+function escapeAnnotationData(value: string): string {
+  return value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+}
+
+function escapeAnnotationProperty(value: string): string {
+  return escapeAnnotationData(value).replaceAll(":", "%3A").replaceAll(",", "%2C");
 }
 
 function main(argv: ReadonlyArray<string>) {
@@ -114,9 +122,11 @@ function main(argv: ReadonlyArray<string>) {
   );
   for (const path of report.violations) {
     const message =
-      `${path}: numbered server migrations must come from T3 Code; ` +
+      `${path}: numbered server migrations must come from the upstream repository; ` +
       "use CREATE TABLE IF NOT EXISTS for fork-owned tables.";
-    console.error(`::error file=${path},title=Fork-only server migration::${message}`);
+    console.error(
+      `::error file=${escapeAnnotationProperty(path)},title=Fork-only server migration::${escapeAnnotationData(message)}`,
+    );
   }
   if (report.violations.length > 0) process.exitCode = 1;
 }

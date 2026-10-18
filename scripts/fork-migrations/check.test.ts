@@ -111,6 +111,30 @@ describe("fork server migration check", () => {
   it("fails with fetch instructions when a required ref is missing", () => {
     expect(() => runCheck({ base: "origin/missing" })).toThrow(/pass its ref with --base/);
     expect(() => runCheck({ head: "missing-head" })).toThrow(/pass its ref with --head/);
-    expect(() => runCheck({ upstream: "upstream/missing" })).toThrow(/Fetch T3 Code/);
+    expect(() => runCheck({ upstream: "upstream/missing" })).toThrow(
+      /Fetch the upstream repository/,
+    );
+  });
+
+  // Windows forbids the filename characters needed to reproduce Actions command injection.
+  it.skipIf(process.platform === "win32")("escapes filenames in CLI workflow annotations", () => {
+    const path = `${MIGRATIONS}/063_Fork%\r\n::notice title=filename::injected-notice\n,colon:.ts`;
+    write(path);
+    const script = NodePath.join(repo, "scripts/fork-migrations/check.ts");
+    NodeFS.mkdirSync(NodePath.dirname(script), { recursive: true });
+    NodeFS.copyFileSync(NodePath.join(import.meta.dirname, "check.ts"), script);
+    commit("add a migration with workflow command characters");
+
+    const result = NodeChildProcess.spawnSync(process.execPath, [script, "--base", "origin/main"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    const annotations = result.stderr.split(/\r?\n/).filter((line) => line.startsWith("::"));
+    expect(annotations).toHaveLength(1);
+    expect(annotations[0]).toContain("063_Fork%25%0D%0A%3A%3Anotice title=filename%3A%3A");
+    expect(annotations[0]).toContain("%0A%2Ccolon%3A.ts,title=");
+    expect(annotations[0]).toContain("063_Fork%25%0D%0A::notice title=filename::");
   });
 });
