@@ -186,6 +186,10 @@ describe("Catalog HomeObject in workerd", () => {
     await expect(personal.view(guest, query)).rejects.toThrow();
     await expect(personal.change(guest, removal, "self-revoke")).rejects.toThrow();
     await waitForFenceAck(env, homeKey, 2);
+    expect(await (await requestHome(env, homeKey, "/test/epochs")).json()).toEqual({
+      savedEpoch: 2,
+      nativeEpoch: 2,
+    });
     await expect(personal.change(guest, removal, "self-revoke")).rejects.toThrow();
   });
 
@@ -266,6 +270,10 @@ describe("Catalog HomeObject in workerd", () => {
         "socket-revoke",
       );
       await waitForFenceAck(env, homeKey, 2);
+      expect(await (await requestHome(env, homeKey, "/test/epochs")).json()).toEqual({
+        savedEpoch: 2,
+        nativeEpoch: 2,
+      });
       expect(await revoked).toMatchObject({ code: "FORBIDDEN" });
       socket.subscribe("reconnect");
       expect(await socket.waitFor("reconnect", "error")).toMatchObject({ code: "FORBIDDEN" });

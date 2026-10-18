@@ -1,18 +1,47 @@
 import { HomeObject as CatalogHomeObject } from "../HomeObject.ts";
 import type { ShardDOState } from "lunorash/do";
 import type { ScheduleRecord } from "@lunora/scheduler";
-import { CatalogScheduler as NativeCatalogScheduler } from "../catalogScheduler.ts";
+import {
+  CatalogScheduler as NativeCatalogScheduler,
+  type CatalogSchedulerEnv,
+} from "../catalogScheduler.ts";
 
-let recoveryPaused = true;
 export class CatalogScheduler extends NativeCatalogScheduler {
-  protected override dispatch(record: ScheduleRecord) {
-    return recoveryPaused ? Promise.resolve(false) : super.dispatch(record);
+  private gate: ReturnType<typeof Promise.withResolvers<void>> | undefined =
+    Promise.withResolvers<void>();
+  private readonly active = new Set<Promise<boolean | "in-progress">>();
+
+  protected override async dispatch(record: ScheduleRecord) {
+    while (this.gate !== undefined) await this.gate.promise;
+    const pending = super.dispatch(record);
+    this.active.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.active.delete(pending);
+    }
+  }
+
+  override async fetch(request: Request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/test/pause") {
+      this.gate ??= Promise.withResolvers<void>();
+      await Promise.all(this.active);
+      return new Response(null, { status: 204 });
+    }
+    if (path === "/test/resume") {
+      const gate = this.gate;
+      this.gate = undefined;
+      gate?.resolve();
+      return new Response(null, { status: 204 });
+    }
+    return super.fetch(request);
   }
 }
 
 export class HomeObject extends CatalogHomeObject {
   private readonly testStorage: DurableObjectStorage;
-  private acknowledgments = 0;
+  private readonly acknowledgments = new Set<string>();
   private readonly acknowledgmentWaiters = new Set<() => void>();
 
   constructor(state: ShardDOState, env: unknown) {
@@ -46,7 +75,7 @@ export class HomeObject extends CatalogHomeObject {
       if (!Number.isSafeInteger(count) || count < 1) return new Response(null, { status: 400 });
       return new Promise<Response>((resolve) => {
         const check = () => {
-          if (this.acknowledgments < count) return;
+          if (this.acknowledgments.size < count) return;
           this.acknowledgmentWaiters.delete(check);
           resolve(new Response(null, { status: 204 }));
         };
@@ -55,7 +84,7 @@ export class HomeObject extends CatalogHomeObject {
       });
     }
     if (path === "/_lunora/delivery-fence" && (await this.testStorage.get("test:block-fences"))) {
-      return new Response("Injected fence installation failure", { status: 503 });
+      return new Response(null, { status: 503 });
     }
     const envelope: unknown = path === "/rpc" ? await request.clone().json() : null;
     const response = await super.fetch(request);
@@ -64,16 +93,21 @@ export class HomeObject extends CatalogHomeObject {
       response.status === 204 &&
       (await this.testStorage.get("test:lose-fence-ack"))
     ) {
-      return new Response("Injected loss after native fence commit", { status: 503 });
+      return new Response(null, { status: 503 });
     }
     if (
       response.status === 200 &&
       typeof envelope === "object" &&
       envelope !== null &&
       "functionPath" in envelope &&
-      envelope.functionPath === "personalRecovery:sync_acknowledgeFence"
+      envelope.functionPath === "personalRecovery:sync_acknowledgeFence" &&
+      "args" in envelope &&
+      typeof envelope.args === "object" &&
+      envelope.args !== null &&
+      "receipt" in envelope.args &&
+      typeof envelope.args.receipt === "string"
     ) {
-      this.acknowledgments++;
+      this.acknowledgments.add(envelope.args.receipt);
       for (const check of this.acknowledgmentWaiters) check();
     }
     return response;
@@ -81,11 +115,12 @@ export class HomeObject extends CatalogHomeObject {
 }
 
 export default {
-  fetch: (request: Request) => {
+  fetch: (request: Request, env: CatalogSchedulerEnv) => {
     const path = new URL(request.url).pathname;
     if (path === "/test/recovery/pause" || path === "/test/recovery/resume") {
-      recoveryPaused = path.endsWith("pause");
-      return new Response(null, { status: 204 });
+      return env.CATALOG_SCHEDULER.get(env.CATALOG_SCHEDULER.idFromName("default")).fetch(
+        new Request(`https://test/test/${path.endsWith("pause") ? "pause" : "resume"}`),
+      );
     }
     return new Response("No public Catalog route", { status: 404 });
   },
