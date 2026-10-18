@@ -8,7 +8,11 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import type { GitHubPullRequestSummary } from "@t3tools/source-control-github/server/gitHubPullRequestJson";
+import type {
+  GitHubPullRequestCore,
+  GitHubPullRequestSummary,
+} from "@t3tools/source-control-github/server/gitHubPullRequestJson";
+import type { SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -137,6 +141,7 @@ const threadShell = (
 const makeFixture = () => {
   const state = {
     userId: "owner",
+    role: "owner" as SignalboxDriveRole | null,
     token: "token-A",
     accountId: "account-A",
     repository: "Acme/Web",
@@ -204,7 +209,7 @@ const makeFixture = () => {
     drives: Effect.succeed([]),
     changes: Stream.empty,
     changed: Stream.empty,
-    access: () => Effect.succeed("owner"),
+    access: () => Effect.sync(() => state.role),
   });
   const canSee: CloudThreadService["Service"]["canSee"] = (actor, id) =>
     Effect.sync(() => {
@@ -263,6 +268,67 @@ describe("CloudPullRequests", () => {
         }),
       );
   });
+
+  it.effect(
+    "offers collaboration controls only with current folder authority and keeps author reviews honest",
+    () => {
+      const fixture = makeFixture();
+      const { stack: _stack, ...summary } = summaryValue("Review me");
+      const core: GitHubPullRequestCore = {
+        ...summary,
+        authorId: "actor-1",
+        createdAt: "2026-10-17T10:00:00.000Z",
+        updatedAt: "2026-10-17T10:00:00.000Z",
+        reviewRequestLogins: [],
+        hasTeamReviewRequest: false,
+        reviewRequestTeams: [],
+        labels: [],
+        headRepositoryOwner: "acme",
+        headSha: "a".repeat(40),
+        body: "A change.",
+        checks: [],
+        comparison: null,
+        checksTruncated: false,
+        viewerAccess: {
+          canWrite: false,
+          canTriage: false,
+          canUpdate: true,
+          didAuthor: true,
+          mergeCapabilities: { merge: false, squash: false, rebase: false },
+        },
+      };
+      vi.mocked(Review.pullRequestDetail).mockReturnValue(Effect.succeed(core));
+      return Effect.gen(function* () {
+        const service = yield* CloudPullRequests.CloudPullRequests;
+        const authored = yield* service.detail(reference());
+        expect(authored.capabilities).toMatchObject({
+          comment: true,
+          reactions: true,
+          edit: { comment: true },
+          review: { inlineComment: true, reply: true, resolve: true },
+        });
+        expect(authored.viewerPermissions).toMatchObject({
+          comment: true,
+          resolve: true,
+          verdicts: ["comment"],
+        });
+        fixture.state.role = "viewer";
+        const readonly = yield* service.detail(reference());
+        expect(readonly.capabilities).toMatchObject({
+          comment: false,
+          reactions: false,
+          edit: { comment: false },
+          review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+        });
+        expect(readonly.viewerPermissions).toMatchObject({
+          comment: false,
+          resolve: false,
+          verdicts: [],
+        });
+        expect(Review.pullRequestDetail).toHaveBeenCalledTimes(1);
+      }).pipe(Effect.provide(fixture.layer));
+    },
+  );
 
   it.effect(
     "filters linked threads through current access and includes visible archived threads",

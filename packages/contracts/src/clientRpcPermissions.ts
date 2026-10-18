@@ -34,6 +34,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.terminalClear]: AuthTerminalOperateScope,
   [WS_METHODS.terminalRestart]: AuthTerminalOperateScope,
   [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
+  [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope, // signalbox: feedback uploads require the destination's operate grant
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,

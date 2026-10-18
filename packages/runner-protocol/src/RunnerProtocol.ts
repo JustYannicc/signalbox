@@ -26,6 +26,7 @@ import { PullOperation, PullResult } from "./PullProtocol.ts";
 import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
 import { TerminalCommandMessage, TerminalReportMessage } from "./TerminalProtocol.ts";
+import { FeedbackRequest, FeedbackResponse } from "./FeedbackProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -378,6 +379,8 @@ export const RunnerHello = Schema.Struct({
   ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** Accepts one-shot provider feedback requests. Older runners must never receive them. */
+  feedback: Schema.optional(Schema.Boolean),
   workflowStops: Schema.optional(Schema.Boolean),
   /** The Runner can answer a pending native provider request. */
   runtimeResponses: Schema.optional(Schema.Boolean),
@@ -389,6 +392,7 @@ export type RunnerHello = typeof RunnerHello.Type;
 /** Runner to thread. */
 export const RunnerMessage = Schema.Union([
   RunnerHello,
+  FeedbackResponse,
   Schema.Struct({
     type: Schema.Literal("batch"),
     /** Counts from 1 within a generation, with no gaps. */
@@ -411,6 +415,7 @@ export type RunnerRefusal = typeof RunnerRefusal.Type;
 
 /** Thread to Runner. */
 export const ThreadMessage = Schema.Union([
+  FeedbackRequest,
   Schema.Struct({ type: Schema.Literal("workflow.stop"), ...WorkflowStopRequest.fields }),
   Schema.Struct({
     type: Schema.Literal("welcome"),
