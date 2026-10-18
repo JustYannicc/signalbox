@@ -150,9 +150,8 @@ export function SignInScreen({
       setWaitingOn(screenHint);
     } catch (error) {
       setNotice(error instanceof AccountFlowError ? error.code : "failed");
-    } finally {
-      setDesktopPending(null);
     }
+    setDesktopPending(null);
   };
 
   if (verifyRequest) return <VerifyEmailScreen request={verifyRequest} />;

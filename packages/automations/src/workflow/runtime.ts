@@ -271,6 +271,7 @@ export function defineAutomationRun(Base: EntrypointClass, load: LoadAutomation)
           notify: verb("notify"),
           sleep: verb("sleep"),
           waitFor: verb("waitFor"),
+          eventCursor: verb("eventCursor"),
           hook: verb("hook"),
           recall: verb("recall"),
           remember: verb("remember"),

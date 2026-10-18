@@ -1,5 +1,6 @@
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type { RunnerHello } from "@signalbox/runner-protocol/RunnerProtocol";
+import { CommandId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -95,6 +96,216 @@ const idle = (
   });
 
 describe("durable thread pull", () => {
+  it.effect("permits an in-flight pull save before reconnect replay is dispatched", () =>
+    withFixture((f) =>
+      withObject(
+        f.database,
+        (engine, runner, context) =>
+          Effect.gen(function* () {
+            const machine = yield* idle(engine, runner);
+            const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+            const state = Context.get(context, PullState.PullState);
+            yield* pulls.begin(owner, {
+              driveId: DRIVE,
+              operationId: "reconnecting-pull",
+              target: f.target,
+              branch: worktree.branch,
+            });
+            const work = yield* runner.work;
+            yield* runner.disconnected({
+              generation: machine.generation,
+              connection: 1,
+              detail: "1006",
+            });
+            expect((yield* runner.hello(hello(machine.generation, machine.token)))._tag).toBe(
+              "welcome",
+            );
+            expect(yield* state.pending).toMatchObject({ phase: "selected", attempts: 1 });
+            expect(yield* runner.authorizeDrive(work.pull!.drive.token)).toMatchObject({
+              _tag: "granted",
+              pullOperationId: "reconnecting-pull",
+            });
+          }),
+        { drives: true, driveDirectory: f.directory },
+      ),
+    ),
+  );
+
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s finishes a pending pull, then saves before release despite an open preview",
+    (type) =>
+      withFixture((f) =>
+        withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              const machine = yield* idle(engine, runner);
+              const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+              yield* pulls.begin(owner, {
+                driveId: DRIVE,
+                operationId: "closing-pull",
+                target: f.target,
+                branch: worktree.branch,
+              });
+              yield* engine.dispatch(
+                owner,
+                { type, commandId: CommandId.make("close-pulling"), threadId },
+                { ...personal, worktree },
+              );
+              expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null });
+              expect((yield* runner.work).pull?.operation.id).toBe("closing-pull");
+              yield* runner.batch({
+                generation: machine.generation,
+                sequence: 2,
+                items: [
+                  {
+                    kind: "git.pull.result",
+                    result: {
+                      id: "closing-pull",
+                      target: f.target,
+                      head: f.first,
+                      wip: null,
+                      outcome: "refused",
+                      reason: "No change was made.",
+                      hasWorkingTreeChanges: false,
+                    },
+                  },
+                ],
+              });
+              const plan = yield* runner.reconcile;
+              expect(plan.release).toBeNull();
+              expect(plan.drain).toMatchObject({ generation: machine.generation });
+              yield* runner.batch({
+                generation: machine.generation,
+                sequence: 3,
+                items: [{ kind: "machine.drained", id: plan.drain!.id, unsaved: [] }],
+              });
+              expect((yield* runner.reconcile).release).toBe(machine.generation);
+              expect((yield* runner.reconcile).ensure).toBeNull();
+            }),
+          {
+            drives: true,
+            driveDirectory: f.directory,
+            previews: { held: true, lastActiveAt: null },
+          },
+        ),
+      ),
+  );
+
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s drains before an exhausted pull fences its machine",
+    (type) =>
+      withFixture((f) =>
+        withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              const machine = yield* idle(engine, runner);
+              const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+              const state = Context.get(context, PullState.PullState);
+              yield* pulls.begin(owner, {
+                driveId: DRIVE,
+                operationId: "closing-exhausted",
+                target: f.target,
+                branch: worktree.branch,
+              });
+              yield* engine.dispatch(
+                owner,
+                { type, commandId: CommandId.make("close-exhausting"), threadId },
+                { ...personal, worktree },
+              );
+              for (let attempt = 0; attempt < 3; attempt++) {
+                expect((yield* runner.work).pull?.operation.id).toBe("closing-exhausted");
+                yield* runner.batch({
+                  generation: machine.generation,
+                  sequence: 2 + attempt,
+                  items: [{ kind: "git.pull.interrupted", id: "closing-exhausted" }],
+                });
+                yield* TestClock.adjust(1_000 * 2 ** attempt);
+              }
+              const plan = yield* runner.reconcile;
+              expect(plan.release).toBeNull();
+              expect(plan.drain).toMatchObject({ generation: machine.generation });
+              expect(yield* state.pending).not.toBeNull();
+              yield* runner.batch({
+                generation: machine.generation,
+                sequence: 5,
+                items: [{ kind: "machine.drained", id: plan.drain!.id, unsaved: [] }],
+              });
+              yield* runner.disconnected({
+                generation: machine.generation,
+                connection: 1,
+                detail: "1006",
+              });
+              expect((yield* runner.reconcile).release).toBe(machine.generation);
+              expect(yield* state.pending).toBeNull();
+              expect((yield* pulls.wait(owner, "closing-exhausted")).outcome).toBe("refused");
+            }),
+          { drives: true, driveDirectory: f.directory },
+        ),
+      ),
+  );
+
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s keeps unsaved files after pull access is revoked",
+    (type) =>
+      withFixture((f) => {
+        let permitted = true;
+        return withObject(
+          f.database,
+          (engine, runner, context) =>
+            Effect.gen(function* () {
+              const machine = yield* idle(engine, runner);
+              const pulls = Context.get(context, ThreadPulls.ThreadPulls);
+              yield* pulls.begin(owner, {
+                driveId: DRIVE,
+                operationId: "closing-revoked",
+                target: f.target,
+                branch: worktree.branch,
+              });
+              const work = yield* runner.work;
+              expect(yield* runner.authorizeDrive(work.pull!.drive.token)).toMatchObject({
+                _tag: "granted",
+                pullOperationId: "closing-revoked",
+              });
+              yield* engine.dispatch(
+                owner,
+                { type, commandId: CommandId.make("close-revoked"), threadId },
+                { ...personal, worktree },
+              );
+              permitted = false;
+              const plan = yield* runner.reconcile;
+              expect(plan.release).toBeNull();
+              expect(plan.drain).toMatchObject({ generation: machine.generation });
+              yield* runner.batch({
+                generation: machine.generation,
+                sequence: 2,
+                items: [
+                  { kind: "machine.drained", id: plan.drain!.id, unsaved: ["access denied"] },
+                ],
+              });
+              const waiting = yield* runner.reconcile;
+              expect(waiting.release).toBeNull();
+              permitted = true;
+              expect(yield* runner.authorizeDrive(work.pull!.drive.token)).toMatchObject({
+                _tag: "granted",
+                pullOperationId: null,
+              });
+              yield* TestClock.adjust(waiting.wakeAt! - (yield* Clock.currentTimeMillis));
+              const retry = yield* runner.reconcile;
+              yield* runner.batch({
+                generation: machine.generation,
+                sequence: 3,
+                items: [{ kind: "machine.drained", id: retry.drain!.id, unsaved: [] }],
+              });
+              expect((yield* runner.reconcile).release).toBe(machine.generation);
+              expect((yield* pulls.wait(owner, "closing-revoked")).outcome).toBe("refused");
+            }),
+          { drives: true, driveDirectory: f.directory, writes: () => Effect.succeed(permitted) },
+        );
+      }),
+  );
+
   it.effect.each(["interrupted", "lost"] as const)(
     "ends after three %s attempts, wakes its caller and fences late saves before the next turn",
     (failure) =>

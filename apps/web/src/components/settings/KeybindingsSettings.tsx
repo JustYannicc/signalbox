@@ -17,8 +17,6 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
-  useCallback,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -581,7 +579,7 @@ function WhenExpressionBuilder({
 }) {
   const expression = whenAstToExpression(value);
   const [expressionDraft, setExpressionDraft] = useState(expression);
-  const parseResult = useMemo(() => parseWhenExpressionDraft(expressionDraft), [expressionDraft]);
+  const parseResult = parseWhenExpressionDraft(expressionDraft);
   const parseError = parseResult.ok ? null : parseResult.message;
   const unknownIdentifiers = parseResult.ok ? unknownWhenVariables(parseResult.value) : [];
 
@@ -1311,12 +1309,51 @@ function BrowserKeybindingNotice() {
   );
 }
 
+function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
+  const ids = new Map<string, string>();
+  const seen = new Set<KeybindingCommand>();
+  for (const row of rows) {
+    if (seen.has(row.command)) continue;
+    seen.add(row.command);
+    ids.set(row.id, keybindingSearchAnchorId(row.command));
+  }
+  return ids;
+}
+
+// Rows come from a hook so they are cached on the server keybindings alone. Built
+// inline, the compiler joins them to the query's cache scope (filtering might
+// mutate them), and every keystroke rebuilds and re-renders every row.
+function useKeybindingCatalog() {
+  const { environment, connectedEnvironments } = useSettingsScope();
+  const serverKeybindings = environment?.serverConfig?.keybindings;
+  const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  // signalbox: no host to pick on the one environment, and no terminal, worktree or editor
+  // commands where no connected environment can run them.
+  const showsEnvironmentUi = useShowsEnvironmentUi();
+  const isShownCommand = (command: KeybindingCommand) => {
+    const capability = keybindingCapability(command);
+    if (capability === undefined) return true;
+    if (capability === "otherEnvironments") return showsEnvironmentUi;
+    return (
+      connectedEnvironments.length === 0 ||
+      connectedEnvironments.some((target) =>
+        environmentSupports(target.serverConfig?.environment?.capabilities, capability),
+      )
+    );
+  };
+  return {
+    commandOptions: buildKeybindingCommandOptions(merged).filter(isShownCommand),
+    allRows: buildKeybindingRows(merged).filter((row) => isShownCommand(row.command)),
+  };
+}
+
 export function KeybindingsSettingsPanel() {
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
   const canOpenKeybindingsFile = useEnvironmentScope(
     primaryEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   const supportsSettingsWrite = connectedEnvironments.every((target) =>
     environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities),
   );
@@ -1331,25 +1368,16 @@ export function KeybindingsSettingsPanel() {
       environmentSupports(target.serverConfig?.environment?.capabilities, "localFilesystem"),
     );
   const canWriteSettings = useAtomValue(
-    useMemo(
-      () =>
-        Atom.make(
-          (get) =>
-            connectedEnvironments.length > 0 &&
-            connectedEnvironments.every(
-              (target) =>
-                environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities) &&
-                get(serverEnvironment.upsertKeybinding.permissionAtom(target.environmentId)) &&
-                get(serverEnvironment.removeKeybinding.permissionAtom(target.environmentId)),
-            ),
+    Atom.make(
+      (get) =>
+        connectedEnvironments.length > 0 &&
+        connectedEnvironments.every(
+          (target) =>
+            environmentCanWriteKeybindings(target.serverConfig?.environment?.capabilities) &&
+            get(serverEnvironment.upsertKeybinding.permissionAtom(target.environmentId)) &&
+            get(serverEnvironment.removeKeybinding.permissionAtom(target.environmentId)),
         ),
-      [connectedEnvironments],
     ),
-  );
-  const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
-  const keybindings = useMemo(
-    () => mergeWithDefaultKeybindings(serverKeybindings ?? []),
-    [serverKeybindings],
   );
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   // signalbox: keybindings.json only opens in an editor on a machine the user reaches.
@@ -1372,42 +1400,6 @@ export function KeybindingsSettingsPanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
-  // signalbox: no host to pick on the one environment, and no terminal, worktree or editor
-  // commands where no connected environment can run them.
-  const showsEnvironmentUi = useShowsEnvironmentUi();
-  const isShownCommand = useCallback(
-    (command: KeybindingCommand) => {
-      const capability = keybindingCapability(command);
-      if (capability === undefined) return true;
-      if (capability === "otherEnvironments") return showsEnvironmentUi;
-      return (
-        connectedEnvironments.length === 0 ||
-        connectedEnvironments.some((environment) =>
-          environmentSupports(environment.serverConfig?.environment?.capabilities, capability),
-        )
-      );
-    },
-    [connectedEnvironments, showsEnvironmentUi],
-  );
-  const rows = useMemo(
-    () =>
-      filterKeybindingRowsForEnvironment(buildKeybindingRows(keybindings, ""), query, {
-        localFilesystem: hasLocalFilesystem,
-        terminal: hasTerminal,
-      }).filter((row) => isShownCommand(row.command)),
-    [keybindings, query, isShownCommand, hasLocalFilesystem, hasTerminal],
-  );
-  const groups = useMemo(() => groupKeybindingRows(rows), [rows]);
-  const anchorIds = useMemo(() => {
-    const ids = new Map<string, string>();
-    const seen = new Set<KeybindingCommand>();
-    for (const row of rows) {
-      if (seen.has(row.command)) continue;
-      seen.add(row.command);
-      ids.set(row.id, keybindingSearchAnchorId(row.command));
-    }
-    return ids;
-  }, [rows]);
   const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
   const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
 
@@ -1415,16 +1407,16 @@ export function KeybindingsSettingsPanel() {
     setHandledSearchTargetId(searchTargetId);
     if (searchTargetId.startsWith("keybinding-")) setQuery("");
   }
-  const commandOptions = useMemo(
-    () => buildKeybindingCommandOptions(keybindings).filter(isShownCommand),
-    [keybindings, isShownCommand],
-  );
-  const whenVariables = useMemo(
-    () => availableKeybindingWhenVariables(buildWhenVariableOptions(), hasTerminal),
-    [hasTerminal],
-  );
+  const whenVariables = availableKeybindingWhenVariables(buildWhenVariableOptions(), hasTerminal);
+  const { commandOptions, allRows } = useKeybindingCatalog();
+  const rows = filterKeybindingRowsForEnvironment(allRows, query, {
+    localFilesystem: hasLocalFilesystem,
+    terminal: hasTerminal,
+  });
+  const groups = groupKeybindingRows(rows);
+  const anchorIds = keybindingAnchorIds(rows);
 
-  const openKeybindingsFile = useCallback(() => {
+  const openKeybindingsFile = () => {
     if (
       !keybindingsConfigPath ||
       !primaryEnvironment ||
@@ -1444,95 +1436,86 @@ export function KeybindingsSettingsPanel() {
         type: "error",
       });
     })();
-  }, [keybindingsConfigPath, openInPreferredEditor, primaryEnvironment]);
+  };
 
-  const saveKeybinding = useCallback(
-    (input: ServerUpsertKeybindingInput) => {
-      if (!primaryEnvironment || !canWriteSettings) return;
-      setSavingCommand(input.command);
-      const payload: ServerUpsertKeybindingInput = {
-        command: input.command,
-        key: input.key.trim(),
-        ...(input.when?.trim() ? { when: input.when.trim() } : {}),
-        ...(input.replace ? { replace: input.replace } : {}),
-      };
-      void (async () => {
-        const results = await Promise.all(
-          connectedEnvironments.map((target) =>
-            upsertKeybinding({ environmentId: target.environmentId, input: payload }),
-          ),
-        );
-        setSavingCommand(null);
-        const failed = results.find((result) => result._tag === "Failure");
-        if (!failed) {
-          setIsAddingBinding(false);
-          return;
-        }
-        if (!isAtomCommandInterrupted(failed)) {
-          const error = squashAtomCommandFailure(failed);
-          toastManager.add({
-            title: "Unable to save keybinding",
-            description: error instanceof Error ? error.message : "The keybinding was not saved.",
-            type: "error",
-          });
-        }
-      })();
-    },
-    [canWriteSettings, connectedEnvironments, primaryEnvironment, upsertKeybinding],
-  );
+  const saveKeybinding = (input: ServerUpsertKeybindingInput) => {
+    if (!primaryEnvironment || !canWriteSettings) return;
+    setSavingCommand(input.command);
+    const payload: ServerUpsertKeybindingInput = {
+      command: input.command,
+      key: input.key.trim(),
+      ...(input.when?.trim() ? { when: input.when.trim() } : {}),
+      ...(input.replace ? { replace: input.replace } : {}),
+    };
+    void (async () => {
+      const results = await Promise.all(
+        connectedEnvironments.map((target) =>
+          upsertKeybinding({ environmentId: target.environmentId, input: payload }),
+        ),
+      );
+      setSavingCommand(null);
+      const failed = results.find((result) => result._tag === "Failure");
+      if (!failed) {
+        setIsAddingBinding(false);
+        return;
+      }
+      if (!isAtomCommandInterrupted(failed)) {
+        const error = squashAtomCommandFailure(failed);
+        toastManager.add({
+          title: "Unable to save keybinding",
+          description: error instanceof Error ? error.message : "The keybinding was not saved.",
+          type: "error",
+        });
+      }
+    })();
+  };
 
-  const removeKeybinding = useCallback(
-    (row: KeybindingRow) => {
-      if (!primaryEnvironment || !canWriteSettings) return;
-      setSavingCommand(row.command);
-      void (async () => {
-        const results = await Promise.all(
-          connectedEnvironments.map((target) =>
-            removeKeybindingMutation({
-              environmentId: target.environmentId,
-              input: rowKeybindingTarget(row),
-            }),
-          ),
-        );
-        setSavingCommand(null);
-        const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
-        if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add({
-            title: "Unable to remove keybinding",
-            description: error instanceof Error ? error.message : "The keybinding was not removed.",
-            type: "error",
-          });
-        }
-      })();
-    },
-    [canWriteSettings, connectedEnvironments, primaryEnvironment, removeKeybindingMutation],
-  );
+  const removeKeybinding = (row: KeybindingRow) => {
+    if (!primaryEnvironment || !canWriteSettings) return;
+    setSavingCommand(row.command);
+    void (async () => {
+      const results = await Promise.all(
+        connectedEnvironments.map((target) =>
+          removeKeybindingMutation({
+            environmentId: target.environmentId,
+            input: rowKeybindingTarget(row),
+          }),
+        ),
+      );
+      setSavingCommand(null);
+      const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
+      if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          title: "Unable to remove keybinding",
+          description: error instanceof Error ? error.message : "The keybinding was not removed.",
+          type: "error",
+        });
+      }
+    })();
+  };
 
-  const resetKeybinding = useCallback(
-    (row: KeybindingRow) => {
-      if (!row.defaultKey) return;
-      saveKeybinding({
+  const resetKeybinding = (row: KeybindingRow) => {
+    if (!row.defaultKey) return;
+    saveKeybinding({
+      command: row.command,
+      key: row.defaultKey,
+      when: row.defaultWhen.trim().length > 0 ? row.defaultWhen : undefined,
+      replace: {
         command: row.command,
-        key: row.defaultKey,
-        when: row.defaultWhen.trim().length > 0 ? row.defaultWhen : undefined,
-        replace: {
-          command: row.command,
-          key: row.key,
-          ...(row.when.trim().length > 0 ? { when: row.when } : {}),
-        },
-      });
-    },
-    [saveKeybinding],
-  );
+        key: row.key,
+        ...(row.when.trim().length > 0 ? { when: row.when } : {}),
+      },
+    });
+  };
 
-  const cancelAdd = useCallback(() => setIsAddingBinding(false), []);
+  const cancelAdd = () => setIsAddingBinding(false);
 
   const rowActions: KeybindingRowActions = {
     readOnly: !supportsSettingsWrite,
     hasTerminal,
     hasLocalFilesystem,
-    allRows: rows,
+    allRows,
     variables: whenVariables,
     onSave: saveKeybinding,
     onReset: resetKeybinding,
@@ -1598,7 +1581,7 @@ export function KeybindingsSettingsPanel() {
           <SettingsGroup>
             <NewKeybindingSettingsRow
               commandOptions={commandOptions}
-              allRows={rows}
+              allRows={allRows}
               variables={whenVariables}
               isSaving={savingCommand !== null}
               onSave={saveKeybinding}

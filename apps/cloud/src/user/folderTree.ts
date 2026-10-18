@@ -4,6 +4,7 @@ import type {
   FolderLevel,
   FolderResolvedPool,
   FolderPhase,
+  FolderOrigin,
   OnePasswordEnvironmentId,
 } from "@t3tools/contracts/signalboxFolders";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
@@ -32,6 +33,8 @@ export interface TreeFolder {
   readonly position: number;
   /** The drive it uses as its files, if any. */
   readonly driveId: string | null;
+  /** The immutable source lineage, when this folder started from another. */
+  readonly origin?: FolderOrigin | null;
   /** Never blank: no instructions is null. */
   readonly instructions: string | null;
   /** The 1Password Environment its threads get, if any. */

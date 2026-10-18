@@ -1,6 +1,5 @@
 import {
   AuthSessionId,
-  AuthStandardClientScopes,
   type AuthEnvironmentScope,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
@@ -14,6 +13,7 @@ import * as Evlog from "../observability/Evlog.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import type { SessionRecord } from "../user/UserStore.ts";
 import * as CloudTokens from "./CloudTokens.ts";
+import { CLOUD_CLIENT_SCOPES } from "./CloudScopes.ts";
 
 /**
  * Environment sessions for the cloud: the same model a self-hosted server
@@ -33,7 +33,7 @@ export const CREDENTIAL_TTL_MS = 2 * 60 * 1000;
  * device list and pairing links) is not served by the cloud yet, so no session
  * may claim its scopes.
  */
-export const CLOUD_SESSION_SCOPES: ReadonlyArray<AuthEnvironmentScope> = AuthStandardClientScopes;
+export const CLOUD_SESSION_SCOPES: ReadonlyArray<AuthEnvironmentScope> = CLOUD_CLIENT_SCOPES;
 
 /** Session subjects follow the self-hosted account convention. */
 export const ACCOUNT_SUBJECT_PREFIX = "account:";

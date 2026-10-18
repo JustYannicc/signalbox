@@ -39,6 +39,7 @@ export interface ThreadRunSummary {
   readonly status: OrchestrationV2RunStatus;
   readonly requestedAt: string | null;
   readonly startedAt: string | null;
+  readonly workStartedAt?: string | null;
   readonly completedAt: string | null;
   readonly assistantMessageId: MessageId | null;
   readonly sourcePlanRef?: {
@@ -299,22 +300,23 @@ export function resolveThreadProviderStack(
 }
 
 /**
- * Both shell and detail timers count from the activity-owning run's work
- * start, never last activity. A wake keeps the start of the work it continues.
+ * Shell and detail timers use the run's stable work start. A wake keeps the
+ * start it continues.
  */
 export function resolveThreadWorkingStartedAt(input: {
   readonly latestRun: Pick<
     ThreadRunSummary,
-    "runId" | "startedAt" | "requestedAt" | "completedAt"
+    "runId" | "workStartedAt" | "startedAt" | "requestedAt" | "completedAt"
   > | null;
   readonly runtime: Pick<ThreadRuntimeSummary, "activeRunId" | "activityStartedAt"> | null;
 }): string | null {
   const valid = (value: string | null | undefined) =>
     value != null && Number.isFinite(Date.parse(value)) ? value : null;
-  if (input.runtime?.activityStartedAt !== undefined) return valid(input.runtime.activityStartedAt);
+  const activityStartedAt = valid(input.runtime?.activityStartedAt);
+  if (activityStartedAt !== null) return activityStartedAt;
   const run = input.latestRun;
   if (run?.completedAt === null && run.runId === input.runtime?.activeRunId) {
-    return valid(run.startedAt) ?? valid(run.requestedAt);
+    return valid(run.workStartedAt) ?? valid(run.startedAt) ?? valid(run.requestedAt);
   }
   return null;
 }

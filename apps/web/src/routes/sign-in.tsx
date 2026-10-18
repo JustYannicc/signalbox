@@ -1,5 +1,4 @@
 import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
 
 import { SignInScreen, type SignInSearch } from "../account/SignInScreen";
 
@@ -26,7 +25,7 @@ function SignInRouteView() {
   const search = Route.useSearch();
   const searchStr = useLocation({ select: (location) => location.searchStr });
   const navigate = useNavigate();
-  const onConsumed = useCallback(() => {
+  const onConsumed = () => {
     void navigate({
       to: "/sign-in",
       search: (previous) => ({
@@ -35,7 +34,7 @@ function SignInRouteView() {
       }),
       replace: true,
     });
-  }, [navigate]);
+  };
 
   return <SignInScreen search={search} searchStr={searchStr} onConsumed={onConsumed} />;
 }
