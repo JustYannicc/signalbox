@@ -2,8 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
-import * as WorkOSClient from "./WorkOSClient.ts";
-import { workosStubLayer } from "./WorkOSTesting.ts";
+import * as WorkOSClient from "@signalbox/account/WorkOSClient";
+import { workosStubLayer } from "@signalbox/account/WorkOSTesting";
 
 const config = {
   clientId: "client_test",
