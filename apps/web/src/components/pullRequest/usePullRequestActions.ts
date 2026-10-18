@@ -9,6 +9,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestRef,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
@@ -24,12 +25,18 @@ import { usePrimaryEnvironmentId } from "~/state/environments";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
-import type { ReviewCommentContext } from "~/reviewCommentContext";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { toastManager } from "../ui/toast";
 import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
+import {
+  type PullRequestThreadTask,
+  runPullRequestThreadHandoff,
+} from "./pullRequestThreadHandoff";
+
+export type { PullRequestThreadTask } from "./pullRequestThreadHandoff";
 
 export function usePullRequestDefaultMergeMethodResolver(
   environmentId: EnvironmentId,
@@ -211,11 +218,6 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
   return { close, closingKeys };
 }
 
-export interface PullRequestThreadTask {
-  prompt: string;
-  reviewComments?: ReadonlyArray<ReviewCommentContext>;
-}
-
 export type PullRequestHandoffDetail = Pick<
   PullRequestDetail,
   "projectId" | "workspaceRoot" | "url"
@@ -231,12 +233,35 @@ export function usePullRequestHandoffs({
   detail: PullRequestHandoffDetail | null;
 }) {
   const newThread = useNewThreadHandler();
+  const navigate = useNavigate();
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId,
     cwd: detail?.workspaceRoot ?? null,
   });
+  const hostCheckout = useEnvironmentSupports(environmentId, "localFilesystem");
   // One at a time whatever the key: they all check the same pull request out.
   const [handoff, setHandoff] = useState<string | null>(null);
+
+  const writeTaskToDraft = (draftId: DraftId, task: PullRequestThreadTask) => {
+    const store = useComposerDraftStore.getState();
+    const draft = store.getComposerDraft(draftId);
+    const existingComments = draft?.reviewComments ?? [];
+    const prompt = handoffPrompt(
+      {
+        prompt: draft?.prompt ?? "",
+        lastHandoffPrompt: lastHandoffPromptByDraft.get(draftId),
+      },
+      task.prompt,
+    );
+    // Remember the hand-off's own contribution, not the merged prompt: only that sentence is
+    // this session's to take back next time, and the reader's text around it is not.
+    lastHandoffPromptByDraft.set(draftId, task.prompt);
+    store.setPrompt(draftId, prompt);
+    store.setReviewComments(
+      draftId,
+      handoffReviewComments(existingComments, task.reviewComments ?? []),
+    );
+  };
 
   /**
    * Nothing is checked out: asking a question is not a reason to move somebody's working tree
@@ -244,35 +269,14 @@ export function usePullRequestHandoffs({
    */
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
-    task: PullRequestThreadTask | null,
-    opened?: { draftId: DraftId },
+    task: PullRequestThreadTask,
   ): Promise<{ draftId: DraftId } | null> => {
-    const session =
-      opened ??
-      (await newThread(projectRef).then(
-        (result) => result,
-        () => null,
-      ));
+    const session = await newThread(projectRef).then(
+      (result) => result,
+      () => null,
+    );
     if (session === null) return null;
-    const store = useComposerDraftStore.getState();
-    if (task === null) return session;
-    const draft = store.getComposerDraft(session.draftId);
-    const existingComments = draft?.reviewComments ?? [];
-    const prompt = handoffPrompt(
-      {
-        prompt: draft?.prompt ?? "",
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(session.draftId),
-      },
-      task.prompt,
-    );
-    // Remember the hand-off's own contribution, not the merged prompt: only that sentence is
-    // this session's to take back next time, and the reader's text around it is not.
-    lastHandoffPromptByDraft.set(session.draftId, task.prompt);
-    store.setPrompt(session.draftId, prompt);
-    store.setReviewComments(
-      session.draftId,
-      handoffReviewComments(existingComments, task.reviewComments ?? []),
-    );
+    writeTaskToDraft(session.draftId, task);
     return session;
   };
 
@@ -307,96 +311,18 @@ export function usePullRequestHandoffs({
   ) => {
     if (!detail || handoff !== null) return;
     setHandoff(kind);
-    // It carries no timeout of its own: a loading toast never expires, and an explicit one
-    // would survive the update and pin the result on screen.
-    const toastId = toastManager.add({
-      type: "loading",
-      title: "Preparing the pull request checkout...",
-    });
-    const projectRef = scopeProjectRef(environmentId, detail.projectId);
-    // The thread is opened before the checkout rather than after it, because the project's setup
-    // script only runs for a checkout that knows which thread it is for — and a worktree with no
-    // dependencies installed is not something anyone can test.
-    const opened = await newThread(projectRef).then(
-      (session) => session,
-      () => null,
-    );
-    if (opened === null) {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
-      });
-      return;
-    }
-    const prepared = await prepareThread.run({
+    await runPullRequestThreadHandoff({
+      projectRef: scopeProjectRef(environmentId, detail.projectId),
       reference: detail.url,
       mode,
-      threadId: opened.threadId,
+      task,
+      hostCheckout,
+      newThread,
+      navigate,
+      prepare: prepareThread.run,
+      writeTask: writeTaskToDraft,
     });
-    if (prepared._tag === "Failure") {
-      setHandoff(null);
-      const detailMessage =
-        prepareThread.error instanceof Error ? prepareThread.error.message : null;
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not prepare the pull request checkout",
-        ...(detailMessage ? { description: detailMessage } : {}),
-      });
-      return;
-    }
-    const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
-    }).then(
-      (session) => session !== null,
-      () => false,
-    );
-    if (!pointed) {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-      });
-      return;
-    }
     setHandoff(null);
-    const staleCheckoutToast = {
-      type: "warning",
-      title: "Checked out, but not on the latest commits",
-      description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
-    } as const;
-    if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? "This repository is on the pull request's branch, with a thread open on it."
-                  : "The pull request is in its own worktree, with a thread open on it.",
-            }
-          : staleCheckoutToast,
-      );
-      return;
-    }
-    await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer — read it over, then send.",
-          }
-        : staleCheckoutToast,
-    );
   };
 
   return { handoff, startAsk, startHandoff };

@@ -16,6 +16,7 @@ import type {
   OrchestrationV2ThreadLaunchInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
+  ThreadPullRequestKey,
   ThreadId,
   WorktreeSetupSnapshot,
   WorktreeSetupCancelInput,
@@ -41,6 +42,12 @@ export class Threads extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
       ask: SignalboxAsk,
+    ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    readonly syncAutomationPullRequestWatch: (
+      actor: Actor,
+      threadId: ThreadId,
+      key: ThreadPullRequestKey,
+      startedAt: string,
     ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
     readonly answerAskAsAssistant: (
       actor: Actor,

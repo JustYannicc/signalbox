@@ -162,7 +162,10 @@ export const UPSTREAM_RPC_REACH = {
   "vcs.refreshStatus": read(),
   "git.runStackedAction": write({ summary: "Commit, push and open pull requests." }),
   "git.resolvePullRequest": read(),
-  "git.preparePullRequestThread": write(),
+  "git.preparePullRequestThread": write({
+    summary:
+      "Prepare a thread on a pull request's latest commit. Pass threadId to make or reuse that thread, and reuse operationId when retrying.",
+  }),
   "vcs.listRefs": read(),
   "vcs.createWorktree": write(),
   "vcs.removeWorktree": write({ destructive: true }),

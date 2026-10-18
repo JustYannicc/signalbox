@@ -10,6 +10,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
+import * as DriveThreadSeeds from "./DriveThreadSeeds.ts";
 import type {
   DriveWriter,
   ThreadRefs,
@@ -20,6 +21,7 @@ import type {
   UndoRestoreRequest,
   UpdateToLatestRequest,
 } from "./DriveRevisionTypes.ts";
+import type { PrepareThreadRequest, PrepareThreadResult } from "./DriveThreadSeeds.ts";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
@@ -43,6 +45,7 @@ export type {
   UndoRestoreRequest,
   UpdateToLatestRequest,
 } from "./DriveRevisionTypes.ts";
+export type { PrepareThreadRequest, PrepareThreadResult } from "./DriveThreadSeeds.ts";
 
 /**
  * What one drive's Durable Object persists: its refs, the packs it holds in
@@ -153,6 +156,11 @@ export class DriveStore extends Context.Service<
     readonly initialize: Effect.Effect<void, SqlError | Migrator.MigrationError>;
     /** A thread's view of the drive. Creates its branch at `main` and pins its base the first time. */
     readonly open: (writer: DriveWriter) => Effect.Effect<RefWrite, SqlError>;
+    /** Reserves an immutable pull-request head before a new thread is launched. */
+    readonly prepareThread: (
+      userId: string,
+      request: PrepareThreadRequest,
+    ) => Effect.Effect<PrepareThreadResult, SqlError>;
     readonly refs: (
       threadId: string | null,
       packsAfter?: number,
@@ -434,6 +442,7 @@ const migrations = Migrator.fromRecord({
   "0010_shared_history_packs": DriveHistory.createTables,
   "0011_drive_publication_creation_attempts": DriveRepositoryPublication.addCreationAttempts,
   "0011_shared_history_transfers": DriveHistory.createTransferTables,
+  "0012_pull_request_thread_seeds": DriveThreadSeeds.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -558,6 +567,21 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
       Effect.asVoid,
     );
 
+  const threadSeeds = DriveThreadSeeds.makeOperations({
+    sql,
+    role: members.role,
+    remote: () => remote,
+    threadStarted: (threadId) =>
+      Effect.gen(function* () {
+        return (
+          (yield* threadRow(threadId)) !== null ||
+          (yield* ref(threadRef(threadId))) !== null ||
+          (yield* ref(wipRef(threadId))) !== null ||
+          (yield* ref(machineRef(threadId))) !== null
+        );
+      }),
+  });
+
   const refs: DriveStore["Service"]["refs"] = (threadId, packsAfter = 0) =>
     Effect.gen(function* () {
       const packs = decodePackRows(
@@ -574,6 +598,7 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
         wip: threadId === null ? null : yield* ref(wipRef(threadId)),
         machine: threadId === null ? null : yield* ref(machineRef(threadId)),
         base: thread?.base ?? null,
+        pendingInitialRemoteHead: yield* threadSeeds.pendingInitialRemoteHead(threadId),
         packs,
         remote: yield* remote,
         shallow,
@@ -649,11 +674,22 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
       if (!(yield* writes(writer))) return NO_ACCESS;
       if (!(yield* fence(writer))) return STALE;
       if ((yield* threadRow(writer.threadId)) === null) {
-        const main = yield* ref(MAIN_REF);
+        const pending = yield* threadSeeds.pendingInitialRemoteHead(writer.threadId);
+        const source = pending === null ? null : yield* remote;
+        if (pending !== null && (source === null || source.repository !== pending.repository)) {
+          return {
+            _tag: "refused",
+            reason:
+              "The drive's remote repository changed after this pull-request head was selected.",
+          } as const;
+        }
+        const main = pending === null ? yield* ref(MAIN_REF) : null;
         const now = yield* Clock.currentTimeMillis;
         yield* sql`INSERT INTO threads (thread_id, base, generation, opened_at)
           VALUES (${writer.threadId}, ${main}, ${writer.generation}, ${now})`;
-        if (main !== null) yield* setRef(threadRef(writer.threadId), main, writer.threadId);
+        if (pending === null && main !== null) {
+          yield* setRef(threadRef(writer.threadId), main, writer.threadId);
+        }
       }
       return {
         _tag: "ok",
@@ -792,12 +828,51 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
       }
       if (!(yield* writes(writer))) return NO_ACCESS;
       if (!(yield* fence(writer))) return STALE;
+      const pending = yield* threadSeeds.pendingInitialRemoteHead(writer.threadId);
+      const branch = threadRef(writer.threadId);
+      if (pending !== null) {
+        const source = yield* remote;
+        if (source === null || source.repository !== pending.repository) {
+          return {
+            _tag: "refused",
+            reason:
+              "The drive's remote repository changed after this pull-request head was selected.",
+          } as const;
+        }
+        const initial = updates.length === 1 ? updates[0] : undefined;
+        if (
+          initial === undefined ||
+          initial.name !== branch ||
+          initial.old !== null ||
+          initial.new !== pending.headSha
+        ) {
+          return {
+            _tag: "refused",
+            reason: "A new pull-request thread can only start at its selected head.",
+          } as const;
+        }
+        const row = yield* threadRow(writer.threadId);
+        if (row === null || row.base !== null) {
+          return {
+            _tag: "refused",
+            reason: "Open the seeded thread before writing its selected head.",
+          } as const;
+        }
+        if (!(yield* isCommit(pending.headSha))) {
+          return {
+            _tag: "refused",
+            reason: "The selected pull-request commit is not in the drive yet.",
+          } as const;
+        }
+      }
       for (const update of updates) {
         // Only the machine ref may name a commit other threads aren't handed.
         const visible =
-          update.name === machineRef(writer.threadId)
+          pending !== null && update.name === branch
             ? yield* isCommit(update.new)
-            : (yield* missing([update.new], null)).length === 0;
+            : update.name === machineRef(writer.threadId)
+              ? yield* isCommit(update.new)
+              : (yield* missing([update.new], null)).length === 0;
         if (!visible) {
           return {
             _tag: "refused",
@@ -817,11 +892,15 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
         }
         currents.set(update.name, current);
       }
-      const branch = threadRef(writer.threadId);
       for (const update of updates) {
         yield* update.name === branch
           ? land(branch, currents.get(branch) ?? null, update.new, writer)
           : setRef(update.name, update.new, writer.threadId);
+      }
+      if (pending !== null) {
+        yield* sql`UPDATE threads SET base = ${pending.headSha}
+          WHERE thread_id = ${writer.threadId} AND base IS NULL`;
+        yield* threadSeeds.consume(writer.threadId);
       }
       return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
     }).pipe(sql.withTransaction);
@@ -1129,6 +1208,7 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
   return DriveStore.of({
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     open,
+    prepareThread: threadSeeds.prepareThread,
     refs,
     ref,
     missing,

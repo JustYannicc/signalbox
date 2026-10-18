@@ -539,6 +539,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       })
     : "local";
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
+  // signalbox: without worktrees every thread gets its own branch, so a pull request picked for
+  // this draft stays its starting point; with them, switching to the checkout drops it.
+  const pullRequestReference =
+    workspaceMode === "worktree" || !supportsWorktrees
+      ? selectedProjectDraft.workspaceSelection?.pullRequestReference
+      : undefined;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
   // Keep the user's explicit choice separate from the resolved display value:
   // only the explicit flag is ever written back to the draft, so the resolved
@@ -1132,7 +1138,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
-          ...(mode === "worktree" && workspaceSelection?.pullRequestReference
+          ...((mode === "worktree" || !supportsWorktrees) && // signalbox
+          workspaceSelection?.pullRequestReference
             ? { pullRequestReference: workspaceSelection.pullRequestReference }
             : {}),
           // An explicit picker choice wins. Otherwise only a task sending now
@@ -1277,7 +1284,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedWorktreePath,
       startFromOrigin,
       draftKey: selectedProjectDraftKey,
-      pullRequestReference: selectedProjectDraft.workspaceSelection?.pullRequestReference,
+      pullRequestReference,
       editingPendingTask,
       prompt,
       attachments,
@@ -1372,7 +1379,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProviderStatus,
       setSelectedModelOptions,
       selectedProject,
-      selectedProjectDraft.workspaceSelection?.pullRequestReference,
+      pullRequestReference,
       selectedProjectKey,
       selectedWorktreePath,
       setProject,

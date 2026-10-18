@@ -3,6 +3,7 @@ import {
   appendPullRequestAgentPrompt,
   pullRequestAgentActions,
   pullRequestAgentPrompt,
+  pullRequestAgentTaskPreparesThread,
   pullRequestAgentThread,
 } from "./pullRequestAgentTasks";
 import { IsoDateTime, ProjectId, ThreadId, type PullRequestDetail } from "@t3tools/contracts";
@@ -66,5 +67,13 @@ describe("PR agent tasks", () => {
       "conflicts",
       "watch",
     ]);
+  });
+
+  it("prepares the pull request only for work on its code, not for questions", () => {
+    expect(
+      pullRequestAgentActions(pr, true)
+        .map((action) => action.task)
+        .filter(pullRequestAgentTaskPreparesThread),
+    ).toEqual(["feedback", "conflicts", "watch"]);
   });
 });

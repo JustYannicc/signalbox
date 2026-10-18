@@ -1,4 +1,8 @@
-import type { CheckpointViews, DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
+import type {
+  CheckpointViews,
+  DriveRemote,
+  InitialRemoteHead,
+} from "@signalbox/runner-protocol/DriveProtocol";
 import type { Oid } from "./git/gitObjects.ts";
 
 /** Who is writing: a thread, on its machine of `generation`. */
@@ -34,6 +38,8 @@ export interface ThreadRefs {
   readonly pinnedViews?: CheckpointViews | null;
   /** Changes on fork or restore so the Runner replaces a stale checkout. */
   readonly revision?: string | null;
+  /** An initial pull-request head that has not been written to the thread branch yet. */
+  readonly pendingInitialRemoteHead?: InitialRemoteHead | null;
 }
 
 export type RefWrite =

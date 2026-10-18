@@ -46,6 +46,7 @@ import { preparationBatch } from "../preparation/preparationBatch.ts";
 
 import type { DriveAuthorization, RemoteAuthorization } from "../ThreadAuthorization.ts";
 import { myDriveId } from "../../drive/driveAccess.ts";
+import { DriveDirectory } from "../../drive/DriveDirectory.ts";
 import { poolObjectName } from "../../pool/PoolDirectory.ts";
 import type { ModelAuthorization } from "../../models/ModelProtocol.ts";
 import {
@@ -81,6 +82,7 @@ import { hasUnconfirmedHandoff, prepareFreshSession } from "./freshSession.ts";
 import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
 import { systemNoticeEvents } from "./runnerEvents.ts";
 import { runtimeResponseUpgrade } from "./runtimeResponseUpgrade.ts";
+import { runnerCapabilityUpgrade } from "./runnerCapabilityUpgrade.ts";
 import {
   accountMovedEvents,
   failRunEvents,
@@ -430,6 +432,7 @@ const make = Effect.gen(function* () {
   const withCrypto = <A>(effect: Effect.Effect<A, never, Crypto.Crypto>) =>
     Effect.provideService(effect, Crypto.Crypto, crypto);
   const drives = yield* Effect.serviceOption(ThreadDrives);
+  const driveDirectory = yield* Effect.serviceOption(DriveDirectory);
   const secretTokens = yield* Effect.serviceOption(ThreadSecrets);
   const drivesEnabled = drives._tag === "Some" && drives.value.enabled;
   const driveIdOf = (owner: ThreadStore.ThreadOwner) =>
@@ -437,6 +440,46 @@ const make = Effect.gen(function* () {
   const driveOf = Effect.map(Effect.orDie(store.owner), (owner) =>
     owner === null ? null : driveIdOf(owner),
   );
+
+  const requiredUpgrade = (
+    lease: ThreadStore.MachineLease,
+    projection: OrchestrationV2ThreadProjection | null,
+    run: ReturnType<typeof harnessRun>,
+    now: number,
+  ) =>
+    Effect.gen(function* () {
+      if (
+        projection !== null &&
+        run !== undefined &&
+        lease.status === "connected" &&
+        lease.pullRequestSeeds !== true &&
+        drivesEnabled &&
+        driveDirectory._tag === "Some"
+      ) {
+        const driveId = yield* driveOf;
+        if (driveId !== null) {
+          const refs = yield* Effect.orDie(
+            driveDirectory.value.forDrive(driveId).refs(projection.thread.id),
+          );
+          if (refs.pendingInitialRemoteHead != null)
+            return {
+              ...runnerCapabilityUpgrade(
+                lease,
+                true,
+                false,
+                lease.pullRequestSeedsUpgrade === true,
+                now,
+                DRAIN_TIMEOUT_MS,
+              ),
+              capability: "pullRequestSeeds" as const,
+            };
+        }
+      }
+      return {
+        ...runtimeResponseUpgrade(lease, projection, run, now, DRAIN_TIMEOUT_MS),
+        capability: "runtimeResponses" as const,
+      };
+    });
 
   const lease = Effect.orDie(store.machine);
   const terminalRemoteRun = (generation: number) => RunId.make(`terminal:lease:${generation}`);
@@ -569,6 +612,9 @@ const make = Effect.gen(function* () {
             runtimeResponses: hello.runtimeResponses === true,
             runtimeResponsesUpgrade:
               hello.runtimeResponses === true ? undefined : lease.runtimeResponsesUpgrade,
+            pullRequestSeeds: hello.pullRequestSeeds === true,
+            pullRequestSeedsUpgrade:
+              hello.pullRequestSeeds === true ? undefined : lease.pullRequestSeedsUpgrade,
           },
           result: {
             _tag: "welcome",
@@ -950,13 +996,15 @@ const make = Effect.gen(function* () {
   const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease, now }, ctx) =>
     Effect.gen(function* () {
       const run = projection === null ? undefined : harnessRun(projection);
-      const upgrade = runtimeResponseUpgrade(lease, projection, run, now, DRAIN_TIMEOUT_MS);
+      const upgrade = yield* requiredUpgrade(lease, projection, run, now);
+      const upgradeKey =
+        upgrade.capability === "pullRequestSeeds" ? "pr-runner-update" : "runner-update";
       const blockedNoticeMissing =
         upgrade.type === "blocked" &&
         projection !== null &&
         run !== undefined &&
         !projection.turnItems.some(
-          (item) => item.id === `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
+          (item) => item.id === `turn-item:${run.id}:${upgradeKey}-blocked:${lease.generation}`,
         );
       const prepared =
         projection === null ? { turn: null, events: [] } : yield* turnFor(projection, ctx);
@@ -1125,6 +1173,12 @@ const make = Effect.gen(function* () {
     if (current.status === "none" || current.token === null) return null;
     const driveId = yield* driveOf;
     if (driveId === null) return null;
+    if (current.pullRequestSeeds !== true && driveDirectory._tag === "Some") {
+      const refs = yield* Effect.orDie(
+        driveDirectory.value.forDrive(driveId).refs(projection.thread.id),
+      );
+      if (refs.pendingInitialRemoteHead != null) return null;
+    }
     return {
       driveId,
       token: yield* driveToken(current.token, projection.thread.id, current.generation),
@@ -1431,7 +1485,9 @@ const make = Effect.gen(function* () {
             preparation.machineGeneration === lease.generation)
             ? changePreparation(preparation, "cancelled", ctx)
             : null;
-        const upgrade = runtimeResponseUpgrade(lease, projection, run, now, DRAIN_TIMEOUT_MS);
+        const upgrade = yield* requiredUpgrade(lease, projection, run, now);
+        const upgradeKey =
+          upgrade.capability === "pullRequestSeeds" ? "pr-runner-update" : "runner-update";
         if (
           cancelled === null &&
           preparation?.status !== "cancelling" &&
@@ -1444,15 +1500,18 @@ const make = Effect.gen(function* () {
               projection,
               run,
               {
-                id: TurnItemId.make(`turn-item:${run.id}:runner-update:${lease.generation}`),
+                id: TurnItemId.make(`turn-item:${run.id}:${upgradeKey}:${lease.generation}`),
                 title: "Machine",
-                message: "Updating this machine so it can answer questions and approvals.",
+                message:
+                  upgrade.capability === "pullRequestSeeds"
+                    ? "Updating this machine so it can load the pull request's code."
+                    : "Updating this machine so it can answer questions and approvals.",
               },
               ctx,
             );
           if (upgrade.type === "blocked") {
             const id = TurnItemId.make(
-              `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
+              `turn-item:${run.id}:${upgradeKey}-blocked:${lease.generation}`,
             );
             if (projection.turnItems.some((item) => item.id === id))
               return keep({ ...IDLE, runId });
@@ -1464,7 +1523,9 @@ const make = Effect.gen(function* () {
                   id,
                   title: "Machine",
                   message:
-                    "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying.",
+                    upgrade.capability === "pullRequestSeeds"
+                      ? "This machine couldn't update to load the pull request's code. Stop this turn and wait for the machine to shut down before retrying."
+                      : "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying.",
                 },
                 ctx,
               ),
@@ -1488,7 +1549,10 @@ const make = Effect.gen(function* () {
           const token = yield* newToken;
           yield* sessionEnded(lease, {
             reason: "updated",
-            detail: "Updating the Runner for native answers.",
+            detail:
+              upgrade.capability === "pullRequestSeeds"
+                ? "Updating the Runner for a prepared pull request."
+                : "Updating the Runner for native answers.",
             runId,
             now,
           });
@@ -1508,7 +1572,10 @@ const make = Effect.gen(function* () {
               requestedAt: now,
               machineClass: lease.machineClass,
               movedUp: lease.movedUp,
-              runtimeResponsesUpgrade: true,
+              runtimeResponsesUpgrade:
+                upgrade.capability === "runtimeResponses" ? true : lease.runtimeResponsesUpgrade,
+              pullRequestSeedsUpgrade:
+                upgrade.capability === "pullRequestSeeds" ? true : lease.pullRequestSeedsUpgrade,
             },
             result: {
               ...IDLE,

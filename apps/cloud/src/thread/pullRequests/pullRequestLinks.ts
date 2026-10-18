@@ -5,6 +5,8 @@ import type {
   ThreadPullRequestLink,
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
+  ThreadPullRequestWatchSyncCommand,
+  ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import {
   legacyThreadPullRequestKey,
@@ -18,10 +20,9 @@ import * as DateTime from "effect/DateTime";
 import { type DecisionContext, threadEvent } from "../threadEvents.ts";
 
 /**
- * A cloud thread's pull request links: `thread.pull-request.link`, `.unlink`
- * and `thread.pull-request-link.sync`, decided the way upstream's orchestrator
- * decides them (`apps/server/src/orchestration-v2/Orchestrator.ts`), so links
- * look the same on every client. Watches aren't served here yet.
+ * A cloud thread's pull request links and watch intent, decided the way
+ * upstream's orchestrator decides links (`apps/server/src/orchestration-v2/Orchestrator.ts`),
+ * so every client sees the same state.
  *
  * Every change goes out as `thread.pull-request-synced` with the whole thread,
  * syncs included: upstream sends a sync as `thread.pull-request-link-updated`
@@ -30,15 +31,18 @@ import { type DecisionContext, threadEvent } from "../threadEvents.ts";
  * cloud thread has few links, so the whole thread costs nothing.
  */
 
-export type PullRequestLinkCommand = Extract<
-  OrchestrationV2Command,
-  {
-    readonly type:
-      | "thread.pull-request.link"
-      | "thread.pull-request.unlink"
-      | "thread.pull-request-link.sync";
-  }
->;
+export type PullRequestLinkCommand =
+  | Extract<
+      OrchestrationV2Command,
+      {
+        readonly type:
+          | "thread.pull-request.link"
+          | "thread.pull-request.unlink"
+          | "thread.pull-request-link.sync"
+          | "thread.pull-request.watch";
+      }
+    >
+  | ThreadPullRequestWatchSyncCommand;
 
 export type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
@@ -132,7 +136,7 @@ function nextThread(
           link === existing ? { ...link, source: "stack-dismissed" as const } : link,
         )
       : links.filter((link) => link !== existing);
-  } else {
+  } else if (command.type === "thread.pull-request-link.sync") {
     if (!existing) return thread;
     // Unchanged host state is no news: only `syncedAt` would move.
     if (
@@ -145,6 +149,45 @@ function nextThread(
     pullRequests = links.map((link) =>
       link === existing ? { ...link, snapshot: command.snapshot, stack: command.stack } : link,
     );
+  } else if (command.type === "thread.pull-request-watch.sync") {
+    if (
+      command.watch !== null ||
+      command.wake !== undefined ||
+      existing?.watch?.startedAt !== command.startedAt
+    ) {
+      return thread;
+    }
+    const { watch: _watch, ...unwatched } = existing;
+    pullRequests = links.map((link) => (link === existing ? unwatched : link));
+  } else {
+    if (!command.watching) {
+      if (!existing?.watch) return thread;
+      const { watch: _watch, ...unwatched } = existing;
+      pullRequests = links.map((link) => (link === existing ? unwatched : link));
+    } else {
+      if (!existing && command.link === undefined) return thread;
+      const link = existing ?? freshLink(key, command.link!.url, command.link!.source, ctx);
+      if (link.watch !== undefined) return thread;
+      const now = DateTime.formatIso(ctx.now);
+      const watch: ThreadPullRequestWatch = {
+        startedAt: now,
+        headSha: null,
+        failedChecks: [],
+        passed: false,
+        passedChecks: [],
+        remarksThrough: link.snapshot?.updatedAt ?? now,
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      };
+      const undismissed =
+        link.source === "stack-dismissed" && command.link !== undefined
+          ? { ...link, source: command.link.source, url: command.link.url }
+          : link;
+      pullRequests = existing
+        ? links.map((entry) => (entry === existing ? { ...undismissed, watch } : entry))
+        : [...links, { ...undismissed, watch }];
+    }
   }
   const linked = thread.linkedPullRequest;
   return {

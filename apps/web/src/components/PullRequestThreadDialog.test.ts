@@ -23,6 +23,10 @@ const state = vi.hoisted(() => ({
   checkouts: [] as string[],
   setupScripts: 0,
   prepared: [] as { branch: string; worktreePath: string | null }[],
+  hostCheckout: true,
+  serverThreadId: null as string | null,
+  inputs: [] as { threadId?: string; operationId?: string }[],
+  awaitedShells: [] as string[],
 }));
 
 vi.mock("react", async (importOriginal) => ({
@@ -64,7 +68,16 @@ vi.mock("~/lib/sourceControlActions", async () => {
 });
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.manager }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
-vi.mock("~/state/environmentCapabilities", () => ({ useEnvironmentSupports: () => true }));
+vi.mock("~/state/environmentCapabilities", () => ({
+  useEnvironmentSupports: (_environmentId: unknown, capability: string) =>
+    capability === "localFilesystem" ? state.hostCheckout : true,
+}));
+vi.mock("~/state/entities", () => ({
+  waitForThreadShell: async (ref: { threadId: string }) => {
+    state.awaitedShells.push(ref.threadId);
+    return true;
+  },
+}));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => command,
 }));
@@ -72,17 +85,22 @@ vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: {} }));
 vi.mock("~/state/git", () => ({
   gitEnvironment: {
     preparePullRequestThread: async ({
-      input: { mode, threadId },
+      input: { mode, threadId, operationId },
     }: {
-      input: { mode: string; threadId?: string };
+      input: { mode: string; threadId?: string; operationId?: string };
     }) => {
       state.checkouts.push(mode);
+      state.inputs.push({
+        ...(threadId === undefined ? {} : { threadId }),
+        ...(operationId === undefined ? {} : { operationId }),
+      });
       if (mode === "worktree" && threadId) state.setupScripts += 1;
       await state.pendingResponse;
       if (state.interrupted) return AsyncResult.failure(Cause.interrupt());
       return AsyncResult.success({
         branch: "feature/pr",
         worktreePath: mode === "worktree" ? "/worktree" : null,
+        ...(state.serverThreadId === null ? {} : { threadId: state.serverThreadId }),
       });
     },
   },
@@ -143,7 +161,7 @@ function renderDialog() {
   });
 }
 
-function prepareAction(label: "Local" | "Worktree") {
+function prepareAction(label: "Local" | "Worktree" | "Use pull request") {
   const action = findAction(renderDialog(), label);
   if (!action) throw new Error(`${label} action missing`);
   return action;
@@ -178,6 +196,10 @@ describe("pull request worktree permissions", () => {
     state.checkouts = [];
     state.setupScripts = 0;
     state.prepared = [];
+    state.hostCheckout = true;
+    state.serverThreadId = null;
+    state.inputs = [];
+    state.awaitedShells = [];
   });
 
   it("does not prepare a worktree or run setup with only source-control permission", async () => {
@@ -207,12 +229,53 @@ describe("pull request worktree permissions", () => {
     expect(state.setupScripts).toBe(0);
   });
 
-  it("keeps local checkout available without task permission", async () => {
+  it("needs task permission for a local checkout too, since it names this thread", async () => {
     await prepareAction("Local")();
+    expect(state.checkouts).toEqual([]);
 
+    state.canOperate = true;
+    await prepareAction("Local")();
     expect(state.checkouts).toEqual(["local"]);
     expect(state.setupScripts).toBe(0);
     expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
+  });
+
+  it("repeats the same operation for a retry of the same preparation", async () => {
+    state.canOperate = true;
+    await prepareAction("Local")();
+    await prepareAction("Local")();
+    await prepareAction("Worktree")();
+
+    const [first, retry, otherMode] = state.inputs;
+    expect(first?.threadId).toBe("thread");
+    expect(first?.operationId).toBeDefined();
+    expect(retry?.operationId).toBe(first?.operationId);
+    expect(otherMode?.operationId).not.toBe(first?.operationId);
+  });
+
+  it("adopts the thread the cloud made for this draft instead of pointing another draft", async () => {
+    state.canOperate = true;
+    state.hostCheckout = false;
+    state.serverThreadId = "thread";
+
+    expect(visibleText(renderDialog())).toContain("This thread then works on its latest commit.");
+    await prepareAction("Use pull request")();
+
+    expect(state.awaitedShells).toEqual(["thread"]);
+    expect(state.prepared).toEqual([]);
+    expect(state.openChanges).toEqual([false]);
+  });
+
+  it("keeps the dialog open when the cloud answers for another thread", async () => {
+    state.canOperate = true;
+    state.hostCheckout = false;
+    state.serverThreadId = "thread-elsewhere";
+
+    await prepareAction("Use pull request")();
+
+    expect(visibleText(renderDialog())).toContain("It came back for a different thread");
+    expect(state.prepared).toEqual([]);
+    expect(state.openChanges).toEqual([]);
   });
 
   it.each(["Local", "Worktree"] as const)(
@@ -238,6 +301,7 @@ describe("pull request worktree permissions", () => {
   );
 
   it("clears a returned error when a newly authorized retry starts, then completes normally", async () => {
+    state.canOperate = true;
     const prepare = prepareAction("Local");
     state.canWriteSourceControl = false;
     await prepare();
@@ -261,6 +325,7 @@ describe("pull request worktree permissions", () => {
   });
 
   it("keeps interrupted preparations quiet and preserves error reset behavior", async () => {
+    state.canOperate = true;
     state.interrupted = true;
     const before = visibleText(renderDialog());
 

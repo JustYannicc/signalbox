@@ -1,5 +1,6 @@
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AnimatedWidth } from "~/components/AnimatedWidth";
@@ -47,6 +48,7 @@ import {
   PlayIcon,
   RotateCcwIcon,
   SparklesIcon,
+  SquarePenIcon,
   Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -75,6 +77,7 @@ import {
 } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
+import { runPullRequestThreadHandoff } from "./pullRequestThreadHandoff";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn, randomUUID } from "~/lib/utils";
@@ -896,6 +899,7 @@ export function PullRequestDetailPanel({
   const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
+  const navigate = useNavigate();
   const { environments } = useEnvironments();
   const pickableEnvironments =
     context === "page"
@@ -919,8 +923,9 @@ export function PullRequestDetailPanel({
     pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
   // signalbox: an environment without worktrees gives each thread its own branch, so there is
-  // no checkout of a pull request into one.
+  // no checkout to choose; it starts a thread on the pull request instead.
   const canCheckOut = useEnvironmentSupports(actingEnvironmentId, "worktrees");
+  const hostCheckout = useEnvironmentSupports(actingEnvironmentId, "localFilesystem");
   const checkoutRoot =
     acting?.workspaceRoot ?? detail?.workspaceRoot ?? project?.workspaceRoot ?? null;
   const canOperateThread = useEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope);
@@ -1049,8 +1054,8 @@ export function PullRequestDetailPanel({
   };
 
   const attachTarget = composerDraftTarget ?? null;
-  const canPrepareWorktree = prepareThread.isAllowed && canOperateThread;
-  const canFixFindings = attachTarget !== null || canPrepareWorktree;
+  const canPrepareThread = prepareThread.isAllowed && canOperateThread;
+  const canFixFindings = attachTarget !== null || canPrepareThread;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
   const guideWriter = useReviewGuideWriter({
     environmentId,
@@ -1101,17 +1106,13 @@ export function PullRequestDetailPanel({
 
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
-    task: ThreadTask | null,
-    opened?: { draftId: DraftId },
+    task: ThreadTask,
   ): Promise<{ draftId: DraftId } | null> => {
-    const session =
-      opened ??
-      (await newThread(projectRef).then(
-        (result) => result,
-        () => null,
-      ));
+    const session = await newThread(projectRef).then(
+      (result) => result,
+      () => null,
+    );
     if (session === null) return null;
-    if (task === null) return session;
     writeTaskToComposer(session.draftId, task);
     return session;
   };
@@ -1194,107 +1195,26 @@ export function PullRequestDetailPanel({
     ) {
       return;
     }
-    if (
-      mode === "worktree" &&
-      !readEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope)
-    ) {
+    // Every preparation names the thread it is for, which takes thread access whatever the mode.
+    if (!readEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope)) {
       return;
     }
     setHandoff(kind);
-    const toastId = toastManager.add({
-      type: "loading",
-      title: "Preparing the pull request checkout...",
-    });
-    const projectRef = scopeProjectRef(
-      actingEnvironmentId,
-      acting?.projectId ?? handoffSummary.projectId,
-    );
-    // The thread is opened before the checkout rather than after it, because the project's setup
-    // script only runs for a checkout that knows which thread it is for — and a worktree with no
-    // dependencies installed is not something anyone can test.
-    const opened = await newThread(projectRef).then(
-      (session) => session,
-      () => null,
-    );
-    if (opened === null) {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
-      });
-      return;
-    }
-    const prepared = await prepareThread.run({
+    await runPullRequestThreadHandoff({
+      projectRef: scopeProjectRef(
+        actingEnvironmentId,
+        acting?.projectId ?? handoffSummary.projectId,
+      ),
       reference: handoffSummary.url,
       mode,
-      threadId: opened.threadId,
+      task,
+      hostCheckout,
+      newThread,
+      navigate,
+      prepare: prepareThread.run,
+      writeTask: writeTaskToComposer,
     });
-    if (prepared._tag === "Failure") {
-      setHandoff(null);
-      const detailMessage =
-        prepareThread.error instanceof Error ? prepareThread.error.message : null;
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not prepare the pull request checkout",
-        ...(detailMessage ? { description: detailMessage } : {}),
-      });
-      return;
-    }
-    const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
-    }).then(
-      (session) => session !== null,
-      () => false,
-    );
-    if (!pointed) {
-      setHandoff(null);
-      // The checkout is on disk; only the thread failed to move onto it. Writing the task now
-      // would send the agent at whatever the thread was already open on — which is the one
-      // outcome worth stopping for, since it reads as success and is not.
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-      });
-      return;
-    }
     setHandoff(null);
-    const staleCheckoutToast = {
-      type: "warning",
-      title: "Checked out, but not on the latest commits",
-      description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
-    } as const;
-    if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? "This repository is on the pull request's branch, with a thread open on it."
-                  : "The pull request is in its own worktree, with a thread open on it.",
-            }
-          : staleCheckoutToast,
-      );
-      return;
-    }
-    await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer — read it over, then send.",
-          }
-        : staleCheckoutToast,
-    );
   };
 
   const askAboutPullRequest = () => {
@@ -1572,7 +1492,7 @@ export function PullRequestDetailPanel({
           <TooltipPopup>Check out this pull request</TooltipPopup>
         </Tooltip>
         <MenuPopup align="end" side="bottom">
-          <MenuItem disabled={!canPrepareWorktree} onClick={() => startCheckout("worktree")}>
+          <MenuItem disabled={!canPrepareThread} onClick={() => startCheckout("worktree")}>
             <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
               <span>In a separate worktree</span>
@@ -1581,7 +1501,7 @@ export function PullRequestDetailPanel({
               </span>
             </span>
           </MenuItem>
-          <MenuItem disabled={!prepareThread.isAllowed} onClick={() => startCheckout("local")}>
+          <MenuItem disabled={!canPrepareThread} onClick={() => startCheckout("local")}>
             <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
               <span>In this repository</span>
@@ -1600,6 +1520,32 @@ export function PullRequestDetailPanel({
           ) : null}
         </MenuPopup>
       </Menu>
+    ) : !canCheckOut && canPrepareThread ? (
+      // A cloud thread carries its own copy of the pull request, so another one is just as
+      // useful beside a thread that already works on it.
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={handoff !== null || checkoutRoot === null}
+              onClick={() => startCheckout("worktree")}
+              aria-label={handoff?.startsWith("checkout") ? "Starting..." : "New thread"}
+            >
+              <SquarePenIcon aria-hidden className="size-3.5" />
+              <span className="@max-[35rem]/pr-header:hidden">
+                {handoff?.startsWith("checkout") ? "Starting..." : "New thread"}
+              </span>
+            </Button>
+          }
+        />
+        <TooltipPopup>
+          {context === "thread"
+            ? "Start another thread on this pull request's latest commit"
+            : "Start a thread on this pull request's latest commit"}
+        </TooltipPopup>
+      </Tooltip>
     ) : null;
 
   const resolveConflictsControl = (

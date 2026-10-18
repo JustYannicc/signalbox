@@ -228,7 +228,13 @@ describe("queued PR checkout", () => {
     expect(state.start).not.toHaveBeenCalled();
     expect(state.checkout).toHaveBeenCalledWith({
       environmentId: "secondary",
-      input: { cwd: "/repo", reference: "https://github.com/acme/repo/pull/123", mode: "worktree" },
+      input: {
+        cwd: "/repo",
+        reference: "https://github.com/acme/repo/pull/123",
+        mode: "worktree",
+        threadId: "new-pr-thread",
+        operationId: `${queuedPullRequest().commandId}:pull-request`,
+      },
     });
     checkout.resolve(AsyncResult.success(preparedCheckout));
     await drained;
@@ -239,6 +245,24 @@ describe("queued PR checkout", () => {
       worktreePath: preparedCheckout.worktreePath,
     });
     expect(bootstrap.prepareWorktree).toBeUndefined();
+    expect(remaining()).toEqual([]);
+  });
+
+  it("sends into the thread the cloud prepared instead of creating it again", async () => {
+    state.grantedEnvironments.add("secondary");
+    await state.manager.enqueue(queuedPullRequest());
+    state.checkout.mockResolvedValueOnce(
+      AsyncResult.success({
+        ...preparedCheckout,
+        worktreePath: "/drive/new-pr-thread",
+        threadId: ThreadId.make("new-pr-thread"),
+      }),
+    );
+    await runDrain();
+    expect(state.start).toHaveBeenCalledOnce();
+    const input = state.start.mock.calls[0]?.[0].input;
+    expect(input).not.toHaveProperty("bootstrap");
+    expect(input.threadId).toBe("new-pr-thread");
     expect(remaining()).toEqual([]);
   });
 

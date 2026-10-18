@@ -44,6 +44,7 @@ export const makeDriveObjectApi = (
     startFromHistory: (userId, history) =>
       run(store.use((s) => s.startFromHistory(userId, history))),
     open: (writer) => run(store.use((s) => s.open(writer))),
+    prepareThread: (userId, request) => run(store.use((s) => s.prepareThread(userId, request))),
     refs: (threadId, packsAfter) => run(store.use((s) => s.refs(threadId, packsAfter))),
     ref: (name) => run(store.use((s) => s.ref(name))),
     missing: (oids, visibleTo) => run(store.use((s) => s.missing(oids, visibleTo))),

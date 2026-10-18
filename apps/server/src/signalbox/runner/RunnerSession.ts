@@ -289,6 +289,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         workflowStops: turns.stopWorkflow !== undefined,
         runtimeResponses: true,
         pulls: true,
+        pullRequestSeeds: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
         takenPreparations: yield* turns.preparationsTaken,

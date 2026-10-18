@@ -40,6 +40,7 @@ import {
 import { makeListingReads } from "./cloudPullRequestListing.ts";
 import { makePullRequestCollaboration } from "./PullRequestCollaboration.ts";
 import { makePullRequestDiscussion } from "./PullRequestDiscussion.ts";
+import { makePullRequestThreadPreparation } from "./PullRequestThreadPreparation.ts";
 import { folderCanWritePullRequests } from "./pullRequestCollaborationSupport.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
 import { makePullRequestViewedFiles } from "./PullRequestViewedFiles.ts";
@@ -429,6 +430,7 @@ const make = Effect.gen(function* () {
 
   const collaboration = yield* makePullRequestCollaboration(invalidate);
   const discussion = yield* makePullRequestDiscussion(invalidate);
+  const preparePullRequestThread = yield* makePullRequestThreadPreparation;
   const freshDetail = (input: PullRequestRef) => detail(input, true);
   const freshDiff = (input: PullRequestDiffInput) =>
     repositories.resolve(input).pipe(
@@ -478,6 +480,7 @@ const make = Effect.gen(function* () {
     invalidate,
     subscribeRefreshes: SubscriptionRef.changes(revision).pipe(Stream.filter((value) => value > 0)),
     resolvePullRequest,
+    preparePullRequestThread,
   };
 });
 

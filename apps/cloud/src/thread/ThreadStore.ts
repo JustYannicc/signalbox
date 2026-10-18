@@ -175,6 +175,8 @@ export interface MachineLease {
   readonly runtimeResponses?: boolean | undefined;
   /** Already replaced an older Runner for this capability; don't loop on a stale image. */
   readonly runtimeResponsesUpgrade?: boolean | undefined;
+  readonly pullRequestSeeds?: boolean | undefined;
+  readonly pullRequestSeedsUpgrade?: boolean | undefined;
   readonly pulls?: boolean | undefined;
   readonly terminals?: boolean | undefined;
   /**
@@ -726,6 +728,8 @@ const MachineLeaseJson = Schema.fromJsonString(
     workflowStops: Schema.optional(Schema.Boolean),
     runtimeResponses: Schema.optional(Schema.Boolean),
     runtimeResponsesUpgrade: Schema.optional(Schema.Boolean),
+    pullRequestSeeds: Schema.optional(Schema.Boolean),
+    pullRequestSeedsUpgrade: Schema.optional(Schema.Boolean),
     pulls: Schema.optional(Schema.Boolean),
     terminals: Schema.optional(Schema.Boolean),
     drain: Schema.optional(

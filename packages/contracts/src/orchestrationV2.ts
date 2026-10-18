@@ -3030,6 +3030,23 @@ export const OrchestrationV2Command = Schema.Union([
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
+export const ThreadPullRequestWatchSyncCommand = Schema.Struct({
+  type: Schema.Literal("thread.pull-request-watch.sync"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  ...ThreadPullRequestKey.fields,
+  startedAt: IsoDateTime,
+  watch: Schema.NullOr(ThreadPullRequestWatch),
+  wake: Schema.optional(
+    Schema.Struct({
+      messageId: MessageId,
+      text: Schema.String,
+      notification: OrchestrationV2Notification,
+    }),
+  ),
+});
+export type ThreadPullRequestWatchSyncCommand = typeof ThreadPullRequestWatchSyncCommand.Type;
+
 /**
  * Commands only the server dispatches. They stay out of
  * `OrchestrationV2Command`, the `dispatchCommand` payload, so no client can
@@ -3038,21 +3055,7 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 const OrchestrationV2InternalCommand = Schema.Union([
   SignalboxAskSyncCommand,
   SignalboxNativeAskRespondCommand,
-  Schema.Struct({
-    type: Schema.Literal("thread.pull-request-watch.sync"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    ...ThreadPullRequestKey.fields,
-    startedAt: IsoDateTime,
-    watch: Schema.NullOr(ThreadPullRequestWatch),
-    wake: Schema.optional(
-      Schema.Struct({
-        messageId: MessageId,
-        text: Schema.String,
-        notification: OrchestrationV2Notification,
-      }),
-    ),
-  }),
+  ThreadPullRequestWatchSyncCommand,
   Schema.Struct({
     type: Schema.Literal("checkpoint.rollback.fail"),
     commandId: CommandId,

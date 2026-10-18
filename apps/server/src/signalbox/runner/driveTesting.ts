@@ -73,6 +73,7 @@ export const makeFakeDrive = (
   options: {
     readonly upstream?: string;
     readonly id?: string;
+    readonly pendingInitialRemoteHead?: DriveState["pendingInitialRemoteHead"];
     /** False: a cloud from before machine state (#490), which answers no `machine` ref. */
     readonly machineState?: boolean;
   } = {},
@@ -95,6 +96,7 @@ export const makeFakeDrive = (
       notes: string | null;
       pinnedViews: CheckpointViews | null;
       revision: string | null;
+      pendingInitialRemoteHead: DriveState["pendingInitialRemoteHead"];
     }
   >();
   const checkpointRecords = new Map<string, Array<DriveCheckpointRecord>>();
@@ -107,6 +109,7 @@ export const makeFakeDrive = (
     failPullResponseAfterSaveOnce: false,
   };
   const shallow: Array<{ seq: number; oid: string }> = [];
+  const remoteCommitUploads: Array<ReadonlyArray<string>> = [];
   /** Files the remote keeps for the drive, as the cloud records them. */
   const promised = new Set<string>();
   /** What `oid` reaches that the store lacks. */
@@ -142,6 +145,8 @@ export const makeFakeDrive = (
       notes: null,
       pinnedViews: null,
       revision: null,
+      pendingInitialRemoteHead:
+        threadId === null ? null : (options.pendingInitialRemoteHead ?? null),
     };
     return {
       driveId: id,
@@ -175,14 +180,16 @@ export const makeFakeDrive = (
       },
       open: Effect.sync(() => {
         if (!threads.has(threadId)) {
+          const seeded = options.pendingInitialRemoteHead != null;
           threads.set(threadId, {
-            thread: main,
+            thread: seeded ? null : main,
             wip: null,
             machine: null,
-            base: main,
+            base: seeded ? null : main,
             notes: null,
             pinnedViews: null,
             revision: null,
+            pendingInitialRemoteHead: options.pendingInitialRemoteHead ?? null,
           });
         }
         return state(threadId, packsAfter);
@@ -325,6 +332,7 @@ export const makeFakeDrive = (
         }),
       uploadPack: (files, upload = {}) =>
         Effect.sync(() => {
+          remoteCommitUploads.push([...(upload.remoteCommits ?? [])]);
           const idx = NodeFS.readFileSync(files.idx);
           const pack = NodeFS.readFileSync(files.pack);
           const name = Buffer.from(pack.subarray(pack.length - 20)).toString("hex");
@@ -396,6 +404,27 @@ export const makeFakeDrive = (
       updateRefs: (updates) =>
         Effect.sync((): RefWriteResult => {
           const refs = threads.get(threadId)!;
+          if (refs.pendingInitialRemoteHead != null) {
+            const threadUpdate = updates.find((update) => update.ref === "thread");
+            if (threadUpdate !== undefined) {
+              if (
+                updates.length !== 1 ||
+                threadUpdate.new !== refs.pendingInitialRemoteHead.headSha
+              ) {
+                return { _tag: "refused", reason: "not the selected pull-request head" };
+              }
+              if (threadUpdate.old !== refs.thread) {
+                return { _tag: "conflict", state: state(threadId, packsAfter) };
+              }
+              if (!has(threadUpdate.new)) {
+                return { _tag: "refused", reason: "unknown selected pull-request commit" };
+              }
+              refs.thread = threadUpdate.new;
+              refs.base = threadUpdate.new;
+              refs.pendingInitialRemoteHead = null;
+              return { _tag: "ok", state: state(threadId, packsAfter) };
+            }
+          }
           if (updates.some((update) => refs[update.ref] !== update.old)) {
             return { _tag: "conflict", state: state(threadId, packsAfter) };
           }
@@ -509,6 +538,7 @@ export const makeFakeDrive = (
     privateObjectsOf: (threadId: string) =>
       packs.filter((pack) => pack.owner === threadId).flatMap((pack) => objectsOf(pack.name)),
     shallow: () => shallow.map((entry) => entry.oid),
+    remoteCommitUploads: () => remoteCommitUploads,
     promised: () => [...promised],
     settings,
     mainFile: (file: string) => git(store, "show", `${main}:${file}`),

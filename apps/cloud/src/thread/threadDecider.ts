@@ -2,6 +2,10 @@ import { type ThreadCommand } from "./threadCommands.ts";
 import { decideAsk } from "./threadAsks.ts";
 import { runtimeResponseEvents } from "./runtimeResponses.ts";
 import {
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+} from "@t3tools/shared/threadPullRequests";
+import {
   type ModelSelection,
   MessageId,
   type OrchestrationV2AppThread,
@@ -91,6 +95,8 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request.link",
   "thread.pull-request.unlink",
   "thread.pull-request-link.sync",
+  "thread.pull-request.watch",
+  "thread.pull-request-watch.sync",
   "thread.archive",
   "thread.unarchive",
   "thread.user-input.dismiss",
@@ -471,6 +477,42 @@ export function decide(
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
       return accept(pullRequestLinkEvents(projection, command, ctx));
+    case "thread.pull-request-watch.sync":
+      if (command.watch !== null || command.wake !== undefined) {
+        return reject("Cloud only supports stopping an ended pull request watch.");
+      }
+      return accept(pullRequestLinkEvents(projection, command, ctx));
+    case "thread.pull-request.watch": {
+      if (command.watching) {
+        if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+          return reject("An archived thread can't watch pull requests.");
+        }
+        if (
+          projection.thread.settledAt !== null ||
+          projection.thread.settledOverride === "settled"
+        ) {
+          return reject("A settled thread can't watch pull requests.");
+        }
+        const key = {
+          host: command.host,
+          repository: command.repository,
+          number: command.number,
+        };
+        const existing = threadPullRequestsOf(projection.thread).find((link) =>
+          threadPullRequestKeysEqual(link, key),
+        );
+        if (existing?.snapshot?.state === "closed" || existing?.snapshot?.state === "merged") {
+          return reject("Only an open pull request can be watched.");
+        }
+        if (
+          (existing === undefined || existing.source === "stack-dismissed") &&
+          (command.link === undefined || command.link.source === "stack-dismissed")
+        ) {
+          return reject("Link the pull request to this thread before watching it.");
+        }
+      }
+      return accept(pullRequestLinkEvents(projection, command, ctx));
+    }
     default:
       return command satisfies never;
   }

@@ -286,6 +286,7 @@ const SERVED = [
   WS_METHODS.pullRequestsInvalidate,
   WS_METHODS.pullRequestsSubscribeRefreshes,
   WS_METHODS.gitResolvePullRequest,
+  WS_METHODS.gitPreparePullRequestThread,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
@@ -409,6 +410,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
+  [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
@@ -451,9 +453,13 @@ export const layerScopeAuthorization = (scopes: ReadonlyArray<AuthEnvironmentSco
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     // Task lifecycle reads need only read scope; its writes operate, as on a self-hosted server.
     const requiredScope =
-      rpc._tag === AUTOMATION_WS_METHODS.automationsTaskLifecycle
-        ? clientRpcRequiredScopes(rpc._tag, payload).find((scope) => !scopes.includes(scope))
-        : REQUIRED_SCOPES[rpc._tag as ServedTag];
+      rpc._tag === WS_METHODS.gitPreparePullRequestThread
+        ? [AuthSourceControlWriteScope, AuthOrchestrationOperateScope].find(
+            (scope) => !scopes.includes(scope),
+          )
+        : rpc._tag === AUTOMATION_WS_METHODS.automationsTaskLifecycle
+          ? clientRpcRequiredScopes(rpc._tag, payload).find((scope) => !scopes.includes(scope))
+          : REQUIRED_SCOPES[rpc._tag as ServedTag];
     return requiredScope === undefined || scopes.includes(requiredScope)
       ? effect
       : Effect.fail(
@@ -1049,6 +1055,10 @@ export const layerHandlers = (input: {
         [WS_METHODS.pullRequestsInvalidate]: (request) => pullRequests.invalidate(request),
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
         [WS_METHODS.gitResolvePullRequest]: (request) => pullRequests.resolvePullRequest(request),
+        [WS_METHODS.gitPreparePullRequestThread]: (request) =>
+          Effect.flatMap(actorNow, (actor) =>
+            pullRequests.preparePullRequestThread(actor, request),
+          ),
         [WS_METHODS.gitRunStackedAction]: (request) =>
           Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
         [WS_METHODS.vcsPull]: (request) =>

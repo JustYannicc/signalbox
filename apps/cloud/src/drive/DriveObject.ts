@@ -146,6 +146,10 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.open(...args);
   }
 
+  prepareThread(...args: Parameters<DriveObjectApi["prepareThread"]>) {
+    return this.api.prepareThread(...args);
+  }
+
   refs(...args: Parameters<DriveObjectApi["refs"]>) {
     return this.api.refs(...args);
   }

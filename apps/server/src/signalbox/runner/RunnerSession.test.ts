@@ -65,6 +65,7 @@ const makeFakeThread = Effect.gen(function* () {
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
   const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+  const pullRequestSeedCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   const terminalProcessIds = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   const terminalReports = yield* Ref.make<ReadonlyArray<TerminalReport>>([]);
@@ -98,6 +99,10 @@ const makeFakeThread = Effect.gen(function* () {
               yield* Ref.update(runtimeResponseCapabilities, (all) => [
                 ...all,
                 message.runtimeResponses,
+              ]);
+              yield* Ref.update(pullRequestSeedCapabilities, (all) => [
+                ...all,
+                message.pullRequestSeeds,
               ]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
@@ -152,6 +157,7 @@ const makeFakeThread = Effect.gen(function* () {
     terminalReports,
     dropOnTerminalReport,
     runtimeResponseCapabilities,
+    pullRequestSeedCapabilities,
     helloRuns,
     dropAfterCommit,
     toCurrent,
@@ -379,6 +385,7 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
         });
         expect(requests).toEqual([request]);
         expect(yield* Ref.get(thread.feedbackCapabilities)).toEqual([true]);
+        expect(yield* Ref.get(thread.pullRequestSeedCapabilities)).toEqual([true]);
       }),
     ),
   );

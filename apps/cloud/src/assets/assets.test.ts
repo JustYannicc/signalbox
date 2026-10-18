@@ -87,6 +87,7 @@ const threads = CloudThreadService.CloudThreadService.of({
       : Effect.fail(new ThreadNotFoundError()),
   answerAskAsAssistant: unused,
   syncAutomationAsk: unused,
+  syncAutomationPullRequestWatch: unused,
   dispatchCommand: unused,
   launchThread: unused,
   threadHistoryPage: unused,

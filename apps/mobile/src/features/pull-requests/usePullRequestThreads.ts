@@ -33,6 +33,7 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import {
   appendPullRequestAgentPrompt,
   pullRequestAgentPrompt,
+  pullRequestAgentTaskPreparesThread,
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
 
@@ -79,7 +80,8 @@ export function usePullRequestThreads(
     pending.current = true;
     setBusy(true);
     try {
-      if (connected && !thread && !canCheckout)
+      const preparesThread = !thread && pullRequestAgentTaskPreparesThread(task);
+      if (connected && preparesThread && !canCheckout)
         throw new Error("Starting work from this PR requires source control write access.");
       await waitForComposerDraftsLoaded();
       const draftKey = thread
@@ -88,7 +90,7 @@ export function usePullRequestThreads(
             environmentId: target.environmentId,
             projectId: target.input.projectId,
           });
-      if (!thread)
+      if (preparesThread)
         updateComposerDraftSettings(draftKey, {
           workspaceSelection: {
             mode: "worktree",

@@ -164,7 +164,7 @@ export const makeThreads = Effect.gen(function* () {
   const dispatchCommand = (actor: Actor, command: ThreadCommand) =>
     Effect.gen(function* () {
       const automationAnswer =
-        command.type === "thread.ask.sync"
+        command.type === "thread.ask.sync" || command.type === "thread.pull-request-watch.sync"
           ? null
           : yield* dispatchAutomationAskAnswer(actor, command, {
               threadSnapshot: (who, id) => threadSnapshot(who, id),
@@ -431,6 +431,17 @@ export const makeThreads = Effect.gen(function* () {
         ),
         threadId,
         ask,
+      }),
+    syncAutomationPullRequestWatch: (actor, threadId, key, startedAt) =>
+      dispatchCommand(actor, {
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make(
+          `automation-pr-watch:${threadId}:${key.host}/${key.repository}#${key.number}:${startedAt}`,
+        ),
+        threadId,
+        ...key,
+        startedAt,
+        watch: null,
       }),
     refreshRemoteWorkspace,
     snapshot: threadSnapshot,

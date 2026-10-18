@@ -66,7 +66,8 @@ export function resolveNewTaskBranchLabel(input: {
   readonly workspaceMode: WorkspaceMode;
   readonly pullRequestReference?: string;
 }): string {
-  if (input.workspaceMode === "worktree" && input.pullRequestReference) {
+  // signalbox: callers pass the reference only while it still decides where the thread starts.
+  if (input.pullRequestReference) {
     const pr = parseChangeRequestUrl(input.pullRequestReference);
     if (pr) return `From PR #${pr.number}`;
   }

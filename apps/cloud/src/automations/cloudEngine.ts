@@ -1,4 +1,10 @@
-import { AutomationError, ProjectId, ThreadId, type AutomationNotice } from "@t3tools/contracts";
+import {
+  AutomationError,
+  CommandId,
+  ProjectId,
+  ThreadId,
+  type AutomationNotice,
+} from "@t3tools/contracts";
 import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
 import { AutomationFolders } from "@signalbox/automations/folderScope";
 import { explained } from "@signalbox/automations/runLog";
@@ -9,12 +15,15 @@ import {
 } from "@signalbox/automations/host";
 import * as HostedEngine from "@signalbox/automations/runner/layer";
 import { HostedRuns } from "@signalbox/automations/runner/hostedDriver";
+import * as RunLinkStore from "@signalbox/automations/runLinkStore";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -42,10 +51,16 @@ import { driveEvent, makeChangedFiles } from "./driveChanges.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
 import * as CloudModelSteps from "./cloudModelSteps.ts";
 import * as CloudThreads from "./cloudThreads.ts";
+import {
+  ensureCloudPullRequestWatches,
+  makeCloudPullRequestWatches,
+} from "./cloudPullRequestWatches.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
 import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
 import * as CloudIngress from "./cloudIngress.ts";
 import * as HookStoreModule from "./hookStore.ts";
+import { threadPullRequestKeysEqual } from "@t3tools/shared/threadPullRequests";
+import { errorTag } from "@t3tools/shared/observability";
 
 /**
  * The user's automations on their Durable Object (#434). Each run is a
@@ -123,6 +138,8 @@ const make = Effect.gen(function* () {
   );
   const push = yield* PushNotifier;
   const sql = yield* SqlClient.SqlClient;
+  const runLinks = yield* RunLinkStore.make;
+  const crypto = yield* Crypto.Crypto;
   const alarm = yield* AutomationAlarm;
   const hooks = yield* CloudIngress.CloudHooks;
   const inbox = yield* HookStoreModule.HookStore;
@@ -133,9 +150,37 @@ const make = Effect.gen(function* () {
   );
 
   yield* ensureCursors.pipe(Effect.orDie);
+  yield* ensureCloudPullRequestWatches.pipe(Effect.orDie);
+  const watchRetryAt = yield* Ref.make<number | null>(null);
   const merges = yield* PullRequestMergesModule.PullRequestMerges;
   const changedFiles = yield* makeChangedFiles;
   const folders = yield* UserFolders.UserFolders;
+  const pullRequestWatches = yield* makeCloudPullRequestWatches({
+    engine,
+    threads,
+    runningAttached: runLinks.runningAttached,
+    clearWatch: (threadId, target, startedAt) =>
+      Effect.gen(function* () {
+        const actor = yield* owner;
+        yield* service
+          .syncAutomationPullRequestWatch(
+            actor,
+            ThreadId.make(threadId),
+            { host: target.host, repository: target.repository, number: target.number },
+            startedAt,
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new AutomationError({
+                  message: "Couldn't clear an ended pull request watch.",
+                  cause,
+                }),
+            ),
+          );
+      }),
+    sql,
+  });
   yield* engine.registerBuiltinTools(
     makeCloudBuiltinTools({ threads, service, owner, merges, folders }),
   );
@@ -143,6 +188,27 @@ const make = Effect.gen(function* () {
   yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
   const tools = makeCloudTools({
     engine,
+    recordWatch: (caller, target, watching) =>
+      Effect.gen(function* () {
+        const linked = (caller.pullRequests ?? []).some(
+          (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+        );
+        const uuid = yield* crypto.randomUUIDv4();
+        yield* service.dispatchCommand(yield* owner, {
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`cloud:pr-watch:${uuid}`),
+          threadId: caller.id,
+          ...target,
+          watching,
+          ...(watching && !linked ? { link: { url: target.url, source: "agent" } } : {}),
+        });
+        return yield* pullRequestWatches.reconcile(caller.id, { target, watching });
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AutomationError({ message: "Couldn't update the pull request watch.", cause }),
+        ),
+      ),
     compiler,
     timezone: savedTimezone,
     threads,
@@ -163,6 +229,31 @@ const make = Effect.gen(function* () {
    */
   const drainAndPush = Effect.gen(function* () {
     yield* engine.drain;
+    const retryPendingWatches = yield* pullRequestWatches.resumePending().pipe(
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Pending pull request watch recovery failed", {
+            errorTag: errorTag(cause),
+          });
+          return true;
+        }),
+      ),
+    );
+    const retryWatchCleanup = yield* pullRequestWatches.reconcileEnded().pipe(
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Pull request watch cleanup failed", {
+            errorTag: errorTag(cause),
+          });
+          return true;
+        }),
+      ),
+    );
+    yield* Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        Ref.set(watchRetryAt, retryPendingWatches || retryWatchCleanup ? now + 60_000 : null),
+      ),
+    );
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
   });
   /** The next scheduled work, including outcome delivery, ask sync and external runs. */
@@ -173,6 +264,7 @@ const make = Effect.gen(function* () {
     engine.nextExternalPollAt,
     inbox.nextAt,
     githubHooks.nextAt,
+    Ref.get(watchRetryAt),
   ]).pipe(
     Effect.map((times) => {
       const pending = times.filter((at): at is number => at !== null);
@@ -220,7 +312,7 @@ const make = Effect.gen(function* () {
       `;
       const taken = rows[0]?.sequence ?? 0;
       const fresh = events.filter((entry) => entry.sequence > taken);
-      const last = fresh.at(-1)?.sequence ?? taken;
+      const last = fresh.reduce((latest, entry) => Math.max(latest, entry.sequence), taken);
       const take = sql`
         INSERT INTO ${sql(table)} (${sql(key)}, sequence) VALUES (${id}, ${last})
         ON CONFLICT (${sql(key)}) DO UPDATE SET sequence = excluded.sequence
@@ -307,12 +399,16 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { fresh, take } = yield* freshSince("thread", threadId, events);
         if (fresh.length === 0) return;
-        yield* take;
         yield* annotateOwner;
+        // The event body can be stale or arrive after a later command. Re-read the
+        // owner's current snapshot before applying watch intent or waking runs.
+        yield* pullRequestWatches.reconcile(threadId);
         yield* feed.publish(fresh.map((entry) => entry.event));
         yield* flush;
+        // A retry repeats idempotent watch effects and event delivery until both finish.
+        yield* take;
       }).pipe(
-        Effect.mapError(storageError),
+        Effect.catchTags({ SqlError: (cause) => Effect.fail(storageError(cause)) }),
         Effect.withSpan("CloudAutomations.threadEvents", {
           attributes: { "thread.id": threadId, "events.count": events.length },
         }),

@@ -618,6 +618,62 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         : ({ _tag: "fetched", head } as const);
     });
 
+  /** Fetches the PR's current head ref, then falls back only to its pinned SHA. */
+  const fetchInitialRemoteHead = (
+    seed: NonNullable<DriveRefs["pendingInitialRemoteHead"]>,
+    remoteToken: string | null,
+  ) =>
+    Effect.gen(function* () {
+      if (remote === null || remote === undefined || remote.repository !== seed.repository) {
+        return yield* new RunnerGitError({
+          message: "The selected pull request does not match this thread's remote repository.",
+        });
+      }
+      if (remoteToken === null) {
+        return yield* new RunnerGitError({
+          message: "Signalbox could not authorize a fetch of the selected pull-request commit.",
+        });
+      }
+
+      const ref = "refs/signalbox/pull-request-seed";
+      yield* git.setRef(ref, null);
+      const fetched = yield* git.exec([
+        "fetch",
+        "--filter=blob:none",
+        "--no-tags",
+        "-q",
+        "origin",
+        `+refs/pull/${seed.number}/head:${ref}`,
+      ]);
+      const currentHead = fetched.code === 0 ? yield* git.resolve(ref) : null;
+      if (currentHead !== seed.headSha) {
+        const pinned = yield* git.exec([
+          "fetch",
+          "--filter=blob:none",
+          "--no-tags",
+          "-q",
+          "origin",
+          seed.headSha,
+        ]);
+        const pinnedHead = pinned.code === 0 ? yield* git.resolve("FETCH_HEAD") : null;
+        if (pinnedHead !== seed.headSha) {
+          return yield* new RunnerGitError({
+            message: "The selected pull-request commit is unavailable through Signalbox.",
+          });
+        }
+        yield* git.setRef(ref, seed.headSha);
+      }
+      const selected = yield* git.resolve(ref);
+      if (selected !== seed.headSha) {
+        return yield* new RunnerGitError({
+          message: "Signalbox could not verify the selected pull-request commit.",
+        });
+      }
+
+      const refusal = yield* drive.initializeRemoteHead(seed.headSha);
+      if (refusal !== null) return yield* new RunnerGitError({ message: refusal });
+    });
+
   /** Brings a mirror drive's `main` to the remote's head. Fails only when the drive has nothing at all. */
   const syncRemote = (fetched: Effect.Success<ReturnType<typeof fetchHistory>>) =>
     Effect.gen(function* () {
@@ -724,9 +780,19 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           if (fetched !== null && remote?.mode !== "source") yield* syncRemote(fetched);
           if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
+        const initialState = yield* drive.open;
+        const seededThisPrepare = initialState.pendingInitialRemoteHead != null;
+        if (seededThisPrepare) {
+          yield* fetchInitialRemoteHead(initialState.pendingInitialRemoteHead!, remoteToken);
+        }
+        const state = seededThisPrepare ? yield* drive.open : initialState;
+        if (state.pendingInitialRemoteHead != null) {
+          return yield* new RunnerGitError({
+            message: "The selected pull-request commit was not saved to this thread's drive.",
+          });
+        }
         yield* progress("fetch", remote === null || remoteToken === null ? "skipped" : "done");
         yield* progress("checkout", "running");
-        const state = yield* drive.open;
         pinnedContinuation = state.pinnedViews !== null;
         const revisionFile = path.join(gitDir, "signalbox-revision");
         const localRevision = yield* fs.readFileString(revisionFile).pipe(
@@ -790,7 +856,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           remote !== null &&
           remote !== undefined &&
           remote.mode !== "source" &&
-          !pinnedContinuation
+          !pinnedContinuation &&
+          !seededThisPrepare
         ) {
           const main = remote.defaultBranch;
           const outcome = yield* syncMain(merged, remote, fetchedMain);

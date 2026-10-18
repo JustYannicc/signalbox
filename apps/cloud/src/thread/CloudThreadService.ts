@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
+  type ThreadPullRequestKey,
   type ThreadId,
   SecretRequestError,
   type SecretRequestAnswerInput,
@@ -64,6 +65,12 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
       ask: SignalboxAsk,
+    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    readonly syncAutomationPullRequestWatch: (
+      actor: Actor,
+      threadId: ThreadId,
+      key: ThreadPullRequestKey,
+      startedAt: string,
     ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
     readonly answerAskAsAssistant: (
       actor: Actor,
@@ -297,6 +304,7 @@ const make = Effect.gen(function* () {
 
   return CloudThreadService.of({
     syncAutomationAsk: threads.syncAutomationAsk,
+    syncAutomationPullRequestWatch: threads.syncAutomationPullRequestWatch,
     answerAskAsAssistant: threads.answerAskAsAssistant,
     uploadFeedback: (actor, input) =>
       directory

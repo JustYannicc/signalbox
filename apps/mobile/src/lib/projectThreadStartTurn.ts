@@ -79,6 +79,15 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
   };
 }
 
+/**
+ * The first message of a thread the environment already made, as when it prepared a pull request
+ * for it: the same turn, with nothing that would create the thread a second time.
+ */
+export function buildPreparedThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
+  const { bootstrap: _bootstrap, ...input } = buildProjectThreadStartTurnInput(spec);
+  return input;
+}
+
 export function deriveThreadTitleFromPrompt(value: string): string {
   const trimmed = assistantCitationsToPlainText(value).trim();
   if (trimmed.length === 0) {

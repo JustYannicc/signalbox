@@ -279,6 +279,10 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/pull-request-thread-preparation": {
+      "types": "./src/state/pullRequestThreadPreparation.ts",
+      "default": "./src/state/pullRequestThreadPreparation.ts"
+    },
     "./state/command-output": {
       "types": "./src/state/commandOutput.ts",
       "default": "./src/state/commandOutput.ts"

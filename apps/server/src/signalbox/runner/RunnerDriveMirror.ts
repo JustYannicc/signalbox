@@ -115,6 +115,8 @@ export type DriveRefs = Readonly<Record<"main" | ThreadRefName, string | null>> 
   readonly notes: string | null;
   readonly pinnedViews: CheckpointViews | null;
   readonly revision: string | null;
+  /** An immutable pull-request head a new thread must materialize before its first turn. */
+  readonly pendingInitialRemoteHead: DriveState["pendingInitialRemoteHead"];
 };
 
 export const CHECKPOINT_NOTES_REF = "refs/notes/signalbox/checkpoints";
@@ -136,6 +138,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
     notes: null,
     pinnedViews: null,
     revision: null,
+    pendingInitialRemoteHead: null,
   };
   let knownNotes: string | null = null;
   /** Whether the drive is backed by a remote, as last seen. */
@@ -174,6 +177,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         notes: state.notes ?? knownNotes,
         pinnedViews: state.pinnedViews ?? null,
         revision: state.revision ?? null,
+        pendingInitialRemoteHead: state.pendingInitialRemoteHead ?? null,
       };
       remoteBacked = state.remote !== null;
       keepsMachine = state.machine !== undefined;
@@ -378,6 +382,40 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
           if (result._tag === "ok") return null;
         }
         return "main kept moving.";
+      }),
+    /** Stores the selected pull-request commit one deep and consumes its durable seed by CAS. */
+    initializeRemoteHead: (head: string) =>
+      Effect.gen(function* () {
+        const alreadyMaterialized = () => {
+          if (known.pendingInitialRemoteHead != null || known.thread === null) {
+            return Effect.succeed(false);
+          }
+          return known.thread === head ? Effect.succeed(true) : git.isAncestor(head, known.thread);
+        };
+
+        if (yield* alreadyMaterialized()) return null;
+        if (known.pendingInitialRemoteHead?.headSha !== head) {
+          return "The selected pull-request head is no longer pending for this thread.";
+        }
+
+        yield* upload(head, { remoteCommits: [head] });
+        for (let attempt = 0; attempt < REF_ATTEMPTS; attempt++) {
+          const result = yield* client.updateRefs([
+            { ref: "thread", old: known.thread, new: head },
+          ]);
+          if (result._tag === "refused") {
+            // The server may have committed the first CAS even if its response was lost.
+            yield* adopt(yield* client.open);
+            if (yield* alreadyMaterialized()) return null;
+            return result.reason;
+          }
+          yield* adopt(result.state);
+          if (yield* alreadyMaterialized()) return null;
+          if (known.pendingInitialRemoteHead?.headSha !== head) {
+            return "The selected pull-request head was consumed by another drive update.";
+          }
+        }
+        return "The thread's initial branch kept moving.";
       }),
     /** Saves `commit` as the auto-save. */
     saveWip: (commit: string) =>
