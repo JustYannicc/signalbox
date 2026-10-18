@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - The probe bounds and stops its compiler subprocess.
 import * as NodeChildProcess from "node:child_process";
 import * as NodePerfHooks from "node:perf_hooks";
+import * as NodeProcess from "node:process";
 
 export type JsonRpcMessage = {
   error?: { code: number; message: string };
@@ -352,10 +353,11 @@ export class LspSmokeClient {
       if (taskkill.error) this.child.kill(signal === "TERM" ? "SIGTERM" : "SIGKILL");
       return;
     }
-    const result = NodeChildProcess.spawnSync("/bin/kill", [`-${signal}`, `-${pid}`], {
-      stdio: "ignore",
-    });
-    if (result.error) this.child.kill(signal === "TERM" ? "SIGTERM" : "SIGKILL");
+    try {
+      NodeProcess.kill(-pid, signal === "TERM" ? "SIGTERM" : "SIGKILL");
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    }
   }
 
   private waitUntilClosed(timeoutMs: number): Promise<CloseResult>;
