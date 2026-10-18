@@ -5,7 +5,6 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -21,7 +20,19 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
+import * as ClientTraceExport from "./observability/ClientTraceExport.ts";
+import * as ClientTraceLimits from "./observability/ClientTraceLimits.ts";
+import * as ClientTraceIntake from "./observability/ClientTraceIntake.ts";
+import * as ClientTraceRoutes from "./observability/clientTraceRoutes.ts";
+import * as ClientIssueIntake from "./observability/ClientIssueIntake.ts";
+import * as ClientIssueRoutes from "./observability/clientIssueRoutes.ts";
+import { logRequestFailure } from "./observability/requestFailures.ts";
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as IdentityProvider from "./account/IdentityProvider.ts";
+import * as TestIdentities from "./testSignIn/TestIdentities.ts";
+import * as TestSignIn from "./testSignIn/TestSignIn.ts";
+import * as TestSignInPolicy from "./testSignIn/TestSignInPolicy.ts";
+import * as TestSignInRoutes from "./http/testSignInRoutes.ts";
 import * as AssetRoutes from "./assets/assetRoutes.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as AttachmentRoutes from "./attachments/attachmentRoutes.ts";
@@ -43,6 +54,7 @@ import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credential
 import * as DiagnosticsRoutes from "./http/diagnosticsRoutes.ts";
 import * as ThreadKindRoutes from "./http/threadKindRoutes.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
+import * as Evlog from "./observability/Evlog.ts";
 import * as Platform from "./platform.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
@@ -53,10 +65,11 @@ import {
   protectedResourceMetadata,
 } from "./api/mcpRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
-import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
+import * as ThreadsLive from "./thread/ThreadsLive.ts";
+import type { LocalKeyVerifier } from "./models/ModelProtocol.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
-import * as ThreadContexts from "./user/threadContexts.ts";
+import * as ThreadContextLayers from "./user/threadContextLayers.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 
 /**
@@ -86,14 +99,35 @@ export const layerServices = (input: {
   readonly users: UserDirectory.UserObjectNamespace;
   readonly threads: ThreadDirectory.ThreadObjectNamespace;
   readonly localWorkerd: boolean;
+  readonly traceExport?: Pick<Fetcher, "fetch">;
+  readonly traceLimiter?: Pick<RateLimit, "limit">;
   /** The drives bucket and its preview prefix, where attachments live. */
   readonly attachments: AttachmentStorage;
 }) =>
-  CloudAssets.layer.pipe(
+  Layer.mergeAll(CloudAssets.layer, ClientTraceIntake.layer, ClientIssueIntake.layer).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ClientTraceExport.layer({
+          ...(input.traceExport ? { TRACE_EXPORT: input.traceExport } : {}),
+          ...(input.vars.TRACE_EXPORT_TOKEN
+            ? { TRACE_EXPORT_TOKEN: input.vars.TRACE_EXPORT_TOKEN }
+            : {}),
+          ...(input.vars.T3CODE_TELEMETRY_ENABLED
+            ? { T3CODE_TELEMETRY_ENABLED: input.vars.T3CODE_TELEMETRY_ENABLED }
+            : {}),
+        }),
+        ClientTraceLimits.layer(
+          input.traceLimiter,
+          input.vars.ENVIRONMENT_ID ?? input.vars.SIGNALBOX_STAGE,
+        ),
+      ),
+    ),
+    Layer.provideMerge(TestSignIn.layer),
+    Layer.provideMerge(Layer.mergeAll(TestIdentities.layer, TestSignInPolicy.layer)),
     Layer.provideMerge(
       Layer.mergeAll(
         CloudAccounts.layer,
-        CloudThreadService.layer,
+        CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
         PreviewSetup.layer,
         ThreadKindRoutes.layerTestClock,
       ),
@@ -101,12 +135,11 @@ export const layerServices = (input: {
     Layer.provideMerge(CloudAttachments.layer(input.attachments)),
     Layer.provideMerge(PreviewSetup.layerSourceHttp),
     // The Worker only reads threads; they are created in their user's object.
-    Layer.provideMerge(Layer.mergeAll(ThreadContexts.layerWorker, ThreadKindTurns.layerNone)),
+    Layer.provideMerge(Layer.mergeAll(ThreadContextLayers.layerWorker, ThreadKindTurns.layerNone)),
     Layer.provideMerge(CloudSessions.layer),
-    Layer.provideMerge(
-      GitHub.layer(GitHub.gitHubPipesConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
-    ),
+    Layer.provideMerge(GitHub.layerForUsers(GitHub.gitHubEndpoints(input.vars))),
     Layer.provideMerge(CloudTokens.layer),
+    Layer.provideMerge(IdentityProvider.layer),
     Layer.provideMerge(Layer.mergeAll(CloudConfig.layer, PreviewSetup.layerConfig)),
     Layer.provideMerge(
       Layer.mergeAll(
@@ -118,6 +151,7 @@ export const layerServices = (input: {
       Layer.mergeAll(FetchHttpClient.layer, Platform.layerCrypto, Platform.layerHttp),
     ),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.vars }))),
+    Layer.provideMerge(Evlog.layer),
   );
 
 type Services = Layer.Success<ReturnType<typeof layerServices>>;
@@ -125,8 +159,11 @@ type Services = Layer.Success<ReturnType<typeof layerServices>>;
 // Raw account routes resolve services per request, from the context the web
 // handler is built with; the API groups take them when the router is built.
 const routes = Layer.mergeAll(
+  ClientTraceRoutes.layer,
+  ClientIssueRoutes.layer,
   EnvironmentApi.layer,
   AccountRoutes.layer,
+  TestSignInRoutes.layer,
   HookRoutes.layer,
   PreviewOpenRoutes.layer,
   DiagnosticsRoutes.layer,
@@ -194,15 +231,18 @@ const openSocket = (request: Request) =>
     }),
   );
 
+/** The request's wide event (`observability/Evlog.ts`), which the handler's `Effect.log*` lands on. */
+type RequestLog = Evlog.UnitLog;
+
 export interface CloudApp {
-  readonly http: (request: Request) => Promise<Response>;
-  readonly webSocket: (request: Request) => Promise<Response>;
+  readonly http: (request: Request, log?: RequestLog) => Promise<Response>;
+  readonly webSocket: (request: Request, log?: RequestLog) => Promise<Response>;
   /** The ModelGateway's check of a local key's signature (`ModelGrants` in `worker.ts`). */
   readonly verifyLocalKey: LocalKeyVerifier;
   /** `/api/v1/`: the public API (`api/apiRoutes.ts`), streams and all. */
-  readonly api: (request: Request) => Promise<Response>;
+  readonly api: (request: Request, log?: RequestLog) => Promise<Response>;
   /** `/mcp` and its protected-resource metadata (`api/mcpRoutes.ts`). */
-  readonly mcp: (request: Request) => Promise<Response>;
+  readonly mcp: (request: Request, log?: RequestLog) => Promise<Response>;
 }
 
 export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
@@ -215,15 +255,7 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
         const httpEffect = yield* HttpRouter.toHttpEffect(routes);
         const context = yield* Effect.context<Services>();
         return HttpEffect.toWebHandler(
-          httpEffect.pipe(
-            // Handlers map expected failures to responses; anything left is a bug worth logging.
-            Effect.tapCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.void
-                : Effect.logError("cloud request failed", Cause.pretty(cause)),
-            ),
-            Effect.provide(context),
-          ),
+          httpEffect.pipe(Effect.tapCause(logRequestFailure), Effect.provide(context)),
         );
       }).pipe(Scope.provide(scope)),
     )
@@ -232,15 +264,21 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
       throw cause;
     });
   return {
-    http: (request) => http.then((handler) => handler(request)),
-    webSocket: (request) => runtime.runPromise(openSocket(request)),
+    http: (request, log) =>
+      http.then((handler) =>
+        handler(request, log === undefined ? undefined : Evlog.loggerContext(log)),
+      ),
+    webSocket: (request, log) => runtime.runPromise(Evlog.provideLogger(openSocket(request), log)),
     verifyLocalKey: (token) => runtime.runPromise(verifyLocalKey(token)),
-    api: (request) => runtime.runPromise(handleApiRequest(request)),
-    mcp: (request) =>
+    api: (request, log) => runtime.runPromise(Evlog.provideLogger(handleApiRequest(request), log)),
+    mcp: (request, log) =>
       runtime.runPromise(
-        PROTECTED_RESOURCE_PATHS.has(new URL(request.url).pathname)
-          ? protectedResourceMetadata(request)
-          : handleMcpRequest(request),
+        Evlog.provideLogger(
+          PROTECTED_RESOURCE_PATHS.has(new URL(request.url).pathname)
+            ? protectedResourceMetadata(request)
+            : handleMcpRequest(request),
+          log,
+        ),
       ),
   };
 };

@@ -1,5 +1,5 @@
 import type { AccountSignInError } from "@t3tools/contracts/account";
-import { useCallback, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
 import { SignalboxLogo } from "../components/SignalboxMark";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -28,12 +28,9 @@ export function SignInFrame({
   // Each state swap unmounts the focused control; land focus (and screen
   // readers) on the new heading instead of <body>.
   // Keyed by title, so this runs once per state.
-  const focusHeading = useCallback(
-    (heading: HTMLHeadingElement | null) => {
-      if (shouldFocusHeading) heading?.focus({ preventScroll: true });
-    },
-    [shouldFocusHeading],
-  );
+  const focusHeading = (heading: HTMLHeadingElement | null) => {
+    if (shouldFocusHeading) heading?.focus({ preventScroll: true });
+  };
 
   return (
     <StandalonePage tone="brand">

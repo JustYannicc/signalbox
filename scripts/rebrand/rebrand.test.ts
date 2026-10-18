@@ -58,6 +58,7 @@ describe("rebrandScript", () => {
       "const e = `t3 ${subcommand}`;",
       'const f = "Remove it with `npm uninstall -g t3`.";',
       'const g = "Open t3code://threads/1";',
+      "const h = \"npm install --global --prefix '/opt/node' t3@0.0.45\";",
     ].join("\n");
 
     expect(rebrandScript("apps/server/src/cli/example.ts", code)).toBe(
@@ -69,6 +70,7 @@ describe("rebrandScript", () => {
         "const e = `signalbox ${subcommand}`;",
         'const f = "Remove it with `npm uninstall -g signalbox-cli`.";',
         'const g = "Open signalbox://threads/1";',
+        "const h = \"npm install --global --prefix '/opt/node' signalbox-cli@0.0.45\";",
       ].join("\n"),
     );
   });
@@ -169,6 +171,22 @@ describe("rebrandFile", () => {
         "Signalbox stores data in `~/.signalbox/userdata`, separate from each worktree's `.t3`.",
         "curl -fsSL https://raw.githubusercontent.com/JustYannicc/signalbox/main/scripts/install.sh | sh",
         "Run `signalbox serve`, or `npx signalbox-cli@latest`.",
+      ].join("\n"),
+    );
+  });
+
+  it("routes our builds' app ids and scheme names in docs, but not other t3code tokens", () => {
+    const doc = [
+      "Allow `clerk://com.t3tools.t3code.dev.callback` and `<TEAM_ID>.com.t3tools.t3code.webauthn`.",
+      "These are separate from the `t3code-dev` / `t3code-preview` / `t3code` navigation schemes.",
+      "Both run in `service.namespace` `t3code`.",
+    ].join("\n");
+
+    expect(rebrandFile("docs/operations/connect-setup.md", doc)).toBe(
+      [
+        "Allow `clerk://com.justyannicc.signalbox.dev.callback` and `<TEAM_ID>.com.justyannicc.signalbox.webauthn`.",
+        "These are separate from the `signalbox-dev` / `signalbox-preview` / `signalbox` navigation schemes.",
+        "Both run in `service.namespace` `t3code`.",
       ].join("\n"),
     );
   });

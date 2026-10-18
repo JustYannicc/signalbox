@@ -5,7 +5,6 @@
  * details panel never strands the diagram off-screen.
  */
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -66,12 +65,12 @@ export function useCanvasViewport(
   } | null>(null);
   const { width, height } = bounds;
 
-  const fit = useCallback(() => {
+  const fit = () => {
     const container = containerRef.current;
     if (!container) return;
     userMovedRef.current = false;
     setViewport(fitViewport({ width, height }, container.clientWidth, container.clientHeight));
-  }, [containerRef, width, height]);
+  };
 
   useLayoutEffect(() => {
     fit();
@@ -82,22 +81,19 @@ export function useCanvasViewport(
     });
   }, [containerRef, fit]);
 
-  const zoomAround = useCallback(
-    (factor: number, clientX?: number, clientY?: number) => {
-      const container = containerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      const px = clientX === undefined ? rect.width / 2 : clientX - rect.left;
-      const py = clientY === undefined ? rect.height / 2 : clientY - rect.top;
-      userMovedRef.current = true;
-      setViewport((current) => {
-        const zoom = clampZoom(current.zoom * factor);
-        const scale = zoom / current.zoom;
-        return { zoom, x: px - (px - current.x) * scale, y: py - (py - current.y) * scale };
-      });
-    },
-    [containerRef],
-  );
+  const zoomAround = (factor: number, clientX?: number, clientY?: number) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const px = clientX === undefined ? rect.width / 2 : clientX - rect.left;
+    const py = clientY === undefined ? rect.height / 2 : clientY - rect.top;
+    userMovedRef.current = true;
+    setViewport((current) => {
+      const zoom = clampZoom(current.zoom * factor);
+      const scale = zoom / current.zoom;
+      return { zoom, x: px - (px - current.x) * scale, y: py - (py - current.y) * scale };
+    });
+  };
 
   // React's onWheel is passive, so preventDefault needs a native listener.
   useEffect(() => {

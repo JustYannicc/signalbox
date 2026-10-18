@@ -3,6 +3,23 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./clientTraceSafety": {
+      "types": "./src/clientTraceSafety.ts",
+      "import": "./src/clientTraceSafety.ts"
+    },
+    "./pnpmVirtualStore": {
+      "types": "./src/pnpmVirtualStore.ts",
+      "import": "./src/pnpmVirtualStore.ts",
+      "require": "./src/pnpmVirtualStore.ts"
+    },
+    "./agentProcesses": {
+      "types": "./src/agentProcesses/registry.ts",
+      "import": "./src/agentProcesses/registry.ts"
+    },
+    "./agentProcessSessions": {
+      "types": "./src/agentProcessSessions.ts",
+      "import": "./src/agentProcessSessions.ts"
+    },
     "./synchronization": {
       "types": "./src/synchronization.ts",
       "import": "./src/synchronization.ts"
@@ -311,6 +328,10 @@
       "types": "./src/relayTracing.ts",
       "import": "./src/relayTracing.ts"
     },
+    "./traceUrlScrubbing": {
+      "types": "./src/traceUrlScrubbing.ts",
+      "import": "./src/traceUrlScrubbing.ts"
+    },
     "./preview": {
       "types": "./src/preview.ts",
       "import": "./src/preview.ts"
@@ -530,6 +551,22 @@
     "./poolUsage": {
       "types": "./src/poolUsage.ts",
       "import": "./src/poolUsage.ts"
+    },
+    "./defaultModelSelection": {
+      "types": "./src/defaultModelSelection.ts",
+      "import": "./src/defaultModelSelection.ts"
+    },
+    "./agentProcessInspection": {
+      "types": "./src/agentProcesses/processOps.ts",
+      "import": "./src/agentProcesses/processOps.ts"
+    },
+    "./agentProcessRun": {
+      "types": "./src/agentProcesses/run.ts",
+      "import": "./src/agentProcesses/run.ts"
+    },
+    "./agentProcessEnvironment": {
+      "types": "./src/agentProcesses/environment.ts",
+      "import": "./src/agentProcesses/environment.ts"
     }
   },
   "scripts": {

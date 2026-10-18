@@ -24,6 +24,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { recordCurrentTurnItem } from "./CurrentTurnItemHistory.ts";
+
 import { replayAndBufferProjectedLiveEvents } from "../orchestration-v2/LiveStreamBudget.ts";
 
 import {
@@ -529,14 +531,19 @@ const makeEventStore = Effect.gen(function* () {
               if (oldest !== undefined) promptHints.delete(oldest);
             }
           }
-          return yield* decodeV2StoredEvent({
+          const stored = yield* decodeV2StoredEvent({
             sequence: rows[0]?.sequence,
             commandId: input.commandId ?? null,
             event,
           });
+          // signalbox: expand the current-item store while preserving the legacy log for rollback.
+          return yield* recordCurrentTurnItem(stored).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
         }),
       { concurrency: 1 },
     ).pipe(
+      sql.withTransaction,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "OrchestrationEventStore.appendAgentEvents:insert",

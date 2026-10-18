@@ -4,9 +4,10 @@ import * as Tool from "effect/ai/Tool";
 
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../../project/ProjectService.ts";
-import * as ServerSettings from "../../serverSettings.ts";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import * as ProjectAutomations from "../ProjectAutomations.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
+import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 
 /** How every automation tool is declared: its services, failure and annotations. */
 
@@ -14,9 +15,9 @@ const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagement.ThreadManagementService,
   WorkflowEngine.WorkflowEngine,
-  // automation_save picks a model for callers without a thread.
+  ProjectAutomations.ProjectAutomations,
   ProjectService.ProjectService,
-  ServerSettings.ServerSettingsService,
+  ThreadLaunch.ThreadLaunchService,
 ];
 
 export const tool = <

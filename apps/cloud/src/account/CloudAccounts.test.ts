@@ -3,6 +3,9 @@ import type { WorkOSCodes } from "@signalbox/account/WorkOSTesting";
 import type { AccountAuthorizeParams } from "@t3tools/contracts/account";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
@@ -207,6 +210,63 @@ describe("CloudAccounts", () => {
       expect(result.location.startsWith("/sign-in?")).toBe(true);
       expect(new URL(result.location, ORIGIN).searchParams.get("handoff")).toBeTruthy();
     }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
+  );
+  it.effect(
+    "uses the trusted WorkOS realm and hides its personal organization during sign-in",
+    () =>
+      Effect.gen(function* () {
+        const requests: Array<{ url: string; authorization: string | undefined }> = [];
+        const client = HttpClient.make((request) =>
+          Effect.sync(() => {
+            requests.push({ url: request.url, authorization: request.headers.authorization });
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                request.url.includes("/organizations/external_id/")
+                  ? { id: "org_personal_sandbox", external_id: "personal:user_sandbox" }
+                  : {
+                      data: [
+                        { organization_id: "org_sandbox", organization_name: "Test company" },
+                        { organization_id: "org_personal_sandbox", organization_name: "Personal" },
+                      ],
+                      list_metadata: { after: null },
+                    },
+              ),
+            );
+          }),
+        );
+        yield* CloudAccounts.CloudAccounts.use((service) =>
+          service.finishSignIn(
+            { origin: ORIGIN, codeVerifier: "", target: { mode: "browser", returnTo: "/" } },
+            { id: "user_sandbox", email: "richard@piedpiper.example" },
+            {
+              clientId: "client_sandbox",
+              apiKey: Redacted.make("sk_test_sandbox"),
+              apiBaseUrl: "https://sandbox.workos.test",
+            },
+          ),
+        ).pipe(
+          Effect.provide(
+            Layer.fresh(CloudAccounts.layer).pipe(
+              Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+            ),
+          ),
+        );
+        expect(requests).toEqual([
+          {
+            url: "https://sandbox.workos.test/user_management/organization_memberships",
+            authorization: "Bearer sk_test_sandbox",
+          },
+          {
+            url: "https://sandbox.workos.test/organizations/external_id/personal%3Auser_sandbox",
+            authorization: "Bearer sk_test_sandbox",
+          },
+        ]);
+        const users = yield* UserDirectory.UserDirectory;
+        const shell = yield* users.forUser("user_sandbox").shellSnapshot();
+        expect(JSON.stringify(shell)).toContain("org_sandbox");
+        expect(JSON.stringify(shell)).not.toContain("org_personal_sandbox");
+      }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
   );
   it.effect("browser sign-in sets a session the account routes recognize, until sign-out", () =>
     Effect.gen(function* () {

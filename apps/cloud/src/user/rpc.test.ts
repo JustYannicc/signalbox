@@ -1,16 +1,19 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   type AuthEnvironmentScope,
   CommandId,
   EnvironmentId,
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2CommandOutputError,
   ProjectId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalboxPersonBrowser";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -25,6 +28,7 @@ import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection, scriptedReply } from "../thread/scriptedProvider.ts";
+import { Threads } from "../thread/Threads.ts";
 import { projectIdForContext } from "./contextProjects.ts";
 import * as CloudRpc from "./rpc.ts";
 
@@ -103,6 +107,54 @@ const sidebar = (rpc: Rpc) =>
   );
 
 describe("cloud RPC", () => {
+  it.effect("preserves command output recovery guidance across the RPC error contract", () =>
+    Effect.gen(function* () {
+      const cloud = makeMemoryCloud();
+      yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+      const services = cloud.layerFor(userId);
+      const threads = yield* Threads.pipe(Effect.provide(services));
+      const message = "Lost the command output stream. Reopen it to read the retained output.";
+      const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
+            CloudRpc.layerScopeAuthorization([AuthOrchestrationReadScope]),
+          ).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                services,
+                Layer.succeed(Threads, {
+                  ...threads,
+                  commandOutput: () =>
+                    Stream.fail(new OrchestrationV2CommandOutputError({ threadId, message })),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const error = yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]({
+        threadId,
+        itemId: TurnItemId.make("command-1"),
+      }).pipe(Stream.runDrain, Effect.flip);
+      expect(error).toMatchObject({ _tag: "OrchestrationV2CommandOutputError", threadId, message });
+    }).pipe(Effect.scoped),
+  );
+  it.effect("serves the person's one managed browser profile through the user RPC", () =>
+    Effect.gen(function* () {
+      const rpc = yield* client([AuthOrchestrationReadScope, AuthPreviewOperateScope]);
+      expect(yield* rpc[SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]({})).toEqual({
+        available: false,
+      });
+
+      const failure = yield* Effect.flip(rpc[SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]({}));
+      expect(failure).toMatchObject({
+        _tag: "SignalboxPersonBrowserError",
+        message: "Cloud browser sign-ins could not be cleared. Try again.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("emits resume transitions and its marker under the requesting trace", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.NativeSpan> = [];

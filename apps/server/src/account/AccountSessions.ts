@@ -1,4 +1,4 @@
-import { AuthAdministrativeScopes, type AuthBrowserSessionResult } from "@t3tools/contracts";
+import { AuthStandardClientScopes, type AuthBrowserSessionResult } from "@t3tools/contracts";
 import type {
   AccountHandoffRequest,
   AccountHandoffResult,
@@ -59,7 +59,7 @@ export const make = Effect.gen(function* () {
   const mintCredential = (account: AccountProfile) =>
     auth.createPairingLink({
       subject: `${ACCOUNT_SUBJECT_PREFIX}${account.id}`,
-      scopes: AuthAdministrativeScopes,
+      scopes: AuthStandardClientScopes,
       label: account.email,
       ttl: CREDENTIAL_TTL,
     });

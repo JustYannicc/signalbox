@@ -11,6 +11,7 @@ import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { DurableObject } from "cloudflare:workers";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -18,8 +19,11 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
-import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
+import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
+import {
+  type DriveObjectNamespace,
+  layerDurableObjects as layerDriveDirectory,
+} from "../drive/DriveDirectory.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import {
   isRunnerAttachmentsPath,
@@ -27,9 +31,10 @@ import {
 } from "../attachments/runnerAttachments.ts";
 import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
+import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
-import * as PreviewState from "./preview/PreviewState.ts";
+import * as PreviewState from "./PreviewState.ts";
 import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
@@ -38,7 +43,8 @@ import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./diagnostics/TurnReports.ts";
-import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
+import { layerFromEnv as layerMachineBackend, machineSettings } from "./runner/machineBackends.ts";
+import * as BoatRecoveryControl from "./RecoveryDrillBoat.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import {
   acceptRunnerSocket,
@@ -57,15 +63,21 @@ import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as RunnerLiveness from "./RunnerLiveness.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as ThreadPulls from "./ThreadPulls.ts";
+import * as PullState from "./PullState.ts";
 import * as TurnModels from "./TurnModels.ts";
 import { scriptedProviderEnabled } from "./scriptedProvider.ts";
 import { noteView } from "./statusLine/statusNotePolicy.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
 import * as StatusNoteModel from "./statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./statusLine/ThreadStatusNotes.ts";
+import { makeRecoveryDrill } from "./RecoveryDrill.ts";
+import type { RecoveryDrillEnv, RecoveryDrillState } from "./RecoveryDrillProtocol.ts";
+import { withRecoveryInspection } from "./RecoveryEvidence.ts";
 
 /**
  * One per thread, named by its thread id, always in the EU jurisdiction. It
@@ -92,6 +104,7 @@ export interface ThreadObjectEnv
     MachineBackend.MachineBackendEnv,
     CloudAnalytics.CloudAnalyticsEnv,
     PreviewEnv,
+    RecoveryDrillEnv,
     GitHub.GitHubEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
@@ -177,13 +190,14 @@ const layerThreadSecrets = Layer.effect(
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
 // `machine`: the object's own container, the light class's machine where the deployment has one.
 const makeRuntime = (
-  storage: DurableObjectStorage,
+  { storage, waitUntil }: Pick<DurableObjectState, "storage" | "waitUntil">,
   env: ThreadObjectEnv,
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
-) =>
-  ManagedRuntime.make(
+) => {
+  const settings = machineSettings(env);
+  return ManagedRuntime.make(
     ThreadRunner.layer.pipe(
       Layer.provide(
         Layer.succeed(ThreadRunner.PreviewHold, {
@@ -192,6 +206,12 @@ const makeRuntime = (
         }),
       ),
       Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+      Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
+      Layer.provideMerge(
+        env.DRIVES === undefined
+          ? Layer.empty
+          : layerDriveDirectory(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+      ),
       // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
       Layer.provideMerge(
         PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
@@ -219,11 +239,13 @@ const makeRuntime = (
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),
+      Layer.provideMerge(BoatRecoveryControl.layer(settings?.kind === "boat" ? settings : null)),
       Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
       Layer.provideMerge(
         Layer.mergeAll(
           ThreadStore.layer,
+          PullState.layer,
           SessionRows.layer,
           PreviewState.layer,
           BrowserTrail.layer(attachmentStorage(env), threadId),
@@ -239,14 +261,17 @@ const makeRuntime = (
           FetchHttpClient.layer,
         ),
       ),
+      Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
     ),
   );
+};
 
 export class ThreadObject extends DurableObject<ThreadObjectEnv> implements ThreadObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly api: ReturnType<typeof makeThreadObjectApi>;
   private readonly runnerHost: RunnerSocketHost;
   private readonly gateway: PreviewGateway;
+  private readonly recovery: ReturnType<typeof makeRecoveryDrill>;
 
   constructor(ctx: DurableObjectState, env: ThreadObjectEnv) {
     super(ctx, env);
@@ -283,7 +308,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         void this.runtime.runPromise(Effect.logError(message, cause)).catch(() => undefined),
     });
     this.runtime = makeRuntime(
-      ctx.storage,
+      { storage: ctx.storage, waitUntil: (promise) => ctx.waitUntil(promise) },
       env,
       this.gateway,
       {
@@ -297,6 +322,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
     this.runnerHost = {
       ctx,
+      now: () => this.now(),
       run: (effect) => this.runtime.runPromise(effect),
       holdsTurn: () =>
         this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),
@@ -307,6 +333,47 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       async () => this.armAlarm(await pushRunnerWork(this.runnerHost)),
       (at) => this.setAlarmNoLaterThan(at),
     );
+    this.recovery = makeRecoveryDrill(env, {
+      incarnation: () =>
+        this.runtime.runPromise(Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4())),
+      load: () => ctx.storage.get<RecoveryDrillState>("recovery-drill-v1"),
+      save: async (state, arm) => {
+        const at = arm ? await this.now() : undefined;
+        await ctx.storage.transaction(async (transaction) => {
+          await transaction.put("recovery-drill-v1", state);
+          if (at !== undefined) await transaction.setAlarm(at);
+        });
+        await ctx.storage.sync();
+      },
+      reset: () => ctx.abort("recovery-drill: intentional object reset"),
+      exclusive: (work) =>
+        this.runtime.runPromise(
+          withRecoveryInspection((inspect) =>
+            Effect.promise(() =>
+              ctx.blockConcurrencyWhile(() =>
+                work((userId, commandIds) => this.runtime.runPromise(inspect(userId, commandIds))),
+              ),
+            ),
+          ),
+        ),
+      boatControl: async () => {
+        const control = await this.runtime.runPromise(
+          Effect.map(BoatRecoveryControl.BoatRecoveryControl, (service) => service),
+        );
+        return control === null
+          ? null
+          : {
+              inspect: (machineId) => this.runtime.runPromise(control.inspect(machineId)),
+              remove: (machineId) => this.runtime.runPromise(control.remove(machineId)),
+            };
+      },
+      rearm: async () => {
+        const deferred = this.deferredAlarmAt;
+        this.deferredAlarmAt = null;
+        if (deferred !== null) await this.setAlarmNoLaterThan(deferred);
+        await this.armAlarm();
+      },
+    });
     // Runner heartbeats are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair(RUNNER_HEARTBEAT_PING, RUNNER_HEARTBEAT_PONG),
@@ -329,8 +396,32 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.snapshot(...args);
   }
 
+  pull(...args: Parameters<ThreadObjectApi["pull"]>) {
+    return this.api.pull(...args);
+  }
+
+  pullOwner(...args: Parameters<ThreadObjectApi["pullOwner"]>) {
+    return this.api.pullOwner(...args);
+  }
+
+  pullTarget(...args: Parameters<ThreadObjectApi["pullTarget"]>) {
+    return this.api.pullTarget(...args);
+  }
+
+  reservePublication(...args: Parameters<ThreadObjectApi["reservePublication"]>) {
+    return this.api.reservePublication(...args);
+  }
+
+  releasePublication(...args: Parameters<ThreadObjectApi["releasePublication"]>) {
+    return this.api.releasePublication(...args);
+  }
+
   subscribe(...args: Parameters<ThreadObjectApi["subscribe"]>) {
     return this.api.subscribe(...args);
+  }
+
+  commandOutput(...args: Parameters<ThreadObjectApi["commandOutput"]>) {
+    return this.api.commandOutput(...args);
   }
 
   summary(...args: Parameters<ThreadObjectApi["summary"]>) {
@@ -339,6 +430,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
     return this.api.diagnostics(...args);
+  }
+
+  recoveryDrill(userId: string, input: unknown) {
+    return this.recovery.command(userId, input);
+  }
+
+  requestPullRequestSync(...args: Parameters<ThreadObjectApi["requestPullRequestSync"]>) {
+    return this.api.requestPullRequestSync(...args);
   }
 
   /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */
@@ -373,7 +472,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.browsingRecord(...args);
   }
 
-  /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */
+  /** The ModelGateway reporting a request it served for this thread (see `models/ModelAccess.ts`). */
   async recordModelRequest(record: ModelGatewayRecord) {
     await this.runtime.runPromise(
       recordUnderLock((diagnostics) =>
@@ -387,7 +486,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
-  /** The ModelGateway asking whether a harness's token is good right now (see `modelGrants.ts`). */
+  /** The ModelGateway asking whether a harness's token is good right now (see `models/ModelAccess.ts`). */
   authorizeModel(token: string, provider: ModelGatewayProvider) {
     return this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.authorizeModel(token, provider)),
@@ -560,8 +659,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(Clock.currentTimeMillis);
   }
 
+  private deferredAlarmAt: number | null = null;
+
   /** Sets the alarm for `at` unless one is already due sooner. */
   private async setAlarmNoLaterThan(at: number) {
+    if (await this.recovery.preservesAlarm()) {
+      this.deferredAlarmAt = Math.min(this.deferredAlarmAt ?? at, at);
+      return;
+    }
     const current = await this.ctx.storage.getAlarm();
     if (current === null || current > at) await this.ctx.storage.setAlarm(at);
   }
@@ -572,6 +677,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
+    const now = await this.now();
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
     const hasWork = await this.runtime.runPromise(
       Effect.gen(function* () {
         const engine = yield* ThreadEngine.ThreadEngine;
@@ -599,13 +706,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         );
       }),
     );
-    if (hasWork) return this.setAlarmNoLaterThan(await this.now());
+    if (hasWork) return this.setAlarmNoLaterThan(now);
+    if (runnerWakeAt !== null) await this.setAlarmNoLaterThan(runnerWakeAt);
     // An alarm that fires now sets the next pull request read and share end itself.
     const pullRequestsAt = await this.runtime.runPromise(
       PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
     );
     if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
-    const now = await this.now();
     const statusNoteAt = await this.runtime.runPromise(
       ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.dueAt(now)),
     );
@@ -622,8 +729,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * stops its machine, and hands a connected Runner its work. Returns when to
    * look again.
    */
-  private async tendMachine(now: number): Promise<number | null> {
-    const plan = await this.runtime.runPromise(
+  private async tendMachine(log: Evlog.UnitLog, now: number): Promise<number | null> {
+    const plan = await this.run(
+      log,
       ThreadRunner.ThreadRunner.use((runner) => runner.reconcile),
     );
     if (plan.release !== null) {
@@ -638,7 +746,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       let operation: MachineReport["operation"] = "ensure";
       // `ok`: the backend did what it could; `false` backs off. A machine that is
       // still coming up is retried at the plan's own pace.
-      const ok = await this.runtime.runPromise(
+      const ok = await this.run(
+        log,
         Effect.gen(function* () {
           const backends = yield* MachineBackend.MachineBackend;
           const backend = backends[plan.machineClass];
@@ -716,7 +825,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       }
     }
     if (plan.busy) {
-      const due = await this.refreshMachine(now, threadId, plan.machineClass);
+      const due = await this.refreshMachine(log, now, threadId, plan.machineClass);
       if (due !== null) wakeAt = wakeAt === null ? due : Math.min(wakeAt, due);
     }
     await pushRunnerWork(this.runnerHost);
@@ -729,18 +838,21 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    */
   private lastRefreshAt = 0;
   private async refreshMachine(
+    log: Evlog.UnitLog,
     now: number,
     threadId: ThreadId,
     machineClass: ThreadRunner.MachinePlan["machineClass"],
   ): Promise<number | null> {
-    const every = await this.runtime.runPromise(
+    const every = await this.run(
+      log,
       MachineBackend.MachineBackend.use((backends) =>
         Effect.succeed(backends[machineClass].refreshEveryMs),
       ),
     );
     if (every === null) return null;
     if (now - this.lastRefreshAt >= every) {
-      const ok = await this.runtime.runPromise(
+      const ok = await this.run(
+        log,
         MachineBackend.MachineBackend.use((backends) =>
           backends[machineClass].refresh(threadId),
         ).pipe(
@@ -767,21 +879,21 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * analytics events, then sends queued analytics, backing off while PostHog
    * fails. Returns when to look again.
    */
-  private async tendDiagnostics(now: number): Promise<number | null> {
-    const finalizeAt = await this.runtime
-      .runPromise(
-        Effect.gen(function* () {
-          const projection = yield* (yield* ThreadEngine.ThreadEngine).projection;
-          if (projection === null) return null;
-          return yield* (yield* TurnReports.TurnReports).finalize(projection, now);
-        }),
-      )
-      .catch(async (cause: unknown) => {
-        await this.runtime.runPromise(Effect.logError("turn diagnostics failed", String(cause)));
-        return now + retryDelay(1);
-      });
+  private async tendDiagnostics(log: Evlog.UnitLog, now: number): Promise<number | null> {
+    const finalizeAt = await this.run(
+      log,
+      Effect.gen(function* () {
+        const projection = yield* (yield* ThreadEngine.ThreadEngine).projection;
+        if (projection === null) return null;
+        return yield* (yield* TurnReports.TurnReports).finalize(projection, now);
+      }),
+    ).catch(async (cause: unknown) => {
+      await this.run(log, Effect.logError("turn diagnostics failed", String(cause)));
+      return now + retryDelay(1);
+    });
     if (now < this.nextAnalyticsAt) return finalizeAt;
-    const sent = await this.runtime.runPromise(
+    const sent = await this.run(
+      log,
       Effect.gen(function* () {
         if ((yield* (yield* ThreadEngine.ThreadEngine).projection) === null) return [true, false];
         const analytics = yield* CloudAnalytics.CloudAnalytics;
@@ -800,9 +912,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * The event outbox (`eventOutbox.ts`), unless it is backing off: committed
    * events to the owner's automations, retried after the usual backoff.
    */
-  private async deliverEvents(now: number) {
+  private async deliverEvents(log: Evlog.UnitLog, now: number) {
     if (now < this.nextEventsAt) return;
-    const delivered = await this.runtime.runPromise(
+    const delivered = await this.run(
+      log,
       deliverPendingEvents.pipe(
         Effect.catchCause((cause) =>
           Effect.logError("thread event delivery failed", Cause.pretty(cause)).pipe(
@@ -827,9 +940,35 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * throwing: Cloudflare stops retrying a failing alarm after a few attempts,
    * and a turn must not stop for good because one step failed.
    */
-  override async alarm() {
+  override async alarm(info?: AlarmInvocationInfo) {
+    return this.recovery.alarm(info, () =>
+      this.runtime.runPromise(
+        Evlog.unit("thread.alarm", { thread: { id: this.threadId() } }, (log) => this.tick(log)),
+      ),
+    );
+  }
+
+  /** A step of this object's runtime, on the alarm's wide event. */
+  private run<A, E>(
+    log: Evlog.UnitLog,
+    effect: Effect.Effect<A, E, ManagedRuntime.ManagedRuntime.Services<typeof this.runtime>>,
+  ) {
+    return this.runtime.runPromise(Evlog.provideLogger(effect, log));
+  }
+
+  private tendRunnerLiveness(now: number) {
+    return RunnerLiveness.tend(this.runnerHost, now, now + retryDelay(1), async (cause) => {
+      await this.runtime
+        .runPromise(Effect.logError("Runner liveness check failed; retrying", String(cause)))
+        .catch(() => undefined);
+    });
+  }
+
+  private async tick(log: Evlog.UnitLog) {
     const now = await this.now();
-    const step = await this.runtime.runPromise(
+    const runnerWakeAt = await this.tendRunnerLiveness(now);
+    const step = await this.run(
+      log,
       ThreadEngine.ThreadEngine.use((engine) => engine.step).pipe(
         Effect.map((more) => ({ ok: true, more })),
         Effect.catchCause((cause) =>
@@ -841,7 +980,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
     this.stepFailures = step.ok ? 0 : this.stepFailures + 1;
     // Before the summary goes out: a synced pull request changes the summary too.
-    const pullRequestsWakeAt = await this.runtime.runPromise(
+    const pullRequestsWakeAt = await this.run(
+      log,
       PullRequestSync.PullRequestSync.use((sync) => sync.sync).pipe(
         Effect.catchCause((cause) =>
           Effect.logError("pull request sync failed", Cause.pretty(cause)).pipe(
@@ -851,7 +991,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       ),
     );
     if (now >= this.nextDeliveryAt) {
-      const delivered = await this.runtime.runPromise(
+      const delivered = await this.run(
+        log,
         deliverPendingSummary.pipe(
           Effect.catchCause((cause) =>
             Effect.logError("thread summary delivery failed", Cause.pretty(cause)).pipe(
@@ -863,14 +1004,15 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.deliveryFailures = delivered ? 0 : this.deliveryFailures + 1;
       this.nextDeliveryAt = delivered ? 0 : now + retryDelay(this.deliveryFailures);
     }
-    await this.deliverEvents(now);
-    const machineWakeAt = await this.tendMachine(now).catch(async (cause: unknown) => {
-      await this.runtime.runPromise(Effect.logError("machine upkeep failed", String(cause)));
+    await this.deliverEvents(log, now);
+    const machineWakeAt = await this.tendMachine(log, now).catch(async (cause: unknown) => {
+      await this.run(log, Effect.logError("machine upkeep failed", String(cause)));
       return now + retryDelay(1);
     });
-    const diagnosticsWakeAt = await this.tendDiagnostics(now);
+    const diagnosticsWakeAt = await this.tendDiagnostics(log, now);
     // A turn that ended without its status note gets one written (#670).
-    const statusNoteWakeAt = await this.runtime.runPromise(
+    const statusNoteWakeAt = await this.run(
+      log,
       ThreadStatusNotes.ThreadStatusNotes.use((notes) => notes.tend(now)).pipe(
         Effect.catchCause((cause) =>
           Effect.logError("runtime status note failed", Cause.pretty(cause)).pipe(
@@ -879,7 +1021,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         ),
       ),
     );
-    const sharing = await this.runtime.runPromise(
+    const sharing = await this.run(
+      log,
       ThreadBrowsing.ThreadBrowsing.use((browsing) => browsing.expire).pipe(
         Effect.map((at) => ({ ok: true, at })),
         Effect.catchCause((cause) =>
@@ -895,7 +1038,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     const eventsAt =
       this.nextEventsAt > 0
         ? this.nextEventsAt
-        : (await this.runtime.runPromise(
+        : (await this.run(
+              log,
               ThreadEngine.ThreadEngine.use((engine) => engine.hasPendingEvents),
             ))
           ? now
@@ -914,6 +1058,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       summaryAt,
       eventsAt,
       machineWakeAt,
+      runnerWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,
       sharingWakeAt,

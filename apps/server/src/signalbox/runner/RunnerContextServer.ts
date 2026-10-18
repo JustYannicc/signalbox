@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the context server is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodePath from "@effect/platform-node/NodePath";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -18,6 +20,8 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { automationCaller, layerAutomationTools } from "./RunnerAutomationTools.ts";
+import { layerRunnerPullRequestTools } from "./RunnerPullRequestTools.ts";
+import { layerLearnerTools } from "./RunnerLearnerTools.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
   BROWSER_EXECUTABLE_ENV,
@@ -115,6 +119,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   ) => Effect.Effect<void, RunnerConnectionError>;
   /** Waits for the first tunnel welcome to restore saved services before exposing their tools. */
   readonly previewServicesReady?: Effect.Effect<void, RunnerConnectionError>;
+  readonly previewHosts?: Effect.Effect<ReadonlyArray<string> | null, RunnerConnectionError>;
   /** The browser behind the `preview_*` tools; the machine's and the person's by default. */
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
@@ -129,6 +134,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     input.browser === undefined && input.threadId !== undefined
       ? makePayments({ asker: paymentAsker(automationCaller(view), input.threadId) })
       : null;
+  const previewHosts = input.previewHosts;
   const browser =
     input.browser ??
     makeRunnerBrowser(
@@ -136,7 +142,12 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
         machine: machineTabs({ executable: env[BROWSER_EXECUTABLE_ENV], env }),
         person: personTabs(personSession(view)),
       },
-      payments === null ? {} : { guard: payments.guard },
+      {
+        ...(payments === null ? {} : { guard: payments.guard }),
+        ...(previewHosts === undefined
+          ? {}
+          : { previewHosts: () => Effect.runPromise(previewHosts) }),
+      },
     );
   payments?.bind(browser);
   yield* Effect.addFinalizer(() =>
@@ -185,6 +196,10 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerContextTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
+    layerRunnerPullRequestTools(view).pipe(
+      Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+    ),
+    layerLearnerTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
     previewServiceTools,
     layerStatusLineTools(view),
