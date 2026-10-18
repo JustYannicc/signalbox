@@ -179,8 +179,7 @@ jobs:
 
       # Nothing deploys unless the plan keeps every Worker, Durable Object,
       # container and bucket where it is.
-      - &plan
-        name: Plan
+      - name: Plan
         working-directory: apps/cloud
         run: bash infra/plan.sh "$STAGE"
 
@@ -190,8 +189,7 @@ jobs:
         run: ./node_modules/.bin/alchemy deploy --stage "$STAGE" --yes --no-input
 
       # One wide event saying the stage now runs this commit, through the Workers' drains.
-      - &release_event
-        name: Send the release event
+      - name: Send the release event
         working-directory: apps/cloud
         run: SIGNALBOX_STAGE="$STAGE" node infra/release-event.ts
 
@@ -431,41 +429,53 @@ jobs:
         env:
           PREVIEW_SESSION_SECRET: ${{ secrets.CLOUD_PREVIEW_SESSION_SECRET }}
 
-      # A reopened pull request may use the same preview origin as before.
-      # This job already runs PR code (the build, the stack) with the Cloudflare
-      # token, which is enough to derive the cleanup token. Main's checkout isn't
-      # a security boundary: it only means a reopen uses main's reviewed call,
-      # not whatever the PR changed it to.
-      - name: Checkout trusted preview scripts
+      # Keep operational scripts and the plan checker on main. The preview
+      # stack, installed Alchemy, build and deploy still come from this PR.
+      - name: Checkout trusted main scripts
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.repository.default_branch }}
-          path: .trusted-cleanup
+          path: .trusted-main
           # Keep the default persist-credentials: with false, checkout runs
           # `git submodule foreach` in this step, which dies on the vendored
           # gitlink under .repos/ that has no .gitmodules entry.
           sparse-checkout: |
             /.github/scripts
+            /apps/cloud/infra/plan.sh
+            /apps/cloud/infra/check-plan.ts
+            /apps/cloud/infra/planCheck.ts
+            /apps/cloud/infra/merge-main.sh
             /apps/cloud/infra/stage.ts
           sparse-checkout-cone-mode: false
 
       - name: Reopen production preview links
         if: github.event.action == 'reopened'
-        run: bash .trusted-cleanup/.github/scripts/call-preview-cleanup.sh activate "$PR_NUMBER"
+        run: bash .trusted-main/.github/scripts/call-preview-cleanup.sh activate "$PR_NUMBER"
 
-      - *plan
+      - name: Plan preview
+        working-directory: apps/cloud
+        run: bash ../../.trusted-main/apps/cloud/infra/plan.sh "$STAGE"
       - *deploy
-      - *release_event
+
+      # Older open PR heads can predate this optional telemetry script.
+      - name: Send the release event when available
+        working-directory: apps/cloud
+        run: |
+          if [[ -f infra/release-event.ts ]]; then
+            SIGNALBOX_STAGE="$STAGE" node infra/release-event.ts
+          else
+            echo "::notice::This PR checkout predates release-event telemetry; skipping it."
+          fi
 
       - name: Verify preview Worker domains
-        run: node .trusted-cleanup/.github/scripts/cloudflare-preview-domains.cjs verify-one-domain
+        run: node .trusted-main/.github/scripts/cloudflare-preview-domains.cjs verify-one-domain
 
-      # Wait until the preview's app host serves its own certificate. Until
-      # then, opening it breaks app.signalbox.run and other previews (#618).
+      # Wait until the preview app host serves its own certificate. Until then,
+      # opening it breaks app.signalbox.run and other previews in that browser (#618).
       - name: Wait for the preview's own certificates
         timeout-minutes: 35
         run: >-
-          node .github/scripts/wait-own-certificate.cjs
+          node .trusted-main/.github/scripts/wait-own-certificate.cjs
           "preview-$PR_NUMBER.signalbox.run"
 
       # Production runs main as it is now, which can be ahead of this checkout:
@@ -477,7 +487,7 @@ jobs:
             echo "::error title=Fetch main::Couldn't fetch current main for the production plan. This is a fetch failure, not a merge conflict."
             exit 1
           fi
-          bash apps/cloud/infra/merge-main.sh origin/main
+          bash .trusted-main/apps/cloud/infra/merge-main.sh origin/main
 
       - name: Rebuild with main for the production plan
         if: steps.merge_main.outputs.merged == 'true'
@@ -496,4 +506,4 @@ jobs:
         working-directory: apps/cloud
         run: |
           SESSION_SECRET=plan-only T3CODE_WORKOS_API_KEY=plan-only PREVIEW_CLEANUP_TOKEN=plan-only \
-            bash infra/plan.sh production
+            bash ../../.trusted-main/apps/cloud/infra/plan.sh production

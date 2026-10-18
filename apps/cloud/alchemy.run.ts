@@ -143,6 +143,8 @@ function workerEnv(target: CloudStage) {
       MACHINE_BACKEND: yield* optional("MACHINE_BACKEND"),
       // Optional: the MCP authorization server (`src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: yield* optional("WORKOS_AUTHKIT_DOMAIN"),
+      // Operators enable a deployed preview temporarily; every normal deploy disables its drills.
+      RECOVERY_DRILLS: "",
       // Optional: the Executor local harness setup adds as an MCP server (`src/localKeys/`).
       EXECUTOR_MCP_URL: yield* optional("EXECUTOR_MCP_URL"),
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
