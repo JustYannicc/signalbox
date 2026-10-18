@@ -39,6 +39,7 @@ export interface WasiPathAnchor {
 }
 
 export type WasiPathSearchCheck = (mount: WasiMountedStorage, directory: Inode) => void;
+export type WasiPathCheck = (mount: WasiMountedStorage, components: readonly string[]) => void;
 
 export interface WasiResolvedPath {
   readonly mount: WasiMountedStorage;
@@ -85,14 +86,9 @@ export function normalizeMounts(mounts: Mount<WasiStorage>[]): WasiMountedStorag
 export class WasiPathResolver {
   readonly #complete: typeof complete;
   // signalbox: personality mount overlays must reject hidden entries before traversal.
-  readonly #checkPath:
-    | ((mount: WasiMountedStorage, components: readonly string[]) => void)
-    | undefined;
+  readonly #checkPath: WasiPathCheck | undefined;
 
-  constructor(
-    completeCall: typeof complete,
-    checkPath?: (mount: WasiMountedStorage, components: readonly string[]) => void,
-  ) {
+  constructor(completeCall: typeof complete, checkPath?: WasiPathCheck) {
     this.#complete = completeCall;
     this.#checkPath = checkPath;
   }
