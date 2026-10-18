@@ -20,6 +20,7 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ThreadProjection,
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
   ProjectId,
@@ -44,6 +45,7 @@ import * as Schema from "effect/Schema";
 import { layerThreadObject } from "../testing.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as TurnReports from "./diagnostics/TurnReports.ts";
 import { onRunnerMessage, type RunnerSocketHost } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 
@@ -178,6 +180,12 @@ export const saveSession = (context: Context.Context<SessionRows.SessionRows>, n
     offset: 0,
     rows: [JSON.stringify({ type: "user", uuid: "row-1" })],
   });
+
+export const readTurnReport = (
+  context: Context.Context<TurnReports.TurnReports>,
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+) => Context.get(context, TurnReports.TurnReports).turn(projection, runId);
 
 export const hello = (generation: number, token: string) => ({
   type: "hello" as const,
