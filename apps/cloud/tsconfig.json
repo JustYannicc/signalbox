@@ -6,5 +6,7 @@
     "lib": ["ES2024", "WebWorker"],
     "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["src/**/*.ts", "evlog.config.ts"]
+  "include": ["src/**/*.ts", "evlog.config.ts"],
+  // Bundled upstream source keeps its compiler assumptions; our adapter has a narrow typed contract.
+  "exclude": ["src/isolate/node/vm/vendor"]
 }
