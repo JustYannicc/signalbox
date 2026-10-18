@@ -4,6 +4,7 @@ export const NODE_BUILTIN_ROUTES = {
   async_hooks: "workerd",
   buffer: "workerd",
   child_process: "kernel-process",
+  console: "workerd-partial",
   constants: "facet-context",
   crypto: "workerd",
   diagnostics_channel: "workerd",
