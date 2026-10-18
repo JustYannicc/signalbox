@@ -234,13 +234,15 @@ const make = Effect.gen(function* () {
   const publishIf = (changedContexts: boolean) =>
     changedContexts ? PubSub.publish(changed, undefined) : Effect.void;
 
+  const reserve = OrganizationRefresh.reserve.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+
   const syncOrganizations: UserContexts["Service"]["syncOrganizations"] = (orgs) =>
     sql
-      .withTransaction(Effect.andThen(OrganizationRefresh.reserve, replaceOrganizations(orgs)))
+      .withTransaction(Effect.andThen(reserve, replaceOrganizations(orgs)))
       .pipe(Effect.flatMap(publishIf), Effect.withSpan("UserContexts.syncOrganizations"));
 
   const reserveOrganizationRefresh: UserContexts["Service"]["reserveOrganizationRefresh"] =
-    OrganizationRefresh.reserve.pipe(Effect.withSpan("UserContexts.reserveOrganizationRefresh"));
+    reserve.pipe(Effect.withSpan("UserContexts.reserveOrganizationRefresh"));
 
   // The check and the writes share one transaction, so no newer reservation lands between them.
   const completeOrganizationRefresh: UserContexts["Service"]["completeOrganizationRefresh"] = (
@@ -250,7 +252,10 @@ const make = Effect.gen(function* () {
     sql
       .withTransaction(
         Effect.gen(function* () {
-          if (!(yield* OrganizationRefresh.isLatest(sequence))) return null;
+          const latest = yield* OrganizationRefresh.isLatest(sequence).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
+          if (!latest) return null;
           return yield* replaceOrganizations(orgs);
         }),
       )

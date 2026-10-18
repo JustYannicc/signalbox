@@ -201,15 +201,15 @@ const make = Effect.gen(function* () {
       [
         WorkOSClient.listOrganizations(realm, userId).pipe(
           // Sign-in waits for this, so a slow WorkOS must not hold it up.
-          Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
-          Effect.catchTags({
-            TimeoutError: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
+          Effect.timeoutOrElse({
+            duration: CONTEXTS_SYNC_TIMEOUT,
+            orElse: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
           }),
         ),
         WorkOSOrganizations.resolvePersonalOrganization(realm, userId).pipe(
-          Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
-          Effect.catchTags({
-            TimeoutError: () =>
+          Effect.timeoutOrElse({
+            duration: CONTEXTS_SYNC_TIMEOUT,
+            orElse: () =>
               Effect.fail(
                 new WorkOSOrganizations.WorkOSPersonalOrganizationError({ operation: "resolve" }),
               ),
