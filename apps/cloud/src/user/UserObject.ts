@@ -20,6 +20,7 @@ import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { makeDistributedCompiler } from "../automations/distributedCompiler.ts";
 import { layerModelCompletion } from "../models/cloudflare.ts";
 import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
@@ -147,6 +148,7 @@ export interface UserObjectEnv
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
   /** Automation runs, one Workflow instance each (`automations/automationWorkflow.ts`). */
   readonly AUTOMATION_RUNS?: Workflow;
+  readonly LOADER?: WorkerLoader;
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
@@ -252,7 +254,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
   );
   const services =
     // The user's automations (#434), on the services below.
-    CloudEngine.layer.pipe(
+    CloudEngine.layerWithCompiler(makeDistributedCompiler(env.LOADER).compile).pipe(
       Layer.provide(
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),

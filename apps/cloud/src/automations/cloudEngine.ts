@@ -114,6 +114,10 @@ const make = Effect.gen(function* () {
   const threads = yield* AutomationThreads;
   const feed = yield* CloudThreads.ThreadEventFeed;
   const compiler = yield* CloudCompilerModule.CloudCompiler;
+  const compileInput = (source: string, compiled: unknown | undefined) =>
+    compiled === undefined
+      ? compiler.compile(source)
+      : Effect.succeed({ ok: true as const, compiled });
   const service = yield* CloudThreadService.CloudThreadService;
   const userTimezone = yield* UserTimezone.UserTimezone;
   const savedTimezone = userTimezone.timezone.pipe(
@@ -271,12 +275,18 @@ const make = Effect.gen(function* () {
     answerAsk: (command, ask) =>
       engine.answerSignalboxAsk(command, ask).pipe(Effect.andThen(flush)),
     listBlocks,
+    validate: ({ source, compiled: supplied }) =>
+      Effect.gen(function* () {
+        const candidate = yield* compileInput(source, supplied);
+        if (!candidate.ok) return { ok: false as const, diagnostics: candidate.diagnostics };
+        const accepted = yield* CloudCompilerModule.acceptCompiled(candidate.compiled);
+        return { ok: true as const, graph: accepted.graph };
+      }),
     save: (input, newThreadModel) =>
       Effect.gen(function* () {
-        if (input.compiled === undefined) {
-          return yield* new AutomationError({ message: CloudCompilerModule.COMPILE_WHERE });
-        }
-        const compiled = yield* CloudCompilerModule.acceptCompiled(input.compiled);
+        const candidate = yield* compileInput(input.source, input.compiled);
+        if (!candidate.ok) return { ok: false as const, diagnostics: candidate.diagnostics };
+        const compiled = yield* CloudCompilerModule.acceptCompiled(candidate.compiled);
         const defaultTimezone =
           compiled.meta.triggers?.some(
             (trigger) => "cron" in trigger && trigger.timezone === undefined,
@@ -463,22 +473,28 @@ const layerAutomationFolders = Layer.effect(
   }),
 );
 
-export const layer = Layer.effect(CloudAutomations, make).pipe(
-  Layer.provideMerge(
-    GitHubWebhooksModule.layer.pipe(Layer.provideMerge(PullRequestMergesModule.layer)),
-  ),
-  Layer.provideMerge(HostedEngine.layer.pipe(Layer.provide(layerAutomationFolders))),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      CloudThreads.layer,
-      CloudCompilerModule.layer,
-      CloudModelSteps.layer,
-      PullRequestReadsModule.layer,
-      PullRequestMergesModule.layer,
-      layerUnhosted,
-      CloudIngress.layer,
-    ).pipe(Layer.provideMerge(CloudThreads.layerEventFeed)),
-  ),
-  Layer.provideMerge(HookStoreModule.layer),
-  Layer.provideMerge(FetchHttpClient.layer),
-);
+const makeLayer = (compilerLayer: typeof CloudCompilerModule.layer) =>
+  Layer.effect(CloudAutomations, make).pipe(
+    Layer.provideMerge(
+      GitHubWebhooksModule.layer.pipe(Layer.provideMerge(PullRequestMergesModule.layer)),
+    ),
+    Layer.provideMerge(HostedEngine.layer.pipe(Layer.provide(layerAutomationFolders))),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        CloudThreads.layer,
+        compilerLayer,
+        CloudModelSteps.layer,
+        PullRequestReadsModule.layer,
+        PullRequestMergesModule.layer,
+        layerUnhosted,
+        CloudIngress.layer,
+      ).pipe(Layer.provideMerge(CloudThreads.layerEventFeed)),
+    ),
+    Layer.provideMerge(HookStoreModule.layer),
+    Layer.provideMerge(FetchHttpClient.layer),
+  );
+
+export const layerWithCompiler = (compile: CloudCompilerModule.CloudSourceCompiler) =>
+  makeLayer(CloudCompilerModule.layerWithCompiler(compile));
+
+export const layer = makeLayer(CloudCompilerModule.layer);

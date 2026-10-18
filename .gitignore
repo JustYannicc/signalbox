@@ -45,3 +45,6 @@ node_modules/
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+
+# Build-generated Dynamic Worker compiler modules and pinned WASM assets.
+apps/cloud/.generated/automation-compiler/

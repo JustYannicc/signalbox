@@ -46,6 +46,10 @@ import type {
   UserObject,
 } from "./src/worker.ts";
 
+import { prepareAutomationCompiler } from "./infra/automationCompiler/prepare.ts";
+
+await prepareAutomationCompiler();
+
 const here = (path: string) => `${import.meta.dirname}/${path}`;
 
 const compatibility = {
@@ -270,6 +274,7 @@ function deploy(
       // Threads' dev servers (`PREVIEW_DOMAIN`), on this stage's preview hosts only.
       routes: [{ pattern: `${target.previewHost}/*`, zoneId: PREVIEW_ZONE.id }],
       assets,
+      build: { input: { moduleTypes: { ".bin": "binary" } } },
       observability,
       // Checking a directly uploaded drive pack streams through all of it (#406): up to 5 GiB.
       limits: { cpuMs: 300_000 },

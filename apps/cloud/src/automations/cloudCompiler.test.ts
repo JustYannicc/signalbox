@@ -5,7 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
-import { CloudCompiler, layer } from "./cloudCompiler.ts";
+import { CloudCompiler, layer, layerWithCompiler } from "./cloudCompiler.ts";
 
 const fileNamed = (name: string) => {
   const source = `export const meta = { name: "${name}" } as const;
@@ -42,5 +42,62 @@ describe("CloudCompiler", () => {
       expect(compiler.compile(first.source).ok).toBe(false);
       expect(compiler.compile(second.source).ok).toBe(false);
     }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps same-source saves staged in either completion order", () =>
+    Effect.gen(function* () {
+      const staging = yield* CloudCompiler;
+      const compiler = yield* AutomationCompiler;
+      for (const finishLaterFirst of [false, true]) {
+        const first = fileNamed("Same source");
+        const second = fileNamed("Same source");
+        const firstStaged = yield* Deferred.make<void>();
+        const secondStaged = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const releaseSecond = yield* Deferred.make<void>();
+        const stage = (file: typeof first, ready: typeof firstStaged, gate: typeof releaseFirst) =>
+          staging
+            .withStaged(
+              file.source,
+              file.compiled,
+              Deferred.succeed(ready, undefined).pipe(
+                Effect.andThen(Deferred.await(gate)),
+                Effect.andThen(Effect.sync(() => compiler.compile(file.source))),
+              ),
+            )
+            .pipe(Effect.forkChild);
+        const firstSave = yield* stage(first, firstStaged, releaseFirst);
+        yield* Deferred.await(firstStaged);
+        const secondSave = yield* stage(second, secondStaged, releaseSecond);
+        yield* Deferred.await(secondStaged);
+
+        yield* Deferred.succeed(finishLaterFirst ? releaseSecond : releaseFirst, undefined);
+        expect((yield* Fiber.join(finishLaterFirst ? secondSave : firstSave)).ok).toBe(true);
+        expect(compiler.compile(first.source).ok).toBe(true);
+        yield* Deferred.succeed(finishLaterFirst ? releaseFirst : releaseSecond, undefined);
+        expect((yield* Fiber.join(finishLaterFirst ? firstSave : secondSave)).ok).toBe(true);
+        expect(compiler.compile(first.source).ok).toBe(false);
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("maps loader failures to an AutomationError", () =>
+    CloudCompiler.use((compiler) => compiler.compile("source").pipe(Effect.flip)).pipe(
+      Effect.provide(
+        layerWithCompiler(async () => {
+          throw new Error("loader failed");
+        }),
+      ),
+      Effect.map((error) => expect(error.message).toBe("Cloud automation compilation failed.")),
+    ),
+  );
+
+  it.effect("reports an unavailable compiler as an AutomationError", () =>
+    CloudCompiler.use((compiler) => compiler.compile("source").pipe(Effect.flip)).pipe(
+      Effect.provide(layer),
+      Effect.map((error) =>
+        expect(error.message).toBe("Cloud automation compiler isn't configured."),
+      ),
+    ),
   );
 });

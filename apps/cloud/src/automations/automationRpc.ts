@@ -7,23 +7,21 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { AutomationThreads } from "@signalbox/automations/host";
-import { fail } from "@signalbox/automations/errors";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import * as Effect from "effect/Effect";
 import type * as Rpc from "effect/rpc/Rpc";
 import * as Stream from "effect/Stream";
 
 import { CloudAutomations } from "./CloudAutomations.ts";
-import { acceptCompiled, COMPILE_WHERE } from "./cloudCompiler.ts";
 import { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
 
 /**
  * The automation RPCs a client calls on the user's object: the same contract
  * the self-hosted server serves (`apps/server/src/workflows/rpcHandlers.ts`),
  * each calling one engine method and then flushing, so what it started
- * here is done before the request ends. Validating and saving take what the
- * caller compiled (`compiled`), since the cloud can't compile. Saves resolve
- * omitted cron zones into scheduling metadata without changing the source or code. Executor
+ * here is done before the request ends. Validating and saving compile source
+ * in the cloud when the caller did not send `compiled`. Saves resolve omitted
+ * cron zones into scheduling metadata without changing the source or code. Executor
  * connections aren't in the cloud yet and say so.
  */
 
@@ -47,8 +45,6 @@ const notYet = (what: string) =>
   Effect.fail(
     new AutomationError({ message: `${what} aren't available in cloud automations yet.` }),
   );
-
-const compileWhere = fail(COMPILE_WHERE);
 
 /**
  * `newThreadModel` is what a new thread of the person's starts on, which is
@@ -124,13 +120,8 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
           });
         }),
       ),
-    // Compiling needs oxc, which can't run in workerd; the caller compiles.
     [METHODS.automationsValidate]: (input: Payload<typeof METHODS.automationsValidate>) =>
-      input.compiled === undefined
-        ? compileWhere
-        : acceptCompiled(input.compiled).pipe(
-            Effect.map((compiled) => ({ ok: true as const, graph: compiled.graph })),
-          ),
+      automations.validate(input),
     [METHODS.automationsSave]: (input: Payload<typeof METHODS.automationsSave>) =>
       about({
         "folder.id": input.projectId,

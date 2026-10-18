@@ -2,6 +2,12 @@
   "name": "@signalbox/automation-compiler",
   "private": true,
   "type": "module",
+  "imports": {
+    "#parserKeys": {
+      "workerd": "./src/parserKeys.ts",
+      "default": "./src/oxc.ts"
+    }
+  },
   "exports": {
     "./*": {
       "types": "./src/*.ts",
@@ -13,11 +19,13 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@oxc-parser/binding-wasm32-wasip1": "0.154.0",
+    "@oxc-transform/binding-wasm32-wasip1": "0.154.0",
     "@signalbox/automations": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
-    "oxc-parser": "0.148.0",
-    "oxc-transform": "0.148.0"
+    "oxc-parser": "0.154.0",
+    "oxc-transform": "0.154.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
