@@ -116,13 +116,15 @@ export const webSocketTransport = (url: string): RunnerTransport => ({
   ),
 });
 
-/** `transport` with the folder's secrets masked in every frame it sends (`secretMask.ts`). */
+/** `transport` with secrets masked in text-bearing frames; exec bytes pass through unchanged. */
 export const maskingTransport = (
   transport: RunnerTransport,
   mask: SecretMask,
 ): RunnerTransport => ({
   connect: Effect.map(transport.connect, (connection) => ({
     ...connection,
-    send: (message) => connection.send(mask.value(message)),
+    // Exec reports carry base64 process bytes; any text scrub would corrupt stdout/stderr.
+    send: (message) =>
+      connection.send(message.type === "exec.report" ? message : mask.value(message)),
   })),
 });
