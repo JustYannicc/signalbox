@@ -10,12 +10,13 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
+import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import { encodeBatchLine, jsonLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 import * as ThreadPulls from "./ThreadPulls.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
-import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -35,6 +36,7 @@ export const makeThreadObjectApi = (
       | ThreadEngine.ThreadEngine
       | TurnReports
       | ThreadBrowsing
+      | ThreadSecretRequests
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
     >,
@@ -72,6 +74,56 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    getWorkflowScript: (actor, input) =>
+      reply(
+        engine.use((service) =>
+          service.getWorkflowScript(actor, wire.workflowScriptInput.decode(input)).pipe(
+            Effect.map((value) => wire.workflowScriptReply.encode({ _tag: "ok", value })),
+            Effect.catchTags({
+              OrchestrationGetWorkflowScriptError: (error) =>
+                Effect.succeed(wire.workflowScriptReply.encode({ _tag: "error", error })),
+            }),
+          ),
+        ),
+      ),
+    stopWorkflow: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          service.stopWorkflow(actor, wire.workflowStopInput.decode(input)).pipe(
+            Effect.map(() => wire.workflowStopReply.encode({ _tag: "ok" })),
+            Effect.catchTags({
+              OrchestrationV2StopWorkflowError: (error) =>
+                Effect.succeed(wire.workflowStopReply.encode({ _tag: "error", error })),
+            }),
+          ),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    answerSecret: async (actor, input) => {
+      const result = await run(
+        ThreadSecretRequests.use((service) =>
+          service.answer(actor, wire.secretAnswer.decode(input)),
+        ).pipe(
+          Effect.as(null),
+          Effect.catchTags({ SecretRequestError: (error) => Effect.succeed(error.reason) }),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    commandOutput: (actor, input) =>
+      run(
+        engine.use((service) =>
+          service.commandOutput(actor, wire.commandOutputInput.decode(input)).pipe(
+            Effect.map((stream) =>
+              stream.pipe(Stream.map(jsonLine(wire.commandOutputFrame)), Stream.toReadableStream()),
+            ),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
+      ),
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),
