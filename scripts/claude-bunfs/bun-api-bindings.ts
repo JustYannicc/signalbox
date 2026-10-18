@@ -326,7 +326,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       for (const parameter of node.parameters) bindUnknown(parameter.name, local);
       collectVarBindings(node.body, local);
       for (const parameter of node.parameters) {
-        if (parameter.initializer) visit(parameter.initializer, local);
+        if (parameter.initializer) visitDefaultInitializer(parameter.initializer, local, visit);
         visitBindingInitializers(parameter.name, local, visit);
       }
       if (node.body) visit(node.body, local);
@@ -643,9 +643,19 @@ function visitBindingInitializers(
     ) {
       visit(element.propertyName.expression, scope);
     }
-    if (element.initializer) visit(element.initializer, scope);
+    if (element.initializer) visitDefaultInitializer(element.initializer, scope, visit);
     visitBindingInitializers(element.name, scope, visit);
   }
+}
+
+function visitDefaultInitializer(
+  initializer: ts.Expression,
+  scope: Scope,
+  visit: (node: ts.Node, scope: Scope) => void,
+): void {
+  const evaluated = scope.fork();
+  visit(initializer, evaluated);
+  scope.merge([evaluated, scope.fork()]);
 }
 
 function visitAssignmentTarget(
@@ -656,7 +666,7 @@ function visitAssignmentTarget(
   target = unwrap(target);
   if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
     visitAssignmentTarget(target.left, scope, visit);
-    visit(target.right, scope);
+    visitDefaultInitializer(target.right, scope, visit);
   } else if (ts.isPropertyAccessExpression(target)) visit(target.expression, scope);
   else if (ts.isElementAccessExpression(target)) {
     visit(target.expression, scope);
@@ -675,7 +685,7 @@ function visitAssignmentTarget(
         ts.isShorthandPropertyAssignment(property) &&
         property.objectAssignmentInitializer
       ) {
-        visit(property.objectAssignmentInitializer, scope);
+        visitDefaultInitializer(property.objectAssignmentInitializer, scope, visit);
       } else if (ts.isSpreadAssignment(property))
         visitAssignmentTarget(property.expression, scope, visit);
     }

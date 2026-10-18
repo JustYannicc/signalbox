@@ -478,6 +478,29 @@ describe("inventoryBunApis", () => {
     }
   });
 
+  it("merges outer alias writes with the path that skips a default", () => {
+    for (const pattern of [
+      "let x; [x = (api = other)] = values; api.newAPI();",
+      "let x; ({value: x = (api = other)} = values); api.newAPI();",
+      "let x; ({x = (api = other)} = values); api.newAPI();",
+      "const [x = (api = other)] = values; api.newAPI();",
+      "const {value: x = (api = other)} = values; api.newAPI();",
+      "function run(x = (api = other)) { api.newAPI(); }",
+    ]) {
+      const inventory = inventoryBunApis([
+        { name: "conditional-default.js", source: `let api = Bun; ${pattern}` },
+      ]);
+
+      assert.deepStrictEqual(inventory.members, [], pattern);
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        pattern,
+      );
+    }
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {
