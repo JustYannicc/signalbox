@@ -7,8 +7,53 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { firstCommit, finish, fixture, undo } from "./rollbackTesting.ts";
 import { connect, freshDatabase, launch, owner, send, withObject } from "./runnerTesting.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import { hasImmediateWork } from "./threadAlarm.ts";
 
 describe("cloud rollback recovery", () => {
+  it.effect("arms cold-object recovery before asking a fenced runner for work", () => {
+    const f = fixture();
+    const filename = freshDatabase();
+    return Effect.gen(function* () {
+      yield* withObject(
+        filename,
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const machine = yield* connect(runner);
+            const first = yield* finish(
+              runner,
+              machine.generation,
+              1,
+              f,
+              firstCommit,
+              null,
+              "answer",
+            );
+            f.state.stopping = true;
+            expect(
+              (yield* Effect.exit(undo(engine, first.turn.runId, "cold-recovery", true)))._tag,
+            ).toBe("Failure");
+          }),
+        f.options,
+      );
+      yield* withObject(
+        filename,
+        (engine, _runner, context) =>
+          Effect.gen(function* () {
+            const store = Context.get(context, ThreadStore.ThreadStore);
+            expect((yield* store.pendingRollback)?.stage).toBe("prepared");
+            // This is the same work check the Durable Object runs inside blockConcurrencyWhile.
+            expect(yield* hasImmediateWork().pipe(Effect.provide(context))).toBe(true);
+            f.state.stopping = false;
+            yield* engine.step;
+            expect(yield* store.pendingRollback).toBeNull();
+            expect((yield* engine.snapshot(owner)).projection.runs[0]?.status).toBe("rolled_back");
+          }),
+        f.options,
+      );
+    });
+  });
+
   it.effect.each(["files-restored", "conversation-updated"] as const)(
     "resumes %s without repeating the drive move",
     (stage) => {

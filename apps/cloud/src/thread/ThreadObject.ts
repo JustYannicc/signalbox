@@ -61,6 +61,7 @@ import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirect
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as CheckpointRollback from "./CheckpointRollback.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import { hasImmediateWork } from "./threadAlarm.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -683,33 +684,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
-    const hasWork = await this.runtime.runPromise(
-      Effect.gen(function* () {
-        const engine = yield* ThreadEngine.ThreadEngine;
-        const runner = work ?? (yield* (yield* ThreadRunner.ThreadRunner).work);
-        if (
-          runner.needsUpkeep ||
-          (yield* engine.hasTurnWork) ||
-          (yield* engine.hasPendingSummary) ||
-          (yield* engine.hasPendingEvents) ||
-          (yield* Effect.forEach(
-            MachineBackend.distinctBackends(yield* MachineBackend.MachineBackend),
-            (backend) => backend.pending,
-          )).some(Boolean)
-        ) {
-          return true;
-        }
-        // Diagnostics re-arm their own alarm while the object lives (a turn's
-        // grace, the analytics backoff), so only a fresh object looks for
-        // leftovers. A thread not created yet has no tables to read.
-        const projection = work === undefined ? yield* engine.projection : null;
-        return (
-          projection !== null &&
-          ((yield* (yield* TurnReports.TurnReports).hasPending(projection)) ||
-            (yield* (yield* CloudAnalytics.CloudAnalytics).hasPending))
-        );
-      }),
-    );
+    const hasWork = await this.runtime.runPromise(hasImmediateWork(work));
     if (hasWork) return this.setAlarmNoLaterThan(await this.now());
     // An alarm that fires now sets the next pull request read and share end itself.
     const pullRequestsAt = await this.runtime.runPromise(
