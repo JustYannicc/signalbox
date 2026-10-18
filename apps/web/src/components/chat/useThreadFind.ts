@@ -16,6 +16,7 @@ import {
   stepThreadFindIndex,
 } from "./threadFind";
 import { subscribeThreadFindOpen } from "./threadFindActionBus";
+import { usePendingThreadFindRequest } from "./threadFindRequest"; // signalbox: search anchors
 import { toastManager } from "../ui/toast";
 
 const EMPTY_SKILLS: readonly InlineSkill[] = [];
@@ -96,6 +97,17 @@ export function useThreadFind({
   });
   const close = useStableCallback(() => setState(CLOSED_FIND));
   useEffect(() => subscribeThreadFindOpen(open), [open]);
+  usePendingThreadFindRequest(threadKey, enabled, (request) =>
+    setState((previous) => ({
+      ...CLOSED_FIND,
+      threadKey: request.threadKey,
+      query: request.query,
+      start: request.start,
+      focusRequestId: previous.focusRequestId + 1,
+      navigationId: previous.navigationId + 1,
+      requestId: previous.navigationId + 1,
+    })),
+  ); // signalbox: search results open Find on their match (#792)
 
   const remote = useServerResults(
     isOpen ? thread : null,
