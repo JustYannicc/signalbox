@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - native process cwd and spawn are a Runner boundary.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodePosixPath from "node:path/posix";
+import * as NodePathPosix from "node:path/posix";
 
 import type { ExecCommand } from "@signalbox/runner-protocol/ExecProtocol";
 
@@ -37,7 +37,7 @@ const inside = (root: string, candidate: string) => {
 
 const isCanonicalWorkspacePath = (cwd: string) =>
   (cwd === CANONICAL_WORKSPACE || cwd.startsWith(`${CANONICAL_WORKSPACE}/`)) &&
-  NodePosixPath.normalize(cwd) === cwd &&
+  NodePathPosix.normalize(cwd) === cwd &&
   !cwd.includes("\\") &&
   !cwd.split("/").includes("..") &&
   !cwd.includes("\0");
@@ -46,9 +46,9 @@ const isCanonicalWorkspacePath = (cwd: string) =>
 export const makeRunnerExecProcessHost = (
   options: RunnerExecProcessHostOptions = {},
 ): RunnerExecProcessHost => {
-  const realpath = options.realpath ?? NodeFs.realpathSync.native;
+  const realpath = options.realpath ?? NodeFS.realpathSync.native;
   const isDirectory =
-    options.isDirectory ?? ((path: string) => NodeFs.statSync(path).isDirectory());
+    options.isDirectory ?? ((path: string) => NodeFS.statSync(path).isDirectory());
   const spawn = options.spawn ?? NodeChildProcess.spawn;
 
   return {
