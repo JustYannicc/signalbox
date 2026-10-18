@@ -228,12 +228,15 @@ export function createOptimisticThreadLifecycle<R, E>(
                 },
           confirm: (source, acknowledgment) =>
             acknowledgment.status === "acknowledged" &&
-            (acknowledgment.receipt.summaryRevision !== undefined
-              ? source.thread?.summaryRevision !== undefined &&
-                source.thread.summaryRevision >= acknowledgment.receipt.summaryRevision
-              : source.sharedSequence &&
-                source.sequence !== null &&
-                source.sequence >= acknowledgment.receipt.sequence),
+            // A settled task archives (#671) and leaves the live shell; its preview ends there,
+            // so a later reopen shows the server's state.
+            (source.thread === null ||
+              (acknowledgment.receipt.summaryRevision !== undefined
+                ? source.thread.summaryRevision !== undefined &&
+                  source.thread.summaryRevision >= acknowledgment.receipt.summaryRevision
+                : source.sharedSequence &&
+                  source.sequence !== null &&
+                  source.sequence >= acknowledgment.receipt.sequence)),
         });
         observeAccount(registry, key);
         try {
