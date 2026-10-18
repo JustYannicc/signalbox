@@ -7,6 +7,8 @@ import { createPathCallbackApi } from "./callback-path.ts";
 
 export { type FsCallback } from "./callback-utils.ts";
 
-export function createCallbackApi(kernelFs: KernelFileSystem) {
-  return { ...createIoCallbackApi(kernelFs), ...createPathCallbackApi(kernelFs) };
+import type { AsyncLeafRunner } from "./operations.ts";
+
+export function createCallbackApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+  return { ...createIoCallbackApi(kernelFs, runLeaf), ...createPathCallbackApi(kernelFs, runLeaf) };
 }
