@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import type { AutomationThreadsShape } from "@signalbox/automations/host";
 import type { WorkflowEngineShape } from "@signalbox/automations/WorkflowEngine";
+import { errorTag } from "@t3tools/shared/observability";
 import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
@@ -233,7 +234,7 @@ export const makeCloudPullRequestWatches = (deps: {
                 retrySoon = true;
                 yield* Effect.logWarning("Pending pull request watch reconciliation failed", {
                   threadId: thread_id,
-                  cause,
+                  errorTag: errorTag(cause),
                 });
               }),
             ),

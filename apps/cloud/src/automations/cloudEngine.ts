@@ -60,6 +60,7 @@ import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
 import * as CloudIngress from "./cloudIngress.ts";
 import * as HookStoreModule from "./hookStore.ts";
 import { threadPullRequestKeysEqual } from "@t3tools/shared/threadPullRequests";
+import { errorTag } from "@t3tools/shared/observability";
 
 /**
  * The user's automations on their Durable Object (#434). Each run is a
@@ -231,7 +232,9 @@ const make = Effect.gen(function* () {
     const retryPendingWatches = yield* pullRequestWatches.resumePending().pipe(
       Effect.catch((cause) =>
         Effect.gen(function* () {
-          yield* Effect.logWarning("Pending pull request watch recovery failed", { cause });
+          yield* Effect.logWarning("Pending pull request watch recovery failed", {
+            errorTag: errorTag(cause),
+          });
           return true;
         }),
       ),
@@ -239,7 +242,9 @@ const make = Effect.gen(function* () {
     const retryWatchCleanup = yield* pullRequestWatches.reconcileEnded().pipe(
       Effect.catch((cause) =>
         Effect.gen(function* () {
-          yield* Effect.logWarning("Pull request watch cleanup failed", { cause });
+          yield* Effect.logWarning("Pull request watch cleanup failed", {
+            errorTag: errorTag(cause),
+          });
           return true;
         }),
       ),

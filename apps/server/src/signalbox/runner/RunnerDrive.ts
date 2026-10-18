@@ -657,13 +657,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         ]);
         const pinnedHead = pinned.code === 0 ? yield* git.resolve("FETCH_HEAD") : null;
         if (pinnedHead !== seed.headSha) {
-          const reason =
-            pinned.stderr.trim() ||
-            (pinned.code === 0
-              ? "The remote returned a different commit."
-              : `git fetch exited ${pinned.code}`);
           return yield* new RunnerGitError({
-            message: `The selected pull-request commit is unavailable through Signalbox: ${reason}`,
+            message: "The selected pull-request commit is unavailable through Signalbox.",
           });
         }
         yield* git.setRef(ref, seed.headSha);

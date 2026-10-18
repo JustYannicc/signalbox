@@ -567,9 +567,11 @@ describe("RunnerDrive", () => {
           });
           const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
 
-          const failed = yield* Effect.exit(runner.prepare("remote-token"));
+          const error = yield* runner.prepare("remote-token").pipe(Effect.flip);
 
-          expect(failed._tag).toBe("Failure");
+          expect(error.message).toBe(
+            "The selected pull-request commit is unavailable through Signalbox.",
+          );
           expect(drive.refs("t1")).toMatchObject({
             thread: null,
             base: null,
