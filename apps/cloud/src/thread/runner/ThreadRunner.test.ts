@@ -1233,6 +1233,7 @@ describe("ThreadRunner", () => {
             driveId: "my/personal/user_1",
             generation: machine.generation,
             live: true,
+            pullOperationId: null,
           });
           expect((yield* runner.authorizeDrive(`${token}x`))._tag).toBe("denied");
           expect((yield* runner.authorizeDrive(machine.token))._tag).toBe("denied");
