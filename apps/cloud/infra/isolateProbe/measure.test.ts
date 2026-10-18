@@ -9,7 +9,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { decodeModuleTransport, MODULE_TRANSPORT_CONTENT_TYPE } from "./moduleTransport.ts";
 
 describe("fixture measurement CLI", () => {
-  it("uploads every full map and records original inventory plus partial HTTP failures", async () => {
+  it.each(["flag", "env"])("records full maps and HTTP failures via %s", async (urlSource) => {
     const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "isolate-fixture-"));
     const requests: Awaited<ReturnType<typeof decodeModuleTransport>>[] = [];
     const failures: unknown[] = [];
@@ -74,14 +74,21 @@ describe("fixture measurement CLI", () => {
           process.execPath,
           [
             NodePath.join(import.meta.dirname, "measure.ts"),
-            "--url",
-            `http://127.0.0.1:${address.port}`,
+            ...(urlSource === "flag" ? ["--url", `http://127.0.0.1:${address.port}`] : []),
             "--fixture",
             dir,
             "--output",
             output,
           ],
-          { env: { ...process.env, PROBE_SECRET: "fixture-test" }, timeout: 45000 },
+          {
+            env: {
+              ...process.env,
+              PROBE_SECRET: "fixture-test",
+              PROBE_URL:
+                urlSource === "env" ? `http://127.0.0.1:${address.port}` : "http://127.0.0.1:1",
+            },
+            timeout: 45000,
+          },
           (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }),
         );
       });

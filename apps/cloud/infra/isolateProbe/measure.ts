@@ -31,10 +31,11 @@ const { values } = NodeUtil.parseArgs({
     "measure-only": { type: "boolean", default: false },
   },
 });
-const token = values.url ? process.env.PROBE_SECRET : "local-probe-only";
+const deployedUrl = values.url ?? process.env.PROBE_URL;
+const token = deployedUrl ? process.env.PROBE_SECRET : "local-probe-only";
 if (!token) throw new Error("Set PROBE_SECRET for a deployed probe.");
 await prepare();
-const harness = values.url
+const harness = deployedUrl
   ? undefined
   : createTestHarness({
       workers: [{ configPath: NodePath.join(import.meta.dirname, "wrangler.jsonc") }],
@@ -43,7 +44,7 @@ const runId = NodeCrypto.randomBytes(8).toString("hex");
 const rows: unknown[] = [];
 
 try {
-  const endpoint = values.url ?? (await harness!.listen()).url.toString();
+  const endpoint = deployedUrl ?? (await harness!.listen()).url.toString();
   const send = async (input: object, session: string, modules?: readonly ModuleDescriptor[]) => {
     const url = new URL("/run", endpoint);
     url.searchParams.set("session", session);
@@ -135,7 +136,7 @@ try {
   }
   const evidence = {
     schemaVersion: 1,
-    environment: values.url ? "deployed" : "local-workerd",
+    environment: deployedUrl ? "deployed" : "local-workerd",
     measuredAt: new Date().toISOString(),
     runId,
     rows,

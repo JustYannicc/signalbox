@@ -16,6 +16,42 @@ The permanent cleanup cascade is tracked in #474 and ships separately.
 
 ## Local development
 
+### Run an isolated deployed probe
+
+From your own checkout with dependencies installed and Alchemy's Cloudflare auth
+already configured, run from the repository root:
+
+```sh
+vp run --filter @signalbox/cloud probe:isolate --fixture /absolute/fixture --output /tmp/proof.json
+```
+
+Each invocation claims its own random `isolate-probe-<hex>` stage, Worker and SQL
+Durable Object namespace. Owners can run concurrently without reserving a shared
+host. It deploys this checkout's prebuilt probe graph, so merge the capabilities
+your fixture needs first. Omit `--fixture` for the standard capability probe.
+The existing per-PR CI probe workflow still works separately.
+
+The command logs the stage, keeps its fresh credential and endpoint in child
+process environments, measures, then destroys that exact Alchemy stage even
+after a failed proof or partial deployment. `--output` retains measurement JSON
+on proof failure. Without it, measurement JSON goes to stdout. Deployment and
+cleanup diagnostics are suppressed because they can contain private endpoints.
+
+SIGINT and SIGTERM stop the owned subprocess group and still attempt cleanup.
+Cleanup has a two-minute deadline plus up to five seconds to stop the child.
+SIGKILL, host loss or failed cleanup can leave resources behind. Use the exact
+stage printed by the command, from the same checkout and Alchemy account:
+
+```sh
+node apps/cloud/infra/isolateProbe/run.ts --destroy-stage isolate-probe-<hex>
+```
+
+Recovery uses Alchemy's existing state; it does not need the old probe credential.
+Cleanup does not retry automatically. Fix the reported operating condition before
+retrying recovery. Never substitute another owner's stage.
+
+### Run the local cloud environment
+
 ```sh
 cd apps/cloud
 cp .dev.vars.example .dev.vars   # fill in; gitignored
