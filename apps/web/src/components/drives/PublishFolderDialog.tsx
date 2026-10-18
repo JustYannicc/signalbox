@@ -11,7 +11,7 @@ import type {
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import * as Option from "effect/Option";
 import { CheckIcon, GlobeIcon, LockIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useOpenLink } from "../../browser/useOpenLink";
 import { useConnectCloudGitHub } from "../../github/CloudGitHubSettings";
@@ -80,11 +80,10 @@ export function PublishFolderDialog(props: {
   const discovery = useEnvironmentQuery(
     props.open ? sourceControlEnvironment.discovery({ environmentId, input: {} }) : null,
   );
-  const scope = useMemo(
-    () => ({ environmentId, cwd: folder.workspaceRoot }),
-    [environmentId, folder.workspaceRoot],
-  );
-  const publish = useSourceControlPublishRepositoryAction(scope);
+  const publish = useSourceControlPublishRepositoryAction({
+    environmentId,
+    cwd: folder.workspaceRoot,
+  });
   const [repositoryOverride, setRepositoryOverride] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<SourceControlRepositoryVisibility>("private");
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +108,7 @@ export function PublishFolderDialog(props: {
   const canSubmit =
     connected && publish.isAllowed && !publish.isPending && REPOSITORY_PATH.test(repository.trim());
 
-  const submit = useCallback(() => {
+  const submit = () => {
     if (!canSubmit || github === undefined) return;
     setError(null);
     void (async () => {
@@ -137,7 +136,7 @@ export function PublishFolderDialog(props: {
       setResult(outcome.value);
       onPublished();
     })();
-  }, [canSubmit, github, onPublished, publish, repository, visibility]);
+  };
 
   const handleOpenChange = (open: boolean) => {
     props.onOpenChange(open);

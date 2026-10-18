@@ -1,7 +1,7 @@
 // signalbox: a cloud folder with files and no remote can be published to GitHub (#810).
 import { AuthSourceControlWriteScope, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { CloudUploadIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useSourceControlActionRunning } from "../../lib/sourceControlActions";
@@ -37,10 +37,7 @@ export function PublishFolderSection(props: {
   const folder = usePublishableFolder(props);
   const canWrite = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const [open, setOpen] = useState(false);
-  const scope = useMemo(
-    () => ({ environmentId, cwd: folder?.workspaceRoot ?? null }),
-    [environmentId, folder?.workspaceRoot],
-  );
+  const scope = { environmentId, cwd: folder?.workspaceRoot ?? null };
   const publishing = useSourceControlActionRunning(scope, ["publishRepository"]);
   const threadStatus = useEnvironmentQuery(
     vcsEnvironment.status({ environmentId, input: { cwd: gitCwd } }),
@@ -51,11 +48,10 @@ export function PublishFolderSection(props: {
   );
   // The folder root refreshes with the action. The thread moves onto its own branch of the new
   // repository when the server next reads it, so read it now rather than at its next turn.
-  const refreshThreadStatus = threadStatus.refresh;
-  const onPublished = useCallback(() => {
+  const onPublished = () => {
     resubscribeThread();
-    refreshThreadStatus();
-  }, [refreshThreadStatus, resubscribeThread]);
+    threadStatus.refresh();
+  };
 
   if (folder === null || !canWrite) return null;
 
