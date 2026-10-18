@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies the native module supplied to the Node bridge.
 import * as NodeConsole from "node:console";
 import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
+import * as NodeStreamWeb from "node:stream/web";
+import * as NodeTimers from "node:timers";
 import { describe, expect, it } from "@effect/vitest";
 import { createNodeBridge, installNodeBridge } from "../NodeBridge.ts";
 
@@ -61,6 +63,24 @@ describe("Node builtin routing", () => {
     expect(bridge.require("console")).toBe(NodeConsole);
     expect(bridge.require("node:console")).toBe(NodeConsole);
     expect(() => createNodeBridge({}).require("node:console")).toThrow(
+      expect.objectContaining({ code: "NODE_BUILTIN_UNAVAILABLE" }),
+    );
+  });
+
+  it("timer routing preserves native aliases and stays unavailable until installed", () => {
+    const bridge = createNodeBridge({ "node:timers": NodeTimers });
+    expect(bridge.require("timers")).toBe(NodeTimers);
+    expect(bridge.require("node:timers")).toBe(NodeTimers);
+    expect(() => createNodeBridge({}).require("node:timers")).toThrow(
+      expect.objectContaining({ code: "NODE_BUILTIN_UNAVAILABLE" }),
+    );
+  });
+
+  it("web stream routing preserves native aliases and requires an installed module", () => {
+    const bridge = createNodeBridge({ "node:stream/web": NodeStreamWeb });
+    expect(bridge.require("stream/web")).toBe(NodeStreamWeb);
+    expect(bridge.require("node:stream/web")).toBe(NodeStreamWeb);
+    expect(() => createNodeBridge({}).require("node:stream/web")).toThrow(
       expect.objectContaining({ code: "NODE_BUILTIN_UNAVAILABLE" }),
     );
   });
