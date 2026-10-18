@@ -1192,6 +1192,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
               Effect.map((providerThread) => ({ providerThread, turn })),
               Effect.catchCause((cause) =>
                 Effect.gen(function* () {
+                  // Later native turns need history; the message alone would discard it.
+                  if (turn.providerTurnOrdinal > 1 && turn.freshSessionText === undefined) {
+                    return yield* new RunnerTurnError({
+                      message:
+                        "Native resume failed and no conversation handoff is available. Send a shorter message or fewer attachments before retrying.",
+                    });
+                  }
                   yield* Effect.logWarning(
                     "native resume failed; starting a fresh session",
                     Cause.pretty(cause),

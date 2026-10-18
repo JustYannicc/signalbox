@@ -110,6 +110,7 @@ const PICKS_A_POOL: ReadonlySet<ThreadCommand["type"]> = new Set([
   "thread.ask.answer",
   "runtime-request.respond",
   "thread.model-selection.set",
+  "provider.switch",
 ]);
 
 /** What a command sends, for the thread's kind (`ThreadKindTurns`). */
