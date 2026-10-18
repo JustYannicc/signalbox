@@ -74,9 +74,8 @@ afterEach(async () => {
 describe("find result navigation", () => {
   it("reveals the source occurrence inside a separately scrolling work group", async () => {
     container.innerHTML =
-      '<div data-timeline-row-id="work-group:first:details"><div style="overflow-y:auto" data-tool-group-scroll><div data-thread-find-entry-id="second"><pre data-thread-find-text>COD4</pre></div></div></div>';
+      '<div data-timeline-row-id="work-group:first:details"><div style="height:200px;overflow-y:auto" data-tool-group-scroll><div style="height:2000px" data-thread-find-entry-id="second"><pre data-thread-find-text>COD4</pre></div></div></div>';
     const inner = container.querySelector<HTMLElement>("[data-tool-group-scroll]")!;
-    Object.defineProperties(inner, { scrollHeight: { value: 2000 }, clientHeight: { value: 200 } });
     inner.getBoundingClientRect = () => new DOMRect(0, 150, 800, 200);
     Object.defineProperty(Range.prototype, "getBoundingClientRect", {
       configurable: true,
