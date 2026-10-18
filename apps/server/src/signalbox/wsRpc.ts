@@ -25,6 +25,7 @@ import { signalboxContextsWsHandlers } from "./contexts/rpc.ts";
 import { signalboxDrivesWsHandlers } from "./drives/rpc.ts";
 import { signalboxFoldersWsHandlers } from "./folders/rpc.ts";
 import { signalboxNotesWsHandlers } from "./notes/rpc.ts";
+import { signalboxTrashWsHandlers } from "./trash/rpc.ts";
 import { signalboxPreviewsWsHandlers } from "./previews/rpc.ts";
 import { signalboxBrowsingWsHandlers } from "./browsing/rpc.ts";
 import { signalboxPushWsHandlers } from "./push/rpc.ts";
@@ -88,6 +89,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
         ...signalboxDrivesWsHandlers,
         ...signalboxFoldersWsHandlers,
         ...signalboxNotesWsHandlers,
+        ...signalboxTrashWsHandlers,
         ...signalboxPreviewsWsHandlers,
         ...signalboxBrowsingWsHandlers,
         ...signalboxPushWsHandlers,

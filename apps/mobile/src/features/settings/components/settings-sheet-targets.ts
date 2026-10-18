@@ -19,6 +19,7 @@ export type SettingsSheetTarget =
   | "SettingsTimeZone" // signalbox: person timezone
   | "SettingsConnectedServices" // signalbox: automations
   | "SettingsSignIn" // signalbox: sign-in grants
+  | "SettingsTrash" // signalbox: trash
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
   | "SettingsDiagnostics"

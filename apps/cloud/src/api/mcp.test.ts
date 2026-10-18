@@ -13,6 +13,8 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import { TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
 
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
@@ -28,6 +30,9 @@ import { Threads } from "../thread/Threads.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
 import { handleMcpRequest, protectedResourceMetadata } from "./mcpRoutes.ts";
+
+const decodeFolders = Schema.decodeUnknownSync(Schema.fromJsonString(SignalboxFoldersSnapshot));
+const decodeTrash = Schema.decodeUnknownSync(Schema.fromJsonString(TrashSnapshot));
 
 const userId = "user_1";
 const repos: Array<ReturnType<typeof makeRepo>> = [];
@@ -412,6 +417,34 @@ describe("Signalbox's MCP", () => {
         expect(answer.isError).toBe(true);
         expect(answer.content[0]?.text).toContain(`No operation ${operation} you can call`);
       }
+    }),
+  );
+
+  it.effect("offers recoverable Trash but keeps permanent cleanup out of agent tools", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connect;
+      const call = (operation: string, input: object = {}) =>
+        tool("signalbox_call", { operation, input });
+      const found = yield* tool("signalbox_search", { query: "empty trash", limit: 3 });
+      expect(
+        (yield* decodeSearch(found.content[0]!.text)).operations.map((row) => row.name),
+      ).not.toContain("trash.empty");
+      const created = yield* call("folders.create", { name: "MCP trash", parentId: null });
+      const folder = decodeFolders(created.content[0]!.text).folders[0]!;
+      const moved = yield* call("trash.folder", { folderId: folder.id });
+      expect(moved.isError ?? false).toBe(false);
+      const entry = decodeTrash(moved.content[0]!.text).entries[0]!;
+      expect((yield* call("trash.restore", { id: entry.id })).isError ?? false).toBe(false);
+      const movedAgain = yield* call("trash.folder", { folderId: folder.id });
+      const next = decodeTrash(movedAgain.content[0]!.text).entries.find(
+        (row) => row.status === "trashed",
+      )!;
+      const emptied = yield* call("trash.empty", { ids: [next.id] });
+      expect(emptied.isError).toBe(true);
+      const listed = yield* call("trash.list");
+      expect(
+        decodeTrash(listed.content[0]!.text).entries.find((row) => row.id === next.id)?.status,
+      ).toBe("trashed");
     }),
   );
 });

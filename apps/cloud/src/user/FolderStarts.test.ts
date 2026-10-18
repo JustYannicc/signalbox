@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { myDriveId } from "../drive/driveAccess.ts";
@@ -223,10 +224,11 @@ describe("starting a folder from existing work", () => {
         head: secondHead,
         packed: git.pack([secondHead]),
       });
-      yield* alice[SIGNALBOX_FOLDERS_WS_METHODS.delete]({ id: newFolderId });
-
       // A crash after importing history leaves the origin and reservation behind.
       // The retry must finish from that exact head even after the source advances.
+      yield* SqlClient.SqlClient.use(
+        (sql) => sql`DELETE FROM folders WHERE id = ${newFolderId}`,
+      ).pipe(Effect.provide(cloud.layerFor(USER)));
       const retried = yield* alice[SIGNALBOX_FOLDERS_WS_METHODS.startFrom]({
         id: source.id,
         newFolderId,

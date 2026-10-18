@@ -17,7 +17,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as IdentityProvider from "./account/IdentityProvider.ts";
-import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
+import { API_HEADER, encodeApiCredential } from "./api/apiCredential.ts";
+import { serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
@@ -126,6 +127,9 @@ import * as UserAnalyticsPreference from "./user/UserAnalyticsPreference.ts";
 import * as UserTimezone from "./user/UserTimezone.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
+import * as UserTrash from "./trash/UserTrash.ts";
+import * as TrashResourcesLive from "./trash/trashResourcesLive.ts";
+import { TrashAlarm, layerPreview as layerTrashPreview } from "./trash/TrashWorkflow.ts";
 
 /** Test wiring: fixed config, a fake WorkOS, and user objects on in-memory SQLite. */
 
@@ -318,8 +322,8 @@ const makeUserRuntime = (
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
   noteReader: Layer.Layer<NoteReader.NoteReader>,
   modelCompletion: Layer.Layer<ModelCompletion.ModelCompletion>,
-) =>
-  ManagedRuntime.make(
+) => {
+  const services =
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
       Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
@@ -421,8 +425,17 @@ const makeUserRuntime = (
         ),
       ),
       Layer.merge(automations),
+    );
+  return ManagedRuntime.make(
+    UserTrash.layer.pipe(
+      Layer.provideMerge(TrashResourcesLive.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(Layer.succeed(TrashAlarm, { armBy: () => Effect.void }), layerTrashPreview),
+      ),
+      Layer.provideMerge(services),
     ),
   );
+};
 
 /**
  * The cloud's objects in memory: a user object per user id and a thread

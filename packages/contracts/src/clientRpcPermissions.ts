@@ -12,6 +12,7 @@ import { WS_METHODS } from "./rpc.ts";
 import { SIGNALBOX_DRIVES_WS_METHODS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_WS_METHODS } from "./signalboxFolders.ts"; // signalbox: folders
 import { SIGNALBOX_NOTES_WS_METHODS } from "./signalboxNotes.ts"; // signalbox: notes
+import { SIGNALBOX_TRASH_WS_METHODS } from "./signalboxTrash.ts"; // signalbox: trash
 import { SIGNALBOX_SIGN_IN_WS_METHODS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
 import { SIGNALBOX_BROWSING_WS_METHODS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import {
@@ -96,6 +97,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_NOTES_WS_METHODS.readAgain]: AuthOrchestrationOperateScope, // signalbox: notes
   [SIGNALBOX_NOTES_WS_METHODS.dismissReading]: AuthOrchestrationOperateScope, // signalbox: notes
   [SIGNALBOX_NOTES_WS_METHODS.accept]: AuthOrchestrationOperateScope, // signalbox: notes
+  [SIGNALBOX_TRASH_WS_METHODS.restore]: AuthOrchestrationOperateScope, // signalbox: trash
+  [SIGNALBOX_TRASH_WS_METHODS.empty]: AuthOrchestrationOperateScope, // signalbox: trash
+  [SIGNALBOX_TRASH_WS_METHODS.thread]: AuthOrchestrationOperateScope, // signalbox: trash
+  [SIGNALBOX_TRASH_WS_METHODS.folder]: AuthOrchestrationOperateScope, // signalbox: trash
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: AuthPreviewOperateScope,

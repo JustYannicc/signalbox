@@ -47,6 +47,7 @@ import {
   SignalboxDrivesUnavailableError,
 } from "@t3tools/contracts/signalboxDrives";
 import {
+  FolderId,
   SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   SIGNALBOX_FOLDERS_WS_METHODS,
   SignalboxFolderError,
@@ -57,6 +58,10 @@ import {
 } from "@t3tools/contracts/signalboxSearch";
 import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes";
+import {
+  SIGNALBOX_TRASH_REQUIRED_SCOPES,
+  SIGNALBOX_TRASH_WS_METHODS,
+} from "@t3tools/contracts/signalboxTrash";
 import {
   SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   SIGNALBOX_BROWSING_WS_METHODS,
@@ -142,6 +147,8 @@ import {
   makeAnalyticsHandlers,
 } from "./analyticsRpc.ts";
 import { makeNotesHandlers, NOTES_METHODS } from "../notes/notesRpc.ts";
+import { makeTrashHandlers } from "../trash/trashRpc.ts";
+import { UserTrash } from "../trash/UserTrash.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -263,6 +270,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   // Notes on each level's pad (`notes/`).
   ...NOTES_METHODS,
+  ...Object.values(SIGNALBOX_TRASH_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   // A thread's synced browser tabs (`thread/browsing/`), and the browser panel's own RPCs on them.
   ...Object.values(SIGNALBOX_BROWSING_WS_METHODS),
@@ -371,6 +379,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   ...SIGNALBOX_NOTES_REQUIRED_SCOPES,
+  ...SIGNALBOX_TRASH_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires for its browser panel.
@@ -612,18 +621,19 @@ export const layerHandlers = (input: {
       const pushes = yield* makePushHandlers(input.sid);
       const threadContexts = yield* ThreadContexts;
       const newThreadModel = (projectId?: ProjectId) =>
-        threadContexts
-          .initialModelSelection(projectId ?? null)
-          .pipe(
-            Effect.map(
-              (selection) => selection ?? (identity.scripted ? scriptedModelSelection : null),
-            ),
-          );
+        threadContexts.initialModelSelection(projectId ?? null).pipe(
+          Effect.catchTags({ ThreadFolderTrashedError: () => Effect.succeed(null) }),
+          Effect.map(
+            (selection) => selection ?? (identity.scripted ? scriptedModelSelection : null),
+          ),
+        );
       const automations = yield* makeAutomationHandlers({
         personReviews: input.via === "client",
         newThreadModel,
       });
       const notes = yield* makeNotesHandlers({ newThreadModel });
+      const trash = yield* makeTrashHandlers;
+      const userTrash = yield* UserTrash;
       const keys = yield* makeKeysHandlers({
         userId,
         scopes: input.scopes ?? CLOUD_CLIENT_SCOPES,
@@ -638,6 +648,7 @@ export const layerHandlers = (input: {
         ...pushes,
         ...automations,
         ...notes,
+        ...trash,
         ...keys,
         ...signIn,
         ...keybindings,
@@ -1060,7 +1071,11 @@ export const layerHandlers = (input: {
         [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: (request) => folderStarts.startFrom(request),
         [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
-        [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) => folderCall(folders.delete(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) =>
+          userTrash.trashFolder({ folderId: request.id }).pipe(
+            Effect.andThen(folders.snapshot),
+            Effect.mapError((error) => new SignalboxFolderError({ message: error.message })),
+          ),
         [SIGNALBOX_FOLDERS_WS_METHODS.moveThread]: (request) =>
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
@@ -1105,7 +1120,12 @@ export const layerHandlers = (input: {
         [WS_METHODS.sectionsMove]: (request) =>
           sections.move(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
         [WS_METHODS.sectionsDelete]: (request) =>
-          sections.delete(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
+          userTrash.trashFolder({ folderId: FolderId.make(request.id) }).pipe(
+            Effect.andThen(sections.snapshot),
+            Effect.mapError(
+              (error) => new SectionsRpcError({ code: "storage-failed", detail: error.message }),
+            ),
+          ),
         [WS_METHODS.sectionsMoveProject]: (request) =>
           sections.moveProject(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
       };

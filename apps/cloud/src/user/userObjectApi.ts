@@ -46,6 +46,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import { UserTrash } from "../trash/UserTrash.ts";
 import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
@@ -82,8 +83,8 @@ export const makeUserObjectApi = (
       | PersonBrowsers.PersonBrowsers
       | SignInGrants.SignInGrants
       | LoginService.LoginService
+      | UserTrash
       | ThreadDirectory.ThreadDirectory
-      | UserFolders.UserFolders
       | DrivePeople.DrivePeople
       | CloudAutomations.CloudAutomations
     >,
@@ -108,6 +109,7 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    trashProgress: (id) => run(UserTrash.use((trash) => trash.progress(id))),
     searchThreads: (actor, input) =>
       run(ThreadSearch.ThreadSearch.use((search) => search.query(actor, input))),
     readSearchItem: (actor, threadId, itemId) =>

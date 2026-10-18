@@ -22,6 +22,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { EnvironmentRegistry, EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { createThreadEnvironmentAtoms } from "@t3tools/client-runtime/state/threads";
+import { createSignalboxTrashAtoms } from "@t3tools/client-runtime/state/signalboxTrash";
 
 export { testConfigAtoms, testSessionAtoms } from "./threadCommandTestSession.ts";
 
@@ -105,7 +106,12 @@ export const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function*
     ),
   );
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) => Atom.make(SNAPSHOT));
-  const commands = createThreadEnvironmentAtoms(runtime, snapshotAtom);
+  const commands = createThreadEnvironmentAtoms(
+    runtime,
+    snapshotAtom,
+    () => false,
+    createSignalboxTrashAtoms(runtime).thread,
+  );
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   const visibleAtom = commands.snapshotAtom(ENVIRONMENT_ID);

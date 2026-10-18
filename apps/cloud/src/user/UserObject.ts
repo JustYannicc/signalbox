@@ -37,7 +37,8 @@ import * as CloudPullRequests from "../github/CloudPullRequests.ts";
 import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
-import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
+import { API_HEADER, decodeApiCredential } from "../api/apiCredential.ts";
+import { serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LearnerService from "../learner/LearnerService.ts";
 import * as LearnerJev from "../learner/LearnerJev.ts";
@@ -94,6 +95,9 @@ import * as UserFolders from "./UserFolders.ts";
 import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserTrash from "../trash/UserTrash.ts";
+import * as TrashResourcesLive from "../trash/trashResourcesLive.ts";
+import { TrashAlarm, layerPreview as layerTrashPreview } from "../trash/TrashWorkflow.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
@@ -243,7 +247,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
       }),
     ),
   );
-  return ManagedRuntime.make(
+  const services =
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
       Layer.provide(
@@ -401,6 +405,17 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
         ),
       ),
+    );
+  return ManagedRuntime.make(
+    UserTrash.layer.pipe(
+      Layer.provideMerge(TrashResourcesLive.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          layerTrashPreview,
+          Layer.succeed(TrashAlarm, { armBy: (at) => Effect.promise(() => armBy(storage, at)) }),
+        ),
+      ),
+      Layer.provideMerge(services),
     ),
   );
 };
@@ -461,11 +476,20 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           Effect.catchCause((cause) => Effect.logError("starting automations failed", { cause })),
         ),
       );
+      await this.runtime.runPromise(
+        UserTrash.UserTrash.use((trash) => trash.armRecovery).pipe(
+          Effect.catchCause((cause) => Effect.logError("arming trash recovery failed", { cause })),
+        ),
+      );
     });
   }
 
   private now() {
     return this.runtime.runPromise(Clock.currentTimeMillis);
+  }
+
+  trashProgress(id: string) {
+    return this.api.trashProgress(id);
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
@@ -770,6 +794,11 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     await this.runtime.runPromise(
       Effect.all(
         [
+          UserTrash.UserTrash.use((trash) => trash.recover).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("recovering trash cleanup failed", { cause }),
+            ),
+          ),
           SearchBackfill.SearchBackfill.use((backfill) => backfill.step),
           UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm).pipe(
             Effect.catchCause((cause) => Effect.logError("idle-chat sweep failed", { cause })),

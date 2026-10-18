@@ -136,7 +136,10 @@ export const layer = Layer.effect(
           Effect.map((read) => recordsOf(read, fields, filter)),
           Effect.mapError(hostError("Couldn't read the thread")),
         ),
-      initialModelSelection: (projectId) => contexts.initialModelSelection(projectId),
+      initialModelSelection: (projectId) =>
+        contexts
+          .initialModelSelection(projectId)
+          .pipe(Effect.mapError(hostError("Couldn't choose the thread's model"))),
       launch: (input) =>
         owner.pipe(
           Effect.flatMap((actor) =>
