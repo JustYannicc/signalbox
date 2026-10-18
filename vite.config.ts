@@ -79,8 +79,6 @@ export default defineConfig({
   fmt: {
     ignorePatterns: [
       ".repos/**",
-      // signalbox: preserve byte-identical upstream workerd Storage contract.
-      "apps/cloud/src/kernel/storage.ts",
       // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
       // it rewrites `*` as `_` and joins lines.
       ".macroscope/ignore.md",
