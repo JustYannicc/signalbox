@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Esbuild from "esbuild";
+import { KERNEL_BUSYBOX_ARTIFACT } from "../../../src/kernel/KernelBusyboxProgram.ts";
 import { KERNEL_GIT_ARTIFACT } from "../../../src/kernel/KernelGitProgram.ts";
 import { gitArtifactPath } from "./prepare.ts";
 import { KERNEL_GIT_FACET_SOURCE } from "./facet-source.ts";
@@ -25,6 +26,7 @@ export async function prepareKernelGitFacet(
   revision: string,
   wasmPath = gitArtifactPath,
   sourceRoot = NodeURL.fileURLToPath(new URL("../../../", import.meta.url)),
+  busyboxPath = NodePath.join(scriptDir, "../coreutils/bin/busybox.wasm"),
 ) {
   if (!/^[0-9a-f]{40}$/.test(revision))
     throw new Error("Pass the exact 40-character source commit");
@@ -36,6 +38,14 @@ export async function prepareKernelGitFacet(
     throw new Error("Git WASM does not match its frozen source pin");
   }
 
+  const busyboxBytes = await NodeFSP.readFile(busyboxPath);
+  if (
+    busyboxBytes.byteLength !== KERNEL_BUSYBOX_ARTIFACT.bytes ||
+    digest(busyboxBytes) !== KERNEL_BUSYBOX_ARTIFACT.sha256
+  ) {
+    throw new Error("BusyBox filter artifact does not match its frozen source pin");
+  }
+  const catBase64 = busyboxBytes.toString("base64");
   const cloudRoot = NodePath.resolve(sourceRoot);
   const outputDir = NodePath.resolve(destination);
   const build = await Esbuild.build({
@@ -52,7 +62,7 @@ export async function prepareKernelGitFacet(
     format: "esm",
     platform: "neutral",
     target: "es2023",
-    external: ["cloudflare:workers", "node:*", "./git.wasm"],
+    external: ["cloudflare:workers", "node:*", "./git.wasm", "./busybox.wasm", "./cat-bytes.txt"],
   });
   const sources = await Promise.all(
     Object.keys(build.metafile.inputs)
@@ -87,10 +97,24 @@ export async function prepareKernelGitFacet(
   await Promise.all([
     NodeFSP.writeFile(NodePath.join(outputDir, "main.js"), main),
     NodeFSP.writeFile(NodePath.join(outputDir, "git.wasm"), bytes),
+    NodeFSP.writeFile(NodePath.join(outputDir, "busybox.wasm"), busyboxBytes),
+    NodeFSP.writeFile(NodePath.join(outputDir, "cat-bytes.txt"), catBase64),
   ]);
   const modules = [
     { name: "main.js", type: "js", bytes: Buffer.byteLength(main), sha256: digest(main) },
     { name: "git.wasm", type: "wasm", bytes: bytes.byteLength, sha256: digest(bytes) },
+    {
+      name: "busybox.wasm",
+      type: "wasm",
+      bytes: busyboxBytes.byteLength,
+      sha256: digest(busyboxBytes),
+    },
+    {
+      name: "cat-bytes.txt",
+      type: "text",
+      bytes: Buffer.byteLength(catBase64),
+      sha256: digest(catBase64),
+    },
   ];
   const inventory = { artifact: KERNEL_GIT_ARTIFACT, sourceRevision: revision, sources, modules };
   const manifest = {
@@ -103,6 +127,8 @@ export async function prepareKernelGitFacet(
     modules: {
       "main.js": { path: "main.js", type: "js" },
       "git.wasm": { path: "git.wasm", type: "wasm" },
+      "busybox.wasm": { path: "busybox.wasm", type: "wasm" },
+      "cat-bytes.txt": { path: "cat-bytes.txt", type: "text" },
     },
     paths: ["/proof", "/proof-again"],
   };

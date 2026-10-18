@@ -1,6 +1,9 @@
 /** Durable Object proof entry; Git is loaded as a static WASM module. */
 export const KERNEL_GIT_FACET_SOURCE = String.raw`import { DurableObject } from "cloudflare:workers";
 import git from "./git.wasm";
+import busybox from "./busybox.wasm";
+import catBase64 from "./cat-bytes.txt";
+import { registerKernelBusyboxCat } from "../../../src/kernel/KernelBusyboxPrograms.ts";
 import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage.ts";
 import { ABI_VERSION, KernelProgramRegistry, callKernel } from "../../../src/kernel/KernelAbi.ts";
 import { KernelFileSystem, KernelOpenFlags } from "../../../src/kernel/KernelFileSystem.ts";
@@ -70,14 +73,27 @@ export class KernelGitFacet extends DurableObject {
         "",
       ].join("\n"));
 
+      ensureDirectory(filesystem, "/bin");
+      const catBytes = Uint8Array.from(atob(catBase64), (character) => character.charCodeAt(0));
+      const catFd = filesystem.open("/bin/cat", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_TRUNC | KernelOpenFlags.O_WRONLY, 0o755);
+      try { filesystem.write(catFd, catBytes, 0n); } finally { filesystem.close(catFd); }
       const registry = new KernelProgramRegistry();
+      const programs = new Map(registerKernelBusyboxCat(registry, busybox));
+      let catRuns = 0;
+      const catBinding = programs.get("/bin/cat");
+      assert(catBinding?.implementation.kind === "async", "Expected async BusyBox cat");
+      programs.set("/bin/cat", { ...catBinding, implementation: { kind: "async", run: (context) => {
+        catRuns++;
+        return catBinding.implementation.run(context);
+      } } });
       const registered = registry.register(KERNEL_GIT_PROGRAM_MANIFEST);
       assert(registered.status === "ok", "Git registration failed: " + JSON.stringify(registered));
       const implementation = createKernelGitProgram({ module: git, credentials: CREDENTIALS });
+      programs.set("/usr/bin/git", { manifest: KERNEL_GIT_PROGRAM_MANIFEST, implementation });
       host = new KernelProgramHost({
         registry,
         wakes,
-        programs: new Map([["/usr/bin/git", { manifest: KERNEL_GIT_PROGRAM_MANIFEST, implementation }]]),
+        programs,
       });
 
       const version = await runGit(host, filesystem, "/work", "--version");
@@ -91,12 +107,13 @@ export class KernelGitFacet extends DurableObject {
 
       const hasCommit = (await runGit(host, filesystem, "/work/repo", "rev-parse", "--verify", "HEAD")).exitCode === 0;
       if (!hasCommit) {
+        writeFile(filesystem, "/work/repo/.gitattributes", "sample.txt filter=proof\n");
         writeFile(filesystem, "/sample.txt", "Root-relative decoy\n");
         writeFile(filesystem, "/absolute.txt", "Root absolute-path decoy\n");
         writeFile(filesystem, "/work/repo/sample.txt", "Relative worktree file\n");
         writeFile(filesystem, "/work/repo/absolute.txt", "Absolute worktree file\n");
         assert(JSON.stringify(filesystem.getPosixMetadata("/work/repo/sample.txt")) === JSON.stringify({ mode: 0o644, uid: 1001, gid: 1002 }), "Seed file metadata changed");
-        const add = await runGit(host, filesystem, "/work/repo", "add", "sample.txt", "/work/repo/absolute.txt");
+        const add = await runGit(host, filesystem, "/work/repo", "add", ".gitattributes", "sample.txt", "/work/repo/absolute.txt");
         assertResult(add, 0);
         const relativeContent = await runGit(host, filesystem, "/work/repo", "show", ":sample.txt");
         assertResult(relativeContent, 0);
@@ -111,6 +128,13 @@ export class KernelGitFacet extends DurableObject {
         const commit = await runGit(host, filesystem, "/work/repo", "commit", "-m", "Add sample file");
         assertResult(commit, 0);
       }
+
+      const filtered = await runGit(host, filesystem, "/work/repo", "-c", "filter.proof.clean=/bin/cat", "-c", "filter.proof.required=true", "hash-object", "--path=sample.txt", "sample.txt");
+      assertResult(filtered, 0);
+      const unfiltered = await runGit(host, filesystem, "/work/repo", "hash-object", "--no-filters", "sample.txt");
+      assertResult(unfiltered, 0);
+      assert(filtered.stdout === unfiltered.stdout, "External clean filter changed bytes");
+      assert(catRuns > 0, "Git never executed the external BusyBox filter");
 
       const cleanStatus = await runGit(host, filesystem, "/work/repo", "status", "--porcelain=v1");
       assertResult(cleanStatus, 0);
@@ -132,9 +156,10 @@ export class KernelGitFacet extends DurableObject {
         filesystem: "KernelFileSystem over Durable Object SQLite storage",
         cwd: "/work/repo",
         initializedOnThisRequest: !hasCommit,
-        checks: ["git --version", "git init in supplied cwd", "relative and absolute git add with root decoys", "git commit", "clean status/diff persisted across requests"],
+        checks: ["git --version", "git init in supplied cwd", "relative and absolute git add with root decoys", "git commit", "real BusyBox clean filter receives pipe EOF", "clean status/diff persisted across requests"],
         status: cleanStatus.stdout,
         diff: cleanDiff.stdout,
+        catRuns,
         processesRemaining: host.processes.size,
         wakesRemaining: wakes.size,
       });
