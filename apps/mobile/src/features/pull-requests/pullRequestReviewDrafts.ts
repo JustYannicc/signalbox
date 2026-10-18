@@ -1,4 +1,5 @@
 import type { PullRequestReviewCommentDraft } from "@t3tools/contracts";
+import type { PullRequestWriteAttemptRecord } from "@t3tools/client-runtime/pull-request-write-attempt";
 import * as Schema from "effect/Schema";
 import { PullRequestReviewCommentDraft as CommentSchema } from "@t3tools/contracts";
 import type { PullRequestParams } from "./usePullRequestDiff";
@@ -12,6 +13,9 @@ export type ReviewDraft = {
   readonly summary: string;
   readonly comment: string;
   readonly comments: readonly PendingReviewComment[];
+  readonly reviewedHeadSha?: string;
+  readonly reviewWriteAttempt?: PullRequestWriteAttemptRecord;
+  readonly commentWriteAttempt?: PullRequestWriteAttemptRecord;
 };
 export const EMPTY_REVIEW_DRAFT: ReviewDraft = { summary: "", comment: "", comments: [] };
 export function pullRequestReviewKey(params: PullRequestParams) {
@@ -38,12 +42,28 @@ export const ReviewDraftDocument = Schema.Struct({
           code: Schema.String,
         }),
       ),
+      reviewedHeadSha: Schema.optional(Schema.String),
+      reviewWriteAttempt: Schema.optional(
+        Schema.Struct({
+          requestKey: Schema.String,
+          operationId: Schema.String,
+          headSha: Schema.optional(Schema.String),
+        }),
+      ),
+      commentWriteAttempt: Schema.optional(
+        Schema.Struct({
+          requestKey: Schema.String,
+          operationId: Schema.String,
+          headSha: Schema.optional(Schema.String),
+        }),
+      ),
     }),
   ),
 });
 export function clearSubmittedReview(current: ReviewDraft, submitted: ReviewDraft): ReviewDraft {
+  const { reviewWriteAttempt: _reviewWriteAttempt, ...currentWithoutAttempt } = current;
   return {
-    ...current,
+    ...currentWithoutAttempt,
     summary: current.summary === submitted.summary ? "" : current.summary,
     comments: current.comments.filter(
       (comment) =>
@@ -58,7 +78,18 @@ export function clearSubmittedReview(current: ReviewDraft, submitted: ReviewDraf
             samePosition(saved.position, comment.position),
         ),
     ),
+    ...(current.summary === submitted.summary
+      ? { reviewedHeadSha: undefined }
+      : current.reviewedHeadSha === undefined
+        ? {}
+        : { reviewedHeadSha: current.reviewedHeadSha }),
   };
+}
+
+export function clearCommentWriteAttempt(current: ReviewDraft, operationId: string): ReviewDraft {
+  if (current.commentWriteAttempt?.operationId !== operationId) return current;
+  const { commentWriteAttempt: _commentWriteAttempt, ...rest } = current;
+  return rest;
 }
 
 function samePosition(

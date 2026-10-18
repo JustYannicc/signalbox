@@ -1,7 +1,7 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
@@ -10,6 +10,7 @@ import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { PullRequestReviewForm } from "./PullRequestReviewForm";
 import {
   pullRequestReviewKey,
+  pullRequestWriteAttemptKey,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
@@ -46,6 +47,23 @@ export function PullRequestComposer({
   // A summary typed but not sent is review work too, and it outlives the popover. Selected as a
   // boolean rather than the text, so typing one does not re-render the composer per keystroke.
   const reviewKey = pullRequestReviewKey(reference);
+  const writeAttemptKey = pullRequestWriteAttemptKey(reference, "review", environmentId);
+  const [reviewedHeadState, setReviewedHeadState] = useState<
+    { readonly key: string; readonly headSha: string } | undefined
+  >(() => {
+    const store = usePullRequestReviewStore.getState();
+    const headSha =
+      store.reviewedHeads[writeAttemptKey] ?? store.writeAttempts[writeAttemptKey]?.headSha;
+    return headSha === undefined ? undefined : { key: writeAttemptKey, headSha };
+  });
+  const reviewedHeadSha =
+    reviewedHeadState?.key === writeAttemptKey ? reviewedHeadState.headSha : undefined;
+  const captureReviewedHead = (headSha: string) =>
+    setReviewedHeadState({ key: writeAttemptKey, headSha });
+  const setReviewedHead = usePullRequestReviewStore((store) => store.setReviewedHead);
+  useEffect(() => {
+    if (reviewedHeadSha !== undefined) setReviewedHead(writeAttemptKey, reviewedHeadSha);
+  }, [reviewedHeadSha, setReviewedHead, writeAttemptKey]);
   const summaryStarted = usePullRequestReviewStore(
     (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
   );
@@ -54,6 +72,7 @@ export function PullRequestComposer({
   if (openReviewRequest !== answeredOpenRequest) {
     setAnsweredOpenRequest(openReviewRequest);
     setRequestedMode("review");
+    captureReviewedHead(detail.headSha);
     setOpen(true);
   }
 
@@ -69,7 +88,11 @@ export function PullRequestComposer({
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (next) setRequestedMode(reviewStarted ? "review" : "comment");
+        if (next) {
+          const mode = !canComment || reviewStarted ? "review" : "comment";
+          setRequestedMode(mode);
+          if (mode === "review") captureReviewedHead(detail.headSha);
+        }
         setOpen(next);
       }}
     >
@@ -110,7 +133,10 @@ export function PullRequestComposer({
               value={[mode]}
               onValueChange={(next) => {
                 const value = next[0];
-                if (value === "comment" || value === "review") setRequestedMode(value);
+                if (value === "comment" || value === "review") {
+                  setRequestedMode(value);
+                  if (value === "review") captureReviewedHead(detail.headSha);
+                }
               }}
             >
               <Toggle value="comment">Comment</Toggle>
@@ -151,6 +177,7 @@ export function PullRequestComposer({
             <PullRequestReviewForm
               environmentId={environmentId}
               reference={reference}
+              reviewedHeadSha={reviewedHeadSha}
               verdicts={verdicts}
               requestChangesSummaryRequired={sourceControlClients
                 .get(detail.provider)

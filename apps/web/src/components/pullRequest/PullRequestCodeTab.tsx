@@ -553,6 +553,7 @@ function PullRequestCodeTab({
       for (const comment of pendingComments) {
         if (comment.path !== path) continue;
         const anchor = getReviewPositionAnchor(comment.position);
+        if (comment.headSha !== displayedRevision?.headSha) continue;
         groupAt(anchor.side, anchor.line).pending.push(comment);
       }
     }
@@ -958,6 +959,7 @@ function PullRequestCodeTab({
           onComment={(body) => {
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
+              headSha: displayedRevision?.headSha ?? detail.headSha,
               path: draft.path,
               ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
               position: draft.position,
@@ -1347,11 +1349,21 @@ function PullRequestCodeTab({
     if (existing) existing.push(thread);
     else orphanFiles.set(thread.path, [thread]);
   }
+  const offDiffPendingComments = pendingComments.filter(
+    (comment) => commit !== null || comment.headSha !== displayedRevision?.headSha,
+  );
+  const offDiffPendingFiles = new Map<string, PendingReviewComment[]>();
+  for (const comment of offDiffPendingComments) {
+    const existing = offDiffPendingFiles.get(comment.path);
+    if (existing) existing.push(comment);
+    else offDiffPendingFiles.set(comment.path, [comment]);
+  }
+  const offDiffCount = orphanThreads.length + offDiffPendingComments.length;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
-      {orphanFiles.size > 0 ? (
+      {orphanFiles.size > 0 || offDiffPendingFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">
           <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
             <h2>
@@ -1366,12 +1378,12 @@ function PullRequestCodeTab({
                   className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
                 />
                 <span aria-hidden className="tabular-nums">
-                  {orphanThreads.length}
+                  {offDiffCount}
                 </span>
                 <span className="sr-only">
-                  {orphanThreads.length === 1
-                    ? "1 conversation"
-                    : `${orphanThreads.length} conversations`}
+                  {offDiffCount === 1
+                    ? "1 comment or conversation"
+                    : `${offDiffCount} comments or conversations`}
                 </span>
               </CollapsibleTrigger>
             </h2>
@@ -1395,6 +1407,27 @@ function PullRequestCodeTab({
                           )}
                           {renderThreadCard(thread)}
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {[...offDiffPendingFiles].map(([path, comments]) => (
+                  <div key={`pending:${path}`}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
+                        }
+                      />
+                      <TooltipPopup side="top">{path}</TooltipPopup>
+                    </Tooltip>
+                    <div className="mt-1 space-y-2">
+                      {comments.map((comment) => (
+                        <PendingReviewCommentCard
+                          key={comment.id}
+                          comment={comment}
+                          onRemove={() => removeComment(reviewKey, comment.id)}
+                        />
                       ))}
                     </div>
                   </div>

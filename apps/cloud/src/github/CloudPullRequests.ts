@@ -11,6 +11,7 @@ import {
   type PullRequestRef,
   type PullRequestThreadCommentsInput,
 } from "@t3tools/contracts";
+import { canWriteDrive } from "@t3tools/contracts/signalboxDrives";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   legacyThreadPullRequestKey,
@@ -26,7 +27,12 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
-import { driveOfRoot, projectOfDrive, threadWorktreeAt } from "../user/contextProjects.ts";
+import {
+  driveOfProject,
+  driveOfRoot,
+  projectOfDrive,
+  threadWorktreeAt,
+} from "../user/contextProjects.ts";
 import { UserDrives } from "../user/UserDrives.ts";
 import { UserShell } from "../user/UserShell.ts";
 import { GitHub } from "./GitHub.ts";
@@ -39,17 +45,25 @@ import {
 } from "./PullRequestRepository.ts";
 import { makeListingReads } from "./cloudPullRequestListing.ts";
 import { makePullRequestCollaboration } from "./PullRequestCollaboration.ts";
+import { makePullRequestDiscussion } from "./PullRequestDiscussion.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
 
 export { CloudPullRequests };
 
 const capabilities: PullRequestCapabilities = {
   diff: true,
-  comment: false,
+  comment: true,
   actions: [],
   mergeMethods: [],
   search: true,
-  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+  review: {
+    inlineComment: true,
+    reply: true,
+    resolve: true,
+    verdicts: ["comment", "approve", "request-changes"],
+  },
+  reactions: true,
+  edit: { changeRequest: false, comment: true },
   reviewers: { request: false, listCandidates: false },
   stacks: true,
 };
@@ -149,11 +163,24 @@ const make = Effect.gen(function* () {
       const core = yield* readCore(input, target).pipe(
         Effect.flatMap((value) => requireData("detail", value)),
       );
+      const userId = yield* drives.userId.pipe(Effect.orElseSucceed(() => null));
+      const driveId = userId === null ? null : driveOfProject(input.projectId, userId);
+      const writable =
+        driveId !== null &&
+        canWriteDrive(yield* drives.access(driveId).pipe(Effect.orElseSucceed(() => null)));
       return {
         ...core,
         headSha: core.headSha ?? undefined,
         provider,
-        capabilities,
+        capabilities: writable
+          ? capabilities
+          : {
+              ...capabilities,
+              comment: false,
+              reactions: false,
+              edit: { changeRequest: false, comment: false },
+              review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+            },
         projectId: target.project.id,
         projectTitle: target.project.title,
         workspaceRoot: target.project.workspaceRoot,
@@ -167,9 +194,13 @@ const make = Effect.gen(function* () {
         mergeCapabilities: core.viewerAccess.mergeCapabilities,
         viewerPermissions: {
           actions: [],
-          comment: false,
-          resolve: false,
-          verdicts: [],
+          comment: writable,
+          resolve: writable && (core.viewerAccess.canWrite || core.viewerAccess.didAuthor),
+          verdicts: !writable
+            ? []
+            : core.viewerAccess.didAuthor
+              ? ["comment"]
+              : capabilities.review.verdicts,
           requestReviewers: false,
         },
         baseComparison:
@@ -393,9 +424,11 @@ const make = Effect.gen(function* () {
     );
 
   const collaboration = yield* makePullRequestCollaboration(invalidate);
+  const discussion = yield* makePullRequestDiscussion(invalidate);
 
   return {
     ...collaboration,
+    ...discussion,
     ...listings,
     summary,
     detail,

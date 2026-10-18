@@ -614,6 +614,10 @@
     "./pull-request-diff-revision": {
       "types": "./src/pullRequestDiffRevision.ts",
       "default": "./src/pullRequestDiffRevision.ts"
+    },
+    "./pull-request-write-attempt": {
+      "types": "./src/pullRequestWriteAttempt.ts",
+      "default": "./src/pullRequestWriteAttempt.ts"
     }
   },
   "scripts": {

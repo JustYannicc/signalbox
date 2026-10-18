@@ -1,12 +1,14 @@
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { preparePullRequestWriteAttempt } from "@t3tools/client-runtime/pull-request-write-attempt";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { uuidv4 } from "../../lib/uuid";
 import { useFocusEffect } from "@react-navigation/native";
 import { Platform, Pressable, View } from "react-native";
-import { clearSubmittedReview } from "./pullRequestReviewDrafts";
+import { clearCommentWriteAttempt, clearSubmittedReview } from "./pullRequestReviewDrafts";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -90,9 +92,17 @@ export function PullRequestReviewSheet({
     verdict !== undefined && result.data
       ? sourceControlClients.get(result.data.provider).reviewSummaryRequired(verdict.value)
       : false;
+  const [reviewedHeadSha, setReviewedHeadSha] = useState<string | undefined>();
+  useEffect(() => {
+    if (!reviewing || reviewedHeadSha !== undefined || !store.ready || !result.data?.headSha)
+      return;
+    const headSha = result.data.headSha;
+    setReviewedHeadSha(headSha);
+    store.update((current) => ({ ...current, reviewedHeadSha: headSha }));
+  }, [reviewedHeadSha, result.data?.headSha, reviewing, store.ready, store.update]);
   const canSubmit =
     store.ready &&
-    (!reviewing || (!stale && canSubmitComments)) &&
+    (!reviewing || (reviewedHeadSha !== undefined && !stale && canSubmitComments)) &&
     (reviewing
       ? verdict !== undefined &&
         (summaryRequired
@@ -106,32 +116,60 @@ export function PullRequestReviewSheet({
       if (!canSubmit)
         throw new Error("Add your feedback and check your permissions before submitting.");
       const submitted = store.draft;
-      const response =
-        reviewing && verdict
-          ? await review({
-              ...target,
-              input: {
-                ...target.input,
-                verdict: verdict.value,
-                body,
-                comments: submitted.comments.map(
-                  ({ id: _id, headSha: _sha, code: _code, ...comment }) => comment,
-                ),
-              },
-            })
-          : await comment({ ...target, input: { ...target.input, body } });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      store.update((current) =>
-        reviewing
-          ? clearSubmittedReview(current, submitted)
-          : { ...current, comment: current.comment === submitted.comment ? "" : current.comment },
-      );
+      if (reviewing && verdict) {
+        const attempt = preparePullRequestWriteAttempt(
+          submitted.reviewWriteAttempt,
+          {
+            ...target.input,
+            verdict: verdict.value,
+            body,
+            comments: submitted.comments.map(
+              ({ id: _id, headSha: _sha, code: _code, ...comment }) => comment,
+            ),
+          },
+          reviewedHeadSha,
+          uuidv4,
+          target.environmentId,
+        );
+        store.update((current) => ({
+          ...current,
+          reviewedHeadSha,
+          reviewWriteAttempt: attempt.attempt,
+        }));
+        if (!(await store.flush()))
+          throw new Error("Could not save the review before submitting. Try again.");
+        const response = await review({ ...target, input: attempt.input });
+        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+        store.update((current) => clearSubmittedReview(current, submitted));
+      } else {
+        const attempt = preparePullRequestWriteAttempt(
+          submitted.commentWriteAttempt,
+          { ...target.input, body },
+          undefined,
+          uuidv4,
+          target.environmentId,
+        );
+        store.update((current) => ({ ...current, commentWriteAttempt: attempt.attempt }));
+        if (!(await store.flush()))
+          throw new Error("Could not save the comment before submitting. Try again.");
+        const response = await comment({ ...target, input: attempt.input });
+        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+        store.update((current) =>
+          clearCommentWriteAttempt(
+            {
+              ...current,
+              comment: current.comment === submitted.comment ? "" : current.comment,
+            },
+            attempt.attempt.operationId,
+          ),
+        );
+      }
       await store.flush();
     });
   return (
     <SheetContent
       title={reviewing ? "Submit review" : "Add comment"}
-      subtitle={`#${params.number}${reviewing && result.data?.headSha ? ` · reviewing ${result.data.headSha.slice(0, 7)}` : ` · ${params.repository}`}`}
+      subtitle={`#${params.number}${reviewing && reviewedHeadSha ? ` · reviewing ${reviewedHeadSha.slice(0, 7)}` : ` · ${params.repository}`}`}
       busy={submission.busy}
       footer={
         <Button

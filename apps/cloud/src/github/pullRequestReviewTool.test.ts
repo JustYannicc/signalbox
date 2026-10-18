@@ -1,6 +1,12 @@
 import { AUTOMATION_PATHS } from "@signalbox/runner-protocol/AutomationProtocol";
 import { PULL_REQUEST_REVIEW_TOOL } from "@signalbox/runner-protocol/PullRequestReviewTools";
-import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  PullRequestOperationError,
+  type PullRequestDetail,
+  ThreadId,
+} from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -22,6 +28,12 @@ const userId = "user-1";
 const actorThreadId = ThreadId.make("review-worker");
 const setup = Effect.gen(function* () {
   const f = yield* fixture;
+  const discussionCalls: Array<{ readonly method: string; readonly input: unknown }> = [];
+  const detail = {
+    calls: [] as Array<unknown>,
+    failure: null as PullRequestOperationError | null,
+  };
+  const headSha = "a".repeat(40);
   const cloud = makeMemoryCloud();
   yield* cloud.userDirectory
     .forUser(userId)
@@ -51,6 +63,28 @@ const setup = Effect.gen(function* () {
     Layer.succeed(CloudThreadService, threads),
     Layer.mock(CloudPullRequests, {
       ...f.writes,
+      detail: (input) => {
+        detail.calls.push(input);
+        return detail.failure === null
+          ? Effect.succeed({ headSha } as PullRequestDetail)
+          : Effect.fail(detail.failure);
+      },
+      comment: (input) =>
+        Effect.sync(() => {
+          discussionCalls.push({ method: "comment", input });
+        }),
+      updateComment: (input) =>
+        Effect.sync(() => {
+          discussionCalls.push({ method: "updateComment", input });
+        }),
+      submitReview: (input) =>
+        Effect.sync(() => {
+          discussionCalls.push({ method: "submitReview", input });
+        }),
+      setReaction: (input) =>
+        Effect.sync(() => {
+          discussionCalls.push({ method: "setReaction", input });
+        }),
       activity: () =>
         Effect.succeed({
           comments: [],
@@ -88,7 +122,7 @@ const setup = Effect.gen(function* () {
     automationTool(actorThreadId, PULL_REQUEST_REVIEW_TOOL, input).pipe(
       Effect.provide(dependencies),
     );
-  return { ...f, dependencies, call };
+  return { ...f, dependencies, call, discussionCalls, detail, headSha };
 });
 
 describe("folder agent PR review reach", () => {
@@ -97,17 +131,26 @@ describe("folder agent PR review reach", () => {
       const f = yield* setup;
       expect(yield* f.call({ action: "read", number: 12 })).toMatchObject({
         _tag: "ok",
-        result: { reviewThreads: [{ id: "PRRT_1", comments: [{ id: "PRRC_1" }] }] },
+        result: {
+          headSha: f.headSha,
+          reviewThreads: [{ id: "PRRT_1", comments: [{ id: "PRRC_1" }] }],
+        },
       });
+      expect(f.detail.calls).toEqual([
+        {
+          projectId: reply.projectId,
+          host: "github.com",
+          repository: "acme/web",
+          expectedAccountId: "123",
+          number: 12,
+        },
+      ]);
       const write = {
         action: "reply",
         number: 12,
         threadId: "PRRT_1",
         body: "Fixed in abc123.",
         operationId: "disposition-1",
-        repository: "other/private",
-        projectId: "other-project",
-        actorThreadId: "other-thread",
       };
       expect(yield* f.call(write)).toMatchObject({ _tag: "ok", result: { written: true } });
       expect(yield* f.call(write)).toMatchObject({ _tag: "ok" });
@@ -118,6 +161,108 @@ describe("folder agent PR review reach", () => {
       expect(f.state.resolved).toBe(true);
       expect(f.state.tokens.every((token) => token === "token-123")).toBe(true);
     }).pipe(Effect.provide(storage)),
+  );
+
+  it.effect(
+    "translates the four collaboration writes through the authenticated folder service",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* setup;
+        expect(
+          yield* f.call({
+            action: "comment",
+            number: 12,
+            body: "Looks good.",
+            operationId: "comment-1",
+          }),
+        ).toMatchObject({ _tag: "ok", result: { written: true } });
+        expect(
+          yield* f.call({
+            action: "updateComment",
+            number: 12,
+            commentId: "IC_1",
+            kind: "issue-comment",
+            body: "Updated.",
+          }),
+        ).toMatchObject({ _tag: "ok", result: { written: true } });
+        expect(
+          yield* f.call({
+            action: "submitReview",
+            number: 12,
+            operationId: "review-1",
+            headSha: "a".repeat(40),
+            verdict: "approve",
+            body: "Reviewed.",
+            comments: [],
+          }),
+        ).toMatchObject({ _tag: "ok", result: { written: true } });
+        expect(
+          yield* f.call({
+            action: "setReaction",
+            number: 12,
+            subjectId: "PRRC_1",
+            content: "thumbs-up",
+            reacted: true,
+          }),
+        ).toMatchObject({ _tag: "ok", result: { written: true, reacted: true } });
+
+        expect(f.discussionCalls).toEqual([
+          {
+            method: "comment",
+            input: {
+              projectId: reply.projectId,
+              host: "github.com",
+              repository: "acme/web",
+              expectedAccountId: "123",
+              number: 12,
+              body: "Looks good.",
+              operationId: "comment-1",
+            },
+          },
+          {
+            method: "updateComment",
+            input: {
+              projectId: reply.projectId,
+              host: "github.com",
+              repository: "acme/web",
+              expectedAccountId: "123",
+              number: 12,
+              commentId: "IC_1",
+              kind: "issue-comment",
+              body: "Updated.",
+            },
+          },
+          {
+            method: "submitReview",
+            input: {
+              projectId: reply.projectId,
+              host: "github.com",
+              repository: "acme/web",
+              expectedAccountId: "123",
+              number: 12,
+              operationId: "review-1",
+              headSha: "a".repeat(40),
+              verdict: "approve",
+              body: "Reviewed.",
+              comments: [],
+            },
+          },
+          {
+            method: "setReaction",
+            input: {
+              projectId: reply.projectId,
+              host: "github.com",
+              repository: "acme/web",
+              expectedAccountId: "123",
+              number: 12,
+              subjectId: "PRRC_1",
+              content: "thumbs-up",
+              reacted: true,
+            },
+          },
+        ]);
+        expect(JSON.stringify(f.discussionCalls)).not.toContain(f.state.token);
+      }).pipe(Effect.provide(storage)),
   );
 
   it.effect("retains permission and rate-limit errors in the agent's tool result", () =>
@@ -161,6 +306,62 @@ describe("folder agent PR review reach", () => {
         yield* f.call({ action: "reply", number: 12, threadId: "PRRT_1", body: "Fixed." }),
       ).toMatchObject({ _tag: "failed", error: { reason: "invalid" } });
       expect(f.state.writes).toBe(0);
+    }).pipe(Effect.provide(storage)),
+  );
+
+  it.effect("requires an operation id and head SHA for comment and review creation", () =>
+    Effect.gen(function* () {
+      const f = yield* setup;
+      expect(
+        yield* f.call({ action: "comment", number: 12, body: "Comment without receipt." }),
+      ).toMatchObject({ _tag: "failed", error: { reason: "invalid" } });
+      expect(
+        yield* f.call({
+          action: "submitReview",
+          number: 12,
+          operationId: "review-1",
+          verdict: "approve",
+          body: "Reviewed.",
+          comments: [],
+        }),
+      ).toMatchObject({ _tag: "failed", error: { reason: "invalid" } });
+      expect(f.discussionCalls).toEqual([]);
+    }).pipe(Effect.provide(storage)),
+  );
+
+  it.effect("preserves the typed read failure when detail is unavailable", () =>
+    Effect.gen(function* () {
+      const f = yield* setup;
+      f.detail.failure = new PullRequestOperationError({
+        operation: "detail",
+        reason: "not-found",
+        detail: "The pull request is no longer available.",
+      });
+      expect(yield* f.call({ action: "read", number: 12 })).toMatchObject({
+        _tag: "failed",
+        error: { _tag: "PullRequestOperationError", reason: "not-found" },
+      });
+      expect(f.discussionCalls).toEqual([]);
+      expect(f.state.writes).toBe(0);
+    }).pipe(Effect.provide(storage)),
+  );
+
+  it.effect("rejects caller-controlled repository and identity fields before service calls", () =>
+    Effect.gen(function* () {
+      const f = yield* setup;
+      expect(
+        yield* f.call({
+          action: "comment",
+          number: 12,
+          body: "Looks good.",
+          operationId: "comment-1",
+          repository: "evil/private",
+          folderId: "other-folder",
+          token: "github-secret",
+          identity: "other-person",
+        }),
+      ).toMatchObject({ _tag: "failed", error: { reason: "invalid" } });
+      expect(f.discussionCalls).toEqual([]);
     }).pipe(Effect.provide(storage)),
   );
 
