@@ -147,12 +147,24 @@ export const layer = Layer.effect(
       );
 
     return AutomationThreads.of({
-      getThreadShell: (threadId) =>
-        projection(threadId).pipe(
-          Effect.map(threadShellFromProjection),
-          Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
-          Effect.mapError(hostError("Couldn't read the thread")),
+      syncAsk: (threadId, ask) =>
+        owner.pipe(
+          Effect.flatMap((actor) => threads.syncAutomationAsk(actor, threadId, ask)),
+          Effect.asVoid,
+          Effect.mapError(hostError("Couldn't sync the automation ask")),
         ),
+      askAnswerer: owner.pipe(Effect.map((actor) => ({ kind: "person", personId: actor.userId }))),
+      getThreadShell: (threadId, options) =>
+        (options?.includeTrashed
+          ? owner.pipe(
+              Effect.flatMap((actor) => directory.forThread(threadId).summary(actor)),
+              Effect.map((summary) => summary?.shell ?? null),
+            )
+          : projection(threadId).pipe(
+              Effect.map(threadShellFromProjection),
+              Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+            )
+        ).pipe(Effect.mapError(hostError("Couldn't read the thread"))),
       getThreadRecords: (threadId, fields, filter) =>
         projection(threadId).pipe(
           Effect.map((read) => recordsOf(read, fields, filter)),

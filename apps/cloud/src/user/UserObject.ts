@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Evlog from "../observability/Evlog.ts";
+import * as ClientActionTimings from "../observability/ClientActionTimings.ts";
 import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
 import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
@@ -27,6 +28,7 @@ import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
+import * as DriveContentSearch from "./DriveContentSearch.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
@@ -34,6 +36,8 @@ import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as AgentPullRequests from "../github/AgentPullRequests.ts";
 import * as CloudPullRequests from "../github/CloudPullRequests.ts";
+import * as PullRequestGuideGeneration from "../github/PullRequestGuideGeneration.ts";
+import { PullRequestGuideAlarm } from "../github/PullRequestReviewGuides.ts";
 import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
@@ -242,6 +246,13 @@ const layerAlarm = (storage: DurableObjectStorage) =>
 const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
   const { storage } = ctx;
   const drives = layerDrives(env);
+  const modelCompletion = layerModelCompletion(
+    { pools: env.POOLS },
+    { localWorkerd: env.LOCAL_WORKERD === "1" },
+  );
+  const guideAlarm = Layer.succeed(PullRequestGuideAlarm, {
+    armBy: (at) => Effect.promise(() => armBy(storage, at)),
+  });
   const searchBackfill = SearchBackfillLive.layer.pipe(
     Layer.provide(
       Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
@@ -256,7 +267,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
         Layer.mergeAll(
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
-          layerModelCompletion({ pools: env.POOLS }, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+          modelCompletion,
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),
@@ -267,8 +278,13 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           GitHubBranches.layer,
           AgentPullRequests.layer,
           GitHubActions.layer,
-          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
+          CloudPullRequests.layer.pipe(
+            Layer.provideMerge(PullRequestRepository.layer),
+            Layer.provide(PullRequestGuideGeneration.layer.pipe(Layer.provide(modelCompletion))),
+            Layer.provide(guideAlarm),
+          ),
           UserPreviewSetup.layer,
+          DriveContentSearch.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
           LoginService.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -406,7 +422,11 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
-          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+          Layer.provideMerge(
+            ClientActionTimings.layer(env, (promise) => ctx.waitUntil(promise)).pipe(
+              Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+            ),
+          ),
         ),
       ),
     );
@@ -547,6 +567,17 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   syncOrganizations(organizations: Parameters<UserObjectApi["syncOrganizations"]>[0]) {
     return this.api.syncOrganizations(organizations);
+  }
+
+  reserveOrganizationRefresh() {
+    return this.api.reserveOrganizationRefresh();
+  }
+
+  completeOrganizationRefresh(
+    sequence: Parameters<UserObjectApi["completeOrganizationRefresh"]>[0],
+    organizations: Parameters<UserObjectApi["completeOrganizationRefresh"]>[1],
+  ) {
+    return this.api.completeOrganizationRefresh(sequence, organizations);
   }
 
   shellSnapshot() {
@@ -818,6 +849,9 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           ),
           CloudAutomations.use((automations) => automations.wake).pipe(
             Effect.catchCause((cause) => Effect.logError("automation crons failed", { cause })),
+          ),
+          CloudPullRequests.CloudPullRequests.use((requests) => requests.wakeReviewGuides).pipe(
+            Effect.catchCause((cause) => Effect.logError("review guide jobs failed", { cause })),
           ),
           LoginService.LoginService.use((logins) => logins.sweep).pipe(
             Effect.catchCause((cause) => Effect.logError("re-login sweep failed", { cause })),

@@ -52,6 +52,7 @@ export const ids = {
   assistantItem: (runId: RunId) => TurnItemId.make(`turn-item:${runId}:assistant`),
   assistantMessage: (runId: RunId) => MessageId.make(`message:${runId}:assistant`),
   providerThread: (threadId: ThreadId) => ProviderThreadId.make(`provider-thread:${threadId}`),
+  providerThreadForRun: (runId: RunId) => ProviderThreadId.make(`provider-thread:${runId}`),
 };
 
 /** Turn items sort by run, then by position within the run, like upstream's ordinal bands. */

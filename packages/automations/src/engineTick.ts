@@ -59,6 +59,7 @@ export interface EngineCore {
     options?: { readonly detail?: AutomationErrorDetail | null },
   ) => Effect.Effect<boolean, AutomationError>;
   readonly launchRun: LaunchRun;
+  readonly pruneChildren: Effect.Effect<void, AutomationError>;
   readonly automationOfRun: (
     runId: string,
   ) => Effect.Effect<AutomationRow | undefined, AutomationError>;
@@ -218,6 +219,7 @@ export const makeTimedWork = (core: EngineCore) =>
         const runningRuns = yield* store.runningRuns();
         yield* core.runLogs.sweep(new Set(runningRuns.map((run) => run.run_id)));
         yield* core.links.prune();
+        yield* core.pruneChildren;
         const running = Map.groupBy(runningRuns, (run) => run.automation_id);
         for (const automation of yield* store.listAutomations()) {
           const keep = new Set([
