@@ -24,6 +24,47 @@ type Format =
   | ((value: string) => boolean)
   | { type?: string; async?: boolean; validate: RegExp | ((value: string) => boolean) };
 
+export interface AjvCompatibleInstance {
+  readonly opts: Record<string, unknown> & { code: Record<string, unknown> };
+  errors: AjvCompatibleError[] | null;
+  addFormat(name: string, definition: Format | true): this;
+  addKeyword(definition: unknown): this;
+  get logger(): never;
+  set logger(value: unknown);
+  get scope(): never;
+  set scope(value: unknown);
+  get refs(): never;
+  set refs(value: unknown);
+  get schemas(): never;
+  set schemas(value: unknown);
+  get formats(): never;
+  set formats(value: unknown);
+  get RULES(): never;
+  set RULES(value: unknown);
+  addMetaSchema(): never;
+  defaultMeta(): string;
+  removeSchema(): never;
+  compileAsync(): never;
+  addVocabulary(): never;
+  getKeyword(): never;
+  removeKeyword(): never;
+  $dataMetaSchema(): never;
+  validateSchema(schema: unknown, throwOrLogError?: unknown): boolean;
+  compile(schema: unknown): AjvCompatibleValidator;
+  addSchema(schema: unknown, id?: string): this;
+  getSchema(id: string): AjvCompatibleValidator | undefined;
+  validate(schema: unknown, data: unknown): boolean;
+  errorsText(
+    errors?: AjvCompatibleError[] | null,
+    options?: { separator?: string; dataVar?: string },
+  ): string;
+}
+
+export interface AjvCompatibleConstructor {
+  new (options?: Record<string, unknown>): AjvCompatibleInstance;
+  readonly prototype: AjvCompatibleInstance;
+}
+
 let nextInstance = 0;
 
 function restoreFormats(previous: ReadonlyMap<string, ((value: string) => boolean) | undefined>) {
@@ -45,7 +86,7 @@ function unsupported(reason: string, schema?: unknown): never {
 export function createInterpretedAjv(
   metaValidators: AjvMetaValidators,
   dialect: keyof AjvMetaValidators = "draft7",
-) {
+): AjvCompatibleConstructor {
   const metaId =
     dialect === "draft7"
       ? "http://json-schema.org/draft-07/schema"
