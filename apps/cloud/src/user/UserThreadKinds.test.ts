@@ -57,6 +57,7 @@ const setup = (
         trash: async () => ({ _tag: "not_found" }),
         restore: async () => ({ _tag: "not_found" }),
         purge: async () => ({ _tag: "not_found" }),
+        answerSecret: async () => "not_found",
         dispatch: async (_actor, command, creation) => {
           options.onArchive?.();
           if (threadId === options.failing) throw new Error("object down");
@@ -65,6 +66,7 @@ const setup = (
           return { _tag: "ok", value: { sequence: 1 } };
         },
         launch: async () => ({ _tag: "not_found" }),
+        commandOutput: async () => null,
         snapshot: async () => ({ _tag: "not_found" }),
         subscribe: async () => null,
         summary: async () => null,

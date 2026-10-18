@@ -1,5 +1,8 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { CommandId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import { normalizeTerminalOutput } from "@t3tools/shared/terminalOutput";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,13 +16,14 @@ import { uploadPack } from "../drive/DriveUploads.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import { signLocalKey } from "../localKeys/LocalKeys.ts";
 import { layerConfig, makeMemoryCloud } from "../testing.ts";
+import * as Environment from "../environment.ts";
+import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import { ThreadEngine } from "../thread/ThreadEngine.ts";
+import { turnItemEvent } from "../thread/threadEvents.ts";
+import { Threads } from "../thread/Threads.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
-import * as Environment from "../environment.ts";
 import { handleMcpRequest, protectedResourceMetadata } from "./mcpRoutes.ts";
-import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
-import { ThreadId } from "@t3tools/contracts";
-import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 
 const decodeFolders = Schema.decodeUnknownSync(Schema.fromJsonString(SignalboxFoldersSnapshot));
 const decodeTrash = Schema.decodeUnknownSync(Schema.fromJsonString(TrashSnapshot));
@@ -109,6 +113,82 @@ const connect = Effect.gen(function* () {
 });
 
 describe("Signalbox's MCP", () => {
+  it.effect("reads a bounded command output snapshot without waiting for its live stream", () =>
+    Effect.gen(function* () {
+      const { tool, cloud } = yield* connect;
+      const threadId = ThreadId.make("command-thread");
+      const itemId = TurnItemId.make("command-item");
+      yield* Threads.use((threads) =>
+        threads.launch(
+          { userId, contextIds: [PERSONAL_CONTEXT_ID] },
+          {
+            commandId: CommandId.make("command-launch"),
+            threadId,
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            title: "Command output",
+            modelSelection: scriptedModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+            initialMessage: {
+              messageId: MessageId.make("command-message"),
+              text: "Run a command",
+              attachments: [],
+            },
+          },
+        ),
+      ).pipe(Effect.provide(cloud.layerFor(userId)));
+      const output = `${"old line\n".repeat(10_000)}last line\rfinal line\n`;
+      yield* cloud.inThread(
+        threadId,
+        ThreadEngine.use((engine) =>
+          engine.apply((projection, ctx) => {
+            const run = projection?.runs[0];
+            if (run === undefined) return Effect.die("Expected a run");
+            return Effect.succeed({
+              events: [
+                turnItemEvent(ctx, {
+                  id: itemId,
+                  threadId,
+                  runId: run.id,
+                  nodeId: run.rootNodeId,
+                  providerThreadId: run.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 10,
+                  status: "running",
+                  title: "Print output",
+                  startedAt: ctx.now,
+                  completedAt: null,
+                  updatedAt: ctx.now,
+                  type: "command_execution",
+                  input: "print output",
+                  output,
+                }),
+              ],
+              result: undefined,
+            });
+          }),
+        ),
+      );
+      const result = yield* tool("signalbox_call", {
+        operation: "threads.commandOutput",
+        input: { threadId, itemId },
+      });
+      expect(result.isError ?? false).toBe(false);
+      const frame = JSON.parse(result.content[0]!.text);
+      expect(frame).toMatchObject({ kind: "replace", running: true, truncated: true });
+      expect(normalizeTerminalOutput(frame.text).text).toContain("final line");
+      expect(frame.text.length).toBeLessThan(70_000);
+      const missing = yield* tool("signalbox_call", {
+        operation: "threads.commandOutput",
+        input: { threadId: "someone-elses-thread", itemId },
+      });
+      expect(missing.isError).toBe(true);
+      expect(missing.content[0]!.text).not.toContain("final line");
+    }),
+  );
   it.effect(
     "runs cloud lifecycle actions and reversals through the generated API with receipts",
     () =>
@@ -304,6 +384,8 @@ describe("Signalbox's MCP", () => {
         (operation) => operation.name,
       );
       expect(names).not.toContain("threads.respond");
+      expect(names).not.toContain("threads.dismissQuestion");
+      expect(names).not.toContain("secrets.answer");
       expect(names).not.toContain("folders.delete");
       expect(names).not.toContain("keys.create");
       const refused = yield* tool("signalbox_call", {
@@ -311,6 +393,11 @@ describe("Signalbox's MCP", () => {
         input: { id: "folder" },
       });
       expect(refused.isError).toBe(true);
+      for (const operation of ["threads.respond", "threads.dismissQuestion", "secrets.answer"]) {
+        const answer = yield* tool("signalbox_call", { operation, input: {} });
+        expect(answer.isError).toBe(true);
+        expect(answer.content[0]?.text).toContain(`No operation ${operation} you can call`);
+      }
     }),
   );
 

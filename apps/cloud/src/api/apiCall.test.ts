@@ -321,6 +321,19 @@ describe("public API calls", () => {
       }),
   );
 
+  it.effect("requires thread read access for a command output snapshot", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const input = { threadId: "hidden-thread", itemId: "hidden-command" };
+      const unscoped = json(
+        yield* call("threads.commandOutput", input, person([AuthOrchestrationOperateScope])),
+      );
+      expect(unscoped.status).toBe(403);
+      const missing = json(yield* call("threads.commandOutput", input));
+      expect(missing.status).toBe(422);
+      expect(missing.body).toMatchObject({ error: { _tag: "OrchestrationV2CommandOutputError" } });
+    }),
+  );
   it.effect("saves and removes a keybinding through the public reach map", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
@@ -561,6 +574,8 @@ describe("public API calls", () => {
       const { call } = yield* setup;
       const agent: ApiCaller = { ...person(), kind: "agent" };
       expect(json(yield* call("threads.respond", {}, agent)).status).toBe(403);
+      expect(json(yield* call("threads.dismissQuestion", {}, agent)).status).toBe(403);
+      expect(json(yield* call("secrets.answer", {}, agent)).status).toBe(403);
       expect(json(yield* call("folders.delete", { id: "f" }, agent)).status).toBe(403);
       expect(
         json(yield* call("keys.create", { label: "mine", scopes: [], model: true }, agent)).status,
