@@ -27,6 +27,8 @@ import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as CloudPullRequests from "../github/CloudPullRequests.ts";
+import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
@@ -77,6 +79,7 @@ import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
+import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
 import * as ChatArchive from "./chatArchive.ts";
 
 /**
@@ -213,6 +216,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         Layer.mergeAll(
           GitHubBranches.layer,
           GitHubActions.layer,
+          CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
@@ -297,6 +301,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserStore.layer,
               UserModelSettings.layer,
+              UserAnalyticsPreference.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
@@ -515,6 +520,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   githubCommitAuthor() {
     return this.api.githubCommitAuthor();
+  }
+
+  pullRequestDiff(input: Parameters<UserObjectApi["pullRequestDiff"]>[0]) {
+    return this.api.pullRequestDiff(input);
   }
 
   onePasswordToken() {

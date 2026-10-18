@@ -4,7 +4,8 @@ import * as NodeFS from "node:fs";
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { previewLabel, previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
+import { previewLabel } from "@t3tools/shared/preview";
+import { previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
 
 import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
 import {

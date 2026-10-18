@@ -1,5 +1,5 @@
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
-import { AutomationError, ThreadId } from "@t3tools/contracts";
+import { AutomationError, ThreadId, type PullRequestDiffInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
+import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { DriveRefEvent } from "../drive/DriveEvents.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
@@ -23,7 +24,11 @@ import {
 } from "../localKeys/localModelAccess.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import { wire } from "../thread/threadWire.ts";
-import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
+import {
+  shellSnapshotWire,
+  type PullRequestDiffReply,
+  type UserObjectApi,
+} from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
@@ -50,6 +55,7 @@ export const makeUserObjectApi = (
       E,
       | UserStore.UserStore
       | UserShell.UserShell
+      | CloudPullRequests.CloudPullRequests
       | UserContexts.UserContexts
       | GitHubConnection.GitHubConnection
       | ConnectionLinks.ConnectionLinks
@@ -165,6 +171,29 @@ export const makeUserObjectApi = (
     importPreviewSetup: (input) =>
       run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.apply(input))),
     githubCommitAuthor: () => github((service) => service.commitAuthor),
+    pullRequestDiff: (input: PullRequestDiffInput) =>
+      run(
+        CloudPullRequests.CloudPullRequests.use((service) =>
+          service.diff(input).pipe(
+            Effect.map((value) => ({ _tag: "success", value }) as const),
+            Effect.catchTags({
+              PullRequestUnavailableError: (error) =>
+                Effect.succeed<PullRequestDiffReply>({
+                  _tag: "unavailable",
+                  reason: error.reason,
+                  ...(error.provider === undefined ? {} : { provider: error.provider }),
+                }),
+              PullRequestOperationError: (error) =>
+                Effect.succeed<PullRequestDiffReply>({
+                  _tag: "operation-error",
+                  operation: error.operation,
+                  detail: error.detail,
+                  ...(error.reason === undefined ? {} : { reason: error.reason }),
+                }),
+            }),
+          ),
+        ),
+      ),
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
     secretSendFolder: (threadId) =>
