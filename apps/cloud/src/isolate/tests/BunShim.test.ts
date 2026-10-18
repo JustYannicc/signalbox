@@ -42,6 +42,7 @@ describe("isolate Bun installation and host boundaries", () => {
     let exitCode: number | null = null;
     const child = {
       pid: 9,
+      signalCode: null,
       exited: Promise.resolve(3).then((value) => {
         exitCode = value;
         return value;

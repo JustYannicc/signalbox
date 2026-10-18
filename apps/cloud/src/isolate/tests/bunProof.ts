@@ -63,6 +63,7 @@ export async function runBunShimProof(files = memoryFileHost()) {
       events.push(command.join(" "));
       return {
         pid: 7,
+        signalCode: null,
         exited: Promise.resolve(0).then((code) => {
           exitCode = code;
           return code;
