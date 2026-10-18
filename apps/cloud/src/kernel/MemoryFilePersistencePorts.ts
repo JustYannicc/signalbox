@@ -299,7 +299,10 @@ export function createMemoryFilePersistencePorts(): MemoryFilePersistenceFixture
           return error("STALE_COMMIT", "The fork has advanced since this commit");
         }
 
-        const commit = `memory-commit-${nextCommit++}`;
+        let commit: string;
+        do {
+          commit = `memory-commit-${nextCommit++}`;
+        } while (snapshots.has(snapshotKey({ ...at, commit })));
         const receipt = { commit };
         const committedAt = { ...at, commit };
         snapshots.set(snapshotKey(committedAt), staged);

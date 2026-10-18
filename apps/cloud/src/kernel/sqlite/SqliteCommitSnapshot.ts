@@ -1,4 +1,9 @@
-import type { ChangedInode, CommitInode, ForkCommit } from "../FilePersistencePorts.ts";
+import type {
+  ChangedInode,
+  CommitInode,
+  FileCommitReceipt,
+  ForkCommit,
+} from "../FilePersistencePorts.ts";
 import type { Inode, Stat, Storage } from "../storage.ts";
 import { FILE_CHUNK_BYTES } from "./SqliteChunks.ts";
 import { firstRow, type FacetStorage, StorageError } from "./SqliteDatabase.ts";
@@ -119,11 +124,42 @@ export class SqliteCommitSnapshot {
     this.fs = fs;
     db.transactionSync(() => {
       db.sql.exec(
+        "CREATE TABLE IF NOT EXISTS kernel_fs_commit_receipt (repository TEXT NOT NULL, fork_name TEXT NOT NULL, base_commit TEXT NOT NULL, turn_id TEXT NOT NULL, commit_id TEXT NOT NULL, PRIMARY KEY (repository, fork_name, base_commit, turn_id))",
+      );
+      db.sql.exec(
         "CREATE TABLE IF NOT EXISTS kernel_fs_commit_snapshot (turn_id TEXT PRIMARY KEY, repository TEXT NOT NULL, fork_name TEXT NOT NULL, commit_id TEXT NOT NULL, manifest_json TEXT NOT NULL)",
       );
       db.sql.exec(
         "CREATE TABLE IF NOT EXISTS kernel_fs_commit_snapshot_chunk (turn_id TEXT NOT NULL, ino TEXT NOT NULL, part INTEGER NOT NULL, bin BLOB NOT NULL, PRIMARY KEY (turn_id, ino, part))",
       );
+    });
+  }
+
+  receipt(at: ForkCommit, turnId: string): FileCommitReceipt | undefined {
+    const row = firstRow(
+      this.db.sql.exec(
+        "SELECT commit_id FROM kernel_fs_commit_receipt WHERE repository = ? AND fork_name = ? AND base_commit = ? AND turn_id = ?",
+        at.repository,
+        at.fork,
+        at.commit,
+        turnId,
+      ),
+    );
+    return row ? { commit: String(row.commit_id) } : undefined;
+  }
+
+  complete(at: ForkCommit, turnId: string, receipt: FileCommitReceipt) {
+    this.db.transactionSync(() => {
+      this.db.sql.exec(
+        "INSERT OR IGNORE INTO kernel_fs_commit_receipt VALUES (?, ?, ?, ?, ?)",
+        at.repository,
+        at.fork,
+        at.commit,
+        turnId,
+        receipt.commit,
+      );
+      this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot_chunk WHERE turn_id = ?", turnId);
+      this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot WHERE turn_id = ?", turnId);
     });
   }
 
@@ -215,13 +251,6 @@ export class SqliteCommitSnapshot {
         JSON.stringify(entries),
       );
       return this.#inodes(turnId, entries);
-    });
-  }
-
-  remove(turnId: string): void {
-    this.db.transactionSync(() => {
-      this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot_chunk WHERE turn_id = ?", turnId);
-      this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot WHERE turn_id = ?", turnId);
     });
   }
 

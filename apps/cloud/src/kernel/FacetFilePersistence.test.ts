@@ -54,6 +54,14 @@ const failed = (code: "IO_ERROR") => ({
   error: { code, message: "injected persistence failure" },
 });
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("facet file persistence", () => {
   it("marks a sized file lazily, wakes for exact bytes, and preserves EAGAIN across raw reopen", async () => {
     const memory = createMemoryFilePersistencePorts();
@@ -80,6 +88,70 @@ describe("facet file persistence", () => {
       expect(hydrated).toEqual({ status: "ok", value: bytes });
       expect(memory.fetchCalls).toMatchObject([{ at: base, paths: ["/lazy"], status: "ok" }]);
     } finally {
+      fixture.close();
+    }
+  });
+
+  it("preserves an in-flight first chunk when a raw SQLite adapter is reopened", async () => {
+    const memory = createMemoryFilePersistencePorts();
+    const firstChunk = new Uint8Array(64 * 1024).fill(5);
+    const lastChunk = new Uint8Array([6, 7, 8]);
+    const expected = new Uint8Array(firstChunk.byteLength + lastChunk.byteLength);
+    expected.set(firstChunk);
+    expected.set(lastChunk, firstChunk.byteLength);
+    memory.seedFile(base, "/big", expected);
+    const firstConsumed = deferred();
+    const continueFetch = deferred();
+    const fixture = rig({
+      commits: memory.commits,
+      hydration: {
+        async fetch() {
+          return {
+            status: "ok",
+            value: [
+              {
+                path: "/big",
+                chunks: (async function* () {
+                  yield firstChunk;
+                  firstConsumed.resolve();
+                  await continueFetch.promise;
+                  yield lastChunk;
+                })(),
+              },
+            ],
+          };
+        },
+      },
+    });
+    try {
+      const inode = fixture.persistence.storage.create(fixture.persistence.storage.root, "big", {
+        type: "file",
+        exclusive: true,
+      });
+      fixture.persistence.storage.truncate(inode, BigInt(expected.byteLength));
+      fixture.persistence.markUnhydrated({
+        inode,
+        path: "/big",
+        at: base,
+        size: BigInt(expected.byteLength),
+      });
+
+      const blocked = readAttempt(fixture.persistence, inode, expected.byteLength);
+      const wakeResult = wake(blocked, fixture.wakes);
+      await firstConsumed.promise;
+      const reopened = createFacetSqliteStorage(fixture.storage, clock);
+      expect(() => reopened.readInto(inode, 0n, new Uint8Array(expected.byteLength))).toThrow(
+        expect.objectContaining({ code: "EAGAIN" }),
+      );
+      continueFetch.resolve();
+      await wakeResult;
+
+      expect(readAttempt(fixture.persistence, inode, expected.byteLength)).toEqual({
+        status: "ok",
+        value: expected,
+      });
+    } finally {
+      continueFetch.resolve();
       fixture.close();
     }
   });
@@ -281,6 +353,79 @@ describe("facet file persistence", () => {
       ).toBeUndefined();
     } finally {
       fixture.close();
+    }
+  });
+
+  it("replays a persisted turn receipt before inspecting new lazy inodes after reopen", async () => {
+    const database = sqliteFixture();
+    const memory = createMemoryFilePersistencePorts();
+    memory.seedFile(base, "/unmodified", new Uint8Array([0]));
+    let fetchCount = 0;
+    let commitCount = 0;
+    const ports: FilePersistencePorts = {
+      hydration: {
+        async fetch() {
+          fetchCount++;
+          return {
+            status: "error",
+            error: { code: "NOT_FOUND", message: "This retry must not fetch" },
+          };
+        },
+      },
+      commits: {
+        async commit(input) {
+          commitCount++;
+          return memory.commits.commit(input);
+        },
+      },
+    };
+    const firstWakes = new KernelWakeRegistry();
+    const first = createFacetFilePersistence(database.storage, clock, { wakes: firstWakes, ports });
+    const secondWakes = new KernelWakeRegistry();
+    let second: ReturnType<typeof createFacetFilePersistence> | undefined;
+    try {
+      const initial = first.storage.create(first.storage.root, "initial", {
+        type: "file",
+        exclusive: true,
+      });
+      first.storage.write(initial, 0n, new Uint8Array([1]));
+      const original = await first.commitTurn({
+        at: base,
+        turnId: "receipt-replay",
+        changedInodes: [{ inode: initial, paths: ["/initial"], removedPaths: [] }],
+        signal: new AbortController().signal,
+      });
+      expect(original.status).toBe("ok");
+      expect(commitCount).toBe(1);
+
+      first.storage.release(initial);
+      first.dispose();
+      firstWakes.dispose();
+
+      second = createFacetFilePersistence(database.storage, clock, { wakes: secondWakes, ports });
+      const lazy = second.storage.create(second.storage.root, "lazy-after-reopen", {
+        type: "file",
+        exclusive: true,
+      });
+      second.storage.truncate(lazy, 1n);
+      second.markUnhydrated({ inode: lazy, path: "/lazy-after-reopen", at: base, size: 1n });
+      const replay = await second.commitTurn({
+        at: base,
+        turnId: "receipt-replay",
+        changedInodes: [{ inode: lazy, paths: ["/lazy-after-reopen"], removedPaths: [] }],
+        signal: new AbortController().signal,
+      });
+
+      expect(replay).toEqual(original);
+      expect(fetchCount).toBe(0);
+      expect(commitCount).toBe(1);
+      second.storage.release(lazy);
+    } finally {
+      second?.dispose();
+      secondWakes.dispose();
+      first.dispose();
+      firstWakes.dispose();
+      database.close();
     }
   });
   it("cancels a commit waiting on shared hydration without cancelling its reader", async () => {

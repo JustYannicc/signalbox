@@ -230,6 +230,38 @@ describe("memory file persistence ports", () => {
     expect(tree["destination"]!.data).toEqual(new Uint8Array([7]));
   });
 
+  it("keeps a generated-looking seed commit immutable and stale after advancing the head", async () => {
+    const ports = createMemoryFilePersistencePorts();
+    const seededAt = { ...base, commit: "memory-commit-1" };
+    ports.seedFile(seededAt, "original", new Uint8Array([1]));
+    const first = await ports.commits.commit({
+      at: seededAt,
+      turnId: "advance-generated-looking-base",
+      changedInodes: [
+        changed(1n, ["added"], [], stat("file", 1n), async function* () {
+          yield new Uint8Array([2]);
+        }),
+      ],
+      signal: new AbortController().signal,
+    });
+    if (first.status !== "ok") throw new Error(first.error.message);
+
+    expect(first.value.commit).not.toBe(seededAt.commit);
+    expect(ports.inspectTree(seededAt)?.["original"]!.data).toEqual(new Uint8Array([1]));
+    expect(ports.inspectTree({ ...seededAt, commit: first.value.commit })?.["added"]!.data).toEqual(
+      new Uint8Array([2]),
+    );
+
+    const stale = await ports.commits.commit({
+      at: seededAt,
+      turnId: "old-base-retry",
+      changedInodes: [],
+      signal: new AbortController().signal,
+    });
+    expect(stale).toMatchObject({ status: "error", error: { code: "STALE_COMMIT" } });
+    expect(ports.inspectTree(seededAt)?.["original"]!.data).toEqual(new Uint8Array([1]));
+  });
+
   it("keeps failed and aborted commits atomic and checks file length against stat", async () => {
     const ports = createMemoryFilePersistencePorts();
     ports.seedFile(base, "base-file", new Uint8Array([1]));

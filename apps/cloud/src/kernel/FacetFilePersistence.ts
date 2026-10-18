@@ -181,6 +181,8 @@ export function createFacetFilePersistence(
     const run = async () => {
       if (owner.signal.aborted || captured.signal.aborted) return cancelled;
       try {
+        const receipt = snapshots.receipt(captured.at, captured.turnId);
+        if (receipt) return { status: "ok", value: receipt } as const;
         const signal = AbortSignal.any([owner.signal, captured.signal]);
         // A changed file can still depend on old bytes after a rename or metadata-only edit.
         for (const change of snapshots.has(captured.at, captured.turnId)
@@ -205,7 +207,7 @@ export function createFacetFilePersistence(
           captured.changedInodes,
         );
         const result = await ports.commits.commit({ ...captured, changedInodes, signal });
-        if (result.status === "ok") snapshots.remove(captured.turnId);
+        if (result.status === "ok") snapshots.complete(captured.at, captured.turnId, result.value);
         return result;
       } catch (error) {
         return error instanceof StorageError && error.code === "ESTALE"

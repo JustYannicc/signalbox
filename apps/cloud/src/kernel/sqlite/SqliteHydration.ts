@@ -26,8 +26,10 @@ export class SqliteHydration {
         fork TEXT NOT NULL, source_commit TEXT NOT NULL, size TEXT NOT NULL)`);
       database.sql.exec(`CREATE TABLE IF NOT EXISTS kernel_fs_hydration_chunk (
         ino TEXT NOT NULL, part INTEGER NOT NULL, bin BLOB NOT NULL, PRIMARY KEY (ino, part))`);
-      // No asynchronous fetch survives the facet incarnation that staged it.
-      database.sql.exec("DELETE FROM kernel_fs_hydration_chunk");
+      // Wrappers can reopen while another request is fetching. begin() clears only its own old attempt.
+      database.sql.exec(
+        "DELETE FROM kernel_fs_hydration_chunk WHERE ino NOT IN (SELECT ino FROM kernel_fs_inode)",
+      );
       database.sql.exec(
         "DELETE FROM kernel_fs_origin WHERE ino NOT IN (SELECT ino FROM kernel_fs_inode)",
       );

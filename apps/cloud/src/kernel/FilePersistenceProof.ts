@@ -1,6 +1,6 @@
 import type { ChangedInode } from "./FilePersistencePorts.ts";
 import { createFacetFilePersistence } from "./FacetFilePersistence.ts";
-import { FILE_CHUNK_BYTES } from "./FacetSqliteStorage.ts";
+import { FILE_CHUNK_BYTES, createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
 import { createMemoryFilePersistencePorts } from "./MemoryFilePersistencePorts.ts";
 import { KernelWakeRegistry } from "./KernelAbi.ts";
 import type { Stat } from "./storage.ts";
@@ -86,7 +86,25 @@ export async function runFilePersistenceProof(database: FacetStorage) {
   ports.seedFile(at, "/deleted", new Uint8Array([8, 6, 7]));
   let mutateDuringCommit: (() => void) | undefined;
   const persistencePorts = {
-    hydration: ports.hydration,
+    hydration: {
+      async fetch(input: Parameters<typeof ports.hydration.fetch>[0]) {
+        const result = await ports.hydration.fetch(input);
+        if (result.status === "error") return result;
+        return {
+          status: "ok",
+          value: result.value.map((file) => ({
+            path: file.path,
+            chunks: (async function* () {
+              for await (const chunk of file.chunks) {
+                yield chunk;
+                // A raw wrapper can reopen after bytes are staged, before the next chunk arrives.
+                createFacetSqliteStorage(database, nowNs);
+              }
+            })(),
+          })),
+        } as const;
+      },
+    },
     commits: {
       async commit(input: Parameters<typeof ports.commits.commit>[0]) {
         mutateDuringCommit?.();
@@ -101,6 +119,7 @@ export async function runFilePersistenceProof(database: FacetStorage) {
     ports: persistencePorts,
   });
   const storage = persistence.storage;
+  let completedCommit: string | undefined;
   const retained = new Set<bigint>();
   const hold = (inode: bigint) => (retained.add(inode), inode);
   const release = (inode: bigint) => {
@@ -189,6 +208,7 @@ export async function runFilePersistenceProof(database: FacetStorage) {
       signal: new AbortController().signal,
     });
     assert(receipt.status === "ok", "Turn commit did not return a receipt");
+    completedCommit = receipt.value.commit;
     const committedAt = { ...at, commit: receipt.value.commit };
     const tree = ports.inspectTree(committedAt);
     assert(tree !== undefined, "The commit receipt did not identify a stored tree");
@@ -241,6 +261,16 @@ export async function runFilePersistenceProof(database: FacetStorage) {
     size: 1n,
   });
   try {
+    const replay = await missing.commitTurn({
+      at,
+      turnId: "kernel-file-persistence-proof-turn",
+      changedInodes: [{ inode: unavailable, paths: ["/not-yet"], removedPaths: [] }],
+      signal: new AbortController().signal,
+    });
+    assert(
+      replay.status === "ok" && replay.value.commit === completedCommit,
+      "Completed turn replay must ignore new unhydrated files after controller reconstruction",
+    );
     const first = missing.attempt(() =>
       missing.storage.readInto(unavailable, 0n, new Uint8Array(1)),
     );
@@ -256,7 +286,9 @@ export async function runFilePersistenceProof(database: FacetStorage) {
       retry.status === "error" && retry.error.code === "UNSUPPORTED",
       "The typed not-yet adapter must fail explicitly as UNSUPPORTED",
     );
-    record("the unconfigured adapter reports UNSUPPORTED after its wake");
+    record(
+      "completed receipt replays before hydration and the unconfigured adapter reports UNSUPPORTED",
+    );
   } finally {
     missing.dispose();
     try {
