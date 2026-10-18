@@ -256,7 +256,10 @@ export interface SyncHome<
     ViewFrame<Output<Definitions["views"][K]>>,
     Failure<Definitions["views"][K]> | SyncFailure
   >;
-  /** Key replay reauthorizes the actor before returning any stored output. */
+  /**
+   * A fresh fenced change returns only Pending, even when it removes the actor's access.
+   * Key replay and Committed output require current authorization.
+   */
   readonly change: <K extends keyof Definitions["changes"] & string>(
     actor: Definitions["actor"]["Type"],
     operation: K,
@@ -279,6 +282,11 @@ export interface SyncHome<
 
 /** The catalog supplies current authority; the adapter supplies its local send fence. */
 export interface AuthorizationGuard<Actor, Home, Permit> {
+  /**
+   * A change permit admits the transaction against its starting local policy. Its own
+   * policy writes do not invalidate that admission, but independent authority changes do.
+   * View and receipt requests resolve current access, including the transaction's writes.
+   */
   readonly authorize: (
     actor: Actor,
     request: {
@@ -288,7 +296,11 @@ export interface AuthorizationGuard<Actor, Home, Permit> {
       readonly input: unknown;
     },
   ) => Effect.Effect<Permit, SyncFailure>;
-  /** Must run immediately at enqueue, with no intervening await. */
+  /**
+   * Synchronous fence check, with no intervening await at the guarded boundary.
+   * For an admitted change, distinguish its own staged policy writes from independent
+   * revocation. Valid admission alone does not authorize protected output or receipt replay.
+   */
   readonly isCurrent: (permit: Permit) => boolean;
 }
 

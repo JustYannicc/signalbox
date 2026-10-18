@@ -26,13 +26,12 @@ export async function writeWire<Output extends SyncSchema, Failure extends SyncS
 ): Promise<WireCommit<Output>> {
   try {
     const commit = await run();
-    const result =
-      commit._tag === "Pending"
-        ? commit
-        : {
-            ...commit,
-            value: await encodeWireValue(output, commit.value, "unavailable"),
-          };
+    // The write checked admission or replay authority; Pending exposes no protected output.
+    if (commit._tag === "Pending") return commit;
+    const result = {
+      ...commit,
+      value: await encodeWireValue(output, commit.value, "unavailable"),
+    };
     const current = await verify();
     current();
     return result;
