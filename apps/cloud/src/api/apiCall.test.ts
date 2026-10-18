@@ -2,7 +2,6 @@ import { operations } from "@signalbox/api/catalog";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  AuthStandardClientScopes,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   EnvironmentId,
@@ -17,6 +16,7 @@ import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as UserModelSettings from "../user/UserModelSettings.ts";
 import { type ApiCaller, callOperation } from "./apiCall.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
@@ -219,13 +219,13 @@ describe("public API calls", () => {
   it.effect("creates threads without a model on an economical pool model instead of Fable", () =>
     Effect.gen(function* () {
       const { call, cloud } = yield* setup;
-      yield* call("server.config", {}, person(AuthStandardClientScopes));
+      yield* call("server.config", {}, person(CLOUD_CLIENT_SCOPES));
       const pool = cloud.pools.directory.forPool(`${userId}:personal`);
       const actor = { userId };
       const login = yield* pool.startLogin(actor, "claude");
       yield* pool.completeLogin(actor, `http://localhost/callback?code=c&state=${login.state}`);
       yield* pool.loginStatus(actor, login.state);
-      yield* call("server.refreshProviders", {}, person(AuthStandardClientScopes));
+      yield* call("server.refreshProviders", {}, person(CLOUD_CLIENT_SCOPES));
       const launched = json(
         yield* call("threads.create", {
           commandId: "launch-economical",
@@ -307,7 +307,7 @@ describe("public API calls", () => {
         yield* call(
           "keys.create",
           { label: "relay", scopes: ["relay:write"], model: false },
-          person(AuthStandardClientScopes),
+          person(CLOUD_CLIENT_SCOPES),
         ),
       );
       expect(answer.status).toBe(422);

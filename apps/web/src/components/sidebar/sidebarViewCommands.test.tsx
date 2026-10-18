@@ -5,7 +5,7 @@ import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
-import { act, createContext, useContext, useEffect, useMemo } from "react";
+import { act, createContext, useContext, useEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -18,16 +18,23 @@ const state = vi.hoisted(() => ({
 
 // Route changes must reach subscribers even when the compiler reuses child JSX.
 const RoutePathContext = createContext("/env/thread");
+const selectedParams = new WeakMap<object, Map<string, unknown>>();
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.keybindings }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
   useParams: ({ select }: { select: (params: Record<string, string>) => unknown }) => {
     const pathname = useContext(RoutePathContext);
-    return useMemo(
-      () => select(pathname === "/env/thread" ? { environmentId: "env", threadId: "thread" } : {}),
-      [pathname],
-    );
+    // The real hook keeps a selection stable until the route changes.
+    const byPath = selectedParams.get(select) ?? new Map<string, unknown>();
+    selectedParams.set(select, byPath);
+    if (!byPath.has(pathname)) {
+      byPath.set(
+        pathname,
+        select(pathname === "/env/thread" ? { environmentId: "env", threadId: "thread" } : {}),
+      );
+    }
+    return byPath.get(pathname);
   },
   useLocation: ({
     select,

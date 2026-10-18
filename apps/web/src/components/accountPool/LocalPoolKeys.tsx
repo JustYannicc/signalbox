@@ -1,6 +1,6 @@
 import type { ClientOs, EnvironmentId } from "@t3tools/contracts";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { browserClientOs } from "../../connection/clientMetadata";
 import { useIsSignalboxCloud } from "../../github/CloudGitHubSettings";
@@ -103,12 +103,12 @@ function LocalKeysSection({
   // Labels read "3m ago"; a minute is fine-grained enough.
   useRelativeTimeTick(60_000);
 
-  const load = useCallback(async () => {
+  const load = async () => {
     const response = await fetch(new URL("/api/local-keys", baseUrl), {
       credentials: "include",
     }).catch(() => null);
     if (response?.ok) setView((await response.json()) as LocalKeysView);
-  }, [baseUrl]);
+  };
 
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- State changes only after the response arrives.
@@ -130,10 +130,9 @@ function LocalKeysSection({
       else setError(await errorMessage(response));
     } catch {
       setError(ERROR_FALLBACK);
-    } finally {
-      setBusy(false);
-      await load();
     }
+    setBusy(false);
+    await load();
   };
 
   const setUp = () =>

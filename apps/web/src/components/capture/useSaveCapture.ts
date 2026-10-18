@@ -8,7 +8,7 @@ import { RegistryContext } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useContext } from "react";
+import { useContext } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../../composerDraftStore";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -92,100 +92,92 @@ export function useSaveCapture() {
   const { defaultProjectRef, handleNewThread } = useHandleNewThread();
 
   /** Starts the uploads an ordinary draft's composer would, so attachments outlive a reload. */
-  const startUploads = useCallback(
-    (environmentId: EnvironmentId, draftId: DraftId) => {
-      const capabilities = registry.get(environmentServerConfigsAtom).get(environmentId)
-        ?.environment.capabilities;
-      if (capabilities?.attachmentUploads !== true) return;
-      const advertised = capabilities.fileAttachments?.maxUploadBytes ?? null;
-      const maxFileBytes = advertised === null ? null : clampFileAttachmentUploadBytes(advertised);
-      const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
-      if (!draft) return;
-      const files =
-        maxFileBytes === null ? [] : draft.files.filter((file) => file.sizeBytes <= maxFileBytes);
-      for (const attachment of [...draft.images, ...files]) {
-        startAttachmentUpload({ environmentId, image: attachment, draftTarget: draftId });
-      }
-    },
-    [registry],
-  );
+  const startUploads = (environmentId: EnvironmentId, draftId: DraftId) => {
+    const capabilities = registry.get(environmentServerConfigsAtom).get(environmentId)
+      ?.environment.capabilities;
+    if (capabilities?.attachmentUploads !== true) return;
+    const advertised = capabilities.fileAttachments?.maxUploadBytes ?? null;
+    const maxFileBytes = advertised === null ? null : clampFileAttachmentUploadBytes(advertised);
+    const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
+    if (!draft) return;
+    const files =
+      maxFileBytes === null ? [] : draft.files.filter((file) => file.sizeBytes <= maxFileBytes);
+    for (const attachment of [...draft.images, ...files]) {
+      startAttachmentUpload({ environmentId, image: attachment, draftTarget: draftId });
+    }
+  };
 
-  return useCallback(
-    async (capture: Capture, options: { readonly open: boolean }): Promise<boolean> => {
-      const text = capture.text.trim();
-      const { destination } = capture;
-      const prepared = await prepareCaptureAttachments(capture.files);
-      let seeded: Seeded | null = null;
-      const seed = (draftId: DraftId) => {
-        seeded = seedDraft(draftId, text, prepared);
-      };
-      const environmentId = destination?.environmentId ?? defaultProjectRef?.environmentId ?? null;
-      const opened = destination
-        ? await startInFolder({
-            environmentId: destination.environmentId,
-            ownerProjectId: destination.ownerProjectId,
-            folderId: destination.folderId,
+  return async (capture: Capture, options: { readonly open: boolean }): Promise<boolean> => {
+    const text = capture.text.trim();
+    const { destination } = capture;
+    const prepared = await prepareCaptureAttachments(capture.files);
+    let seeded: Seeded | null = null;
+    const seed = (draftId: DraftId) => {
+      seeded = seedDraft(draftId, text, prepared);
+    };
+    const environmentId = destination?.environmentId ?? defaultProjectRef?.environmentId ?? null;
+    const opened = destination
+      ? await startInFolder({
+          environmentId: destination.environmentId,
+          ownerProjectId: destination.ownerProjectId,
+          folderId: destination.folderId,
+          navigate: options.open,
+          seed,
+        })
+      : defaultProjectRef
+        ? await handleNewThread(defaultProjectRef, {
+            freshDraft: true,
             navigate: options.open,
             seed,
           })
-        : defaultProjectRef
-          ? await handleNewThread(defaultProjectRef, {
-              freshDraft: true,
-              navigate: options.open,
-              seed,
-            })
-              .then((draft) => draft && { ...draft, filed: true })
-              .catch(() => null)
-          : null;
-      // Assigned inside the callback, which TypeScript can't follow.
-      const filled = seeded as Seeded | null;
-      if (filled === null) {
-        for (const { image } of prepared.images) URL.revokeObjectURL(image.previewUrl);
-        toastManager.add({ type: "error", title: "Couldn't save the draft" });
-        // Nothing is lost: it reopens with what was written, files included.
-        restoreQuickCapture({ text: capture.text, files: capture.files, destination });
-        return false;
-      }
-      // A draft filled before a later step failed (opening it, filing it) is saved, not retried.
-      const filed = opened?.filed ?? false;
-      if (environmentId !== null) startUploads(environmentId, filled.draftId);
+            .then((draft) => draft && { ...draft, filed: true })
+            .catch(() => null)
+        : null;
+    // Assigned inside the callback, which TypeScript can't follow.
+    const filled = seeded as Seeded | null;
+    if (filled === null) {
+      for (const { image } of prepared.images) URL.revokeObjectURL(image.previewUrl);
+      toastManager.add({ type: "error", title: "Couldn't save the draft" });
+      // Nothing is lost: it reopens with what was written, files included.
+      restoreQuickCapture({ text: capture.text, files: capture.files, destination });
+      return false;
+    }
+    // A draft filled before a later step failed (opening it, filing it) is saved, not retried.
+    const filed = opened?.filed ?? false;
+    if (environmentId !== null) startUploads(environmentId, filled.draftId);
 
-      const notAttached = [...prepared.skipped, ...filled.rejected];
-      if (notAttached.length > 0) {
-        toastManager.add({
-          type: "warning",
-          title:
-            notAttached.length === 1 ? "A file wasn't attached" : "Some files weren't attached",
-          description: notAttached.join(", "),
-        });
-      }
-      if (!filed && destination) {
-        toastManager.add({
-          type: "warning",
-          title: `Couldn't file it ${destination.inPlace}`,
-          description:
-            "The draft was saved. Use Move thread to folder… in the command palette to file it.",
-        });
-      }
-      if (!options.open) {
-        showSavedToast(filled.draftId, text, filed ? destination : null, navigate);
-      }
-      await filled.persisting.catch(() => undefined);
-      const notPersisted = new Set(
-        useComposerDraftStore.getState().getComposerDraft(filled.draftId)?.nonPersistedImageIds ??
-          [],
-      );
-      if (filled.acceptedImageIds.some((id) => notPersisted.has(id))) {
-        toastManager.add({
-          type: "warning",
-          title: "Images in this draft won't survive a reload",
-          description: "The browser's storage is full. Open the draft and send it to keep them.",
-        });
-      }
-      return true;
-    },
-    [defaultProjectRef, handleNewThread, navigate, startInFolder, startUploads],
-  );
+    const notAttached = [...prepared.skipped, ...filled.rejected];
+    if (notAttached.length > 0) {
+      toastManager.add({
+        type: "warning",
+        title: notAttached.length === 1 ? "A file wasn't attached" : "Some files weren't attached",
+        description: notAttached.join(", "),
+      });
+    }
+    if (!filed && destination) {
+      toastManager.add({
+        type: "warning",
+        title: `Couldn't file it ${destination.inPlace}`,
+        description:
+          "The draft was saved. Use Move thread to folder… in the command palette to file it.",
+      });
+    }
+    if (!options.open) {
+      showSavedToast(filled.draftId, text, filed ? destination : null, navigate);
+    }
+    await filled.persisting.catch(() => undefined);
+    const notPersisted = new Set(
+      useComposerDraftStore.getState().getComposerDraft(filled.draftId)?.nonPersistedImageIds ?? [],
+    );
+    if (filled.acceptedImageIds.some((id) => notPersisted.has(id))) {
+      toastManager.add({
+        type: "warning",
+        title: "Images in this draft won't survive a reload",
+        description: "The browser's storage is full. Open the draft and send it to keep them.",
+      });
+    }
+    return true;
+  };
 }
 
 function showSavedToast(
