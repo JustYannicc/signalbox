@@ -46,7 +46,7 @@ export function normalizeModule(input: NormalizeInput) {
     throw new Error(`BUN_MODULE_FORMAT_UNSUPPORTED: ${input.name}: ${input.format}`);
   }
   const ast = parse(input.name, source);
-  const shadowed = shadowedMetaRequires(ast);
+  const shadowed = shadowedMetaRequires(ast, input.format === 1);
   const edits: { start: number; end: number; text: string }[] = [];
   const visit = (node: ts.Node) => {
     if (

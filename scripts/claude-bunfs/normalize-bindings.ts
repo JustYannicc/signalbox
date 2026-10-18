@@ -3,12 +3,28 @@ import ts from "typescript-legacy";
 interface Scope {
   readonly parent: Scope | undefined;
   readonly functionScope: boolean;
+  readonly strict: boolean;
   readonly bindings: Set<string>;
 }
 
 /** A rewritten bare require must still resolve to esbuild's host require. */
-export function shadowedMetaRequires(file: ts.SourceFile): ReadonlySet<ts.Node> {
-  const root: Scope = { parent: undefined, functionScope: true, bindings: new Set() };
+export function shadowedMetaRequires(
+  file: ts.SourceFile,
+  moduleStrict: boolean,
+): ReadonlySet<ts.Node> {
+  const hasStrictDirective = (statements: ts.NodeArray<ts.Statement>): boolean => {
+    for (const statement of statements) {
+      if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break;
+      if (statement.expression.text === "use strict") return true;
+    }
+    return false;
+  };
+  const root: Scope = {
+    parent: undefined,
+    functionScope: true,
+    strict: moduleStrict || hasStrictDirective(file.statements),
+    bindings: new Set(),
+  };
   const uses: { node: ts.Node; scope: Scope }[] = [];
   const bind = (name: ts.BindingName, scope: Scope): void => {
     if (ts.isIdentifier(name)) scope.bindings.add(name.text);
@@ -17,19 +33,39 @@ export function shadowedMetaRequires(file: ts.SourceFile): ReadonlySet<ts.Node> 
         if (ts.isBindingElement(element)) bind(element.name, scope);
   };
   const visit = (node: ts.Node, scope: Scope): void => {
-    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name)
+    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
       scope.bindings.add(node.name.text);
-    const functionScope = ts.isFunctionLike(node);
+      // Annex B also exposes sloppy block functions in the containing function.
+      if (ts.isFunctionDeclaration(node) && !scope.strict) {
+        let destination = scope;
+        while (!destination.functionScope && destination.parent) destination = destination.parent;
+        destination.bindings.add(node.name.text);
+      }
+    }
+    const functionScope = ts.isFunctionLike(node) || ts.isClassStaticBlockDeclaration(node);
     const ownsScope =
       functionScope ||
       ts.isBlock(node) ||
+      ts.isCaseBlock(node) ||
       ts.isCatchClause(node) ||
       ts.isForStatement(node) ||
       ts.isForInStatement(node) ||
       ts.isForOfStatement(node) ||
       ts.isClassLike(node);
     const current: Scope = ownsScope
-      ? { parent: scope, functionScope, bindings: new Set() }
+      ? {
+          parent: scope,
+          functionScope,
+          strict:
+            scope.strict ||
+            ts.isClassLike(node) ||
+            (ts.isFunctionLike(node) &&
+              "body" in node &&
+              node.body !== undefined &&
+              ts.isBlock(node.body) &&
+              hasStrictDirective(node.body.statements)),
+          bindings: new Set(),
+        }
       : scope;
     if ((ts.isFunctionExpression(node) || ts.isClassExpression(node)) && node.name)
       current.bindings.add(node.name.text);

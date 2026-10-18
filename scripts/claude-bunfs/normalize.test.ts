@@ -129,4 +129,33 @@ describe("Bun module normalization", () => {
       ).source,
     ).toContain('export const result=require("node:path")');
   });
+
+  it("handles sloppy block functions and isolates switch and static-block bindings", () => {
+    const body =
+      'function load(){if(true){function require(){return "captured"}}return import.meta.require("node:path")}';
+    expect(() =>
+      normalizeModule({
+        name: "cli",
+        key: "cli",
+        format: 2,
+        source: `(function(exports,require,module,__filename,__dirname){${body}})`,
+      }),
+    ).toThrow("BUN_REQUIRE_SHADOWED");
+    for (const source of [
+      `"use strict";${body}`,
+      'switch(0){case 0: let require;} export const result=import.meta.require("node:path");',
+      'class Example { static { var require; } } export const result=import.meta.require("node:path");',
+    ])
+      expect(normalizeModule({ name: "cli", key: "cli", format: 1, source }).source).toContain(
+        'require("node:path")',
+      );
+    expect(() =>
+      normalizeModule({
+        name: "cli",
+        key: "cli",
+        format: 1,
+        source: 'switch(0){case 0:let require;import.meta.require("node:path");}',
+      }),
+    ).toThrow("BUN_REQUIRE_SHADOWED");
+  });
 });
