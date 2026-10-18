@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import {
   DeviceId,
   EnvironmentId,
@@ -21,6 +23,9 @@ const fake = vi.hoisted(() => ({
   cancelOpen: vi.fn(),
   close: vi.fn(),
   resolveLateAdoption: null as (() => void) | null,
+  delayExactOwnerSessionId: null as string | null,
+  delayNextManualSelection: false,
+  pendingManualSelections: new Map<string, () => void>(),
 }));
 
 vi.mock("~/state/device", async () => {
@@ -121,12 +126,54 @@ vi.mock("../preview/PreviewPanelShell", async () => {
       React.createElement("div", null, props.children),
   };
 });
+vi.mock("../chat/ChatCanvasContext", () => ({
+  useChatCanvas: () => ({
+    container: document.body,
+    previewKey: "device:local:emulator-5554",
+    layout: { frame: { x: 0, y: 0, width: 240, height: 420 } },
+  }),
+}));
+vi.mock("../device/DeviceStreamView", () => ({ DeviceStreamView: () => null }));
+vi.mock("~/components/ui/button", async () => {
+  const React = await import("react");
+  return {
+    Button: (props: {
+      readonly children?: React.ReactNode;
+      readonly "aria-label"?: string;
+      readonly onClick?: () => void;
+      readonly onPointerDown?: (event: unknown) => void;
+    }) =>
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          "aria-label": props["aria-label"],
+          onClick: props.onClick,
+          onPointerDown: props.onPointerDown,
+        },
+        props.children,
+      ),
+  };
+});
+vi.mock("~/components/ui/tooltip", async () => {
+  const React = await import("react");
+  return {
+    Tooltip: (props: { readonly children?: React.ReactNode }) =>
+      React.createElement(React.Fragment, null, props.children),
+    TooltipTrigger: (props: {
+      readonly render?: React.ReactNode;
+      readonly children?: React.ReactNode;
+    }) => props.render ?? props.children,
+    TooltipPopup: () => null,
+  };
+});
 
 import { useClosedViewStore } from "../../closedViewStore";
 import { usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { DevicePanel } from "./DevicePanel";
+import { ThreadPreviewMiniPlayer } from "../preview/ThreadPreviewMiniPlayer";
 import { useAgentOpenedPreviews } from "../preview/useAgentOpenedPreviews";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
@@ -142,6 +189,11 @@ const selectedDevice = {
 } as const;
 const runtimeDevice = { ...selectedDevice, id: DeviceId.make("emulator-5554"), booted: true };
 const previewState = { listLoaded: false, sessions: {} } as ThreadPreviewState;
+const EMPTY_PANEL_STATE = {
+  isOpen: false,
+  activeSurfaceId: null,
+  surfaces: [],
+} as const;
 
 function initialState(): DeviceServiceState {
   return {
@@ -187,6 +239,9 @@ function setupLeaseService() {
   closeInputs.length = 0;
   exactAdoptionCalls = 0;
   fake.resolveLateAdoption = null;
+  fake.delayExactOwnerSessionId = null;
+  fake.delayNextManualSelection = false;
+  fake.pendingManualSelections.clear();
   fake.listeners.clear();
   fake.snapshot = initialState();
   fake.list.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
@@ -203,12 +258,37 @@ function setupLeaseService() {
         };
       }
       exactAdoptionCalls++;
-      if (exactAdoptionCalls === 1) {
+      if (input.sessionId === fake.delayExactOwnerSessionId && exactAdoptionCalls === 1) {
         return new Promise((resolve) => {
           fake.resolveLateAdoption = () => resolve(success(existing));
         });
       }
       return success(existing);
+    }
+
+    if (fake.delayNextManualSelection) {
+      fake.delayNextManualSelection = false;
+      const requestId = input.requestId;
+      if (!requestId) throw new Error("Expected manual device opens to have a request id.");
+      const session: DeviceSession = {
+        sessionId: "cancelled-manual-observer",
+        leaseId: "device-walk-1",
+        requestId,
+        ownerKind: "panel",
+        observer: true,
+        threadId: input.threadId,
+        hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
+        deviceId: runtimeDevice.id,
+        platform: input.platform,
+        openedAt: "2026-10-18T00:00:00.000Z",
+      };
+      return new Promise((resolve) => {
+        fake.pendingManualSelections.set(requestId, () => {
+          owners.set(session.sessionId, session);
+          publish([...owners.values()]);
+          resolve(success(session));
+        });
+      });
     }
 
     const controller = [...owners.values()].find(
@@ -284,17 +364,11 @@ function PanelHost() {
     () => fake.snapshot as DeviceServiceState,
   );
   const panelState = useRightPanelStore(
-    (state) =>
-      state.byThreadKey[threadKey] ?? {
-        isOpen: false,
-        activeSurfaceId: null,
-        surfaces: [],
-      },
+    (state) => state.byThreadKey[threadKey] ?? EMPTY_PANEL_STATE,
   );
   const panelSurfaces = panelState.surfaces;
-  const miniPlayerSource = usePreviewMiniPlayerStore(
-    (state) => state.byThreadKey[threadKey]?.source ?? null,
-  );
+  const miniPlayer = usePreviewMiniPlayerStore((state) => state.byThreadKey[threadKey] ?? null);
+  const miniPlayerSource = miniPlayer?.source ?? null;
   useAgentOpenedPreviews({
     threadRef,
     deviceState,
@@ -306,16 +380,23 @@ function PanelHost() {
     sheetLayout: false,
   });
   const surface = panelState.surfaces.find((entry) => entry.id === panelState.activeSurfaceId);
-  return surface?.kind === "device" ? (
-    <DevicePanel
-      key={surface.id}
-      mode="embedded"
-      threadRef={threadRef}
-      surface={surface}
-      visible={panelState.isOpen}
-      onDismissSetup={() => undefined}
-    />
-  ) : null;
+  return (
+    <>
+      {surface?.kind === "device" ? (
+        <DevicePanel
+          key={surface.id}
+          mode="embedded"
+          threadRef={threadRef}
+          surface={surface}
+          visible={panelState.isOpen}
+          onDismissSetup={() => undefined}
+        />
+      ) : null}
+      {miniPlayer ? (
+        <ThreadPreviewMiniPlayer threadRef={threadRef} miniPlayer={miniPlayer} />
+      ) : null}
+    </>
+  );
 }
 
 let root: Root;
@@ -329,7 +410,7 @@ beforeEach(() => {
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({
     byThreadKey: {},
-    pendingDeviceOpenByThreadKey: {},
+    pendingDeviceOpensByThreadKey: {},
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
@@ -340,6 +421,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 async function startSelectedDevice() {
@@ -354,6 +436,7 @@ async function startSelectedDevice() {
   const start = container.querySelector<HTMLButtonElement>('[aria-label="Start Signalbox Pixel"]');
   if (!start) throw new Error("Expected the stopped Pixel row.");
   const canonicalSurface = waitForCanonicalSurface();
+  fake.delayExactOwnerSessionId = "panel-controller";
   await act(async () => {
     start.click();
     await canonicalSurface;
@@ -422,7 +505,76 @@ describe("DevicePanel lease ownership", () => {
     ]);
   });
 
-  it("floats and reopens the same exact controller", async () => {
+  it("stores a replacement owner before the same tab remounts", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    useRightPanelStore.getState().openDevice(threadRef, {
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: runtimeDevice.id,
+      platform: "android",
+      name: runtimeDevice.name,
+      sessionId: "stale-panel-owner",
+      leaseId: "stale-walk",
+    });
+    useRightPanelStore
+      .getState()
+      .renameDevice(threadRef, "device:local:emulator-5554", "Android recovery tab");
+
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <PanelHost />
+        </StrictMode>,
+      ),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+    });
+
+    const tab = useRightPanelStore
+      .getState()
+      .byThreadKey[threadKey]?.surfaces.find(
+        (surface) => surface.id === "device:local:emulator-5554",
+      );
+    expect(tab).toMatchObject({
+      title: "Android recovery tab",
+      target: { sessionId: "panel-controller", leaseId: "device-walk-1" },
+    });
+    expect([...owners.values()]).toEqual([
+      expect.objectContaining({ sessionId: "panel-controller", observer: false }),
+    ]);
+    expect(openInputs[0]).toMatchObject({
+      sessionId: "stale-panel-owner",
+      leaseId: "stale-walk",
+    });
+    expect(openInputs.some((input) => input.sessionId === undefined)).toBe(true);
+
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <PanelHost key="reacquired-owner-remount" />
+        </StrictMode>,
+      );
+      await Promise.resolve();
+    });
+
+    expect([...owners.values()]).toEqual([
+      expect.objectContaining({ sessionId: "panel-controller", observer: false }),
+    ]);
+    expect(closeInputs).toEqual([]);
+    expect(
+      openInputs
+        .filter((input) => input.deviceId === runtimeDevice.id)
+        .every(
+          (input) =>
+            (input.sessionId === "stale-panel-owner" && input.leaseId === "stale-walk") ||
+            (input.sessionId === "panel-controller" && input.leaseId === "device-walk-1") ||
+            input.sessionId === undefined,
+        ),
+    ).toBe(true);
+  });
+
+  it("floats and maximizes through the real mini-player and panel lifecycle", async () => {
     await startSelectedDevice();
     const floatButton = container.querySelector<HTMLButtonElement>('[aria-label="Float device"]');
     if (!floatButton) throw new Error("Expected the open device panel.");
@@ -436,21 +588,22 @@ describe("DevicePanel lease ownership", () => {
       leaseId: "device-walk-1",
     });
     expect([...owners.values()]).toHaveLength(1);
-
+    const maximizeButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open preview in right panel"]',
+    );
+    if (!maximizeButton) throw new Error("Expected the mini-player maximize control.");
     await act(async () => {
-      useRightPanelStore.getState().openDevice(threadRef, {
-        hostId: LOCAL_DEVICE_HOST_ID,
-        deviceId: runtimeDevice.id,
-        platform: "android",
-        name: runtimeDevice.name,
-        sessionId: "panel-controller",
-        leaseId: "device-walk-1",
-      });
+      maximizeButton.click();
+      await Promise.resolve();
     });
+
     expect(hasCanonicalSurface()).toBe(true);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.isOpen).toBe(true);
+    expect(container.querySelector('[data-observer="false"]')).not.toBeNull();
     expect([...owners.values()]).toEqual([
       expect.objectContaining({ sessionId: "panel-controller", observer: false }),
     ]);
+    expect(closeInputs).toEqual([]);
     expect(
       openInputs.every(
         (input) =>
@@ -458,5 +611,86 @@ describe("DevicePanel lease ownership", () => {
           (input.sessionId === "panel-controller" && input.leaseId === "device-walk-1"),
       ),
     ).toBe(true);
+  });
+
+  it("keeps a cancelled overlapping selection out of previews and releases its late owner", async () => {
+    useRightPanelStore.getState().open(threadRef, "device");
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <PanelHost />
+        </StrictMode>,
+      ),
+    );
+    const start = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Start Signalbox Pixel"]',
+    );
+    if (!start) throw new Error("Expected the stopped Pixel row.");
+    fake.delayNextManualSelection = true;
+    await act(async () => start.click());
+    const [cancelledRequestId, completeCancelledSelection] =
+      [...fake.pendingManualSelections.entries()][0] ?? [];
+    if (!cancelledRequestId || !completeCancelledSelection)
+      throw new Error("Expected the first selection to remain in flight.");
+
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <PanelHost key="selection-remount" />
+        </StrictMode>,
+      );
+      await Promise.resolve();
+    });
+
+    const replacementStart = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Start Signalbox Pixel"]',
+    );
+    if (!replacementStart) throw new Error("Expected the remounted device selector.");
+    const canonicalSurface = waitForCanonicalSurface();
+    await act(async () => {
+      replacementStart.click();
+      await canonicalSurface;
+    });
+
+    const manualInputs = openInputs.filter((input) => input.deviceId === selectedDevice.id);
+    expect(manualInputs).toHaveLength(2);
+    const activeRequestId = manualInputs.find(
+      (input) => input.requestId !== cancelledRequestId,
+    )?.requestId;
+    if (!activeRequestId) throw new Error("Expected the second selection to become active.");
+    expect(useRightPanelStore.getState().pendingDeviceOpensByThreadKey[threadKey]).toEqual([
+      { requestId: cancelledRequestId, hostId: LOCAL_DEVICE_HOST_ID },
+    ]);
+    expect(
+      fake.cancelOpen.mock.calls.some(
+        ([request]) =>
+          (request as { input?: { requestId?: string } }).input?.requestId === cancelledRequestId,
+      ),
+    ).toBe(true);
+
+    await act(async () => {
+      completeCancelledSelection();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect([...owners.values()]).toEqual([
+      expect.objectContaining({ sessionId: "panel-controller", observer: false }),
+    ]);
+    expect(closeInputs).toEqual([
+      expect.objectContaining({ sessionId: "cancelled-manual-observer", leaseId: "device-walk-1" }),
+    ]);
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey[threadKey]).toBeUndefined();
+    expect(useRightPanelStore.getState().pendingDeviceOpensByThreadKey[threadKey]).toBeUndefined();
+    expect(
+      useRightPanelStore
+        .getState()
+        .byThreadKey[threadKey]?.surfaces.find(
+          (surface) => surface.id === "device:local:emulator-5554",
+        ),
+    ).toMatchObject({
+      target: { sessionId: "panel-controller", leaseId: "device-walk-1" },
+    });
+    expect(activeRequestId).not.toBe(cancelledRequestId);
   });
 });

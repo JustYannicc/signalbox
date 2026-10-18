@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { DevicePlatform, ScopedThreadRef } from "@t3tools/contracts";
+import type { DevicePlatform, DeviceSession, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 export interface PreviewMiniPlayerPosition {
@@ -24,6 +24,8 @@ export type PreviewMiniPlayerSource =
       readonly leaseId?: string;
     };
 
+type DevicePreviewSource = Extract<PreviewMiniPlayerSource, { readonly kind: "device" }>;
+
 export interface PreviewMiniPlayerState {
   readonly source: PreviewMiniPlayerSource;
   readonly position: PreviewMiniPlayerPosition | null;
@@ -34,6 +36,11 @@ export interface PreviewMiniPlayerState {
 interface PreviewMiniPlayerStoreState {
   readonly byThreadKey: Record<string, PreviewMiniPlayerState>;
   readonly open: (ref: ScopedThreadRef, source: PreviewMiniPlayerSource) => void;
+  readonly updateDeviceOwner: (
+    ref: ScopedThreadRef,
+    expectedSource: DevicePreviewSource,
+    owner: Pick<DeviceSession, "threadId" | "hostId" | "deviceId" | "sessionId" | "leaseId">,
+  ) => boolean;
   readonly close: (ref: ScopedThreadRef) => void;
   /** `sourceKey` guards against a drag that outlives the source it started on. */
   readonly move: (
@@ -85,6 +92,34 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
         },
       };
     }),
+  updateDeviceOwner: (ref, expectedSource, owner) => {
+    if (
+      owner.threadId !== ref.threadId ||
+      owner.hostId !== expectedSource.hostId ||
+      owner.deviceId !== expectedSource.deviceId
+    )
+      return false;
+    let updated = false;
+    set((state) => {
+      const threadKey = scopedThreadKey(ref);
+      const current = state.byThreadKey[threadKey];
+      if (
+        !current ||
+        current.source !== expectedSource ||
+        current.source.kind !== "device" ||
+        (current.source.sessionId === owner.sessionId && current.source.leaseId === owner.leaseId)
+      )
+        return state;
+      updated = true;
+      return {
+        byThreadKey: {
+          ...state.byThreadKey,
+          [threadKey]: { ...current, source: { ...current.source, ...owner } },
+        },
+      };
+    });
+    return updated;
+  },
   close: (ref) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);

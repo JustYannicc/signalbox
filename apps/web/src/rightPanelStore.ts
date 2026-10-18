@@ -3,7 +3,12 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type DeviceSession,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -38,6 +43,8 @@ export interface PendingDeviceOpen {
   readonly requestId: string;
   readonly hostId: string;
 }
+
+const EMPTY_PENDING_DEVICE_OPENS: ReadonlyArray<PendingDeviceOpen> = [];
 
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
@@ -113,7 +120,7 @@ export interface ThreadPanelVisibility {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  pendingDeviceOpenByThreadKey: Record<string, PendingDeviceOpen>;
+  pendingDeviceOpensByThreadKey: Record<string, ReadonlyArray<PendingDeviceOpen>>;
   pendingMaximizeThreadKey: string | null;
   requestMaximize: (ref: ScopedThreadRef) => void;
   consumeMaximizeRequest: (ref: ScopedThreadRef) => boolean;
@@ -140,6 +147,12 @@ interface RightPanelStoreState {
     target: Pick<PendingDeviceOpen, "hostId">,
   ) => void;
   endDeviceOpen: (ref: ScopedThreadRef, requestId: string) => void;
+  updateDeviceSurfaceOwner: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    expectedTarget: DeviceTabTarget,
+    owner: Pick<DeviceSession, "threadId" | "hostId" | "deviceId" | "sessionId" | "leaseId">,
+  ) => boolean;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -599,7 +612,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
       byThreadKey: {},
-      pendingDeviceOpenByThreadKey: {},
+      pendingDeviceOpensByThreadKey: {},
       pendingMaximizeThreadKey: null,
       requestMaximize: (ref) => set({ pendingMaximizeThreadKey: scopedThreadKey(ref) }),
       consumeMaximizeRequest: (ref) => {
@@ -611,20 +624,66 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       userActionRevisionByThreadKey: {},
       closeRevisionByThreadKey: {},
       beginDeviceOpen: (ref, requestId, target) =>
-        set((state) => ({
-          pendingDeviceOpenByThreadKey: {
-            ...state.pendingDeviceOpenByThreadKey,
-            [scopedThreadKey(ref)]: { requestId, ...target },
-          },
-        })),
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const pending =
+            state.pendingDeviceOpensByThreadKey[threadKey] ?? EMPTY_PENDING_DEVICE_OPENS;
+          if (pending.some((entry) => entry.requestId === requestId)) return state;
+          return {
+            pendingDeviceOpensByThreadKey: {
+              ...state.pendingDeviceOpensByThreadKey,
+              [threadKey]: [...pending, { requestId, ...target }],
+            },
+          };
+        }),
       endDeviceOpen: (ref, requestId) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (state.pendingDeviceOpenByThreadKey[threadKey]?.requestId !== requestId) return state;
-          const { [threadKey]: _pending, ...pendingDeviceOpenByThreadKey } =
-            state.pendingDeviceOpenByThreadKey;
-          return { pendingDeviceOpenByThreadKey };
+          const pending = state.pendingDeviceOpensByThreadKey[threadKey];
+          if (!pending?.some((entry) => entry.requestId === requestId)) return state;
+          const remaining = pending.filter((entry) => entry.requestId !== requestId);
+          const pendingDeviceOpensByThreadKey = { ...state.pendingDeviceOpensByThreadKey };
+          if (remaining.length === 0) delete pendingDeviceOpensByThreadKey[threadKey];
+          else pendingDeviceOpensByThreadKey[threadKey] = remaining;
+          return { pendingDeviceOpensByThreadKey };
         }),
+      updateDeviceSurfaceOwner: (ref, surfaceId, expectedTarget, owner) => {
+        if (
+          owner.threadId !== ref.threadId ||
+          owner.hostId !== expectedTarget.hostId ||
+          owner.deviceId !== expectedTarget.deviceId
+        )
+          return false;
+        let updated = false;
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const current = state.byThreadKey[threadKey];
+          const surface = current?.surfaces.find((entry) => entry.id === surfaceId);
+          if (
+            !current ||
+            surface?.kind !== "device" ||
+            surface.target !== expectedTarget ||
+            !surface.target ||
+            (surface.target.sessionId === owner.sessionId &&
+              surface.target.leaseId === owner.leaseId)
+          )
+            return state;
+          updated = true;
+          const target = { ...surface.target, ...owner };
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: {
+                ...current,
+                surfaces: current.surfaces.map((entry) =>
+                  entry.id === surfaceId && entry.kind === "device" ? { ...entry, target } : entry,
+                ),
+              },
+            },
+          };
+        });
+        return updated;
+      },
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
       openProactive: (ref, surface, expectedUserActionRevision) => {
@@ -1086,7 +1145,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             !(threadKey in state.threadPanelVisibilityByThreadKey) &&
             !(threadKey in state.userActionRevisionByThreadKey) &&
             !(threadKey in state.closeRevisionByThreadKey) &&
-            !(threadKey in state.pendingDeviceOpenByThreadKey)
+            !(threadKey in state.pendingDeviceOpensByThreadKey)
           ) {
             return state;
           }
@@ -1097,14 +1156,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             state.userActionRevisionByThreadKey;
           const { [threadKey]: _closeRevision, ...closeRevisionByThreadKey } =
             state.closeRevisionByThreadKey;
-          const { [threadKey]: _pending, ...pendingDeviceOpenByThreadKey } =
-            state.pendingDeviceOpenByThreadKey;
+          const { [threadKey]: _pending, ...pendingDeviceOpensByThreadKey } =
+            state.pendingDeviceOpensByThreadKey;
           return {
             byThreadKey,
             threadPanelVisibilityByThreadKey,
             userActionRevisionByThreadKey,
             closeRevisionByThreadKey,
-            pendingDeviceOpenByThreadKey,
+            pendingDeviceOpensByThreadKey,
           };
         }),
     }),

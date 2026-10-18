@@ -125,103 +125,115 @@ export function DevicePanel(props: {
     if (retainedOwner !== null) retainDeviceLeaseOwner({ environmentId, ...retainedOwner });
     const heartbeat = async () => {
       const controller = new AbortController();
+      const requestId = randomUUID();
       requestController = controller;
-      const settlement = await settleDeviceOpenForSurface({
-        signal: controller.signal,
-        isCurrent: () => !cancelled,
-        open: (signal, requestId) =>
-          open(
-            {
+      useRightPanelStore.getState().beginDeviceOpen(props.threadRef, requestId, {
+        hostId: target.hostId,
+      });
+      try {
+        const settlement = await settleDeviceOpenForSurface({
+          signal: controller.signal,
+          isCurrent: () => !cancelled,
+          requestId,
+          open: (signal, requestId) =>
+            open(
+              {
+                environmentId,
+                input: {
+                  threadId,
+                  hostId: target.hostId,
+                  deviceId: target.deviceId,
+                  platform: target.platform,
+                  requestId,
+                  ...(owner !== null
+                    ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
+                    : !targetLeaseConsumed && targetOwner !== null
+                      ? { sessionId: targetOwner.sessionId, leaseId: targetOwner.leaseId }
+                      : {}),
+                },
+              },
+              signal,
+            ),
+          cancel: (requestId) =>
+            cancelOpen({
               environmentId,
               input: {
                 threadId,
                 hostId: target.hostId,
                 deviceId: target.deviceId,
-                platform: target.platform,
                 requestId,
-                ...(owner !== null
-                  ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
-                  : !targetLeaseConsumed && targetOwner !== null
-                    ? { sessionId: targetOwner.sessionId, leaseId: targetOwner.leaseId }
-                    : {}),
               },
-            },
-            signal,
-          ),
-        cancel: (requestId) =>
-          cancelOpen({
-            environmentId,
-            input: {
-              threadId,
-              hostId: target.hostId,
-              deviceId: target.deviceId,
-              requestId,
-            },
-          }),
-        release: (session) => {
-          if (
-            retainedOwner !== null &&
-            session.sessionId === retainedOwner.sessionId &&
-            session.leaseId === retainedOwner.leaseId
-          )
-            return Promise.resolve();
-          return close({
-            environmentId,
-            input: {
-              threadId,
-              hostId: session.hostId,
-              deviceId: session.deviceId,
-              sessionId: session.sessionId,
-              leaseId: session.leaseId,
-            },
-          });
-        },
-        accept: () => undefined,
-      });
-      if (requestController === controller) requestController = null;
-      if (settlement._tag === "Cancelled") return;
-      const result = settlement.result;
-      if (result._tag === "Success") {
-        owner = result.value;
-        panelSessionRef.current = owner;
-        targetLeaseConsumed = true;
-        setPanelSession(owner);
-        setLeaseWaiting(false);
-        setOperationError(null);
-      } else {
-        const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
-        const staleSession =
-          typeof failure === "object" &&
-          failure !== null &&
-          "_tag" in failure &&
-          failure._tag === "DeviceOperationError" &&
-          "reason" in failure &&
-          failure.reason === "stale_session";
-        if (owner !== null && staleSession) {
-          const staleOwner = owner;
-          owner = null;
-          panelSessionRef.current = null;
-          setPanelSession(null);
-          targetLeaseConsumed =
-            targetOwner !== null &&
-            staleOwner.sessionId === targetOwner.sessionId &&
-            staleOwner.leaseId === targetOwner.leaseId;
-          setLeaseWaiting(true);
-          timer = setTimeout(() => void heartbeat(), 0);
-          return;
-        }
-        if (owner === null) {
-          if (!targetLeaseConsumed && targetOwner !== null) {
-            targetLeaseConsumed = true;
+            }),
+          release: (session) => {
+            if (
+              retainedOwner !== null &&
+              session.sessionId === retainedOwner.sessionId &&
+              session.leaseId === retainedOwner.leaseId
+            )
+              return Promise.resolve();
+            return close({
+              environmentId,
+              input: {
+                threadId,
+                hostId: session.hostId,
+                deviceId: session.deviceId,
+                sessionId: session.sessionId,
+                leaseId: session.leaseId,
+              },
+            });
+          },
+          accept: () => undefined,
+        });
+        if (settlement._tag === "Cancelled") return;
+        const result = settlement.result;
+        if (result._tag === "Success") {
+          owner = result.value;
+          panelSessionRef.current = owner;
+          targetLeaseConsumed = true;
+          useRightPanelStore
+            .getState()
+            .updateDeviceSurfaceOwner(props.threadRef, props.surface.id, target, owner);
+          setPanelSession(owner);
+          setLeaseWaiting(false);
+          setOperationError(null);
+        } else {
+          const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
+          const staleSession =
+            typeof failure === "object" &&
+            failure !== null &&
+            "_tag" in failure &&
+            failure._tag === "DeviceOperationError" &&
+            "reason" in failure &&
+            failure.reason === "stale_session";
+          if (owner !== null && staleSession) {
+            const staleOwner = owner;
+            owner = null;
+            panelSessionRef.current = null;
+            setPanelSession(null);
+            targetLeaseConsumed =
+              targetOwner !== null &&
+              staleOwner.sessionId === targetOwner.sessionId &&
+              staleOwner.leaseId === targetOwner.leaseId;
             setLeaseWaiting(true);
             timer = setTimeout(() => void heartbeat(), 0);
             return;
           }
-          setLeaseWaiting(false);
-          setOperationError(formatEnvironmentQueryError(result.cause));
+          if (owner === null) {
+            if (!targetLeaseConsumed && targetOwner !== null) {
+              targetLeaseConsumed = true;
+              setLeaseWaiting(true);
+              timer = setTimeout(() => void heartbeat(), 0);
+              return;
+            }
+            setLeaseWaiting(false);
+            setOperationError(formatEnvironmentQueryError(result.cause));
+          }
         }
+        timer = setTimeout(() => void heartbeat(), 60_000);
+      } finally {
+        if (requestController === controller) requestController = null;
+        useRightPanelStore.getState().endDeviceOpen(props.threadRef, requestId);
       }
-      timer = setTimeout(() => void heartbeat(), 60_000);
     };
     void heartbeat();
     return () => {

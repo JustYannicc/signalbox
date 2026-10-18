@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import {
   DeviceId,
   EnvironmentId,
@@ -113,6 +115,12 @@ const source = {
   sessionId: owner.sessionId,
   leaseId: owner.leaseId,
 };
+const replacementOwner: DeviceSession = {
+  ...owner,
+  sessionId: "panel-controller-replacement",
+  leaseId: "device-walk-2",
+  openedAt: "2026-10-18T00:01:00.000Z",
+};
 const deviceState: DeviceServiceState = {
   hosts: [
     {
@@ -133,6 +141,13 @@ const deviceState: DeviceServiceState = {
   hubBasePath: "",
   revision: 1,
 };
+
+function MiniPlayerHost() {
+  const miniPlayer = usePreviewMiniPlayerStore((state) => state.byThreadKey[threadKey] ?? null);
+  return miniPlayer ? (
+    <ThreadPreviewMiniPlayer threadRef={threadRef} miniPlayer={miniPlayer} />
+  ) : null;
+}
 
 let root: Root;
 let container: HTMLDivElement;
@@ -158,7 +173,7 @@ beforeEach(() => {
   fake.close.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   useRightPanelStore.setState({
     byThreadKey: {},
-    pendingDeviceOpenByThreadKey: {},
+    pendingDeviceOpensByThreadKey: {},
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
@@ -169,6 +184,7 @@ beforeEach(() => {
 afterEach(async () => {
   if (rootMounted) await act(async () => root.unmount());
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("ThreadPreviewMiniPlayer device ownership", () => {
@@ -180,16 +196,13 @@ describe("ThreadPreviewMiniPlayer device ownership", () => {
       name: source.name,
     });
     usePreviewMiniPlayerStore.getState().open(threadRef, source);
-    const miniPlayer = selectThreadPreviewMiniPlayer(
-      usePreviewMiniPlayerStore.getState().byThreadKey,
-      threadRef,
-    );
-    if (!miniPlayer) throw new Error("Expected the device mini-player.");
+    if (!selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, threadRef))
+      throw new Error("Expected the device mini-player.");
 
     await act(async () =>
       root.render(
         <StrictMode>
-          <ThreadPreviewMiniPlayer threadRef={threadRef} miniPlayer={miniPlayer} />
+          <MiniPlayerHost />
         </StrictMode>,
       ),
     );
@@ -228,5 +241,75 @@ describe("ThreadPreviewMiniPlayer device ownership", () => {
       await Promise.resolve();
     });
     expect(fake.close).not.toHaveBeenCalled();
+  });
+
+  it("stores a reacquired owner before the mini-player remounts", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fake.snapshot = { ...deviceState, sessions: [replacementOwner] };
+    const owners = new Map([[replacementOwner.sessionId, replacementOwner]]);
+    fake.open.mockReset().mockImplementation((request: unknown) => {
+      const input = (request as { input: DeviceOpenInput }).input;
+      openInputs.push(input);
+      if (input.sessionId === owner.sessionId && input.leaseId === owner.leaseId)
+        return Promise.resolve({
+          _tag: "Failure" as const,
+          cause: { _tag: "DeviceOperationError", reason: "stale_session" },
+        });
+      owners.set(replacementOwner.sessionId, replacementOwner);
+      return Promise.resolve({ _tag: "Success" as const, value: replacementOwner });
+    });
+    fake.close.mockReset().mockImplementation((request: unknown) => {
+      const input = (request as { input: { sessionId?: string; leaseId?: string } }).input;
+      const current = owners.get(input.sessionId ?? "");
+      if (current?.leaseId === input.leaseId) owners.delete(current.sessionId);
+      return Promise.resolve({ _tag: "Success" as const, value: undefined });
+    });
+    usePreviewMiniPlayerStore.getState().open(threadRef, source);
+
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <MiniPlayerHost />
+        </StrictMode>,
+      ),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+    });
+
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey[threadKey]?.source).toMatchObject({
+      sessionId: replacementOwner.sessionId,
+      leaseId: replacementOwner.leaseId,
+    });
+    expect([...owners.values()]).toEqual([replacementOwner]);
+    expect(openInputs.some((input) => input.sessionId === undefined)).toBe(true);
+
+    await act(async () => {
+      root.unmount();
+      rootMounted = false;
+      root = createRoot(container);
+      rootMounted = true;
+      root.render(
+        <StrictMode>
+          <MiniPlayerHost />
+        </StrictMode>,
+      );
+      await Promise.resolve();
+    });
+
+    expect([...owners.values()]).toEqual([replacementOwner]);
+    expect(fake.close).not.toHaveBeenCalled();
+    expect(
+      openInputs
+        .filter((input) => input.deviceId === device.id)
+        .every(
+          (input) =>
+            input.sessionId === owner.sessionId ||
+            (input.sessionId === replacementOwner.sessionId &&
+              input.leaseId === replacementOwner.leaseId) ||
+            input.sessionId === undefined,
+        ),
+    ).toBe(true);
   });
 });

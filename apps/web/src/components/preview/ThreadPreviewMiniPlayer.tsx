@@ -387,6 +387,7 @@ function DeviceMiniPlayer({
       const result = settlement.result;
       if (result._tag === "Success") {
         owner = { sessionId: result.value.sessionId, leaseId: result.value.leaseId };
+        usePreviewMiniPlayerStore.getState().updateDeviceOwner(threadRef, source, result.value);
         const verifiedOwnership = { key: sourceOwnerKey, owner, verified: true };
         leaseOwnershipRef.current = verifiedOwnership;
         setLeaseOwnership(verifiedOwnership);
