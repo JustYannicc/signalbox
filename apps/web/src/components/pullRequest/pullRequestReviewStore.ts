@@ -1,7 +1,11 @@
 import type { PullRequestRef, PullRequestReviewCommentDraft } from "@t3tools/contracts";
+import type { PullRequestWriteAttemptRecord } from "@t3tools/client-runtime/pull-request-write-attempt";
 import { create } from "zustand";
 
-export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
+export type PendingReviewComment = PullRequestReviewCommentDraft & {
+  readonly id: string;
+  readonly headSha?: string;
+};
 
 /**
  * A counter rather than anything derived from the comment: two remarks on one line can be the
@@ -25,15 +29,35 @@ export function pullRequestReviewKey(reference: PullRequestRef): string {
   ]);
 }
 
+export function pullRequestWriteAttemptKey(
+  reference: PullRequestRef,
+  kind: "comment" | "review",
+  environmentId: string,
+) {
+  return JSON.stringify([environmentId, pullRequestReviewKey(reference), kind]);
+}
+
+export function pendingReviewCommentsHaveStaleHead(
+  comments: ReadonlyArray<PendingReviewComment>,
+  headSha: string | undefined,
+): boolean {
+  return comments.some((comment) => comment.headSha !== headSha);
+}
+
 interface PullRequestReviewStoreState {
   readonly drafts: Readonly<Record<string, ReadonlyArray<PendingReviewComment>>>;
   readonly summaries: Readonly<Record<string, string>>;
+  readonly reviewedHeads: Readonly<Record<string, string>>;
+  readonly writeAttempts: Readonly<Record<string, PullRequestWriteAttemptRecord>>;
   readonly addComment: (key: string, comment: PendingReviewComment) => void;
   readonly removeComment: (key: string, commentId: string) => void;
   readonly removeComments: (key: string, commentIds: ReadonlyArray<string>) => void;
   readonly clear: (key: string) => void;
   readonly setSummary: (key: string, body: string) => void;
   readonly clearSummary: (key: string, submittedBody: string) => void;
+  readonly setReviewedHead: (key: string, headSha: string) => void;
+  readonly setWriteAttempt: (key: string, attempt: PullRequestWriteAttemptRecord) => void;
+  readonly clearWriteAttempt: (key: string, operationId: string) => void;
 }
 
 const EMPTY: ReadonlyArray<PendingReviewComment> = [];
@@ -41,6 +65,8 @@ const EMPTY: ReadonlyArray<PendingReviewComment> = [];
 export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((set) => ({
   drafts: {},
   summaries: {},
+  reviewedHeads: {},
+  writeAttempts: {},
   addComment: (key, comment) =>
     set((state) => ({
       drafts: { ...state.drafts, [key]: [...(state.drafts[key] ?? EMPTY), comment] },
@@ -73,6 +99,16 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
       if (state.summaries[key] !== submittedBody) return state;
       const { [key]: _removed, ...rest } = state.summaries;
       return { summaries: rest };
+    }),
+  setReviewedHead: (key, headSha) =>
+    set((state) => ({ reviewedHeads: { ...state.reviewedHeads, [key]: headSha } })),
+  setWriteAttempt: (key, attempt) =>
+    set((state) => ({ writeAttempts: { ...state.writeAttempts, [key]: attempt } })),
+  clearWriteAttempt: (key, operationId) =>
+    set((state) => {
+      if (state.writeAttempts[key]?.operationId !== operationId) return state;
+      const { [key]: _removed, ...rest } = state.writeAttempts;
+      return { writeAttempts: rest };
     }),
 }));
 
