@@ -46,6 +46,8 @@ export interface NodeProcessHostContext {
   readonly env: NodeProcessEnvironment;
   readonly identity: NodeRuntimeIdentity;
   readonly streams: NodeProcessStreams;
+  /** Monotonic nanoseconds for this host; defaults to the captured native clock. */
+  readonly monotonicNowNs?: () => bigint;
   readonly processes?: Pick<KernelProcessTable, "signalPid">;
   readonly parentProcessHandle?: KernelHandle<"process">;
 }
@@ -146,6 +148,9 @@ export function validateNodeProcessHost(context: NodeProcessHostContext): void {
     !context.streams.stderr
   ) {
     throw new TypeError("Node host context requires stdin, stdout and stderr streams");
+  }
+  if (context.monotonicNowNs !== undefined && typeof context.monotonicNowNs !== "function") {
+    throw new TypeError("Node host context monotonicNowNs must be a function when supplied");
   }
   validateNodeRuntimeIdentity(context.identity);
 }

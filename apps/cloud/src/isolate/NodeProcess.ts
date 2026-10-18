@@ -37,27 +37,32 @@ type HrtimeFunction = ((previous?: [number, number]) => [number, number]) & {
   bigint: () => bigint;
 };
 
-function createHrtime(): HrtimeFunction {
+function createHrtime(readMonotonicTimeNs?: () => bigint): HrtimeFunction {
   const nativeHrtime: unknown = Reflect.get(NodeProcess, "hrtime");
   const nativeBigint: unknown =
     typeof nativeHrtime === "function" ? Reflect.get(nativeHrtime, "bigint") : undefined;
+  const hostPerformance = typeof performance === "undefined" ? undefined : performance;
+  const performanceNow = hostPerformance ? Reflect.get(hostPerformance, "now") : undefined;
+  const monotonicNow =
+    readMonotonicTimeNs ??
+    (typeof nativeBigint === "function"
+      ? () => Reflect.apply(nativeBigint, nativeHrtime, []) as bigint
+      : () => {
+          if (typeof performanceNow !== "function" || !hostPerformance) {
+            return unsupportedNodeOperation("process.hrtime.bigint");
+          }
+          const milliseconds = Reflect.apply(performanceNow, hostPerformance, []) as number;
+          return BigInt(Math.floor(milliseconds * 1e6));
+        });
   const hrtime = ((previous?: [number, number]) => {
-    if (typeof nativeHrtime === "function") {
-      return (nativeHrtime as (previous?: [number, number]) => [number, number])(previous);
-    }
-    if (typeof performance === "undefined") unsupportedNodeOperation("process.hrtime");
-    const nanoseconds = BigInt(Math.floor(performance.now() * 1e6));
+    const nanoseconds = monotonicNow();
     const seconds = Number(nanoseconds / 1_000_000_000n);
     const remainder = Number(nanoseconds % 1_000_000_000n);
     if (!previous) return [seconds, remainder];
     const difference = nanoseconds - (BigInt(previous[0]) * 1_000_000_000n + BigInt(previous[1]));
     return [Number(difference / 1_000_000_000n), Number(difference % 1_000_000_000n)];
   }) as HrtimeFunction;
-  hrtime.bigint = () => {
-    if (typeof nativeBigint === "function") return (nativeBigint as () => bigint)();
-    if (typeof performance === "undefined") unsupportedNodeOperation("process.hrtime.bigint");
-    return BigInt(Math.floor(performance.now() * 1e6));
-  };
+  hrtime.bigint = monotonicNow;
   return hrtime;
 }
 
@@ -143,8 +148,10 @@ class HostProcess extends NodeEvents.EventEmitter {
   readonly stdin: NodeProcessHostContext["streams"]["stdin"];
   readonly stdout: NodeProcessHostContext["streams"]["stdout"];
   readonly stderr: NodeProcessHostContext["streams"]["stderr"];
-  readonly hrtime = createHrtime();
+  readonly hrtime: HrtimeFunction;
   readonly #host: NodeProcessHostContext;
+  readonly #monotonicNowNs: () => bigint;
+  readonly #startTimeNs: bigint;
 
   #state: NodeProcessState = "running";
   #exitCode: number | undefined;
@@ -152,6 +159,9 @@ class HostProcess extends NodeEvents.EventEmitter {
   constructor(host: NodeProcessHostContext) {
     super();
     this.#host = host;
+    this.hrtime = createHrtime(host.monotonicNowNs);
+    this.#monotonicNowNs = this.hrtime.bigint;
+    this.#startTimeNs = this.#monotonicNowNs();
     this.env = host.env;
     this.argv = [...host.identity.argv];
     this.execArgv = [...(host.identity.execArgv ?? [])];
@@ -264,7 +274,7 @@ class HostProcess extends NodeEvents.EventEmitter {
   getActiveResourcesInfo = unsupportedMeasurement("getActiveResourcesInfo");
   availableMemory = unsupportedMeasurement("availableMemory");
   constrainedMemory = unsupportedMeasurement("constrainedMemory");
-  uptime = unsupportedMeasurement("uptime");
+  uptime = () => Number(this.#monotonicNowNs() - this.#startTimeNs) / 1_000_000_000;
 }
 
 export function createNodeProcess(host: NodeProcessHostContext) {
