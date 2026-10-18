@@ -13,6 +13,13 @@ import {
   type ModuleDescriptor,
 } from "./moduleTransport.ts";
 
+interface FixtureRequest {
+  path: string;
+  method?: string;
+  bodyFile?: string;
+  contentType?: string;
+}
+
 interface Fixture {
   id: string;
   mainModule: string;
@@ -21,7 +28,98 @@ interface Fixture {
   allowGeneratedCode?: boolean;
   entrypoint: string;
   modules: Record<string, { path: string; type: "js" | "cjs" | "text" | "wasm" }>;
-  paths: string[];
+  paths?: string[];
+  requests?: FixtureRequest[];
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function parseFixture(value: unknown): Fixture {
+  if (!isRecord(value)) throw new Error("Fixture manifest must be an object");
+  const hasPaths = Object.hasOwn(value, "paths");
+  const hasRequests = Object.hasOwn(value, "requests");
+  if (hasPaths === hasRequests) {
+    throw new Error("Fixture manifest must define exactly one of paths or requests");
+  }
+  if (typeof value.id !== "string" || !value.id) throw new Error("Fixture id is required");
+  if (typeof value.mainModule !== "string") throw new Error("Fixture mainModule is required");
+  if (typeof value.entrypoint !== "string") throw new Error("Fixture entrypoint is required");
+  if (!isRecord(value.modules)) throw new Error("Fixture modules must be an object");
+  if (value.mode !== undefined && value.mode !== "facet" && value.mode !== "worker") {
+    throw new Error("Fixture mode must be facet or worker");
+  }
+  if (hasPaths) {
+    if (!Array.isArray(value.paths) || !value.paths.every((path) => typeof path === "string")) {
+      throw new Error("Fixture paths must be an array of strings");
+    }
+    return value as unknown as Fixture;
+  }
+  if (!Array.isArray(value.requests)) throw new Error("Fixture requests must be an array");
+  const requests = value.requests.map((request, index): FixtureRequest => {
+    if (!isRecord(request)) throw new Error(`Fixture request ${index} must be an object`);
+    if (
+      Object.keys(request).some(
+        (key) => !["path", "method", "bodyFile", "contentType"].includes(key),
+      )
+    ) {
+      throw new Error(`Fixture request ${index} has an unsupported field`);
+    }
+    if (typeof request.path !== "string" || !request.path) {
+      throw new Error(`Fixture request ${index} requires a path`);
+    }
+    if (
+      request.method !== undefined &&
+      (typeof request.method !== "string" ||
+        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(request.method) ||
+        ["CONNECT", "TRACE", "TRACK"].includes(request.method.toUpperCase()))
+    ) {
+      throw new Error(`Fixture request ${index} has an invalid method`);
+    }
+    if (
+      request.contentType !== undefined &&
+      (typeof request.contentType !== "string" || /[\r\n\0]/.test(request.contentType))
+    ) {
+      throw new Error(`Fixture request ${index} has an invalid contentType`);
+    }
+    if (request.bodyFile !== undefined) {
+      if (
+        typeof request.bodyFile !== "string" ||
+        !request.bodyFile ||
+        NodePath.isAbsolute(request.bodyFile) ||
+        NodePath.win32.isAbsolute(request.bodyFile)
+      ) {
+        throw new Error(`Fixture request ${index} bodyFile must be a relative path`);
+      }
+      const method = typeof request.method === "string" ? request.method : "GET";
+      if (["GET", "HEAD"].includes(method.toUpperCase())) {
+        throw new Error(
+          `Fixture request ${index} bodyFile requires a method other than GET or HEAD`,
+        );
+      }
+    }
+    return request as unknown as FixtureRequest;
+  });
+  return { ...value, requests } as unknown as Fixture;
+}
+
+function isWithinDirectory(directory: string, file: string) {
+  const relative = NodePath.relative(directory, file);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${NodePath.sep}`) &&
+    !NodePath.isAbsolute(relative)
+  );
+}
+
+async function readFixtureBody(directory: string, bodyFile: string) {
+  const root = await NodeFSP.realpath(directory);
+  const file = await NodeFSP.realpath(NodePath.resolve(root, bodyFile));
+  if (!isWithinDirectory(root, file)) {
+    throw new Error(`Fixture bodyFile must stay inside the fixture directory: ${bodyFile}`);
+  }
+  return NodeFSP.readFile(file);
 }
 
 const { values } = NodeUtil.parseArgs({
@@ -45,26 +143,34 @@ const rows: unknown[] = [];
 
 try {
   const endpoint = values.url ?? (await harness!.listen()).url.toString();
-  const send = async (input: object, session: string, modules?: readonly ModuleDescriptor[]) => {
+  const send = async (
+    input: object,
+    session: string,
+    modules?: readonly ModuleDescriptor[],
+    payload?: Uint8Array,
+  ) => {
     const url = new URL("/run", endpoint);
     url.searchParams.set("session", session);
     // Node fetch requires duplex for a streaming request body, including over HTTP/1.
+    const hasModuleTransport = modules !== undefined || payload !== undefined;
     const init: RequestInit & { duplex?: "half" } = {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
-        "content-type": modules ? MODULE_TRANSPORT_CONTENT_TYPE : "application/json",
+        "content-type": hasModuleTransport ? MODULE_TRANSPORT_CONTENT_TYPE : "application/json",
       },
-      body: modules ? encodeModuleTransport(input, modules) : JSON.stringify(input),
-      ...(modules ? { duplex: "half" } : {}),
+      body: hasModuleTransport
+        ? encodeModuleTransport(input, modules ?? [], {}, payload)
+        : JSON.stringify(input),
+      ...(hasModuleTransport ? { duplex: "half" } : {}),
       signal: AbortSignal.timeout(60_000),
     };
     return requestJson(url, init);
   };
   if (values.fixture) {
     const dir = NodePath.resolve(values.fixture);
-    const fixture: Fixture = JSON.parse(
-      await NodeFSP.readFile(NodePath.join(dir, "manifest.json"), "utf8"),
+    const fixture = parseFixture(
+      JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "manifest.json"), "utf8")),
     );
     const modules: ModuleDescriptor[] = [];
     const inventory: object[] = [];
@@ -78,27 +184,71 @@ try {
         sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
       });
     }
-    for (const [index, path] of fixture.paths.entries()) {
-      const id = `${runId}-${fixture.id}`;
-      rows.push({
-        fixture: fixture.id,
-        cold: index === 0,
-        path,
-        inventory,
-        ...(await send(
-          {
+    if (fixture.paths) {
+      for (const [index, path] of fixture.paths.entries()) {
+        const id = `${runId}-${fixture.id}`;
+        rows.push({
+          fixture: fixture.id,
+          cold: index === 0,
+          path,
+          inventory,
+          ...(await send(
+            {
+              id,
+              mode: fixture.mode ?? "facet",
+              allowOutbound: fixture.allowOutbound === true,
+              allowGeneratedCode: fixture.allowGeneratedCode === true,
+              path,
+              mainModule: fixture.mainModule,
+              entrypoint: fixture.entrypoint,
+            },
             id,
-            mode: fixture.mode ?? "facet",
-            allowOutbound: fixture.allowOutbound === true,
-            allowGeneratedCode: fixture.allowGeneratedCode === true,
-            path,
-            mainModule: fixture.mainModule,
-            entrypoint: fixture.entrypoint,
-          },
-          id,
-          modules,
-        )),
-      });
+            modules,
+          )),
+        });
+      }
+    } else {
+      for (const [index, request] of fixture.requests!.entries()) {
+        const id = `${runId}-${fixture.id}`;
+        const payload = request.bodyFile ? await readFixtureBody(dir, request.bodyFile) : undefined;
+        const requestEvidence = {
+          path: request.path,
+          method: request.method ?? "GET",
+          ...(request.contentType !== undefined ? { contentType: request.contentType } : {}),
+          ...(payload
+            ? {
+                payload: {
+                  bytes: payload.byteLength,
+                  sha256: NodeCrypto.createHash("sha256").update(payload).digest("hex"),
+                  bodyFile: request.bodyFile,
+                },
+              }
+            : {}),
+        };
+        rows.push({
+          fixture: fixture.id,
+          cold: index === 0,
+          path: request.path,
+          request: requestEvidence,
+          inventory,
+          ...(await send(
+            {
+              id,
+              mode: fixture.mode ?? "facet",
+              allowOutbound: fixture.allowOutbound === true,
+              allowGeneratedCode: fixture.allowGeneratedCode === true,
+              path: request.path,
+              ...(request.method !== undefined ? { method: request.method } : {}),
+              ...(request.contentType !== undefined ? { contentType: request.contentType } : {}),
+              mainModule: fixture.mainModule,
+              entrypoint: fixture.entrypoint,
+            },
+            id,
+            modules,
+            payload,
+          )),
+        });
+      }
     }
   } else {
     for (const path of ["/status", "/capabilities", "/jspi", "/wasm", "/sqlite?mib=16"]) {
