@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
 import { DriveAccess, DriveFileChange, Oid, SkippedFolder } from "./DriveProtocol.ts";
+import { PullOperation, PullResult } from "./PullProtocol.ts";
 import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
 
@@ -260,6 +261,10 @@ export const RunnerItem = Schema.Union([
     runId: RunId,
     message: Schema.String,
   }),
+  /** The result of applying one persisted pull operation to the thread's drive. */
+  Schema.Struct({ kind: Schema.Literal("git.pull.result"), result: PullResult }),
+  /** A pull had no durable result yet, so the thread may replay the same operation id. */
+  Schema.Struct({ kind: Schema.Literal("git.pull.interrupted"), id: Schema.String }),
   /** The folder's secrets could not all be loaded: the turn runs without the ones missing. */
   Schema.Struct({
     kind: Schema.Literal("secrets.notice"),
@@ -343,6 +348,8 @@ export const RunnerHello = Schema.Struct({
   ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
+  pulls: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
@@ -423,6 +430,8 @@ export const ThreadMessage = Schema.Union([
    * `hello` said it `drains`.
    */
   Schema.Struct({ type: Schema.Literal("drain"), id: NonNegativeInt }),
+  /** Applies a selected remote commit to the thread branch, preserving its WIP. */
+  Schema.Struct({ type: Schema.Literal("git.pull"), operation: PullOperation, drive: DriveAccess }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type ThreadMessage = typeof ThreadMessage.Type;

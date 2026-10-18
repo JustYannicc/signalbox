@@ -211,6 +211,9 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
           Effect.forkIn(scope),
           Effect.asVoid,
         );
+      case "git.pull":
+        // Fetches can take a while. Keep receiving turns, interrupts and drain requests meanwhile.
+        return Effect.asVoid(Effect.forkIn(turns.pull(message), scope));
       case "end":
         return Deferred.succeed(ended, message.reason).pipe(Effect.andThen(connection.close));
       default:
@@ -235,6 +238,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         build: input.build,
         drains: true,
         steers: true,
+        pulls: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
         takenPreparations: yield* turns.preparationsTaken,

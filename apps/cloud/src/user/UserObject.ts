@@ -89,6 +89,7 @@ import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
 import * as UserKeybindings from "./UserKeybindings.ts";
 import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
+import * as UserTimezone from "./UserTimezone.ts";
 import * as ChatArchive from "./chatArchive.ts";
 import { makeProfileId } from "./profileId.ts";
 
@@ -330,6 +331,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
               UserModelSettings.layer,
               UserKeybindings.layer,
               UserAnalyticsPreference.layer,
+              UserTimezone.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
@@ -578,6 +580,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
     return this.api.clientTraceDimensions(threadIds);
+  }
+
+  clientFolderDimensions(folderIds: Parameters<UserObjectApi["clientFolderDimensions"]>[0]) {
+    return this.api.clientFolderDimensions(folderIds);
   }
 
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {

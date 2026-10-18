@@ -9,7 +9,10 @@ import {
   type ThreadMessage,
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import { CLAUDE_STREAM_PREFIX } from "@signalbox/runner-protocol/SessionProtocol";
+import {
+  CLAUDE_STREAM_PREFIX,
+  type SessionAppend,
+} from "@signalbox/runner-protocol/SessionProtocol";
 import {
   CommandId,
   MessageId,
@@ -159,6 +162,11 @@ export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, te
     personal,
   );
 
+export const appendSession = (
+  context: Context.Context<SessionRows.SessionRows>,
+  input: SessionAppend,
+) => Context.get(context, SessionRows.SessionRows).append(input);
+
 /** Stores a row of Claude's session `nativeId`, as a machine's session store does. */
 export const saveSession = (context: Context.Context<SessionRows.SessionRows>, nativeId: string) =>
   Context.get(context, SessionRows.SessionRows).append({
@@ -178,6 +186,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  pulls: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>
@@ -417,3 +426,6 @@ export const hostFor = (
     holdsTurn: () => Promise.resolve(holds()),
     afterChange: () => Promise.resolve(),
   }));
+
+export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+export { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";
