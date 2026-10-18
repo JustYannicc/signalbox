@@ -81,15 +81,16 @@ export function useReviewGuideWriter({
       );
       attempt.current = prepared.attempt;
       const result = await generate({ environmentId, input: prepared.input });
+      pending.current = false;
+      setStarting(false);
       if (result._tag === "Success") attempt.current = undefined;
       if (result._tag === "Failure") {
         reportFailure(squashAtomCommandFailure(result));
       }
     } catch (cause) {
-      reportFailure(cause);
-    } finally {
       pending.current = false;
       setStarting(false);
+      reportFailure(cause);
     }
   };
 
