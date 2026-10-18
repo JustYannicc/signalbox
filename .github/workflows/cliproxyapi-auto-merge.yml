@@ -3,6 +3,10 @@
 name: CLIProxyAPI sync auto-merge
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - apps/cloud/containers/cliproxyapi/release.json
   workflow_run:
     workflows:
       - Deploy Signalbox Cloud
@@ -20,15 +24,18 @@ permissions:
 jobs:
   enable-auto-merge:
     if: >-
-      github.event.workflow_run.event == 'pull_request' &&
+      github.event_name == 'push' ||
+      (github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.head_branch == 'automation/cliproxyapi-update'
+      github.event.workflow_run.head_branch == 'automation/cliproxyapi-update')
+    concurrency:
+      group: cliproxyapi-sync-auto-merge
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
-      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      HEAD_BRANCH: automation/cliproxyapi-update
     steps:
       - name: Checkout release sync tools
         uses: actions/checkout@v6
@@ -38,18 +45,37 @@ jobs:
       - name: Resolve the release PR and current check results
         id: gate
         run: |
-          pr_json="$(gh pr list --state open --head "$HEAD_BRANCH" --json number,headRefOid)"
-          pr="$(jq -r --arg sha "$HEAD_SHA" '.[] | select(.headRefOid == $sha) | .number' <<< "$pr_json" | head -n1)"
+          # A late old completion can replace the current head's queued wakeup.
+          pr_json="$(gh pr list --state open --head "$HEAD_BRANCH" --json number,headRefOid,labels)"
+          pr="$(jq -r '.[0].number // empty' <<< "$pr_json")"
           if [[ -z "$pr" ]]; then
             echo "state=waiting" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          head_sha="$(jq -er --argjson pr "$pr" '.[] | select(.number == $pr) | .headRefOid' <<< "$pr_json")"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          backstop="$(jq -r --argjson pr "$pr" '.[] | select(.number == $pr) | any(.labels[]; .name == "cli-proxyapi-rollback")' <<< "$pr_json")"
+          echo "backstop=$backstop" >> "$GITHUB_OUTPUT"
+          policy_args=()
+          if [[ "$backstop" == "true" ]]; then policy_args+=(--backstop); fi
+          manifest=apps/cloud/containers/cliproxyapi/release.json
+          git fetch origin +refs/heads/main:refs/remotes/origin/main "$head_sha"
+          git show "origin/main:$manifest" > "$RUNNER_TEMP/cliproxyapi-current.json"
+          git show "$head_sha:$manifest" > "$RUNNER_TEMP/cliproxyapi-candidate.json"
+          version="$(jq -er '.version' "$RUNNER_TEMP/cliproxyapi-candidate.json")"
+          policy="$(python3 -m scripts.cliproxyapi.release_policy "$RUNNER_TEMP/cliproxyapi-current.json" "$version" "$RUNNER_TEMP/cliproxyapi-candidate.json" "${policy_args[@]}")"
+          if [[ "$(jq -r '.held or .staleRollback' <<< "$policy")" == "true" ]]; then
+            echo "state=held" >> "$GITHUB_OUTPUT"
+            echo "CLIProxyAPI $version is held or its rollback metadata is stale; auto-merge stays disabled." >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.holds[] | "- \(.reason) (\(.upstreamIssue)); reproduction: \(.reproduction)"' <<< "$policy" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           checks="$(gh pr checks "$pr" --json name,bucket,startedAt,workflow || true)"
           if ! jq -e 'type == "array"' <<< "$checks" >/dev/null; then
             echo "state=failed" >> "$GITHUB_OUTPUT"
-            echo "summary=Could not read the release PR checks for $HEAD_SHA." >> "$GITHUB_OUTPUT"
+            echo "summary=Could not read the release PR checks for $head_sha." >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -57,7 +83,7 @@ jobs:
           failures="$(jq -r '[.[] | select(.bucket == "fail") | "\(.workflow // "check") / \(.name)"] | unique | join(", ")' <<< "$latest")"
           if [[ -n "$failures" ]]; then
             echo "state=failed" >> "$GITHUB_OUTPUT"
-            echo "summary=Checks failed on ${HEAD_SHA:0:12}: $failures" >> "$GITHUB_OUTPUT"
+            echo "summary=Checks failed on ${head_sha:0:12}: $failures" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -65,7 +91,7 @@ jobs:
           for name in "Deploy preview cloud" "CLIProxyAPI container smoke"; do
             result="$(jq -r --arg name "$name" '[.[] | select(.name == $name)] | last | .bucket // "missing"' <<< "$latest")"
             if [[ "$result" != "pass" ]]; then
-              echo "Required gate '$name' is not green on $HEAD_SHA ($result)."
+              echo "Required gate '$name' is not green on $head_sha ($result)."
               ready=false
             fi
           done
@@ -83,7 +109,7 @@ jobs:
           echo "state=ready" >> "$GITHUB_OUTPUT"
 
       - name: Leave the release PR open while checks are blocked
-        if: steps.gate.outputs.pr != '' && steps.gate.outputs.state != 'ready'
+        if: always() && steps.gate.outputs.pr != '' && steps.gate.outputs.state != 'ready'
         env:
           PR: ${{ steps.gate.outputs.pr }}
         run: |
@@ -101,14 +127,36 @@ jobs:
         if: steps.gate.outputs.state == 'ready'
         env:
           PR: ${{ steps.gate.outputs.pr }}
+          CANDIDATE_SHA: ${{ steps.gate.outputs.head_sha }}
+          BACKSTOP: ${{ steps.gate.outputs.backstop }}
           CLOSE_REASON: The release checks are green and GitHub auto-merge is enabled.
         run: |
-          gh pr merge "$PR" --auto --squash
+          manifest=apps/cloud/containers/cliproxyapi/release.json
+          git fetch origin +refs/heads/main:refs/remotes/origin/main "$CANDIDATE_SHA"
+          git show "origin/main:$manifest" > "$RUNNER_TEMP/cliproxyapi-current.json"
+          git show "$CANDIDATE_SHA:$manifest" > "$RUNNER_TEMP/cliproxyapi-candidate.json"
+          version="$(jq -er '.version' "$RUNNER_TEMP/cliproxyapi-candidate.json")"
+          policy_args=()
+          if [[ "$BACKSTOP" == "true" ]]; then policy_args+=(--backstop); fi
+          policy="$(python3 -m scripts.cliproxyapi.release_policy "$RUNNER_TEMP/cliproxyapi-current.json" "$version" "$RUNNER_TEMP/cliproxyapi-candidate.json" "${policy_args[@]}")"
+          if [[ "$(jq -r '.held or .staleRollback' <<< "$policy")" == "true" ]]; then
+            auto_merge="$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+            if [[ "$auto_merge" == "true" ]]; then gh pr merge "$PR" --disable-auto; fi
+            echo "The final hold recheck blocked CLIProxyAPI $version; auto-merge stays disabled." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh pr merge "$PR" --auto --squash --match-head-commit "$CANDIDATE_SHA"
           node scripts/cliproxyapi/report-problem.mjs close
 
       - name: Report an auto-merge workflow problem
         if: failure()
         env:
+          PR: ${{ steps.gate.outputs.pr }}
           PROBLEM_SUMMARY: The auto-merge workflow could not finish its check or merge step.
           PROBLEM_DETAILS: "See this action run and the triggering workflow: ${{ github.event.workflow_run.html_url }}"
-        run: node scripts/cliproxyapi/report-problem.mjs report
+        run: |
+          if [[ -n "$PR" ]]; then
+            auto_merge="$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+            if [[ "$auto_merge" == "true" ]]; then gh pr merge "$PR" --disable-auto; fi
+          fi
+          node scripts/cliproxyapi/report-problem.mjs report

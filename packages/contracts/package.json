@@ -7,6 +7,10 @@
   ],
   "type": "module",
   "exports": {
+    "./clientIssues": {
+      "types": "./src/clientIssues.ts",
+      "import": "./src/clientIssues.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
@@ -30,6 +34,10 @@
     "./sections": {
       "types": "./src/sections.ts",
       "import": "./src/sections.ts"
+    },
+    "./personTimezone": {
+      "types": "./src/personTimezone.ts",
+      "import": "./src/personTimezone.ts"
     },
     "./signalboxAnalytics": {
       "types": "./src/signalboxAnalytics.ts",
@@ -83,9 +91,17 @@
       "types": "./src/signalboxSignIn.ts",
       "import": "./src/signalboxSignIn.ts"
     },
+    "./signalboxPersonBrowser": {
+      "types": "./src/signalboxPersonBrowser.ts",
+      "import": "./src/signalboxPersonBrowser.ts"
+    },
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"
+    },
+    "./signalboxLearner": {
+      "types": "./src/signalboxLearner.ts",
+      "import": "./src/signalboxLearner.ts"
     }
   },
   "scripts": {

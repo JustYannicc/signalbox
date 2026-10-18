@@ -2,6 +2,7 @@ import { SectionId } from "@t3tools/contracts/sections";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import {
   FolderId,
+  FolderOrigin,
   OnePasswordEnvironmentId,
   SecretEnvironmentName,
 } from "@t3tools/contracts/signalboxFolders";
@@ -23,6 +24,8 @@ export const FolderRow = Schema.Struct({
   position: Schema.Number,
   drive_id: Schema.NullOr(Schema.String),
   instructions: Schema.NullOr(Schema.String),
+  // Optional: a cloud from before folder lineage (#678 part 2) sends none.
+  origin: Schema.optionalKey(Schema.NullOr(Schema.fromJsonString(FolderOrigin))),
   // Optional: a cloud from before folder secrets (#395) sends none.
   secrets_environment_id: Schema.optionalKey(Schema.NullOr(OnePasswordEnvironmentId)),
   // Optional: a cloud from before per-secret subfolder access sends none.

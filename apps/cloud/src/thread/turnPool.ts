@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 
-import { poolKindOfInstance } from "./providerCatalog.ts";
+import { poolKindOfInstance } from "../models/ModelRouting.ts";
 
 /**
  * What a thread's turns run on and follow: its pool, its chain's `AGENTS.md`

@@ -1,3 +1,4 @@
+import { PERSON_TIMEZONE_REQUIRED_SCOPES } from "@t3tools/contracts/personTimezone"; // signalbox: cloud timezone
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
@@ -48,6 +49,7 @@ import { SIGNALBOX_PUSH_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPush
 import { SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxRepositories"; // signalbox: repositories
 import { SIGNALBOX_KEYS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxKeys"; // signalbox: personal keys
 import { SIGNALBOX_SIGN_IN_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxSignIn"; // signalbox: sign-in grants
+import { SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPersonBrowser"; // signalbox: cloud browser profile
 import { SECTIONS_RPC_REQUIRED_SCOPES } from "../sections/rpcScopes.ts"; // signalbox: sections
 import { ACCOUNT_POOL_RPC_SCOPES } from "../accountHub/poolRpcScopes.ts"; // signalbox: account pools
 
@@ -56,6 +58,7 @@ import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes"; // sig
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
+  ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES, // signalbox: contexts
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives
@@ -69,6 +72,7 @@ export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES, // signalbox: repositories
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES, // signalbox: personal keys
   ...SIGNALBOX_SIGN_IN_REQUIRED_SCOPES, // signalbox: sign-in grants
+  ...SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES, // signalbox: cloud browser profile
   ...SECTIONS_RPC_REQUIRED_SCOPES, // signalbox: sections
   ...ACCOUNT_POOL_RPC_SCOPES, // signalbox: account pools
   ...CLIENT_GUARDED_RPC_SCOPES,

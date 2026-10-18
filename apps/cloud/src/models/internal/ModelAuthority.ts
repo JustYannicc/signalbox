@@ -2,10 +2,11 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 
-import type { ModelGatewayRecord, ModelUsage } from "../../modelGateway/modelGatewayRecord.ts";
+import type { ModelGatewayRecord, ModelUsage } from "../ModelRecords.ts";
 import type {
   LocalModelAuthorization,
   ModelAuthorization,
+  ModelCallTrace,
   ModelForwardReply,
   ModelPoolRoute,
 } from "../ModelProtocol.ts";
@@ -24,6 +25,7 @@ export class ModelAuthority extends Context.Service<
       path: string,
       request: Request,
       thread?: string,
+      trace?: ModelCallTrace,
     ) => Promise<ModelForwardReply>;
     readonly recordThread: (threadId: ThreadId, record: ModelGatewayRecord) => Promise<void>;
     readonly recordLocal: (

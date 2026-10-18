@@ -27,8 +27,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
+import type { ModelCallTrace } from "../models/ModelProtocol.ts";
 import * as CliProxyApi from "./cliProxyApi.ts";
 import * as PoolContainer from "./PoolContainer.ts";
+import { unknownRelease } from "./CliProxyApiRuntime.ts";
+import { observePoolCall, PoolTelemetry } from "./PoolTelemetry.ts";
 import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
@@ -216,6 +219,7 @@ export class PoolEngine extends Context.Service<
       path: string,
       request: Request,
       thread?: string,
+      trace?: ModelCallTrace,
     ) => Effect.Effect<
       {
         readonly response: Response;
@@ -407,6 +411,7 @@ const make = Effect.gen(function* () {
   const store = yield* PoolStore.PoolStore;
   const container = yield* PoolContainer.PoolContainer;
   const external = yield* ExternalFetch;
+  const telemetry = yield* PoolTelemetry;
   const crypto = yield* Crypto.Crypto;
   const links = yield* PoolLinks.PoolLinks;
   const randomKey = PoolLinks.randomKey.pipe(Effect.provideService(Crypto.Crypto, crypto));
@@ -472,36 +477,72 @@ const make = Effect.gen(function* () {
    */
   const endpointOf = (
     row: PoolRow,
-    options?: { readonly passive?: true; readonly onSend?: () => void; readonly models?: true },
-  ): CliProxyApi.PoolEndpoint =>
-    row.backing === "external" &&
-    row.external_url !== null &&
-    row.external_management_key !== null &&
-    row.external_client_key !== null
+    options?: {
+      readonly passive?: true;
+      readonly onSend?: () => void;
+      readonly models?: true;
+      readonly actor?: PoolActor;
+      readonly thread?: string;
+      readonly trace?: ModelCallTrace;
+    },
+  ): CliProxyApi.PoolEndpoint => {
+    const remote =
+      row.backing === "external" &&
+      row.external_url !== null &&
+      row.external_management_key !== null &&
+      row.external_client_key !== null;
+    const endpoint = remote
       ? {
-          fetch: (request) => {
-            options?.onSend?.();
-            return external.fetch(request);
-          },
           baseUrl: row.external_url,
           managementKey: row.external_management_key,
           clientKey: row.external_client_key,
           link: isPoolLinkUrl(row.external_url),
         }
       : {
-          fetch: (request) =>
-            options?.passive
-              ? container.peek(request)
-              : container.fetch(request, {
-                  store: { accessKey: row.store_access_key, secretKey: row.store_secret_key },
-                  ...(options?.onSend === undefined ? {} : { onSend: options.onSend }),
-                  ...(options?.models ? { models: { clientKey: row.client_key } } : {}),
-                }),
           baseUrl: PoolContainer.CONTAINER_ORIGIN,
           managementKey: row.management_key,
           clientKey: row.client_key,
           link: false,
         };
+    return {
+      ...endpoint,
+      fetch: (request) =>
+        observePoolCall({
+          request,
+          baseUrl: endpoint.baseUrl,
+          backing: endpoint.link ? "linked" : remote ? "external" : "managed",
+          release: remote ? () => unknownRelease : container.release,
+          correlation: {
+            ...(options?.actor && { person: { id: options.actor.userId } }),
+            // Link affinity is caller-supplied; only the model authority supplies a trace.
+            ...(options?.trace && {
+              ...(options.thread && { thread: { id: options.thread } }),
+              turn: { id: options.trace.runId, traceId: options.trace.traceId },
+            }),
+          },
+          submit: telemetry.submit,
+          send: (onSend) => {
+            const sending = () => {
+              onSend();
+              options?.onSend?.();
+            };
+            if (remote) {
+              sending();
+              return external.fetch(request);
+            }
+            if (options?.passive) {
+              sending();
+              return container.peek(request);
+            }
+            return container.fetch(request, {
+              store: { accessKey: row.store_access_key, secretKey: row.store_secret_key },
+              onSend: sending,
+              ...(options?.models ? { models: { clientKey: row.client_key } } : {}),
+            });
+          },
+        }),
+    };
+  };
 
   /** The routing the pool's admins chose, or the default. */
   const routingOf = sql<{
@@ -682,16 +723,6 @@ const make = Effect.gen(function* () {
               WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
         }),
       );
-      // The models the accounts serve. A failed read keeps the last list.
-      yield* CliProxyApi.listModels(endpoint).pipe(
-        Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
-        Effect.catchTags({
-          PoolBackendError: (error) =>
-            Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
-              Effect.andThen(withSql(PoolModels.markTried(now))),
-            ),
-        }),
-      );
       const cached = yield* cachedAccounts;
       const known = new Map(cached.accounts.map((account) => [account.name, account]));
       const changed = live.filter((account) => {
@@ -709,26 +740,34 @@ const make = Effect.gen(function* () {
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
       if (changed.length === 0 && removed.length === 0 && cached.error === null) {
-        // Account-list freshness is independent of the usage probes below.
         yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
-        yield* refreshLimits(endpoint, live, now, mode);
-        return live;
-      }
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          for (const account of changed) {
-            const contributor = known.has(account.name) ? null : contributors(account.name);
-            yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
+      } else {
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            for (const account of changed) {
+              const contributor = known.has(account.name) ? null : contributors(account.name);
+              yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
                 contributed_by, added_at)
               VALUES (${account.name}, ${account.type}, ${account.email},
                 ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
               ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
                 disabled = excluded.disabled, signed_out = excluded.signed_out`;
-          }
-          for (const account of removed) {
-            yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
-          }
-          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+            }
+            for (const account of removed) {
+              yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
+            }
+            yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+          }),
+        );
+      }
+      // Account freshness must not wait for model discovery or provider usage probes.
+      yield* CliProxyApi.listModels(endpoint).pipe(
+        Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
+        Effect.catchTags({
+          PoolBackendError: (error) =>
+            Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
+              Effect.andThen(withSql(PoolModels.markTried(now))),
+            ),
         }),
       );
       yield* refreshLimits(endpoint, live, now, mode);
@@ -949,9 +988,7 @@ const make = Effect.gen(function* () {
       // The account list may already have committed while its usage probes were slow.
       const after = yield* cachedAccounts;
       if (after.checkedAt > cached.checkedAt) return after;
-      const now = yield* Clock.currentTimeMillis;
-      yield* sql`UPDATE accounts_state SET checked_at = ${now},
-        error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
+      yield* sql`UPDATE accounts_state SET error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
       return yield* cachedAccounts;
     });
 
@@ -1209,7 +1246,13 @@ const make = Effect.gen(function* () {
       return { imported, skipped };
     });
 
-  const forwardModel: PoolEngine["Service"]["forwardModel"] = (actor, path, request, thread) =>
+  const forwardModel: PoolEngine["Service"]["forwardModel"] = (
+    actor,
+    path,
+    request,
+    thread,
+    trace,
+  ) =>
     Effect.gen(function* () {
       // Said in the turn that fails, which is how someone removed from the pool finds out.
       const { row } = yield* access(actor, "member", {
@@ -1222,6 +1265,9 @@ const make = Effect.gen(function* () {
       const serving =
         yield* sql`SELECT 1 FROM accounts WHERE disabled = 0 AND signed_out = 0 LIMIT 1`;
       const endpoint = endpointOf(row, {
+        actor,
+        ...(thread === undefined ? {} : { thread }),
+        ...(trace === undefined ? {} : { trace }),
         onSend: () => {
           sent.at = clock.currentTimeMillisUnsafe();
         },

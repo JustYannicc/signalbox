@@ -1,3 +1,4 @@
+import { CLIENT_TRACES_PATH, contentFreeTracer } from "@t3tools/shared/clientTraceSafety";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -50,7 +51,7 @@ export function configureClientTracing(config: ClientTracingConfig = {}): Promis
 }
 
 async function applyClientTracingConfig(config: ClientTracingConfig): Promise<void> {
-  const otlpTracesUrl = resolvePrimaryEnvironmentHttpUrl("/api/observability/v1/traces");
+  const otlpTracesUrl = resolvePrimaryEnvironmentHttpUrl(CLIENT_TRACES_PATH);
   const exportIntervalMs = Math.max(10, config.exportIntervalMs ?? DEFAULT_EXPORT_INTERVAL_MS);
   const nextConfigKey = `${otlpTracesUrl}|${exportIntervalMs}`;
 
@@ -79,6 +80,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
         OtlpTracer.make({
           url: otlpTracesUrl,
           exportInterval: `${exportIntervalMs} millis`,
+          maxBatchSize: 128,
           resource: CLIENT_TRACING_RESOURCE,
         }),
       ),
@@ -106,7 +108,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
     return;
   }
 
-  ClientTracer.setDelegate(delegateResult.value);
+  ClientTracer.setDelegate(contentFreeTracer(delegateResult.value));
   activeRuntime = runtime;
   activeScope = scope;
 }

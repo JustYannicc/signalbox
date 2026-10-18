@@ -73,11 +73,11 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
       if (failure !== null) setError(failure.error);
       return failure === null;
     };
-    try {
+    await (async () => {
       if (await steps(step)) closeFolderDialog();
-    } finally {
+    })().finally(() => {
       setRunning(null);
-    }
+    });
   };
 
   const save = (event?: FormEvent) => {

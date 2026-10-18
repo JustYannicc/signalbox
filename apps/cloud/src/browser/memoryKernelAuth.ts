@@ -115,6 +115,12 @@ export const memoryKernelAuth = (sites: Readonly<Record<string, ReadonlyArray<Sc
         if (shown.flow_status === "SUCCESS") entry.connection = shown;
         return shown;
       }),
+    clearConnections: (profileName) =>
+      Effect.sync(() => {
+        for (const [id, entry] of live) {
+          if (entry.request.profile_name === profileName) live.delete(id);
+        }
+      }),
     stopSavingCredentials: (id) =>
       Effect.sync(() => {
         const entry = live.get(id);

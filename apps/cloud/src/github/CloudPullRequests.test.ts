@@ -188,6 +188,7 @@ const makeFixture = () => {
   const userShell = UserShell.UserShell.of({
     snapshot: Effect.succeed(shell),
     subscribe: () => Effect.succeed(Stream.empty),
+    subscribeArchived: Effect.succeed(Stream.empty),
     recordThreadSummary: () => Effect.void,
     rebuildThreadIndex: Effect.succeed(0),
   });
@@ -217,7 +218,7 @@ const makeFixture = () => {
   });
   const api = { host: "github.com" } as GitHubApi;
   const dependencies = Layer.mergeAll(
-    Layer.succeed(GitHub, GitHub.of({ pipes: null, api })),
+    Layer.succeed(GitHub, GitHub.of({ pipesForUser: () => Effect.succeed(null), api })),
     Layer.succeed(PullRequestRepository.PullRequestRepository, repository),
     Layer.succeed(UserShell.UserShell, userShell),
     Layer.succeed(UserDrives.UserDrives, userDrives),

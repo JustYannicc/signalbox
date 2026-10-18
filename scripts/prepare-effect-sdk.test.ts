@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - install-time filesystem and compiler fixtures.
+// @effect-diagnostics nodeBuiltinImport:off - Filesystem and compiler fixtures exercise install setup.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
@@ -10,13 +10,10 @@ import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { afterEach, expect } from "vite-plus/test";
-import getExePath from "@effect/tsgo/lib/getExePath";
 
-import rootPackage from "../package.json" with { type: "json" };
 import editorSettings from "../.vscode/settings.json" with { type: "json" };
 
 const require = NodeModule.createRequire(import.meta.url);
-const exec = NodeUtil.promisify(NodeChildProcess.exec);
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const roots: string[] = [];
 
@@ -26,7 +23,7 @@ afterEach(() => {
 
 function scratch() {
   const root = NodeFS.realpathSync(
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "effect-sdk-")),
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "tsc-rs-sdk-")),
   );
   roots.push(root);
   return root;
@@ -44,17 +41,17 @@ function link(target: string, path: string) {
 
 function stageWorktree(root: string) {
   NodeFS.mkdirSync(NodePath.join(root, "scripts"), { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(root, ".vscode"), { recursive: true });
+  write(NodePath.join(root, "package.json"), JSON.stringify({ type: "module" }));
   NodeFS.copyFileSync(
     NodeURL.fileURLToPath(new URL("./prepare-effect-sdk.ts", import.meta.url)),
     NodePath.join(root, "scripts/prepare-effect-sdk.ts"),
   );
-  write(NodePath.join(root, "package.json"), JSON.stringify(rootPackage));
+  write(NodePath.join(root, ".vscode/settings.json"), JSON.stringify(editorSettings));
   return root;
 }
 
 function sdkCompiler(worktree: string, compilerName: string) {
-  // VS Code's native resolveTsdkPathToExe falls back to <tsdk>/tsc[.exe].
-  // https://github.com/microsoft/typescript-go/blob/2bd066d87f5bafd315be9f40889d0a60b9e58e0b/_extension/src/util.ts
   return NodePath.join(worktree, editorSettings["js/ts.tsdk.path"], compilerName);
 }
 
@@ -75,165 +72,142 @@ function snapshot(directory: string): unknown {
     });
 }
 
-function stageEffectPackage(
+function stageTscRsPackage(
   store: string,
-  version: string,
-  platformName: string,
+  build: string,
+  platformPackageName: string,
   compilerName: string,
+  options: { includeCompiler?: boolean } = {},
 ) {
-  const effect = NodePath.join(store, `effect-tsgo-${version}`);
-  const platform = NodePath.join(store, `${platformName}-${version}`);
-  const artifact = NodePath.join(platform, "artifacts/typescript/7.0.2");
+  const tscRs = NodePath.join(store, `tsc-rs-${build}`);
+  const platform = NodePath.join(store, `${platformPackageName.replaceAll("/", "-")}-${build}`);
+  const library = NodePath.join(platform, "lib");
   write(
-    NodePath.join(effect, "package.json"),
+    NodePath.join(tscRs, "package.json"),
     JSON.stringify({
-      name: "@effect/tsgo",
-      version,
+      name: "tsc-rs",
+      version: "0.7.0",
       type: "module",
-      exports: { "./lib/getExePath": "./lib/getExePath.js" },
+      main: "lib/version.cjs",
+      exports: { ".": "./lib/version.cjs", "./package.json": "./package.json" },
     }),
   );
-  write(
-    NodePath.join(effect, "lib/getExePath.js"),
-    NodeFS.readFileSync(require.resolve("@effect/tsgo/lib/getExePath"), "utf8"),
-  );
+  write(NodePath.join(tscRs, "lib/version.cjs"), "exports.version = '7.1.0-dev';\n");
   write(
     NodePath.join(platform, "package.json"),
-    JSON.stringify({ name: `@effect/${platformName}`, version }),
-  );
-  write(
-    NodePath.join(platform, "lib/upstream.json"),
     JSON.stringify({
-      schemaVersion: 5,
-      components: { typescript: { "7.0.2": { gitHead: "fixture" } } },
+      name: platformPackageName,
+      version: "0.7.0",
+      type: "module",
+      exports: { "./package.json": "./package.json" },
     }),
   );
-  write(NodePath.join(artifact, compilerName), `Effect compiler ${version}`);
-  write(NodePath.join(artifact, "lib.d.ts"), `Effect standard library ${version}`);
-  link(platform, NodePath.join(effect, "node_modules/@effect", platformName));
-  return { effect, artifact };
+  if (options.includeCompiler !== false) {
+    const compiler = NodePath.join(library, compilerName);
+    write(compiler, `Rust compiler ${build}`);
+    NodeFS.chmodSync(compiler, 0o755);
+  }
+  write(NodePath.join(library, "lib.d.ts"), `Rust standard library ${build}`);
+  link(platform, NodePath.join(tscRs, "node_modules", platformPackageName));
+  return { tscRs, library };
 }
 
-it.effect("prepare isolates worktree SDK versions without changing shared packages", () =>
+it.effect("prepare isolates worktree SDKs without changing shared Rust packages", () =>
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;
     const architecture = yield* HostProcess.Architecture;
+    const nodeExecutable = yield* HostProcess.ExecutablePath;
     const compilerName = platform === "win32" ? "tsc.exe" : "tsc";
-    const platformName = `tsgo-${platform}-${architecture}`;
+    const platformPackageName = `@tsc-rs/${platform}-${architecture}`;
     yield* Effect.promise(async () => {
       const root = scratch();
       const store = NodePath.join(root, "store");
-      const typescript = NodePath.join(store, "typescript");
-      const native = NodePath.join(store, "typescript-platform");
-      write(
-        NodePath.join(typescript, "package.json"),
-        JSON.stringify({
-          name: "typescript",
-          version: "7.0.2",
-          gitHead: "fixture",
-        }),
-      );
-      write(NodePath.join(native, "lib", compilerName), "unpatched shared TypeScript");
-      write(NodePath.join(native, "lib/lib.d.ts"), "unpatched shared libraries");
-      const first = stageEffectPackage(store, "0.50.0", platformName, compilerName);
-      const second = stageEffectPackage(store, "0.51.1", platformName, compilerName);
-      const updated = stageEffectPackage(store, "0.52.0", platformName, compilerName);
+      NodeFS.mkdirSync(store);
+      const first = stageTscRsPackage(store, "first", platformPackageName, compilerName);
+      const second = stageTscRsPackage(store, "second", platformPackageName, compilerName);
+      const updated = stageTscRsPackage(store, "updated", platformPackageName, compilerName);
+      const missing = stageTscRsPackage(store, "missing", platformPackageName, compilerName, {
+        includeCompiler: false,
+      });
       const worktreeA = stageWorktree(NodePath.join(root, "worktree-a"));
       const worktreeB = stageWorktree(NodePath.join(root, "worktree-b"));
       for (const worktree of [worktreeA, worktreeB]) {
-        link(typescript, NodePath.join(worktree, "node_modules/typescript"));
-        link(
-          native,
-          NodePath.join(
-            worktree,
-            `node_modules/@typescript/typescript-${platform}-${architecture}`,
-          ),
-        );
+        NodeFS.mkdirSync(NodePath.join(worktree, "node_modules"), { recursive: true });
       }
-      link(first.effect, NodePath.join(worktreeA, "node_modules/@effect/tsgo"));
-      link(second.effect, NodePath.join(worktreeB, "node_modules/@effect/tsgo"));
+      link(first.tscRs, NodePath.join(worktreeA, "node_modules/tsc-rs"));
+      link(second.tscRs, NodePath.join(worktreeB, "node_modules/tsc-rs"));
 
-      // Run the actual prepare command; only Vite's unrelated config step is stubbed.
-      const bin = NodePath.join(root, "bin");
-      const vp = NodePath.join(bin, platform === "win32" ? "vp.cmd" : "vp");
-      write(vp, platform === "win32" ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
-      NodeFS.chmodSync(vp, 0o755);
-      const env = { ...process.env, PATH: `${bin}${NodePath.delimiter}${process.env.PATH ?? ""}` };
-      const prepare = (cwd: string) => exec(rootPackage.scripts.prepare, { cwd, env });
+      // Run the actual generator from independent worktrees, including a repeat install.
+      const prepare = (cwd: string) =>
+        execFile(nodeExecutable, ["scripts/prepare-effect-sdk.ts"], { cwd });
       const before = snapshot(store);
       await Promise.all([prepare(worktreeA), prepare(worktreeB)]);
       await prepare(worktreeA);
 
       expect(NodeFS.realpathSync(sdkCompiler(worktreeA, compilerName))).toBe(
-        NodePath.join(first.artifact, compilerName),
+        NodePath.join(first.library, compilerName),
       );
       expect(NodeFS.realpathSync(sdkCompiler(worktreeB, compilerName))).toBe(
-        NodePath.join(second.artifact, compilerName),
+        NodePath.join(second.library, compilerName),
       );
       expect(NodeFS.readFileSync(sdkCompiler(worktreeA, compilerName), "utf8")).toBe(
-        "Effect compiler 0.50.0",
+        "Rust compiler first",
       );
       expect(NodeFS.readFileSync(sdkCompiler(worktreeB, compilerName), "utf8")).toBe(
-        "Effect compiler 0.51.1",
+        "Rust compiler second",
       );
 
-      NodeFS.unlinkSync(NodePath.join(worktreeA, "node_modules/@effect/tsgo"));
-      link(updated.effect, NodePath.join(worktreeA, "node_modules/@effect/tsgo"));
+      NodeFS.unlinkSync(NodePath.join(worktreeA, "node_modules/tsc-rs"));
+      link(updated.tscRs, NodePath.join(worktreeA, "node_modules/tsc-rs"));
       await prepare(worktreeA);
       expect(NodeFS.realpathSync(sdkCompiler(worktreeA, compilerName))).toBe(
-        NodePath.join(updated.artifact, compilerName),
+        NodePath.join(updated.library, compilerName),
       );
       expect(NodeFS.realpathSync(sdkCompiler(worktreeB, compilerName))).toBe(
-        NodePath.join(second.artifact, compilerName),
+        NodePath.join(second.library, compilerName),
       );
       expect(
         NodeFS.readFileSync(
           NodePath.join(worktreeA, editorSettings["js/ts.tsdk.path"], "lib.d.ts"),
           "utf8",
         ),
-      ).toBe("Effect standard library 0.52.0");
+      ).toBe("Rust standard library updated");
       expect(snapshot(store)).toEqual(before);
 
-      const mismatched = NodePath.join(root, "mismatched-typescript");
-      write(
-        NodePath.join(mismatched, "package.json"),
-        JSON.stringify({
-          name: "typescript",
-          version: "7.0.2",
-          gitHead: "not-supported",
-        }),
-      );
-      NodeFS.unlinkSync(NodePath.join(worktreeA, "node_modules/typescript"));
-      link(mismatched, NodePath.join(worktreeA, "node_modules/typescript"));
-      await expect(prepare(worktreeA)).rejects.toThrow(
-        "No packaged Effect TypeScript executable matches installed TypeScript",
-      );
+      NodeFS.unlinkSync(NodePath.join(worktreeA, "node_modules/tsc-rs"));
+      link(missing.tscRs, NodePath.join(worktreeA, "node_modules/tsc-rs"));
+      await expect(prepare(worktreeA)).rejects.toThrow("missing its tsc executable");
       expect(NodeFS.realpathSync(sdkCompiler(worktreeA, compilerName))).toBe(
-        NodePath.join(updated.artifact, compilerName),
+        NodePath.join(updated.library, compilerName),
       );
       expect(NodeFS.realpathSync(sdkCompiler(worktreeB, compilerName))).toBe(
-        NodePath.join(second.artifact, compilerName),
+        NodePath.join(second.library, compilerName),
       );
       expect(snapshot(store)).toEqual(before);
     });
   }),
 );
 
-it.effect("generated SDK runs the installed Effect binary with its standard libraries", () =>
+it.effect("generated SDK runs the installed Rust compiler with its standard libraries", () =>
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;
+    const architecture = yield* HostProcess.Architecture;
+    const nodeExecutable = yield* HostProcess.ExecutablePath;
     const compilerName = platform === "win32" ? "tsc.exe" : "tsc";
+    const tscRsEntry = NodeFS.realpathSync(require.resolve("tsc-rs"));
+    const tscRsRequire = NodeModule.createRequire(tscRsEntry);
+    const platformPackageName = `@tsc-rs/${platform}-${architecture}`;
+    const platformPackagePath = NodeFS.realpathSync(
+      tscRsRequire.resolve(`${platformPackageName}/package.json`),
+    );
+    const installedLibrary = NodePath.join(NodePath.dirname(platformPackagePath), "lib");
     yield* Effect.promise(async () => {
       const worktree = stageWorktree(scratch());
       link(
-        NodePath.dirname(require.resolve("@effect/tsgo/package.json")),
-        NodePath.join(worktree, "node_modules/@effect/tsgo"),
+        NodePath.dirname(NodeFS.realpathSync(require.resolve("tsc-rs/package.json"))),
+        NodePath.join(worktree, "node_modules/tsc-rs"),
       );
-      link(
-        NodePath.dirname(require.resolve("typescript/package.json")),
-        NodePath.join(worktree, "node_modules/typescript"),
-      );
-      await execFile(process.execPath, ["scripts/prepare-effect-sdk.ts"], { cwd: worktree });
+      await execFile(nodeExecutable, ["scripts/prepare-effect-sdk.ts"], { cwd: worktree });
       write(
         NodePath.join(worktree, "valid.ts"),
         "const value: Promise<number> = Promise.resolve(1);\n",
@@ -246,7 +220,7 @@ it.effect("generated SDK runs the installed Effect binary with its standard libr
       expect(result.stdout).toBe("");
       expect(result.stderr).toBe("");
       expect(NodeFS.realpathSync(sdkCompiler(worktree, compilerName))).toBe(
-        NodeFS.realpathSync(getExePath()),
+        NodePath.join(installedLibrary, compilerName),
       );
     });
   }),

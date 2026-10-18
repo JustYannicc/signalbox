@@ -30,6 +30,7 @@ import { type SignalboxContext, SignalboxContextId } from "./signalboxContexts.t
 export const SIGNALBOX_FOLDERS_WS_METHODS = {
   subscribe: "signalbox.folders.subscribe",
   create: "signalbox.folders.create",
+  startFrom: "signalbox.folders.startFrom",
   update: "signalbox.folders.update",
   move: "signalbox.folders.move",
   delete: "signalbox.folders.delete",
@@ -45,6 +46,7 @@ export const SIGNALBOX_FOLDERS_WS_METHODS = {
 export const SIGNALBOX_FOLDERS_REQUIRED_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.create]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.update]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.move]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: AuthOrchestrationOperateScope,
@@ -152,10 +154,23 @@ export type FolderLevel = typeof FolderLevel.Type;
 export const FolderResolvedPool = Schema.Struct({ poolId: AccountPoolId, from: FolderLevel });
 export type FolderResolvedPool = typeof FolderResolvedPool.Type;
 
+/** The immutable source identity and point in history a folder started from. */
+export const FolderOrigin = Schema.Struct({
+  /** Canonical, source-qualified legacy catalog identity; this is not an access grant. */
+  legacyCatalogHome: TrimmedNonEmptyString,
+  folderId: FolderId,
+  name: FolderName,
+  driveId: TrimmedNonEmptyString,
+  head: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type FolderOrigin = typeof FolderOrigin.Type;
+
 export const Folder = Schema.Struct({
   id: FolderId,
   /** Its own name, or its files' when it was never renamed. */
   name: FolderName,
+  /** Where its files and history came from, fixed when it was started. */
+  origin: Schema.optionalKey(FolderOrigin),
   parentId: Schema.NullOr(FolderId),
   position: NonNegativeInt,
   /** Whose tree it's in: Personal, or a work organization. A folder never leaves it. */
@@ -243,6 +258,15 @@ export const FolderCreateInput = Schema.Struct({
   phases: Schema.optionalKey(Schema.NullOr(Schema.Array(FolderPhaseName))),
 });
 export type FolderCreateInput = typeof FolderCreateInput.Type;
+
+/** Starts a new top-level folder in the source's owner context, sharing its current history. */
+export const FolderStartFromInput = Schema.Struct({
+  id: FolderId,
+  newFolderId: FolderId,
+  /** Defaults to the source name with a copy suffix that avoids sibling collisions. */
+  name: Schema.optionalKey(FolderName),
+});
+export type FolderStartFromInput = typeof FolderStartFromInput.Type;
 
 /** Changes the given fields. */
 export const FolderUpdateInput = Schema.Struct({
@@ -359,6 +383,7 @@ const SubscribeRpc = Rpc.make(SIGNALBOX_FOLDERS_WS_METHODS.subscribe, {
 export const SIGNALBOX_FOLDERS_RPCS = [
   SubscribeRpc,
   change(SIGNALBOX_FOLDERS_WS_METHODS.create, FolderCreateInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.startFrom, FolderStartFromInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.update, FolderUpdateInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.move, FolderMoveInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.delete, FolderDeleteInput),
