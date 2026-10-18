@@ -44,8 +44,9 @@ import {
 import { commandOutputStream } from "./commandOutput/outputStream.ts";
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
-import type { DecisionContext } from "./threadEvents.ts";
+import { decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
+import type { Decision, DecisionContext } from "./threadEvents.ts";
+import { expireEndedRuntimeRequests } from "./runtimeRequests.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
 import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
@@ -403,6 +404,11 @@ const make = Effect.gen(function* () {
     return head;
   });
 
+  if (initial.owner !== null && initialProjection !== null) {
+    const events = expireEndedRuntimeRequests(initialProjection, yield* context);
+    if (events.length > 0) yield* commit({ events });
+  }
+
   /**
    * The thread as `actor` may see it: only its owner, while they're in its
    * context. Anyone else sees what an unknown id shows.
@@ -483,6 +489,24 @@ const make = Effect.gen(function* () {
           Effect.flatMap(poolErrorMessage(error), (message) => refuse(message, { record: false }));
         if (decision._tag === "rejected") {
           return yield* refuse(decision.message, { record: true });
+        }
+        const answersNativeRequest = decision.events.some(
+          (event) =>
+            event.type === "runtime-request.updated" &&
+            event.payload.status === "resolved" &&
+            event.payload.responseCapability.type === "live",
+        );
+        if (answersNativeRequest) {
+          const machine = yield* Effect.orDie(store.machine);
+          // Replacing a legacy callback cannot deliver an answer committed during its drain.
+          if (machine.status === "connected" && machine.runtimeResponses !== true) {
+            return yield* refuse(
+              machine.runtimeResponsesUpgrade === true
+                ? "This machine couldn't update to support questions and approvals. Stop this turn and wait for the machine to shut down before retrying."
+                : "This machine is updating. Try your answer again shortly.",
+              { record: false },
+            );
+          }
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");

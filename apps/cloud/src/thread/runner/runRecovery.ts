@@ -8,7 +8,8 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 
-import { finishRunEvents, isLiveRun, startRunEvents } from "../runLifecycle.ts";
+import { finishRunEvents, startRunEvents } from "../runLifecycle.ts";
+import { isLiveRun } from "../runState.ts";
 import { type DecisionContext, ids, messageEvent, turnItemEvent } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";
 import { systemNoticeEvents } from "./runnerEvents.ts";
