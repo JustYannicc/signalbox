@@ -27,6 +27,7 @@ import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
 import { TerminalCommandMessage, TerminalReportMessage } from "./TerminalProtocol.ts";
 import { FeedbackRequest, FeedbackResponse } from "./FeedbackProtocol.ts";
+import { ExecCommandMessage, ExecReportMessage } from "./ExecProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -70,12 +71,12 @@ import { FeedbackRequest, FeedbackResponse } from "./FeedbackProtocol.ts";
  *
  * A turn in a folder that names 1Password Environments also carries the
  * owner's service account token for them (`SecretsProtocol.ts`): the Runner
- * reads the values as a harness session starts, and masks them in every
- * frame it sends.
+ * reads the values as a harness session starts, and masks them in its
+ * text-bearing frames.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 7;
-/** Versions 5 and 6 remain readable while existing machines finish their image rollout. */
+export const RUNNER_PROTOCOL_VERSION = 8;
+/** Versions 5 through 7 remain readable while existing machines finish their image rollout. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
@@ -387,6 +388,8 @@ export const RunnerHello = Schema.Struct({
   runtimeResponses: Schema.optional(Schema.Boolean),
   /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
   pulls: Schema.optional(Schema.Boolean),
+  /** Runs non-PTY processes for the hosted kernel. */
+  exec: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
@@ -401,6 +404,7 @@ export const RunnerMessage = Schema.Union([
     items: Schema.Array(RunnerItem),
   }),
   TerminalReportMessage,
+  ExecReportMessage,
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type RunnerMessage = typeof RunnerMessage.Type;
@@ -432,6 +436,7 @@ export const ThreadMessage = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
   TerminalCommandMessage,
+  ExecCommandMessage,
   /** A committed response to a native request this live run observed on its harness session. */
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

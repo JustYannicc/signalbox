@@ -10,6 +10,7 @@ import type {
   TerminalCommandMessage,
   TerminalReport,
 } from "@signalbox/runner-protocol/TerminalProtocol";
+import type { ExecCommandMessage, ExecReport } from "@signalbox/runner-protocol/ExecProtocol";
 import {
   NodeId,
   OrchestrationV2ProviderThread,
@@ -30,10 +31,12 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as Stream from "effect/Stream";
 
 import { makeRunnerSession, RunnerConnectionError, type RunnerTransport } from "./RunnerSession.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerTerminals } from "./RunnerTerminals.ts";
+import type { RunnerExecHost } from "./RunnerExecHost.ts";
 
 const decodeProviderThread = Schema.decodeUnknownEffect(
   Schema.toCodecJson(OrchestrationV2ProviderThread),
@@ -65,6 +68,8 @@ const makeFakeThread = Effect.gen(function* () {
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
   const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+  const execCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+  const execReports = yield* Ref.make<ReadonlyArray<ExecReport>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   const terminalProcessIds = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   const terminalReports = yield* Ref.make<ReadonlyArray<TerminalReport>>([]);
@@ -99,6 +104,7 @@ const makeFakeThread = Effect.gen(function* () {
                 ...all,
                 message.runtimeResponses,
               ]);
+              yield* Ref.update(execCapabilities, (all) => [...all, message.exec]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
@@ -129,6 +135,9 @@ const makeFakeThread = Effect.gen(function* () {
               yield* Ref.update(terminalReports, (all) => [...all, message.report]);
               if (yield* Ref.getAndSet(dropOnTerminalReport, false)) yield* close;
               return;
+            case "exec.report":
+              yield* Ref.update(execReports, (all) => [...all, message.report]);
+              return;
           }
         });
       return { send, receive: Queue.take(inbox), close };
@@ -152,6 +161,8 @@ const makeFakeThread = Effect.gen(function* () {
     terminalReports,
     dropOnTerminalReport,
     runtimeResponseCapabilities,
+    execCapabilities,
+    execReports,
     helloRuns,
     dropAfterCommit,
     toCurrent,
@@ -286,6 +297,19 @@ const makeFakeTerminals = Effect.gen(function* () {
   const emitReport = (report: TerminalReport) =>
     Effect.flatMap(Deferred.await(emitRef), (emit) => emit(report));
   return { make, commands, replays, emitReport };
+});
+
+const makeFakeExec = Effect.gen(function* () {
+  const commands = yield* Queue.unbounded<ExecCommandMessage>();
+  const reports = yield* Queue.unbounded<ExecReport>();
+  const make = () =>
+    Effect.succeed({
+      handleCommand: (message: ExecCommandMessage) =>
+        Queue.offer(commands, message).pipe(Effect.asVoid),
+      reports: Stream.fromQueue(reports),
+    } satisfies RunnerExecHost);
+  const emit = (report: ExecReport) => Effect.asVoid(Queue.offer(reports, report));
+  return { make, commands: Queue.take(commands), emit };
 });
 
 const noopTerminals = {
@@ -495,6 +519,66 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
         ).toEqual(["snapshot", "event"]);
       }),
     ),
+  );
+
+  it.effect(
+    "advertises exec, routes commands and does not replay process output after reconnect",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const thread = yield* makeFakeThread;
+          const turns = yield* makeFakeTurns;
+          const exec = yield* makeFakeExec;
+          const session = yield* makeRunnerSession({
+            threadId,
+            generation: 1,
+            token: "token",
+            machineId: "machine",
+            imageVersion: "test",
+            build,
+            transport: thread.transport,
+            makeTurns: turns.make,
+            makeTerminals: makeNoopTerminals,
+            makeExec: exec.make,
+          });
+          yield* thread.ready;
+          expect(yield* Ref.get(thread.execCapabilities)).toEqual([true]);
+
+          const command: ExecCommandMessage = {
+            type: "exec.command",
+            command: {
+              type: "signal",
+              generation: 1,
+              processId: "process-1",
+              requestId: "signal-1",
+              signal: 2,
+            },
+          };
+          yield* thread.toCurrent(command);
+          expect(yield* exec.commands).toEqual(command);
+
+          const report: ExecReport = {
+            type: "output",
+            generation: 1,
+            processId: "process-1",
+            sequence: 1,
+            stream: "stdout",
+            dataBase64: "aGVsbG8=",
+          };
+          yield* exec.emit(report);
+          yield* settle(
+            Effect.map(Ref.get(thread.execReports), (all) => all.length === 1),
+            "first process output forwarded",
+          );
+
+          yield* session.dropConnection;
+          yield* settle(
+            Effect.map(Ref.get(thread.hellos), (all) => all.length === 2),
+            "Runner reconnect",
+          );
+          expect(yield* Ref.get(thread.execReports)).toEqual([report]);
+        }),
+      ),
   );
 
   it.effect("clears a failed replay socket before the next connection starts", () =>
