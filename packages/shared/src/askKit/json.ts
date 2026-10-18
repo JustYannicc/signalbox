@@ -54,17 +54,31 @@ export function canonicalJson(value: unknown): CanonicalJson {
 /**
  * Whether a value is JSON at all, with no size or depth bound: legacy surfaces accept whatever
  * the ask contract does. Iterative, so a deeply nested value can't exhaust the stack.
+ * Like `JSON.stringify`, a value reached twice is fine and only a cycle fails; a checked value is
+ * remembered so shared parts aren't walked again.
  */
 export function isJsonValue(value: unknown): boolean {
-  const pending: unknown[] = [value];
-  while (pending.length > 0) {
-    const node = pending.pop();
+  const ancestors = new Set<object>();
+  const checked = new WeakSet<object>();
+  const pending: Array<{ readonly node: unknown } | { readonly leave: object }> = [{ node: value }];
+  for (let entry = pending.pop(); entry !== undefined; entry = pending.pop()) {
+    if ("leave" in entry) {
+      ancestors.delete(entry.leave);
+      checked.add(entry.leave);
+      continue;
+    }
+    const { node } = entry;
     if (node === null || typeof node === "boolean" || typeof node === "string") continue;
     if (typeof node === "number" && Number.isFinite(node)) continue;
-    if (Array.isArray(node)) for (const item of node) pending.push(item);
-    else if (typeof node === "object" && isPlainObject(node)) {
-      for (const item of Object.values(node)) pending.push(item);
-    } else return false;
+    if (typeof node !== "object" || !(Array.isArray(node) || isPlainObject(node))) return false;
+    if (checked.has(node)) continue;
+    if (ancestors.has(node)) return false;
+    ancestors.add(node);
+    // Popped after every child, so `ancestors` holds exactly the path to the current node.
+    pending.push({ leave: node });
+    for (const child of Array.isArray(node) ? node : Object.values(node)) {
+      pending.push({ node: child });
+    }
   }
   return true;
 }

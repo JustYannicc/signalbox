@@ -1,11 +1,42 @@
-import type { AskKitProblem } from "@t3tools/contracts/askKit";
+import {
+  ASK_KIT_SLIDER_MAX_STEPS,
+  type AskKitProblem,
+  type AskKitSliderProps,
+} from "@t3tools/contracts/askKit";
 import * as Result from "effect/Result";
 
 import { canonicalJson, jsonProblem, problem, type Path } from "./json.ts";
 import type { AskKitComponentSpec, AskKitValue } from "./types.ts";
 
-export function onGrid(steps: number): boolean {
-  return Math.abs(steps - Math.round(steps)) <= 1e-9 * Math.max(1, Math.abs(steps));
+type SliderGrid = Pick<AskKitSliderProps, "min" | "max" | "step">;
+
+/**
+ * Rounding error a grid point may carry at these magnitudes: subtracting, scaling and adding
+ * back each lose at most an ulp of the largest number involved. Comparing by step counts alone
+ * fails far from zero, where `(value - min) / step` drifts by whole fractions of a step.
+ */
+const gridTolerance = ({ min, max, step }: SliderGrid) =>
+  8 * Number.EPSILON * Math.max(Math.abs(min), Math.abs(max), Math.abs(step));
+
+/**
+ * Steps from `min` to `max`, or null when the step doesn't divide the range into 1 to
+ * `ASK_KIT_SLIDER_MAX_STEPS` steps. A step within a few tolerances of zero is refused too:
+ * the grid points would sit closer than rounding error and off-grid numbers would pass.
+ */
+export function sliderStepCount(grid: SliderGrid): number | null {
+  const tolerance = gridTolerance(grid);
+  if (grid.step < 4 * tolerance) return null;
+  const count = Math.round((grid.max - grid.min) / grid.step);
+  if (count < 1 || count > ASK_KIT_SLIDER_MAX_STEPS) return null;
+  return Math.abs(grid.min + count * grid.step - grid.max) <= tolerance ? count : null;
+}
+
+/** Whether `value` is one of the grid's points, rebuilt as `min + k * step` and compared. */
+function onSliderGrid(grid: SliderGrid, value: number): boolean {
+  const count = sliderStepCount(grid);
+  const position = Math.round((value - grid.min) / grid.step);
+  if (count === null || position < 0 || position > count) return false;
+  return Math.abs(grid.min + position * grid.step - value) <= gridTolerance(grid);
 }
 
 /** A structured value against a kit component; `options` maps canonical option JSON to index. */
@@ -90,7 +121,7 @@ export function decodeKitValue(
           problem("answer-out-of-range", path, "The number is outside the slider's range."),
         );
       }
-      if (!onGrid((value - spec.min) / spec.step)) {
+      if (!onSliderGrid(spec, value)) {
         return Result.fail(
           problem("answer-off-step", path, "The number isn't on one of the slider's steps."),
         );

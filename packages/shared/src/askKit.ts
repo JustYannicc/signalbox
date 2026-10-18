@@ -26,7 +26,7 @@ import type {
   AskKitQuestion,
   AskKitResolution,
 } from "./askKit/types.ts";
-import { decodeKitValue, onGrid } from "./askKit/values.ts";
+import { decodeKitValue, sliderStepCount } from "./askKit/values.ts";
 
 export type {
   AskKitComponentSpec,
@@ -163,12 +163,11 @@ function componentSpec(
     case "slider": {
       const decoded = decodeProps(decodeComponentProps.slider(props), problems);
       if (decoded === null) return null;
-      const steps = (decoded.max - decoded.min) / decoded.step;
       if (decoded.min >= decoded.max) {
         problems.push(
           problem("slider-range-invalid", [...PROPS_PATH, "max"], "max must be above min."),
         );
-      } else if (steps > ASK_KIT_SLIDER_MAX_STEPS || !onGrid(steps)) {
+      } else if (sliderStepCount(decoded) === null) {
         problems.push(
           problem(
             "slider-step-invalid",

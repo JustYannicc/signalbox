@@ -151,6 +151,19 @@ describe("ask kit surfaces", () => {
     expect(codes(ask("slider", { min: 0, max: 10, step: 1 }))).toEqual(["options-unexpected"]);
   });
 
+  it("refuses slider steps that leave no step or sit below rounding error", () => {
+    const slider = (props: unknown) => ask("slider", props, { options: [] });
+    // One "step" of 1e12 over a range of 1 rounds to zero steps.
+    expect(codes(slider({ min: 0, max: 1, step: 1e12 }))).toEqual(["slider-step-invalid"]);
+    expect(codes(slider({ min: 0, max: 1, step: 0.6 }))).toEqual(["slider-step-invalid"]);
+    // At 1e12 a double resolves about 1e-4, so 1e-4 steps can't be told apart from rounding.
+    expect(codes(slider({ min: 1e12 - 0.001, max: 1e12, step: 0.0001 }))).toEqual([
+      "slider-step-invalid",
+    ]);
+    expect(codes(slider({ min: 999_999_999_999, max: 1e12, step: 0.1 }))).toEqual([]);
+    expect(codes(slider({ min: -1, max: 1, step: 0.25 }))).toEqual([]);
+  });
+
   it("rejects component shapes that can't answer the way the agent meant", () => {
     expect(codes(ask("ranking", {}, { multiSelect: true }))).toEqual(["multi-select-unsupported"]);
     expect(codes(ask("choices", {}, { options: [] }))).toEqual(["options-missing"]);

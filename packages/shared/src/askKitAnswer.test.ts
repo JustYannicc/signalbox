@@ -70,6 +70,20 @@ describe("ask kit answers", () => {
     expect(failureCode(answer(slider, "0.3"))).toBe("answer-invalid");
   });
 
+  it("finds grid points far from zero, where step counts drift", () => {
+    const far = ask("slider", { min: 999_999_999_999, max: 1e12, step: 0.1 }, { options: [] });
+    for (const value of [999_999_999_999, 999_999_999_999.1, 999_999_999_999.7, 1e12]) {
+      expect(answer(far, value)).toEqual(Result.succeed({ component: "slider", value }));
+    }
+    expect(failureCode(answer(far, 999_999_999_999.15))).toBe("answer-off-step");
+    expect(failureCode(answer(far, 999_999_999_999.05))).toBe("answer-off-step");
+
+    const signed = ask("slider", { min: -1, max: 1, step: 0.25 }, { options: [] });
+    expect(answer(signed, -0.75)).toEqual(Result.succeed({ component: "slider", value: -0.75 }));
+    expect(failureCode(answer(signed, -0.8))).toBe("answer-off-step");
+    expect(failureCode(answer(signed, 1.25))).toBe("answer-out-of-range");
+  });
+
   it("limits text answers and treats blanks as unanswered", () => {
     const text = ask("text", { maxLength: 5 }, { options: [] });
     expect(answer(text, "short")).toEqual(Result.succeed({ component: "text", text: "short" }));
@@ -129,5 +143,26 @@ describe("ask kit answers", () => {
     );
     expect(failureCode(answer(native, Number.POSITIVE_INFINITY))).toBe("json-invalid");
     expect(failureCode(answer(native, undefined))).toBe("json-invalid");
+  });
+
+  it("rejects cyclic values but accepts parts shared without a cycle", () => {
+    const native = ask("native-question", { header: "Pick" });
+    const loop: Record<string, unknown> = { name: "loop" };
+    loop.self = loop;
+    const ring: unknown[] = [1];
+    ring.push([ring]);
+    expect(failureCode(answer(native, loop))).toBe("json-invalid");
+    expect(failureCode(answer(native, { wrapped: ring }))).toBe("json-invalid");
+
+    const shared = { a: [1, 2] };
+    const reused = { x: shared, y: [shared, { z: shared }] };
+    expect(answer(native, reused)).toEqual(Result.succeed({ component: "legacy", value: reused }));
+
+    // Sixty stacked diamonds reach the bottom 2^60 ways; each part is checked once.
+    let diamond: unknown = "bottom";
+    for (let level = 0; level < 60; level++) diamond = [diamond, diamond];
+    expect(answer(native, diamond)).toEqual(
+      Result.succeed({ component: "legacy", value: diamond }),
+    );
   });
 });
