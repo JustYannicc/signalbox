@@ -21,6 +21,7 @@ import { serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
+import * as ClientActionTimings from "./observability/ClientActionTimings.ts";
 import type { KernelApi } from "./browser/KernelApi.ts";
 import type { KernelAuth } from "./browser/KernelAuth.ts";
 import * as PersonBrowsers from "./browser/PersonBrowsers.ts";
@@ -33,6 +34,7 @@ import * as CloudConfig from "./CloudConfig.ts";
 import { canWrite, myDriveId } from "./drive/driveAccess.ts";
 import * as DriveDirectory from "./drive/DriveDirectory.ts";
 import * as DriveFiles from "./drive/DriveFiles.ts";
+import * as DriveContentSearch from "./user/DriveContentSearch.ts";
 import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
@@ -265,6 +267,7 @@ const makeUserRuntime = (
           GitHubActions.layer,
           CloudPullRequests.layer.pipe(Layer.provideMerge(PullRequestRepository.layer)),
           UserPreviewSetup.layer,
+          DriveContentSearch.layer,
           CloudAssets.layer,
           LoginService.layer(logins),
           UserNotes.layer.pipe(Layer.provide(noteReader)),
@@ -353,7 +356,7 @@ const makeUserRuntime = (
               layerUserObjectTokens,
             ),
           ),
-          Layer.provideMerge(observe),
+          Layer.provideMerge(Layer.mergeAll(observe, ClientActionTimings.layerOff)),
         ),
       ),
       Layer.merge(automations),

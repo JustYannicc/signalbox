@@ -138,11 +138,11 @@ export default workflow(async (w, input: { resume?: SyncPr } | null) => {
     }
 
     // Green with nothing open: the folder's Merge gate decides, the same as an agent's merge_pull_request.
-    await w.start("Ask the merge gate", "Merge gate", {
+    await w.start("Merge gate", {
       threadId,
       url,
       note: `Upstream T3 Code sync opened by the "Sync upstream T3 Code" automation (#5). CI, Upstream Merge and Upstream Sync passed at the head.`,
-    });
+    }, { wait: false });
     await w.waitFor("Wait for the merge", {
       on: ["pr.merged", "pr.closed", "pr.checks.failed", "pr.conflicted"],
       where,

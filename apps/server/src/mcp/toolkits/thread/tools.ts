@@ -1,3 +1,4 @@
+import { askTools } from "./askTools.ts";
 import {
   ScheduledTaskId,
   ScheduledTask,
@@ -272,6 +273,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.OpenWorld, true);
 
 export const ThreadToolkit = Toolkit.make(
+  ...askTools,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadForkTool,

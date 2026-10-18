@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "./auth.ts";
+import { ClientActionTimingsBatch } from "./clientActionTiming.ts";
 
 export const SIGNALBOX_ANALYTICS_WS_METHODS = {
   getSettings: "signalbox.analytics.getSettings",
@@ -41,6 +42,10 @@ export const ProductAnalyticsClientEvent = Schema.Union([
   }),
   // Sent by the capture bar (#24).
   Schema.Struct({ event: Schema.Literal("capture.used") }),
+  Schema.Struct({
+    event: Schema.Literal("interaction.timings"),
+    samples: ClientActionTimingsBatch,
+  }),
 ]);
 export type ProductAnalyticsClientEvent = typeof ProductAnalyticsClientEvent.Type;
 

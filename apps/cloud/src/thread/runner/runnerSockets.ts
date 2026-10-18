@@ -47,6 +47,7 @@ export interface RunnerSocketAttachment {
   readonly sentTerminalRequests?: ReadonlyArray<string> | undefined;
   /** SHA-256 of pending stop identities. Older attachments stored an array per stop. */
   readonly sentWorkflowStops?: string | ReadonlyArray<string> | undefined;
+  /** Ids only; the committed projection owns the answer values. Reset on reconnect. */
   readonly runtimeResponses?: boolean | undefined;
   readonly sentRuntimeResponses?: ReadonlyArray<string> | undefined;
 }
@@ -158,12 +159,6 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     starting && work.secrets.length > 0
       ? await host.run(runner.use((service) => service.secretsToken))
       : null;
-  // Asked the same way, and only for a turn that resumes its harness session.
-  const handed = turn?.turn ?? null;
-  const freshSessionText =
-    starting && handed !== null && handed.providerThread.nativeThreadRef !== null
-      ? await host.run(runner.use((service) => service.freshSessionText(handed)))
-      : null;
   const drive: DriveAccess | null =
     work.drive === null || author === null ? work.drive : { ...work.drive, author };
   const terminalWork =
@@ -230,7 +225,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     ) {
       send(socket, {
         type: "turn.start",
-        turn: freshSessionText === null ? turn.turn : { ...turn.turn, freshSessionText },
+        turn: turn.turn,
         modelToken: turn.modelToken,
         drive,
         sessions: turn.sessions,
@@ -284,12 +279,13 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentSteers = Math.max(sentSteers, work.steers.length);
     }
     if (attachment.runtimeResponses === true && sentRunId === work.activeRunId) {
+      const sent = new Set(sentRuntimeResponses);
       for (const response of work.runtimeResponses) {
-        if (response.runId !== sentRunId || sentRuntimeResponses.includes(response.requestId))
-          continue;
+        if (response.runId !== sentRunId || sent.has(response.requestId)) continue;
         send(socket, response);
-        sentRuntimeResponses = [...sentRuntimeResponses, response.requestId];
+        sent.add(response.requestId);
       }
+      sentRuntimeResponses = [...sent];
     }
     // A drain asked for and not answered yet, once per connection (#493).
     let sentDrainId = attachment.sentDrainId;
@@ -316,7 +312,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentDrainId !== attachment.sentDrainId ||
       sentSteers !== (attachment.sentSteers ?? 0) ||
       sentTerminalRequests.join("\n") !== (attachment.sentTerminalRequests ?? []).join("\n") ||
-      sentRuntimeResponses !== attachment.sentRuntimeResponses
+      sentRuntimeResponses.length !== (attachment.sentRuntimeResponses?.length ?? 0)
     ) {
       socket.serializeAttachment({
         ...attachment,
