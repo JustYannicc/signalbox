@@ -75,6 +75,7 @@ const makeOwner = () => {
   const received: Array<Delivery> = [];
   const state = { down: false };
   const automations = CloudAutomations.CloudAutomations.of({
+    answerAsk: () => Effect.die("not used"),
     receiveHook: () => Effect.die("not used"),
     save: () => Effect.die("not used"),
     threadEvents: (input) =>
