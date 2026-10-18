@@ -5,7 +5,7 @@ import type {
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
-import type { UsageRecord, UsageSpeed } from "@t3tools/provider-core/server/usage";
+import type { UsageRecord, UsageSpeed } from "./usage.ts";
 
 export interface TokenRates {
   readonly inputCostPerToken: number;
