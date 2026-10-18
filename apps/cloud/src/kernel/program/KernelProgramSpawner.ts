@@ -323,22 +323,24 @@ export class KernelProgramSpawner {
           ...(prepared.home === undefined ? {} : { home: prepared.home }),
         }),
       };
-      const completion = runKernelExecution(controller.signal, async () => {
-        if (controller.signal.aborted) return terminatedStatus(sentSignal);
-        try {
-          const exit = await runKernelAsyncProgram(implementation.run, context, {
-            resolve: this.#resolve,
-            bindingFor: this.#bindingFor,
-            processes: this.#processes,
-            wakes: this.#wakes,
-            spawnFor,
-          });
-          return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
-        } catch (error) {
+      const completion = runKernelExecution(controller.signal, () =>
+        Promise.resolve().then(async () => {
           if (controller.signal.aborted) return terminatedStatus(sentSignal);
-          throw error;
-        }
-      });
+          try {
+            const exit = await runKernelAsyncProgram(implementation.run, context, {
+              resolve: this.#resolve,
+              bindingFor: this.#bindingFor,
+              processes: this.#processes,
+              wakes: this.#wakes,
+              spawnFor,
+            });
+            return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
+          } catch (error) {
+            if (controller.signal.aborted) return terminatedStatus(sentSignal);
+            throw error;
+          }
+        }),
+      );
       return { process: { completion, signal } };
     }
 

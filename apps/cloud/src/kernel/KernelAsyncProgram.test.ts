@@ -172,6 +172,41 @@ describe("KernelAsyncProgram", () => {
     }
   });
 
+  it("lets an async program signal itself before its first await", async () => {
+    let selfSignalAccepted = false;
+    const context = setup(
+      new Map([
+        [
+          "/bin/outer",
+          {
+            manifest: manifest("outer"),
+            implementation: {
+              kind: "async",
+              run: async (program) => {
+                selfSignalAccepted =
+                  program.processes.signal(program.identity.handle, 9).status === "ok";
+                await Promise.resolve();
+                return { exitCode: 0, signal: 0, coreDumped: false };
+              },
+            },
+          } satisfies KernelProgramBinding,
+        ],
+      ]),
+    );
+    const prepared = context.host.prepare({ filesystem: context.filesystem });
+    try {
+      const child = spawn(context.host, prepared);
+      await expect(context.host.exitStatus(child)).resolves.toMatchObject({
+        status: "ok",
+        value: { exitCode: 0, signal: 9 },
+      });
+      expect(selfSignalAccepted).toBe(true);
+      expect(context.host.processes.reap(child).status).toBe("ok");
+    } finally {
+      await context.close();
+    }
+  });
+
   it("reports explicit signals as exit status and parent abort as cancellation", async () => {
     const outerManifest = manifest("outer");
     const starts = [deferred(), deferred()];
