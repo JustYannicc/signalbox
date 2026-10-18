@@ -150,6 +150,69 @@ describe("GitWorkflowService", () => {
     }).pipe(Effect.provide(layerTest));
   });
 
+  it.effect("reads the checked-out branch with one narrow Git command", () => {
+    const execute = vi.fn((_input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.succeed({
+        exitCode: 0 as GitVcsDriver.ExecuteGitResult["exitCode"],
+        stdout: "refs/heads/feature/local-name\n",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+    );
+    const layerTest = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+        }),
+      ),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({ execute })),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const branch = yield* workflow.currentBranch("/repo");
+
+      assert.equal(branch, "feature/local-name");
+      assert.deepStrictEqual(execute.mock.calls[0]?.[0], {
+        operation: "GitWorkflowService.currentBranch",
+        cwd: "/repo",
+        args: ["symbolic-ref", "--quiet", "HEAD"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      });
+    }).pipe(Effect.provide(layerTest));
+  });
+
+  it.effect("returns no branch when the current checkout has detached HEAD", () => {
+    const execute = vi.fn((_input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.succeed({
+        exitCode: 1 as GitVcsDriver.ExecuteGitResult["exitCode"],
+        stdout: "",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+    );
+    const layerTest = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+        }),
+      ),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({ execute })),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+
+      assert.isNull(yield* workflow.currentBranch("/repo"));
+      assert.equal(execute.mock.calls.length, 1);
+    }).pipe(Effect.provide(layerTest));
+  });
+
   it.effect("returns an empty ref list when no VCS repository is detected", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
@@ -225,6 +288,49 @@ describe("GitWorkflowService", () => {
       ),
     );
   });
+
+  it.effect("reads branch names unambiguously when a tag has the same name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-current-branch-" });
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      for (const args of [
+        ["init", "-b", "release"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+        ["tag", "release"],
+      ]) {
+        yield* driver.execute({ operation: "test.setupRepo", cwd, args });
+      }
+      assert.equal(yield* workflow.currentBranch(cwd), "release");
+      yield* driver.execute({
+        operation: "test.setupRepo",
+        cwd,
+        args: ["checkout", "-b", "heads/release"],
+      });
+      assert.equal(yield* workflow.currentBranch(cwd), "heads/release");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+              detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+            }),
+          ),
+          Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provideMerge(GitVcsDriver.layer),
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-current-branch-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect("finds a name among the refs of every namespace", () =>
     Effect.gen(function* () {
