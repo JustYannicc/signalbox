@@ -430,9 +430,47 @@ describe("immutable drive content pages", () => {
         "nested/protected.txt": "needle",
       });
       const result = yield* scanDriveContents(reader, "commit", input);
-      expect(result.matches.map((match) => match.path)).toEqual(["keep.txt", "nested/open.txt"]);
+      expect(result.matches.map((match) => match.path)).toEqual([
+        "keep.txt",
+        "nested/open.txt",
+        "nested/protected.txt",
+      ]);
       expect(reader.blob.mock.calls.map(([oid]) => oid)).not.toContain("blob:blocked/.gitignore");
       expect(result.truncated).toBe(false);
+    }),
+  );
+
+  it.effect("lets the nearest ignore scope override an ancestor's .ignore rules", () =>
+    Effect.gen(function* () {
+      for (const included of [true, false]) {
+        const { reader } = fixture({
+          ".ignore": `${included ? "" : "!"}protected.txt\n`,
+          "nested/.gitignore": `${included ? "!" : ""}protected.txt\n`,
+          "nested/protected.txt": "needle",
+        });
+        const result = yield* scanDriveContents(reader, "commit", input);
+        expect(result.matches.map((match) => match.path)).toEqual(
+          included ? ["nested/protected.txt"] : [],
+        );
+      }
+    }),
+  );
+
+  it.effect("keeps admitted parents open when resolving a child's direct ignore rules", () =>
+    Effect.gen(function* () {
+      for (const name of ["folder", "folder [a]*?#!\\"]) {
+        const { reader } = fixture({
+          ".gitignore": "folder*/\n*.log\n",
+          "nested/.gitignore": "!folder*/\n",
+          [`nested/${name}/keep.txt`]: "needle",
+          [`nested/${name}/skip.log`]: "needle",
+        });
+        const result = yield* scanDriveContents(reader, "commit", input);
+        expect(result.matches.map((match) => match.path)).toEqual([`nested/${name}/keep.txt`]);
+        expect(reader.blob.mock.calls.map(([oid]) => oid)).not.toContain(
+          `blob:nested/${name}/skip.log`,
+        );
+      }
     }),
   );
 

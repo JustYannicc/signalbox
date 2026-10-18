@@ -117,25 +117,30 @@ export const scanDriveContents = Effect.fn("scanDriveContents")(function* (
     budget.excludePaths?.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ===
     true;
   const ignored = (path: string, directory: boolean) => {
-    let result = false;
-    // ripgrep gives .ignore precedence over .gitignore at every depth.
-    for (const index of [0, 1]) {
-      for (const frame of stack) {
-        const contents = frame.rules[index];
-        if (!contents) continue;
-        const key = `${index}:${frame.path}`;
-        let rules = ignoreMatchers.get(key);
-        if (rules === undefined) {
-          rules = ignore({ ignorecase: false }).add(contents);
-          ignoreMatchers.set(key, rules);
-        }
-        const relative = path.slice(frame.path.length);
-        const test = rules.test(`${relative}${directory ? "/" : ""}`);
-        if (test.ignored) result = true;
-        else if (test.unignored) result = false;
+    // Native fff resolves the closest matching scope first; .ignore wins within that scope.
+    for (let index = stack.length - 1; index >= 0; index--) {
+      const frame = stack[index]!;
+      if (frame.rules.every((contents) => contents.length === 0)) continue;
+      let scoped = ignoreMatchers.get(frame.path);
+      if (scoped === undefined) {
+        scoped = ignore({ ignorecase: false });
+        for (const contents of frame.rules) scoped.add(contents);
+        ignoreMatchers.set(frame.path, scoped);
       }
+      const relative = path.slice(frame.path.length);
+      let rules = scoped;
+      if (relative.includes("/")) {
+        rules = ignore({ ignorecase: false }).add(scoped);
+        // DFS already admitted these parents, possibly through a closer scope's negation.
+        for (let end = relative.indexOf("/"); end !== -1; end = relative.indexOf("/", end + 1)) {
+          const parent = relative.slice(0, end + 1).replace(/[\\*?[\]#! ]/gu, "\\$&");
+          rules.add({ pattern: `!/${parent}` });
+        }
+      }
+      const test = rules.test(`${relative}${directory ? "/" : ""}`);
+      if (test.ignored || test.unignored) return test.ignored;
     }
-    return result;
+    return false;
   };
   const load = Effect.fn("scanDriveContents.load")(function* (oid: Oid, rules: boolean) {
     const size = oid === EMPTY_TREE ? 0 : (yield* reader.sizes([oid])).get(oid);
