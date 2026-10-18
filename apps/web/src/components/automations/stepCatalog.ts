@@ -87,6 +87,10 @@ export const STEP_GROUPS: ReadonlyArray<CatalogGroup> = [
     title: "Waiting and memory",
     entries: [
       step("sleep", "Wait for a while, or until a time."),
+      step(
+        "eventCursor",
+        "Mark the current inbox position so a later wait only receives newer events.",
+      ),
       step("waitFor", "Wait for an outside event, with an optional timeout."),
       step("hook", "Make a link someone else calls back, then wait for the call."),
       step("recall", "Read a value saved by an earlier run, like a cursor or handled ids."),

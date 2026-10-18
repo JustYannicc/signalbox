@@ -1,11 +1,8 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  makeRecoveryDrill,
-  type RecoveryDrillEnv,
-  type RecoveryDrillState,
-} from "./RecoveryDrill.ts";
+import { makeRecoveryDrill } from "./RecoveryDrill.ts";
+import type { RecoveryDrillEnv, RecoveryDrillState } from "./RecoveryDrillProtocol.ts";
 import { NO_MACHINE } from "./ThreadStore.ts";
 import type { RecoveryEvidence, RecoveryInspection } from "./RecoveryEvidence.ts";
 
@@ -56,6 +53,7 @@ const fixture = (env: RecoveryDrillEnv = preview) => {
           inspected += 1;
           return evidence;
         }),
+      boatControl: async () => null,
       rearm: async () => {},
     });
   return {
@@ -89,7 +87,13 @@ describe("preview recovery drills", () => {
     { ...preview, RECOVERY_DRILLS: "" },
   ])("cannot operate or inspect a non-enabled preview: %j", async (env) => {
     const test = fixture(env);
-    expect(await test.drill().command("owner", command("enroll"))).toEqual({ error: "disabled" });
+    for (const input of [
+      command("enroll"),
+      command("kill-machine"),
+      { ...command("inspect-machine"), machineId: "untrusted" },
+    ]) {
+      expect(await test.drill().command("owner", input)).toEqual({ error: "disabled" });
+    }
     expect(test.inspected).toBe(0);
     expect(test.state).toBeUndefined();
   });
