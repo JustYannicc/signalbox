@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the carry preserves native Node stdio outside Effect.
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import type { Storage } from "../storage.ts";
 
 export function nativeStorage(_path: string): Storage {
@@ -17,7 +17,7 @@ export default {
   read(fd: number, buffers: Uint8Array[], _options: { position: null }) {
     let count = 0;
     for (const buffer of buffers) {
-      const read = NodeFs.readSync(fd, buffer, 0, buffer.byteLength, null);
+      const read = NodeFS.readSync(fd, buffer, 0, buffer.byteLength, null);
       count += read;
       if (read < buffer.byteLength) break;
     }
@@ -26,7 +26,7 @@ export default {
   write(fd: number, buffers: Uint8Array[], _options: { position: null }) {
     let count = 0;
     for (const buffer of buffers) {
-      const written = NodeFs.writeSync(fd, buffer, 0, buffer.byteLength, null);
+      const written = NodeFS.writeSync(fd, buffer, 0, buffer.byteLength, null);
       count += written;
       if (written < buffer.byteLength) break;
     }
