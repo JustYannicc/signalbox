@@ -6,6 +6,7 @@
     "./table": "./src/table.ts",
     "./definition": "./src/definition.ts",
     "./adapters/lunoraHome": "./src/adapters/lunoraHome.ts",
+    "./adapters/lunoraTables": "./src/adapters/lunoraTables.ts",
     "./adapters/lunoraSchema": "./src/adapters/lunoraSchema.ts",
     "./adapters/lunoraClient": "./src/adapters/lunoraClient.ts",
     "./adapters/evlog": "./src/adapters/evlog.ts",

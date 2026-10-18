@@ -47,6 +47,8 @@ export { DriveObject } from "./drive/DriveObject.ts";
 export { SearchIndexObject } from "./search/CloudflareSearchIndex.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
+export { HomeObject } from "./catalog/HomeObject.ts";
+export { CatalogScheduler } from "./catalog/catalogScheduler.ts";
 export { ExecutorTokenBindingObject } from "./executor/ExecutorTokenBindingObject.ts";
 export { AutomationHost, AutomationWorkflow } from "./automations/automationWorkflow.ts";
 

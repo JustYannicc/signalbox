@@ -37,6 +37,8 @@ import {
 } from "./infra/stage.ts";
 import type {
   DriveObject,
+  HomeObject,
+  CatalogScheduler,
   ExecutorTokenBindingObject,
   ModelGrants,
   PoolObject,
@@ -163,10 +165,15 @@ function workerEnv(target: CloudStage) {
     });
     const signingSeedId = `ExecutorTokenSigningKeySeed${target.cloudWorker.replaceAll("-", "")}`;
     const signingSeed = yield* Alchemy.makeRandom(signingSeedId, { bytes: 32 });
+    const catalogRelaySeed = yield* Alchemy.makeRandom(
+      `CatalogRelaySecret${target.cloudWorker.replaceAll("-", "")}`,
+      { bytes: 32 },
+    );
     const signingJwk = AlchemyOutput.map(signingSeed, (seed) =>
       Redacted.make(executorSigningJwk(Redacted.value(seed))),
     ).as<Redacted.Redacted<string>>();
     const shared = {
+      LUNORA_RELAY_SECRET: catalogRelaySeed,
       SEARCH_INDEX_GENERATION: search.generation,
       SEARCH_INDEX_DISABLED: search.disabled ? "1" : "0",
       T3CODE_WORKOS_CLIENT_ID: yield* Config.String("T3CODE_WORKOS_CLIENT_ID"),
@@ -287,6 +294,8 @@ function deploy(
         AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
+        HOMES: Cloudflare.DurableObject<HomeObject>(DO.HOMES),
+        CATALOG_SCHEDULER: Cloudflare.DurableObject<CatalogScheduler>(DO.CATALOG_SCHEDULER),
         SEARCH_INDEX: Cloudflare.DurableObject<SearchIndexObject>(DO.SEARCH_INDEX),
         EXECUTOR_TOKEN_BINDINGS: Cloudflare.DurableObject<ExecutorTokenBindingObject>(
           DO.EXECUTOR_TOKEN_BINDINGS,
