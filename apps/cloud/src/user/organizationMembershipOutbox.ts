@@ -50,7 +50,7 @@ export class OrganizationMembershipSnapshotError extends Schema.TaggedError<Orga
     reason: Schema.Literals([
       // Not a positive safe integer, so no revision could hold it.
       "invalid-sequence",
-      // One organization listed twice with different roles.
+      // Repeating an organization makes the accepted membership list ambiguous.
       "duplicate-organization",
       "invalid-organization",
       // The sequence was applied before, with different memberships.
@@ -97,16 +97,19 @@ const refuse = (reason: OrganizationMembershipSnapshotError["reason"]) =>
   Effect.fail(new OrganizationMembershipSnapshotError({ reason }));
 
 // A newer sequence always wins; the guard only keeps a corrupt row from going backwards.
-const upsert = (sequence: number, organizationId: string, roleSlugs: string | null) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO organization_membership_outbox
+const upsert = Effect.fnUntraced(function* (
+  sequence: number,
+  organizationId: string,
+  roleSlugs: string | null,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO organization_membership_outbox
         (organization_id, revision, role_slugs, pending)
       VALUES (${organizationId}, ${sequence}, ${roleSlugs}, 1)
       ON CONFLICT (organization_id) DO UPDATE SET revision = excluded.revision,
         role_slugs = excluded.role_slugs, pending = 1
       WHERE organization_membership_outbox.revision < excluded.revision`;
-  });
+});
 
 /**
  * Applies the memberships accepted refresh `sequence` read. Run it inside
@@ -123,10 +126,8 @@ export const syncSnapshot = (sequence: number, organizations: ReadonlyArray<Work
     const incoming = new Map<string, string>();
     for (const organization of organizations) {
       if (!isOrganizationId(organization.id)) return yield* refuse("invalid-organization");
-      const roleSlugs = normalRoleSlugs(organization);
-      const seen = incoming.get(organization.id);
-      if (seen !== undefined && seen !== roleSlugs) return yield* refuse("duplicate-organization");
-      incoming.set(organization.id, roleSlugs);
+      if (incoming.has(organization.id)) return yield* refuse("duplicate-organization");
+      incoming.set(organization.id, normalRoleSlugs(organization));
     }
 
     const sql = yield* SqlClient.SqlClient;

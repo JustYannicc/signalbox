@@ -221,15 +221,17 @@ describe("organization membership outbox", () => {
         { id: ACME, name: "Acme", roleSlugs: ["member"] },
       ]).pipe(Effect.flip);
       expect(duplicate).toMatchObject({ reason: "duplicate-organization" });
+      const sameRoles = yield* Outbox.syncSnapshot(1, [
+        { id: ACME, name: "Acme" },
+        { id: ACME, name: "Acme", roleSlugs: [] },
+      ]).pipe(Effect.flip);
+      expect(sameRoles).toMatchObject({ reason: "duplicate-organization" });
       const blank = yield* Outbox.syncSnapshot(1, [{ id: " ", name: "Blank" }]).pipe(Effect.flip);
       expect(blank).toMatchObject({ reason: "invalid-organization" });
       expect(yield* state).toEqual(before);
 
       expect(
-        yield* Outbox.syncSnapshot(Number.MAX_SAFE_INTEGER, [
-          { id: ACME, name: "Acme" },
-          { id: ACME, name: "Acme", roleSlugs: [] },
-        ]),
+        yield* Outbox.syncSnapshot(Number.MAX_SAFE_INTEGER, [{ id: ACME, name: "Acme" }]),
       ).toBe("applied");
       expect(yield* Outbox.acknowledge(ACME, Number.MAX_SAFE_INTEGER + 1)).toBe(false);
       expect(yield* Outbox.acknowledge(ACME, Number.MAX_SAFE_INTEGER)).toBe(true);

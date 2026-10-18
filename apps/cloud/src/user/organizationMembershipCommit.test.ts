@@ -126,6 +126,27 @@ describe("organization membership commits", () => {
     }).pipe(Effect.provide(layerMemoryStore)),
   );
 
+  it.effect("rejects repeated memberships before they can diverge from delivery records", () =>
+    Effect.gen(function* () {
+      const { contexts, memberships, outbox } = yield* services;
+      yield* contexts.syncOrganizations([...acmeAdmin, ...globexMember]);
+      const before = { memberships: yield* memberships, outbox: yield* outbox };
+      const duplicate = [...acmeAdmin, ...acmeAdmin];
+      const sequence = yield* contexts.reserveOrganizationRefresh;
+
+      const refreshed = yield* contexts
+        .completeOrganizationRefresh(sequence, duplicate)
+        .pipe(Effect.flip);
+      expect(refreshed).toMatchObject({ reason: "duplicate-organization" });
+      expect({ memberships: yield* memberships, outbox: yield* outbox }).toEqual(before);
+
+      const synced = yield* contexts.syncOrganizations(duplicate).pipe(Effect.flip);
+      expect(synced).toMatchObject({ reason: "duplicate-organization" });
+      expect({ memberships: yield* memberships, outbox: yield* outbox }).toEqual(before);
+      expect((yield* contexts.membership(GLOBEX)).membership?.roleSlugs).toEqual(["member"]);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
   it.effect("files a trusted sync under the sequence it reserved", () =>
     Effect.gen(function* () {
       const { contexts, pending } = yield* services;
