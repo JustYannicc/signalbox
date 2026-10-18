@@ -11,6 +11,7 @@ import {
   type DeviceSession,
 } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import * as actualCause from "effect/Cause";
 import { act, StrictMode, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -26,6 +27,7 @@ const fake = vi.hoisted(() => ({
   delayExactOwnerSessionId: null as string | null,
   delayNextManualSelection: false,
   pendingManualSelections: new Map<string, () => void>(),
+  streamReadOnlyValues: [] as boolean[],
 }));
 
 vi.mock("~/state/device", async () => {
@@ -133,7 +135,12 @@ vi.mock("../chat/ChatCanvasContext", () => ({
     layout: { frame: { x: 0, y: 0, width: 240, height: 420 } },
   }),
 }));
-vi.mock("../device/DeviceStreamView", () => ({ DeviceStreamView: () => null }));
+vi.mock("../device/DeviceStreamView", () => ({
+  DeviceStreamView: (props: { readonly readOnly: boolean }) => {
+    fake.streamReadOnlyValues.push(props.readOnly);
+    return null;
+  },
+}));
 vi.mock("~/components/ui/button", async () => {
   const React = await import("react");
   return {
@@ -169,12 +176,16 @@ vi.mock("~/components/ui/tooltip", async () => {
 });
 
 import { useClosedViewStore } from "../../closedViewStore";
-import { usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
-import { useRightPanelStore } from "../../rightPanelStore";
+import {
+  previewMiniPlayerSourceKey,
+  usePreviewMiniPlayerStore,
+} from "../../previewMiniPlayerStore";
 import type { ThreadPreviewState } from "../../previewStateStore";
-import { DevicePanel } from "./DevicePanel";
+import { useRightPanelStore } from "../../rightPanelStore";
+import { shouldRenderPreviewMiniPlayer } from "../ChatView.logic";
 import { ThreadPreviewMiniPlayer } from "../preview/ThreadPreviewMiniPlayer";
 import { useAgentOpenedPreviews } from "../preview/useAgentOpenedPreviews";
+import { DevicePanel } from "./DevicePanel";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
 const threadKey = scopedThreadKey(threadRef);
@@ -254,7 +265,7 @@ function setupLeaseService() {
       if (!existing || existing.leaseId !== input.leaseId) {
         return {
           _tag: "Failure" as const,
-          cause: { _tag: "DeviceOperationError", reason: "stale_session" },
+          cause: actualCause.fail({ _tag: "DeviceOperationError", reason: "stale_session" }),
         };
       }
       exactAdoptionCalls++;
@@ -380,6 +391,8 @@ function PanelHost() {
     sheetLayout: false,
   });
   const surface = panelState.surfaces.find((entry) => entry.id === panelState.activeSurfaceId);
+  const renderedSurface = panelState.isOpen ? (surface ?? null) : null;
+  const miniPlayerVisible = shouldRenderPreviewMiniPlayer(miniPlayerSource, renderedSurface);
   return (
     <>
       {surface?.kind === "device" ? (
@@ -392,7 +405,7 @@ function PanelHost() {
           onDismissSetup={() => undefined}
         />
       ) : null}
-      {miniPlayer ? (
+      {miniPlayer && miniPlayerVisible ? (
         <ThreadPreviewMiniPlayer threadRef={threadRef} miniPlayer={miniPlayer} />
       ) : null}
     </>
@@ -407,6 +420,7 @@ beforeEach(() => {
   container = document.createElement("div");
   root = createRoot(container);
   setupLeaseService();
+  fake.streamReadOnlyValues.length = 0;
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({
     byThreadKey: {},
@@ -572,6 +586,118 @@ describe("DevicePanel lease ownership", () => {
             input.sessionId === undefined,
         ),
     ).toBe(true);
+
+    const closeButton = container.querySelector<HTMLButtonElement>('[aria-label="Close device"]');
+    if (!closeButton) throw new Error("Expected the reacquired device panel close control.");
+    await act(async () => {
+      closeButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect([...owners.values()]).toEqual([]);
+    expect(closeInputs).toEqual([
+      expect.objectContaining({
+        sessionId: "panel-controller",
+        leaseId: "device-walk-1",
+      }),
+    ]);
+  });
+
+  it("floats the exact panel owner into an existing hidden same-device source", async () => {
+    const unrelatedRef = scopeThreadRef(
+      EnvironmentId.make("environment-2"),
+      ThreadId.make("other-thread"),
+    );
+    const unrelatedSource = {
+      kind: "device" as const,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: runtimeDevice.id,
+      platform: runtimeDevice.platform,
+      name: runtimeDevice.name,
+      sessionId: "other-environment-owner",
+      leaseId: "other-environment-walk",
+    };
+    usePreviewMiniPlayerStore.getState().open(unrelatedRef, unrelatedSource);
+    await startSelectedDevice();
+    const externalObserver: DeviceSession = {
+      sessionId: "other-client-observer",
+      leaseId: "device-walk-1",
+      requestId: "other-client-open",
+      ownerKind: "panel",
+      observer: true,
+      threadId: threadRef.threadId,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: runtimeDevice.id,
+      platform: runtimeDevice.platform,
+      openedAt: "2026-10-18T00:02:00.000Z",
+    };
+    owners.set(externalObserver.sessionId, externalObserver);
+    publish([...owners.values()]);
+
+    const existingSource = usePreviewMiniPlayerStore.getState().byThreadKey[threadKey]?.source;
+    expect(existingSource).toMatchObject({
+      kind: "device",
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: runtimeDevice.id,
+      sessionId: undefined,
+      leaseId: undefined,
+    });
+    expect(container.querySelector('[aria-label="Floating device preview"]')).toBeNull();
+    if (!existingSource || existingSource.kind !== "device")
+      throw new Error("Expected the hidden same-device mini-player source.");
+    const sourceKey = previewMiniPlayerSourceKey(existingSource);
+    usePreviewMiniPlayerStore.getState().resize(threadRef, sourceKey, 480, { x: 36, y: 52 });
+
+    const floatButton = container.querySelector<HTMLButtonElement>('[aria-label="Float device"]');
+    if (!floatButton) throw new Error("Expected the active device float control.");
+    fake.streamReadOnlyValues.length = 0;
+    await act(async () => floatButton.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey[threadKey]).toMatchObject({
+      source: {
+        kind: "device",
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: runtimeDevice.id,
+        sessionId: "panel-controller",
+        leaseId: "device-walk-1",
+      },
+      position: { x: 36, y: 52 },
+      width: 480,
+      lastInteraction: "resize",
+    });
+    expect(container.querySelector('[aria-label="Floating device preview"]')).not.toBeNull();
+    expect(fake.streamReadOnlyValues.at(-1)).toBe(false);
+    expect([...owners.values()]).toEqual([
+      expect.objectContaining({ sessionId: "panel-controller", observer: false }),
+      externalObserver,
+    ]);
+    expect(openInputs.filter((input) => input.sessionId === undefined)).toHaveLength(1);
+
+    const closeButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Close floating preview"]',
+    );
+    if (!closeButton) throw new Error("Expected the floating preview close control.");
+    await act(async () => {
+      closeButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect([...owners.values()]).toEqual([externalObserver]);
+    expect(
+      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(unrelatedRef)]?.source,
+    ).toEqual(unrelatedSource);
+    expect(closeInputs).toEqual([
+      expect.objectContaining({
+        sessionId: "panel-controller",
+        leaseId: "device-walk-1",
+      }),
+    ]);
   });
 
   it("floats and maximizes through the real mini-player and panel lifecycle", async () => {

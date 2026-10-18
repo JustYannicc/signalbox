@@ -37,7 +37,7 @@ import {
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { useThreadPreviewState } from "~/previewStateStore";
 import {
   type PreviewMiniPlayerSize,
@@ -333,83 +333,92 @@ function DeviceMiniPlayer({
     leaseOwnershipRef.current = { key: sourceOwnerKey, owner, verified: false };
     const heartbeat = async () => {
       const controller = new AbortController();
+      const requestId = randomUUID();
       requestController = controller;
-      const settlement = await settleDeviceOpenForSurface({
-        signal: controller.signal,
-        isCurrent: () => !cancelled,
-        open: (signal, requestId) =>
-          openDeviceLease(
-            {
+      useRightPanelStore.getState().beginDeviceOpen(threadRef, requestId, {
+        hostId: source.hostId,
+      });
+      try {
+        const settlement = await settleDeviceOpenForSurface({
+          signal: controller.signal,
+          isCurrent: () => !cancelled,
+          requestId,
+          open: (signal, requestId) =>
+            openDeviceLease(
+              {
+                environmentId: threadRef.environmentId,
+                input: {
+                  threadId: threadRef.threadId,
+                  hostId: source.hostId,
+                  deviceId: source.deviceId,
+                  platform: source.platform,
+                  requestId,
+                  ...(owner === null ? {} : owner),
+                },
+              },
+              signal,
+            ),
+          cancel: (requestId) =>
+            cancelDeviceOpen({
               environmentId: threadRef.environmentId,
               input: {
                 threadId: threadRef.threadId,
                 hostId: source.hostId,
                 deviceId: source.deviceId,
-                platform: source.platform,
                 requestId,
-                ...(owner === null ? {} : owner),
               },
-            },
-            signal,
-          ),
-        cancel: (requestId) =>
-          cancelDeviceOpen({
-            environmentId: threadRef.environmentId,
-            input: {
-              threadId: threadRef.threadId,
-              hostId: source.hostId,
-              deviceId: source.deviceId,
-              requestId,
-            },
-          }),
-        release: (session) => {
-          if (
-            retainedOwner !== null &&
-            session.sessionId === retainedOwner.sessionId &&
-            session.leaseId === retainedOwner.leaseId
-          )
-            return Promise.resolve();
-          return closeDeviceLease({
-            environmentId: threadRef.environmentId,
-            input: {
-              threadId: threadRef.threadId,
-              hostId: session.hostId,
-              deviceId: session.deviceId,
-              sessionId: session.sessionId,
-              leaseId: session.leaseId,
-            },
-          });
-        },
-        accept: () => undefined,
-      });
-      if (requestController === controller) requestController = null;
-      if (settlement._tag === "Cancelled") return;
-      const result = settlement.result;
-      if (result._tag === "Success") {
-        owner = { sessionId: result.value.sessionId, leaseId: result.value.leaseId };
-        usePreviewMiniPlayerStore.getState().updateDeviceOwner(threadRef, source, result.value);
-        const verifiedOwnership = { key: sourceOwnerKey, owner, verified: true };
-        leaseOwnershipRef.current = verifiedOwnership;
-        setLeaseOwnership(verifiedOwnership);
-      } else {
-        const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
-        const staleSession =
-          typeof failure === "object" &&
-          failure !== null &&
-          "_tag" in failure &&
-          failure._tag === "DeviceOperationError" &&
-          "reason" in failure &&
-          failure.reason === "stale_session";
-        if (owner !== null && staleSession) {
-          owner = null;
-          const staleOwnership = { key: sourceOwnerKey, owner: null, verified: false };
-          leaseOwnershipRef.current = staleOwnership;
-          setLeaseOwnership(staleOwnership);
-          timer = setTimeout(() => void heartbeat(), 0);
-          return;
+            }),
+          release: (session) => {
+            if (
+              retainedOwner !== null &&
+              session.sessionId === retainedOwner.sessionId &&
+              session.leaseId === retainedOwner.leaseId
+            )
+              return Promise.resolve();
+            return closeDeviceLease({
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: threadRef.threadId,
+                hostId: session.hostId,
+                deviceId: session.deviceId,
+                sessionId: session.sessionId,
+                leaseId: session.leaseId,
+              },
+            });
+          },
+          accept: () => undefined,
+        });
+        if (settlement._tag === "Cancelled") return;
+        const result = settlement.result;
+        if (result._tag === "Success") {
+          owner = { sessionId: result.value.sessionId, leaseId: result.value.leaseId };
+          usePreviewMiniPlayerStore.getState().updateDeviceOwner(threadRef, source, result.value);
+          const verifiedOwnership = { key: sourceOwnerKey, owner, verified: true };
+          leaseOwnershipRef.current = verifiedOwnership;
+          setLeaseOwnership(verifiedOwnership);
+        } else {
+          const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
+          const staleSession =
+            typeof failure === "object" &&
+            failure !== null &&
+            "_tag" in failure &&
+            failure._tag === "DeviceOperationError" &&
+            "reason" in failure &&
+            failure.reason === "stale_session";
+          if (owner !== null && staleSession) {
+            owner = null;
+            const staleOwnership = { key: sourceOwnerKey, owner: null, verified: false };
+            leaseOwnershipRef.current = staleOwnership;
+            setLeaseOwnership(staleOwnership);
+            timer = setTimeout(() => void heartbeat(), 0);
+            return;
+          }
         }
+        timer = setTimeout(() => void heartbeat(), 60_000);
+      } finally {
+        if (requestController === controller) requestController = null;
+        useRightPanelStore.getState().endDeviceOpen(threadRef, requestId);
       }
-      timer = setTimeout(() => void heartbeat(), 60_000);
     };
     void heartbeat();
     return () => {

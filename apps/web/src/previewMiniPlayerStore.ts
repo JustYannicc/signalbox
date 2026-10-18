@@ -78,6 +78,20 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
         current &&
         previewMiniPlayerSourceKey(current.source) === previewMiniPlayerSourceKey(source)
       ) {
+        if (
+          current.source.kind === "device" &&
+          source.kind === "device" &&
+          source.sessionId !== undefined &&
+          source.leaseId !== undefined &&
+          (current.source.sessionId !== source.sessionId ||
+            current.source.leaseId !== source.leaseId)
+        )
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: { ...current, source },
+            },
+          };
         return state;
       }
       return {
