@@ -1,4 +1,3 @@
-import { applyTextSourceEdits, type TextSourceMap } from "./textSourceMap.ts";
 import {
   COMPOSER_CONTEXT_LABEL_MAX_CHARS,
   type ComposerContextId,
@@ -139,21 +138,6 @@ export function replaceComposerContextReferences(
     cursor = occurrence.end;
   }
   return result + text.slice(cursor);
-}
-
-// signalbox: availability labels can change without moving surrounding Find intervals.
-export function replaceComposerContextReferencesSourceMap(
-  text: string,
-  replace: (occurrence: ComposerContextReferenceOccurrence) => string,
-): TextSourceMap {
-  return applyTextSourceEdits(
-    text,
-    collectComposerContextReferences(text).map((occurrence) => ({
-      start: occurrence.start,
-      end: occurrence.end,
-      text: replace(occurrence),
-    })),
-  );
 }
 
 const CONTEXT_ENVELOPE_TAG = "t3_context";

@@ -15,12 +15,7 @@ import {
 } from "./composerContextLegacy.ts";
 import { shouldPreserveAssistantLineBreaks } from "./markdownPipeline.ts";
 export { THREAD_FIND_BLOCK_TAGS } from "./threadFindMarkdown.ts";
-export { threadFindNodeLabelAnchor, type ThreadFindTextTree } from "./markdownTextSourceMap.ts";
-export {
-  resolveThreadFindRange,
-  resolveThreadFindRenderedRange,
-  threadFindRenderedLabels,
-} from "./threadFindProvenance.ts";
+export { resolveThreadFindRange } from "./threadFindProvenance.ts";
 export type {
   ThreadFindDocument,
   ThreadFindSegment,

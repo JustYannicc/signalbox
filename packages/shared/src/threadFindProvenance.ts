@@ -1,7 +1,6 @@
 import {
   isCompleteTextSourceMap,
   mergeTextRanges,
-  sourceRangeToText,
   textRangeToSource,
   validTextRange,
   type TextRange,
@@ -190,87 +189,4 @@ export function remapThreadFindDocument(
       }),
     })),
   };
-}
-
-export interface ThreadFindRenderedLabel {
-  readonly sourceStart: number;
-  readonly sourceEnd: number;
-  readonly label: string;
-}
-
-/** Label anchors come from the renderer's final parsed links, mapped to the original source. */
-export function threadFindRenderedLabels(
-  document: ThreadFindDocument,
-  map: TextSourceMap,
-  anchors: readonly TextRange[],
-): readonly ThreadFindRenderedLabel[] | null {
-  if (map.source !== document.source || !isCompleteTextSourceMap(map)) return null;
-  const labels: ThreadFindRenderedLabel[] = [];
-  const seen = new Set<ThreadFindDisplaySlot>();
-  for (const segment of document.segments)
-    for (const run of segment.runs) {
-      if (
-        run.target.kind !== "slot" ||
-        run.target.slot.kind !== "link-label" ||
-        seen.has(run.target.slot)
-      )
-        continue;
-      const slot = run.target.slot;
-      seen.add(slot);
-      const matches = anchors.filter((anchor) => {
-        const ranges = textRangeToSource(map, anchor);
-        return (
-          ranges?.length === 1 &&
-          ranges[0]!.start === slot.sourceStart &&
-          ranges[0]!.end === slot.sourceEnd
-        );
-      });
-      if (matches.length > 1) return null;
-      const anchor = matches[0];
-      // A split renderer owns only its slice of the original document.
-      if (anchor)
-        labels.push({ sourceStart: anchor.start, sourceEnd: anchor.end, label: slot.text });
-    }
-  return labels;
-}
-
-export function resolveThreadFindRenderedRange(
-  document: ThreadFindDocument,
-  segmentIndex: number,
-  range: TextRange,
-  map: TextSourceMap,
-  labels: readonly ThreadFindRenderedLabel[],
-) {
-  const resolved = resolveThreadFindRange(document, segmentIndex, range);
-  if (!resolved || map.source !== document.source || !isCompleteTextSourceMap(map)) return null;
-  const ranges: TextRange[] = [];
-  for (const source of resolved.ranges) {
-    const projected = sourceRangeToText(map, source);
-    if (!projected) return null;
-    ranges.push(...projected);
-  }
-  const selectedLabels: Array<
-    ThreadFindRenderedLabel & { kind: "link-label"; text: string; start: number; end: number }
-  > = [];
-  for (const selection of resolved.slots) {
-    if (selection.slot.kind !== "link-label") return null;
-    const candidates = labels.filter((label) => {
-      const source = textRangeToSource(map, { start: label.sourceStart, end: label.sourceEnd });
-      return (
-        source?.length === 1 &&
-        source[0]!.start === selection.slot.sourceStart &&
-        source[0]!.end === selection.slot.sourceEnd &&
-        label.label === selection.slot.text
-      );
-    });
-    if (candidates.length !== 1) return null;
-    selectedLabels.push({
-      ...candidates[0]!,
-      kind: "link-label",
-      text: selection.slot.text,
-      start: selection.start,
-      end: selection.end,
-    });
-  }
-  return { sourceMarkdown: map.text, ranges: mergeTextRanges(ranges), labels: selectedLabels };
 }
