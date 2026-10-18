@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { record, textField, writeJson } from "./ciArchive.ts";
+import { waitForProbeRouter } from "./readiness.ts";
 
 export interface OwnedWorker {
   script: string;
@@ -101,7 +102,9 @@ export class Cloudflare {
     owner.version = textField(versions[0], "version_id");
     const subdomain = textField(await this.request("/workers/subdomain"), "subdomain");
     if (!/^[a-z0-9-]+$/.test(subdomain)) throw new Error("Invalid account subdomain");
-    return `https://${owner.script}.${subdomain}.workers.dev`;
+    const url = `https://${owner.script}.${subdomain}.workers.dev`;
+    await waitForProbeRouter(url, secret, { fetch: (request) => this.fetcher(request) });
+    return url;
   }
 
   async actor(owner: OwnedWorker) {
