@@ -13,6 +13,7 @@
  * resources are retained, so no destroy or replace ever deletes them.
  */
 import * as Alchemy from "alchemy";
+import * as AlchemyOutput from "alchemy/Output";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import { searchSettings } from "./src/search/searchSettings.ts";
@@ -21,6 +22,7 @@ import * as Redacted from "effect/Redacted";
 import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
+import { executorSigningJwk } from "./infra/executorSigningKey.ts";
 import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
@@ -35,6 +37,7 @@ import {
 } from "./infra/stage.ts";
 import type {
   DriveObject,
+  ExecutorTokenBindingObject,
   ModelGrants,
   PoolObject,
   PreviewLinkRegistry,
@@ -144,6 +147,11 @@ function workerEnv(target: CloudStage) {
       SEARCH_INDEX_GENERATION: yield* optional("SEARCH_INDEX_GENERATION"),
       SEARCH_INDEX_DISABLED: yield* optional("SEARCH_INDEX_DISABLED"),
     });
+    const signingSeedId = `ExecutorTokenSigningKeySeed${target.cloudWorker.replaceAll("-", "")}`;
+    const signingSeed = yield* Alchemy.makeRandom(signingSeedId, { bytes: 32 });
+    const signingJwk = AlchemyOutput.map(signingSeed, (seed) =>
+      Redacted.make(executorSigningJwk(Redacted.value(seed))),
+    ).as<Redacted.Redacted<string>>();
     const shared = {
       SEARCH_INDEX_GENERATION: search.generation,
       SEARCH_INDEX_DISABLED: search.disabled ? "1" : "0",
@@ -157,6 +165,9 @@ function workerEnv(target: CloudStage) {
       EXECUTOR_MCP_URL: yield* optional("EXECUTOR_MCP_URL"),
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
+      EXECUTOR_TOKEN_PRIVATE_JWK: signingJwk,
+      // Optional public verification keys for tokens signed before an operator rotates the seed.
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: yield* optional("EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS"),
       // Optional: Claude and Codex on boat VMs.
       BOAT_API_KEY: yield* optionalSecret("BOAT_API_KEY"),
       // Optional: chat or task classifiers (`src/threadKinds/`); unset, threads stay tasks.
@@ -194,7 +205,12 @@ function workerEnv(target: CloudStage) {
 
 function deploy(
   target: CloudStage,
-  env: Readonly<Record<string, string | Redacted.Redacted<string>>>,
+  env: Readonly<
+    Record<
+      string,
+      string | Redacted.Redacted<string> | AlchemyOutput.Output<Redacted.Redacted<string>, unknown>
+    >
+  >,
   telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
@@ -258,6 +274,9 @@ function deploy(
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         SEARCH_INDEX: Cloudflare.DurableObject<SearchIndexObject>(DO.SEARCH_INDEX),
+        EXECUTOR_TOKEN_BINDINGS: Cloudflare.DurableObject<ExecutorTokenBindingObject>(
+          DO.EXECUTOR_TOKEN_BINDINGS,
+        ),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),
         // A managed pool's CLIProxyAPI, pinned in containers/cliproxyapi/release.json.

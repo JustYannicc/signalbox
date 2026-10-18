@@ -57,8 +57,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "pullRequests.comment": gap("#816"),
   "pullRequests.updateComment": gap("#816"),
   "pullRequests.submitReview": gap("#816"),
-  "pullRequests.replyToThread": gap("#816"),
-  "pullRequests.setThreadResolution": gap("#816"),
   "pullRequests.setReaction": gap("#816"),
   "pullRequests.runAction": gap("#817"),
   "pullRequests.update": gap("#817"),

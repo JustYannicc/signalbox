@@ -72,6 +72,7 @@ const setup = (
         backfill: async () => ({ _tag: "not_found" }),
         searchDocuments: async () => null,
         find: async () => ({ _tag: "not_found" }),
+        authorizeExecutorTurn: async () => false,
         requestPullRequestSync: async () => ({ _tag: "not_found" }),
         diagnostics: async () => null,
         previews: async () => null,
