@@ -1211,6 +1211,14 @@ describe("ThreadRunner", () => {
           const { projection } = yield* snapshot(engine);
           expect(projection.checkpoints).toMatchObject([
             {
+              id: `checkpoint:${turn.runId}:start`,
+              runId: turn.runId,
+              appRunOrdinal: null,
+              ordinalWithinScope: 0,
+              status: "ready",
+              files: [],
+            },
+            {
               runId: turn.runId,
               appRunOrdinal: turn.runOrdinal,
               ref: `..${commit}`,

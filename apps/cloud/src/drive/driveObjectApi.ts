@@ -66,6 +66,10 @@ export const makeDriveObjectApi = (
     forkCheckpoint: (userId, request) => run(store.use((s) => s.forkCheckpoint(userId, request))),
     restoreCheckpoint: (userId, request) =>
       changingOutbox(run(store.use((s) => s.restoreCheckpoint(userId, request)))),
+    restoreCheckpointStatus: (userId, request) =>
+      run(store.use((s) => s.restoreCheckpointStatus(userId, request))),
+    advanceThreadFence: (threadId, generation) =>
+      run(store.use((s) => s.advanceThreadFence(threadId, generation))),
     undoRestore: (userId, request) =>
       changingOutbox(run(store.use((s) => s.undoRestore(userId, request)))),
     updateToLatest: (userId, request) => run(store.use((s) => s.updateToLatest(userId, request))),

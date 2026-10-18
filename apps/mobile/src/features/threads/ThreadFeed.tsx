@@ -219,6 +219,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
+import { UndoLastTurnButton } from "./UndoLastTurnButton"; // signalbox: undo last turn (#398)
 import {
   fileRoutePathSegments,
   isAbsolutePath,
@@ -1332,6 +1333,14 @@ function renderFeedEntry(
                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
               </Pressable>
             ) : null}
+            {entry.pendingMessage ? null : ( // signalbox: undo last turn (#398)
+              <UndoLastTurnButton // signalbox: undo last turn (#398)
+                environmentId={props.environmentId} // signalbox: undo last turn (#398)
+                threadId={props.threadId} // signalbox: undo last turn (#398)
+                messageId={message.id} // signalbox: undo last turn (#398)
+                tintColor={iconSubtleColor} // signalbox: undo last turn (#398)
+              /> // signalbox: undo last turn (#398)
+            )}
             {presentation.text.trim().length > 0 ? (
               <UserMessageCopyButton
                 text={presentation.text}

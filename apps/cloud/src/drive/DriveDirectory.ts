@@ -22,6 +22,8 @@ import type {
   PromisedFile,
   RefWrite,
   RestoreCheckpointRequest,
+  RestoreCheckpointStatus,
+  ThreadFenceResult,
   UndoRestoreRequest,
   Shortcut,
   ShortcutChange,
@@ -130,6 +132,13 @@ export interface DriveObjectApi {
     userId: string,
     request: RestoreCheckpointRequest,
   ) => Promise<CheckpointOperationResult>;
+  /** Internal recovery evidence, never exposed through the drive's HTTP routes. */
+  readonly restoreCheckpointStatus: (
+    userId: string,
+    request: RestoreCheckpointRequest,
+  ) => Promise<RestoreCheckpointStatus>;
+  /** Internal lease retirement; does not create a thread, grant access or move refs. */
+  readonly advanceThreadFence: (threadId: string, generation: number) => Promise<ThreadFenceResult>;
   readonly undoRestore: (
     userId: string,
     request: UndoRestoreRequest,
@@ -201,6 +210,8 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     checkpoint: wrap("checkpoint"),
     forkCheckpoint: wrap("forkCheckpoint"),
     restoreCheckpoint: wrap("restoreCheckpoint"),
+    restoreCheckpointStatus: wrap("restoreCheckpointStatus"),
+    advanceThreadFence: wrap("advanceThreadFence"),
     undoRestore: wrap("undoRestore"),
     updateToLatest: wrap("updateToLatest"),
   } as DriveHandle;

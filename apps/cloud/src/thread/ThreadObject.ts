@@ -20,6 +20,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
+import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import {
@@ -58,6 +59,7 @@ import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
+import * as CheckpointRollback from "./CheckpointRollback.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
@@ -191,6 +193,8 @@ const makeRuntime = (
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
+  endOldRunners: (generation: number) => void,
+  setAlarmNoLaterThan: (at: number) => Promise<void>,
 ) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
@@ -216,6 +220,25 @@ const makeRuntime = (
         ),
       ),
       Layer.provideMerge(ThreadEngine.layer),
+      Layer.provideMerge(
+        CheckpointRollback.layer.pipe(
+          Layer.provide(
+            env.DRIVES === undefined
+              ? Layer.empty
+              : DriveDirectory.layerDurableObjects(env.DRIVES, {
+                  localWorkerd: env.LOCAL_WORKERD === "1",
+                }),
+          ),
+          Layer.provide(
+            Layer.succeed(CheckpointRollback.RollbackRuntime, {
+              arm: Effect.flatMap(Clock.currentTimeMillis, (now) =>
+                Effect.promise(() => setAlarmNoLaterThan(now + 1_000)),
+              ),
+              endRunners: (generation) => Effect.sync(() => endOldRunners(generation)),
+            }),
+          ),
+        ),
+      ),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
           Layer.provide(
@@ -305,6 +328,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           ),
       },
       () => this.threadId(),
+      (generation) => endRunners(ctx, generation, "Thread was undone."),
+      (at) => this.setAlarmNoLaterThan(at),
     );
     this.runnerHost = {
       ctx,

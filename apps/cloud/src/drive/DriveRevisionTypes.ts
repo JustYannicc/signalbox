@@ -55,12 +55,21 @@ export interface ForkCheckpointRequest {
 export interface RestoreCheckpointRequest {
   readonly threadId: string;
   readonly runId: string;
+  /** Restore the turn's start or end. Omitted means end. */
+  readonly boundary?: "start" | "end";
   readonly operationId: string;
   readonly expectedThread: Oid | null;
   readonly expectedWip: Oid | null;
   /** The generation the caller observed; the operation advances it by one. */
   readonly generation: number;
 }
+
+/** Internal recovery evidence. Never returns refs or bypasses public restore authorization. */
+export type RestoreCheckpointStatus = "committed" | "not-committed" | "unverified";
+
+export type ThreadFenceResult =
+  | { readonly _tag: "ok"; readonly generation: number }
+  | { readonly _tag: "missing" };
 
 export interface UndoRestoreRequest {
   readonly threadId: string;

@@ -635,7 +635,7 @@ describe("drive checkpoints and revisions", () => {
     }).pipe(Effect.provide(drives.layer));
   });
 
-  it.effect("adds restore snapshots when upgrading a drive with 0007 already applied", () => {
+  it.effect("upgrades revision recovery tables without rewriting existing receipts", () => {
     const layer = DriveStore.layer("my/personal/user_upgrade").pipe(
       Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
     );
@@ -647,6 +647,9 @@ describe("drive checkpoints and revisions", () => {
         thread_id TEXT PRIMARY KEY, base TEXT, generation INTEGER NOT NULL, opened_at INTEGER NOT NULL
       )`;
       yield* DriveRevisions.createTables.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      yield* sql`INSERT INTO drive_revision_operations
+        (thread_id, operation_id, kind, request_json, created_at)
+        VALUES ('legacy-thread', 'legacy-restore', 'restore', '{}', 0)`;
       yield* DriveEvents.createTables;
       yield* sql`CREATE TABLE effect_sql_migrations (
         migration_id INTEGER NOT NULL,
@@ -672,15 +675,19 @@ describe("drive checkpoints and revisions", () => {
         WHERE type = 'table' AND name = 'drive_restore_snapshots'`;
       const applied = yield* sql<{ readonly migration_id: number; readonly name: string }>`
         SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 7
-        ORDER BY migration_id`;
+        ORDER BY migration_id, name`;
       expect(snapshots).toHaveLength(1);
       expect(applied.map(({ migration_id, name }) => [migration_id, name])).toEqual([
         [7, "drive_revisions"],
         [8, "drive_restore_snapshots"],
         [9, "ref_deletions"],
+        [10, "restore_requesters"],
         [10, "shared_history_packs"],
         [11, "shared_history_transfers"],
       ]);
+      expect(
+        yield* sql`SELECT operation_id, request_json, requester_id FROM drive_revision_operations`,
+      ).toEqual([{ operation_id: "legacy-restore", request_json: "{}", requester_id: null }]);
     }).pipe(Effect.provide(layer));
   });
 });

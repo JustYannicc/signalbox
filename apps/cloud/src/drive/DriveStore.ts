@@ -16,6 +16,8 @@ import type {
   CheckpointOperationResult,
   ForkCheckpointRequest,
   RestoreCheckpointRequest,
+  RestoreCheckpointStatus,
+  ThreadFenceResult,
   UndoRestoreRequest,
   UpdateToLatestRequest,
 } from "./DriveRevisionTypes.ts";
@@ -37,6 +39,8 @@ export type {
   CheckpointOperationResult,
   ForkCheckpointRequest,
   RestoreCheckpointRequest,
+  RestoreCheckpointStatus,
+  ThreadFenceResult,
   UndoRestoreRequest,
   UpdateToLatestRequest,
 } from "./DriveRevisionTypes.ts";
@@ -289,6 +293,16 @@ export class DriveStore extends Context.Service<
       userId: string,
       request: RestoreCheckpointRequest,
     ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /** Internal recovery only: matches the recorded requester and exact restore without reading refs. */
+    readonly restoreCheckpointStatus: (
+      userId: string,
+      request: RestoreCheckpointRequest,
+    ) => Effect.Effect<RestoreCheckpointStatus, SqlError>;
+    /** Internal lease retirement. Raises an existing fence to at least this generation without moving refs. */
+    readonly advanceThreadFence: (
+      threadId: string,
+      generation: number,
+    ) => Effect.Effect<ThreadFenceResult, SqlError>;
     /**
      * Reverses one successful restore while preserving current refs under private refs.
      * The next Runner must use the generation returned here.
@@ -416,6 +430,7 @@ const migrations = Migrator.fromRecord({
   // Undo snapshots for restores already tracked by 0007.
   "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
   "0009_ref_deletions": DriveEvents.allowDeletedRefs,
+  "0010_restore_requesters": DriveRevisions.addOperationRequester,
   "0010_shared_history_packs": DriveHistory.createTables,
   "0011_shared_history_transfers": DriveHistory.createTransferTables,
 });
@@ -613,6 +628,20 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
       }
       return true;
     });
+
+  const advanceThreadFence: DriveStore["Service"]["advanceThreadFence"] = (threadId, generation) =>
+    Effect.gen(function* () {
+      if (!Number.isSafeInteger(generation) || generation < 0) {
+        return yield* Effect.die("A valid thread generation is required.");
+      }
+      const row = yield* threadRow(threadId);
+      if (row === null) return { _tag: "missing" } as const;
+      const next = Math.max(generation, row.generation);
+      if (next !== row.generation) {
+        yield* sql`UPDATE threads SET generation = ${next} WHERE thread_id = ${threadId}`;
+      }
+      return { _tag: "ok", generation: next } as const;
+    }).pipe(sql.withTransaction);
 
   const STALE: RefWrite = {
     _tag: "refused",
@@ -1092,6 +1121,7 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
   return DriveStore.of({
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     open,
+    advanceThreadFence,
     refs,
     ref,
     missing,

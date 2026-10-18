@@ -35,6 +35,7 @@ export const scriptedServerProvider = (checkedAt: string): ServerProvider => ({
   displayName: "Scripted",
   badgeLabel: "Preview",
   showInteractionModeToggle: false,
+  // Scripted runs do not capture checkpoints.
   supportsConversationRollback: false,
   supportsTextGeneration: false,
   enabled: true,

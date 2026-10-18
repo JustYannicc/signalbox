@@ -395,7 +395,7 @@ export const makeFakeDrive = (
       threads.get(threadId)![ref] = oid;
     },
     /** Applies the drive refs a restore would publish before a machine reopens the thread. */
-    pinToCheckpoint: (threadId: string, commit: string, views: CheckpointViews) => {
+    pinToCheckpoint: (threadId: string, commit: string | null, views: CheckpointViews) => {
       const refs = threads.get(threadId)!;
       refs.thread = commit;
       refs.wip = commit;

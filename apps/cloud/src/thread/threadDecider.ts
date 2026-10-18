@@ -77,6 +77,7 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request.link",
   "thread.pull-request.unlink",
   "thread.pull-request-link.sync",
+  "checkpoint.rollback",
   "thread.archive",
   "thread.unarchive",
 ] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
@@ -247,6 +248,8 @@ export function decide(
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
   switch (command.type) {
+    case "checkpoint.rollback":
+      return reject("Checkpoint rollback must run through the rollback service.");
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {

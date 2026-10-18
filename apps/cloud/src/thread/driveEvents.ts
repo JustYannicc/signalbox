@@ -105,7 +105,31 @@ export function checkpointEvents(
     // What the thread's machine state left out, for its details (#490).
     ...(item.skipped === undefined ? {} : { skipped: item.skipped }),
   };
-  return [...scopeEvents, { ...base, type: "checkpoint.captured", payload: checkpoint }];
+  const initial: ReadonlyArray<OrchestrationV2DomainEvent> =
+    run.ordinal === 1 && !projection.checkpoints.some((saved) => saved.ordinalWithinScope === 0)
+      ? [
+          {
+            ...base,
+            type: "checkpoint.captured",
+            payload: {
+              ...checkpoint,
+              id: CheckpointId.make(`checkpoint:${run.id}:start`),
+              parentCheckpointId: null,
+              ordinalWithinScope: 0,
+              appRunOrdinal: null,
+              ref: CheckpointRef.make(
+                item.start === null ? "empty" : `${item.start}..${item.start}`,
+              ),
+              files: [],
+            },
+          },
+        ]
+      : [];
+  return [
+    ...scopeEvents,
+    ...initial,
+    { ...base, type: "checkpoint.captured", payload: checkpoint },
+  ];
 }
 
 export function noticeEvents(

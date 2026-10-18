@@ -38,10 +38,18 @@ const turnOfMessage = (projection: Projection) => {
     null;
 };
 
-const conversation = (projection: Projection) =>
-  projection.messages.filter(
-    (message) => (message.role === "user" || message.role === "assistant") && message.text !== "",
+const conversation = (projection: Projection) => {
+  const removed = projection.runs.filter((run) => run.status === "rolled_back");
+  const runs = new Set(removed.map((run) => run.id));
+  const prompts = new Set(removed.map((run) => run.userMessageId));
+  return projection.messages.filter(
+    (message) =>
+      (message.role === "user" || message.role === "assistant") &&
+      message.text !== "" &&
+      (message.runId === null || !runs.has(message.runId)) &&
+      !prompts.has(message.id),
   );
+};
 
 /** Each turn's checkpoint: the files it saved and the commits they are between. */
 const checkpointsByTurn = (projection: Projection) => {
@@ -49,7 +57,9 @@ const checkpointsByTurn = (projection: Projection) => {
   const out = new Map<number, Projection["checkpoints"][number]>();
   for (const checkpoint of projection.checkpoints) {
     const turn = checkpoint.runId === null ? undefined : ordinals.get(checkpoint.runId);
-    if (turn !== undefined && checkpoint.status === "ready") out.set(turn, checkpoint);
+    if (turn !== undefined && checkpoint.status === "ready" && checkpoint.appRunOrdinal !== null) {
+      out.set(turn, checkpoint);
+    }
   }
   return out;
 };
@@ -70,7 +80,7 @@ export const threadTurns = (
   const messages = conversation(projection);
   return [...projection.runs]
     .sort((left, right) => left.ordinal - right.ordinal)
-    .filter((run) => only === null || run.ordinal === only)
+    .filter((run) => run.status !== "rolled_back" && (only === null || run.ordinal === only))
     .map((run) => {
       const checkpoint = checkpoints.get(run.ordinal);
       return {
