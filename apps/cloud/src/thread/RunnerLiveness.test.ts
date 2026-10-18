@@ -47,6 +47,46 @@ const runningRunner = (
   });
 
 describe("RunnerLiveness", () => {
+  it.effect("retries a failed disconnect write before starting recovery", () =>
+    withObject(freshDatabase(), (engine, runner, context) =>
+      Effect.gen(function* () {
+        const sockets: Array<WebSocket> = [];
+        yield* runningRunner(engine, runner, context, sockets);
+        const host = yield* hostFor(runner, sockets);
+        let attempts = 0;
+        const failingHost: typeof host = {
+          ...host,
+          run: (effect) => {
+            attempts += 1;
+            return attempts === 1
+              ? Promise.reject(new Error("disconnect write failed"))
+              : host.run(effect);
+          },
+        };
+        yield* TestClock.adjust("45 seconds");
+        const expiredAt = yield* Clock.currentTimeMillis;
+        yield* Effect.promise(() =>
+          expect(RunnerLiveness.inspect(failingHost, expiredAt)).rejects.toThrow(
+            "disconnect write failed",
+          ),
+        );
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, wakeAt: null });
+
+        expect(
+          yield* Effect.promise(() => RunnerLiveness.inspect(failingHost, expiredAt)),
+        ).toBeNull();
+        expect(attempts).toBe(2);
+        expect(yield* runner.reconcile).toMatchObject({ wakeAt: expiredAt + 60_000 });
+        yield* TestClock.adjust("60 seconds");
+        expect(yield* runner.reconcile).toMatchObject({ lost: true, release: 1 });
+        expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
+          "interrupted",
+          "starting",
+        ]);
+      }),
+    ),
+  );
+
   it.effect(
     "keeps a healthy Runner through reconstruction, expires the silent connection, and preserves its ack on reconnect",
     () =>

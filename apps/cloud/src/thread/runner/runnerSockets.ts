@@ -27,8 +27,6 @@ export interface RunnerSocketAttachment {
   readonly connection: number;
   /** Last Runner frame handled by the object, persisted through hibernation. */
   readonly lastActivityAt?: number | undefined;
-  /** Prevents repeated synthetic closes while a lost socket remains attached. */
-  readonly heartbeatExpiredAt?: number | undefined;
   /** The server ended or replaced this connection. */
   readonly inactive?: true | undefined;
   /** The run this socket's Runner was handed, until it ends or is stopped. */
@@ -301,10 +299,11 @@ export async function onRunnerClose(
   code = 1000,
   reason = "",
 ) {
-  // 1005 and 1006 only describe a close; they cannot be sent.
-  close(socket, code === 1005 || code === 1006 ? 1000 : code, reason);
   const attachment = attachmentOf(socket);
-  if (attachment === null || attachment.inactive === true) return;
+  if (attachment === null || attachment.inactive === true) {
+    close(socket, code === 1005 || code === 1006 ? 1000 : code, reason);
+    return;
+  }
   const replaced = host.ctx.getWebSockets(RUNNER_TAG).some((other) => {
     const replacement = other === socket ? null : attachmentOf(other);
     return (
@@ -312,9 +311,19 @@ export async function onRunnerClose(
       replacement.connection > attachment.connection
     );
   });
-  socket.serializeAttachment({ ...attachment, inactive: true });
-  if (replaced) return;
-  const detail = `code ${code}${reason === "" ? "" : `, ${reason}`}`;
-  await host.run(runner.use((service) => service.disconnected({ ...attachment, detail })));
-  await host.afterChange();
+  if (!replaced) {
+    const detail = `code ${code}${reason === "" ? "" : `, ${reason}`}`;
+    await host.run(runner.use((service) => service.disconnected({ ...attachment, detail })));
+  }
+  const current = attachmentOf(socket);
+  if (
+    current?.generation === attachment.generation &&
+    current.connection === attachment.connection
+  ) {
+    // A failed disconnect must remain eligible for the next alarm retry.
+    socket.serializeAttachment({ ...current, inactive: true });
+    // 1005 and 1006 only describe a close; they cannot be sent.
+    close(socket, code === 1005 || code === 1006 ? 1000 : code, reason);
+  }
+  if (!replaced) await host.afterChange();
 }

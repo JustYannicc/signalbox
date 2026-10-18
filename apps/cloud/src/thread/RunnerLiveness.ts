@@ -13,11 +13,7 @@ export const inspect = async (host: RunnerSocketHost, now: number): Promise<numb
   for (const socket of host.ctx.getWebSockets()) {
     if (!isRunnerSocket(host.ctx, socket)) continue;
     const attachment = (socket.deserializeAttachment() as RunnerSocketAttachment | null) ?? null;
-    if (
-      attachment === null ||
-      attachment.inactive === true ||
-      attachment.heartbeatExpiredAt !== undefined
-    ) {
+    if (attachment === null || attachment.inactive === true) {
       continue;
     }
 
@@ -28,11 +24,6 @@ export const inspect = async (host: RunnerSocketHost, now: number): Promise<numb
     }
     const deadline = Math.max(lastActivityAt, autoResponseAt ?? 0) + RUNNER_SILENCE_LIMIT_MS;
     if (now >= deadline) {
-      socket.serializeAttachment({
-        ...attachment,
-        lastActivityAt,
-        heartbeatExpiredAt: now,
-      });
       await onRunnerClose(host, socket, 1006, "heartbeat timed out");
       continue;
     }
