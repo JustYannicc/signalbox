@@ -1114,6 +1114,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox: one-environment copy for question answer files
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
@@ -2189,6 +2190,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     uploadsByImageId,
   });
   const needsReattachFileCount = composerFiles.filter(composerFileNeedsReattach).length;
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox: one-environment copy for question answer files
   const fileStagingLimit = fileAttachmentStagingLimit({
     attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
@@ -2204,7 +2206,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (questionAttachmentTarget &&
     !supportsQuestionAttachments &&
     (composerImages.length > 0 || composerFiles.length > 0)
-      ? "Update this server to send files with question answers"
+      ? environmentCopy("Update this server to send files with question answers") // signalbox: one-environment copy for question answer files
       : null) ??
     fileCapabilityBlockReason ??
     (supportsAttachmentUploads

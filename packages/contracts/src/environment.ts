@@ -160,6 +160,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   sections: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps the user's folders and thread homes (`signalboxFolders.ts`). */
   folders: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Server answers content queries with item anchors through `signalbox.search.query`. */
+  threadContentSearch: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps the user's notes and reads them (`signalboxNotes.ts`). */
   notes: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps standing sign-in grants (`signalboxSignIn.ts`). */

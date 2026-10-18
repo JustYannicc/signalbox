@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { DeviceHostId, DeviceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -92,8 +92,28 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(state.sessions.map((session) => session.hostId)).toEqual(["b"]);
     expect(state.hostStatuses.a?.status).toBe("ready");
     expect(state.hostStatuses.offline?.status).toBe("failed");
+    const panelSession = state.sessions[0]!;
+    yield* service.close({
+      threadId,
+      hostId: panelSession.hostId,
+      deviceId: panelSession.deviceId,
+      sessionId: panelSession.sessionId,
+      leaseId: panelSession.leaseId,
+    });
+    const providerSessionId = ProviderSessionId.make("provider-session-b");
+    const agentSession = yield* service.open(
+      { threadId, hostId: "b", deviceId: "emulator-5554", platform: "android" },
+      { kind: "agent", providerSessionId },
+    );
     const targeting = yield* service
-      .agentTarget({ threadId, hostId: "b", deviceId: "emulator-5554" })
+      .agentTarget({
+        threadId,
+        hostId: "b",
+        deviceId: "emulator-5554",
+        sessionId: agentSession.sessionId,
+        leaseId: agentSession.leaseId,
+        providerSessionId,
+      })
       .pipe(Effect.forkChild);
     yield* Deferred.await(writeStarted);
     const replacing = yield* service
@@ -130,5 +150,126 @@ it.effect("keeps hosts independent when serials collide and another host fails",
         enableAgentDeviceAccess: true,
       }),
     ),
+  ),
+);
+
+it.effect("uses the refreshed SSH endpoint when readiness returns a stale snapshot", () =>
+  Effect.gen(function* () {
+    const hostId = DeviceHostId.make("ssh-reconnect");
+    const deviceId = DeviceId.make("emulator-5554");
+    const threadId = ThreadId.make("ssh-reconnect-race");
+    const providerSessionId = ProviderSessionId.make("provider-reconnect-race");
+    const makeReady = (baseUrl: string): DeviceHost.DeviceHostAgentReady => ({
+      nodePath: process.execPath,
+      hub: { origin: "http://device.test" },
+      agentDevice: { baseUrl, token: `${baseUrl}-token`, entryPath: "/agent-device" },
+      run: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+    });
+    const oldReady = makeReady("http://agent-old.test");
+    const reconnectedReady = makeReady("http://agent-new.test");
+    const targetReadinessCaptured = yield* Deferred.make<void>();
+    const allowTargetReadinessReturn = yield* Deferred.make<void>();
+    const currentReadinessPublished = yield* Deferred.make<void>();
+    let captureTargetReadiness = false;
+    let currentReady = oldReady;
+    const configuredEndpoints: Array<string> = [];
+    const refreshedEndpoints: Array<string> = [];
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: hostId,
+      summary: Effect.succeed({
+        id: hostId,
+        label: "SSH host",
+        kind: "ssh",
+        hubInstalled: true,
+        agentDeviceInstalled: true,
+        platforms: [{ platform: "android", available: true }],
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+      ensureReady: () => Effect.succeed(oldReady),
+      ensureAgentReady: () =>
+        Effect.gen(function* () {
+          const ready = oldReady;
+          if (captureTargetReadiness) {
+            captureTargetReadiness = false;
+            yield* Deferred.succeed(targetReadinessCaptured, undefined);
+            yield* Deferred.await(allowTargetReadinessReturn);
+            currentReady = reconnectedReady;
+            yield* Deferred.succeed(currentReadinessPublished, undefined);
+          }
+          return ready;
+        }),
+      current: Effect.sync(() => currentReady),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    };
+    const http = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            simulators: [],
+            emulators: [
+              {
+                id: deviceId,
+                name: "Pixel",
+                version: "36",
+                platform: "android",
+                booted: true,
+                physical: false,
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const service = yield* DeviceService.makeWithHosts(
+      new Map([[hostId, host]]),
+      undefined,
+      (_hostId, ready) =>
+        Effect.sync(() => {
+          configuredEndpoints.push(ready.agentDevice.baseUrl);
+          return "/agent-config.json";
+        }),
+      undefined,
+      { automaticCleanup: false },
+      (_hostId, ready, session) =>
+        Effect.sync(() => {
+          refreshedEndpoints.push(`${session.sessionId}:${ready.agentDevice.baseUrl}`);
+        }),
+    ).pipe(Effect.provide(NodeCrypto.layer), Effect.provideService(HttpClient.HttpClient, http));
+
+    const session = yield* service.open(
+      { threadId, hostId, deviceId, platform: "android" },
+      { kind: "agent", providerSessionId },
+    );
+    const target = {
+      threadId,
+      hostId,
+      deviceId,
+      sessionId: session.sessionId,
+      leaseId: session.leaseId,
+      providerSessionId,
+    };
+    yield* service.agentTarget(target);
+    expect(configuredEndpoints).toEqual(["http://agent-old.test"]);
+
+    captureTargetReadiness = true;
+    const targetFiber = yield* service.agentTarget(target).pipe(Effect.forkChild);
+    yield* Deferred.await(targetReadinessCaptured);
+    // The host still exposes its previous readiness while its reconnect callback commits the new endpoint.
+    yield* service.refreshAgentEndpoints(host, reconnectedReady);
+    expect(refreshedEndpoints).toEqual([`${session.sessionId}:http://agent-new.test`]);
+    yield* Deferred.succeed(allowTargetReadinessReturn, undefined);
+    yield* Deferred.await(currentReadinessPublished);
+    expect(currentReady.agentDevice.baseUrl).toBe("http://agent-new.test");
+    yield* Fiber.join(targetFiber);
+
+    expect(configuredEndpoints).toEqual(["http://agent-old.test", "http://agent-new.test"]);
+  }).pipe(
+    Effect.provide(
+      ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+    ),
+    Effect.scoped,
   ),
 );

@@ -214,14 +214,17 @@ describe("foldersModel", () => {
     ]);
   });
 
-  it("says where a deleted folder's contents go", () => {
+  it("says a deleted folder's whole subtree goes to Trash and can come back", () => {
     const byId = (id: string) => snapshot.folders.find((entry) => entry.id === id)!;
-    expect(folderDeleteMessage(snapshot, byId("clients"))).toBe(
-      "Its folders and threads move up to “Work”. No thread or file is deleted.",
-    );
+    const restore =
+      "to Trash with it. Restore it within 30 days to bring everything back where it was, with its instructions and settings.";
     expect(folderDeleteMessage(snapshot, byId("work"))).toBe(
-      "Its folders and threads move up to the top level. No thread or file is deleted.",
+      `Its 2 folders and every thread inside go ${restore}`,
     );
+    expect(folderDeleteMessage(snapshot, byId("clients"))).toBe(
+      `Its folder and every thread inside go ${restore}`,
+    );
+    expect(folderDeleteMessage(snapshot, byId("northwind"))).toBe(`Its threads go ${restore}`);
   });
 
   it("counts live threads in each folder and everything below it", () => {

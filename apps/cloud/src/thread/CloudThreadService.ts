@@ -1,5 +1,6 @@
 import {
   type OrchestrationV2Command,
+  type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
@@ -7,6 +8,8 @@ import {
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
   type ThreadId,
+  SecretRequestError,
+  type SecretRequestAnswerInput,
 } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type {
@@ -63,10 +66,14 @@ export class CloudThreadService extends Context.Service<
       ProviderUploadFeedbackResult,
       ProviderUploadFeedbackError | ThreadNotFoundError | ThreadObjectError
     >;
+    readonly answerSecret: (
+      actor: Actor,
+      input: SecretRequestAnswerInput,
+    ) => Effect.Effect<void, SecretRequestError>;
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
-    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CloudThreadError>;
     readonly launchThread: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,
@@ -293,6 +300,15 @@ const make = Effect.gen(function* () {
                   }),
                 ),
           ),
+        ),
+    answerSecret: (actor, input) =>
+      directory
+        .forThread(input.threadId)
+        .answerSecret(actor, input)
+        .pipe(
+          Effect.catchTags({
+            ThreadObjectError: () => Effect.fail(new SecretRequestError({ reason: "load_failed" })),
+          }),
         ),
     canSee,
     previews,

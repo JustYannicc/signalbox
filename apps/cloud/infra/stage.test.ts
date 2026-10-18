@@ -27,8 +27,11 @@ interface WranglerConfig {
   readonly containers: ReadonlyArray<{ class_name: string; max_instances: number }>;
   readonly workflows: ReadonlyArray<{ binding: string; name: string; class_name: string }>;
   readonly worker_loaders: ReadonlyArray<{ binding: string }>;
+  readonly migrations: ReadonlyArray<{ tag: string; new_sqlite_classes?: ReadonlyArray<string> }>;
   readonly vars: Readonly<Record<string, string>>;
-  readonly env: { readonly dev: Pick<WranglerConfig, "workflows" | "worker_loaders"> };
+  readonly env: {
+    readonly dev: Pick<WranglerConfig, "durable_objects" | "workflows" | "worker_loaders">;
+  };
 }
 
 const readWrangler = (file: string) =>
@@ -53,6 +56,7 @@ describe("cloudStage", () => {
       vars: {
         SIGNALBOX_STAGE: "production",
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
+        EXECUTOR_TOKEN_ISSUER: "https://app.signalbox.run",
         CLOUD_URL: "https://app.signalbox.run",
         MODEL_GATEWAY_URL: "https://gateway.signalbox.run",
         PREVIEW_DOMAIN: "*-app.signalbox-preview.dev",
@@ -75,6 +79,7 @@ describe("cloudStage", () => {
       vars: {
         SIGNALBOX_STAGE: "pr-298",
         ENVIRONMENT_ID: "cloud-preview-298",
+        EXECUTOR_TOKEN_ISSUER: "https://preview-298.signalbox.run",
         DRIVE_PACKS_PREFIX: "pr-298/",
         MODEL_GATEWAY_URL: "https://preview-298.signalbox.run",
         PREVIEW_DOMAIN: "*-pr298.signalbox-preview.dev",
@@ -172,6 +177,14 @@ describe("wrangler.jsonc", () => {
         wrangler.durable_objects.bindings.map((binding) => [binding.name, binding.class_name]),
       ),
     ).toEqual(DURABLE_OBJECT_BINDINGS);
+    expect(
+      Object.fromEntries(
+        wrangler.env.dev.durable_objects.bindings.map((binding) => [
+          binding.name,
+          binding.class_name,
+        ]),
+      ),
+    ).toEqual(DURABLE_OBJECT_BINDINGS);
     expect(wrangler.containers.map((container) => container.class_name).sort()).toEqual([
       DURABLE_OBJECT_BINDINGS.POOLS,
       DURABLE_OBJECT_BINDINGS.THREADS,
@@ -206,5 +219,19 @@ describe("wrangler.jsonc", () => {
       (readWrangler("wrangler.model-gateway.jsonc") as WranglerConfig).compatibility_date,
     ).toBe(COMPATIBILITY_DATE);
     expect(wrangler.vars.ENVIRONMENT_ID).toBe(cloudStage("production").vars.ENVIRONMENT_ID);
+    expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
+  });
+
+  it("retains the token binding before the additive search migration", () => {
+    expect(wrangler.migrations.slice(-2)).toEqual([
+      {
+        tag: "v6",
+        new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.EXECUTOR_TOKEN_BINDINGS],
+      },
+      {
+        tag: "search-index-v1",
+        new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.SEARCH_INDEX],
+      },
+    ]);
   });
 });

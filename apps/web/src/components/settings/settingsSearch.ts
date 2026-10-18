@@ -36,7 +36,8 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/trash"; // signalbox: trash
 
 export type SettingsSearchScope =
   | "environment"
@@ -102,6 +103,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+  "/settings/trash": "Trash", // signalbox: trash
 };
 
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
@@ -400,6 +402,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Time format",
     to: "/settings/general",
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
+  },
+  {
+    id: "person-timezone", // signalbox: person timezone
+    capability: "personTimezone",
+    title: "Time zone",
+    to: "/settings/general",
+    searchTerms: ["timezone time zone schedule local time automatic device"],
   },
   {
     id: "response-streaming",
@@ -1060,6 +1069,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
+  // signalbox: trash
+  {
+    id: "trash",
+    title: "Trash",
+    to: "/settings/trash",
+    searchTerms: ["deleted threads folders restore recover empty bin recycle permanently forever"],
+    cloudOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -1082,6 +1099,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
+  "/settings/trash": null, // signalbox: trash
 };
 
 export function getSettingsSearchTargetScope(targetId: string) {

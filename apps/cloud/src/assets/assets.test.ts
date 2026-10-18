@@ -69,6 +69,7 @@ const unused = () => Effect.die("not used by assets");
 /** Only `owner` sees the thread, which has the one screenshot. */
 const threads = CloudThreadService.CloudThreadService.of({
   uploadFeedback: unused,
+  answerSecret: unused,
   threadSnapshot: (actor, id) =>
     actor.userId === owner && id === threadId
       ? Effect.succeed({

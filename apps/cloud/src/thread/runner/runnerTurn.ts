@@ -1,3 +1,4 @@
+import { workflowStopResult } from "../workflowControl.ts";
 import type {
   RunnerItem,
   RunnerMessageInput,
@@ -125,6 +126,7 @@ export function failRunEvents(
   failure: OrchestrationV2ProviderFailure,
   ctx: DecisionContext,
   providerTurnId: ProviderTurnId | null = null,
+  options: { readonly queue?: "advance" | "hold" | "keep" } = {},
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   const errorItem: OrchestrationV2TurnItem = {
     id: TurnItemId.make(`turn-item:${run.id}:failure`),
@@ -145,6 +147,7 @@ export function failRunEvents(
     failure,
   };
   return finishRunEvents(projection, run, "failed", ctx, {
+    ...options,
     leading: [turnItemEvent(ctx, errorItem)],
   });
 }
@@ -163,7 +166,9 @@ function startedEvents(
   item: Extract<RunnerItem, { readonly kind: "turn.started" }>,
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
-  if (!awaitsHandoff(run)) return [];
+  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
+  if (!awaitsHandoff(run) && !(run.status === "waiting" && attempt?.status === "pending"))
+    return [];
   const threadId = projection.thread.id;
   const current = providerThreadFor(projection, run, "active", ctx);
   // The harness's native state, under the thread's own identity for the record.
@@ -183,13 +188,16 @@ function startedEvents(
     createdAt: current.createdAt,
     updatedAt: ctx.now,
   };
-  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
   return [
     providerSessionEvent(ctx, threadId, item.providerSession),
     providerThreadEvent(ctx, threadId, providerThread),
-    runEvent(ctx, "run.updated", { ...run, status: "running", startedAt: ctx.now }),
+    runEvent(ctx, "run.updated", {
+      ...run,
+      status: run.status === "waiting" ? "waiting" : "running",
+      startedAt: ctx.now,
+    }),
     ...(attempt === undefined
       ? []
       : [
@@ -247,6 +255,7 @@ function itemEvents(
   item: RunnerItem,
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
+  if (item.kind === "workflow.stopped") return workflowStopResult(projection, item, ctx);
   const run = harnessRun(projection);
   // Usage and log lines are for the turn's diagnostics, not its events; a drain is the lease's.
   if (
@@ -265,6 +274,11 @@ function itemEvents(
   // A report about a run that already ended (stopped, or failed for want of a machine).
   if (run === undefined || run.id !== item.runId) return [];
   switch (item.kind) {
+    case "preparation.progress":
+    case "preparation.ready":
+    case "preparation.cancelled":
+    case "preparation.failed":
+      return [];
     case "turn.started":
       return startedEvents(projection, run, item, ctx);
     case "turn.failed":
