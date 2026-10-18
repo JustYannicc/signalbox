@@ -28,8 +28,15 @@ work organization you belong to shows inside it as a level of its own. You don't
 and organizations you join show up the next time you sign in. Your top level and each organization
 have their own folders, nested as deep as you like. Choose **New folder** at the bottom of Home or
 inside an organization, or **New folder inside** in a folder's menu; the command palette has **New
-folder** too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves its
-folders and threads up a level. No thread or file is deleted.
+folder** too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves it
+to Trash with every folder and thread inside it.
+
+### Trash
+
+In Signalbox Cloud, threads and folders you delete go to **Settings → Trash**. **Restore** puts one
+back where it was, with everything that was inside it and a folder's instructions and settings.
+Everything stays restorable for 30 days. On a phone, tap an item in Trash to restore it.
+Permanent cleanup is not enabled yet. Trash keeps expired items stored and says so.
 
 ### Where threads live
 
@@ -212,6 +219,16 @@ Tasks leave through **Done** when you hover their row. Chats you leave alone arc
 after seven idle days; hover a chat's icon to see when. Change or turn this off in **Settings →
 General → Archive idle chats after**. Bring an archived chat back from **Settings → Archive**.
 
+## Answer an ask
+
+An agent can leave a **Blocker** when it needs your input, **Ready** when it needs your go,
+or **Considering** when a decision needs time. Ask it to leave one in the thread. Each question
+explains why it matters, what your answer unblocks, and what the agent recommends.
+
+Answer with an option or your own words. You can answer some questions now and leave the rest
+for another round. An ask stays in the thread after the agent finishes; answering later sends
+your reply back to the agent. Archiving the thread closes its remaining asks and keeps their history. Reopening it restores unfinished asks; an automation that ended while archived stays closed.
+
 ## See where a thread got to
 
 In Signalbox Cloud, every thread keeps a status line: what it's doing or waiting on, the next step,
@@ -282,6 +299,18 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 
 ## Settle finished work
 
+Tasks have an editable **Done when** condition in their details. The folder's **Task done**
+automation proposes the condition and archives the task with a short outcome when it holds.
+For linked code work, the default waits until every pull request is merged and its deployment
+is live. Repositories without a deployment skip that check. Customize the automation to change
+the folder's defaults.
+
+Settling early takes one click. It stops the agent and holds queued messages for later.
+Your assistant records whether you dropped the work or it is done enough for a finishing pass. If the reason is unclear, it leaves a low-priority question
+for later. The task stays settled while that question waits. Find finished tasks under the
+folder's **Recently settled** list. **Reopen** restores the task; sending a new message also
+reopens it. Chats have no done-condition and keep their idle archive behavior.
+
 Choose **Settle thread** from its menu to move finished work out of the active list
 without deleting the conversation. **Un-settle thread** restores it to active work
 and prevents automatic settlement until new activity resumes the usual rules.
@@ -302,7 +331,7 @@ settle every thread in that section between it and the one you release on.
 The **Un-settle** and **Wake** buttons work the same way in their sections.
 Press `Escape` while dragging to cancel.
 
-By default, environments settle inactive threads after three days and settle
+For threads without a done-condition, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
@@ -338,8 +367,11 @@ The linked pull request participates in automatic settlement.
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
-across connected environments. Message search starts after two characters and
-includes your messages and final agent responses.
+across connected environments. On mobile, search from Home. Content search starts
+after two characters. In Signalbox Cloud it searches messages, summaries and tool
+excerpts across your folders, including archived threads. Open a content result
+to jump to its matching item. If older threads are still being indexed, search
+shows how many are missing.
 
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request

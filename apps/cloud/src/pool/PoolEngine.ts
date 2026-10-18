@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   type AccountPoolSetRoutingInput,
+  type AccountPoolProviderAdvice,
   DEFAULT_POOL_ROUTING,
   isCloudPoolAccountType,
   POOL_LINK_PATH,
@@ -24,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
+import { takesTurns } from "@t3tools/shared/poolUsage";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
@@ -35,6 +37,8 @@ import { observePoolCall, PoolTelemetry } from "./PoolTelemetry.ts";
 import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
+import * as PoolUsageHistory from "./poolUsageHistory.ts";
+import * as PoolUsageLedger from "./PoolUsageLedger.ts";
 import * as PoolStore from "./poolStore.ts";
 import * as ThreadAccounts from "./threadAccounts.ts";
 
@@ -156,6 +160,9 @@ export class PoolEngine extends Context.Service<
      */
     readonly prepareDelete: (actor: PoolActor) => Effect.Effect<void, Failure>;
     readonly accounts: (actor: PoolActor) => Effect.Effect<PoolAccounts, Failure>;
+    readonly advice: (
+      actor: PoolActor,
+    ) => Effect.Effect<ReadonlyArray<AccountPoolProviderAdvice> | null, Failure>;
     /**
      * The models the pool serves, for the check at turn start. A pool whose
      * models were never attempted reads them now, waking its container: the
@@ -168,6 +175,8 @@ export class PoolEngine extends Context.Service<
     readonly refreshModelsAtAlarm: () => Effect.Effect<void, SqlError>;
     /** The next catalog refresh alarm for a pool with accounts or an external backing. */
     readonly nextModelsRefreshAt: () => Effect.Effect<number | null, SqlError>;
+    readonly refreshUsageAtAlarm: () => Effect.Effect<void, SqlError>;
+    readonly nextUsageSampleAt: () => Effect.Effect<number | null, SqlError>;
     readonly startLogin: (
       actor: PoolActor,
       provider: CliProxyApi.PoolLoginProvider,
@@ -309,6 +318,9 @@ const migrations = Migrator.fromRecord({
   }),
   "0008_thread_accounts": ThreadAccounts.createTables,
   "0009_model_metadata": PoolModels.addMetadata,
+  "0010_usage_history": PoolUsageHistory.createTables,
+  "0011_usage_sampling": PoolUsageHistory.addSampling,
+  "0012_usage_ledger": PoolUsageLedger.createTable,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -348,7 +360,7 @@ export const ACCOUNTS_READ_TIMEOUT_MS = 750;
 /** A stuck upstream request must release the shared refresh so polling can retry. */
 export const ACCOUNTS_REFRESH_TIMEOUT_MS = 120_000;
 
-const ACCOUNTS_READ_TIMEOUT_MESSAGE =
+export const ACCOUNTS_READ_TIMEOUT_MESSAGE =
   "The pool did not refresh its account snapshot in time. Try again shortly.";
 
 /** CLIProxyAPI refreshes its model registry every three hours. */
@@ -631,6 +643,39 @@ const make = Effect.gen(function* () {
     };
   });
 
+  /** Stores the account list without claiming a foreground snapshot or quota read completed. */
+  const storeAccountRows = (
+    live: ReadonlyArray<CliProxyApi.ListedAccount>,
+    cached: ReadonlyArray<CachedAccount>,
+    now: number,
+    contributors: (name: string) => string | null = () => null,
+  ) =>
+    Effect.gen(function* () {
+      const known = new Map(cached.map((account) => [account.name, account]));
+      for (const account of live) {
+        const before = known.get(account.name);
+        if (
+          before !== undefined &&
+          before.type === account.type &&
+          before.email === account.email &&
+          before.disabled === account.disabled &&
+          before.signedOut === account.signedOut
+        )
+          continue;
+        const contributor = before === undefined ? contributors(account.name) : null;
+        yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
+          contributed_by, added_at)
+        VALUES (${account.name}, ${account.type}, ${account.email},
+          ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
+        ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
+          disabled = excluded.disabled, signed_out = excluded.signed_out`;
+      }
+      const names = new Set(live.map((account) => account.name));
+      for (const account of cached) {
+        if (!names.has(account.name)) yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
+      }
+    });
+
   const threadAccounts = ThreadAccounts.make({
     sql,
     audit: (detail) => audit(POOL_ITSELF, "move-thread", detail),
@@ -724,42 +769,14 @@ const make = Effect.gen(function* () {
         }),
       );
       const cached = yield* cachedAccounts;
-      const known = new Map(cached.accounts.map((account) => [account.name, account]));
-      const changed = live.filter((account) => {
-        const before = known.get(account.name);
-        return (
-          before === undefined ||
-          before.type !== account.type ||
-          before.email !== account.email ||
-          before.disabled !== account.disabled ||
-          before.signedOut !== account.signedOut
-        );
-      });
-      const names = new Set(live.map((account) => account.name));
-      const removed = cached.accounts.filter((account) => !names.has(account.name));
       const mode: PoolLimits.ReadMode =
         options?.passive === true || options?.probe === true ? "probe" : "free";
-      if (changed.length === 0 && removed.length === 0 && cached.error === null) {
-        yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
-      } else {
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            for (const account of changed) {
-              const contributor = known.has(account.name) ? null : contributors(account.name);
-              yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
-                contributed_by, added_at)
-              VALUES (${account.name}, ${account.type}, ${account.email},
-                ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
-              ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
-                disabled = excluded.disabled, signed_out = excluded.signed_out`;
-            }
-            for (const account of removed) {
-              yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
-            }
-            yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
-          }),
-        );
-      }
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* storeAccountRows(live, cached.accounts, now, contributors);
+          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+        }),
+      );
       // Account freshness must not wait for model discovery or provider usage probes.
       yield* CliProxyApi.listModels(endpoint).pipe(
         Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
@@ -1064,6 +1081,20 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const advice: PoolEngine["Service"]["advice"] = (actor) =>
+    Effect.gen(function* () {
+      const { role } = yield* access(actor, "member");
+      // Account counts and plans are admin-only, checked again on each read.
+      if (role !== "admin") return null;
+      const read = yield* Effect.flatMap(cachedAccounts, withLimits);
+      return yield* withSql(
+        PoolUsageHistory.advice(
+          PoolUsageHistory.accountsWithQuota(read.accounts).filter(takesTurns),
+          yield* Clock.currentTimeMillis,
+        ),
+      );
+    });
+
   // A turn start may make its first read; later refreshes are passive.
   const models: PoolEngine["Service"]["models"] = (actor) =>
     Effect.gen(function* () {
@@ -1106,6 +1137,51 @@ const make = Effect.gen(function* () {
               : now;
       return Math.max(now, next);
     });
+
+  const nextUsageSampleAt: PoolEngine["Service"]["nextUsageSampleAt"] = () =>
+    Effect.gen(function* () {
+      const row = yield* poolRow;
+      if (row === null) return null;
+      const { accounts } = yield* cachedAccounts;
+      if (
+        !accounts.some(
+          (account) =>
+            PoolLimits.READS_LIMITS.has(account.type) && !account.disabled && !account.signedOut,
+        )
+      )
+        return null;
+      return yield* withSql(PoolUsageHistory.nextSampleAt(yield* Clock.currentTimeMillis));
+    });
+
+  const samplingUsage = yield* Semaphore.make(1);
+  const refreshUsageAtAlarm: PoolEngine["Service"]["refreshUsageAtAlarm"] = () =>
+    Effect.gen(function* () {
+      const next = yield* nextUsageSampleAt();
+      const now = yield* Clock.currentTimeMillis;
+      if (next === null || next > now) return;
+      yield* withSql(PoolUsageHistory.sampledAt(now));
+      const row = yield* poolRow;
+      if (row === null) return;
+      // Unlike foreground snapshots, the quarter-hourly sample may wake a sleeping pool.
+      const endpoint = endpointOf(row, { models: true });
+      yield* ensureManagedConfig(endpoint);
+      const live = yield* CliProxyApi.listAccounts(endpoint);
+      const cached = yield* cachedAccounts;
+      // Login/import must discover new accounts so their contributor is recorded on insertion.
+      const known = new Set(cached.accounts.map((account) => account.name));
+      const held = live.filter((account) => known.has(account.name));
+      yield* sql.withTransaction(storeAccountRows(held, cached.accounts, now));
+      yield* refreshLimits(endpoint, live, now, "probe");
+    }).pipe(
+      samplingUsage.withPermits(1),
+      Effect.timeoutOrElse({
+        duration: ACCOUNTS_REFRESH_TIMEOUT_MS,
+        orElse: () => Effect.logWarning("pool usage sample timed out"),
+      }),
+      Effect.catchTags({
+        PoolBackendError: (cause) => Effect.logWarning("pool usage sample failed", { cause }),
+      }),
+    );
 
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider, flow) =>
     Effect.gen(function* () {
@@ -1307,10 +1383,13 @@ const make = Effect.gen(function* () {
     setBacking,
     prepareDelete,
     accounts,
+    advice,
     models,
     cachedModels: cachedModelsForActor,
     refreshModelsAtAlarm,
     nextModelsRefreshAt,
+    refreshUsageAtAlarm,
+    nextUsageSampleAt,
     startLogin,
     loginStatus,
     completeLogin,

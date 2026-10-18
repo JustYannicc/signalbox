@@ -22,6 +22,29 @@ const responseClient = (body: unknown, status = 200, headers: Record<string, str
     ),
   );
 
+it.effect("fails repository creation on 404 while preserving missing repository reads", () =>
+  Effect.gen(function* () {
+    const api = makeGitHubApi(responseClient({ message: "Not Found" }, 404));
+    expect(yield* api.repository("token", "missing/repository")).toBeNull();
+    expect(yield* api.publicationRepository("token", "missing/repository")).toBeNull();
+    const error = yield* api
+      .createRepository("token", {
+        owner: "missing",
+        name: "repository",
+        personal: false,
+        private: true,
+        description: "Signalbox publication test",
+      })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "GitHubError",
+      operation: "createRepository",
+      status: 404,
+      requestKind: "rest",
+    });
+  }),
+);
+
 it.effect("keeps transport error text and request credentials out of logs", () => {
   const token = "github-transport-secret-canary";
   const detail = `A request carrying ${token} failed`;
@@ -139,6 +162,29 @@ it.effect(
       expect(text).toBe(JSON.stringify(answer));
     }),
 );
+it.effect("preserves partial mutation data despite a GraphQL rate-limit error", () =>
+  Effect.gen(function* () {
+    for (const error of [
+      { type: "RATE_LIMITED" },
+      { type: "RATE_LIMIT", extensions: { code: "graphql_rate_limit" } },
+    ]) {
+      const answer = {
+        data: { addPullRequestReviewThreadReply: { comment: { id: "PRRC_created" } } },
+        errors: [error],
+      };
+      const text = yield* makeGitHubApi(
+        responseClient(answer, 200, { "retry-after": "60" }),
+      ).graphql(
+        "reply",
+        "token",
+        "mutation { addPullRequestReviewThreadReply { comment { id } } }",
+        {},
+      );
+      expect(text).toBe(JSON.stringify(answer));
+    }
+  }),
+);
+
 it.effect("keeps bounded, sanitized diagnostics for unreadable GraphQL answers", () => {
   const token = "github-response-secret-canary";
   const lines: Array<string> = [];

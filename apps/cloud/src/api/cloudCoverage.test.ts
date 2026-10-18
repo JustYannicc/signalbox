@@ -6,6 +6,19 @@ import { descriptor } from "../environment.ts";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves pool advice through the API and MCP reach entry", () => {
+    const advice = operations.find((operation) => operation.name === "pools.advice");
+    expect(advice).toBeDefined();
+    expect(advice?.rpc).toBe("accountPool.subscribeAdvice");
+    expect(cloudServes(advice!)).toBe(true);
+    expect(cloudUnserved(advice!)).toBeUndefined();
+  });
+
+  it("serves explicit provider feedback requests through the runner", () => {
+    const operation = operations.find((operation) => operation.name === "provider.uploadFeedback")!;
+    expect(cloudServes(operation)).toBe(true);
+    expect(cloudUnserved(operation)).toBeUndefined();
+  });
   it("serves workflow inspection and stop through the generated API and MCP reach", () => {
     for (const [name, access] of [
       ["threads.getWorkflowScript", "read"],
@@ -38,6 +51,15 @@ describe("cloud API coverage", () => {
     }
   });
 
+  it("serves queued edits and reorders through the cloud decider", () => {
+    for (const name of ["threads.queuedRun.edit", "threads.queuedRun.reorder"]) {
+      const operation = operations.find((candidate) => candidate.name === name);
+      if (operation === undefined) throw new Error(`Missing ${name}`);
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
   it("serves both keybinding edits rather than leaving the editor with unknown RPCs", () => {
     const keybindings = operations.filter((operation) => operation.name.startsWith("keybindings."));
     expect(keybindings.map((operation) => operation.name).sort()).toEqual([
@@ -60,14 +82,14 @@ describe("cloud API coverage", () => {
     ).toEqual([]);
   });
 
-  it("reports deferred cloud terminals as tracked gaps", () => {
+  it("serves every public terminal operation", () => {
     const terminals = operations.filter((operation) =>
       /^(terminal\.|terminalEvents\.|terminalMetadata\.)/.test(operation.name),
     );
     expect(terminals).toHaveLength(9);
     for (const operation of terminals) {
-      expect(cloudServes(operation)).toBe(false);
-      expect(cloudUnserved(operation)).toEqual({ _tag: "gap", issue: "#744" });
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
     }
   });
 
@@ -103,6 +125,21 @@ describe("cloud API coverage", () => {
       .filter((operation) => !cloudServes(operation) && cloudUnserved(operation) === undefined)
       .map((operation) => operation.name);
     expect(silent).toEqual([]);
+  });
+
+  it("serves review replies and resolution through the public API", () => {
+    for (const name of [
+      "pullRequests.comment",
+      "pullRequests.updateComment",
+      "pullRequests.submitReview",
+      "pullRequests.setReaction",
+      "pullRequests.replyToThread",
+      "pullRequests.setThreadResolution",
+    ]) {
+      const operation = operations.find((entry) => entry.name === name)!;
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
   });
 
   it("serves starting a folder from another folder through the cloud RPC", () => {

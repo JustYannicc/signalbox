@@ -15,7 +15,13 @@ import type { Change } from "../liveFeed.ts";
 import { explained } from "../runLog.ts";
 import type { AutomationRow, WorkflowStore } from "../WorkflowStore.ts";
 import type { HostStore } from "./hostStore.ts";
-import { builtInById, builtInByName, builtInOfRow, type BuiltInAutomation } from "./registry.ts";
+import {
+  BUILT_IN_AUTOMATIONS,
+  builtInById,
+  builtInByName,
+  builtInOfRow,
+  type BuiltInAutomation,
+} from "./registry.ts";
 
 /** Where a built-in would run: the project, and the defaults its host row starts with there. */
 export interface BuiltInPlace {
@@ -139,7 +145,16 @@ export const makeBuiltIns = (deps: {
       return saved.automation satisfies Automation;
     });
 
-  return { resolve, resolveName, guardSave, customize };
+  const ensureDefaultsForEvent = (eventType: string, place: BuiltInPlace) =>
+    Effect.gen(function* () {
+      for (const builtIn of BUILT_IN_AUTOMATIONS) {
+        if (!builtIn.defaultOn?.includes(eventType)) continue;
+        if (yield* customized(builtIn, place.projectId)) continue;
+        yield* ensureHost(builtIn, place);
+      }
+    });
+
+  return { resolve, resolveName, guardSave, customize, ensureDefaultsForEvent };
 };
 
 export type BuiltIns = ReturnType<typeof makeBuiltIns>;

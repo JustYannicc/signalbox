@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { parseRateTable } from "../usage/usagePricing.ts";
+import { parseRateTable } from "@t3tools/provider-core/server/usagePricing";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import { enrichProviderModelMetadata } from "./providerModelMetadata.ts";
 

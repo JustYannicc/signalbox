@@ -1,4 +1,5 @@
 import { LIST_NOTES_TOOL, type ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
+import { PULL_REQUEST_REVIEW_TOOL } from "@signalbox/runner-protocol/PullRequestReviewTools";
 import { AGENT_PULL_REQUEST_TOOL, Request } from "@signalbox/runner-protocol/PullRequestTools";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -6,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import * as AgentPullRequests from "../github/AgentPullRequests.ts";
 import { listNotesTool } from "../notes/notesTool.ts";
+import { pullRequestReviewTool } from "../github/pullRequestReviewTool.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 
 const decodePullRequest = Schema.decodeUnknownOption(Request);
@@ -37,9 +39,10 @@ export const automationTool = (threadId: string, name: string, input: unknown) =
       );
     }
     if (name === LIST_NOTES_TOOL) return yield* listNotesTool(threadId);
+    if (name === PULL_REQUEST_REVIEW_TOOL) return yield* pullRequestReviewTool(threadId, input);
     const automations = yield* Effect.serviceOption(CloudAutomations);
     if (Option.isNone(automations)) {
-      return { _tag: "failed", message: "Automations aren't running in this cloud yet." };
+      return { _tag: "failed" as const, message: "Automations aren't running in this cloud yet." };
     }
     return yield* automations.value.tool({ threadId }, name, input).pipe(
       Effect.map((result) => ({ _tag: "ok" as const, result })),

@@ -41,10 +41,12 @@ export const COMPATIBILITY_DATE = "2026-10-01";
  */
 export const DURABLE_OBJECT_BINDINGS = {
   USERS: "UserObject",
+  SEARCH_INDEX: "SearchIndexObject",
   THREADS: "ThreadObject",
   POOLS: "PoolObject",
   DRIVES: "DriveObject",
   PREVIEW_LINKS: "PreviewLinkRegistry",
+  EXECUTOR_TOKEN_BINDINGS: "ExecutorTokenBindingObject",
 } as const;
 
 /**
@@ -137,6 +139,7 @@ export const cloudStage = (stage: string): CloudStage => {
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
+        EXECUTOR_TOKEN_ISSUER: "https://app.signalbox.run",
         ...urls("app.signalbox.run", "gateway.signalbox.run"),
         PREVIEW_DOMAIN: previews,
         // Previews that may take a signed-in user's setup (`src/previewSetup/`).
@@ -167,6 +170,7 @@ export const cloudStage = (stage: string): CloudStage => {
       SIGNALBOX_STAGE: stage,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
+      EXECUTOR_TOKEN_ISSUER: `https://${cloudDomain}`,
       ...urls(cloudDomain, cloudDomain),
       PREVIEW_DOMAIN: previews,
       DRIVE_PACKS_PREFIX: `pr-${number}/`,

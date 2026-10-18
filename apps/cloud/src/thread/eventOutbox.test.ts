@@ -65,6 +65,7 @@ const makeOwner = () => {
   const received: Array<Delivery> = [];
   const state = { down: false };
   const automations = CloudAutomations.CloudAutomations.of({
+    answerAsk: () => Effect.die("not in these tests"),
     save: () => Effect.die("not in these tests"),
     receiveHook: () => Effect.die("not in these tests"),
     threadEvents: (input) =>
@@ -79,6 +80,7 @@ const makeOwner = () => {
     flush: Effect.void,
     start: Effect.void,
     host: () => Effect.die("not in these tests"),
+    executorRunActive: () => Effect.succeed(false),
     workerModule: () => Effect.die("not in these tests"),
   });
   const cloud = makeMemoryCloud({

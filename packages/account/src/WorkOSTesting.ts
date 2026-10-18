@@ -56,8 +56,24 @@ const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
+/**
+ * One active membership. `roleSlugs` are sent as WorkOS does, as `role` (the
+ * first) and `roles`; `wire` sends its fields instead, for other shapes.
+ */
+export interface WorkOSTestMembership extends WorkOSOrganization {
+  readonly wire?: { readonly role?: unknown; readonly roles?: unknown };
+}
+
 /** Each user's active organizations, in the order WorkOS lists them. */
-export type WorkOSMemberships = Readonly<Record<string, ReadonlyArray<WorkOSOrganization>>>;
+export type WorkOSMemberships = Readonly<Record<string, ReadonlyArray<WorkOSTestMembership>>>;
+
+const roleFields = ({ roleSlugs = [], wire }: WorkOSTestMembership) => {
+  if (wire) return wire;
+  const [first] = roleSlugs;
+  return first === undefined
+    ? {}
+    : { role: { slug: first }, roles: roleSlugs.map((slug) => ({ slug })) };
+};
 
 /** Fake `GET /user_management/organization_memberships`, paged by `limit` and `after`. */
 const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => {
@@ -73,6 +89,7 @@ const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => 
       organization_name: organization.name,
       user_id: url.searchParams.get("user_id"),
       status: "active",
+      ...roleFields(organization),
     }));
   const after = url.searchParams.get("after");
   const start = after ? all.findIndex((membership) => membership.id === after) + 1 : 0;

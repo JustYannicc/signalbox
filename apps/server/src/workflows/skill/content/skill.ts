@@ -8,6 +8,8 @@ description: Use when work should happen without anyone supervising it in Signal
 
 An automation is one TypeScript file. Signalbox draws its diagram from the code and runs it durably: every step's result is journaled, the code replays from the top after each step, and a run survives restarts and can wait days for a person. You write only the code.
 
+Automations run only in Signalbox Cloud. For code steps, use \`w.run(label, { on: "github-actions" }, fn, ...args)\` after the repository setup in \`references/github-actions.md\`. Direct host \`w.run\`, external-service \`w.call\` and connected-service \`watch\` / \`source.item.*\` triggers are unavailable. Use \`w.http\` for HTTP APIs. Connected services other than the GitHub integration are not available in cloud automations yet. \`w.call\` supports Signalbox tools.
+
 **The code is the supervisor.** When the user wants a process — build these tickets in order, triage every email, react whenever a turn fails — write an automation that does it instead of doing the supervising yourself turn by turn. Agents do the judgment-heavy work inside steps; the automation decides order, retries, merges and when to alert someone, deterministically.
 
 This SDK is not in your training data. These files, \`automation_reference\` and the validator are the truth; habits from Temporal, Inngest, Trigger.dev or Cloudflare Workflows are wrong here.
@@ -27,9 +29,9 @@ Work through it in order. Each item is done when its check holds.
 
 \`\`\`ts
 export const meta = {
-  name: "Triage support emails",
-  description: "Sort each support email, draft a reply, and ask me before sending.",
-  intent: "when a support email comes in, sort it and draft a reply I can approve",
+  name: "Draft support replies",
+  description: "Sort each support email and prepare a reply I can edit and send.",
+  intent: "when a support email comes in, sort it and prepare a reply for me to send",
   triggers: [{ webhook: true }],
 } as const;
 
@@ -38,13 +40,13 @@ export default workflow(async (w, email: { from: string; subject: string; body: 
   if (kind === "spam") return "ignored";
 
   const draft = await w.llm("Draft a reply", { prompt: \`Write a short, friendly reply to:\\n\${email.body}\` });
-  // Send it? The user can edit the draft first.
-  const answer = await w.ask("Send this reply?", {
+  // The user can edit the draft before keeping it.
+  const answer = await w.ask("Keep this reply?", {
     fields: { reply: { type: "longText", default: draft, required: true } },
-    options: ["send", "skip"],
+    options: ["keep", "skip"],
   });
-  if (answer.choice === "send") {
-    await w.call("Send the reply", "gmail.users.messages.send", { userId: "me", to: email.from, text: answer.values.reply });
+  if (answer.choice === "keep") {
+    await w.notify("Reply ready to send", \`To: \${email.from}\\n\${answer.values.reply}\`);
   }
   if (kind === "bug") {
     await w.agent("Look into the bug", { prompt: \`A customer reported: \${email.body}\`, worktree: "main" });
@@ -60,7 +62,7 @@ The validator enforces each one; breaking it fails with the quoted message.
 |---|---|---|
 | Every step is \`await w.<verb>("Label", …)\`; the label is a string or template literal | The label is the box a non-developer reads | "The first argument must be a label" |
 | Workflow code has no \`fetch\`, timers, \`process\` or packages; use \`w.http\`, \`w.sleep\`, \`w.run\` | Workflow code replays; side effects must be journaled steps | "fetch isn't available" |
-| Packages and the machine only inside top-level functions passed to \`w.run\` (and helpers only they call) | \`w.run\` executes in Node with the file's imports installed | "… is an imported package" |
+| Packages and the machine only inside top-level functions passed to \`w.run\` (and helpers only they call) | \`w.run\` executes in Node on GitHub Actions with the file's imports installed | "… is an imported package" |
 | No steps inside \`.map\`/\`.forEach\`/other callbacks; use \`w.each\`, \`w.parallel\`, \`w.repeat\` or a \`for\` loop | Steps need a stable place in the diagram | "Steps can't run inside a callback" |
 | Inside \`each\`/\`parallel\`/\`repeat\`, use the receiver the callback gets | Each iteration is tracked on its own | "Pass w, the receiver this callback gets" |
 | \`concurrency\` and \`max\` are literal numbers; \`meta\` is a plain literal | The diagram and scheduler read them without running code | "must be a literal" |
@@ -73,7 +75,7 @@ The run's start time is \`trigger.at\` (an ISO string), the same on every replay
 
 | You'd write | Write instead |
 |---|---|
-| \`step.run("id", async () => …)\`, \`ctx.run\`, \`step.do\` | a verb: \`await w.http("Fetch the page", url)\` or \`await w.run("Parse it", parse, url)\` |
+| \`step.run("id", async () => …)\`, \`ctx.run\`, \`step.do\` | a verb: \`await w.http("Fetch the page", url)\` or \`await w.run("Parse it", { on: "github-actions" }, parse, url)\` |
 | \`await fetch(url)\` in the workflow | \`await w.http("Fetch …", url)\` |
 | \`setTimeout\`, or polling an agent in a loop | one \`await w.sleep(…)\`; \`w.agent\` already waits for the thread to finish |
 | \`w.sleep\` in a loop to check again later | a cron trigger, or \`w.waitFor\` with a \`timeout\` |

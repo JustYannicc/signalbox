@@ -1,11 +1,13 @@
 import { isComposerSubmissionUncertain } from "../composerSubmissionRecovery";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import { threadDetailToShell } from "@t3tools/client-runtime/state/thread-detail-shell";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   isThreadWokeUnseen,
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveComposerStop,
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
 } from "./ChatView.logic";
@@ -129,6 +131,7 @@ import {
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { SignalboxAsksPanel } from "./chat/SignalboxAsksPanel"; // signalbox: durable answer rounds
 import { attachedAutomationTasks } from "@t3tools/client-runtime/automations/attached"; // signalbox: attached automation runs
 import {
   latestUnheldRun,
@@ -1169,13 +1172,19 @@ export default function ChatView(props: ChatViewProps) {
         ? store.getDraftSession(draftId)
         : null,
   );
-  const serverThread = useThreadShell(routeThreadRef);
+  const serverThreadShell = useThreadShell(routeThreadRef);
   const routeThreadDetailRef = resolveThreadDetailRef(routeThreadRef, {
-    shellExists: serverThread !== null,
+    shellExists: serverThreadShell !== null,
     waitForShell: draftThread !== null,
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  // signalbox: present archived detail without adding it to the active shell.
+  const serverThread =
+    serverThreadShell ??
+    (routeKind === "server" && serverProjection !== null
+      ? threadDetailToShell(environmentId, serverProjection)
+      : null);
   const promptRef = useRef("");
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
@@ -1642,7 +1651,10 @@ export default function ChatView(props: ChatViewProps) {
     container: workspaceLayoutElement,
     widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
   });
-  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const liveActiveThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  // signalbox: a settled task is archived (#671) and only has its detail shell.
+  const activeThreadShell =
+    liveActiveThreadShell ?? (serverThreadShell === null ? serverThread : null);
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
@@ -3026,6 +3038,8 @@ export default function ChatView(props: ChatViewProps) {
     isPreparingWorktree,
     blocksSend: worktreeSetupBlocksSend,
     retryableRunIds: retryableWorkspacePreparationRunIds,
+    actions: worktreeSetupActions,
+    awaitingSnapshot: awaitingWorktreeSetupSnapshot,
     begin: beginWorktreeSetup,
     cancel: cancelWorktreeSetup,
     retryPreparation: onRetryWorkspacePreparationStable,
@@ -3043,7 +3057,6 @@ export default function ChatView(props: ChatViewProps) {
     // follow-up is on screen rather than when the server echoes it back.
     followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
-  const onCancelWorktreeSetupStable = useStableCallback(() => void cancelWorktreeSetup());
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -3493,8 +3506,19 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+  const composerStop = resolveComposerStop({
+    setupSnapshot: worktreeSetup,
+    awaitingSetupSnapshot: awaitingWorktreeSetupSnapshot,
+    setupCancel: worktreeSetupActions?.cancel ?? null,
+    canInterrupt: canInterruptRunningThread,
+  });
   const onInterrupt = async () => {
+    if (composerStop === "cancel-setup") {
+      worktreeSetupActions?.onCancel();
+      return;
+    }
     if (
+      composerStop !== "interrupt" ||
       !activeThread ||
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
     )
@@ -5833,7 +5857,7 @@ export default function ChatView(props: ChatViewProps) {
         composerRef.current?.isCaretAtStart() === true &&
         queuedRunsControlRef.current?.editLatest(event.repeat) === true,
       "thread.stop": ({ event }) => {
-        if (!canInterruptRunningThread) return false;
+        if (composerStop === null) return false;
         if (!event.repeat) void onInterruptStable();
       },
     },
@@ -7802,8 +7826,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!worktreeSetup || worktreeSetup.phase !== "running" || !draftId) {
       return;
     }
-    void cancelWorktreeSetup().then((cancelled) => {
-      if (cancelled) setWorkLocallyResendDraftId(draftId);
+    // Resend locally only once the server confirms setup stopped; an error or
+    // timeout leaves the draft with the setup that may still be running.
+    void cancelWorktreeSetup().then((outcome) => {
+      if (outcome === "stopped") setWorkLocallyResendDraftId(draftId);
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
@@ -8277,7 +8303,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                 worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
-                onCancelWorktreeSetup={onCancelWorktreeSetupStable}
+                worktreeSetupActions={paintOnlyDisplayedTimeline ? null : worktreeSetupActions}
                 {...(paintOnlyDisplayedTimeline
                   ? {}
                   : {
@@ -8472,6 +8498,13 @@ export default function ChatView(props: ChatViewProps) {
                               }
                             />
                           ) : null}
+                          {activeThreadRef ? (
+                            <SignalboxAsksPanel
+                              threadRef={activeThreadRef}
+                              asks={serverProjection?.thread.asks}
+                              requests={serverProjection?.runtimeRequests}
+                            />
+                          ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
                               canOperateThread={canOperateThread}
@@ -8507,7 +8540,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               phase={phase}
                               isCompacting={isCompacting}
-                              canInterrupt={canInterruptRunningThread}
+                              canInterrupt={composerStop !== null}
                               isConnecting={isConnecting}
                               isSendBusy={
                                 (isSendBusy && !sendQueuesBehindSetup) ||

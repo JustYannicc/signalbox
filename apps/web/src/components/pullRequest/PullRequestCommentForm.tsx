@@ -1,9 +1,12 @@
 import { useAtomCommand } from "~/state/use-atom-command";
+import { preparePullRequestWriteAttempt } from "@t3tools/client-runtime/pull-request-write-attempt";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
 import { useState, type RefObject } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { randomUUID } from "~/lib/utils";
+import { pullRequestWriteAttemptKey, usePullRequestReviewStore } from "./pullRequestReviewStore";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -61,18 +64,27 @@ export function PullRequestCommentForm({
       setSubmitting(null);
       return;
     }
+    const attemptKey = pullRequestWriteAttemptKey(reference, "comment", environmentId);
+    const prepared = preparePullRequestWriteAttempt(
+      usePullRequestReviewStore.getState().writeAttempts[attemptKey],
+      { ...reference, body: trimmed },
+      undefined,
+      randomUUID,
+      environmentId,
+    );
+    usePullRequestReviewStore.getState().setWriteAttempt(attemptKey, prepared.attempt);
     const result = await postComment({
       environmentId,
-      input: {
-        ...reference,
-        body: trimmed,
-      },
+      input: prepared.input,
     });
     if (result._tag === "Failure") {
       setSubmitting(null);
       toastManager.add({ type: "error", title: "Could not post the comment" });
       return;
     }
+    usePullRequestReviewStore
+      .getState()
+      .clearWriteAttempt(attemptKey, prepared.attempt.operationId);
     setBody("");
     setSubmitting(null);
     onClose();

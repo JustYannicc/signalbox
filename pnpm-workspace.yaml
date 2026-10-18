@@ -229,6 +229,8 @@ minimumReleaseAgeExclude:
   - lunorash@1.0.0-alpha.398
 
 overrides:
+  # Keep clean lockfile resolution on the version our delivery-error patch extends.
+  "@lunora/errors": 1.0.0-alpha.57
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
@@ -348,16 +350,28 @@ packageExtensions:
   "@clerk/expo-native-components@*":
     dependencies:
       "@expo/config-plugins": 58.0.9
-  # Our patch makes @effect/vitest import vite-plus/test. A catalog: spec here
-  # resolves through the vite-plus override above.
+  # The patch imports vite-plus/test; resolve it from the host runner.
   "@effect/vitest@*":
-    dependencies:
-      vite-plus: "catalog:"
+    peerDependencies:
+      vite-plus: ^1.0.0
 
 patchedDependencies:
+  "@lunora/errors@1.0.0-alpha.57": patches/@lunora__errors@1.0.0-alpha.57.patch
+  "@lunora/platform@1.0.0-alpha.65": patches/@lunora__platform@1.0.0-alpha.65.patch
+  "@lunora/shard-engine@1.0.0-alpha.132": patches/@lunora__shard-engine@1.0.0-alpha.132.patch
+  "@lunora/scheduler@1.0.0-alpha.130": patches/@lunora__scheduler@1.0.0-alpha.130.patch
+  "@lunora/server@1.0.0-alpha.209": patches/@lunora__server@1.0.0-alpha.209.patch
+  "@lunora/do@1.0.0-alpha.218": patches/@lunora__do@1.0.0-alpha.218.patch
+  "@lunora/runtime@1.0.0-alpha.208": patches/@lunora__runtime@1.0.0-alpha.208.patch
+  "@lunora/codegen@1.0.0-alpha.315": patches/@lunora__codegen@1.0.0-alpha.315.patch
+  "@lunora/client@1.0.0-alpha.215": patches/@lunora__client@1.0.0-alpha.215.patch
+  "@lunora/config@1.0.0-alpha.363": patches/@lunora__config@1.0.0-alpha.363.patch
+  "@lunora/cli@1.0.0-alpha.399": patches/@lunora__cli@1.0.0-alpha.399.patch
   "@distilled.cloud/cloudflare@1.0.0-rc.13": patches/cloudflare-observability-destinations.patch
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
+  expo-modules-core@58.0.22: patches/expo-modules-core@58.0.22.patch
+  expo-notifications@58.1.5: patches/expo-notifications@58.1.5.patch
   "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch
   "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
   "@expo/metro-config@58.0.14": patches/@expo__metro-config@58.0.14.patch

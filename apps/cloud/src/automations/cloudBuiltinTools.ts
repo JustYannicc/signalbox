@@ -139,8 +139,7 @@ export const makeCloudBuiltinTools = (deps: {
           );
         return { ...target, alreadyLinked };
       }),
-    // The merge gate's evidence, all about one head commit: the server's `pull_request_read`
-    // (`apps/server/src/workflows/builtinTools/pullRequestAction.ts`) plus what it can't read.
+    // The merge gate judges evidence for one head commit.
     pull_request_read: (_call, args) =>
       Effect.gen(function* () {
         const ref = yield* linkedPullRequest(args);

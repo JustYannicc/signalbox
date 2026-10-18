@@ -9,6 +9,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -18,6 +19,7 @@ import { contextAllows } from "../drive/driveAccess.ts";
 import * as Environment from "../environment.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
+import * as SearchBackfill from "../search/SearchBackfill.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 import { contextProjects } from "./contextProjects.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -27,14 +29,17 @@ import * as UserStore from "./UserStore.ts";
 /**
  * A user's sidebar, served from their object's thread index: the snapshot
  * `GET /api/orchestration/shell` and `subscribeShell` start from, and the
- * `thread.updated` items that follow as thread objects deliver summaries,
+ * thread updates and removals that follow as thread objects deliver summaries,
  * each of which may also push to the user's phones (`PushNotifier`).
  * Its projects are the drives of the user's contexts (see `contextProjects`);
  * when those change, open subscriptions get a fresh snapshot. Threads of a
  * context the user has left stay indexed but out of sight.
  */
 
-type ShellItem = Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }>;
+type ShellItem = Extract<
+  OrchestrationV2ShellStreamItem,
+  { readonly kind: "thread.updated" | "thread.removed" }
+>;
 type ShellUpdate =
   | {
       readonly kind: "thread.changed";
@@ -76,6 +81,7 @@ const make = Effect.gen(function* () {
   const { contextIds } = contexts;
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const pushes = yield* PushNotifier.PushNotifier;
+  const searchBackfill = yield* Effect.serviceOption(SearchBackfill.SearchBackfill);
   // Pushes outlive the delivery that caused them, so a slow APNs never holds up the thread.
   const scope = yield* Effect.scope;
   // Thread updates and project changes share one queue, so a subscriber sees
@@ -122,12 +128,11 @@ const make = Effect.gen(function* () {
         );
 
   const publish = (summary: ThreadSummary, sequence: number) => {
-    const item: ShellItem = {
-      kind: "thread.updated",
-      sequence,
-      location: summary.shell.archivedAt === null ? "active" : "archive",
-      thread: summary.shell,
-    };
+    const location = summary.shell.archivedAt === null ? "active" : "archive";
+    const item: ShellItem =
+      summary.shell.deletedAt === null
+        ? { kind: "thread.updated", sequence, location, thread: summary.shell }
+        : { kind: "thread.removed", sequence, location, threadId: summary.threadId };
     return Effect.asVoid(
       PubSub.publish(updates, { kind: "thread.changed", item, contextId: summary.contextId }),
     );
@@ -137,6 +142,15 @@ const make = Effect.gen(function* () {
   const record = (summary: ThreadSummary) =>
     Effect.gen(function* () {
       const written = yield* store.recordThreadSummary(summary);
+      if (Option.isSome(searchBackfill)) {
+        yield* searchBackfill.value
+          .observeThread(summary.threadId)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("search snapshot queue failed", { cause }),
+            ),
+          );
+      }
       if (written === null || !contextAllows(yield* contextIds, summary.contextId)) return;
       yield* publish(summary, written.sequence);
       yield* Effect.forkIn(
@@ -191,6 +205,14 @@ const make = Effect.gen(function* () {
                     },
                   },
                 ],
+              ];
+            }
+            if (item.kind === "thread.removed") {
+              return [
+                archivedIds,
+                item.location === "archive" && archivedIds.delete(item.threadId)
+                  ? [{ kind: "thread.removed", sequence: item.sequence, threadId: item.threadId }]
+                  : [],
               ];
             }
             if (item.kind !== "thread.updated") return [archivedIds, []];

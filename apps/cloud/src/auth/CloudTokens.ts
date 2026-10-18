@@ -55,6 +55,15 @@ const GitHubConnectClaims = Schema.TaggedStruct("github-connect", {
   u: UserId,
   gid: Schema.String,
   exp: ExpiresAt,
+  returnUrl: Schema.optionalKey(Schema.String),
+});
+
+/** Native caller identity, still requiring the same person's browser sign-in before Pipes. */
+const GitHubNativeStartClaims = Schema.TaggedStruct("github-native-start", {
+  u: UserId,
+  gid: Schema.String,
+  returnUrl: Schema.String,
+  exp: ExpiresAt,
 });
 
 /**
@@ -125,6 +134,7 @@ const SignedClaims = Schema.Union([
   CredentialClaims,
   HandoffClaims,
   GitHubConnectClaims,
+  GitHubNativeStartClaims,
   ConnectionLinkClaims,
   LocalKeyClaims,
   PreviewSetupClaims,

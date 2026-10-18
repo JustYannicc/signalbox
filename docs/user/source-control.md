@@ -44,8 +44,11 @@ GitHub where you grant or request it.
 After connecting GitHub and adding a repository, open **Pull Requests** to read its reviews,
 checks, conversations and changed files on web, desktop or mobile. A thread can also link a
 review from another GitHub repository your account can access. If GitHub cannot provide the
-review, Signalbox reports the problem so you can retry. The Pull Requests view is read-only;
-open the pull request on GitHub to comment or merge.
+review, Signalbox reports the problem so you can retry. You can comment, edit comments your
+GitHub account may change, react, submit a review, and reply to, resolve or reopen review
+conversations. A review stays tied to the version you reviewed; if the pull request changes,
+review the new version before submitting again. Ask the agent working in the repository's folder
+to do the same through your connected GitHub account. Open GitHub for other pull request actions.
 
 To work on a repository, choose **Add project → GitHub repository** and pick it from your
 repositories, or type its `owner/name`. Signalbox doesn't copy
@@ -57,7 +60,7 @@ Once the pull request is merged on GitHub, new threads start from the merged com
 Ask the agent to update its pull request description, post a comment, reply to a review, or
 attach a screenshot. It uses the same GitHub connection to act on its own branch's pull request;
 you don't need to give it a token or finish the action on GitHub.
-You can edit or delete comments on GitHub, and remove a screenshot from the description or
+You can delete comments on GitHub, and remove a screenshot from the description or
 comment that displays it.
 
 Signalbox saves a thread's files as it goes. Those saves stay in Signalbox; only the thread's
@@ -163,6 +166,12 @@ toast or from the banner above the composer.
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
+
+For a cloud folder with its own files, open a thread's details and choose **Publish to GitHub**.
+Connect your GitHub account, choose a repository name and visibility, and publish under your
+account or an organization where you can create repositories. Signalbox connects the folder
+and pushes its committed history; work on thread branches stays separate. A folder with no
+commits creates an empty repository, ready for its first push.
 
 ## Create a pull request
 

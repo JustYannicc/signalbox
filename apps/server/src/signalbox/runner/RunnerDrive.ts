@@ -145,6 +145,10 @@ export interface RunnerDrive {
     author?: CommitAuthor,
     folders?: ReadonlyArray<FolderInstructions>,
     pullRequests?: ReadonlyArray<ThreadPullRequestLink>,
+    progress?: (
+      stage: "fetch" | "checkout",
+      status: "running" | "done" | "skipped",
+    ) => Effect.Effect<void>,
   ) => Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
@@ -266,7 +270,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let conflicted: ReadonlyArray<string> = [];
   /** The main a turn start reported conflicting, and its merge message, until taken in or dropped. */
   let syncing: { readonly main: string; readonly message: string } | null = null;
-  /** The remote the drive is backed by, once read; a drive's remote never changes. */
+  /** Refreshed at turn boundaries: a local drive may have been published meanwhile. */
   let remote: DriveRemote | null | undefined = undefined;
   /** Whether a turn start opened the drive here: only then is there anything to save. */
   let prepared = false;
@@ -523,6 +527,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   });
 
   const resolveAndLand = Effect.gen(function* () {
+    remote = yield* drive.refresh;
     if (yield* mergeInProgress) {
       const files = yield* concludeMerge;
       if (files.length > 0) return { _tag: "conflict", files } as DriveOutcome;
@@ -679,9 +684,11 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     author = DRIVE_COMMIT_AUTHOR,
     folders = [],
     pullRequests = [],
+    progress = () => Effect.void,
   ) =>
     exclusive(
       Effect.gen(function* () {
+        yield* progress("fetch", "running");
         const existed = yield* fs.exists(gitDir);
         yield* fs.makeDirectory(input.cwd, { recursive: true });
         if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
@@ -694,13 +701,13 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         syncing = null;
         /** The remote's default branch, when this turn start fetched it: only then is it current. */
         let fetchedMain: string | null = null;
-        // Read once on the first turn and again for remote-backed drives. Only mirror mode
-        // advances `main`; a source still needs the history for promised files and git operations.
-        if (remote !== null && remoteToken !== null) {
+        // Discover newly published remotes every turn. Only mirror mode advances main;
+        // a source still supplies history and promised files.
+        {
           const current = yield* input.client.state;
           remote = current.remote;
           let fetched: Effect.Success<ReturnType<typeof fetchHistory>> | null = null;
-          if (remote !== null) {
+          if (remote !== null && remoteToken !== null) {
             // The drive keeps the remote's files on the remote; git fetches them as it needs them.
             const credentials = remoteCredentialFile(input.cwd);
             yield* fs.writeFileString(
@@ -717,6 +724,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           if (fetched !== null && remote?.mode !== "source") yield* syncRemote(fetched);
           if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
+        yield* progress("fetch", remote === null || remoteToken === null ? "skipped" : "done");
+        yield* progress("checkout", "running");
         const state = yield* drive.open;
         pinnedContinuation = state.pinnedViews !== null;
         const revisionFile = path.join(gitDir, "signalbox-revision");
@@ -802,8 +811,10 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         const mounts = yield* shortcuts.mount(remoteToken, state.pinnedViews !== null);
         mounted = new Set(mounts.mounted.map((mount) => mount.path));
         mountedShortcuts = mounts.mounted;
+        const composed = yield* instructions.compose(mounts.mounted, folders);
+        yield* progress("checkout", "done");
         return {
-          instructions: yield* instructions.compose(mounts.mounted, folders),
+          instructions: composed,
           notices: [...notices, ...mounts.notices],
           ...(mainConflict === undefined ? {} : { mainConflict }),
         } satisfies PreparedDrive;
@@ -841,6 +852,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     exclusive(
       withMachineState(
         Effect.gen(function* () {
+          // Publication can happen while this turn is working. Never land its work on remote main.
+          remote = yield* drive.refresh;
           // Committing now would commit onto the rebase's detached HEAD; the branch stays as last saved.
           if (yield* rebasing) {
             return {
@@ -954,7 +967,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   const saveBranch: RunnerDrive["saveBranch"] = (message) =>
     exclusive(
       Effect.gen(function* () {
-        if (remote === undefined) remote = yield* drive.refresh;
+        remote = yield* drive.refresh;
         if (remote === null) {
           return {
             _tag: "not_saved",
