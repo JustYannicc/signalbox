@@ -28,9 +28,9 @@ export const ASK_KIT_JSON_MAX_LENGTH = 256_000;
 export const ASK_KIT_JSON_MAX_DEPTH = 16;
 export const ASK_KIT_TEXT_MAX_LENGTH = 20_000;
 export const ASK_KIT_SLIDER_MAX_STEPS = 10_000;
-export const ASK_KIT_SLIDER_MAX_MAGNITUDE = 1e12;
-export const ASK_KIT_DATA_IMAGE_MAX_LENGTH = 48_000;
-export const ASK_KIT_HTML_PREVIEW_MAX_LENGTH = 60_000;
+const ASK_KIT_SLIDER_MAX_MAGNITUDE = 1e12;
+const ASK_KIT_DATA_IMAGE_MAX_LENGTH = 48_000;
+const ASK_KIT_HTML_PREVIEW_MAX_LENGTH = 60_000;
 
 const Label = TrimmedNonEmptyString.check(Schema.isMaxLength(80));
 const Caption = TrimmedNonEmptyString.check(Schema.isMaxLength(300));
