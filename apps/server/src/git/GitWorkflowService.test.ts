@@ -154,7 +154,7 @@ describe("GitWorkflowService", () => {
     const execute = vi.fn((_input: GitVcsDriver.ExecuteGitInput) =>
       Effect.succeed({
         exitCode: 0 as GitVcsDriver.ExecuteGitResult["exitCode"],
-        stdout: "feature/local-name\n",
+        stdout: "refs/heads/feature/local-name\n",
         stderr: "",
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -178,7 +178,7 @@ describe("GitWorkflowService", () => {
       assert.deepStrictEqual(execute.mock.calls[0]?.[0], {
         operation: "GitWorkflowService.currentBranch",
         cwd: "/repo",
-        args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        args: ["symbolic-ref", "--quiet", "HEAD"],
         allowNonZeroExit: true,
         timeoutMs: 5_000,
       });
@@ -288,6 +288,49 @@ describe("GitWorkflowService", () => {
       ),
     );
   });
+
+  it.effect("reads branch names unambiguously when a tag has the same name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-current-branch-" });
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      for (const args of [
+        ["init", "-b", "release"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+        ["tag", "release"],
+      ]) {
+        yield* driver.execute({ operation: "test.setupRepo", cwd, args });
+      }
+      assert.equal(yield* workflow.currentBranch(cwd), "release");
+      yield* driver.execute({
+        operation: "test.setupRepo",
+        cwd,
+        args: ["checkout", "-b", "heads/release"],
+      });
+      assert.equal(yield* workflow.currentBranch(cwd), "heads/release");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+              detect: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+            }),
+          ),
+          Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provideMerge(GitVcsDriver.layer),
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-current-branch-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect("finds a name among the refs of every namespace", () =>
     Effect.gen(function* () {

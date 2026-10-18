@@ -8,7 +8,7 @@ import { ownerLevelName, threadHomeLookup } from "@t3tools/client-runtime/state/
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { SquarePenIcon, XIcon } from "lucide-react";
-import { memo, useCallback, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import {
   composerDraftHasUserContent,
@@ -148,10 +148,8 @@ export function HomeDrafts() {
   const rows = useDraftRows(routeDraftId);
   const placeName = usePlaceName();
   const navigate = useNavigate();
-  const openDraft = useCallback(
-    (draftId: DraftId) => void navigate({ to: "/draft/$draftId", params: { draftId } }),
-    [navigate],
-  );
+  const openDraft = (draftId: DraftId) =>
+    void navigate({ to: "/draft/$draftId", params: { draftId } });
   if (rows.length === 0) return null;
   return (
     <section aria-label="Drafts" className="max-h-[35%] shrink-0 overflow-y-auto px-2 pb-2">

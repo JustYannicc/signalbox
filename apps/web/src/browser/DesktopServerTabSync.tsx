@@ -4,7 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { usePreviewSession } from "~/components/preview/usePreviewSession";
 import {
@@ -50,17 +50,13 @@ export function DesktopServerTabSync() {
     );
   }, [environmentId]);
 
-  const threadIds = useMemo(
-    () =>
-      Object.entries(previewByThreadKey).flatMap(([threadKey, state]) => {
-        const threadRef = parseScopedThreadKey(threadKey);
-        return threadRef?.environmentId === environmentId &&
-          Object.values(state.sessions).some((snapshot) => snapshot.runtime === "server")
-          ? [threadRef.threadId]
-          : [];
-      }),
-    [environmentId, previewByThreadKey],
-  );
+  const threadIds = Object.entries(previewByThreadKey).flatMap(([threadKey, state]) => {
+    const threadRef = parseScopedThreadKey(threadKey);
+    return threadRef?.environmentId === environmentId &&
+      Object.values(state.sessions).some((snapshot) => snapshot.runtime === "server")
+      ? [threadRef.threadId]
+      : [];
+  });
 
   if (environmentId === null) return null;
   return threadIds.map((threadId) => (
@@ -73,10 +69,7 @@ function ThreadServerTabSync(props: {
   readonly threadId: ThreadId;
 }) {
   const { environmentId, threadId } = props;
-  const threadRef = useMemo<ScopedThreadRef>(
-    () => ({ environmentId, threadId }),
-    [environmentId, threadId],
-  );
+  const threadRef: ScopedThreadRef = { environmentId, threadId };
   usePreviewSession(threadRef);
   return null;
 }
