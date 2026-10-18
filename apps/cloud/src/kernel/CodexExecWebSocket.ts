@@ -14,26 +14,21 @@ export function acceptCodexExecWebSocket(
   const pair = new WebSocketPair();
   const client = pair[0];
   const server = pair[1];
+  server.binaryType = "arraybuffer";
   server.accept();
   const connection = sessions.connect(
     (message) => {
       server.send(encodeMessage(message));
     },
-    () => {
-      if (server.readyState === WebSocket.OPEN) server.close(1000, "Exec-server detached");
+    (code, reason) => {
+      if (server.readyState === WebSocket.OPEN) server.close(code, reason);
     },
   );
-  let activeRequests = 0;
   const close = (code: number, reason: string) => {
     if (server.readyState === WebSocket.OPEN) server.close(code, reason);
     connection.disconnect();
   };
   server.addEventListener("message", (event) => {
-    // Leave room for control requests while reads or child admission are suspended.
-    if (activeRequests >= 128) {
-      close(1013, "Too many exec-server requests");
-      return;
-    }
     let text: string;
     try {
       text =
@@ -44,16 +39,12 @@ export function acceptCodexExecWebSocket(
       close(1007, "Expected UTF-8 JSON");
       return;
     }
-    activeRequests++;
     const work = connection
       .receive(text)
       .then(() => {
         if (connection.closed) close(1002, "Exec-server protocol error");
       })
-      .catch(() => close(1011, "Exec-server transport failed"))
-      .finally(() => {
-        activeRequests--;
-      });
+      .catch(() => close(1011, "Exec-server transport failed"));
     lifetime.waitUntil(work);
   });
   server.addEventListener("close", () => connection.disconnect());

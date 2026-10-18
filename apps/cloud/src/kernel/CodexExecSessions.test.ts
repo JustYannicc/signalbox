@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { CodexExecSessions, type ExecSessionHandler } from "./CodexExecSessions.ts";
 import type { Notification, Reply } from "./CodexExecProtocol.ts";
 
@@ -135,6 +135,58 @@ describe("Codex exec-server sessions", () => {
     }
   });
 
+  it("rejects resume after the deadline even when the cleanup timer has not run", async () => {
+    vi.useFakeTimers();
+    const fixture = setup();
+    try {
+      const id = await fixture.initialize();
+      fixture.connection.disconnect();
+      vi.setSystemTime(Date.now() + 30_000);
+      const replies: (Reply | Notification)[] = [];
+      const replacement = fixture.sessions.connect((message) => {
+        replies.push(message);
+      });
+      await replacement.receive(
+        frame(2, "initialize", { clientName: "codex", resumeSessionId: id }),
+      );
+      expect(replies.at(-1)).toMatchObject({
+        error: { code: -32600, message: "Session has expired" },
+      });
+      expect(fixture.created[0]!.signal.aborted).toBe(true);
+      expect(fixture.created).toHaveLength(1);
+    } finally {
+      await fixture.sessions.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("reserves control admission while ordinary reads are blocked", async () => {
+    const fixture = setup();
+    try {
+      await fixture.initialize();
+      fixture.request.mockImplementation(async (method, _params, signal) => {
+        if (method !== "process/read") return { terminated: true };
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        return {};
+      });
+      const reads = Array.from({ length: 128 }, (_, i) =>
+        fixture.connection.receive(frame(i + 10, "process/read")),
+      );
+      await fixture.connection.receive(frame(200, "process/read"));
+      expect(fixture.messages.at(-1)).toMatchObject({ id: 200, error: { code: -32603 } });
+      await fixture.connection.receive(frame(201, "environment/status"));
+      expect(fixture.messages.at(-1)).toEqual({ id: 201, result: { status: "ready" } });
+      await fixture.connection.receive(frame(202, "process/terminate"));
+      expect(fixture.messages.at(-1)).toEqual({ id: 202, result: { terminated: true } });
+      fixture.connection.disconnect();
+      await Promise.all(reads);
+    } finally {
+      await fixture.sessions.dispose();
+    }
+  });
+
   it("uses upstream malformed-request ids and rejects repeated initialization", async () => {
     const fixture = setup();
     try {
@@ -179,5 +231,22 @@ describe("Codex exec-server sessions", () => {
     await fixture.sessions.dispose();
     expect(uninitialized.closed).toBe(true);
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("closes protocol violations with the actual protocol close code", async () => {
+    const fixture = setup();
+    try {
+      for (const text of ['{"method":"unexpected"}', '{"id":1,"result":{}}']) {
+        const close = vi.fn();
+        const send = vi.fn();
+        const connection = fixture.sessions.connect(send, close);
+        await connection.receive(text);
+        expect(connection.closed).toBe(true);
+        expect(close).toHaveBeenCalledWith(1002, expect.any(String));
+        expect(send).not.toHaveBeenCalled();
+      }
+    } finally {
+      await fixture.sessions.dispose();
+    }
   });
 });

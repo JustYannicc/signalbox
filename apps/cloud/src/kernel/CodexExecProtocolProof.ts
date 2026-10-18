@@ -163,12 +163,13 @@ class ProofClient {
 
   constructor(socket: WebSocket) {
     this.#socket = socket;
+    socket.binaryType = "arraybuffer";
     this.#closed = new Promise((resolve) => {
       socket.addEventListener(
         "close",
-        () => {
+        (event) => {
           for (const waiter of this.#pending.values())
-            waiter.reject(new Error("Proof WebSocket closed"));
+            waiter.reject(new Error(`Proof WebSocket closed ${event.code}: ${event.reason}`));
           this.#pending.clear();
           resolve();
         },

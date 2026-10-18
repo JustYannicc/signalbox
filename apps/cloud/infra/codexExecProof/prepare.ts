@@ -13,6 +13,7 @@ export async function prepareCodexExecProof(destination: string) {
     "CodexExecSessions",
     "CodexExecWebSocket",
     "CodexExecProtocolProof",
+    "execServer/JsonFrame",
   ]) {
     const source = await NodeFSP.readFile(
       new URL(`../../src/kernel/${name}.ts`, import.meta.url),
@@ -23,6 +24,7 @@ export async function prepareCodexExecProof(destination: string) {
       '$1.js"',
     );
     const path = `${name}.js`;
+    await NodeFSP.mkdir(NodePath.dirname(NodePath.join(destination, path)), { recursive: true });
     await NodeFSP.writeFile(NodePath.join(destination, path), js);
     modules[path] = { path, type: "js" };
   }

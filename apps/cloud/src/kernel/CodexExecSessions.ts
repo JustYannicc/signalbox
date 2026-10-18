@@ -4,6 +4,7 @@ import {
   initializeParams,
   invalidRequest,
   RpcError,
+  UnexpectedExecResponse,
   type EnvironmentInfo,
   type Message,
   type Notification,
@@ -24,6 +25,7 @@ type Session = {
   connection: object | undefined;
   disconnect: (() => void) | undefined;
   timer: ReturnType<typeof setTimeout> | undefined;
+  detachedUntil: number | undefined;
   cleanup: Promise<void> | undefined;
 };
 
@@ -62,7 +64,7 @@ export class CodexExecSessions {
     }
   }
 
-  connect(send: Send, closeTransport?: () => void) {
+  connect(send: Send, closeTransport?: (code: number, reason: string) => void) {
     if (this.#closed) throw new RpcError(-32600, "Exec-server is closed");
     const identity = {};
     const abort = new AbortController();
@@ -70,7 +72,9 @@ export class CodexExecSessions {
     let initialized = false;
     let initializeRequested = false;
     let closed = false;
-    const disconnect = () => {
+    let ordinaryRequests = 0;
+    let controlRequests = 0;
+    const disconnect = (code = 1000, reason = "Exec-server detached") => {
       if (closed) return;
       closed = true;
       abort.abort();
@@ -81,19 +85,20 @@ export class CodexExecSessions {
         session.send = undefined;
         if (!this.#closed) {
           const detached = session;
+          detached.detachedUntil = Date.now() + this.#ttlMs;
           detached.timer = setTimeout(() => {
             void this.#remove(detached).catch(this.#options.onCleanupError);
           }, this.#ttlMs);
         }
       }
-      closeTransport?.();
+      closeTransport?.(code, reason);
     };
     const sendIfOpen: Send = async (message) => {
       if (closed) return;
       try {
         await send(message);
       } catch (error) {
-        disconnect();
+        disconnect(1011, "Exec-server transport failed");
         throw error;
       }
     };
@@ -130,19 +135,43 @@ export class CodexExecSessions {
         try {
           message = decodeMessage(text);
         } catch (error) {
+          if (error instanceof UnexpectedExecResponse) {
+            disconnect(1002, "Unexpected exec-server response");
+            return;
+          }
           await sendIfOpen({ id: -1, error: rpcError(error) });
           return;
         }
         if (message.id === undefined) {
           if (message.method === "initialized" && session) initialized = true;
-          else disconnect();
+          else disconnect(1002, "Unexpected exec-server notification");
           return;
         }
+        // Reads can wait on output without occupying the capacity needed to terminate a child.
+        const control = [
+          "initialize",
+          "environment/info",
+          "environment/status",
+          "process/signal",
+          "process/terminate",
+        ].includes(message.method);
+        if (control ? controlRequests >= 16 : ordinaryRequests >= 128) {
+          await sendIfOpen({
+            id: message.id,
+            error: { code: -32603, message: "Too many exec-server requests" },
+          });
+          return;
+        }
+        if (control) controlRequests++;
+        else ordinaryRequests++;
         let reply: Reply;
         try {
           reply = { id: message.id, result: await request(message) };
         } catch (error) {
           reply = { id: message.id, error: rpcError(error) };
+        } finally {
+          if (control) controlRequests--;
+          else ordinaryRequests--;
         }
         await sendIfOpen(reply);
       },
@@ -174,11 +203,16 @@ export class CodexExecSessions {
       const existing = this.#sessions.get(resumeId);
       if (!existing) return invalidRequest("Unknown session id");
       if (existing.abort.signal.aborted) return invalidRequest("Session is closed");
+      if (existing.detachedUntil !== undefined && Date.now() >= existing.detachedUntil) {
+        void this.#remove(existing).catch(this.#options.onCleanupError);
+        return invalidRequest("Session has expired");
+      }
       if (existing.connection)
         throw new RpcError(-32010, "Session is already attached to another connection");
       session = existing;
       clearTimeout(session.timer);
       session.timer = undefined;
+      session.detachedUntil = undefined;
     } else {
       if (this.#sessions.size >= this.#maxSessions)
         throw new RpcError(-32603, "Too many exec-server sessions");
@@ -202,6 +236,7 @@ export class CodexExecSessions {
         disconnect: undefined,
         send: undefined,
         timer: undefined,
+        detachedUntil: undefined,
         cleanup: undefined,
       };
       session = created;

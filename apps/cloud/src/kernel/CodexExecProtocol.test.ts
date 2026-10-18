@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   decodeMessage,
   encodeMessage,
   readParams,
   RpcError,
+  UnexpectedExecResponse,
   signalParams,
   startParams,
   writeParams,
@@ -37,9 +38,27 @@ describe("Codex exec-server wire decoding", () => {
     '{"id":9223372036854775808,"method":"initialize"}',
     '{"id":1.0,"method":"initialize"}',
     '{"id":1e2,"method":"initialize"}',
-    '{"id":1,"result":{}}',
   ])("rejects malformed inbound message %s", (text) => {
     expect(() => decodeMessage(text)).toThrow(RpcError);
+  });
+
+  it("rejects duplicate keys, including escaped equivalents and nested objects", () => {
+    for (const text of [
+      '{"id":1,"id":2,"method":"x"}',
+      '{"id":1,"\\u0069d":2,"method":"x"}',
+      '{"method":"x","params":{"env":{"PATH":"a","PATH":"b"}}}',
+    ])
+      expect(() => decodeMessage(text)).toThrow("Duplicate JSON object key");
+    expect(decodeMessage('{"method":"x","params":[{"a":1},{"a":2}]}')).toMatchObject({
+      method: "x",
+    });
+  });
+
+  it("distinguishes unsolicited responses from malformed requests", () => {
+    expect(() => decodeMessage('{"id":1,"result":{}}')).toThrow(UnexpectedExecResponse);
+    expect(() => decodeMessage('{"id":1,"error":{"code":-32600,"message":"x"}}')).toThrow(
+      UnexpectedExecResponse,
+    );
   });
 
   it("round-trips the full signed 64-bit request-id range without rounding", () => {

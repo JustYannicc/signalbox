@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - the portable wire boundary uses workerd's byte codecs without an Effect runtime.
 import * as NodeBuffer from "node:buffer";
+import { preflightJsonFrame } from "./execServer/JsonFrame.ts";
 
 // Codex 0.162.1 exec-server-protocol uses camelCase JSON-RPC without a jsonrpc field.
 export type RequestId = string | number | bigint;
@@ -31,6 +32,8 @@ export class RpcError extends Error {
     this.name = "CodexExecRpcError";
   }
 }
+
+export class UnexpectedExecResponse extends Error {}
 
 export const invalidParams = (message: string): never => {
   throw new RpcError(-32602, message);
@@ -82,39 +85,23 @@ export function decodeMessage(text: string, maxBytes = 16 * 1024 * 1024): Messag
   if (NodeBuffer.Buffer.byteLength(text) > maxBytes)
     return invalidRequest("Message exceeds byte limit");
   let value: unknown;
-  const numericIds = new WeakMap<object, string>();
+  let numericId: string | undefined;
   try {
-    const parse: (
-      source: string,
-      reviver: (
-        this: object,
-        key: string,
-        value: unknown,
-        context?: { source?: string },
-      ) => unknown,
-    ) => unknown = JSON.parse;
-    value = parse(text, function (key, entry, context) {
-      if (key === "id" && typeof entry === "number" && context?.source !== undefined) {
-        numericIds.set(this, context.source);
-      }
-      return entry;
-    });
-  } catch {
-    return invalidRequest("Invalid JSON");
-  }
-  const pending = [value];
-  let remaining = 256 * 1024;
-  while (pending.length > 0) {
-    if (--remaining < 0) return invalidRequest("Message exceeds value limit");
-    const current = pending.pop();
-    if (current !== null && typeof current === "object") {
-      for (const child of Object.values(current)) pending.push(child);
-    }
+    numericId = preflightJsonFrame(text);
+    value = JSON.parse(text);
+  } catch (error) {
+    return invalidRequest(error instanceof SyntaxError ? error.message : "Invalid JSON");
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return invalidRequest("Expected a JSON-RPC object");
   }
   const record = value as Record<string, unknown>;
+  if (
+    !Object.hasOwn(record, "method") &&
+    (Object.hasOwn(record, "result") || Object.hasOwn(record, "error"))
+  ) {
+    throw new UnexpectedExecResponse("No server request is awaiting this response");
+  }
   if (typeof record.method !== "string") return invalidRequest("Expected a method");
   let id: RequestId | undefined;
   if (
@@ -126,7 +113,7 @@ export function decodeMessage(text: string, maxBytes = 16 * 1024 * 1024): Messag
   }
   if (typeof record.id === "string") id = record.id;
   if (typeof record.id === "number") {
-    const source = numericIds.get(record);
+    const source = numericId;
     if (source === undefined) {
       if (!Number.isSafeInteger(record.id))
         return invalidRequest("Cannot decode an exact numeric request id");
