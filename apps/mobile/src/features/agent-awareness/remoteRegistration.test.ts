@@ -2,10 +2,12 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import Constants from "expo-constants";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { TestClock } from "effect/testing";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
@@ -1130,7 +1132,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         data: "fcm-token",
       });
       Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
-      const now = vi.spyOn(Date, "now").mockReturnValue(1000000);
       vi.mocked(clearAndroidAgentNotifications).mockClear();
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
       return Effect.gen(function* () {
@@ -1147,7 +1148,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         for (const listener of appStateMock.listeners) listener("active");
         yield* runBackgroundOperations();
         expect(saveAgentAwarenessRegistrationRecord).toHaveBeenCalledTimes(2);
-        now.mockReturnValue(1060001);
+        yield* TestClock.adjust(Duration.millis(60_001));
         for (const listener of appStateMock.listeners) listener("active");
         yield* runBackgroundOperations();
         expect(saveAgentAwarenessRegistrationRecord).toHaveBeenCalledTimes(3);
