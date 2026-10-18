@@ -1,6 +1,12 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { CommandId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  OrchestrationV2DispatchCommandResult,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { normalizeTerminalOutput } from "@t3tools/shared/terminalOutput";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -226,7 +232,19 @@ describe("Signalbox's MCP", () => {
         expect((yield* snapshot()).projection.thread.settledOverride).toBe("settled");
         yield* call("threads.unsettle", { commandId: "unsettle", threadId, reason: "user" });
         expect((yield* snapshot()).projection.thread.settledOverride).toBe("active");
-        expect(yield* call("threads.settle", { commandId: "settle", threadId })).toEqual(settled);
+        const replayed = yield* call("threads.settle", { commandId: "settle", threadId });
+        expect(replayed.isError ?? false).toBe(false);
+        const decodeReceipt = Schema.decodeUnknownEffect(
+          Schema.fromJsonString(OrchestrationV2DispatchCommandResult),
+        );
+        const originalReceipt = yield* decodeReceipt(settled.content[0]!.text);
+        const replayedReceipt = yield* decodeReceipt(replayed.content[0]!.text);
+        const summary = yield* cloud.threadDirectory.forThread(threadId).summary(actor);
+        expect(replayedReceipt).toEqual({
+          sequence: originalReceipt.sequence,
+          summaryRevision: summary?.shell.summaryRevision,
+        });
+        expect(replayedReceipt.summaryRevision).toBeGreaterThan(originalReceipt.summaryRevision!);
         expect((yield* snapshot()).projection.thread.settledOverride).toBe("active");
         yield* call("threads.archive", { commandId: "archive", threadId });
         yield* cloud.settle;
