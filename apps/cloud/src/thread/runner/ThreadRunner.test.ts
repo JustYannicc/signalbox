@@ -1,4 +1,5 @@
 import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
   MIN_RUNNER_PROTOCOL_VERSION,
   RUNNER_PROTOCOL_VERSION,
   type RunnerItem,
@@ -1024,7 +1025,12 @@ describe("ThreadRunner", () => {
           });
           yield* connect(runner);
           const work = yield* runner.work;
-          expect(work.drive?.instructions).toEqual(levels);
+          expect(work.drive?.instructions).toEqual([
+            ...levels,
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          ]);
         }),
       { drives: true },
     ),
@@ -1062,7 +1068,12 @@ describe("ThreadRunner", () => {
           const work = yield* runner.work;
           // The continuation: a run of its own.
           expect(work.turn?.runId).not.toBe(turn.runId);
-          expect(work.drive?.instructions).toEqual(levels);
+          expect(work.drive?.instructions).toEqual([
+            ...levels,
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          ]);
         }),
       { drives: true },
     ),

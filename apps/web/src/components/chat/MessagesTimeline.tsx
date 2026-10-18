@@ -40,6 +40,10 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  toggleRunFoldExpansion,
+  transitionRunFoldExpansion,
+} from "@t3tools/client-runtime/state/thread-fold-expansion";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   liveThoughtLine,
@@ -625,6 +629,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const runContinuations = latestRun?.runContinuations;
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
@@ -732,15 +737,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const onToggleTurnFold = (runId: RunId) => {
     suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
-    setExpandedRunIds((existing) => {
-      const next = new Set(existing);
-      if (next.has(runId)) {
-        next.delete(runId);
-      } else {
-        next.add(runId);
-      }
-      return next;
-    });
+    setExpandedRunIds((existing) => toggleRunFoldExpansion(existing, runId, runContinuations));
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
     suspendEndScrollMaintenanceForDisclosure(anchorKey, expandedWorkGroupIds.has(groupId));
@@ -774,25 +771,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (identity !== listIdentityKey || !latestRun || previous?.runId === undefined) {
       return;
     }
-    if (latestRun.runId === previous.runId) {
-      if (previous.status === "running" && latestRun.status === "interrupted") {
-        setExpandedRunIds((existing) => {
-          const next = new Set(existing);
-          next.add(latestRun.runId);
-          return next;
-        });
-      }
-      return;
-    }
-    setExpandedRunIds((existing) => {
-      if (!existing.has(previous.runId)) {
-        return existing;
-      }
-      const next = new Set(existing);
-      next.delete(previous.runId);
-      return next;
-    });
-  }, [latestRun, listIdentityKey]);
+    setExpandedRunIds((existing) =>
+      transitionRunFoldExpansion(existing, previous, latestRun, runContinuations),
+    );
+  }, [latestRun, listIdentityKey, runContinuations]);
 
   // Find the fold that hides the match: imported turns have no run id but still
   // fold under a synthetic key, so the match's own run id cannot open them.
