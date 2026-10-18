@@ -339,6 +339,10 @@
       "types": "./src/state/signalboxPersonBrowser.ts",
       "default": "./src/state/signalboxPersonBrowser.ts"
     },
+    "./state/signalboxTrash": {
+      "types": "./src/state/signalboxTrash.ts",
+      "default": "./src/state/signalboxTrash.ts"
+    },
     "./state/signalboxPreviews": {
       "types": "./src/state/signalboxPreviews.ts",
       "default": "./src/state/signalboxPreviews.ts"
@@ -634,6 +638,10 @@
     "./pull-request-diff-revision": {
       "types": "./src/pullRequestDiffRevision.ts",
       "default": "./src/pullRequestDiffRevision.ts"
+    },
+    "./pull-request-write-attempt": {
+      "types": "./src/pullRequestWriteAttempt.ts",
+      "default": "./src/pullRequestWriteAttempt.ts"
     }
   },
   "scripts": {

@@ -75,9 +75,6 @@ const DEFAULT_ATTEMPTS: Partial<Record<WorkflowStepVerb, number>> = {
 };
 const MAX_ATTEMPTS = 10;
 
-/** Whether a verb's steps can be tried again, so a parked retry restarts them. */
-export const retries = (verb: WorkflowStepVerb) => DEFAULT_ATTEMPTS[verb] !== undefined;
-
 export function retryPolicy(verb: WorkflowStepVerb, args: ReadonlyArray<unknown>): RetryPolicy {
   const fallback = DEFAULT_ATTEMPTS[verb];
   if (fallback === undefined) return { attempts: 1, backoff: "fixed" };

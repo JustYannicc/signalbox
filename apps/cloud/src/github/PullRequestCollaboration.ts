@@ -1,21 +1,19 @@
 import {
-  PullRequestOperationError,
   type PullRequestInvalidateInput,
-  type PullRequestRef,
   type PullRequestThreadReplyInput,
   type PullRequestThreadResolutionInput,
 } from "@t3tools/contracts";
-import { canWriteDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { driveOfProject } from "../user/contextProjects.ts";
-import { UserDrives } from "../user/UserDrives.ts";
 import { GitHub } from "./GitHub.ts";
-import { PullRequestRepository } from "./PullRequestRepository.ts";
-import { AgentPullRequestError, safeApiError } from "./agentPullRequestError.ts";
+import { AgentPullRequestError } from "./agentPullRequestError.ts";
 import { makeAgentPullRequestReceipts } from "./agentPullRequestReceipts.ts";
+import {
+  collaborationError,
+  makeCollaborationQuery,
+  makePullRequestWriteAccess,
+} from "./pullRequestCollaborationSupport.ts";
 
 const THREAD = `query CollaborationThread($id: ID!) {
   node(id: $id) { ... on PullRequestReviewThread {
@@ -61,108 +59,16 @@ const ResolutionResult = Schema.Struct({
   unresolveReviewThread: Schema.optional(Resolution),
 });
 
-interface GraphqlAnswer<A> {
-  readonly data?: A | null | undefined;
-  readonly errors?: ReadonlyArray<{ readonly type?: string | undefined }> | undefined;
-}
-const answerOf = <A>(schema: Schema.Codec<A, unknown>) =>
-  Schema.decodeUnknownOption(
-    Schema.fromJsonString(
-      Schema.Struct({
-        data: Schema.optional(Schema.NullOr(schema)),
-        errors: Schema.optional(
-          Schema.Array(Schema.Struct({ type: Schema.optional(Schema.String) })),
-        ),
-      }),
-    ),
-  );
-const decodeThread = answerOf(ThreadResult);
-const decodeReply = answerOf(ReplyResult);
-const decodeResolution = answerOf(ResolutionResult);
-
 const refuse = AgentPullRequestError.forCategory;
-const publicError = (operation: string) => (error: AgentPullRequestError) =>
-  new PullRequestOperationError({
-    operation,
-    detail: error.message,
-    status: error.status,
-    ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-    reason:
-      error.retryAt !== undefined
-        ? "rate-limit"
-        : error.category === "not_found"
-          ? "not-found"
-          : error.category === "not_connected"
-            ? "not-connected"
-            : error.category === "conflict"
-              ? "operation-conflict"
-              : error.category === "github_conflict"
-                ? "conflict"
-                : error.category === "unavailable"
-                  ? undefined
-                  : error.category,
-  });
 
-/** Folder authority is checked anew even when a durable receipt can answer the retry. */
 export const makePullRequestCollaboration = (
   invalidate: (input: PullRequestInvalidateInput) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repositories = yield* PullRequestRepository;
-    const drives = yield* UserDrives;
+    const authorize = yield* makePullRequestWriteAccess;
     const receipts = yield* makeAgentPullRequestReceipts(refuse);
-
-    const authorize = (input: PullRequestRef) =>
-      Effect.gen(function* () {
-        const target = yield* repositories.resolve(input);
-        const userId = yield* drives.userId.pipe(Effect.mapError(() => refuse("permission")));
-        const driveId = userId === null ? null : driveOfProject(input.projectId, userId);
-        if (driveId === null) return yield* refuse("permission");
-        const role = yield* drives
-          .access(driveId)
-          .pipe(Effect.mapError(() => refuse("permission")));
-        if (!canWriteDrive(role)) return yield* refuse("permission");
-        return target;
-      });
-
-    const query = <A>(
-      token: string,
-      document: string,
-      variables: Readonly<Record<string, unknown>>,
-      decode: (text: string) => Option.Option<GraphqlAnswer<A>>,
-    ) =>
-      Effect.gen(function* () {
-        const text = yield* github.api
-          .graphql("pullRequestCollaboration", token, document, variables)
-          .pipe(
-            Effect.mapError((error) =>
-              // GraphQL reports a definite rate-limit refusal inside an HTTP 200.
-              safeApiError(error.retryAt === undefined ? error : { ...error, status: 429 }),
-            ),
-          );
-        if (text === null) return yield* refuse("not_found", 404);
-        const decoded = decode(text);
-        if (Option.isNone(decoded)) return yield* refuse("unavailable", 200);
-        const { data, errors } = decoded.value;
-        if (errors !== undefined && errors.length > 0) {
-          // A mutation may have committed before one of its selected fields failed.
-          if (
-            data != null &&
-            typeof data === "object" &&
-            Object.values(data).some((value) => value != null)
-          )
-            return yield* refuse("unavailable", 200);
-          const types = errors.map((error) => error.type);
-          if (types.every((type) => type === "FORBIDDEN")) return yield* refuse("permission", 403);
-          if (types.every((type) => type === "NOT_FOUND")) return yield* refuse("not_found", 404);
-          if (types.every((type) => type === "UNPROCESSABLE"))
-            return yield* refuse("github_conflict", 422);
-          return yield* refuse("unavailable", 200);
-        }
-        if (data == null) return yield* refuse("unavailable", 200);
-        return data;
-      });
+    const query = makeCollaborationQuery(github.api);
 
     const threadFor = (
       input: PullRequestThreadResolutionInput | PullRequestThreadReplyInput,
@@ -170,7 +76,7 @@ export const makePullRequestCollaboration = (
       repository: string,
     ) =>
       Effect.gen(function* () {
-        const { node } = yield* query(token, THREAD, { id: input.threadId }, decodeThread);
+        const { node } = yield* query(token, THREAD, { id: input.threadId }, ThreadResult);
         if (node === null) return yield* refuse("not_found", 404);
         if (
           node.pullRequest.number !== input.number ||
@@ -204,7 +110,7 @@ export const makePullRequestCollaboration = (
                 target.token,
                 REPLY,
                 { threadId: input.threadId, body: input.body },
-                decodeReply,
+                ReplyResult,
               ).pipe(
                 Effect.flatMap((result) => {
                   const id = result.addPullRequestReviewThreadReply?.comment?.id;
@@ -220,7 +126,7 @@ export const makePullRequestCollaboration = (
         yield* invalidate({ reference: input });
       }).pipe(
         Effect.catchTags({
-          AgentPullRequestError: (error) => Effect.fail(publicError("replyToThread")(error)),
+          AgentPullRequestError: (error) => Effect.fail(collaborationError("replyToThread")(error)),
         }),
       );
 
@@ -235,7 +141,7 @@ export const makePullRequestCollaboration = (
             target.token,
             input.resolved ? RESOLVE : UNRESOLVE,
             { id: input.threadId },
-            decodeResolution,
+            ResolutionResult,
           );
           const updated = (
             input.resolved ? result.resolveReviewThread : result.unresolveReviewThread
@@ -246,7 +152,8 @@ export const makePullRequestCollaboration = (
         yield* invalidate({ reference: input });
       }).pipe(
         Effect.catchTags({
-          AgentPullRequestError: (error) => Effect.fail(publicError("setThreadResolution")(error)),
+          AgentPullRequestError: (error) =>
+            Effect.fail(collaborationError("setThreadResolution")(error)),
         }),
       );
 

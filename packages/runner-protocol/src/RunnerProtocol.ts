@@ -25,6 +25,8 @@ import { DriveAccess, DriveFileChange, Oid, SkippedFolder } from "./DriveProtoco
 import { PullOperation, PullResult } from "./PullProtocol.ts";
 import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
+import { TerminalCommandMessage, TerminalReportMessage } from "./TerminalProtocol.ts";
+import { FeedbackRequest, FeedbackResponse } from "./FeedbackProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -358,6 +360,8 @@ export const RunnerHello = Schema.Struct({
   machineId: Schema.String,
   threadId: ThreadId,
   generation: PositiveInt,
+  /** Fresh for each terminal host process, stable across its socket reconnects. */
+  terminalProcessId: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
   token: Schema.String,
   lastAckedSequence: NonNegativeInt,
   /** Absent from Runners built before diagnostics. */
@@ -375,6 +379,8 @@ export const RunnerHello = Schema.Struct({
   ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** Accepts one-shot provider feedback requests. Older runners must never receive them. */
+  feedback: Schema.optional(Schema.Boolean),
   workflowStops: Schema.optional(Schema.Boolean),
   /** The Runner can answer a pending native provider request. */
   runtimeResponses: Schema.optional(Schema.Boolean),
@@ -386,12 +392,14 @@ export type RunnerHello = typeof RunnerHello.Type;
 /** Runner to thread. */
 export const RunnerMessage = Schema.Union([
   RunnerHello,
+  FeedbackResponse,
   Schema.Struct({
     type: Schema.Literal("batch"),
     /** Counts from 1 within a generation, with no gaps. */
     sequence: PositiveInt,
     items: Schema.Array(RunnerItem),
   }),
+  TerminalReportMessage,
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type RunnerMessage = typeof RunnerMessage.Type;
@@ -407,6 +415,7 @@ export type RunnerRefusal = typeof RunnerRefusal.Type;
 
 /** Thread to Runner. */
 export const ThreadMessage = Schema.Union([
+  FeedbackRequest,
   Schema.Struct({ type: Schema.Literal("workflow.stop"), ...WorkflowStopRequest.fields }),
   Schema.Struct({
     type: Schema.Literal("welcome"),
@@ -421,6 +430,7 @@ export const ThreadMessage = Schema.Union([
     message: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
+  TerminalCommandMessage,
   /** A committed response to a native request this live run observed on its harness session. */
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

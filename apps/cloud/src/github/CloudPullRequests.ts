@@ -39,17 +39,26 @@ import {
 } from "./PullRequestRepository.ts";
 import { makeListingReads } from "./cloudPullRequestListing.ts";
 import { makePullRequestCollaboration } from "./PullRequestCollaboration.ts";
+import { makePullRequestDiscussion } from "./PullRequestDiscussion.ts";
+import { folderCanWritePullRequests } from "./pullRequestCollaborationSupport.ts";
 import { makeReadCache } from "./cloudReadCache.ts";
 
 export { CloudPullRequests };
 
 const capabilities: PullRequestCapabilities = {
   diff: true,
-  comment: false,
+  comment: true,
   actions: [],
   mergeMethods: [],
   search: true,
-  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+  review: {
+    inlineComment: true,
+    reply: true,
+    resolve: true,
+    verdicts: ["comment", "approve", "request-changes"],
+  },
+  reactions: true,
+  edit: { changeRequest: false, comment: true },
   reviewers: { request: false, listCandidates: false },
   stacks: true,
 };
@@ -149,11 +158,20 @@ const make = Effect.gen(function* () {
       const core = yield* readCore(input, target).pipe(
         Effect.flatMap((value) => requireData("detail", value)),
       );
+      const writable = yield* folderCanWritePullRequests(drives, input.projectId);
       return {
         ...core,
         headSha: core.headSha ?? undefined,
         provider,
-        capabilities,
+        capabilities: writable
+          ? capabilities
+          : {
+              ...capabilities,
+              comment: false,
+              reactions: false,
+              edit: { changeRequest: false, comment: false },
+              review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+            },
         projectId: target.project.id,
         projectTitle: target.project.title,
         workspaceRoot: target.project.workspaceRoot,
@@ -167,9 +185,13 @@ const make = Effect.gen(function* () {
         mergeCapabilities: core.viewerAccess.mergeCapabilities,
         viewerPermissions: {
           actions: [],
-          comment: false,
-          resolve: false,
-          verdicts: [],
+          comment: writable,
+          resolve: writable && (core.viewerAccess.canWrite || core.viewerAccess.didAuthor),
+          verdicts: !writable
+            ? []
+            : core.viewerAccess.didAuthor
+              ? ["comment"]
+              : capabilities.review.verdicts,
           requestReviewers: false,
         },
         baseComparison:
@@ -393,9 +415,11 @@ const make = Effect.gen(function* () {
     );
 
   const collaboration = yield* makePullRequestCollaboration(invalidate);
+  const discussion = yield* makePullRequestDiscussion(invalidate);
 
   return {
     ...collaboration,
+    ...discussion,
     ...listings,
     summary,
     detail,

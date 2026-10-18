@@ -91,6 +91,7 @@ import {
 import { threadRouteIsHydrating } from "./thread-route-hydration";
 import { useThreadPromptLink } from "../prompt-links/useThreadPromptLink";
 import { ThreadHeader } from "./ThreadHeader";
+import { TaskLifecycleControl } from "./TaskLifecycleControl";
 import {
   useAndroidWorkspaceBack,
   useWorkspaceListNavigation,
@@ -997,6 +998,12 @@ function ThreadRouteContent(
         progress={gitActionProgress}
         onDismiss={dismissGitActionResult}
         onOpenPullRequest={openPullRequest}
+      />
+
+      <TaskLifecycleControl
+        environmentId={selectedThread.environmentId}
+        threadId={selectedThread.id}
+        shell={selectedThread}
       />
 
       <ThreadPane>

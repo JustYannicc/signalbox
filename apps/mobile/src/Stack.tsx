@@ -69,6 +69,7 @@ import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import { PublishFolderSheet } from "./features/folders/PublishFolderSheet"; // signalbox: #810
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
@@ -83,6 +84,7 @@ import {
   automationStackScreens,
 } from "./features/automations/routes"; // signalbox: automations
 import { signInSettingsScreens } from "./features/signIn/routes"; // signalbox: sign-in grants
+import { trashSettingsScreens } from "./features/trash/routes"; // signalbox: trash
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectNewRoute } from "./features/projects/AddProjectNewRoute";
@@ -359,6 +361,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
     }),
     ...automationSettingsScreens(), // signalbox: automations
     ...signInSettingsScreens(), // signalbox: sign-in grants
+    ...trashSettingsScreens(), // signalbox: trash
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
       linking: "scheduled-tasks/new",
@@ -573,6 +576,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitCommit",
   "GitConfirm",
   "GitOverview",
+  "PublishFolder", // signalbox: #810
   "NewTaskSheet",
   "SettingsLegal",
   "SettingsSheet",
@@ -923,6 +927,16 @@ const RootStackConfig = createWorkspaceStackNavigator({
     GitBranches: createNativeStackScreen({
       screen: GitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.55, 0.92],
+        sheetGrabberVisible: true,
+      },
+    }),
+    // signalbox: publish a cloud folder to GitHub (#810)
+    PublishFolder: createNativeStackScreen({
+      screen: PublishFolderSheet,
+      linking: `${THREAD_LINKING_PREFIX}/git/publish`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.92],

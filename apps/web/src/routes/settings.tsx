@@ -159,7 +159,8 @@ function SettingsRouteLayout() {
         !showsEnvironmentUi ||
         pathname === "/settings/providers" ||
         pathname === "/settings/pools" || // signalbox: pools
-        pathname === "/settings/sign-in" // signalbox: sign-in grants
+        pathname === "/settings/sign-in" || // signalbox: sign-in grants
+        pathname === "/settings/trash" // signalbox: trash
       }
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target

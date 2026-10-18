@@ -29,8 +29,6 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
 import * as AutomationHttp from "./workflows/http.ts"; // signalbox: automations
-import * as AutomationPush from "./workflows/AutomationPush.ts"; // signalbox: automations
-import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalbox: automations
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
 import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import * as PoolUsageHistory from "./accountHub/PoolUsageHistory.ts"; // signalbox: pool usage history
@@ -73,7 +71,8 @@ import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts"
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
-import * as TerminalManager from "./terminal/Manager.ts";
+// signalbox: the cloud terminal engine must not load self-hosted provider wiring.
+import * as ServerTerminalManager from "./terminal/ServerTerminalManager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -425,7 +424,7 @@ const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDr
 
 const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
-const layerTerminal = TerminalManager.layer.pipe(
+const layerTerminal = ServerTerminalManager.layer.pipe(
   Layer.provide(layerPtyAdapter),
   Layer.provide(layerPortScanner),
   Layer.provide(layerNativeTelemetry),
@@ -574,8 +573,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   PoolUsageHistory.layer, // signalbox: pool usage history
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
-  AutomationPush.layer, // signalbox: automations
-  AutomationSkill.layer, // signalbox: automations
   layerThreadSettlementWorker,
   StorageCleanup.layer.pipe(
     Layer.provide(WorktreeCleanupGuard.layer),
@@ -733,7 +730,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(
         WebhookRoute.layer.pipe(
           Layer.provide(RelayDeliveryProof.layer),
-          Layer.provide(AutomationHttp.layerWebhookReceiver), // signalbox: automation webhooks
+          Layer.provide(AutomationHttp.automationWebhookMiddleware.layer), // signalbox: automation webhooks
         ),
       ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),

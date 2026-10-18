@@ -1,7 +1,10 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+
+import { pullRequestEnvironment } from "~/state/pullRequests";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
@@ -10,9 +13,14 @@ import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { PullRequestReviewForm } from "./PullRequestReviewForm";
 import {
   pullRequestReviewKey,
+  pullRequestWriteAttemptKey,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+
+type ReviewHeadPin =
+  | { readonly key: string; readonly status: "loading" | "failed" }
+  | { readonly key: string; readonly status: "pinned"; readonly headSha: string | undefined };
 
 export function PullRequestComposer({
   environmentId,
@@ -46,6 +54,42 @@ export function PullRequestComposer({
   // A summary typed but not sent is review work too, and it outlives the popover. Selected as a
   // boolean rather than the text, so typing one does not re-render the composer per keystroke.
   const reviewKey = pullRequestReviewKey(reference);
+  const writeAttemptKey = pullRequestWriteAttemptKey(reference, "review", environmentId);
+  const [reviewHeadPin, setReviewHeadPin] = useState<ReviewHeadPin | undefined>(() => {
+    const store = usePullRequestReviewStore.getState();
+    const headSha =
+      store.reviewedHeads[writeAttemptKey] ?? store.writeAttempts[writeAttemptKey]?.headSha;
+    return headSha === undefined ? undefined : { key: writeAttemptKey, status: "pinned", headSha };
+  });
+  const pin = reviewHeadPin?.key === writeAttemptKey ? reviewHeadPin : undefined;
+  const reviewedHeadSha = pin?.status === "pinned" ? pin.headSha : undefined;
+  // Each review entry pins its own fresh read, never the cached head; a newer entry drops it.
+  const enterReview = () => setReviewHeadPin({ key: writeAttemptKey, status: "loading" });
+  const readDetail = useAtomQueryRunner(pullRequestEnvironment.detail, {
+    refresh: true,
+    reportFailure: false,
+  });
+  const readFreshDetail = useEffectEvent(() => readDetail({ environmentId, input: reference }));
+  useEffect(() => {
+    if (reviewHeadPin?.status !== "loading") return;
+    const { key } = reviewHeadPin;
+    let active = true;
+    void readFreshDetail().then((response) => {
+      if (!active) return;
+      setReviewHeadPin(
+        response._tag === "Success"
+          ? { key, status: "pinned", headSha: response.value.headSha }
+          : { key, status: "failed" },
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [reviewHeadPin]);
+  const setReviewedHead = usePullRequestReviewStore((store) => store.setReviewedHead);
+  useEffect(() => {
+    if (reviewedHeadSha !== undefined) setReviewedHead(writeAttemptKey, reviewedHeadSha);
+  }, [reviewedHeadSha, setReviewedHead, writeAttemptKey]);
   const summaryStarted = usePullRequestReviewStore(
     (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
   );
@@ -54,6 +98,7 @@ export function PullRequestComposer({
   if (openReviewRequest !== answeredOpenRequest) {
     setAnsweredOpenRequest(openReviewRequest);
     setRequestedMode("review");
+    enterReview();
     setOpen(true);
   }
 
@@ -69,7 +114,11 @@ export function PullRequestComposer({
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (next) setRequestedMode(reviewStarted ? "review" : "comment");
+        if (next) {
+          const mode = !canComment || reviewStarted ? "review" : "comment";
+          setRequestedMode(mode);
+          if (mode === "review") enterReview();
+        }
         setOpen(next);
       }}
     >
@@ -110,7 +159,10 @@ export function PullRequestComposer({
               value={[mode]}
               onValueChange={(next) => {
                 const value = next[0];
-                if (value === "comment" || value === "review") setRequestedMode(value);
+                if (value === "comment" || value === "review") {
+                  setRequestedMode(value);
+                  if (value === "review") enterReview();
+                }
               }}
             >
               <Toggle value="comment">Comment</Toggle>
@@ -151,6 +203,9 @@ export function PullRequestComposer({
             <PullRequestReviewForm
               environmentId={environmentId}
               reference={reference}
+              reviewedHeadSha={reviewedHeadSha}
+              currentHeadSha={detail.headSha}
+              headStatus={pin?.status}
               verdicts={verdicts}
               requestChangesSummaryRequired={sourceControlClients
                 .get(detail.provider)

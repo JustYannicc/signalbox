@@ -32,7 +32,7 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
-import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
+import { resolveProviderInstanceTerminalEnvironment } from "./terminal/ServerTerminalManager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);

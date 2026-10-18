@@ -120,6 +120,14 @@ export interface ThreadOwner {
   readonly driveId: string | null;
 }
 
+export interface ThreadTrashReceipt {
+  readonly trashId: string;
+  readonly generation: number;
+  readonly deletedAt: number;
+  readonly purgeAfter: number;
+  readonly state: "trashed" | "restored";
+}
+
 export type CommandReceipt =
   | { readonly _tag: "accepted"; readonly sequence: number }
   | { readonly _tag: "rejected"; readonly message: string };
@@ -168,6 +176,7 @@ export interface MachineLease {
   /** Already replaced an older Runner for this capability; don't loop on a stale image. */
   readonly runtimeResponsesUpgrade?: boolean | undefined;
   readonly pulls?: boolean | undefined;
+  readonly terminals?: boolean | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
    * `id` (when it was asked), and whether it answered and what it couldn't save.
@@ -348,6 +357,13 @@ export class ThreadStore extends Context.Service<
       generation: number,
       secrets: ReadonlyArray<SecretValue>,
     ) => Effect.Effect<void, SqlError>;
+    readonly currentTrash: Effect.Effect<ThreadTrashReceipt | null, SqlError>;
+    readonly beginTrash: (input: {
+      readonly trashId: string;
+      readonly deletedAt: number;
+      readonly purgeAfter: number;
+    }) => Effect.Effect<ThreadTrashReceipt, SqlError>;
+    readonly restoreTrash: (trashId: string) => Effect.Effect<ThreadTrashReceipt | null, SqlError>;
   }
 >()("@signalbox/cloud/thread/ThreadStore") {}
 
@@ -441,6 +457,20 @@ const migrations = Migrator.fromRecord({
   "0010_browsing": migrateBrowsing,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  "0012_trash": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE thread_trash (
+      trash_id TEXT PRIMARY KEY,
+      generation INTEGER NOT NULL,
+      deleted_at INTEGER NOT NULL,
+      purge_after INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('trashed', 'restored'))
+    )`;
+    yield* sql`CREATE TABLE thread_trash_current (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      trash_id TEXT NOT NULL
+    )`;
+  }),
   "0012_preparation": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE preparation (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL)`;
@@ -557,6 +587,13 @@ const OwnerRow = Schema.Struct({
   context_id: SignalboxContextId,
   drive_id: Schema.NullOr(Schema.String),
 });
+const TrashRow = Schema.Struct({
+  trash_id: Schema.String,
+  generation: Schema.Number,
+  deleted_at: Schema.Number,
+  purge_after: Schema.Number,
+  state: Schema.Literals(["trashed", "restored"]),
+});
 const ReceiptRow = Schema.Struct({
   status: Schema.Literals(["accepted", "rejected"]),
   result_sequence: Schema.NullOr(Schema.Number),
@@ -565,6 +602,7 @@ const ReceiptRow = Schema.Struct({
 const OutboxRow = Schema.Struct({ revision: Schema.Number, delivered: Schema.Number });
 const decodeEventRows = Schema.decodeUnknownSync(Schema.Array(EventRow));
 const decodeOwnerRows = Schema.decodeUnknownSync(Schema.Array(OwnerRow));
+const decodeTrashRows = Schema.decodeUnknownSync(Schema.Array(TrashRow));
 const decodeReceiptRows = Schema.decodeUnknownSync(Schema.Array(ReceiptRow));
 const decodeOutboxRows = Schema.decodeUnknownSync(Schema.Array(OutboxRow));
 const SearchDeliveryJson = Schema.fromJsonString(
@@ -689,6 +727,7 @@ const MachineLeaseJson = Schema.fromJsonString(
     runtimeResponses: Schema.optional(Schema.Boolean),
     runtimeResponsesUpgrade: Schema.optional(Schema.Boolean),
     pulls: Schema.optional(Schema.Boolean),
+    terminals: Schema.optional(Schema.Boolean),
     drain: Schema.optional(
       Schema.Union([
         Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),
@@ -1624,6 +1663,59 @@ const make = Effect.gen(function* () {
     if (input.summaryChanged) yield* sql`UPDATE outbox SET revision = revision + 1 WHERE id = 1`;
   }, sql.withTransaction);
 
+  const toTrashReceipt = (row: typeof TrashRow.Type): ThreadTrashReceipt => ({
+    trashId: row.trash_id,
+    generation: row.generation,
+    deletedAt: row.deleted_at,
+    purgeAfter: row.purge_after,
+    state: row.state,
+  });
+
+  const readTrash = (trashId: string) =>
+    sql`SELECT trash_id, generation, deleted_at, purge_after, state
+      FROM thread_trash WHERE trash_id = ${trashId}`.pipe(
+      Effect.map((rows) => decodeTrashRows(rows).map(toTrashReceipt)[0] ?? null),
+    );
+
+  const currentTrash: ThreadStore["Service"]["currentTrash"] = Effect.gen(function* () {
+    const rows = yield* sql`SELECT trash_id FROM thread_trash_current WHERE id = 1`;
+    const trashId = (rows[0] as { readonly trash_id?: string } | undefined)?.trash_id;
+    return trashId === undefined ? null : yield* readTrash(trashId);
+  });
+
+  const beginTrash: ThreadStore["Service"]["beginTrash"] = Effect.fn("ThreadStore.beginTrash")(
+    function* (input) {
+      const existing = yield* readTrash(input.trashId);
+      if (existing !== null) return existing;
+      const current = yield* currentTrash;
+      if (current?.state === "trashed") return current;
+      const next: ThreadTrashReceipt = {
+        trashId: input.trashId,
+        generation: (current?.generation ?? 0) + 1,
+        deletedAt: input.deletedAt,
+        purgeAfter: input.purgeAfter,
+        state: "trashed",
+      };
+      yield* sql`INSERT INTO thread_trash
+        (trash_id, generation, deleted_at, purge_after, state)
+        VALUES (${next.trashId}, ${next.generation}, ${next.deletedAt}, ${next.purgeAfter}, ${next.state})`;
+      yield* sql`INSERT INTO thread_trash_current (id, trash_id) VALUES (1, ${next.trashId})
+        ON CONFLICT (id) DO UPDATE SET trash_id = excluded.trash_id`;
+      return next;
+    },
+    sql.withTransaction,
+  );
+
+  const restoreTrash: ThreadStore["Service"]["restoreTrash"] = Effect.fn(
+    "ThreadStore.restoreTrash",
+  )(function* (trashId) {
+    const existing = yield* readTrash(trashId);
+    if (existing === null || existing.state === "restored") return existing;
+    const next = { ...existing, state: "restored" as const };
+    yield* sql`UPDATE thread_trash SET state = 'restored' WHERE trash_id = ${trashId}`;
+    return next;
+  }, sql.withTransaction);
+
   const initialized: ThreadStore["Service"]["initialized"] =
     sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'`.pipe(
       Effect.map((rows) => rows.length > 0),
@@ -1677,6 +1769,9 @@ const make = Effect.gen(function* () {
         Effect.provideService(SqlClient.SqlClient, sql),
       ),
     saveMachineRecord,
+    currentTrash,
+    beginTrash,
+    restoreTrash,
   });
 });
 

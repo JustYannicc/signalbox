@@ -18,6 +18,7 @@ import { makeMemoryCloud } from "../testing.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 import * as UserContexts from "../user/UserContexts.ts";
 import * as UserStore from "../user/UserStore.ts";
+import * as UserFolders from "../user/UserFolders.ts";
 import * as SearchAuthority from "./SearchAuthority.ts";
 
 const userId = "user_1";
@@ -85,8 +86,9 @@ const summary = (
 const prepare = Effect.gen(function* () {
   const cloud = makeMemoryCloud();
   const userServices = cloud.userObject(userId);
-  const { store, contexts, driveIndex } = yield* Effect.all({
+  const { store, contexts, driveIndex, folders } = yield* Effect.all({
     store: UserStore.UserStore,
+    folders: UserFolders.UserFolders,
     contexts: UserContexts.UserContexts,
     driveIndex: UserDriveIndex.UserDriveIndex,
   }).pipe(Effect.provide(userServices));
@@ -119,10 +121,66 @@ const prepare = Effect.gen(function* () {
   const authority = yield* SearchAuthority.SearchAuthority.pipe(
     Effect.provide(SearchAuthority.layerUser.pipe(Layer.provide(userServices))),
   );
-  return { authority, contexts, drive, owner, driveIndex, store };
+  return { authority, contexts, drive, owner, driveIndex, store, folders };
 });
 
 describe("SearchAuthority", () => {
+  it.effect(
+    "hides a trashed subtree before its thread tombstones arrive and restores search access",
+    () =>
+      Effect.gen(function* () {
+        const { authority, folders, store } = yield* prepare;
+        const actor = { userId, contextIds: [PERSONAL_CONTEXT_ID] };
+        let snapshot = yield* folders.create({ name: "Parent", parentId: null });
+        const parent = snapshot.folders.find((folder) => folder.name === "Parent")!;
+        snapshot = yield* folders.create({ name: "Child", parentId: parent.id });
+        const child = snapshot.folders.find((folder) => folder.name === "Child")!;
+        snapshot = yield* folders.create({ name: "Elsewhere", parentId: null });
+        const elsewhere = snapshot.folders.find((folder) => folder.name === "Elsewhere")!;
+        yield* folders.update({ id: parent.id, files: projectTwo });
+        yield* folders.moveThread({ threadId: ThreadId.make("personal-one"), folderId: child.id });
+        const before = yield* store.threadIndex;
+        yield* store.replaceThreadIndex([
+          ...before.threads.map((row) => ({ ...row, threadId: row.shell.id, revision: 1 })),
+          summary("filed-elsewhere", PERSONAL_CONTEXT_ID, projectTwo),
+        ]);
+        yield* folders.moveThread({
+          threadId: ThreadId.make("filed-elsewhere"),
+          folderId: elsewhere.id,
+        });
+        expect((yield* authority.current(actor)).homes.flatMap((home) => home.threadIds)).toEqual(
+          expect.arrayContaining(["personal-one", "personal-two", "filed-elsewhere"]),
+        );
+
+        // Stop after the folder commit, as a stalled cross-object Trash cascade does.
+        const { trash } = yield* folders.trash({ id: parent.id });
+        expect(
+          (yield* store.threadIndex).threads.every(
+            (row) =>
+              (row.shell.id !== "personal-one" && row.shell.id !== "personal-two") ||
+              row.shell.deletedAt === null,
+          ),
+        ).toBe(true);
+        const hidden = (yield* authority.current(actor)).homes.flatMap((home) => home.threadIds);
+        expect(hidden).not.toContain("personal-one");
+        expect(hidden).not.toContain("personal-two");
+        expect(hidden).toContain("filed-elsewhere");
+        expect(hidden).toContain("archived-thread");
+        yield* folders.moveThread({
+          threadId: ThreadId.make("personal-two"),
+          folderId: elsewhere.id,
+        });
+        expect((yield* authority.current(actor)).homes.flatMap((home) => home.threadIds)).toContain(
+          "personal-two",
+        );
+
+        yield* folders.restoreTrash(trash.trashId);
+        expect((yield* authority.current(actor)).homes.flatMap((home) => home.threadIds)).toEqual(
+          expect.arrayContaining(["personal-one", "personal-two", "filed-elsewhere"]),
+        );
+      }),
+  );
+
   it.effect("denies an actor whose user id does not own the user object", () =>
     Effect.gen(function* () {
       const { authority } = yield* prepare;

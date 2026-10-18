@@ -17,10 +17,10 @@ import {
   type PreparationState,
   retryPreparationEvents,
 } from "./preparation/preparationState.ts";
-import { decideLifecycleCommand } from "./lifecycleCommands.ts";
 import { decideQueuedRunCommand } from "./queuedRunCommands.ts";
 import { respondToRuntimeRequest } from "./runtimeRequests.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
+import * as threadLifecycle from "./threadLifecycle.ts";
 import {
   activeRun,
   cancelQueuedEvents,
@@ -159,22 +159,13 @@ function dispatchMessage(
   const { thread } = projection;
   const updates: Array<OrchestrationV2DomainEvent> = [];
   let current = thread;
-  if (current.archivedAt !== null) {
-    current = { ...current, archivedAt: null, updatedAt: ctx.now };
-    updates.push(threadEvent(ctx, "thread.unarchived", current));
-  }
-  if (current.settledOverride !== null || current.settledAt !== null) {
-    current = {
-      ...current,
-      settledOverride: null,
-      settledAt: null,
-      unsettledAt: current.settledOverride === "active" ? current.unsettledAt : ctx.now,
-      updatedAt: ctx.now,
-    };
-    updates.push(threadEvent(ctx, "thread.unsettled", current));
+  const reopened = threadLifecycle.reopenForMessage(thread, ctx);
+  if (reopened !== null) {
+    current = reopened.thread;
+    updates.push(reopened.event);
   }
   const firstMessage = !projection.messages.some((message) => message.role === "user");
-  if (command.titleSeed !== undefined && firstMessage && command.titleSeed !== thread.title) {
+  if (command.titleSeed !== undefined && firstMessage && command.titleSeed !== current.title) {
     current = { ...current, title: command.titleSeed, updatedAt: ctx.now };
     updates.push(threadEvent(ctx, "thread.metadata-updated", current));
   }
@@ -216,14 +207,15 @@ function dispatchMessage(
     createdAt: ctx.now,
     updatedAt: ctx.now,
   };
-  const steered = steerTarget(projection, command);
+  const updatedProjection = applyEvents(projection, updates) ?? projection;
+  const steered = steerTarget(updatedProjection, command);
   if (steered !== undefined) {
-    return accept([...updates, ...steerEvents(projection, steered, message, "steer", ctx)]);
+    return accept([...updates, ...steerEvents(updatedProjection, steered, message, "steer", ctx)]);
   }
   const queuePosition =
     Math.max(
       0,
-      ...projection.runs
+      ...updatedProjection.runs
         .filter((run) => run.status === "queued")
         .map((run) => run.queuePosition ?? run.ordinal),
     ) + 1;
@@ -253,7 +245,7 @@ function dispatchMessage(
   if (live !== undefined) {
     return accept([...updates, runEvent(ctx, "run.created", run), recorded]);
   }
-  const withMessage = applyEvents(projection, [...updates, recorded]) ?? projection;
+  const withMessage = applyEvents(updatedProjection, [recorded]) ?? updatedProjection;
   return accept([...updates, recorded, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
 }
 
@@ -265,6 +257,9 @@ function updateThread(
 ): Decision {
   return accept([threadEvent(ctx, type, { ...projection.thread, ...patch, updatedAt: ctx.now })]);
 }
+
+const lifecycleDecision = (decision: threadLifecycle.LifecycleDecision): Decision =>
+  decision._tag === "accepted" ? accept(decision.events) : reject(decision.message);
 
 /**
  * The commands a cloud thread serves today. Anything else is rejected with a
@@ -317,8 +312,10 @@ export function decide(
     case "thread.auto-settle.set":
     case "thread.pin":
     case "thread.unpin":
-    case "thread.pin.reorder":
-      return decideLifecycleCommand(projection, command, ctx) ?? reject(unsupported());
+    case "thread.pin.reorder": {
+      const decision = threadLifecycle.decide(projection, command, ctx);
+      return decision === undefined ? reject(unsupported()) : lifecycleDecision(decision);
+    }
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
     case "run.interrupt": {
@@ -408,9 +405,13 @@ export function decide(
         return reject("This thread changed since it went idle.");
       }
       return updateThread(projection, "thread.archived", { archivedAt: ctx.now }, ctx);
-    case "thread.unarchive":
+    case "thread.unarchive": {
+      // Unarchiving a settled task reopens it.
+      const reopened = threadLifecycle.decide(projection, command, ctx);
+      if (reopened !== undefined) return lifecycleDecision(reopened);
       if (projection.thread.archivedAt === null) return reject("This thread is not archived.");
       return updateThread(projection, "thread.unarchived", { archivedAt: null }, ctx);
+    }
     case "runtime-request.respond":
     case "thread.user-input.dismiss": {
       const resolved = respondToRuntimeRequest(projection, command, ctx);

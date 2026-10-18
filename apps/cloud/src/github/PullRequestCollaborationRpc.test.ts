@@ -44,6 +44,22 @@ const connect = (canWrite: boolean, fail = false) =>
           : Effect.sync(() => {
               calls.push(input);
             }),
+      comment: (input) =>
+        Effect.sync(() => {
+          calls.push(input);
+        }),
+      updateComment: (input) =>
+        Effect.sync(() => {
+          calls.push(input);
+        }),
+      submitReview: (input) =>
+        Effect.sync(() => {
+          calls.push(input);
+        }),
+      setReaction: (input) =>
+        Effect.sync(() => {
+          calls.push(input);
+        }),
       setThreadResolution: (input) =>
         Effect.sync(() => {
           calls.push(input);
@@ -83,6 +99,38 @@ describe("public cloud PR collaboration RPCs", () => {
         yield* f.rpc[WS_METHODS.pullRequestsSetThreadResolution]({
           ...reference,
           resolved: true,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
+      expect(
+        yield* f.rpc[WS_METHODS.pullRequestsComment]({
+          ...reference,
+          body: "Hello.",
+          operationId: "comment-1",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
+      expect(
+        yield* f.rpc[WS_METHODS.pullRequestsUpdateComment]({
+          ...reference,
+          commentId: "IC_1",
+          kind: "issue-comment",
+          body: "Edited.",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
+      expect(
+        yield* f.rpc[WS_METHODS.pullRequestsSubmitReview]({
+          ...reference,
+          verdict: "approve",
+          body: "",
+          comments: [],
+          operationId: "review-1",
+          headSha: "a".repeat(40),
+        }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
+      expect(
+        yield* f.rpc[WS_METHODS.pullRequestsSetReaction]({
+          ...reference,
+          content: "thumbs-up",
+          reacted: true,
         }).pipe(Effect.flip),
       ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
       expect(f.calls).toEqual([]);

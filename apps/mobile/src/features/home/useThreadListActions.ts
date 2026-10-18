@@ -1,6 +1,10 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  serverConfigSupportsSignalboxTrash,
+  threadDeleteConfirmationMessage,
+} from "@t3tools/client-runtime/state/signalboxTrash";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -78,6 +82,12 @@ function environmentSupportsTitleRegeneration(
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadTitleRegeneration === true
+  );
+}
+
+function environmentSupportsSignalboxTrash(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return serverConfigSupportsSignalboxTrash(
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId),
   );
 }
 
@@ -185,9 +195,8 @@ function useThreadActionExecutor(
           Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return false;
         }
-        if (action === "archive" || action === "unarchive" || action === "delete") {
-          refreshArchivedThreadsForEnvironment(thread.environmentId);
-        }
+        // signalbox: settle and unsettle move a thread in or out of the archive too.
+        refreshArchivedThreadsForEnvironment(thread.environmentId);
         onCompleted?.(action, thread);
         return true;
       } finally {
@@ -214,7 +223,17 @@ function useConfirmDeleteThread(
     (thread: EnvironmentThreadShell) => {
       if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
       const title = "Delete thread?";
-      const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
+      const usesSignalboxTrash = environmentSupportsSignalboxTrash(thread.environmentId);
+      const message = usesSignalboxTrash
+        ? [
+            `“${thread.title}”`,
+            threadDeleteConfirmationMessage({
+              cloud: true,
+              other: false,
+              scope: "thread",
+            }),
+          ].join("\n")
+        : `“${thread.title}” will be permanently deleted, including its terminal history.`;
       Dialog.confirm({
         title,
         message,

@@ -28,8 +28,6 @@ import {
   type TerminalSessionStatus,
   type TerminalSummary,
   type TerminalWriteInput,
-  ClaudeSettings,
-  CodexSettings,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
@@ -49,19 +47,12 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import * as ServerConfig from "../config.ts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import {
   increment,
   terminalRestartsTotal,
@@ -69,8 +60,6 @@ import {
 } from "../observability/Metrics.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
-import * as PortScanner from "../preview/PortScanner.ts";
-import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export {
@@ -101,10 +90,8 @@ const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
-const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
-const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
-class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocessCheckError>()(
+export class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
   {
     cause: Schema.optional(Schema.Defect()),
@@ -1325,81 +1312,6 @@ interface TerminalManagerOptions {
     TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
   >;
 }
-
-export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
-  "terminal.resolveProviderInstanceTerminalEnvironment",
-)(function* (input: {
-  readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
-  readonly path: Path.Path;
-  readonly rawProviderInstanceId: string;
-  readonly env: Record<string, string> | undefined;
-}) {
-  const providerInstanceId = ProviderInstanceId.make(input.rawProviderInstanceId);
-  const settings = yield* input.serverSettings.getSettings.pipe(
-    Effect.mapError((cause) => new TerminalProviderEnvironmentError({ providerInstanceId, cause })),
-  );
-  const instance = deriveProviderInstanceConfigMap(settings)[providerInstanceId];
-  if (instance === undefined) {
-    return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
-  }
-
-  let resolved = yield* mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
-  if (instance.driver === "codex") {
-    const config = decodeCodexSettings(instance.config ?? {});
-    if (Option.isSome(config)) {
-      const layout = yield* resolveCodexHomeLayout(config.value).pipe(
-        Effect.provideService(Path.Path, input.path),
-      );
-      if (layout.effectiveHomePath)
-        resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
-    }
-  } else if (instance.driver === "claudeAgent") {
-    const config = decodeClaudeSettings(instance.config ?? {});
-    if (Option.isSome(config)) {
-      resolved = yield* makeClaudeEnvironment(config.value, resolved).pipe(
-        Effect.provideService(Path.Path, input.path),
-      );
-    }
-  }
-
-  return Object.fromEntries(
-    Object.entries(resolved).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  );
-});
-
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
-  const ptyAdapter = yield* PtyAdapter.PtyAdapter;
-  const portDiscovery = yield* PortScanner.PortDiscovery;
-  const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const path = yield* Path.Path;
-  const resolveProviderInstanceEnvironment = Effect.fn(
-    "terminal.resolveProviderInstanceEnvironment",
-  )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
-    resolveProviderInstanceTerminalEnvironment({
-      serverSettings,
-      path,
-      rawProviderInstanceId,
-      env,
-    }),
-  );
-  return yield* makeWithOptions({
-    logsDir: terminalLogsDir,
-    ptyAdapter,
-    processTable: nativeTelemetry.processTable.pipe(
-      Effect.mapError(
-        (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
-      ),
-    ),
-    managedBinaryCacheDir: providerStatusCacheDir,
-    managedBinaryToolsDir: path.join(baseDir, "tools"),
-    registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
-    unregisterTerminal: portDiscovery.unregisterTerminal,
-    resolveProviderInstanceEnvironment,
-  });
-});
 
 export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(function* (
   options: TerminalManagerOptions,
@@ -3148,5 +3060,3 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     subscribeMetadata,
   });
 });
-
-export const layer = Layer.effect(TerminalManager, make()).pipe(Layer.provide(ProcessRunner.layer));
