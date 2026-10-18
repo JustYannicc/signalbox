@@ -1,3 +1,4 @@
+import * as diagnosticsChannel from "node:diagnostics_channel";
 import { describe, expect, it } from "@effect/vitest";
 import { createNodeBridge, installNodeBridge } from "../NodeBridge.ts";
 
@@ -15,6 +16,28 @@ describe("Node builtin routing", () => {
     );
     expect(() => createNodeBridge({ fs: {}, "fs/promises": promises })).toThrow(
       expect.objectContaining({ code: "NODE_BRIDGE_ALIAS_CONFLICT" }),
+    );
+  });
+
+  it("diagnostics channels retain native identity through both bridge aliases", () => {
+    const bridge = createNodeBridge({ "node:diagnostics_channel": diagnosticsChannel });
+    expect(bridge.require("diagnostics_channel")).toBe(diagnosticsChannel);
+    expect(bridge.require("node:diagnostics_channel")).toBe(diagnosticsChannel);
+    const channel = diagnosticsChannel.channel(Symbol("bridge-channel"));
+    const payload = { value: 42 };
+    const received: unknown[] = [];
+    const subscriber = (message: unknown) => received.push(message);
+    channel.subscribe(subscriber);
+    try {
+      channel.publish(payload);
+      expect(received).toEqual([payload]);
+      expect(received[0]).toBe(payload);
+    } finally {
+      channel.unsubscribe(subscriber);
+    }
+    expect(channel.hasSubscribers).toBe(false);
+    expect(() => createNodeBridge({}).require("node:diagnostics_channel")).toThrow(
+      expect.objectContaining({ code: "NODE_BUILTIN_UNAVAILABLE" }),
     );
   });
 
