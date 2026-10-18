@@ -231,11 +231,13 @@ export async function runCurrentKernelCpuAsyncSystemImport<T>(
   if (!state) return await run((step) => step());
   const resume = pauseState(state);
   try {
-    let result: T | PromiseLike<T>;
+    let result: Promise<T>;
     try {
       const leaveSystem = enterScope(state, "system");
       try {
-        result = run((step) => runCurrentKernelCpuSystem(step));
+        result = Promise.resolve(run((step) => runCurrentKernelCpuSystem(step)));
+        // Leaving can throw after work has started; keep its rejection owned.
+        void result.catch(() => undefined);
       } finally {
         leaveSystem();
       }

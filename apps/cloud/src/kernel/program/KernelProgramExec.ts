@@ -43,11 +43,13 @@ export function runKernelAsyncProgram(
   const leaveUser = enterCurrentKernelCpuUser();
   let result: Promise<KernelExitStatus>;
   try {
-    result = run(completeContext);
+    result = Promise.resolve(run(completeContext));
+    // Accounting cleanup can fail before the process can await its result.
+    void result.catch(() => undefined);
   } finally {
     leaveUser();
   }
-  return Promise.resolve(result).then(validateStatus);
+  return result.then(validateStatus);
 }
 
 /** Replaces the current program while retaining its PID and descriptor table. */

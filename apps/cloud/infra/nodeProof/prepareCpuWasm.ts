@@ -12,6 +12,47 @@ export const cpuReturnReactor = new Uint8Array([
 ]);
 
 export const cpuWasmCheckMethods = `
+  async checkAsyncRejectionFailure(checks) {
+    let fail=false;
+    const expected=new Error('CPU leave failed after async work started');
+    const accounting=new KernelCpuAccounting(()=>{
+      if(fail){fail=false;throw expected;}
+      return readClock();
+    });
+    const registry=new KernelProgramRegistry();
+    const manifest={name:'cpu-failure',version:'1',abiVersion:ABI_VERSION,
+      requiredCapabilities:['process.wait'],entrypoint:'cpu-failure'};
+    assert(registry.register(manifest).status==='ok','CPU failure program registration');
+    const programs=new Map([['/bin/cpu-failure',{manifest,implementation:{kind:'async',run(){
+      fail=true;return Promise.reject(new Error('Program operation failed'));
+    }}}]]);
+    const host=new KernelProgramHost({registry,programs,wakes:this.wakes,cpuAccounting:accounting});
+    const owner=host.cpuExecution.root;
+    let received;
+    await owner.run(async()=>{
+      const leave=owner.enterUser();
+      try {
+        await runCurrentKernelCpuAsyncSystemImport(()=>{
+          fail=true;return Promise.reject(new Error('Imported operation failed'));
+        });
+      } catch(error){received=error;}
+      finally {leave();}
+    });
+    owner.stop();
+    checks.asyncImportClockErrorPreserved=received===expected;
+    const storage=createFacetSqliteStorage(this.ctx.storage,readClock);
+    const filesystem=new KernelFileSystem({mounts:[{path:'/',storage}]});
+    try {
+      const prepared=host.prepare({filesystem});
+      const resolved=host.resolve('/bin/cpu-failure');
+      assert(resolved.status==='ok','CPU failure program resolution');
+      const child=callKernel(host.backend(prepared),'process.spawn',
+        {program:resolved.value,args:[],env:{}});
+      assert(child.status==='ok','CPU failure program admission');
+      const result=await host.exitStatus(child.value);
+      checks.asyncProgramClockFailureSettles=result.status==='error' && result.error.code==='IO_ERROR';
+    } finally {await host.processes.dispose();filesystem.dispose();}
+  }
   async checkWasmClockFailures(checks) {
     for(const [key,failAt] of [['jspiClockEntryCleanup',1],['jspiClockLeaveCleanup',2]]) {
       let reads=0;

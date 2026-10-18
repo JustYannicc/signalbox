@@ -15,7 +15,8 @@ export async function prepareNodeCpuProof(destination: string): Promise<void> {
       resolveDir: NodeURL.fileURLToPath(new URL("../../src/", import.meta.url)),
       contents: `export {KernelCpuAccounting} from './kernel/KernelCpuAccounting.ts';
 export {KernelProgramHost} from './kernel/KernelProgramHost.ts';
-export {KernelProgramRegistry} from './kernel/KernelAbi.ts';
+export {KernelProgramRegistry,ABI_VERSION,callKernel} from './kernel/KernelAbi.ts';
+export {runCurrentKernelCpuAsyncSystemImport} from './kernel/KernelCpuExecution.ts';
 export {KernelWakeRegistry} from './kernel/KernelWakeRegistry.ts';
 export {createFacetSqliteStorage} from './kernel/FacetSqliteStorage.ts';
 export {KernelFileSystem} from './kernel/KernelFileSystem.ts';
@@ -80,7 +81,8 @@ import {PassThrough} from 'node:stream';
 import pollReactor from './poll.wasm';
 import returnReactor from './return.wasm';
 import {KernelCpuAccounting,KernelProgramHost,KernelProgramRegistry,KernelWakeRegistry,
-  createNodeProcess,bootNodeRelease,createFacetSqliteStorage,KernelFileSystem,createKernelAsyncWasi} from './runtime.js';
+  createNodeProcess,bootNodeRelease,createFacetSqliteStorage,KernelFileSystem,createKernelAsyncWasi,
+  runCurrentKernelCpuAsyncSystemImport,ABI_VERSION,callKernel} from './runtime.js';
 
 const readClock=NativeProcess.hrtime.bigint.bind(NativeProcess.hrtime);
 const equal=(a,b)=>a.user===b.user && a.system===b.system;
@@ -158,6 +160,7 @@ export class ProcessCpuFacet extends DurableObject {
       await this.root.run(()=>this.checkWasm(checks));
       await this.checkWasmSiblings(checks);
       await this.checkWasmClockFailures(checks);
+      await this.checkAsyncRejectionFailure(checks);
       const final=release.read().value;
       checks.monotonic=final.user>=initial.value.user && final.system>=initial.value.system;
       const difference=release.read(initial.value).value;
