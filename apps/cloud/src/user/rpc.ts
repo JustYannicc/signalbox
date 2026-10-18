@@ -18,6 +18,7 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
+  OrchestrationV2CommandOutputError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
@@ -183,6 +184,7 @@ const SERVED = [
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverUpdateSettings,
   WS_METHODS.serverProbe,
+  WS_METHODS.secretsAnswerRequest,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
@@ -191,6 +193,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+  ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
@@ -286,6 +289,7 @@ const REQUIRED_SCOPES = {
   ...ANALYTICS_REQUIRED_SCOPES,
   ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
+  [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
@@ -294,6 +298,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
@@ -624,6 +629,8 @@ export const layerHandlers = (input: {
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
+        [WS_METHODS.secretsAnswerRequest]: (request) =>
+          Effect.flatMap(actorNow, (actor) => threads.answerSecret(actor, request)),
         [WS_METHODS.serverReportClientActivity]: () => Effect.void,
         [WS_METHODS.subscribeServerLifecycle]: () =>
           Stream.unwrap(
@@ -720,6 +727,21 @@ export const layerHandlers = (input: {
                   threadId: request.threadId,
                   message: failureMessage(error),
                 }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) => coreThreads.commandOutput(actor, request)),
+          ).pipe(
+            Stream.interruptWhen(lostSight(request.threadId)),
+            Stream.mapError((cause) =>
+              cause._tag === "OrchestrationV2CommandOutputError"
+                ? cause
+                : new OrchestrationV2CommandOutputError({
+                    threadId: request.threadId,
+                    message: "Couldn't read this command's output. It may no longer be available.",
+                    cause,
+                  }),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>

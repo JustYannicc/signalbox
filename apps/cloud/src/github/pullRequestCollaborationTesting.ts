@@ -2,6 +2,7 @@ import type { SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
@@ -18,6 +19,7 @@ export const reference = {
 };
 export const reply = { ...reference, threadId: "PRRT_1", body: "Fixed.", operationId: "reply-1" };
 export const resolution = { ...reference, threadId: "PRRT_1", resolved: true };
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 export const fixture = Effect.gen(function* () {
   const state = {
@@ -45,7 +47,7 @@ export const fixture = Effect.gen(function* () {
       Effect.gen(function* () {
         state.tokens.push(token);
         if (document.startsWith("query"))
-          return JSON.stringify({
+          return encodeJson({
             data: {
               node: {
                 id: "PRRT_1",
@@ -63,21 +65,21 @@ export const fixture = Effect.gen(function* () {
         state.writes += 1;
         yield* state.afterWrite;
         if (state.failure !== null) return yield* state.failure;
-        if (state.malformed) return JSON.stringify({ data: {} });
+        if (state.malformed) return encodeJson({ data: {} });
         if (state.errors !== undefined)
-          return JSON.stringify({
+          return encodeJson({
             data: state.partial
               ? { addPullRequestReviewThreadReply: { comment: { id: "PRRC_created" } } }
               : null,
             errors: state.errors,
           });
         if (document.includes("CollaborationReply"))
-          return JSON.stringify({
+          return encodeJson({
             data: { addPullRequestReviewThreadReply: { comment: { id: "PRRC_created" } } },
           });
         state.resolved = !document.includes("CollaborationUnresolve");
         const key = state.resolved ? "resolveReviewThread" : "unresolveReviewThread";
-        return JSON.stringify({
+        return encodeJson({
           data: { [key]: { thread: { id: "PRRT_1", isResolved: state.resolved } } },
         });
       }),
