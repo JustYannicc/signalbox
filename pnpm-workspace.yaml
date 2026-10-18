@@ -366,6 +366,7 @@ patchedDependencies:
   "@lunora/client@1.0.0-alpha.215": patches/@lunora__client@1.0.0-alpha.215.patch
   "@lunora/config@1.0.0-alpha.363": patches/@lunora__config@1.0.0-alpha.363.patch
   "@lunora/cli@1.0.0-alpha.399": patches/@lunora__cli@1.0.0-alpha.399.patch
+  "@distilled.cloud/cloudflare@1.0.0-rc.13": patches/cloudflare-observability-destinations.patch
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
   "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch

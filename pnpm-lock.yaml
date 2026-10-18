@@ -152,6 +152,7 @@ pnpmfileChecksum: sha256-F2nnRBrWvcEUVdK/58ZL6W5ygAC316wA2G9A5J+XwHo=
 
 patchedDependencies:
   '@clerk/expo-native-components@0.2.0': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
+  '@distilled.cloud/cloudflare@1.0.0-rc.13': 6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68
   '@effect/vitest@4.0.5': 2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02
   '@expo/fingerprint@0.21.5': 5ba43cef2f33a2ede89724be4b6e5c19954a2358b3fd276522710c2c14e642bd
   '@expo/metro-config@58.0.14': 90fa980e8b6480631fb2fbb04559834e3c612db40c550cd828f11be297d8d760
@@ -2213,6 +2214,9 @@ importers:
       vite-plus:
         specifier: 1.0.0
         version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(svelte@5.57.2)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
 
 packages:
 
@@ -15288,11 +15292,11 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@alchemy.run/cloudflare-runtime@2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)':
+  '@alchemy.run/cloudflare-runtime@2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)':
     dependencies:
       '@alchemy.run/node-utils': 2.0.0-beta.80
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260918.1)
-      '@distilled.cloud/cloudflare': 1.0.0-rc.13(effect@4.0.5)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5)
       '@puppeteer/browsers': 3.2.2(yauzl@3.4.0)
       capnp-es: 0.0.16(typescript@7.0.2)
       effect: 4.0.5
@@ -16687,7 +16691,7 @@ snapshots:
       '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.5)
       effect: 4.0.5
 
-  '@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.5)':
+  '@distilled.cloud/cloudflare@1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5)':
     dependencies:
       '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.5)
       effect: 4.0.5
@@ -22627,14 +22631,14 @@ snapshots:
 
   alchemy@2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(b3ec8503f5c642c9bb0bbb60bfc1a3fd):
     dependencies:
-      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
+      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
       '@alchemy.run/floci': 2.0.0-beta.80(effect@4.0.5)
       '@alchemy.run/node-utils': 2.0.0-beta.80
       '@alchemy.run/sigil': 0.1.0-alpha.1(@types/react@19.3.0)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       '@distilled.cloud/acme': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/aws': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/axiom': 1.0.0-rc.13(effect@4.0.5)
-      '@distilled.cloud/cloudflare': 1.0.0-rc.13(effect@4.0.5)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5)
       '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/doppler': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/fly-io': 1.0.0-rc.13(effect@4.0.5)
@@ -22711,14 +22715,14 @@ snapshots:
 
   alchemy@2.0.0-beta.80(patch_hash=0e3e0a80b1a06032e5093f70c7fa71969756b71dd3319af6bc9cc9537155f6a1)(ce9e0ae4663115423d5e3531ae45cdef):
     dependencies:
-      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
+      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5))(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(rolldown@1.2.5)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0)
       '@alchemy.run/floci': 2.0.0-beta.80(effect@4.0.5)
       '@alchemy.run/node-utils': 2.0.0-beta.80
       '@alchemy.run/sigil': 0.1.0-alpha.1(@types/react@19.3.0)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       '@distilled.cloud/acme': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/aws': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/axiom': 1.0.0-rc.13(effect@4.0.5)
-      '@distilled.cloud/cloudflare': 1.0.0-rc.13(effect@4.0.5)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.13(patch_hash=6972313f9f56d8f5a35723062efab65ab9be4ea1472ff42ab6c3fbb15c448f68)(effect@4.0.5)
       '@distilled.cloud/core': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/doppler': 1.0.0-rc.13(effect@4.0.5)
       '@distilled.cloud/fly-io': 1.0.0-rc.13(effect@4.0.5)

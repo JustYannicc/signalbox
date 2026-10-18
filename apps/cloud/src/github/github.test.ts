@@ -585,6 +585,120 @@ describe("GitHub-backed drives", () => {
     );
   });
 
+  it.effect("publishes source-mode work already landed on local main", () => {
+    const remote = setup();
+    const github = makeFakeGitHub({
+      bare: remote.bare,
+      repository: "owner/repo",
+      defaultBranch: "main",
+    });
+    const cloud = makeMemoryCloud({ github: github.layer });
+    return Effect.gen(function* () {
+      const user = cloud.userDirectory.forUser(userId);
+      yield* user.recordSignIn({ id: userId, email: "a@b.c" });
+      yield* user.beginGitHubConnect({ grantId: "g1", returnTo: REDIRECT });
+      github.authorize(userId);
+      yield* user.completeGitHubConnect("g1");
+      const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
+            CloudRpc.layerScopeAuthorization([
+              AuthOrchestrationReadScope,
+              AuthOrchestrationOperateScope,
+              AuthSourceControlWriteScope,
+            ]),
+          ).pipe(Layer.provide(cloud.layerFor(userId))),
+        ),
+      );
+      const imported = yield* rpc[WS_METHODS.projectCloneStart]({
+        projectId,
+        title: "repo",
+        createdAt: "2026-10-08T10:00:00.000Z",
+        remoteUrl: "https://github.com/owner/repo.git",
+        destinationPath: "~/repo",
+      });
+      const driveId = imported.cwd.slice("/drives/".length);
+      const handle = (yield* DriveDirectory).forDrive(driveId);
+      const writer = { threadId, userId, generation: 1, live: true, packsAfter: 0 };
+      yield* handle.setRemote({
+        provider: "github",
+        repository: "owner/repo",
+        defaultBranch: "main",
+        mode: "source",
+      });
+      yield* uploadPack({
+        driveId,
+        threadId,
+        ...remote.pack([remote.head]),
+        remoteHead: remote.head,
+      });
+      expect(
+        yield* handle.replaceMain(userId, { expectedMain: null, newMain: remote.head }),
+      ).toMatchObject({ _tag: "ok" });
+      const launched = yield* rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+        commandId: CommandId.make(`launch-${threadId}`),
+        threadId,
+        projectId: imported.projectId,
+        title: "Land source work",
+        modelSelection: scriptedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+      });
+      const cwd = launched.projection.thread.worktreePath!;
+      yield* handle.open(writer);
+
+      NodeFS.writeFileSync(
+        NodePath.join(remote.machine, "src/app.ts"),
+        "export const sourceChange = true;\n",
+      );
+      git(remote.machine, ["commit", "-qam", "Land source work"]);
+      const landed = git(remote.machine, ["rev-parse", "HEAD"]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([landed], [remote.head]) });
+      expect(
+        yield* handle.updateRefs(writer, [
+          { name: threadRef(threadId), old: remote.head, new: landed },
+        ]),
+      ).toMatchObject({ _tag: "ok" });
+      expect(
+        yield* handle.reconcile(writer, { expectedMain: remote.head, newMain: landed }),
+      ).toMatchObject({ _tag: "ok" });
+
+      expect(yield* handle.ref("main")).toBe(landed);
+      expect(github.head("main")).toBe(remote.head);
+      expect(() => git(remote.bare, ["cat-file", "-e", landed])).toThrow();
+      const status = () =>
+        rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(Stream.take(1), Stream.runHead);
+      expect(yield* status()).toMatchObject(
+        Option.some({
+          remote: { hasUpstream: false, aheadCount: 1, aheadOfDefaultCount: 1 },
+        }),
+      );
+
+      const response = yield* serveBranchRequest(
+        { userId, threadId, driveId, live: true },
+        JSON.stringify({ action: "push" }),
+      );
+      expect(response.status).toBe(200);
+      expect(branchJson.publish.decode(yield* Effect.promise(() => response.text()))).toMatchObject(
+        { _tag: "published", pushed: true },
+      );
+      expect(github.head("signalbox/0000abcd")).toBe(landed);
+      expect(git(remote.bare, ["rev-parse", `${landed}^{tree}`])).toBe(
+        git(remote.machine, ["rev-parse", `${landed}^{tree}`]),
+      );
+      expect(yield* status()).toMatchObject(
+        Option.some({
+          remote: { hasUpstream: true, aheadCount: 0, aheadOfDefaultCount: 1 },
+        }),
+      );
+    }).pipe(
+      Effect.provide(Layer.mergeAll(cloud.drives.layer, github.layer)),
+      Effect.provideService(UserDirectory, cloud.userDirectory),
+    );
+  });
+
   it.effect("reads a drive's promised files from GitHub as the reader, with their sizes", () => {
     const remote = setup();
     const github = makeFakeGitHub({

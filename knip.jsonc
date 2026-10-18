@@ -32,6 +32,8 @@
         "workload-cost-replay.ts", // signalbox: workload analytics
         "boundaries/check.mjs", // signalbox: module boundaries
         "boundaries/tests.mjs", // signalbox: module boundaries
+        "deploy-workflow-policy.tests.mjs", // Node runs these directly in Signalbox CI.
+        "deploy-plan.tests.mjs",
       ],
       // The `t3` npm package's files: copied into the package, never imported.
       "ignore": [

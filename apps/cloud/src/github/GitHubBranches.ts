@@ -297,13 +297,19 @@ const make = Effect.gen(function* () {
   );
 
   /** The thread's branch in its drive, and how many commits it has over its base. */
-  const branchState = (drive: DriveHandle, threadId: string) =>
+  const branchState = (
+    drive: DriveHandle,
+    threadId: string,
+    sourceMode: boolean,
+    sourceDefaultHead: Oid | null,
+  ) =>
     Effect.gen(function* () {
       const refs = yield* drive.refs(threadId);
-      // The remote has its base, its main and every remote commit the drive holds one deep.
-      const known = [refs.base, refs.main, ...refs.shallow].filter(
-        (oid): oid is Oid => oid !== null,
-      );
+      // Source-mode main and base are local. Only checked remote commits and GitHub's
+      // current default head can stop the walk there.
+      const known = (
+        sourceMode ? [sourceDefaultHead, ...refs.shallow] : [refs.base, refs.main, ...refs.shallow]
+      ).filter((oid): oid is Oid => oid !== null);
       const ahead =
         refs.thread === null
           ? 0
@@ -332,9 +338,6 @@ const make = Effect.gen(function* () {
         };
       }
       const { branch } = target.thread;
-      const state = yield* branchState(target.drive, target.thread.id).pipe(
-        Effect.mapError(asManagerError(cwd, "status")),
-      );
       const branchLocal = { ...local, isDefaultRef: false, refName: branch };
       const userToken = includeRemote ? yield* token : null;
       if (userToken === null) return { local: branchLocal, remote: null };
@@ -343,11 +346,20 @@ const make = Effect.gen(function* () {
         [
           github.api.branchHead(userToken, repository, branch),
           github.api.pullForBranch(userToken, repository, branch),
+          target.remote.mode === "source"
+            ? github.api.branchHead(userToken, repository, target.remote.defaultBranch)
+            : Effect.succeed(null),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(Effect.option);
       if (remote._tag === "None") return { local: branchLocal, remote: null };
-      const [remoteHead, pr] = remote.value;
+      const [remoteHead, pr, sourceDefaultHead] = remote.value;
+      const state = yield* branchState(
+        target.drive,
+        target.thread.id,
+        target.remote.mode === "source",
+        sourceDefaultHead,
+      ).pipe(Effect.mapError(asManagerError(cwd, "status")));
       let aheadCount = state.ahead;
       let behindCount = 0;
       if (remoteHead !== null && state.head !== null && remoteHead !== state.head) {
@@ -441,14 +453,19 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const repository = target.remote.repository;
-      const [refs, old] = yield* Effect.all(
+      const [refs, old, sourceDefaultHead] = yield* Effect.all(
         [
           target.drive.refs(threadId).pipe(Effect.mapError(driveUnavailable)),
           github.api
             .branchHead(userToken, repository, branch)
             .pipe(Effect.mapError(gitHubRefusal("push"))),
+          target.remote.mode === "source"
+            ? github.api
+                .branchHead(userToken, repository, target.remote.defaultBranch)
+                .pipe(Effect.mapError(gitHubRefusal("push")))
+            : Effect.succeed(null),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       );
       if (refs.thread === null) {
         return yield* refusal("nothing_saved", "This thread has not saved any work yet.");
@@ -459,9 +476,10 @@ const make = Effect.gen(function* () {
         driveId: target.driveId,
         head,
         old,
-        remoteHas: [refs.base, refs.main, ...refs.shallow].filter(
-          (oid): oid is Oid => oid !== null,
-        ),
+        remoteHas: (target.remote.mode === "source"
+          ? [sourceDefaultHead, ...refs.shallow]
+          : [refs.base, refs.main, ...refs.shallow]
+        ).filter((oid): oid is Oid => oid !== null),
         limits: GITHUB_LIMITS,
         // GitHub still checks `old` as it moves the branch, so a lease never races a push.
         force: old !== null && old === lease,
