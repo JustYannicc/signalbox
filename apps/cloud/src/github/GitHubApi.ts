@@ -7,8 +7,9 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
-import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
+import { HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 import {
   defaultGitHubEndpoints,
@@ -17,6 +18,7 @@ import {
   unreadable,
 } from "./GitHubApiSupport.ts";
 import { makeAgentGitHubApi } from "./agentGitHubApi.ts";
+import { isRangeRequest, parseRangeEof, readRange } from "./blobRange/response.ts";
 
 export { GitHubError, type GitHubEndpoints, unreadable };
 
@@ -188,8 +190,8 @@ const boundedDiagnostic = (value: string, token: string, maxLength: number) => {
   return sanitized.length > maxLength ? `${sanitized.slice(0, maxLength)}…` : sanitized;
 };
 
-const boundedResponseHeader = (value: string) =>
-  value.length > 120 ? `${value.slice(0, 120)}…` : value;
+const boundedResponseHeader = (value: string, token: string) =>
+  boundedDiagnostic(value, token, 120) ?? "";
 
 const responseDiagnostics = (
   requestKind: GitHubRequestKind,
@@ -209,19 +211,19 @@ const responseDiagnostics = (
   const rateLimitHeaders = {
     ...(response.headers["x-ratelimit-remaining"] === undefined
       ? {}
-      : { remaining: boundedResponseHeader(response.headers["x-ratelimit-remaining"]) }),
+      : { remaining: boundedResponseHeader(response.headers["x-ratelimit-remaining"], token) }),
     ...(response.headers["x-ratelimit-reset"] === undefined
       ? {}
-      : { reset: boundedResponseHeader(response.headers["x-ratelimit-reset"]) }),
+      : { reset: boundedResponseHeader(response.headers["x-ratelimit-reset"], token) }),
     ...(response.headers["x-ratelimit-resource"] === undefined
       ? {}
-      : { resource: boundedResponseHeader(response.headers["x-ratelimit-resource"]) }),
+      : { resource: boundedResponseHeader(response.headers["x-ratelimit-resource"], token) }),
     ...(response.headers["x-ratelimit-used"] === undefined
       ? {}
-      : { used: boundedResponseHeader(response.headers["x-ratelimit-used"]) }),
+      : { used: boundedResponseHeader(response.headers["x-ratelimit-used"], token) }),
     ...(response.headers["retry-after"] === undefined
       ? {}
-      : { retryAfter: boundedResponseHeader(response.headers["retry-after"]) }),
+      : { retryAfter: boundedResponseHeader(response.headers["retry-after"], token) }),
   };
   return {
     requestKind,
@@ -253,25 +255,28 @@ export const makeGitHubApi = (
     request: HttpClientRequest.HttpClientRequest,
     requestKind: GitHubRequestKind,
   ) =>
-    client.execute(request.pipe(HttpClientRequest.setHeader("user-agent", "signalbox-cloud"))).pipe(
-      // Requests and underlying errors can contain credentials; log only the failure category.
-      Effect.tapError((error) =>
-        Effect.logWarning("GitHub request failed", {
-          operation,
-          requestKind,
-          reason: error.reason._tag,
-        }),
-      ),
-      Effect.mapError(
-        () =>
-          new GitHubError({
+    HttpClient.withScope(client)
+      .execute(request.pipe(HttpClientRequest.setHeader("user-agent", "signalbox-cloud")))
+      .pipe(
+        // Requests and underlying errors can contain credentials; log only the failure category.
+        Effect.tapError((error) =>
+          Effect.logWarning("GitHub request failed", {
             operation,
-            status: 0,
-            message: "GitHub did not answer.",
             requestKind,
+            reason: error.reason._tag,
           }),
-      ),
-    );
+        ),
+        Effect.mapError(
+          (cause) =>
+            new GitHubError({
+              operation,
+              status: 0,
+              message: "GitHub did not answer.",
+              requestKind,
+              cause,
+            }),
+        ),
+      );
 
   /** `request` as `token`, asking for `accept`. */
   const asUser = (
@@ -761,6 +766,59 @@ export const makeGitHubApi = (
     /** A file's bytes by id, or null when `repository` doesn't have it (#406). */
     blob: (token: string, repository: string, sha: string) =>
       rawBytes("blob", HttpClientRequest.get(`${api}/repos/${repository}/git/blobs/${sha}`), token),
+    /** A bounded raw slice by id. A chunk alone does not verify the blob's Git object id. */
+    blobRange: Effect.fnUntraced(
+      function* (token: string, repository: string, sha: string, offset: number, length: number) {
+        if (!isRangeRequest({ offset, length })) {
+          return yield* new GitHubError({
+            operation: "blobRange",
+            status: 0,
+            message: "GitHub blob ranges require a non-negative safe offset and 1 to 65536 bytes.",
+            requestKind: "rest",
+          });
+        }
+        const request = asUser(
+          HttpClientRequest.get(`${api}/repos/${repository}/git/blobs/${sha}`).pipe(
+            HttpClientRequest.setHeader(
+              "range",
+              `bytes=${offset}-${BigInt(offset) + BigInt(length) - 1n}`,
+            ),
+          ),
+          token,
+          "application/vnd.github.raw+json",
+        );
+        const response = yield* send("blobRange", request, "rest");
+        if (response.status === 404) return null;
+        if (response.status === 416) {
+          const size = parseRangeEof(response.headers["content-range"], offset);
+          if (size !== null) return { bytes: new Uint8Array(0), size, complete: true };
+        }
+        if (response.status !== 200 && response.status !== 206) {
+          const retryAt = rateLimitRetryAt(response, yield* Clock.currentTimeMillis);
+          return yield* new GitHubError({
+            operation: "blobRange",
+            status: response.status,
+            message: "GitHub refused the blob range request.",
+            ...responseDiagnostics("rest", response, "", token),
+            ...(retryAt === undefined ? {} : { retryAt }),
+          });
+        }
+        return yield* readRange(response, offset, length).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitHubError({
+                operation: "blobRange",
+                status: response.status,
+                message: "GitHub sent an invalid or unreadable blob range.",
+                ...responseDiagnostics("rest", response, "", token),
+                cause,
+              }),
+          ),
+        );
+      },
+      Effect.scoped,
+      Effect.tapError(logResponseFailure),
+    ),
     /**
      * Every file's size under commit or tree `sha`, by id. GitHub lists at most
      * 100,000 entries; a bigger tree answers what it listed.

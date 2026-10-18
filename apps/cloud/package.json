@@ -12,6 +12,7 @@
     "@boxd-sh/sdk": "0.2.17",
     "@cloudflare/dynamic-workflows": "0.1.1",
     "@effect/sql-sqlite-do": "catalog:",
+    "@noble/hashes": "catalog:",
     "@signalbox/account": "workspace:*",
     "@signalbox/api": "workspace:*",
     "@signalbox/automations": "workspace:*",
@@ -31,6 +32,7 @@
     "ignore": "7.0.12",
     "jose": "catalog:",
     "lunorash": "1.0.0-alpha.398",
+    "pako": "2.1.0",
     "re2js": "2.8.6",
     "tldts": "catalog:"
   },
@@ -39,7 +41,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@noble/curves": "catalog:",
-    "@noble/hashes": "catalog:",
     "@signalbox/automation-compiler": "workspace:*",
     "@types/node": "catalog:",
     "alchemy": "2.0.0-beta.80",
