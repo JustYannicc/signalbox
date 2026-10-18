@@ -10,6 +10,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
 } from "@t3tools/contracts";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { scheduledTaskSource } from "@signalbox/automations/scheduledTasks";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { SIGNALBOX_FOLDERS_WS_METHODS } from "@t3tools/contracts/signalboxFolders";
@@ -17,9 +18,11 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 // Machines and the CLI compile saves (oxc can't run in workerd); tests compile the same way.
@@ -28,6 +31,7 @@ import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow"
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import { projectIdForContext, projectIdForDrive } from "../user/contextProjects.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import { PERSON_TIMEZONE_WS_METHODS } from "@t3tools/contracts/personTimezone";
 import { SIGNALBOX_TRASH_WS_METHODS } from "@t3tools/contracts/signalboxTrash";
@@ -198,6 +202,101 @@ export default workflow(async (_w, _input: { issueId: string }) => ({ closed: tr
         (yield* engine((workflow) => workflow.list())).some((automation) => automation.builtIn),
       ).toBe(false);
       expect(result.blocks.some((candidate) => candidate.source.type === "builtin")).toBe(true);
+    }),
+  );
+
+  it.effect("authorizes the requested project before listing its folder and ancestor blocks", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc, settingsRpc } = yield* setup;
+      const user = cloud.userDirectory.forUser(userId);
+      const ownerId = SignalboxContextId.make("org_acme");
+      const currentDrive = "shared/org_acme/k2";
+      const parentDrive = "shared/org_acme/k3";
+      yield* user.syncOrganizations([{ id: ownerId, name: "Acme" }]);
+      for (const [driveId, name] of [
+        [currentDrive, "Current drive"],
+        [parentDrive, "Parent drive"],
+      ] as const) {
+        yield* user.recordDriveAccess({
+          driveId,
+          name,
+          role: "editor",
+          sharedBy: null,
+          revision: 1,
+        });
+      }
+
+      const currentProject = projectIdForDrive(currentDrive);
+      const parentProject = projectIdForDrive(parentDrive);
+      const ownerProject = projectIdForContext(ownerId);
+      const snapshot = yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.subscribe]({}).pipe(
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      const currentFolder = snapshot.folders.find(
+        (folder) => folder.files?.projectId === currentProject,
+      );
+      const parentFolder = snapshot.folders.find(
+        (folder) => folder.files?.projectId === parentProject,
+      );
+      if (currentFolder === undefined || parentFolder === undefined) {
+        return expect.unreachable("the shared drives have no folders");
+      }
+      yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.move]({
+        id: currentFolder.id,
+        parentId: parentFolder.id,
+      });
+
+      const saveBlock = (name: string, projectId: typeof currentProject) => {
+        const source = `export const meta = { name: ${JSON.stringify(name)} } as const;\nexport default workflow(async (_w) => "done");`;
+        return rpc[AUTOMATION_WS_METHODS.automationsSave]({
+          source,
+          projectId,
+          compiled: compiledOf(source),
+        });
+      };
+      for (const [name, projectId] of [
+        ["Current folder block", currentProject],
+        ["Ancestor block", parentProject],
+        ["Owner block", ownerProject],
+      ] as const) {
+        const saved = yield* saveBlock(name, projectId);
+        if (!saved.ok) return expect.unreachable();
+      }
+
+      const visible = yield* settingsRpc[AUTOMATION_WS_METHODS.automationsListBlocks]({
+        projectId: currentProject,
+      });
+      const blocks = new Map(visible.blocks.map((block) => [block.name, block]));
+      expect(blocks.get("Current folder block")?.source).toEqual({
+        type: "folder",
+        projectId: currentProject,
+      });
+      expect(blocks.get("Ancestor block")?.source).toEqual({
+        type: "folder",
+        projectId: parentProject,
+      });
+      expect(blocks.get("Owner block")?.source).toEqual({
+        type: "folder",
+        projectId: ownerProject,
+      });
+      const topLevel = yield* settingsRpc[AUTOMATION_WS_METHODS.automationsListBlocks]({
+        projectId: ownerProject,
+      });
+      expect(topLevel.blocks.some((block) => block.name === "Owner block")).toBe(true);
+
+      yield* user.syncOrganizations([]);
+      const revoked = yield* Effect.exit(
+        settingsRpc[AUTOMATION_WS_METHODS.automationsListBlocks]({ projectId: currentProject }),
+      );
+      expect(revoked._tag).toBe("Failure");
+
+      const foreign = yield* Effect.exit(
+        settingsRpc[AUTOMATION_WS_METHODS.automationsListBlocks]({
+          projectId: projectIdForContext(SignalboxContextId.make("org_foreign")),
+        }),
+      );
+      expect(foreign._tag).toBe("Failure");
     }),
   );
 
