@@ -55,7 +55,7 @@ import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHy
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import * as UsageService from "../usage/UsageService.ts"; // signalbox: supply cached rates to provider metadata enrichment
-import { parseRateTable } from "../usage/usagePricing.ts"; // signalbox: build model rates for provider refresh coverage
+import { parseRateTable } from "@t3tools/provider-core/server/usagePricing"; // signalbox: build model rates for provider refresh coverage
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
