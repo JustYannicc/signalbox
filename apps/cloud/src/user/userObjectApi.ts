@@ -1,3 +1,6 @@
+import { askTool, isAskTool } from "../thread/askTools.ts";
+import type * as Crypto from "effect/Crypto";
+import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
 import { AutomationError, ThreadId, type PullRequestDiffInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -64,6 +67,8 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | Crypto.Crypto
+      | CloudThreadService.CloudThreadService
       | ThreadSearch.ThreadSearch
       | UserLearner.UserLearner
       | UserStore.UserStore
@@ -239,7 +244,8 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
-    automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    automationTool: (threadId, name, input) =>
+      run(isAskTool(name) ? askTool(threadId, name, input) : automationTool(threadId, name, input)),
     folderStatus: (threadId) =>
       run(
         UserThreadStatus.UserThreadStatus.use((status) =>

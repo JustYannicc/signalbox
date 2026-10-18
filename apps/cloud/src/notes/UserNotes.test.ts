@@ -83,6 +83,8 @@ const setup = (
             };
           }),
         dispatchCommand: unused,
+        answerAskAsAssistant: unused,
+        syncAutomationAsk: unused,
         threadSnapshot: unused,
         threadHistoryPage: unused,
         requestPullRequestSync: unused,

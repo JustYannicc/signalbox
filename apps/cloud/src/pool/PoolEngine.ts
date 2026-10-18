@@ -373,7 +373,7 @@ export const ACCOUNTS_READ_TIMEOUT_MS = 750;
 /** A stuck upstream request must release the shared refresh so polling can retry. */
 export const ACCOUNTS_REFRESH_TIMEOUT_MS = 120_000;
 
-const ACCOUNTS_READ_TIMEOUT_MESSAGE =
+export const ACCOUNTS_READ_TIMEOUT_MESSAGE =
   "The pool did not refresh its account snapshot in time. Try again shortly.";
 
 /** CLIProxyAPI refreshes its model registry every three hours. */
