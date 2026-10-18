@@ -220,6 +220,19 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     return "read";
   };
 
+  const visitAssignmentTarget = (target: ts.Expression, scope: Scope): void => {
+    target = unwrap(target);
+    if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+      const base = valueOf(target.expression, scope);
+      if (base?.kind === "member") addMember(target.expression, base.path, "read");
+      else if (base && isBunRelated(base)) addDynamic(target.expression, base, "read");
+      visit(target.expression, scope);
+      if (ts.isElementAccessExpression(target) && target.argumentExpression) {
+        visit(target.argumentExpression, scope);
+      }
+    }
+  };
+
   const bindPattern = (pattern: ts.BindingName, base: BunValue | undefined, scope: Scope): void => {
     if (ts.isIdentifier(pattern)) {
       scope.set(pattern.text, base);
@@ -232,6 +245,9 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
           bindUnknown(element.name, scope);
           continue;
         }
+        if (element.propertyName && ts.isComputedPropertyName(element.propertyName)) {
+          visit(element.propertyName.expression, scope);
+        }
         const key = bindingKey(element);
         const next = append(base, key);
         if (key === undefined && base && isBunRelated(base)) {
@@ -243,6 +259,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         ) {
           addMember(element.propertyName ?? element.name, next.path, "read");
         }
+        if (element.initializer) visitDefaultInitializer(element.initializer, scope, visit);
         bindPattern(
           element.name,
           element.initializer ? mergeValues([next, valueOf(element.initializer, scope)]) : next,
@@ -253,6 +270,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     }
     for (const element of pattern.elements) {
       if (!ts.isOmittedExpression(element)) {
+        if (element.initializer) visitDefaultInitializer(element.initializer, scope, visit);
         bindPattern(
           element.name,
           element.initializer
@@ -275,6 +293,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       ts.isBinaryExpression(pattern) &&
       pattern.operatorToken.kind === ts.SyntaxKind.EqualsToken
     ) {
+      visitDefaultInitializer(pattern.right, scope, visit);
       bindAssignmentPattern(
         pattern.left,
         mergeValues([base, valueOf(pattern.right, scope)]),
@@ -287,6 +306,9 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         if (ts.isShorthandPropertyAssignment(property)) {
           const next = append(base, property.name.text);
           if (next?.kind === "member") addMember(property.name, next.path, "read");
+          if (property.objectAssignmentInitializer) {
+            visitDefaultInitializer(property.objectAssignmentInitializer, scope, visit);
+          }
           scope.set(
             property.name.text,
             property.objectAssignmentInitializer
@@ -294,6 +316,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
               : next,
           );
         } else if (ts.isPropertyAssignment(property)) {
+          if (ts.isComputedPropertyName(property.name)) visit(property.name.expression, scope);
           const key = propertyKey(property.name);
           const next = append(base, key);
           if (key === undefined && base && isBunRelated(base)) {
@@ -317,6 +340,8 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
           scope,
         );
       }
+    } else {
+      visitAssignmentTarget(pattern, scope);
     }
   };
 
@@ -333,7 +358,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       collectVarBindings(node.body, local);
       for (const parameter of node.parameters) {
         if (parameter.initializer) visitDefaultInitializer(parameter.initializer, local, visit);
-        visitBindingInitializers(parameter.name, local, visit);
+        bindPattern(parameter.name, undefined, local);
       }
       if (node.body) visit(node.body, local);
       return;
@@ -352,12 +377,10 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     }
     if (ts.isVariableDeclaration(node)) {
       if (!node.initializer) {
-        visitBindingInitializers(node.name, scope, visit);
         if (!ts.isIdentifier(node.name)) bindPattern(node.name, undefined, scope);
         return;
       }
       visit(node.initializer, scope);
-      visitBindingInitializers(node.name, scope, visit);
       const value = valueOf(node.initializer, scope);
       if (ts.isIdentifier(node.name)) scope.set(node.name.text, value);
       else {
@@ -380,14 +403,15 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         ts.isObjectLiteralExpression(target) || ts.isArrayLiteralExpression(target);
       if (destructuring) visit(node.right, scope);
       const patternValue = destructuring ? valueOf(node.right, scope) : undefined;
-      visitAssignmentTarget(node.left, scope, visit);
+      if (!destructuring) visitAssignmentTarget(node.left, scope);
       if (!destructuring) visit(node.right, scope);
       if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
         const value = destructuring ? patternValue : valueOf(node.right, scope);
         if (value?.kind === "member" && destructuring) {
           addMember(node.right, value.path, "read");
         }
-        bindAssignmentPattern(node.left, value, scope);
+        if (destructuring) bindAssignmentPattern(node.left, value, scope);
+        else if (ts.isIdentifier(target)) scope.set(target.text, value);
       }
       return;
     }
@@ -428,10 +452,14 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       if (!ts.isForStatement(node)) visit(node.expression, loop);
       if (node.initializer && ts.isVariableDeclarationList(node.initializer)) {
         visit(node.initializer, loop);
+        if (!ts.isForStatement(node)) {
+          for (const declaration of node.initializer.declarations) {
+            if (ts.isIdentifier(declaration.name)) loop.set(declaration.name.text, undefined);
+          }
+        }
       } else if (node.initializer) {
         if (ts.isForStatement(node)) visit(node.initializer, loop);
         else {
-          visitAssignmentTarget(node.initializer, loop, visit);
           bindAssignmentPattern(node.initializer, undefined, loop);
         }
       }
@@ -644,26 +672,6 @@ function isNestedAccess(node: ts.Node): boolean {
   return false;
 }
 
-function visitBindingInitializers(
-  pattern: ts.BindingName,
-  scope: Scope,
-  visit: (node: ts.Node, scope: Scope) => void,
-): void {
-  if (ts.isIdentifier(pattern)) return;
-  for (const element of pattern.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (
-      ts.isObjectBindingPattern(pattern) &&
-      element.propertyName &&
-      ts.isComputedPropertyName(element.propertyName)
-    ) {
-      visit(element.propertyName.expression, scope);
-    }
-    if (element.initializer) visitDefaultInitializer(element.initializer, scope, visit);
-    visitBindingInitializers(element.name, scope, visit);
-  }
-}
-
 function visitDefaultInitializer(
   initializer: ts.Expression,
   scope: Scope,
@@ -672,40 +680,6 @@ function visitDefaultInitializer(
   const evaluated = scope.fork();
   visit(initializer, evaluated);
   scope.merge([evaluated, scope.fork()]);
-}
-
-function visitAssignmentTarget(
-  target: ts.Expression,
-  scope: Scope,
-  visit: (node: ts.Node, scope: Scope) => void,
-): void {
-  target = unwrap(target);
-  if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-    visitAssignmentTarget(target.left, scope, visit);
-    visitDefaultInitializer(target.right, scope, visit);
-  } else if (ts.isPropertyAccessExpression(target)) visit(target.expression, scope);
-  else if (ts.isElementAccessExpression(target)) {
-    visit(target.expression, scope);
-    if (target.argumentExpression) visit(target.argumentExpression, scope);
-  } else if (ts.isArrayLiteralExpression(target)) {
-    for (const element of target.elements) {
-      if (ts.isSpreadElement(element)) visitAssignmentTarget(element.expression, scope, visit);
-      else if (!ts.isOmittedExpression(element)) visitAssignmentTarget(element, scope, visit);
-    }
-  } else if (ts.isObjectLiteralExpression(target)) {
-    for (const property of target.properties) {
-      if (ts.isPropertyAssignment(property)) {
-        if (ts.isComputedPropertyName(property.name)) visit(property.name.expression, scope);
-        visitAssignmentTarget(property.initializer, scope, visit);
-      } else if (
-        ts.isShorthandPropertyAssignment(property) &&
-        property.objectAssignmentInitializer
-      ) {
-        visitDefaultInitializer(property.objectAssignmentInitializer, scope, visit);
-      } else if (ts.isSpreadAssignment(property))
-        visitAssignmentTarget(property.expression, scope, visit);
-    }
-  }
 }
 
 function isTransparent(parent: ts.Node, child: ts.Node): boolean {

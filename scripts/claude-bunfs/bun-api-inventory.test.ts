@@ -601,6 +601,93 @@ describe("inventoryBunApis", () => {
     }
   });
 
+  it("binds earlier pattern elements before evaluating later defaults", () => {
+    for (const source of [
+      "let api, x; for ([api = Bun.fs, x = api.newAPI()] of values) {}",
+      "for (let [api = Bun.fs, x = api.newAPI()] of values) {}",
+      "let api, x; [api = Bun.fs, x = api.newAPI()] = values;",
+      "let [api = Bun.fs, x = api.newAPI()] = values;",
+      "let {api = Bun.fs, x = api.newAPI()} = values;",
+      "let api, x; ({api = Bun.fs, x = api.newAPI()} = values);",
+      "function run([api = Bun.fs, x = api.newAPI()]) {}",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "sequential-defaults.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        source,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        source,
+      );
+    }
+  });
+
+  it("keeps later default writes after earlier pattern bindings", () => {
+    for (const source of [
+      "let api, x; for ([api, x = (api = Bun.fs)] of values) api.newAPI();",
+      "for (let [api, x = (api = Bun.fs)] of values) api.newAPI();",
+      "let api, x; [api, x = (api = Bun.fs)] = values; api.newAPI();",
+      "let [api, x = (api = Bun.fs)] = values; api.newAPI();",
+      "let {api, x = (api = Bun.fs)} = values; api.newAPI();",
+      "let api, x; ({api, x = (api = Bun.fs)} = values); api.newAPI();",
+      "function run([api, x = (api = Bun.fs)]) { api.newAPI(); }",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "sequential-default-writes.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        source,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        source,
+      );
+    }
+  });
+
+  it("records Bun member objects read while assigning properties", () => {
+    for (const source of [
+      "for (Bun.fs.x of values) {}",
+      "Bun.fs.x = value;",
+      "({value: Bun.fs.x} = values);",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "write-base.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path, occurrences }) => ({
+          path,
+          accesses: occurrences.map(({ access }) => access),
+        })),
+        [{ path: "fs", accesses: ["read"] }],
+        source,
+      );
+      assert.deepStrictEqual(inventory.dynamicAccesses, [], source);
+    }
+  });
+
+  it("clears var aliases when iteration assigns a new value", () => {
+    const inventory = inventoryBunApis([
+      {
+        name: "iteration-var.js",
+        source: "var api = Bun.fs; for (var api of values) api.readFile();",
+      },
+    ]);
+
+    assert.deepStrictEqual(
+      inventory.members.map(({ path }) => path),
+      ["fs"],
+    );
+    assert.deepStrictEqual(inventory.dynamicAccesses, []);
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {
