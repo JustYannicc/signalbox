@@ -86,6 +86,7 @@ jobs:
 
       - name: Upload full report
         id: artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: upstream-owned-file-report-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
