@@ -18,7 +18,7 @@ import {
   type ServerProviderResetCredits,
   UsageLimitSourceError,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
+import { claudeResetCreditsForWindows } from "@t3tools/provider-core/server/resetCredits";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -27,10 +27,7 @@ import { formatClaudeSubscriptionAuthLabel } from "../provider/ClaudeProvider.ts
 import {
   CLAIM_OUTCOMES,
   ClaimResponse,
-  type ClaudeResetGrant,
   RESET_CREDIT_FAILURES,
-  claudeResetCreditsToContract,
-  liveClaudeResetGrants,
 } from "../provider/claudeResetCredits.ts";
 
 const API_BASE = "https://api.anthropic.com";
@@ -59,68 +56,17 @@ const UsageExtras = Schema.Struct({
 });
 const decodeUsageExtras = Schema.decodeUnknownOption(UsageExtras);
 
-type ClearingGrant = ClaudeResetGrant & { readonly clears: ReadonlyArray<string> };
-type UsageWindow = { readonly id: string; readonly usedPercent: number };
-
-const endsAt = (grant: ClaudeResetGrant) =>
-  grant.ends_at ? Date.parse(grant.ends_at) : Number.POSITIVE_INFINITY;
-
-// Fewest windows cleared first, then the soonest to expire.
-const narrowestFirst = (a: ClearingGrant, b: ClearingGrant) =>
-  a.clears.length - b.clears.length || endsAt(a) - endsAt(b);
-
-function summarize(grants: ReadonlyArray<ClearingGrant>, pick: ClearingGrant | undefined) {
-  const soonest = grants.toSorted((a, b) => endsAt(a) - endsAt(b))[0];
-  const expires = soonest?.ends_at ? DateTime.make(soonest.ends_at) : Option.none();
-  return {
-    availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
-    ...(pick ? { nextCreditId: pick.id } : {}),
-    ...(Option.isSome(expires) ? { nextExpiresAt: DateTime.formatIso(expires.value) } : {}),
-  };
-}
-
-function splitResetCredits(
-  grants: ReadonlyArray<ClearingGrant>,
-  windows: ReadonlyArray<UsageWindow>,
-): ServerProviderResetCredits {
-  const byNarrowest = grants.toSorted(narrowestFirst);
-  // The account-wide credit is what a plain "Use reset" claims: the narrowest
-  // grant that clears every window at its limit right now.
-  const limited = windows.filter((window) => window.usedPercent >= 100).map((window) => window.id);
-  const pick =
-    byNarrowest.find((grant) => limited.every((id) => grant.clears.includes(id))) ?? byNarrowest[0];
-  const windowIds = [...new Set(grants.flatMap((grant) => grant.clears))];
-  return {
-    ...summarize(grants, pick),
-    windows: windowIds.map((windowId) => {
-      const clearing = byNarrowest.filter((grant) => grant.clears.includes(windowId));
-      return { windowId, ...summarize(clearing, clearing[0]) };
-    }),
-  };
-}
-
-const clearsSomething = (grant: ClaudeResetGrant): grant is ClearingGrant =>
-  grant.clears !== undefined;
-
 /** The plan and banked resets in a parsed usage response. Missing pieces stay missing. */
 export function hubClaudeUsageExtras(
   raw: unknown,
-  windows: ReadonlyArray<UsageWindow>,
+  windows: ReadonlyArray<{ readonly id: string; readonly usedPercent: number }>,
   nowMs: number,
 ): { readonly plan?: string; readonly resetCredits?: ServerProviderResetCredits } {
   const block = raw && typeof raw === "object" && "cedar_ember" in raw ? raw.cedar_ember : null;
   const tier = Option.getOrUndefined(decodeUsageExtras(raw))?.cedar_ember?.event_props?.tier;
   const plan = tier ? { plan: formatClaudeSubscriptionAuthLabel(tier) } : {};
-  const live = liveClaudeResetGrants(block, nowMs);
-  if (!live) return plan;
-  const usable = live.grants.filter((grant) => grant.resets_left > 0);
-  const clearing = usable.filter(clearsSomething);
-  // A grant that does not say what it clears: Claude's own pick, shown on every window.
-  if (clearing.length !== usable.length) {
-    const credits = claudeResetCreditsToContract(block, nowMs);
-    return { ...plan, ...(credits ? { resetCredits: credits } : {}) };
-  }
-  return { ...plan, resetCredits: splitResetCredits(clearing, windows) };
+  const resetCredits = claudeResetCreditsForWindows(block, windows, nowMs);
+  return { ...plan, ...(resetCredits ? { resetCredits } : {}) };
 }
 
 const Profile = Schema.Struct({ organization: Schema.Struct({ uuid: Schema.String }) });
