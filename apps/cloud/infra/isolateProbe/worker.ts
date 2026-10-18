@@ -86,7 +86,7 @@ export class ProbeSession extends DurableObject<Env> {
         compatibilityFlags: ["nodejs_compat"],
         mainModule: input.mainModule ?? "main.js",
         modules: decodedModules,
-        globalOutbound: input.allowOutbound === true ? undefined : null,
+        ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
       }));
       const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`);
       const stub =
