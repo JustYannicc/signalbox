@@ -5,6 +5,8 @@ import type {
   SecretRequestAnswerInput,
   SecretRequestFailureReason,
   OrchestrationV2Command,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
@@ -104,6 +106,10 @@ export interface ThreadObjectApi {
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: unknown,
+  ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
   /** Reads a linked pull request now, when `actor` can see the thread and link. */
@@ -222,6 +228,10 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly commandOutput: (
+    actor: Actor,
+    input: OrchestrationV2SubscribeCommandOutputInput,
+  ) => Stream.Stream<OrchestrationV2CommandOutputFrame, ThreadNotFoundError | ThreadObjectError>;
   /** Asks GitHub to refresh one current link; invisible threads and missing links are not found. */
   readonly requestPullRequestSync: (
     actor: Actor,
@@ -397,6 +407,12 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         Effect.flatMap((reason) =>
           reason === null ? Effect.void : Effect.fail(new SecretRequestError({ reason })),
         ),
+      ),
+    commandOutput: (actor, input) =>
+      lines(
+        "commandOutput",
+        () => api.commandOutput(actor, wire.commandOutputInput.encode(input)),
+        wire.commandOutputFrame.decode,
       ),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(

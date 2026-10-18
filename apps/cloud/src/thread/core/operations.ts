@@ -2,6 +2,7 @@ import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
   type ChatAttachment,
   type OrchestrationV2Command,
+  OrchestrationV2CommandOutputError,
   type OrchestrationV2ThreadStreamItem,
   type ProjectId,
   ThreadId,
@@ -314,5 +315,28 @@ export const makeThreads = Effect.gen(function* () {
     snapshot: threadSnapshot,
     history: threadHistoryPage,
     subscribe: subscribeThread,
+    commandOutput: (actor, input) =>
+      directory
+        .forThread(input.threadId)
+        .commandOutput(actor, input)
+        .pipe(
+          Stream.mapError(
+            (cause) =>
+              new OrchestrationV2CommandOutputError({
+                threadId: input.threadId,
+                message: "Couldn't read this command's output. It may no longer be available.",
+                cause,
+              }),
+          ),
+          Stream.concat(
+            Stream.fail(
+              new OrchestrationV2CommandOutputError({
+                threadId: input.threadId,
+                message: "Lost the command output stream. Reopen it to read the retained output.",
+              }),
+            ),
+          ),
+          Stream.takeUntil((frame) => !frame.running),
+        ),
   });
 });

@@ -79,7 +79,11 @@ import {
   composerDraftsAtom,
   composerContextImportsAtom,
   ensureComposerDraftsLoaded,
+  ensureComposerDraftRevision,
+  flushComposerDrafts,
+  flushComposerDraftsAfterOutboxWrite,
   getComposerDraftSnapshot,
+  clearComposerDraftContentIfMatchingQueuedMessage,
   mergeComposerDraftContent,
   removeComposerDraftAttachment,
   scheduleUnusedComposerAttachmentCleanup,
@@ -91,6 +95,7 @@ import {
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { isComposerDraftPersistenceError, type QueuedThreadMessage } from "./thread-outbox-model";
 import { Atom } from "effect/reactivity";
 import { AsyncResult } from "effect/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
@@ -697,14 +702,29 @@ export function useThreadComposerState() {
             ? "queue"
             : "auto";
 
+      const sourceDraftRevision = ensureComposerDraftRevision(threadKey);
+      if (sourceDraftRevision === undefined) return null;
+      try {
+        // The outbox can only reconcile a stale draft after restart if this
+        // source version is durable before the queued message is committed.
+        await flushComposerDrafts();
+      } catch (error) {
+        setThreadComposerError(
+          threadKey,
+          error instanceof Error ? error.message : "Failed to save the composer draft.",
+        );
+        return null;
+      }
+
       const metadata = makeQueuedMessageMetadata();
       const messageId = MessageId.make(metadata.messageId);
       clearThreadComposerError(threadKey);
-      const enqueuePromise = enqueueThreadOutboxMessage({
+      const queuedMessage: QueuedThreadMessage = {
         environmentId: selectedThreadShell.environmentId,
         threadId: selectedThreadShell.id,
         messageId,
         commandId: CommandId.make(metadata.commandId),
+        sourceDraftRevision,
         text,
         attachments,
         context: draft.context,
@@ -716,11 +736,17 @@ export function useThreadComposerState() {
         ),
         ...(followUpDispatchMode === null ? {} : { dispatchMode: followUpDispatchMode }),
         createdAt: metadata.createdAt,
-      });
-      clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
-      enqueuePromise.then(
+      };
+      const enqueuePromise = enqueueThreadOutboxMessage(queuedMessage);
+      clearComposerDraftContentIfMatchingQueuedMessage(threadKey, queuedMessage);
+      void flushComposerDraftsAfterOutboxWrite(enqueuePromise).then(
         () => scheduleUnusedComposerAttachmentCleanup(attachments),
         (error: unknown) => {
+          if (isComposerDraftPersistenceError(error)) {
+            scheduleUnusedComposerAttachmentCleanup(attachments);
+            setThreadComposerError(threadKey, error.message, messageId);
+            return;
+          }
           // Restore text via merge (idempotent) but attachments via the uncapped
           // append: the merge path slots existing attachments first and truncates
           // at the send limit, which would silently drop this message's images if
