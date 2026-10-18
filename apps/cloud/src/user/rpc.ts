@@ -30,6 +30,7 @@ import {
   OrchestrationV2ThreadLaunchError,
   ProjectListEntriesError,
   ProjectReadFileError,
+  ProjectSearchContentsError,
   ProjectSearchEntriesError,
   RpcScopeAuthorization,
   type ProjectCloneListEvent,
@@ -124,6 +125,8 @@ import { makeRepositoryPublication } from "../github/GitHubRepositoryPublication
 import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
+import * as DriveContentSearch from "./DriveContentSearch.ts";
+import { messages as contentSearchMessages } from "./DriveContentSearchErrors.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
@@ -235,6 +238,7 @@ const SERVED = [
   WS_METHODS.projectsListEntries,
   WS_METHODS.projectsReadFile,
   WS_METHODS.projectsSearchEntries,
+  WS_METHODS.projectsSearchContents,
   WS_METHODS.reviewGetDiffPreview,
   WS_METHODS.reviewGetDiffFileContents,
   WS_METHODS.vcsListRefs,
@@ -356,6 +360,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSearchContents]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffFileContents]: AuthFilesystemReadScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
@@ -582,6 +587,7 @@ export const layerHandlers = (input: {
         (contextIds) => ({ userId, contextIds }),
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
+      const contentSearch = yield* DriveContentSearch.DriveContentSearch;
       const githubImport = yield* makeGitHubImport();
       const publishRepository = yield* makeRepositoryPublication(userDrives.access);
       const browsing = yield* makeBrowsingHandlers({
@@ -933,6 +939,20 @@ export const layerHandlers = (input: {
                   limit: request.limit,
                   failure: "search_index_search_failed",
                   detail,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsSearchContents]: (request) =>
+          actorNow.pipe(Effect.flatMap((actor) => contentSearch.query(actor, request))).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectSearchContentsError({
+                  cwd: request.cwd,
+                  queryLength: request.query.length,
+                  limit: request.limit,
+                  failure: "search_index_search_failed",
+                  detail: contentSearchMessages[cause._tag],
+                  cause,
                 }),
             ),
           ),
