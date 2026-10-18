@@ -23,6 +23,8 @@ export const SignalboxEnvironmentCapabilityFields = {
   keybindingsWrite: Schema.optionalKey(Schema.Boolean),
   /** Serves the person's analytics consent read/write RPCs, independently of host settings. */
   analyticsSettings: Schema.optionalKey(Schema.Boolean),
+  /** Opt-in: cloud keeps the person's timezone. Clients require true, including before config loads. */
+  personTimezone: Schema.optionalKey(Schema.Boolean),
   /** Serves `device.*`: the iOS Simulators and Android Emulators on its device hosts. */
   devices: Schema.optionalKey(Schema.Boolean),
   /** Serves scheduled tasks (`scheduledTasks.*`, `subscribeScheduledTasks`). */

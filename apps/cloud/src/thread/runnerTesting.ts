@@ -189,6 +189,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  pulls: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>
@@ -446,3 +447,6 @@ export const sendRunnerFrame = (
   socket: FakeSocket,
   message: RunnerMessage,
 ) => Effect.promise(() => onRunnerMessage(host, socket.socket, runnerFrame.encode(message)));
+
+export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+export { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";
