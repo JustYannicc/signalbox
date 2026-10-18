@@ -70,6 +70,22 @@ describe("kernel host extension ABI", () => {
     expect(child.terminate).not.toHaveBeenCalled();
   });
 
+  it("takes exactly one resource when a caller handle has a changing identity getter", () => {
+    const resources = new KernelResourceTable();
+    const first = ok(resources.allocate("process", "first"));
+    const second = ok(resources.allocate("process", "second"));
+    let reads = 0;
+    const handle = {
+      kind: "process" as const,
+      get id() {
+        return ++reads === 1 ? first.id : second.id;
+      },
+    };
+    expect(ok(resources.take(handle, "process"))).toBe("first");
+    expect(resources.drain()).toEqual([{ kind: "process", value: "second" }]);
+    expect(reads).toBe(1);
+  });
+
   it("bounds resource allocation without invalidating live capabilities", () => {
     const resources = new KernelResourceTable(1);
     const handle = ok(resources.allocate("secret", "opaque-reference"));
@@ -310,24 +326,38 @@ describe("kernel host extension ABI", () => {
 
   it("rejects unknown operations and inherited backend capabilities", () => {
     const programs = new KernelProgramRegistry();
-    for (const capability of ["constructor", "toString", "unknown"] as KernelCapability[]) {
-      expect(programs.register({ ...program, requiredCapabilities: [capability] })).toMatchObject({
+    for (const capability of ["constructor", "toString", "unknown"]) {
+      expect(
+        Reflect.apply(programs.register, programs, [
+          { ...program, requiredCapabilities: [capability] },
+        ]),
+      ).toMatchObject({
         status: "error",
         error: { code: "UNSUPPORTED" },
       });
-      expect(callKernel({}, capability, { reason: "test", capability: "test" })).toMatchObject({
+      expect(
+        Reflect.apply(callKernel, undefined, [
+          {},
+          capability,
+          { reason: "test", capability: "test" },
+        ]),
+      ).toMatchObject({
         status: "error",
         error: { code: "UNSUPPORTED" },
       });
       const backend: KernelBackend = {};
       const unknown = vi.fn(() => kernelOk({ requestId: "unknown" }));
       Object.defineProperty(backend, capability, { value: unknown });
-      expect(callKernel(backend, capability, { reason: "test", capability: "test" })).toMatchObject(
-        {
-          status: "error",
-          error: { code: "UNSUPPORTED" },
-        },
-      );
+      expect(
+        Reflect.apply(callKernel, undefined, [
+          backend,
+          capability,
+          { reason: "test", capability: "test" },
+        ]),
+      ).toMatchObject({
+        status: "error",
+        error: { code: "UNSUPPORTED" },
+      });
       expect(unknown).not.toHaveBeenCalled();
     }
     const inherited: KernelBackend = Object.create({

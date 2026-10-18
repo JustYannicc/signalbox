@@ -28,7 +28,6 @@ export type KernelResult<T> =
       readonly error: { readonly code: KernelErrorCode; readonly message: string };
     }
   | { readonly status: "would_block"; readonly wakeToken: WakeToken };
-export type KernelCall<T> = KernelResult<T>;
 export const kernelOk = <T>(value: T) => ({ status: "ok", value }) as const;
 export const kernelError = (code: KernelErrorCode, message: string) =>
   ({ status: "error", error: { code, message } }) as const;
@@ -88,8 +87,9 @@ export class KernelResourceTable<
 
   /** The owner performs backend cleanup after taking ownership of the resource. */
   take<K extends KernelHandleKind>(handle: KernelHandle, kind: K): KernelResult<Resources[K]> {
-    const result = this.get(handle, kind);
-    if (result.status === "ok") this.#entries.delete(handle.id);
+    const snapshot = { id: handle.id, kind: handle.kind };
+    const result = this.get(snapshot, kind);
+    if (result.status === "ok") this.#entries.delete(snapshot.id);
     return result;
   }
 
@@ -180,7 +180,9 @@ export function callKernel<K extends KernelCapability>(
 export function attemptKernelOperation<T>(
   wakes: KernelWakeRegistry,
   subscribe: WakeSubscription,
-  attempt: () => KernelResult<T> | { readonly status: "would_block" },
+  attempt: () =>
+    | Exclude<KernelResult<T>, { readonly status: "would_block" }>
+    | { readonly status: "would_block"; readonly wakeToken?: never },
 ): KernelResult<T> {
   const registration = wakes.register(subscribe);
   if (registration.status !== "ok") return registration;
