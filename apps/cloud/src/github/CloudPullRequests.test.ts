@@ -18,6 +18,8 @@ import * as Stream from "effect/Stream";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Platform from "../platform.ts";
 
 import * as Environment from "../environment.ts";
 import { CloudThreadService } from "../thread/CloudThreadService.ts";
@@ -216,8 +218,11 @@ const makeFixture = () => {
         state.syncCalls.push({ userId: actor.userId, threadId });
       }),
   });
-  const api = { host: "github.com" } as GitHubApi;
+  const graphql = vi.fn<GitHubApi["graphql"]>();
+  const api = { host: "github.com", graphql } as unknown as GitHubApi;
   const dependencies = Layer.mergeAll(
+    NodeSqliteClient.layer({ filename: ":memory:" }),
+    Platform.layerCrypto,
     Layer.succeed(GitHub, GitHub.of({ pipesForUser: () => Effect.succeed(null), api })),
     Layer.succeed(PullRequestRepository.PullRequestRepository, repository),
     Layer.succeed(UserShell.UserShell, userShell),
@@ -226,6 +231,7 @@ const makeFixture = () => {
   );
   return {
     state,
+    graphql,
     layer: CloudPullRequests.layer.pipe(Layer.provide(dependencies)),
   };
 };
@@ -367,6 +373,50 @@ describe("CloudPullRequests", () => {
       }).pipe(Effect.provide(fixture.layer));
     },
   );
+
+  it.effect("a reply invalidates cached reads and publishes the refreshed repository", () => {
+    const fixture = makeFixture();
+    let providerReads = 0;
+    vi.mocked(Review.pullRequestSummary).mockImplementation(() => {
+      providerReads += 1;
+      return Effect.succeed(summaryValue(`read-${providerReads}`));
+    });
+    fixture.graphql.mockImplementation((_operation, _token, document) =>
+      Effect.succeed(
+        JSON.stringify({
+          data: document.startsWith("query")
+            ? {
+                node: {
+                  id: "PRRT_1",
+                  isResolved: false,
+                  viewerCanReply: true,
+                  viewerCanResolve: true,
+                  viewerCanUnresolve: true,
+                  pullRequest: { number: 12, repository: { nameWithOwner: "acme/web" } },
+                },
+              }
+            : { addPullRequestReviewThreadReply: { comment: { id: "PRRC_1" } } },
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const pullRequests = yield* CloudPullRequests.CloudPullRequests;
+      expect((yield* pullRequests.summary(reference())).title).toBe("read-1");
+      const refresh = yield* Effect.forkChild(Stream.runHead(pullRequests.subscribeRefreshes));
+      yield* Effect.yieldNow;
+      yield* pullRequests.replyToThread({
+        ...reference(),
+        threadId: "PRRT_1",
+        body: "Fixed.",
+        operationId: "reply-1",
+      });
+      expect((yield* pullRequests.summary(reference())).title).toBe("read-2");
+      expect(Option.getOrNull(yield* Fiber.join(refresh))).toBe(1);
+      expect(fixture.state.syncCalls.map((call) => call.threadId)).toContain(
+        ThreadId.make("visible"),
+      );
+    }).pipe(Effect.provide(fixture.layer));
+  });
 
   it.effect("reports missing summary and detail data as provider errors", () => {
     const fixture = makeFixture();

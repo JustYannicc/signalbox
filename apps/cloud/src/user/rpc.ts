@@ -18,6 +18,8 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
+  OrchestrationGetWorkflowScriptError,
+  OrchestrationV2StopWorkflowError,
   OrchestrationV2CommandOutputError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -195,6 +197,8 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
+  ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
@@ -234,6 +238,8 @@ const SERVED = [
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
+  WS_METHODS.pullRequestsReplyToThread,
+  WS_METHODS.pullRequestsSetThreadResolution,
   WS_METHODS.pullRequestsDiffFileContents,
   WS_METHODS.pullRequestsInvalidate,
   WS_METHODS.pullRequestsSubscribeRefreshes,
@@ -298,6 +304,8 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // A cloud serves only tool output images, which a self-hosted server gates on this scope.
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
@@ -333,6 +341,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsReplyToThread]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSetThreadResolution]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
@@ -725,6 +735,38 @@ export const layerHandlers = (input: {
                 }),
             ),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (request) =>
+          Effect.flatMap(actorNow, (actor) => coreThreads.getWorkflowScript(actor, request)).pipe(
+            Effect.catchTags({
+              ThreadNotFoundError: () =>
+                Effect.fail(
+                  new OrchestrationGetWorkflowScriptError({
+                    reason: "not-found",
+                    scriptPath: request.scriptPath,
+                  }),
+                ),
+              ThreadObjectError: () =>
+                Effect.fail(
+                  new OrchestrationGetWorkflowScriptError({
+                    reason: "read-failed",
+                    scriptPath: request.scriptPath,
+                  }),
+                ),
+            }),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (request) =>
+          Effect.flatMap(actorNow, (actor) => coreThreads.stopWorkflow(actor, request)).pipe(
+            Effect.catchTags({
+              ThreadNotFoundError: () =>
+                Effect.fail(
+                  new OrchestrationV2StopWorkflowError({ ...request, reason: "unavailable" }),
+                ),
+              ThreadObjectError: () =>
+                Effect.fail(
+                  new OrchestrationV2StopWorkflowError({ ...request, reason: "unavailable" }),
+                ),
+            }),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (request) =>
           Stream.unwrap(
             Effect.map(actorNow, (actor) => coreThreads.commandOutput(actor, request)),
@@ -854,6 +896,9 @@ export const layerHandlers = (input: {
         [WS_METHODS.pullRequestsChecks]: (request) => pullRequests.checks(request),
         [WS_METHODS.pullRequestsActivity]: (request) => pullRequests.activity(request),
         [WS_METHODS.pullRequestsThreadComments]: (request) => pullRequests.threadComments(request),
+        [WS_METHODS.pullRequestsReplyToThread]: (request) => pullRequests.replyToThread(request),
+        [WS_METHODS.pullRequestsSetThreadResolution]: (request) =>
+          pullRequests.setThreadResolution(request),
         [WS_METHODS.pullRequestsDiffFileContents]: (request) =>
           pullRequests.diffFileContents(request),
         [WS_METHODS.pullRequestsInvalidate]: (request) => pullRequests.invalidate(request),

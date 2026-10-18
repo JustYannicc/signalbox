@@ -1,3 +1,4 @@
+import type { Threads } from "./Threads.ts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
@@ -89,6 +90,8 @@ const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly getWorkflowScript: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
+  readonly stopWorkflow: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
   readonly answerSecret: (
     actor: Actor,
     input: unknown,
@@ -112,6 +115,11 @@ export interface ThreadObjectApi {
   ) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /** Whether the exact live run still holds the requested Runner generation. */
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Promise<boolean>;
   /** Reads a linked pull request now, when `actor` can see the thread and link. */
   readonly requestPullRequestSync: (actor: Actor, key: string) => Promise<ThreadObjectReply<void>>;
   /**
@@ -202,6 +210,8 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly getWorkflowScript: Threads["Service"]["getWorkflowScript"];
+  readonly stopWorkflow: Threads["Service"]["stopWorkflow"];
   readonly answerSecret: (
     actor: Actor,
     input: SecretRequestAnswerInput,
@@ -228,6 +238,10 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  readonly authorizeExecutorTurn: (
+    actor: Actor,
+    input: { readonly runId: string; readonly generation: number },
+  ) => Effect.Effect<boolean, ThreadObjectError>;
   readonly commandOutput: (
     actor: Actor,
     input: OrchestrationV2SubscribeCommandOutputInput,
@@ -402,6 +416,30 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    getWorkflowScript: (actor, input) =>
+      call("getWorkflowScript", () =>
+        api.getWorkflowScript(actor, wire.workflowScriptInput.encode(input)),
+      ).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) =>
+          decodeIn("getWorkflowScript", () => wire.workflowScriptReply.decode(value)),
+        ),
+        Effect.flatMap((reply) =>
+          reply._tag === "ok" ? Effect.succeed(reply.value) : Effect.fail(reply.error),
+        ),
+      ),
+    stopWorkflow: (actor, input) =>
+      call("stopWorkflow", () =>
+        api.stopWorkflow(actor, wire.workflowStopInput.encode(input)),
+      ).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) =>
+          decodeIn("stopWorkflow", () => wire.workflowStopReply.decode(value)),
+        ),
+        Effect.flatMap((reply) => (reply._tag === "ok" ? Effect.void : Effect.fail(reply.error))),
+      ),
     answerSecret: (actor, input) =>
       call("answerSecret", () => api.answerSecret(actor, wire.secretAnswer.encode(input))).pipe(
         Effect.flatMap((reason) =>
@@ -536,6 +574,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
             : decodeIn("summary", () => wire.summary.decode(value)),
         ),
       ),
+    authorizeExecutorTurn: (actor, input) =>
+      call("authorizeExecutorTurn", () => api.authorizeExecutorTurn(actor, input)),
   };
 }
 

@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { RunId } from "@t3tools/contracts";
 
 import { matchThread, threadTurns } from "../context/threadContext.ts";
 import {
@@ -14,6 +15,7 @@ import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
+import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import { encodeBatchLine, jsonLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 import * as ThreadPulls from "./ThreadPulls.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
@@ -39,6 +41,7 @@ export const makeThreadObjectApi = (
       | ThreadSecretRequests
       | ThreadPulls.ThreadPulls
       | PullRequestSync.PullRequestSync
+      | ThreadRunner.ThreadRunner
     >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
@@ -74,6 +77,33 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    getWorkflowScript: (actor, input) =>
+      reply(
+        engine.use((service) =>
+          service.getWorkflowScript(actor, wire.workflowScriptInput.decode(input)).pipe(
+            Effect.map((value) => wire.workflowScriptReply.encode({ _tag: "ok", value })),
+            Effect.catchTags({
+              OrchestrationGetWorkflowScriptError: (error) =>
+                Effect.succeed(wire.workflowScriptReply.encode({ _tag: "error", error })),
+            }),
+          ),
+        ),
+      ),
+    stopWorkflow: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          service.stopWorkflow(actor, wire.workflowStopInput.decode(input)).pipe(
+            Effect.map(() => wire.workflowStopReply.encode({ _tag: "ok" })),
+            Effect.catchTags({
+              OrchestrationV2StopWorkflowError: (error) =>
+                Effect.succeed(wire.workflowStopReply.encode({ _tag: "error", error })),
+            }),
+          ),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
     answerSecret: async (actor, input) => {
       const result = await run(
         ThreadSecretRequests.use((service) =>
@@ -282,6 +312,23 @@ export const makeThreadObjectApi = (
             summary === null ? null : wire.summary.encode(summary),
           ),
         ),
+      ),
+    authorizeExecutorTurn: (actor, input) =>
+      run(
+        engine
+          .use((service) => service.summary(actor))
+          .pipe(
+            Effect.flatMap((summary) =>
+              summary === null
+                ? Effect.succeed(false)
+                : ThreadRunner.ThreadRunner.use((runner) =>
+                    runner.authorizeExecutorTurn({
+                      runId: RunId.make(input.runId),
+                      generation: input.generation,
+                    }),
+                  ),
+            ),
+          ),
       ),
   };
 };
