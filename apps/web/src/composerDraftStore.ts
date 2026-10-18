@@ -1,3 +1,8 @@
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  cloneComposerImageForRetry,
+  isComposerSubmissionUncertain,
+} from "./composerSubmissionRecovery";
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -381,6 +386,35 @@ export function composerDraftHasUserContent(
     draft.reviewComments.length > 0 ||
     draft.threadContexts.length > 0
   );
+}
+
+export function recoverComposerSubmission(input: {
+  target: ComposerThreadTarget;
+  result: AtomCommandResult<unknown, unknown>;
+  requestStarted: boolean;
+  content: Pick<
+    ComposerThreadDraftState,
+    | "prompt"
+    | "images"
+    | "files"
+    | "terminalContexts"
+    | "previewAnnotations"
+    | "reviewComments"
+    | "threadContexts"
+  >;
+}) {
+  if (isComposerSubmissionUncertain(input.result, input.requestStarted)) return "uncertain";
+  const store = useComposerDraftStore.getState();
+  if (composerDraftHasUserContent(store.getComposerDraft(input.target))) return "occupied";
+  const { target, content } = input;
+  store.setPrompt(target, content.prompt);
+  store.addImages(target, content.images.map(cloneComposerImageForRetry));
+  store.addFiles(target, content.files);
+  store.setTerminalContexts(target, content.terminalContexts);
+  store.setPreviewAnnotations(target, content.previewAnnotations);
+  store.setReviewComments(target, content.reviewComments);
+  store.setThreadContexts(target, content.threadContexts);
+  return "restored";
 }
 
 export interface DraftSessionState {
@@ -3958,6 +3992,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+          // A reload must not hydrate the last unsent snapshot after a send.
+          composerDebouncedStorage.flush();
         },
         clearComposerPromptAndImages: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
@@ -3993,6 +4029,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+          composerDebouncedStorage.flush();
         },
         moveComposerPromptAndImages: (from, to) => {
           const fromKey = resolveComposerDraftKey(get(), from) ?? "";

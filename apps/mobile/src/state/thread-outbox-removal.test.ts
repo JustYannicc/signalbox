@@ -13,6 +13,11 @@ const harness = vi.hoisted(() => ({
   >,
 }));
 
+vi.mock("../lib/uuid", async () => {
+  const { randomUUID } = await import("node:crypto");
+  return { uuidv4: randomUUID };
+});
+
 vi.mock("./thread-outbox", async () => {
   const { createThreadOutboxManager } = await import("./thread-outbox-manager");
   const { appAtomRegistry } = await import("./atom-registry");
