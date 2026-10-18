@@ -28,6 +28,14 @@ function makeTable(maxProcesses?: number) {
   return { table, wakes };
 }
 
+function makeTableWithWakes(wakes: KernelWakeRegistry, maxProcesses?: number) {
+  const table = new KernelProcessTable({
+    wakes,
+    ...(maxProcesses === undefined ? {} : { maxProcesses }),
+  });
+  return { table, wakes };
+}
+
 function launch(
   completion: Promise<KernelExitStatus>,
   signal = vi.fn(() => ({
@@ -435,6 +443,55 @@ describe("KernelProcessTable", () => {
     expect(release).toHaveBeenCalledTimes(1);
     expect(await table.dispose()).toEqual({ status: "ok", value: undefined });
     expect(table.size).toBe(0);
+  });
+
+  it("terminates and reaps one owned process while the wake registry is full", async () => {
+    const wakes = new KernelWakeRegistry({ maxTokens: 1 });
+    const { table } = makeTableWithWakes(wakes);
+    const unrelatedCompletion = deferred<KernelExitStatus>();
+    const targetCompletion = deferred<KernelExitStatus>();
+    const unrelated = table.spawn(
+      undefined,
+      () => launch(unrelatedCompletion.promise).child,
+      vi.fn(),
+    );
+    expect(unrelated.status).toBe("ok");
+    if (unrelated.status !== "ok") return;
+    const unrelatedWait = table.exitStatus(unrelated.value.handle);
+    expect(unrelatedWait.status).toBe("would_block");
+    if (unrelatedWait.status !== "would_block") return;
+    expect(wakes.size).toBe(1);
+
+    const targetSignal = vi.fn(() => {
+      targetCompletion.resolve(status(0, 9));
+      return { status: "ok" as const, value: undefined };
+    });
+    const target = table.spawn(
+      undefined,
+      () => ({ completion: targetCompletion.promise, signal: targetSignal }),
+      vi.fn(),
+    );
+    expect(target.status).toBe("ok");
+    if (target.status !== "ok") return;
+
+    await expect(table.terminateAndReap(target.value.handle)).resolves.toEqual({
+      status: "ok",
+      value: undefined,
+    });
+    expect(targetSignal).toHaveBeenCalledWith(9);
+    expect(table.info(target.value.handle)).toMatchObject({
+      status: "error",
+      error: { code: "INVALID_HANDLE" },
+    });
+    expect(table.info(unrelated.value.handle).status).toBe("ok");
+    expect(table.size).toBe(1);
+    expect(wakes.size).toBe(1);
+
+    unrelatedCompletion.resolve(status(0));
+    expect(await wakes.wait(unrelatedWait.wakeToken)).toEqual({ status: "ok", value: undefined });
+    expect(table.reap(unrelated.value.handle)).toEqual({ status: "ok", value: undefined });
+    expect(wakes.size).toBe(0);
+    expect(await table.dispose()).toEqual({ status: "ok", value: undefined });
   });
 
   it("runs cleanup after a launch failure and drains asynchronous release", async () => {

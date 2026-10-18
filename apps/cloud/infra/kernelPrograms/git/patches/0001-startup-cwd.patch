@@ -1,0 +1,17 @@
+--- a/packages/worker/wasm/nimbus-libc/nimbus-proc.c
++++ b/packages/worker/wasm/nimbus-libc/nimbus-proc.c
+@@ -20,0 +21,14 @@
++NIMBUS_PROC_IMPORT("startup_cwd") int __nimbus_startup_cwd(char *buffer, unsigned capacity);
++
++/* WASI has no process cwd; seed wasi-libc before Git runs. */
++static void __attribute__((constructor)) nimbus_seed_startup_cwd(void) {
++  int length = __nimbus_startup_cwd(NULL, 0);
++  if (length < 0) _Exit(1);
++  char *cwd = malloc((size_t)length + 1);
++  if (!cwd) _Exit(1);
++  int copied = __nimbus_startup_cwd(cwd, (unsigned)length + 1);
++  if (copied != length) { free(cwd); _Exit(1); }
++  int result = chdir(cwd);
++  free(cwd);
++  if (result != 0) _Exit(1);
++}
