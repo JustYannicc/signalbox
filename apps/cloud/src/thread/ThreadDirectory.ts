@@ -2,6 +2,8 @@ import type { Threads } from "./Threads.ts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
+import type { FeedbackOutcome } from "@signalbox/runner-protocol/FeedbackProtocol";
+import type { ProviderUploadFeedbackInput } from "@t3tools/contracts";
 import type {
   SecretRequestAnswerInput,
   SecretRequestFailureReason,
@@ -125,6 +127,10 @@ const decodeLifecycleReceipt = Schema.decodeUnknownSync(ThreadLifecycleReceiptWi
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly uploadFeedback: (
+    actor: Actor,
+    input: ProviderUploadFeedbackInput,
+  ) => Promise<ThreadObjectReply<FeedbackOutcome>>;
   readonly trash: (
     actor: Actor,
     input: ThreadTrashInput,
@@ -276,6 +282,10 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly uploadFeedback: (
+    actor: Actor,
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<FeedbackOutcome, ThreadNotFoundError | ThreadObjectError>;
   readonly trash: (
     actor: Actor,
     input: ThreadTrashInput,
@@ -530,6 +540,11 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       Effect.flatMap((value) => decodeIn(operation, () => decodeLifecycleReceipt(value))),
     );
   return {
+    uploadFeedback: (actor, input) =>
+      call("uploadFeedback", () => api.uploadFeedback(actor, input)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+      ),
     trash: (actor, input) => lifecycle("trash", () => api.trash(actor, input)),
     restore: (actor, input) => lifecycle("restore", () => api.restore(actor, input)),
     purge: (actor, input) => lifecycle("purge", () => api.purge(actor, input)),

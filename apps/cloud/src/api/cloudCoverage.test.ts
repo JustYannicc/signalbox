@@ -14,6 +14,11 @@ describe("cloud API coverage", () => {
     expect(cloudUnserved(advice!)).toBeUndefined();
   });
 
+  it("serves explicit provider feedback requests through the runner", () => {
+    const operation = operations.find((operation) => operation.name === "provider.uploadFeedback")!;
+    expect(cloudServes(operation)).toBe(true);
+    expect(cloudUnserved(operation)).toBeUndefined();
+  });
   it("serves workflow inspection and stop through the generated API and MCP reach", () => {
     for (const [name, access] of [
       ["threads.getWorkflowScript", "read"],

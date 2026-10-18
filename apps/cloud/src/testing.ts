@@ -62,6 +62,7 @@ import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as PreviewState from "./thread/PreviewState.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as ThreadFeedback from "./thread/ThreadFeedback.ts";
 import * as ThreadSecretRequests from "./thread/ThreadSecrets.ts";
 import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
 import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
@@ -246,6 +247,7 @@ export const layerThreadObject = (
     readonly models?: Layer.Layer<TurnModels.TurnModels>;
     /** What writes runtime status notes; no model, unless given. */
     readonly statusNoteModel?: Layer.Layer<StatusNoteModel.StatusNoteModel>;
+    readonly feedback?: ThreadFeedback.FeedbackTransport["Service"];
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
@@ -264,6 +266,18 @@ export const layerThreadObject = (
       }),
     ),
     Layer.provideMerge(ThreadBrowsing.layer),
+    Layer.provideMerge(
+      ThreadFeedback.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            ThreadFeedback.FeedbackTransport,
+            options.feedback ?? {
+              upload: () => Effect.succeed({ _tag: "failed", failure: "runner_unavailable" }),
+            },
+          ),
+        ),
+      ),
+    ),
     Layer.provideMerge(
       ThreadStatusNotes.layer.pipe(
         Layer.provide(options.statusNoteModel ?? StatusNoteModel.layerNone),
@@ -481,6 +495,7 @@ export const makeMemoryCloud = (
           A,
           E,
           | ThreadEngine.ThreadEngine
+          | ThreadFeedback.ThreadFeedback
           | ThreadRunner.ThreadRunner
           | ThreadStore.ThreadStore
           | UserDirectory.UserDirectory
@@ -587,6 +602,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadFeedback.ThreadFeedback
         | ThreadRunner.ThreadRunner
         | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore

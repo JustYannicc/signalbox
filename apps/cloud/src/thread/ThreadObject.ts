@@ -57,6 +57,8 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import * as ThreadFeedback from "./ThreadFeedback.ts";
+import { FeedbackSockets } from "./FeedbackSockets.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingEvents } from "./eventOutbox.ts";
@@ -187,6 +189,7 @@ const makeRuntime = (
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
   threadId: () => ThreadId,
+  feedback: FeedbackSockets,
   secretChanged: () => Promise<void>,
 ) => {
   const settings = machineSettings(env);
@@ -214,6 +217,11 @@ const makeRuntime = (
         ),
         // The thread's browser tabs (#585), beside its conversation.
         Layer.provideMerge(ThreadBrowsing.layer),
+        Layer.provideMerge(
+          ThreadFeedback.layer.pipe(
+            Layer.provide(Layer.succeed(ThreadFeedback.FeedbackTransport, feedback)),
+          ),
+        ),
         // Its status note (#670), written by the runtime through the owner's pool when the agent didn't.
         Layer.provideMerge(
           ThreadStatusNotes.layer.pipe(
@@ -261,6 +269,8 @@ const makeRuntime = (
         Layer.provideMerge(
           UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
         ),
+      )
+      .pipe(
         Layer.provideMerge(
           Layer.mergeAll(
             SqliteClient.layer({ storage }),
@@ -268,8 +278,8 @@ const makeRuntime = (
             FetchHttpClient.layer,
           ),
         ),
-      )
-      .pipe(Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil })))),
+        Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil({ waitUntil }))),
+      ),
   );
 };
 
@@ -282,6 +292,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   constructor(ctx: DurableObjectState, env: ThreadObjectEnv) {
     super(ctx, env);
+    const feedback = new FeedbackSockets(ctx);
     // Created only through `jurisdiction("eu")`; anything else is a routing bug.
     if (env.LOCAL_WORKERD !== "1" && ctx.id.jurisdiction !== THREAD_OBJECT_JURISDICTION) {
       throw new Error("Thread objects must live in the EU jurisdiction.");
@@ -326,10 +337,12 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           ),
       },
       () => this.threadId(),
+      feedback,
       () => this.armAlarm(),
     );
     this.runnerHost = {
       ctx,
+      feedbackResult: (socket, response) => feedback.receive(socket, response),
       now: () => this.now(),
       run: (effect) => this.runtime.runPromise(effect),
       holdsTurn: () =>
@@ -485,6 +498,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
     return this.api.diagnostics(...args);
+  }
+
+  uploadFeedback(...args: Parameters<ThreadObjectApi["uploadFeedback"]>) {
+    return this.api.uploadFeedback(...args);
   }
 
   recoveryDrill(userId: string, input: unknown) {

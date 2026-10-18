@@ -79,7 +79,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   ),
   "provider.consumeResetCredit": gap("#820"),
   "provider.install.*": poolHarnesses,
-  "provider.uploadFeedback": gap("#822"),
   "server.updateProvider": poolHarnesses,
 
   "acpRegistry.*": exempt("ACP agents install on a host; cloud threads run on pool harnesses."),
