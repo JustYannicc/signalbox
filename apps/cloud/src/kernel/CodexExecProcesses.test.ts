@@ -8,8 +8,6 @@ import type {
 import { kernelError, kernelOk, type KernelResult } from "./KernelAbi.ts";
 import { CodexExecProcesses } from "./CodexExecProcesses.ts";
 import { CodexExecSessions } from "./CodexExecSessions.ts";
-import { ProcessesInstance } from "./execServer/ProcessesInstance.ts";
-import { fileUriToGuestPath, prepareProcessLaunch } from "./execServer/ProcessesLaunch.ts";
 import { RpcError, type Notification, type Reply } from "./CodexExecProtocol.ts";
 
 const launch = {
@@ -249,78 +247,105 @@ describe("Codex exec-server process handling", () => {
     }
   });
 
-  it("rejects lossy file URIs and unsupported process modes before launch", () => {
-    expect(fileUriToGuestPath("file:///workspace/folder%20name")).toBe("/workspace/folder name");
-    for (const cwd of [
-      "file://localhost/workspace",
-      "file://server/share",
-      "file:///workspace/%2Fetc",
-      "file:///workspace/%00file",
-      "file:///workspace?query",
-      "file:///workspace#fragment",
-      "file:\\workspace",
-    ]) {
-      expect(() => fileUriToGuestPath(cwd)).toThrow(RpcError);
-    }
-
-    const environment = { baseEnv: { PATH: "/bin" }, platformOs: "linux" };
-    const unsupported = [
-      { tty: true },
-      { sandbox: {} },
-      { shellSnapshot: {} },
-      { enforceManagedNetwork: true },
-      { managedNetwork: {} },
-      { networkProxy: {} },
-    ];
-    for (const patch of unsupported) {
-      expect(() => prepareProcessLaunch({ ...launch, ...patch }, environment)).toThrow(
-        "unsupported",
+  it("rejects lossy file URIs and unsupported process modes before launch", async () => {
+    const fixture = harness({ baseEnv: { PATH: "/bin" }, platformOs: "linux" });
+    try {
+      await fixture.handler.request(
+        "process/start",
+        { ...launch, cwd: "file:///workspace/folder%20name" },
+        requestSignal(),
       );
+      expect(fixture.commands[0]?.cwd).toBe("/workspace/folder name");
+    } finally {
+      await fixture.handler.dispose();
+    }
+    const rejected = harness({ baseEnv: { PATH: "/bin" }, platformOs: "linux" });
+    try {
+      for (const cwd of [
+        "file://localhost/workspace",
+        "file://server/share",
+        "file:///workspace/%2Fetc",
+        "file:///workspace/%00file",
+        "file:///workspace?query",
+        "file:///workspace#fragment",
+        "file:\\workspace",
+      ]) {
+        await expect(
+          rejected.handler.request("process/start", { ...launch, cwd }, requestSignal()),
+        ).rejects.toThrow(RpcError);
+      }
+
+      const unsupported = [
+        { tty: true },
+        { sandbox: {} },
+        { shellSnapshot: {} },
+        { enforceManagedNetwork: true },
+        { managedNetwork: {} },
+        { networkProxy: {} },
+      ];
+      for (const patch of unsupported) {
+        await expect(
+          rejected.handler.request("process/start", { ...launch, ...patch }, requestSignal()),
+        ).rejects.toThrow("unsupported");
+      }
+
+      await expect(
+        rejected.handler.request(
+          "process/start",
+          { ...launch, env: { LARGE: "€".repeat(90_000) } },
+          requestSignal(),
+        ),
+      ).rejects.toThrow("size limit");
+      expect(rejected.commands).toEqual([]);
+    } finally {
+      await rejected.handler.dispose();
     }
 
-    const windows = prepareProcessLaunch(
-      {
-        ...launch,
-        envPolicy: {
-          inherit: "core",
-          ignoreDefaultExcludes: true,
-          exclude: [],
-          set: {},
-          includeOnly: [],
-        },
+    const windows = harness({
+      baseEnv: {
+        PATH: "C:\\bin",
+        PATHEXT: ".EXE",
+        USERPROFILE: "C:\\Users\\user",
+        APPDATA: "C:\\Users\\user\\AppData\\Roaming",
+        LOCALAPPDATA: "C:\\Users\\user\\AppData\\Local",
+        TEMP: "C:\\Temp",
+        TMP: "C:\\Temp",
+        TMPDIR: "C:\\Temp",
+        POWERSHELL: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        PWSH: "C:\\Program Files\\PowerShell\\pwsh.exe",
       },
-      {
-        baseEnv: {
-          PATH: "C:\\bin",
-          PATHEXT: ".EXE",
-          USERPROFILE: "C:\\Users\\user",
-          APPDATA: "C:\\Users\\user\\AppData\\Roaming",
-          LOCALAPPDATA: "C:\\Users\\user\\AppData\\Local",
-          TEMP: "C:\\Temp",
-          TMP: "C:\\Temp",
-          TMPDIR: "C:\\Temp",
-          POWERSHELL: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-          PWSH: "C:\\Program Files\\PowerShell\\pwsh.exe",
-        },
-        platformOs: "windows",
-      },
-    );
-    expect(windows.command.env).toEqual({
-      PATH: "C:\\bin",
-      PATHEXT: ".EXE",
-      USERPROFILE: "C:\\Users\\user",
-      APPDATA: "C:\\Users\\user\\AppData\\Roaming",
-      LOCALAPPDATA: "C:\\Users\\user\\AppData\\Local",
-      TEMP: "C:\\Temp",
-      TMP: "C:\\Temp",
-      TMPDIR: "C:\\Temp",
-      POWERSHELL: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      PWSH: "C:\\Program Files\\PowerShell\\pwsh.exe",
+      platformOs: "windows",
     });
-
-    expect(() =>
-      prepareProcessLaunch({ ...launch, env: { LARGE: "€".repeat(90_000) } }, environment),
-    ).toThrow("size limit");
+    try {
+      await windows.handler.request(
+        "process/start",
+        {
+          ...launch,
+          envPolicy: {
+            inherit: "core",
+            ignoreDefaultExcludes: true,
+            exclude: [],
+            set: {},
+            includeOnly: [],
+          },
+        },
+        requestSignal(),
+      );
+      expect(windows.commands[0]?.env).toEqual({
+        PATH: "C:\\bin",
+        PATHEXT: ".EXE",
+        USERPROFILE: "C:\\Users\\user",
+        APPDATA: "C:\\Users\\user\\AppData\\Roaming",
+        LOCALAPPDATA: "C:\\Users\\user\\AppData\\Local",
+        TEMP: "C:\\Temp",
+        TMP: "C:\\Temp",
+        TMPDIR: "C:\\Temp",
+        POWERSHELL: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        PWSH: "C:\\Program Files\\PowerShell\\pwsh.exe",
+      });
+    } finally {
+      await windows.handler.dispose();
+    }
   });
 
   it("rejects a stdin chunk that cannot retain its deduplication identity", async () => {
@@ -595,40 +620,49 @@ describe("Codex exec-server process handling", () => {
   });
 
   it("closes stdin admission before awaiting the process stop acknowledgement", async () => {
+    const writeEntered = deferred<void>();
+    const writeGate = deferred<void>();
     const signalEntered = deferred<void>();
     const signalGate = deferred<void>();
     const child = makeChild({
+      write: async () => {
+        writeEntered.resolve();
+        await writeGate.promise;
+      },
       signal: async () => {
         signalEntered.resolve();
         await signalGate.promise;
         return kernelOk(undefined);
       },
     });
-    const process = new ProcessesInstance({
-      processId: launch.processId,
-      identity: "test",
-      child: child.child,
-      pipeStdin: true,
-      notify: async () => {},
-      maxWriteIds: 8,
-      maxWriteBytes: 1024,
-      maxDedupBytes: 1024,
-      onClosed: () => {},
-      onCleanupFailure: () => {},
-    });
+    const fixture = harness({ spawn: async () => child.child });
     let cleanup: Promise<void> | undefined;
     try {
-      cleanup = process.dispose();
+      await fixture.handler.request("process/start", launch, requestSignal());
+      const firstWrite = fixture.handler.request(
+        "process/write",
+        writeRequest("in-flight-write", Uint8Array.from([0])),
+        requestSignal(),
+      );
+      await writeEntered.promise;
+      const pendingWrite = fixture.handler.request(
+        "process/write",
+        writeRequest("queued-write-during-dispose", Uint8Array.from([1])),
+        requestSignal(),
+      );
+      cleanup = fixture.handler.dispose();
       await signalEntered.promise;
-      await expect(
-        process.write("new-write-during-dispose", Uint8Array.from([1]), requestSignal()),
-      ).resolves.toEqual({ status: "stdinClosed" });
+      writeGate.resolve();
+      await expect(firstWrite).resolves.toEqual({ status: "accepted" });
+      await expect(pendingWrite).resolves.toEqual({ status: "stdinClosed" });
       signalGate.resolve();
       await cleanup;
-      expect(child.writes).toEqual([]);
+      expect(child.writes).toEqual([Uint8Array.from([0])]);
     } finally {
+      writeGate.resolve();
       signalGate.resolve();
       await cleanup?.catch(() => {});
+      await fixture.handler.dispose();
     }
   });
 
