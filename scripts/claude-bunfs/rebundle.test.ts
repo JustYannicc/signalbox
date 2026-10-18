@@ -267,10 +267,16 @@ describe("integrated Claude rebundling", () => {
       const { extracted } = await makeExtraction(
         root,
         `${touch}("entry");
+        export const sourceUrl=import.meta.url;
+        export const sourceFilename=import.meta.filename;
+        export const sourceDirname=import.meta.dirname;
         export const worker=${JSON.stringify(WORKER_NAME)};
         export const later=()=>import(${JSON.stringify(LEGACY_NAME)});
         export const nested=()=>import(${JSON.stringify(WORKER_NAME)});`,
-        `${touch}("worker");export const later=()=>import(${JSON.stringify(LEGACY_NAME)});`,
+        `${touch}("worker");export const sourceUrl=import.meta.url;
+        export const sourceFilename=import.meta.filename;
+        export const sourceDirname=import.meta.dirname;
+        export const later=()=>import(${JSON.stringify(LEGACY_NAME)});`,
       );
       const output = NodePath.join(root, "bundle");
       const artifact = await rebundle({
@@ -291,6 +297,9 @@ describe("integrated Claude rebundling", () => {
       Reflect.set(globalThis, Symbol.for(symbol), (name: string) => hits.push(name));
       const release = launcher.launch();
       expect(launcher.launch()).toBe(release);
+      expect(release.sourceUrl).toBe("file:///$bunfs/root/cli");
+      expect(release.sourceFilename).toBe("/$bunfs/root/cli");
+      expect(release.sourceDirname).toBe("/$bunfs/root");
       expect(hits).toEqual(["entry"]);
       const legacy = await release.later();
       expect(legacy.default.value).toBe("legacy-cjs");
@@ -298,6 +307,9 @@ describe("integrated Claude rebundling", () => {
       const nested = await release.nested();
       expect(await nested.later()).toBe(legacy);
       expect(worker.launch()).toBe(nested);
+      expect(nested.sourceUrl).toBe(NodeURL.pathToFileURL(WORKER_NAME, { windows: false }).href);
+      expect(nested.sourceFilename).toBe(WORKER_NAME);
+      expect(nested.sourceDirname).toBe(NodePath.posix.dirname(WORKER_NAME));
       expect(hits).toEqual(["entry", "worker"]);
       expect(
         Object.keys(artifact.manifest.modules).some((path) => path.startsWith("chunks/")),
