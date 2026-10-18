@@ -1,8 +1,9 @@
+import { clientAskCommand } from "@t3tools/shared/signalboxAsks";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
+  CommandId,
   type ChatAttachment,
-  type OrchestrationV2Command,
   OrchestrationV2CommandOutputError,
   type OrchestrationV2ThreadStreamItem,
   type ProjectId,
@@ -14,6 +15,9 @@ import * as Hex from "effect/encoding/Hex";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+
+import type { ThreadCommand } from "../threadCommands.ts";
+import { dispatchAutomationAskAnswer } from "../../automations/askAnswers.ts";
 
 import { CloudAttachments } from "../../attachments/CloudAttachments.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
@@ -100,16 +104,17 @@ const isNotFound = Schema.is(ThreadNotFoundError);
 const isRefusal = (error: unknown) => isRejected(error) || isNotFound(error);
 
 /** Commands that can start a turn or pick a model: they carry the resolved pools, instructions and secrets. */
-const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
+const PICKS_A_POOL: ReadonlySet<ThreadCommand["type"]> = new Set([
   "thread.create",
   "message.dispatch",
+  "thread.ask.answer",
+  "runtime-request.respond",
   "thread.model-selection.set",
   "provider.switch",
-  "runtime-request.respond",
 ]);
 
 /** What a command sends, for the thread's kind (`ThreadKindTurns`). */
-const messageOf = (command: OrchestrationV2Command) =>
+const messageOf = (command: ThreadCommand) =>
   command.type === "message.dispatch" ? { text: command.text, title: command.titleSeed } : null;
 
 const rejectTrashedFolder = <A>(
@@ -156,8 +161,15 @@ export const makeThreads = Effect.gen(function* () {
       }),
     );
 
-  const dispatchCommand: Threads.Threads["Service"]["dispatch"] = (actor, command) =>
+  const dispatchCommand = (actor: Actor, command: ThreadCommand) =>
     Effect.gen(function* () {
+      const automationAnswer =
+        command.type === "thread.ask.sync"
+          ? null
+          : yield* dispatchAutomationAskAnswer(actor, command, {
+              threadSnapshot: (who, id) => threadSnapshot(who, id),
+            });
+      if (automationAnswer !== null) return automationAnswer;
       const threadId = commandThreadId(command);
       if (threadId === null) {
         return yield* ThreadCommandRejectedError.forCommand(
@@ -405,7 +417,21 @@ export const makeThreads = Effect.gen(function* () {
       directory.forThread(input.threadId).getWorkflowScript(actor, input),
     stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),
     launch: launchThread,
-    dispatch: dispatchCommand,
+    dispatch: (actor, command) => dispatchCommand(actor, clientAskCommand(command, actor.userId)),
+    answerAskAsAssistant: (actor, caller, command) =>
+      dispatchCommand(actor, {
+        ...command,
+        answeredBy: { kind: "assistant", personId: actor.userId, assistantThreadId: caller },
+      }),
+    syncAutomationAsk: (actor, threadId, ask) =>
+      dispatchCommand(actor, {
+        type: "thread.ask.sync",
+        commandId: CommandId.make(
+          `automation-ask:${ask.id}:${ask.updatedAt}:${ask.status}:${ask.rounds.length}`,
+        ),
+        threadId,
+        ask,
+      }),
     refreshRemoteWorkspace,
     snapshot: threadSnapshot,
     history: threadHistoryPage,

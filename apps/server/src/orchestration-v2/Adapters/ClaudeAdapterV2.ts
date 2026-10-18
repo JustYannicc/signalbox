@@ -178,6 +178,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import { AUTOMATION_READ_ONLY_TOOLS } from "../../workflows/mcp/readOnlyTools.ts"; // signalbox: automations
+import { SIGNALBOX_ASK_TOOLS } from "@t3tools/contracts/signalboxAskTools";
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
@@ -1202,6 +1203,9 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
   ...AUTOMATION_READ_ONLY_TOOLS.map((name) => `mcp__t3-code__${name}`), // signalbox: automations
+  ...Object.entries(SIGNALBOX_ASK_TOOLS)
+    .filter(([, tool]) => tool.readonly)
+    .map(([name]) => `mcp__t3-code__${name}`),
 ];
 
 // Claude Code aborts an HTTP MCP call after 60 s ("The operation timed out.")
@@ -3201,6 +3205,9 @@ export function claudeUserInputQuestions(
               label,
               description:
                 typeof optionRecord.description === "string" ? optionRecord.description.trim() : "",
+              ...(typeof optionRecord.preview === "string"
+                ? { preview: optionRecord.preview }
+                : {}),
             },
           ];
         })
