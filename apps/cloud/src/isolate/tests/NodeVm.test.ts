@@ -37,7 +37,8 @@ beforeAll(async () => {
     hostOps: load(NODE_VM_PREPARED_MODULES.hostOps),
     primordials: primordials.LAUNCH_PRIMORDIALS,
     moduleHelpers: load(NODE_VM_PREPARED_MODULES.moduleHelpers),
-    hasSyntheticArgumentsReference: load(NODE_VM_PREPARED_MODULES.expressionAnalysis).hasSyntheticArgumentsReference,
+    hasSyntheticArgumentsReference: load(NODE_VM_PREPARED_MODULES.expressionAnalysis)
+      .hasSyntheticArgumentsReference,
   } as unknown as NodeVmRuntimeModules;
 
   fallback = createNodeVm(refusingVm(), runtimeModules, refusingFunctionConstructors());
@@ -121,9 +122,7 @@ describe("Node vm interpreter fallback", () => {
   it("refuses parser-identified synthetic script arguments references", () => {
     const guarded = createNodeVm(
       refusingVm(),
-      {
-        ...runtimeModulesForTest(),
-      },
+      runtimeModulesForTest(),
       refusingFunctionConstructors(),
     );
 
@@ -139,7 +138,9 @@ describe("Node vm interpreter fallback", () => {
     expect(guarded.module.runInThisContext("'arguments'")).toBe("arguments");
     expect(guarded.module.runInThisContext("({ arguments: 7 }).arguments")).toBe(7);
     expect(guarded.module.runInThisContext("(arguments => arguments)(7)")).toBe(7);
-    expect(guarded.module.runInThisContext("(function () { return arguments.length; })(1)")).toBe(1);
+    expect(guarded.module.runInThisContext("(function () { return arguments.length; })(1)")).toBe(
+      1,
+    );
   });
 
   it("keeps strict and sloppy function semantics for the function constructor", () => {
@@ -199,6 +200,40 @@ describe("Node vm interpreter fallback", () => {
         },
       }),
     ).toThrow(coercionError);
+  });
+
+  it("does not replay native compileFunction parameter getters that throw refusal-shaped errors", () => {
+    const refusal = Object.assign(new Error("guest parameter getter"), {
+      code: "ERR_METHOD_NOT_IMPLEMENTED",
+    });
+    let reads = 0;
+    const params = Object.defineProperty(["value"], 0, {
+      get() {
+        if (++reads === 1) throw refusal;
+        return "value";
+      },
+    });
+    const native = createNodeVm(NodeVM, runtimeModulesForTest());
+    expect(() => native.module.compileFunction("return value", params)).toThrow(refusal);
+    expect(reads).toBe(1);
+  });
+
+  it("does not replay native newTarget getters that throw refusal-shaped errors", () => {
+    const refusal = Object.assign(new Error("guest newTarget getter"), {
+      code: "ERR_METHOD_NOT_IMPLEMENTED",
+    });
+    let reads = 0;
+    const target = new Proxy(function Target() {}, {
+      get(value, key, receiver) {
+        if (key === "prototype" && ++reads === 1) throw refusal;
+        return Reflect.get(value, key, receiver);
+      },
+    });
+    const native = createNodeVm(NodeVM, runtimeModulesForTest());
+    expect(() =>
+      Reflect.construct(native.functionConstructors.Function, ["return 1"], target),
+    ).toThrow(refusal);
+    expect(reads).toBe(1);
   });
 
   it("limits runInThisContext to checked single-expression scripts", () => {
@@ -302,43 +337,39 @@ describe("Node vm interpreter fallback", () => {
     try {
       expect(globalThis.Function).toBe(shims.Function);
       expect(Function.prototype.constructor).toBe(shims.Function);
-      expect((async function () {}).constructor).toBe(shims.AsyncFunction);
-      expect((function* () {}).constructor).toBe(shims.GeneratorFunction);
-      expect((async function* () {}).constructor).toBe(shims.AsyncGeneratorFunction);
-      expect(Object.getPrototypeOf((async function () {}).constructor)).toBe(globalThis.Function);
-      expect(Object.getPrototypeOf((function* () {}).constructor)).toBe(globalThis.Function);
-      expect(Object.getPrototypeOf((async function* () {}).constructor)).toBe(globalThis.Function);
+      expect(async function () {}.constructor).toBe(shims.AsyncFunction);
+      expect(function* () {}.constructor).toBe(shims.GeneratorFunction);
+      expect(async function* () {}.constructor).toBe(shims.AsyncGeneratorFunction);
+      expect(Object.getPrototypeOf(async function () {}.constructor)).toBe(globalThis.Function);
+      expect(Object.getPrototypeOf(function* () {}.constructor)).toBe(globalThis.Function);
+      expect(Object.getPrototypeOf(async function* () {}.constructor)).toBe(globalThis.Function);
       expect(Object.getPrototypeOf(shims.AsyncFunction)).toBe(shims.Function);
       expect(Object.getPrototypeOf(shims.GeneratorFunction)).toBe(shims.Function);
       expect(Object.getPrototypeOf(shims.AsyncGeneratorFunction)).toBe(shims.Function);
-      const generatedAsync = ((async function () {}).constructor as (...args: string[]) => Function)(
+      const generatedAsync = (async function () {}.constructor as (...args: string[]) => Function)(
         "return 43",
       ) as () => Promise<number>;
-      const generatedGenerator = ((function* () {}).constructor as (...args: string[]) => Function)(
+      const generatedGenerator = (function* () {}.constructor as (...args: string[]) => Function)(
         "yield 47",
       ) as () => Generator<number, void, unknown>;
-      const generatedAsyncGenerator = ((async function* () {}).constructor as (
-        ...args: string[]
-      ) => Function)("yield 53") as () => AsyncGenerator<number, void, unknown>;
+      const generatedAsyncGenerator = (
+        async function* () {}.constructor as (...args: string[]) => Function
+      )("yield 53") as () => AsyncGenerator<number, void, unknown>;
       expect(await generatedAsync()).toBe(43);
       expect(generatedGenerator().next().value).toBe(47);
       expect((await generatedAsyncGenerator().next()).value).toBe(53);
       expect(Object.getPrototypeOf(nativeAsyncFunction)).toBe(nativeAsyncParent);
       expect(Object.getPrototypeOf(nativeGeneratorFunction)).toBe(nativeGeneratorParent);
-      expect(Object.getPrototypeOf(nativeAsyncGeneratorFunction)).toBe(
-        nativeAsyncGeneratorParent,
-      );
+      expect(Object.getPrototypeOf(nativeAsyncGeneratorFunction)).toBe(nativeAsyncGeneratorParent);
     } finally {
       installation.restore();
     }
-    expect((async function () {}).constructor).toBe(nativeAsyncFunction);
-    expect((function* () {}).constructor).toBe(nativeGeneratorFunction);
-    expect((async function* () {}).constructor).toBe(nativeAsyncGeneratorFunction);
+    expect(async function () {}.constructor).toBe(nativeAsyncFunction);
+    expect(function* () {}.constructor).toBe(nativeGeneratorFunction);
+    expect(async function* () {}.constructor).toBe(nativeAsyncGeneratorFunction);
     expect(Object.getPrototypeOf(nativeAsyncFunction)).toBe(nativeAsyncParent);
     expect(Object.getPrototypeOf(nativeGeneratorFunction)).toBe(nativeGeneratorParent);
-    expect(Object.getPrototypeOf(nativeAsyncGeneratorFunction)).toBe(
-      nativeAsyncGeneratorParent,
-    );
+    expect(Object.getPrototypeOf(nativeAsyncGeneratorFunction)).toBe(nativeAsyncGeneratorParent);
     expect(Object.getOwnPropertyDescriptor(globalThis, "Function")).toEqual(originalFunction);
     expect(Object.getOwnPropertyDescriptor(Function.prototype, "constructor")).toEqual(
       originalConstructor,
@@ -362,6 +393,7 @@ function refusingVm(): NodeVmNativeSurface {
 function refusingFunctionConstructors(): NodeVmNativeFunctionConstructors {
   const refuse = (native: Function): NodeVmFunctionConstructor => {
     const constructor = function (...args: unknown[]) {
+      if (args.length === 0) return function emptyFunction() {};
       for (const arg of args) {
         if (typeof arg === "symbol") {
           throw new TypeError("Cannot convert a Symbol value to a string");

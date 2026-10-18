@@ -4,7 +4,10 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { parse, version as acornVersion } from "acorn";
 import * as Esbuild from "esbuild";
-import { primordialAcorn, NODE_VM_EXPRESSION_ANALYSIS_SOURCE } from "../../src/isolate/NodeVmBuild.ts";
+import {
+  primordialAcorn,
+  NODE_VM_EXPRESSION_ANALYSIS_SOURCE,
+} from "../../src/isolate/NodeVmBuild.ts";
 
 const CORE_SRC = NodeURL.fileURLToPath(
   new URL("../../src/isolate/node/vm/vendor/nimbus/core/src/", import.meta.url),
@@ -57,6 +60,13 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
       external: true,
     }));
   };
+  const parserPlugin = (name: string): Esbuild.Plugin => ({
+    name,
+    setup(build) {
+      externalizePrimordials(build);
+      build.onResolve({ filter: /^acorn$/ }, () => ({ path: "./parser.js", external: true }));
+    },
+  });
 
   const primordials = await Esbuild.build({
     ...common,
@@ -105,27 +115,13 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
     ...common,
     entryPoints: [NodePath.join(CORE_SRC, "interpreter/index.ts")],
     format: "esm",
-    plugins: [
-      {
-        name: "nimbus-parser-module",
-        setup(build) {
-          externalizePrimordials(build);
-          build.onResolve({ filter: /^acorn$/ }, () => ({ path: "./parser.js", external: true }));
-        },
-      },
-    ],
+    plugins: [parserPlugin("nimbus-parser-module")],
   });
   const analysisBuild = await Esbuild.build({
     ...common,
     entryPoints: [NodeURL.fileURLToPath(NODE_VM_EXPRESSION_ANALYSIS_SOURCE)],
     format: "esm",
-    plugins: [{
-      name: "nimbus-expression-analysis-parser",
-      setup(build) {
-        externalizePrimordials(build);
-        build.onResolve({ filter: /^acorn$/ }, () => ({ path: "./parser.js", external: true }));
-      },
-    }],
+    plugins: [parserPlugin("nimbus-expression-analysis-parser")],
   });
   const interpreterMetafile = interpreterBuild.metafile;
   if (!interpreterMetafile) {
@@ -178,7 +174,10 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
 
   const parser = asCommonJs(parserBuild.outputFiles?.[0]?.text, "parser");
   const interpreter = asCommonJs(interpreterBuild.outputFiles?.[0]?.text, "interpreter");
-  const missingParserExports = interpreter.imports.filter((name) => !parser.exports.includes(name));
+  const analysis = asCommonJs(analysisBuild.outputFiles?.[0]?.text, "expression analysis");
+  const missingParserExports = [...interpreter.imports, ...analysis.imports].filter(
+    (name) => !parser.exports.includes(name),
+  );
   if (missingParserExports.length > 0) {
     throw new Error(`[node-vm] parser is missing exports: ${missingParserExports.join(", ")}`);
   }
@@ -192,10 +191,7 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
     [NODE_VM_PREPARED_MODULES.interpreter]: interpreter.text,
     [NODE_VM_PREPARED_MODULES.hostOps]: hostOpsSource,
     [NODE_VM_PREPARED_MODULES.moduleHelpers]: `module.exports = ${moduleHelpersSource};`,
-    [NODE_VM_PREPARED_MODULES.expressionAnalysis]: asCommonJs(
-      analysisBuild.outputFiles?.[0]?.text,
-      "expression analysis",
-    ).text,
+    [NODE_VM_PREPARED_MODULES.expressionAnalysis]: analysis.text,
   });
 }
 
@@ -215,7 +211,10 @@ function requiredOutput(source: string | undefined, label: string): string {
   return source;
 }
 
-function asCommonJs(source: string | undefined, label: "parser" | "interpreter") {
+function asCommonJs(
+  source: string | undefined,
+  label: "parser" | "interpreter" | "expression analysis",
+) {
   if (!source) throw new Error(`[node-vm] ${label} bundle was empty`);
   const program = parse(source, { ecmaVersion: "latest", sourceType: "module" });
   const edits: { start: number; end: number; text: string }[] = [];
@@ -236,11 +235,11 @@ function asCommonJs(source: string | undefined, label: "parser" | "interpreter")
           end: node.end,
           text: `const ${only.local.name} = require(${request});`,
         });
-      } else if (label === "interpreter" && node.source.value === "./parser.js") {
+      } else if (label !== "parser" && node.source.value === "./parser.js") {
         const fields: string[] = [];
         for (const specifier of node.specifiers) {
           if (specifier.type !== "ImportSpecifier" || specifier.imported.type !== "Identifier") {
-            throw new Error(`[node-vm] interpreter imports parser through ${specifier.type}`);
+            throw new Error(`[node-vm] ${label} imports parser through ${specifier.type}`);
           }
           fields.push(`${specifier.imported.name}: ${specifier.local.name}`);
           imports.push(specifier.imported.name);

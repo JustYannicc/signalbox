@@ -1,5 +1,5 @@
 import type { NodeVmInterpreter, NodeVmRuntimeFunctionKind } from "./runtime-contract.ts";
-import { isCodegenRefusal } from "./codegen-refusal.ts";
+import { nativeCodeGenerationRefused } from "./codegen-refusal.ts";
 import { vmOrigin } from "./code-origin.ts";
 
 // Guest code can replace these operations after launch.
@@ -110,24 +110,23 @@ function routedConstructor(
   const routed = function (...args: unknown[]) {
     const target = new.target;
     const sourceArgs = stringifyFunctionArguments(args);
-    try {
+    // V8 can admit an empty constructor even when string compilation is disabled.
+    if (!nativeCodeGenerationRefused(() => apply(native, undefined, ["return 0"]))) {
       return target === undefined
         ? apply(native, undefined, sourceArgs)
         : construct(native, sourceArgs, target);
-    } catch (error) {
-      if (!isCodegenRefusal(error)) throw error;
-      const paramCount = sourceArgs.length === 0 ? 0 : sourceArgs.length - 1;
-      const params = new NativeArray<string>(paramCount);
-      setPrototypeOf(params, null);
-      for (let i = 0; i < params.length; i++) params[i] = sourceArgs[i]!;
-      const body = sourceArgs.length === 0 ? "" : sourceArgs[sourceArgs.length - 1]!;
-      const compiled = interpreter.compileFunction(kind, params, body, vmOrigin);
-      if (target !== undefined && target !== routed) {
-        const prototype = get(target, "prototype");
-        if (isObjectOrFunction(prototype)) setPrototypeOf(compiled, prototype);
-      }
-      return compiled;
     }
+    const paramCount = sourceArgs.length === 0 ? 0 : sourceArgs.length - 1;
+    const params = new NativeArray<string>(paramCount);
+    setPrototypeOf(params, null);
+    for (let i = 0; i < params.length; i++) params[i] = sourceArgs[i]!;
+    const body = sourceArgs.length === 0 ? "" : sourceArgs[sourceArgs.length - 1]!;
+    const compiled = interpreter.compileFunction(kind, params, body, vmOrigin);
+    if (target !== undefined && target !== routed) {
+      const prototype = get(target, "prototype");
+      if (isObjectOrFunction(prototype)) setPrototypeOf(compiled, prototype);
+    }
+    return compiled;
   };
 
   defineProperty(routed, "name", { value: get(native, "name"), configurable: true });

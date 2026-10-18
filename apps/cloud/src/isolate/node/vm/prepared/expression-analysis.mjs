@@ -1,3 +1,4 @@
+// A JS build entry keeps upstream compiler assumptions outside the typed adapter's project.
 import {
   expressionFunctionBody,
   parseRuntimeFunction,
@@ -17,8 +18,10 @@ const realm = {
   SyntaxError,
   scriptOptions: own({ ecmaVersion: "latest", sourceType: "script" }),
   messageOf(error) {
-    const message = error !== null && (typeof error === "object" || typeof error === "function")
-      ? reflectGet(error, "message") : undefined;
+    const message =
+      error !== null && (typeof error === "object" || typeof error === "function")
+        ? reflectGet(error, "message")
+        : undefined;
     return typeof message === "string" ? message : stringOf(error);
   },
 };

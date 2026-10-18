@@ -4,7 +4,7 @@ import type {
   NodeVmInterpreterHost,
   NodeVmModuleHelpers,
 } from "./node/vm/runtime-contract.ts";
-import { isCodegenRefusal } from "./node/vm/codegen-refusal.ts";
+import { nativeCodeGenerationRefused } from "./node/vm/codegen-refusal.ts";
 import { rejectedDynamicImport, vmOrigin } from "./node/vm/code-origin.ts";
 import {
   createNodeVmFunctionConstructorShims,
@@ -109,13 +109,9 @@ export function createNodeVm<T extends NodeVmNativeSurface>(
   const nativeRunInThisContext = nativeVm.runInThisContext;
   const nativeCompileFunction = nativeVm.compileFunction;
   const runInThisContext = (code: string, options?: string | object): unknown => {
-    let codegenRefused = false;
-    try {
-      apply(nativeCompileFunction, nativeVm, ["", []]);
-    } catch (error) {
-      if (!isCodegenRefusal(error)) throw error;
-      codegenRefused = true;
-    }
+    const codegenRefused = nativeCodeGenerationRefused(() =>
+      apply(nativeCompileFunction, nativeVm, ["return 0", []]),
+    );
     if (!codegenRefused) {
       return apply(nativeRunInThisContext, nativeVm, [code, options]);
     }
@@ -133,18 +129,18 @@ export function createNodeVm<T extends NodeVmNativeSurface>(
     params?: readonly string[],
     options?: object,
   ): Function => {
-    try {
+    if (
+      !nativeCodeGenerationRefused(() => apply(nativeCompileFunction, nativeVm, ["return 0", []]))
+    ) {
       return apply(nativeCompileFunction, nativeVm, [code, params, options]) as Function;
-    } catch (error) {
-      if (!isCodegenRefusal(error)) throw error;
-      assertNoFallbackOptions("compileFunction", options);
-      return interpreter.compileFunction(
-        "function",
-        normalizeParameters(params),
-        stringOf(code),
-        vmOrigin,
-      );
     }
+    assertNoFallbackOptions("compileFunction", options);
+    return interpreter.compileFunction(
+      "function",
+      normalizeParameters(params),
+      stringOf(code),
+      vmOrigin,
+    );
   };
   const module = Object.freeze({
     ...nativeVm,
