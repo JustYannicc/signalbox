@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as Esbuild from "esbuild";
 import { normalizeModule } from "./normalize.ts";
 
@@ -74,5 +74,59 @@ describe("Bun module normalization", () => {
         source: "export const main=import.meta.main",
       }).source,
     ).toBe("export const main=false");
+  });
+
+  it("rejects wrapper signatures whose bindings would change when flattened", () => {
+    expect(() =>
+      normalizeModule({
+        name: "cli",
+        key: "cli",
+        format: 2,
+        source:
+          "(function self(exports,require,module,__filename,__dirname){module.exports=typeof self;})",
+      }),
+    ).toThrow("BUN_CJS_SHAPE_CHANGED");
+    expect(() =>
+      normalizeModule({
+        name: "cli",
+        key: "cli",
+        format: 2,
+        source:
+          "(function(exports,require,module,__filename,...__dirname){module.exports=__dirname;})",
+      }),
+    ).toThrow("BUN_CJS_SHAPE_CHANGED");
+    expect(() =>
+      normalizeModule({
+        name: "cli",
+        key: "cli",
+        format: 2,
+        source:
+          '(function(exports,require,module,__filename,__dirname="default"){module.exports=__dirname;})',
+      }),
+    ).toThrow("BUN_CJS_SHAPE_CHANGED");
+  });
+
+  it("rejects requires captured by parameters, destructuring, or hoisted variables", () => {
+    const normalize = (source: string) =>
+      normalizeModule({ name: "cli", key: "cli", format: 1, source });
+    expect(() => normalize('export const load=require=>import.meta.require("node:path")')).toThrow(
+      "BUN_REQUIRE_SHADOWED",
+    );
+    expect(() =>
+      normalize('function load({require}){return import.meta.require("node:path")}'),
+    ).toThrow("BUN_REQUIRE_SHADOWED");
+    expect(() =>
+      normalize(
+        'function load(){const result=import.meta.require("node:path");if(false){var require;}return result}',
+      ),
+    ).toThrow("BUN_REQUIRE_SHADOWED");
+    expect(() => normalize('try{}catch(require){import.meta.require("node:path")}')).toThrow(
+      "BUN_REQUIRE_SHADOWED",
+    );
+    expect(
+      normalize(
+        'function unrelated(require){} export const result=import.meta.require("node:path")',
+      ).source,
+    ).toContain('export const result=require("node:path")');
   });
 });

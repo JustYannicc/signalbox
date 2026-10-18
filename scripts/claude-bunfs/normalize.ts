@@ -1,4 +1,5 @@
 import ts from "typescript-legacy";
+import { shadowedMetaRequires } from "./normalize-bindings.ts";
 
 export interface NormalizeInput {
   readonly name: string;
@@ -20,8 +21,12 @@ export function normalizeModule(input: NormalizeInput) {
     while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
     if (
       !ts.isFunctionExpression(expression) ||
+      expression.name ||
       expression.asteriskToken ||
       expression.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+      expression.parameters.some(
+        (parameter) => parameter.dotDotDotToken || parameter.initializer,
+      ) ||
       expression.parameters.map((parameter) => parameter.name.getText(ast)).join(",") !==
         "exports,require,module,__filename,__dirname"
     )
@@ -41,6 +46,7 @@ export function normalizeModule(input: NormalizeInput) {
     throw new Error(`BUN_MODULE_FORMAT_UNSUPPORTED: ${input.name}: ${input.format}`);
   }
   const ast = parse(input.name, source);
+  const shadowed = shadowedMetaRequires(ast);
   const edits: { start: number; end: number; text: string }[] = [];
   const visit = (node: ts.Node) => {
     if (
@@ -48,9 +54,11 @@ export function normalizeModule(input: NormalizeInput) {
       ts.isMetaProperty(node.expression) &&
       node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
     ) {
-      if (node.name.text === "require")
+      if (node.name.text === "require") {
+        if (shadowed.has(node))
+          throw new Error(`BUN_REQUIRE_SHADOWED: ${input.name}:${node.getStart(ast)}`);
         edits.push({ start: node.getStart(ast), end: node.end, text: "require" });
-      else if (node.name.text === "dir" || node.name.text === "dirname")
+      } else if (node.name.text === "dir" || node.name.text === "dirname")
         edits.push({
           start: node.getStart(ast),
           end: node.end,
