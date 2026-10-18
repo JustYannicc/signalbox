@@ -1,6 +1,6 @@
 import { type AccountReturn, fetchAccountSessionState } from "@t3tools/client-runtime/account";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
@@ -52,43 +52,40 @@ function environmentOrigin(host: string): string | null {
 export function useFinishEnvironmentSignIn() {
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
   const navigate = useNavigate();
-  return useCallback(
-    (accountReturn: AccountReturn) => {
-      // signalbox: the default cloud sign-in started on /sign-in, so a failure goes back there.
-      // Read before `finish`, which consumes the pending attempt.
-      const pendingOrigin = readPendingEnvironmentSignIn();
-      const startedOnSignIn = pendingOrigin !== null && pendingOrigin === cloudDefaultOrigin();
-      const finish = async () => {
-        if (accountReturn._tag === "error") throw new AccountFlowError(accountReturn.error);
-        const { origin, credential } = await completeEnvironmentSignIn(accountReturn.handoff);
-        const added = await connectPairing({ host: origin, pairingCode: credential });
-        if (added._tag === "Failure") throw new AccountFlowError("failed");
-        reloadAt("/");
-      };
-      finish().catch((error: unknown) => {
-        cancelNativeSignIn();
-        const cancelled = error instanceof AccountFlowError && error.code === "cancelled";
-        toastManager.add({
-          type: cancelled ? "info" : "error",
-          title: cancelled
-            ? "Sign-in cancelled"
-            : startedOnSignIn
-              ? "Couldn't sign in"
-              : "Could not add the environment",
-          description: startedOnSignIn
-            ? "Signing in didn't finish. Try again."
-            : cancelled
-              ? "The environment was not added."
-              : "Signing in didn't finish. Try again.",
-        });
-        void navigate({
-          to: startedOnSignIn ? "/sign-in" : "/settings/connections",
-          replace: true,
-        });
+  return (accountReturn: AccountReturn) => {
+    // signalbox: the default cloud sign-in started on /sign-in, so a failure goes back there.
+    // Read before `finish`, which consumes the pending attempt.
+    const pendingOrigin = readPendingEnvironmentSignIn();
+    const startedOnSignIn = pendingOrigin !== null && pendingOrigin === cloudDefaultOrigin();
+    const finish = async () => {
+      if (accountReturn._tag === "error") throw new AccountFlowError(accountReturn.error);
+      const { origin, credential } = await completeEnvironmentSignIn(accountReturn.handoff);
+      const added = await connectPairing({ host: origin, pairingCode: credential });
+      if (added._tag === "Failure") throw new AccountFlowError("failed");
+      reloadAt("/");
+    };
+    finish().catch((error: unknown) => {
+      cancelNativeSignIn();
+      const cancelled = error instanceof AccountFlowError && error.code === "cancelled";
+      toastManager.add({
+        type: cancelled ? "info" : "error",
+        title: cancelled
+          ? "Sign-in cancelled"
+          : startedOnSignIn
+            ? "Couldn't sign in"
+            : "Could not add the environment",
+        description: startedOnSignIn
+          ? "Signing in didn't finish. Try again."
+          : cancelled
+            ? "The environment was not added."
+            : "Signing in didn't finish. Try again.",
       });
-    },
-    [connectPairing, navigate],
-  );
+      void navigate({
+        to: startedOnSignIn ? "/sign-in" : "/settings/connections",
+        replace: true,
+      });
+    });
+  };
 }
 
 export function AccountEnvironmentSignIn({

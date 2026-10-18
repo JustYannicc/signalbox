@@ -137,7 +137,7 @@ const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
-  it("carries command failure metadata through runtime and JSON schemas without output text", () => {
+  it("carries command output metadata through runtime and JSON schemas without output text", () => {
     const base = {
       id: "command-item",
       type: "command_execution",
@@ -159,6 +159,8 @@ describe("orchestration V2 contracts", () => {
       {},
       { outputIndicatesFailure: true },
       { outputIndicatesFailure: false },
+      { outputTruncated: true },
+      { outputTruncated: false },
     ]) {
       const runtime = decodeOrchestrationV2TurnItem({ ...base, ...metadata, updatedAt: now });
       const json = decodeOrchestrationV2TurnItemJson({
@@ -1486,6 +1488,7 @@ describe("background work kinds from older or newer servers", () => {
         { taskId: "bg-3", description: "Nightly", kind: "workflow", schedule: "0 3 * * *" },
         { taskId: "bg-4", description: "npm test", kind: "command" },
         { taskId: "bg-5", kind: "subagent", childThreadId: "thread-child" },
+        { taskId: "bg-6", kind: "subagent", providerInstanceId: "claudeAgent" },
       ],
     });
     expect(providerThread.pendingBackgroundTasks).toEqual([
@@ -1494,6 +1497,7 @@ describe("background work kinds from older or newer servers", () => {
       { taskId: "bg-3", description: "Nightly", kind: "background_task" },
       { taskId: "bg-4", description: "npm test", kind: "command" },
       { taskId: "bg-5", kind: "subagent", childThreadId: "thread-child" },
+      { taskId: "bg-6", kind: "subagent", providerInstanceId: "claudeAgent" },
     ]);
     const encoded = encodeOrchestrationV2ProviderThreadJson(providerThread).pendingBackgroundTasks;
     expect(encoded).toEqual(providerThread.pendingBackgroundTasks);
@@ -1512,6 +1516,7 @@ describe("background work kinds from older or newer servers", () => {
       "bg-3",
       "bg-4",
       "bg-5",
+      "bg-6",
     ]);
     expect(() =>
       decodeOrchestrationV2ProviderThreadJson({

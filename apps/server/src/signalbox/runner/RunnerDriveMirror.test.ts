@@ -26,6 +26,55 @@ const commit = (repo: string, message: string) =>
   );
 
 describe("storePacks", () => {
+  it.effect(
+    "marks a commit shallow when git reports its missing parent with a successful exit",
+    () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const source = NodePath.join(root, "source");
+          const repo = NodePath.join(root, "repo");
+          NodeFS.mkdirSync(source);
+          NodeFS.mkdirSync(repo);
+          git(source, "init", "-q");
+          git(repo, "init", "-q");
+          commit(source, "base");
+          const parent = git(source, "rev-parse", "HEAD");
+          commit(source, "tip");
+          const tip = git(source, "rev-parse", "HEAD");
+          const object = NodePath.join("objects", tip.slice(0, 2), tip.slice(2));
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(repo, ".git", object)), {
+            recursive: true,
+          });
+          NodeFS.copyFileSync(
+            NodePath.join(source, ".git", object),
+            NodePath.join(repo, ".git", object),
+          );
+          const real = yield* makeRunnerGit(repo);
+          const reportedMissing = {
+            ...real,
+            exec: (args: ReadonlyArray<string>) =>
+              args[0] === "rev-list" && args[3] === parent
+                ? Effect.succeed({ code: 0, stdout: `?${parent}\n`, stderr: "" })
+                : real.exec(args),
+          };
+
+          yield* storePacks({
+            gitDir: NodePath.join(repo, ".git"),
+            git: reportedMissing,
+            packs: [],
+            shallow: [tip],
+            promisor: false,
+            download: () => Effect.void,
+          });
+
+          expect(NodeFS.readFileSync(NodePath.join(repo, ".git", "shallow"), "utf8")).toBe(
+            `${tip}\n`,
+          );
+          expect(git(repo, "rev-list", "--count", tip)).toBe("1");
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
+  );
+
   it.effect("checks a shallow commit's parents only the first time the drive answers it", () =>
     scopedTest((root) =>
       Effect.gen(function* () {

@@ -95,6 +95,14 @@
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
     },
+    "./observability/client-issues": {
+      "types": "./src/observability/clientIssues.ts",
+      "default": "./src/observability/clientIssues.ts"
+    },
+    "./observability/client-issue-http": {
+      "types": "./src/observability/clientIssueHttp.ts",
+      "default": "./src/observability/clientIssueHttp.ts"
+    },
     "./operations": {
       "types": "./src/operations/index.ts",
       "default": "./src/operations/index.ts"
@@ -311,6 +319,10 @@
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"
     },
+    "./state/signalboxPoolSignIn": {
+      "types": "./src/state/signalboxPoolSignIn.ts",
+      "default": "./src/state/signalboxPoolSignIn.ts"
+    },
     "./state/signalboxSignIn": {
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"
@@ -471,6 +483,10 @@
       "types": "./src/state/threadExecution.ts",
       "default": "./src/state/threadExecution.ts"
     },
+    "./state/thread-fold-expansion": {
+      "types": "./src/state/threadFoldExpansion.ts",
+      "default": "./src/state/threadFoldExpansion.ts"
+    },
     "./state/thread-requests": {
       "types": "./src/state/threadRequests.ts",
       "default": "./src/state/threadRequests.ts"
@@ -594,6 +610,10 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./pull-request-query": {
+      "types": "./src/pullRequestQuery.ts",
+      "default": "./src/pullRequestQuery.ts"
     },
     "./pull-request-diff-revision": {
       "types": "./src/pullRequestDiffRevision.ts",

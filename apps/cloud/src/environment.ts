@@ -105,10 +105,16 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     threadKinds: true,
     // Threads' status notes, written by their agents or the runtime (`user/UserThreadStatus.ts`).
     threadStatusNotes: true,
+    threadSettlement: true,
+    threadPinning: true,
+    threadPinReorder: true,
+    threadAutoSettleOptOut: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    commandOutputStreaming: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
+    usageHistory: false,
     // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
     poolFeatures: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,

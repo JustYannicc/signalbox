@@ -6,7 +6,7 @@ import {
   type SignalboxDriveShortcut,
 } from "@t3tools/contracts/signalboxDrives";
 import { FolderSymlinkIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { signalboxDrives } from "../../state/signalboxDrives";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -45,15 +45,12 @@ export function useDriveShortcutsMenu(
     Readonly<Record<string, ReadonlyArray<SignalboxDriveShortcut>>>
   >({});
   const shortcuts = (driveId === null ? undefined : loaded[driveId]) ?? [];
-  const load = useCallback(
-    (id: SignalboxDrive["id"]) =>
-      listShortcuts({ environmentId, input: { driveId: id } }).then((result) => {
-        if (result._tag === "Success") {
-          setLoaded((current) => ({ ...current, [id]: result.value.shortcuts }));
-        }
-      }),
-    [environmentId, listShortcuts],
-  );
+  const load = (id: SignalboxDrive["id"]) =>
+    listShortcuts({ environmentId, input: { driveId: id } }).then((result) => {
+      if (result._tag === "Success") {
+        setLoaded((current) => ({ ...current, [id]: result.value.shortcuts }));
+      }
+    });
 
   useEffect(() => {
     if (driveId !== null) void load(driveId);
