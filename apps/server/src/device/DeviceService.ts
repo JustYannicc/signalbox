@@ -414,14 +414,26 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   });
 
-  const refreshAgentEndpoints = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) =>
-    SynchronizedRef.modifyEffect(stateRef, ({ state }) =>
-      Effect.forEach(
-        listAgentDeviceSessions(state).filter((session) => session.hostId === hostId),
-        (session) => refreshAgent(hostId, ready, session),
+  // SSH publishes onReady before its public current readiness, so retain the callback's source.
+  const latestAgentReadyByHost = new WeakMap<
+    DeviceHost.DeviceHost["Service"],
+    DeviceHost.DeviceHostAgentReady
+  >();
+  const refreshAgentEndpoints = (
+    host: DeviceHost.DeviceHost["Service"],
+    ready: DeviceHost.DeviceHostAgentReady,
+  ) =>
+    SynchronizedRef.modifyEffect(stateRef, ({ state }) => {
+      if (hosts.get(host.id) !== host) return Effect.succeed([undefined, { state }] as const);
+      return Effect.forEach(
+        listAgentDeviceSessions(state).filter((session) => session.hostId === host.id),
+        (session) => refreshAgent(host.id, ready, session),
         { discard: true },
-      ).pipe(Effect.as([undefined, { state }] as const)),
-    );
+      ).pipe(
+        Effect.tap(() => Effect.sync(() => latestAgentReadyByHost.set(host, ready))),
+        Effect.as([undefined, { state }] as const),
+      );
+    });
 
   const publish = (update: (state: DeviceServiceState) => DeviceServiceState) =>
     SynchronizedRef.updateAndGetEffect(stateRef, ({ state }) => {
@@ -1755,7 +1767,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 );
               const session = agentSessionFor(state, input);
               if (!session) return Effect.fail(staleAgentTarget());
-              return configureAgent(input.hostId, ready, session).pipe(
+              const latestReady = latestAgentReadyByHost.get(host) ?? ready;
+              return configureAgent(input.hostId, latestReady, session).pipe(
                 Effect.map((configPath) => [{ configPath, session }, { state }] as const),
               );
             }),
@@ -1988,20 +2001,23 @@ export const make = (
               if (configured.has(host.id)) continue;
               added = true;
               const hostScope = yield* Scope.fork(scope);
-              const instance = yield* SshDeviceHost.make(
+              let instance: DeviceHost.DeviceHost["Service"] | undefined;
+              instance = yield* SshDeviceHost.make(
                 host,
                 (ready) =>
-                  refreshAgentEndpoints(host.id, ready).pipe(
-                    Effect.asVoid,
-                    Effect.mapError(
-                      (error) =>
-                        new DeviceHost.DeviceHostError({
-                          hostId: host.id,
-                          step: "configuring agent access",
-                          cause: error,
-                        }),
-                    ),
-                  ),
+                  instance === undefined
+                    ? Effect.void
+                    : refreshAgentEndpoints(instance, ready).pipe(
+                        Effect.asVoid,
+                        Effect.mapError(
+                          (error) =>
+                            new DeviceHost.DeviceHostError({
+                              hostId: host.id,
+                              step: "configuring agent access",
+                              cause: error,
+                            }),
+                        ),
+                      ),
                 (status, detail) =>
                   service
                     .setHostStatus(host.id, { status, ...(detail ? { detail } : {}) })

@@ -1,5 +1,4 @@
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
@@ -18,9 +17,14 @@ const encodeEndpoint = Schema.encodeEffect(
   ),
 );
 
-class AgentDeviceAddressError extends Data.TaggedError("AgentDeviceAddressError")<{
-  readonly message: string;
-}> {}
+class AgentDeviceAddressError extends Schema.TaggedError<AgentDeviceAddressError>()(
+  "AgentDeviceAddressError",
+  { addressKind: Schema.Literal("unix") },
+) {
+  override get message(): string {
+    return "Agent device access requires an HTTP server bound to an IP address.";
+  }
+}
 
 const key = Effect.fn("AgentDeviceTarget.key")(function* (value: string) {
   const crypto = yield* Crypto.Crypto;
@@ -60,9 +64,7 @@ export const agentDeviceProxyBaseUrl = Effect.fn("AgentDeviceTarget.proxyBaseUrl
   sessionId: string,
 ) {
   if (NetAddress.isUnixPathAddress(address)) {
-    return yield* new AgentDeviceAddressError({
-      message: "Agent device access requires an HTTP server bound to an IP address.",
-    });
+    return yield* new AgentDeviceAddressError({ addressKind: "unix" });
   }
   const host = NetAddress.isUnspecified(address.address)
     ? "127.0.0.1"

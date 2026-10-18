@@ -61,7 +61,11 @@ describe("host-bound agent commands", () => {
       const unixFailure = yield* Effect.flip(
         agentDeviceProxyBaseUrl(NetAddress.unixPathAddress("/tmp/signalbox.sock"), sessionId),
       );
-      expect(unixFailure.message).toContain("requires an HTTP server bound to an IP address");
+      expect(unixFailure).toMatchObject({
+        _tag: "AgentDeviceAddressError",
+        addressKind: "unix",
+        message: "Agent device access requires an HTTP server bound to an IP address.",
+      });
     }),
   );
 
