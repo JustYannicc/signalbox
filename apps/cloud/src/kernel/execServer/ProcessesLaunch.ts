@@ -54,10 +54,17 @@ const WINDOWS_CORE_ENV = new Set([
   "USERPROFILE",
   "HOMEDRIVE",
   "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
   "PROGRAMFILES",
   "PROGRAMFILES(X86)",
   "PROGRAMW6432",
   "PROGRAMDATA",
+  "POWERSHELL",
+  "PWSH",
 ]);
 
 interface EnvironmentPolicy {

@@ -57,7 +57,6 @@ export class ProcessesInput {
     }
     return this.#withWriteLock(async () => {
       if (signal.aborted) throw abortError();
-      if (this.#disposing || this.#stdinClosed) return { status: "stdinClosed" };
       const previous = this.#writeIds.get(writeId);
       if (previous) {
         if (!bytesEqual(previous, bytes)) {
@@ -65,6 +64,7 @@ export class ProcessesInput {
         }
         return { status: "accepted" };
       }
+      if (this.#disposing || this.#stdinClosed) return { status: "stdinClosed" };
 
       const ownedBytes = Uint8Array.from(bytes);
       try {
@@ -83,9 +83,12 @@ export class ProcessesInput {
     void this.close();
   }
 
-  async beginDispose() {
+  beginDispose() {
     this.#disposing = true;
     this.#stdinClosed = true;
+  }
+
+  async waitForWrites() {
     await this.#writeTail;
   }
 
@@ -122,7 +125,7 @@ export class ProcessesInput {
     this.#writeIds.set(writeId, copy);
     this.#retainedBytes += copy.byteLength;
     while (this.#writeIds.size > this.#maxWriteIds || this.#retainedBytes > this.#maxDedupBytes) {
-      const oldest = this.#writeIds.entries().next().value as [string, Uint8Array] | undefined;
+      const oldest = this.#writeIds.entries().next().value;
       if (!oldest) break;
       this.#writeIds.delete(oldest[0]);
       this.#retainedBytes -= oldest[1].byteLength;

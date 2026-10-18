@@ -1,4 +1,3 @@
-// @effect-diagnostics globalTimers:off - the timer only expires closed process replay state.
 import { CodexExecOutputLog, type OutputLogRead } from "../CodexExecOutputLog.ts";
 import type { KernelCommandChild } from "../KernelCommandForwarder.ts";
 import type { KernelResult } from "../KernelAbi.ts";
@@ -118,7 +117,6 @@ export class ProcessesInstance {
   }
 
   write(writeId: string, bytes: Uint8Array, signal: AbortSignal) {
-    if (this.#disposing || this.exited) return Promise.resolve({ status: "stdinClosed" });
     return this.#input.write(writeId, bytes, signal);
   }
 
@@ -135,6 +133,7 @@ export class ProcessesInstance {
 
   async dispose() {
     this.#disposing = true;
+    this.#input.beginDispose();
     this.log.dispose();
     if (this.#disposePromise) return this.#disposePromise;
     const cleanup = this.#disposeChild(/* stopRunning */ true);
@@ -239,9 +238,10 @@ export class ProcessesInstance {
         signalError = error;
       }
     }
-    await this.#input.beginDispose();
+    this.#input.beginDispose();
     try {
       await this.#child.dispose();
+      await this.#input.waitForWrites();
       this.#childDisposed = true;
     } catch (disposeError) {
       if (signalError !== undefined) {

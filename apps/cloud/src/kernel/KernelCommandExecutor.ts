@@ -118,10 +118,7 @@ async function waitForWake(
   try {
     const result = await host.wakes.wait(token, signal);
     if (result.status === "error") {
-      throw new KernelCommandExecutionError(
-        result.error.code as KernelErrorCode,
-        result.error.message,
-      );
+      throw new KernelCommandExecutionError(result.error.code, result.error.message);
     }
   } finally {
     host.wakes.release(token);

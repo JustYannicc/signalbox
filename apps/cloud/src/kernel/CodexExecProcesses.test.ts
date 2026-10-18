@@ -5,9 +5,10 @@ import type {
   KernelCommandExit,
   KernelCommandForwarder,
 } from "./KernelCommandForwarder.ts";
-import { kernelOk, type KernelResult } from "./KernelAbi.ts";
+import { kernelError, kernelOk, type KernelResult } from "./KernelAbi.ts";
 import { CodexExecProcesses } from "./CodexExecProcesses.ts";
 import { CodexExecSessions } from "./CodexExecSessions.ts";
+import { ProcessesInstance } from "./execServer/ProcessesInstance.ts";
 import { fileUriToGuestPath, prepareProcessLaunch } from "./execServer/ProcessesLaunch.ts";
 import { RpcError, type Notification, type Reply } from "./CodexExecProtocol.ts";
 
@@ -293,8 +294,12 @@ describe("Codex exec-server process handling", () => {
           PATH: "C:\\bin",
           PATHEXT: ".EXE",
           USERPROFILE: "C:\\Users\\user",
+          APPDATA: "C:\\Users\\user\\AppData\\Roaming",
+          LOCALAPPDATA: "C:\\Users\\user\\AppData\\Local",
           TEMP: "C:\\Temp",
-          LOCALAPPDATA: "C:\\Users\\user\\AppData",
+          TMP: "C:\\Temp",
+          TMPDIR: "C:\\Temp",
+          POWERSHELL: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
           PWSH: "C:\\Program Files\\PowerShell\\pwsh.exe",
         },
         platformOs: "windows",
@@ -304,6 +309,13 @@ describe("Codex exec-server process handling", () => {
       PATH: "C:\\bin",
       PATHEXT: ".EXE",
       USERPROFILE: "C:\\Users\\user",
+      APPDATA: "C:\\Users\\user\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\Users\\user\\AppData\\Local",
+      TEMP: "C:\\Temp",
+      TMP: "C:\\Temp",
+      TMPDIR: "C:\\Temp",
+      POWERSHELL: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      PWSH: "C:\\Program Files\\PowerShell\\pwsh.exe",
     });
 
     expect(() =>
@@ -470,6 +482,160 @@ describe("Codex exec-server process handling", () => {
       signalGate.resolve();
       cleanupGate.resolve();
       await fixture.handler.dispose();
+    }
+  });
+
+  it("re-acknowledges retained stdin writes after process exit", async () => {
+    const child = makeChild();
+    const fixture = harness({ spawn: async () => child.child });
+    const bytes = Uint8Array.from([65, 66]);
+    try {
+      await fixture.handler.request("process/start", launch, requestSignal());
+      expect(
+        await fixture.handler.request(
+          "process/write",
+          writeRequest("write-before-exit", bytes),
+          requestSignal(),
+        ),
+      ).toEqual({ status: "accepted" });
+
+      const exitedEvent = fixture.waitForNotifications("process/exited");
+      child.finishExit({ exitCode: 0, signal: 0, coreDumped: false });
+      await exitedEvent;
+
+      expect(
+        await fixture.handler.request(
+          "process/write",
+          writeRequest("write-before-exit", bytes),
+          requestSignal(),
+        ),
+      ).toEqual({ status: "accepted" });
+      await expect(
+        fixture.handler.request(
+          "process/write",
+          writeRequest("write-before-exit", Uint8Array.from([67])),
+          requestSignal(),
+        ),
+      ).rejects.toThrow("different bytes");
+
+      const closedEvent = fixture.waitForNotifications("process/closed");
+      child.closeStdout();
+      child.closeStderr();
+      await closedEvent;
+      expect(
+        await fixture.handler.request(
+          "process/write",
+          writeRequest("write-before-exit", bytes),
+          requestSignal(),
+        ),
+      ).toEqual({ status: "accepted" });
+      await expect(
+        fixture.handler.request(
+          "process/write",
+          writeRequest("write-before-exit", Uint8Array.from([67])),
+          requestSignal(),
+        ),
+      ).rejects.toThrow("different bytes");
+      expect(
+        await fixture.handler.request(
+          "process/write",
+          writeRequest("new-write-after-exit", bytes),
+          requestSignal(),
+        ),
+      ).toEqual({ status: "stdinClosed" });
+      expect(child.writes).toEqual([bytes]);
+    } finally {
+      await fixture.handler.dispose();
+    }
+  });
+
+  it("disposes the child before waiting on blocked stdin and retains it for cleanup retry", async () => {
+    const writeEntered = deferred<void>();
+    const writeGate = deferred<void>();
+    const cleanupEntered = deferred<void>();
+    let disposeAttempts = 0;
+    const child = makeChild({
+      write: async () => {
+        writeEntered.resolve();
+        await writeGate.promise;
+      },
+      signal: () => kernelError("IO_ERROR", "signal failed"),
+      dispose: async () => {
+        disposeAttempts++;
+        cleanupEntered.resolve();
+        if (disposeAttempts === 1) throw new Error("temporary dispose failure");
+        writeGate.resolve();
+      },
+    });
+    const fixture = harness({ spawn: async () => child.child });
+    let firstCleanup: Promise<void> | undefined;
+    try {
+      await fixture.handler.request("process/start", launch, requestSignal());
+      const pendingWrite = fixture.handler.request(
+        "process/write",
+        writeRequest("blocked-write", Uint8Array.from([1])),
+        requestSignal(),
+      );
+      await writeEntered.promise;
+
+      firstCleanup = fixture.handler.dispose();
+      let timer!: ReturnType<typeof setTimeout>;
+      const cleanupStarted = await Promise.race([
+        cleanupEntered.promise.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 1_000);
+        }),
+      ]);
+      clearTimeout(timer);
+      expect(cleanupStarted).toBe(true);
+      await expect(firstCleanup).rejects.toThrow("process cleanup failed");
+      expect(child.disposeCalls).toBe(1);
+
+      await fixture.handler.dispose();
+      await expect(pendingWrite).resolves.toEqual({ status: "accepted" });
+      expect(child.disposeCalls).toBe(2);
+    } finally {
+      writeGate.resolve();
+      await firstCleanup?.catch(() => {});
+      await fixture.handler.dispose().catch(() => {});
+    }
+  });
+
+  it("closes stdin admission before awaiting the process stop acknowledgement", async () => {
+    const signalEntered = deferred<void>();
+    const signalGate = deferred<void>();
+    const child = makeChild({
+      signal: async () => {
+        signalEntered.resolve();
+        await signalGate.promise;
+        return kernelOk(undefined);
+      },
+    });
+    const process = new ProcessesInstance({
+      processId: launch.processId,
+      identity: "test",
+      child: child.child,
+      pipeStdin: true,
+      notify: async () => {},
+      maxWriteIds: 8,
+      maxWriteBytes: 1024,
+      maxDedupBytes: 1024,
+      onClosed: () => {},
+      onCleanupFailure: () => {},
+    });
+    let cleanup: Promise<void> | undefined;
+    try {
+      cleanup = process.dispose();
+      await signalEntered.promise;
+      await expect(
+        process.write("new-write-during-dispose", Uint8Array.from([1]), requestSignal()),
+      ).resolves.toEqual({ status: "stdinClosed" });
+      signalGate.resolve();
+      await cleanup;
+      expect(child.writes).toEqual([]);
+    } finally {
+      signalGate.resolve();
+      await cleanup?.catch(() => {});
     }
   });
 
