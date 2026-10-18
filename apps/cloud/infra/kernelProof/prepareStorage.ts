@@ -9,9 +9,11 @@ export const prepareStorageProof = async (destination: string) => {
   const modules: Record<string, { path: string; type: "js" }> = {};
   for (const name of [
     "FacetSqliteStorage",
+    "PosixStorage",
     "StorageProof",
     "sqlite/SqliteDatabase",
     "sqlite/SqliteInodes",
+    "sqlite/SqlitePosixMetadata",
     "sqlite/SqliteChunks",
     "sqlite/SqliteFileSystem",
     "sqlite/SqliteHydration",
