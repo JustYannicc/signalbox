@@ -11,7 +11,7 @@
  * CLIProxyAPI round-robins; each window fills in its own units and resets on
  * its own clock. The pool runs out when no account has quota left.
  *
- * @module accountHub/poolAdvice
+ * @module shared/poolAdvice
  */
 import type { UsageLimitSourceAccount } from "@t3tools/contracts";
 import {
