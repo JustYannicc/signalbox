@@ -555,6 +555,52 @@ describe("inventoryBunApis", () => {
     assert.deepStrictEqual(inventory.dynamicAccesses, []);
   });
 
+  it("evaluates for-in/of sources before optional head defaults", () => {
+    for (const source of [
+      "let api; let x; for ([x = (api = Bun.fs)] of (api = other, values)) api.newAPI();",
+      "let api; for (const [x = (api = Bun.fs)] of (api = other, values)) api.newAPI();",
+      "let api; let x; for ([x = (api = Bun.fs)] in (api = other, values)) api.newAPI();",
+      "let api; for (const [x = (api = Bun.fs)] in (api = other, values)) api.newAPI();",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "iteration-default-order.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        source,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        source,
+      );
+    }
+  });
+
+  it("preserves possible Bun aliases from iteration head defaults", () => {
+    for (const source of [
+      "for (const [api = Bun.fs] of values) api.newAPI();",
+      "let api; for ([api = Bun.fs] of values) api.newAPI();",
+      "for (const {value: api = Bun.fs} of values) api.newAPI();",
+      "let api; for ({api = Bun.fs} of values) api.newAPI();",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "iteration-default-alias.js", source }]);
+
+      assert.deepStrictEqual(
+        inventory.members.map(({ path }) => path),
+        ["fs"],
+        source,
+      );
+      assert.ok(
+        inventory.dynamicAccesses.some(
+          ({ basePath, access }) => basePath === "" && access === "call",
+        ),
+        source,
+      );
+    }
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {

@@ -353,6 +353,7 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     if (ts.isVariableDeclaration(node)) {
       if (!node.initializer) {
         visitBindingInitializers(node.name, scope, visit);
+        if (!ts.isIdentifier(node.name)) bindPattern(node.name, undefined, scope);
         return;
       }
       visit(node.initializer, scope);
@@ -417,17 +418,24 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
     if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
       const writes = scope.fork();
       const loop = new Scope(writes);
+      if (
+        node.initializer &&
+        ts.isVariableDeclarationList(node.initializer) &&
+        node.initializer.flags & ts.NodeFlags.BlockScoped
+      ) {
+        bindUnknownList(node.initializer, loop);
+      }
+      if (!ts.isForStatement(node)) visit(node.expression, loop);
       if (node.initializer && ts.isVariableDeclarationList(node.initializer)) {
-        if (node.initializer.flags & ts.NodeFlags.BlockScoped)
-          bindUnknownList(node.initializer, loop);
         visit(node.initializer, loop);
       } else if (node.initializer) {
-        visit(node.initializer, loop);
+        if (ts.isForStatement(node)) visit(node.initializer, loop);
+        else {
+          visitAssignmentTarget(node.initializer, loop, visit);
+          bindAssignmentPattern(node.initializer, undefined, loop);
+        }
       }
       if (ts.isForStatement(node) && node.condition) visit(node.condition, loop);
-      if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && node.expression) {
-        visit(node.expression, loop);
-      }
       if (ts.isForStatement(node) && node.incrementor) visit(node.incrementor, loop);
       visit(node.statement, loop);
       scope.merge([writes, scope.fork()]);
