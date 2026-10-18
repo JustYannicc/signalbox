@@ -148,12 +148,13 @@ describe("module transport lifecycle", () => {
     },
   );
 
-  it("rejects trailing bytes and preserves that error if source cancellation fails", async () => {
+  it("releases trailing-byte rejection without cancelling unread bytes", async () => {
     const reasons: unknown[] = [];
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         for (const part of header([])) controller.enqueue(part);
         controller.enqueue(new Uint8Array([0]));
+        controller.enqueue(new Uint8Array([7]));
       },
       cancel(reason) {
         reasons.push(reason);
@@ -162,9 +163,15 @@ describe("module transport lifecycle", () => {
     });
     const transport = await openModuleTransport(stream);
     await expect(transport.discard()).rejects.toThrow("Trailing module transport bytes");
-    expect(reasons).toHaveLength(1);
-    expect(reasons[0]).toBeInstanceOf(Error);
+    expect(reasons).toHaveLength(0);
     expect(stream.locked).toBe(false);
+    const next = stream.getReader();
+    try {
+      expect(await next.read()).toEqual({ done: false, value: new Uint8Array([7]) });
+      await next.cancel().catch(() => {});
+    } finally {
+      next.releaseLock();
+    }
   });
 
   it.each([false, true])(
@@ -215,5 +222,45 @@ describe("module transport lifecycle", () => {
     expect(stream.locked).toBe(false);
     await expect(transport.readModules()).rejects.toThrow("already consumed or cancelled");
     await expect(transport.discard()).rejects.toThrow("already consumed or cancelled");
+  });
+
+  it("releases after explicit source cancellation throws", async () => {
+    let cancellations = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of header([])) controller.enqueue(part);
+      },
+      cancel() {
+        cancellations++;
+        throw new Error("cancel failed");
+      },
+    });
+    const transport = await openModuleTransport(stream);
+    await transport.cancel();
+    await transport.cancel();
+    expect(cancellations).toBe(1);
+    expect(stream.locked).toBe(false);
+  });
+
+  it("rejects an over-budget header without reading or cancelling its payload", async () => {
+    let pulls = 0;
+    let cancellations = 0;
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (pulls++ === 0) controller.enqueue(new Uint8Array([255, 255, 255, 255]));
+          else controller.enqueue(new Uint8Array([1]));
+        },
+        cancel() {
+          cancellations++;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    await expect(openModuleTransport(stream)).rejects.toThrow("Metadata budget exceeded");
+    expect(pulls).toBe(1);
+    expect(cancellations).toBe(0);
+    expect(stream.locked).toBe(false);
+    await stream.cancel();
   });
 });

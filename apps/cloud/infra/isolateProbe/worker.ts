@@ -7,7 +7,9 @@ import {
   openModuleTransport,
   MODULE_TRANSPORT_CONTENT_TYPE,
   type ModuleTransport,
+  DEFAULT_MODULE_TRANSPORT_LIMITS,
 } from "./moduleTransport.ts";
+import { preflightWrapper, withPreflight } from "./preflight.ts";
 
 interface ProbeInput {
   id: string;
@@ -57,6 +59,30 @@ interface Env {
   PROBE_SECRET: string;
 }
 
+async function rejectedUpload(request: Request, error: unknown) {
+  // Unread bytes can abort a forwarded fetch's response. Drain a bounded tail without decoding it.
+  const body = request.body;
+  if (body && !body.locked) {
+    const reader = body.getReader();
+    try {
+      let remaining =
+        DEFAULT_MODULE_TRANSPORT_LIMITS.maxMetadataBytes +
+        DEFAULT_MODULE_TRANSPORT_LIMITS.maxBodyBytes +
+        4;
+      while (remaining >= 0) {
+        const next = await reader.read();
+        if (next.done) break;
+        remaining -= next.value.byteLength;
+      }
+    } catch {
+      // A failed source must not replace the original validation failure.
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  return new Response(String(error), { status: 400 });
+}
+
 export class ProbeSession extends DurableObject<Env> {
   override async fetch(request: Request) {
     const url = new URL(request.url);
@@ -92,13 +118,13 @@ export class ProbeSession extends DurableObject<Env> {
           suppliedModules = value.modules;
         }
       } catch (error) {
-        return new Response(String(error), { status: 400 });
+        return rejectedUpload(request, error);
       }
       const finishUpload = async () => {
         try {
           await transport?.discard();
         } catch (error) {
-          return new Response(String(error), { status: 400 });
+          return rejectedUpload(request, error);
         }
       };
       const started = Date.now();
@@ -139,53 +165,78 @@ export class ProbeSession extends DurableObject<Env> {
           await transport?.discard();
           return new Response("Invalid generated value", { status: 400 });
         }
-        const worker = this.env.LOADER.get(input.id, async () => {
-          const modules =
-            input.generatedValue !== undefined
-              ? {
-                  "main.js": `export default {fetch(){return Response.json({value:${input.generatedValue},generated:true})}}`,
-                }
-              : transport
-                ? await transport.readModules()
-                : (suppliedModules ?? {
-                    "main.js": FACET_SOURCE,
-                    "esm.js": "export const answer = 42;",
-                    "suspend.wasm": { wasm: new Uint8Array(JSPI_WASM).buffer },
-                  });
-          const decodedModules = Object.fromEntries(
-            Object.entries(modules).map(([name, module]) => [
-              name,
-              typeof module === "object" && "wasmBase64" in module
-                ? { wasm: Uint8Array.from(atob(module.wasmBase64), (c) => c.charCodeAt(0)).buffer }
-                : module,
-            ]),
+        const wrapper = transport
+          ? preflightWrapper(
+              transport.moduleNames,
+              input.mainModule ?? "main.js",
+              input.entrypoint ?? (input.mode === "worker" ? "default" : "ProbeFacet"),
+            )
+          : undefined;
+        // Legacy ids cannot contain ':', so they can never substitute a fixture for our preflight.
+        const worker = this.env.LOADER.get(
+          transport ? `framed:${input.id}` : input.id,
+          async () => {
+            const modules =
+              input.generatedValue !== undefined
+                ? {
+                    "main.js": `export default {fetch(){return Response.json({value:${input.generatedValue},generated:true})}}`,
+                  }
+                : transport
+                  ? await transport.readModules()
+                  : (suppliedModules ?? {
+                      "main.js": FACET_SOURCE,
+                      "esm.js": "export const answer = 42;",
+                      "suspend.wasm": { wasm: new Uint8Array(JSPI_WASM).buffer },
+                    });
+            const decodedModules = Object.fromEntries(
+              Object.entries(modules).map(([name, module]) => [
+                name,
+                typeof module === "object" && "wasmBase64" in module
+                  ? {
+                      wasm: Uint8Array.from(atob(module.wasmBase64), (c) => c.charCodeAt(0)).buffer,
+                    }
+                  : module,
+              ]),
+            );
+            if (wrapper) decodedModules[wrapper.moduleName] = { js: wrapper.source };
+            return {
+              compatibilityDate: "2026-10-18",
+              compatibilityFlags: ["nodejs_compat"],
+              mainModule: wrapper?.moduleName ?? input.mainModule ?? "main.js",
+              modules: decodedModules,
+              ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
+            };
+          },
+        );
+        const invoke = async () => {
+          const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`);
+          const stub =
+            input.mode === "worker"
+              ? worker.getEntrypoint(wrapper?.fixtureExport ?? input.entrypoint)
+              : this.ctx.facets.get(input.id, () => ({
+                  class: worker.getDurableObjectClass(
+                    wrapper?.fixtureExport ?? input.entrypoint ?? "ProbeFacet",
+                  ),
+                }));
+          const response = await stub.fetch(probeRequest);
+          return Response.json({
+            id: input.id,
+            target: input.mode ?? "facet",
+            wallMs: Date.now() - started,
+            status: response.status,
+            result: await response.json(),
+          });
+        };
+        if (wrapper && transport) {
+          const upload = transport;
+          return await withPreflight(
+            (request) => worker.getEntrypoint(wrapper.entrypoint).fetch(request),
+            () => upload.discard(),
+            invoke,
+            wrapper.identity,
           );
-          return {
-            compatibilityDate: "2026-10-18",
-            compatibilityFlags: ["nodejs_compat"],
-            mainModule: input.mainModule ?? "main.js",
-            modules: decodedModules,
-            ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
-          };
-        });
-        const probeRequest = new Request(`https://probe.invalid${input.path ?? "/status"}`);
-        const stub =
-          input.mode === "worker"
-            ? worker.getEntrypoint(input.entrypoint)
-            : this.ctx.facets.get(input.id, () => ({
-                class: worker.getDurableObjectClass(input.entrypoint ?? "ProbeFacet"),
-              }));
-        const response = await stub.fetch(probeRequest);
-        // A warm loader or facet can skip getCode; its upload still needs validation.
-        const uploadError = await finishUpload();
-        if (uploadError) return uploadError;
-        return Response.json({
-          id: input.id,
-          target: input.mode ?? "facet",
-          wallMs: Date.now() - started,
-          status: response.status,
-          result: await response.json(),
-        });
+        }
+        return await invoke();
       } catch (error) {
         const uploadError = await finishUpload();
         if (uploadError) return uploadError;

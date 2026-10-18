@@ -339,20 +339,21 @@ describe("framed module transport", () => {
     expect(() => encodeModuleTransport(1n, [])).toThrow();
   });
 
-  it("cancels and unlocks malformed streams while retaining the original failure", async () => {
-    let reason: unknown;
+  it("releases malformed streams without aborting their source or replacing the failure", async () => {
+    let cancellations = 0;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(frame(metadata([descriptor("a"), descriptor("a")])));
       },
-      cancel(error) {
-        reason = error;
+      cancel() {
+        cancellations++;
         throw new Error("cancel failed");
       },
     });
     await expect(decodeModuleTransport(stream)).rejects.toThrow("Duplicate module name");
-    expect(reason).toBeInstanceOf(Error);
+    expect(cancellations).toBe(0);
     expect(stream.locked).toBe(false);
+    await stream.cancel().catch(() => {});
   });
 
   it("propagates source failures and releases the reader", async () => {

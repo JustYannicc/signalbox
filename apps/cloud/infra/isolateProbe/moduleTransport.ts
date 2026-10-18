@@ -142,6 +142,7 @@ export function encodeModuleTransport(
 
 export interface ModuleTransport {
   readonly input: unknown;
+  readonly moduleNames: readonly string[];
   readModules(): Promise<Record<string, WorkerLoaderModule>>;
   discard(): Promise<void>;
   cancel(reason?: unknown): Promise<void>;
@@ -155,16 +156,21 @@ export async function openModuleTransport(
   let chunk: Uint8Array = new Uint8Array(0);
   let offset = 0;
   let closed = false;
-  async function cancel(reason?: unknown) {
+  function release() {
     if (closed) return;
     closed = true;
+    reader.releaseLock();
+    chunk = new Uint8Array(0);
+    offset = 0;
+  }
+  async function cancel(reason?: unknown) {
+    if (closed) return;
     try {
       await reader.cancel(reason);
     } catch {
       // A source's cancellation error must not hide the framing or source error.
     } finally {
-      reader.releaseLock();
-      chunk = new Uint8Array(0);
+      release();
     }
   }
   async function nextChunk() {
@@ -248,11 +254,8 @@ export async function openModuleTransport(
         }
         if (await nextChunk()) throw new Error("Trailing module transport bytes");
         return modules;
-      } catch (error) {
-        await cancel(error);
-        throw error;
       } finally {
-        await cancel();
+        release();
       }
     }
     let consumption: Promise<void> | undefined;
@@ -271,6 +274,7 @@ export async function openModuleTransport(
     }
     return {
       input: metadata.input,
+      moduleNames: metadata.modules.map((module) => module.name),
       readModules: async () => start(true),
       async discard() {
         if (!consumption) start(false);
@@ -280,7 +284,7 @@ export async function openModuleTransport(
       cancel,
     };
   } catch (error) {
-    await cancel(error);
+    release();
     throw error;
   }
 }
