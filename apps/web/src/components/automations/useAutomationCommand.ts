@@ -8,7 +8,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -18,25 +18,22 @@ export function useAutomationCommand<W, A, E>(command: AtomCommand<W, A, E>, fai
   const send = useAtomCommand(command, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   /** Resolves with the result on success, null after reporting a failure. Pass a title to override. */
-  const run = useCallback(
-    async (input: W, title = failureTitle): Promise<{ readonly value: A } | null> => {
-      setBusy(true);
-      const result = await send(input);
-      setBusy(false);
-      if (result._tag === "Success") return { value: result.value };
-      if (!isAtomCommandInterrupted(result)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title,
-            description: String(squashAtomCommandFailure(result)),
-          }),
-        );
-      }
-      return null;
-    },
-    [failureTitle, send],
-  );
+  const run = async (input: W, title = failureTitle): Promise<{ readonly value: A } | null> => {
+    setBusy(true);
+    const result = await send(input);
+    setBusy(false);
+    if (result._tag === "Success") return { value: result.value };
+    if (!isAtomCommandInterrupted(result)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description: String(squashAtomCommandFailure(result)),
+        }),
+      );
+    }
+    return null;
+  };
   return { run, busy };
 }
 

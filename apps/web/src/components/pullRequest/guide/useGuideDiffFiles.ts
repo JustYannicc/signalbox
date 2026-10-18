@@ -1,6 +1,6 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, PullRequestDiffRevision, PullRequestRef } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   isGuideDiffRevisionCurrent,
@@ -19,6 +19,7 @@ interface LoadedDiff {
   readonly files: ReadonlyMap<string, FileDiffMetadata>;
   readonly revision: PullRequestDiffRevision | undefined;
   readonly stale: boolean;
+  readonly folded: unknown;
 }
 
 const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
@@ -42,6 +43,7 @@ export function useGuideDiffFiles({
     files: NO_FILES,
     revision: undefined,
     stale: false,
+    folded: null,
   });
   const current: LoadedDiff =
     loaded.key === key
@@ -53,6 +55,7 @@ export function useGuideDiffFiles({
           files: NO_FILES,
           revision: undefined,
           stale: false,
+          folded: null,
         };
   const missing = wantedPaths.some((path) => !current.files.has(path));
   const loading = missing && !current.done;
@@ -65,56 +68,44 @@ export function useGuideDiffFiles({
       : null,
   );
 
+  // Each page is folded in once, during the render that first sees it.
   const data = query.data;
-  const cursor = current.cursor;
-  useEffect(() => {
-    if (data === null) return;
-    setLoaded((previous) => {
-      const base =
-        previous.key === key
-          ? previous
-          : {
-              key,
-              cursor: null,
-              done: false,
-              files: NO_FILES,
-              revision: undefined,
-              stale: false,
-            };
-      if (base.cursor !== cursor || base.done) return base;
-      if (!isGuideDiffRevisionCurrent(headSha, data.revision)) {
-        // The guide's excerpts belong to its head, so never pair them with another commit's diff.
-        return {
-          key,
-          cursor: null,
-          done: true,
-          files: NO_FILES,
-          revision: undefined,
-          stale: true,
-        };
-      }
+  if (data !== null && !current.done && current.folded !== data) {
+    if (!isGuideDiffRevisionCurrent(headSha, data.revision)) {
+      // The guide's excerpts belong to its head, so never pair them with another commit's diff.
+      setLoaded({
+        key,
+        cursor: null,
+        done: true,
+        files: NO_FILES,
+        revision: undefined,
+        stale: true,
+        folded: data,
+      });
+    } else {
       const parsed = getRenderablePatch(
         data.patch,
-        `pull-request-guide:${key}:${cursor ?? "first"}`,
+        `pull-request-guide:${key}:${current.cursor ?? "first"}`,
       );
       // The server can restart a stale continuation with a new first page; drop prior snapshot
       // files before following that response's next cursor.
-      const files = samePullRequestDiffRevision(base.revision, data.revision)
-        ? new Map(base.files)
+      const files = samePullRequestDiffRevision(current.revision, data.revision)
+        ? new Map(current.files)
         : new Map<string, FileDiffMetadata>();
       if (parsed?.kind === "files") {
         for (const file of parsed.files) files.set(resolveFileDiffPath(file), file);
       }
-      return {
+      setLoaded({
         key,
         cursor: data.nextCursor,
         done: data.nextCursor === null,
         files,
         revision: data.revision,
         stale: false,
-      };
-    });
-  }, [cursor, data, headSha, key]);
+        folded: data,
+      });
+    }
+  }
 
   return {
     files: current.files,

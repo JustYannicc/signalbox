@@ -30,10 +30,8 @@ import {
 import {
   createContext,
   memo,
-  useCallback,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -149,62 +147,34 @@ function HomeThreads(props: ListProps) {
   const serverConfigs = useServerConfigs();
   const supportsThreadKinds =
     serverConfigs.get(environmentId)?.environment.capabilities.threadKinds;
-  const environmentIds = useMemo(() => [environmentId], [environmentId]);
-  const archived = useArchivedThreadSnapshots(environmentIds);
+  const archived = useArchivedThreadSnapshots([environmentId]);
   const kinds = useAtomValue(environmentThreadKindsAtom(environmentId));
-  const kindOf = useMemo(() => (kinds === null ? null : threadKindLookup(kinds)), [kinds]);
-  const archivedThreads = useMemo(
-    () =>
-      archived.snapshots
-        .find((entry) => entry.environmentId === environmentId)
-        ?.snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)) ?? [],
-    [archived.snapshots, environmentId],
+  const kindOf = kinds === null ? null : threadKindLookup(kinds);
+  const archivedThreads =
+    archived.snapshots
+      .find((entry) => entry.environmentId === environmentId)
+      ?.snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)) ?? [];
+  const recentlySettled = recentlySettledFolderThreads({
+    environmentId,
+    projectIds: owner.context.projectIds,
+    home,
+    homeOf: threadHomeLookup(snapshot),
+    liveThreads: threads,
+    archivedThreads,
+    isTask: (thread) =>
+      threadKindWithCapabilityFallback(
+        supportsThreadKinds,
+        kindOf === null ? null : effectiveThreadKind(kindOf(thread.id)).kind,
+      ) === "task",
+  });
+  const recentlySettledKeys = new Set(
+    recentlySettled.map((thread) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    ),
   );
-  const homeOf = useMemo(() => threadHomeLookup(snapshot), [snapshot]);
-  const recentlySettled = useMemo(
-    () =>
-      recentlySettledFolderThreads({
-        environmentId,
-        projectIds: owner.context.projectIds,
-        home,
-        homeOf,
-        liveThreads: threads,
-        archivedThreads,
-        isTask: (thread) =>
-          threadKindWithCapabilityFallback(
-            supportsThreadKinds,
-            kindOf === null ? null : effectiveThreadKind(kindOf(thread.id)).kind,
-          ) === "task",
-      }),
-    [
-      archivedThreads,
-      environmentId,
-      home,
-      homeOf,
-      kindOf,
-      owner.context.projectIds,
-      supportsThreadKinds,
-      threads,
-    ],
-  );
-  const recentlySettledKeys = useMemo(
-    () =>
-      new Set(
-        recentlySettled.map((thread) =>
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        ),
-      ),
-    [recentlySettled],
-  );
-  const visibleThreads = useMemo(
-    () =>
-      threads.filter(
-        (thread) =>
-          !recentlySettledKeys.has(
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          ),
-      ),
-    [recentlySettledKeys, threads],
+  const visibleThreads = threads.filter(
+    (thread) =>
+      !recentlySettledKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
   );
   const liveThreadMembership = threads
     .map((thread) => thread.id)
@@ -223,36 +193,23 @@ function HomeThreads(props: ListProps) {
   )
     ? activeThreadKey
     : null;
-  const scope = useMemo<SidebarThreadScope>(() => {
-    const homeOf = threadHomeLookup(snapshot);
-    return {
-      threads: visibleThreads,
-      activeThreadKey: activeHere,
-      settingsProjectKey: (thread) => projectKeys.get(thread.projectId),
-      threadMenu: (thread) => ({
-        items: [
-          moveThreadMenuItem(threadFolderChoices(snapshot, ownerId, homeOf(thread)), !canEdit),
-        ],
-        select: (clicked) => {
-          const destination = movedThreadDestination(clicked);
-          if (destination === null) return false;
-          void commands.moveThread(environmentId, thread.id, destination.folderId);
-          return true;
-        },
-      }),
-    };
-  }, [
-    activeHere,
-    canEdit,
-    commands,
-    environmentId,
-    ownerId,
-    projectKeys,
-    snapshot,
-    visibleThreads,
-  ]);
+  const homeOf = threadHomeLookup(snapshot);
+  const scope: SidebarThreadScope = {
+    threads: visibleThreads,
+    activeThreadKey: activeHere,
+    settingsProjectKey: (thread) => projectKeys.get(thread.projectId),
+    threadMenu: (thread) => ({
+      items: [moveThreadMenuItem(threadFolderChoices(snapshot, ownerId, homeOf(thread)), !canEdit)],
+      select: (clicked) => {
+        const destination = movedThreadDestination(clicked);
+        if (destination === null) return false;
+        void commands.moveThread(environmentId, thread.id, destination.folderId);
+        return true;
+      },
+    }),
+  };
   const project = environment.ownerProjects.get(ownerId);
-  const row = useMemo(() => project && folderListRow(project, listKey), [listKey, project]);
+  const row = project && folderListRow(project, listKey);
   if (!row || !renderProject || (visibleThreads.length === 0 && recentlySettled.length === 0))
     return null;
   return (
@@ -609,13 +566,10 @@ const NO_COUNTS: ReadonlyMap<FolderId, number> = new Map();
 function useStartFromSidebar(): (input: StartInFolder) => void {
   const startInFolder = useStartInFolder();
   const { isMobile, setOpenMobile } = useSidebar();
-  return useCallback(
-    (input: StartInFolder) => {
-      if (isMobile) setOpenMobile(false);
-      void startInFolder(input);
-    },
-    [isMobile, setOpenMobile, startInFolder],
-  );
+  return (input: StartInFolder) => {
+    if (isMobile) setOpenMobile(false);
+    void startInFolder(input);
+  };
 }
 
 /** Your top level's ⋯ (new thread or automation, instructions, secrets): it has no row of its own. */
@@ -667,10 +621,12 @@ export function FoldersSidebarTree(props: {
   const start = useStartFromSidebar();
   const editable = useAtomValue(folderEditableEnvironmentsAtom);
   const activeThreadKey = useActiveThreadKey();
-  const tree = useMemo<TreeContext>(
-    () => ({ collapsed: sidebar.collapsed, toggle: sidebar.toggle, commands, start }),
-    [commands, sidebar.collapsed, sidebar.toggle, start],
-  );
+  const tree: TreeContext = {
+    collapsed: sidebar.collapsed,
+    toggle: sidebar.toggle,
+    commands,
+    start,
+  };
   if (sidebar.environments.length === 0 && sidebar.failures.length === 0) return null;
 
   return (

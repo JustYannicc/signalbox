@@ -410,6 +410,7 @@ export const makeEngine = <R>(
 
     const startStep = makeStartStep({
       store,
+      links,
       services,
       functions,
       models: Option.getOrUndefined(modelSteps),

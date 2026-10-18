@@ -8,7 +8,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { ArchiveRestoreIcon, CheckIcon, ChevronRightIcon, PencilIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -97,7 +97,7 @@ export function TaskLifecycleControl(props: {
   readonly onReopen?: (() => void) | undefined;
 }) {
   const { environmentId, threadId } = props;
-  const threadRef = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
+  const threadRef = { environmentId, threadId };
   const liveShell = useThreadShell(threadRef);
   // A settled task is archived, so the live shell drops it; its page still shows Reopen.
   const archivedShell = useArchivedThreadShell(
@@ -116,7 +116,7 @@ function TaskLifecycleTaskRow(props: {
   readonly onReopen?: (() => void) | undefined;
 }) {
   const { environmentId, threadId, shell } = props;
-  const threadRef = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
+  const threadRef = { environmentId, threadId };
   const threadKind = useThreadKind(threadRef, shell);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const runLifecycle = useAtomCommand(automationState.taskLifecycle, { reportFailure: false });

@@ -3277,6 +3277,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               occurredAt: now,
               payload: { ...original, status: "cancelled", completedAt: now },
             },
+            // A provider wake the restart cut before it started does not supersede it.
+            {
+              id: EventId.make("restart-cut-wake-event"),
+              type: "run.created",
+              threadId,
+              runId: RunId.make("restart-cut-wake"),
+              occurredAt: now,
+              payload: {
+                ...original,
+                id: RunId.make("restart-cut-wake"),
+                ordinal: 2,
+                status: "cancelled",
+                startedAt: null,
+                completedAt: now,
+              },
+            },
           ],
           effects: [],
         });
@@ -3302,10 +3318,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* orchestrator.dispatch(command);
         yield* orchestrator.dispatch(command);
         const admitted = yield* orchestrator.getThreadProjection(threadId);
-        assert.lengthOf(admitted.runs, 2);
-        assert.equal(admitted.runs[1]?.restartContinuationOfRunId, original.id);
+        assert.lengthOf(admitted.runs, 3);
+        assert.equal(admitted.runs[2]?.restartContinuationOfRunId, original.id);
         const continuationItems = admitted.turnItems.filter(
-          (item) => item.runId === admitted.runs[1]?.id,
+          (item) => item.runId === admitted.runs[2]?.id,
         );
         assert.isFalse(continuationItems.some((item) => item.type === "user_message"));
         assert.deepInclude(
@@ -3320,7 +3336,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           messageId: MessageId.make("restart-stale-race"),
         });
         const raced = yield* orchestrator.getThreadProjection(threadId);
-        assert.lengthOf(raced.runs, 2);
+        assert.lengthOf(raced.runs, 3);
         assert.isFalse(raced.messages.some((message) => message.id === "restart-stale-race"));
       }),
   );
@@ -4024,7 +4040,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect("starts a wake's work clock from the run that ran before it", () =>
+  it.effect("anchors queued work at activation and wake work at the inherited start", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -4076,6 +4092,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* dispatch("prompt", false);
       yield* dispatch("queued", false);
+      assert.isUndefined((yield* runFor("queued")).workStartedAt);
       yield* dispatch("early-wake", true);
       yield* orchestrator.dispatch({
         type: "queued-run.reorder",
@@ -4121,18 +4138,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const millis = (value: DateTime.Utc | undefined) =>
         value === undefined ? undefined : DateTime.toEpochMillis(value);
 
+      const prompt = yield* runFor("prompt");
+      assert.equal(millis(prompt.workStartedAt), millis(prompt.requestedAt));
+
       yield* settle("prompt", now);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("early-wake")).id);
       assert.equal(millis((yield* runFor("early-wake")).workStartedAt), millis(now));
 
-      yield* settle("early-wake", DateTime.add(now, { seconds: 1 }));
+      const queuedActivatedAt = DateTime.add(now, { minutes: 10 });
+      yield* TestClock.adjust("10 minutes");
+      yield* settle("early-wake", queuedActivatedAt);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("queued")).id);
-      assert.isUndefined((yield* runFor("queued")).workStartedAt);
+      assert.equal(millis((yield* runFor("queued")).workStartedAt), millis(queuedActivatedAt));
+      assert.isUndefined((yield* runFor("late-wake")).workStartedAt);
 
-      const queuedStartedAt = DateTime.add(now, { minutes: 10 });
+      const queuedStartedAt = DateTime.add(queuedActivatedAt, { seconds: 35 });
+      yield* TestClock.adjust("35 seconds");
       yield* settle("queued", queuedStartedAt);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("late-wake")).id);
-      assert.equal(millis((yield* runFor("late-wake")).workStartedAt), millis(queuedStartedAt));
+      assert.equal(millis((yield* runFor("late-wake")).workStartedAt), millis(queuedActivatedAt));
     }),
   );
 
