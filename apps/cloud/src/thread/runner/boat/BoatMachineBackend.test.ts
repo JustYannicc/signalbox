@@ -260,6 +260,7 @@ describe("BoatMachineBackend", () => {
     Effect.gen(function* () {
       for (const [status, retryable, code] of [
         [401, false, "machine_access_denied"],
+        [404, false, "machine_request_rejected"],
         [429, true, "machine_rate_limited"],
         [0, true, "machine_backend_unavailable"],
       ] as const) {
@@ -287,6 +288,58 @@ describe("BoatMachineBackend", () => {
         expect(error.startupProblem).toMatchObject({ retryable, code });
         expect(JSON.stringify(error.startupProblem)).not.toContain("opaque provider response body");
         expect(store.current().createKey).not.toBeNull();
+      }
+    }),
+  );
+
+  it.effect("recovers when the VM disappears between inspection and startup", () =>
+    Effect.gen(function* () {
+      for (const operation of ["resume", "execute", "writeFile"] as const) {
+        const boat = makeFakeBoat();
+        const store = makeStore();
+        const backend = yield* makeBackend(boat, store);
+        yield* backend.ensure(request(1));
+        boat.settle();
+        if (operation === "resume") {
+          yield* backend.stop(threadId);
+          boat.settle();
+        }
+        const gone = () =>
+          Effect.suspend(() => {
+            boat.sandboxes.delete("bx_1");
+            return Effect.fail(
+              new BoatApiError({
+                operation,
+                status: 404,
+                code: "sandbox_not_found",
+                message: "No such sandbox.",
+              }),
+            );
+          });
+        const disappearing = yield* makeBackend(
+          {
+            ...boat,
+            api: {
+              ...boat.api,
+              resume: operation === "resume" ? gone : boat.api.resume,
+              execute: operation === "execute" ? gone : boat.api.execute,
+              writeFile: operation === "writeFile" ? gone : boat.api.writeFile,
+            },
+          },
+          store,
+        );
+        const error = yield* Effect.flip(disappearing.ensure(request(2)));
+        expect(error.startupProblem).toMatchObject({
+          code: "machine_disappeared",
+          retryable: true,
+        });
+        const recovered = yield* makeBackend(boat, store);
+        yield* recovered.ensure(request(2));
+        yield* recovered.ensure(request(2));
+        boat.settle();
+        expect((yield* recovered.ensure(request(2))).actual).toBe("running");
+        expect(boat.config("bx_2")?.generation).toBe(2);
+        expect([...boat.sandboxes.keys()]).toEqual(["bx_2"]);
       }
     }),
   );

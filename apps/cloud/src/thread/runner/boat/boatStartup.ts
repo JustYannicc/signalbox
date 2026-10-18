@@ -31,6 +31,18 @@ export const boatStartupProblem = (error: BoatApiError): MachineStartupProblem =
       retryable: true,
     };
   }
+  if (
+    error.status === 404 &&
+    (error.operation === "resume" ||
+      error.operation === "execute" ||
+      error.operation === "writeFile")
+  ) {
+    return {
+      code: "machine_disappeared",
+      message: "Boat no longer has the requested machine.",
+      retryable: true,
+    };
+  }
   const retryable =
     error.status === 0 || error.status >= 500 || error.status === 408 || error.status === 409;
   return {
