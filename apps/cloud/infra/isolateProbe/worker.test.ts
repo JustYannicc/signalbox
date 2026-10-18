@@ -91,12 +91,14 @@ const framedRun = async (
   input: unknown,
   modules: readonly ModuleDescriptor[] = [],
   body = encodeModuleTransport(input, modules),
+  outerHeaders: Record<string, string> = {},
 ) => {
   const init: RequestInit & { duplex: "half" } = {
     method: "POST",
     headers: {
       authorization: "Bearer local-probe-only",
       "content-type": MODULE_TRANSPORT_CONTENT_TYPE,
+      ...outerHeaders,
     },
     body,
     duplex: "half",
@@ -337,6 +339,242 @@ describe("framed fixtures over workerd HTTP", () => {
     });
   });
 
+  it("passes opaque POST bytes to the facet and keeps them in that facet's SQLite state", async () => {
+    const source = `import { DurableObject } from "cloudflare:workers";
+      import wasm from "./engine.wasm";
+      const wasmValue = () => new WebAssembly.Instance(wasm, {env:{suspend:value=>value+1}}).exports.run(40);
+      const requestInfo = request => ({
+        method: request.method,
+        contentType: request.headers.get("content-type"),
+        authorization: request.headers.get("authorization"),
+        origin: request.headers.get("origin"),
+        probeSecret: request.headers.get("x-probe-secret"),
+        forwardedFor: request.headers.get("x-forwarded-for")
+      });
+      export default { async fetch(request) {
+        return Response.json({...requestInfo(request), wasm:wasmValue(), body:[...new Uint8Array(await request.arrayBuffer())]});
+      }};
+      export class ProbeFacet extends DurableObject {
+        async fetch(request) {
+          const sql = this.ctx.storage.sql;
+          const body = [...new Uint8Array(await request.arrayBuffer())];
+          sql.exec("CREATE TABLE IF NOT EXISTS seeded_asset (id TEXT PRIMARY KEY, bytes BLOB NOT NULL, content_type TEXT)");
+          const info = requestInfo(request);
+          if (new URL(request.url).pathname === "/seed-assets") {
+            sql.exec("INSERT OR REPLACE INTO seeded_asset(id, bytes, content_type) VALUES (?, ?, ?)",
+              "boot", new Uint8Array(body).buffer, info.contentType);
+          }
+          const asset = sql.exec("SELECT bytes, content_type FROM seeded_asset WHERE id = ?", "boot").one();
+          return Response.json({...info, wasm:wasmValue(), body,
+            stored:[...new Uint8Array(asset.bytes)], storedContentType:asset.content_type});
+        }
+      }`;
+    const modules: ModuleDescriptor[] = [
+      { name: "main.js", type: "js", bytes: new TextEncoder().encode(source) },
+      { name: "engine.wasm", type: "wasm", bytes: JSPI_WASM },
+    ];
+    const binaryA = new Uint8Array([0xff, 0xc3, 0x28, 0x00, 0x80, 0xfe]);
+    const binaryB = new Uint8Array([0x00, 0x9f, 0xff, 0x41, 0x80]);
+    const id = "native-payload-facet";
+    const post = (bytes: Uint8Array) => {
+      const input = {
+        id,
+        method: "POST",
+        contentType: "application/octet-stream",
+        path: "/seed-assets",
+      };
+      return framedRun(input, modules, encodeModuleTransport(input, modules, {}, bytes), {
+        origin: "https://attacker.invalid",
+        "x-probe-secret": "outer-only",
+        "x-forwarded-for": "203.0.113.9",
+      });
+    };
+    const first = await post(binaryA);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      status: 200,
+      result: {
+        method: "POST",
+        contentType: "application/octet-stream",
+        authorization: null,
+        origin: null,
+        probeSecret: null,
+        forwardedFor: null,
+        wasm: 42,
+        body: [...binaryA],
+        stored: [...binaryA],
+        storedContentType: "application/octet-stream",
+      },
+    });
+
+    const read = async () => {
+      const input = { id, path: "/boot" };
+      return framedRun(input, modules);
+    };
+    expect(await (await read()).json()).toMatchObject({
+      status: 200,
+      result: {
+        method: "GET",
+        contentType: null,
+        authorization: null,
+        origin: null,
+        probeSecret: null,
+        forwardedFor: null,
+        wasm: 42,
+        body: [],
+        stored: [...binaryA],
+        storedContentType: "application/octet-stream",
+      },
+    });
+
+    const reseeded = await post(binaryB);
+    expect(reseeded.status).toBe(200);
+    expect(await reseeded.json()).toMatchObject({
+      status: 200,
+      result: { body: [...binaryB], stored: [...binaryB], wasm: 42 },
+    });
+    expect(await (await read()).json()).toMatchObject({
+      status: 200,
+      result: { body: [], stored: [...binaryB], wasm: 42 },
+    });
+
+    const workerInput = {
+      id: "native-payload-worker",
+      mode: "worker",
+      path: "/seed-assets",
+      method: "POST",
+      contentType: "application/octet-stream",
+    };
+    expect(
+      await (
+        await framedRun(
+          workerInput,
+          modules,
+          encodeModuleTransport(workerInput, modules, {}, binaryA),
+        )
+      ).json(),
+    ).toMatchObject({
+      status: 200,
+      target: "worker",
+      result: {
+        method: "POST",
+        body: [...binaryA],
+        contentType: "application/octet-stream",
+        wasm: 42,
+        authorization: null,
+        origin: null,
+      },
+    });
+  });
+
+  it.each(["truncated", "trailing"] as const)(
+    "rejects a %s payload on cold and warm facets before SQL or outbound effects",
+    async (failure) => {
+      const modules: ModuleDescriptor[] = [
+        {
+          name: "main.js",
+          type: "js",
+          bytes: new TextEncoder().encode(`import { DurableObject } from "cloudflare:workers";
+            export class ProbeFacet extends DurableObject {
+              async fetch(request) {
+                const sql = this.ctx.storage.sql;
+                sql.exec("CREATE TABLE IF NOT EXISTS counter (value INTEGER)");
+                sql.exec("INSERT INTO counter SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM counter)");
+                if (new URL(request.url).pathname === "/bump") {
+                  sql.exec("UPDATE counter SET value = value + 1");
+                  await fetch(${JSON.stringify(outboundUrl)});
+                }
+                return Response.json({calls:sql.exec("SELECT value FROM counter").one().value});
+              }
+            }`),
+        },
+      ];
+      const opaque = new Uint8Array([0xff, 0x80, 0x00, 0xc3, 0x28]);
+      const malformedBody = (input: unknown) => encodeModuleTransport(input, modules, {}, opaque);
+      const damaged = async (input: unknown) => {
+        const packet = new Uint8Array(await new Response(malformedBody(input)).arrayBuffer());
+        const bytes =
+          failure === "truncated" ? packet.subarray(0, -1) : new Uint8Array([...packet, 0]);
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+      };
+      const base = {
+        method: "POST",
+        contentType: "application/octet-stream",
+        path: "/bump",
+        allowOutbound: true,
+      };
+
+      for (const warmed of [false, true]) {
+        const id = `payload-${warmed ? "warm" : "cold"}-${failure}`;
+        const initial = { ...base, id };
+        const before = outboundRequests;
+        if (warmed) {
+          const response = await framedRun(
+            initial,
+            modules,
+            encodeModuleTransport(initial, modules, {}, new Uint8Array([0x01])),
+          );
+          expect(await response.json()).toMatchObject({ status: 200, result: { calls: 1 } });
+          expect(outboundRequests).toBe(before + 1);
+        }
+
+        const rejected = await framedRun(initial, modules, await damaged(initial));
+        const error = await rejected.text();
+        expect(rejected.status, error).toBe(400);
+        expect(error).toContain(
+          failure === "truncated" ? "Truncated request payload" : "Trailing module transport bytes",
+        );
+        expect(outboundRequests).toBe(before + (warmed ? 1 : 0));
+
+        const readInput = { id, path: "/read", allowOutbound: true };
+        expect(await (await framedRun(readInput, modules)).json()).toMatchObject({
+          status: 200,
+          result: { calls: warmed ? 1 : 0 },
+        });
+        expect(outboundRequests).toBe(before + (warmed ? 1 : 0));
+        if (!warmed) {
+          const valid = await framedRun(
+            initial,
+            modules,
+            encodeModuleTransport(initial, modules, {}, opaque),
+          );
+          expect(await valid.json()).toMatchObject({ status: 200, result: { calls: 1 } });
+          expect(outboundRequests).toBe(before + 1);
+        }
+      }
+    },
+  );
+
+  it("still rejects invalid UTF-8 code when a separate opaque request payload is present", async () => {
+    const input = {
+      id: "payload-invalid-code",
+      method: "POST",
+      contentType: "application/octet-stream",
+      path: "/bump",
+      allowOutbound: true,
+    };
+    const before = outboundRequests;
+    const response = await framedRun(
+      input,
+      [{ name: "main.js", type: "js", bytes: new Uint8Array([0xff]) }],
+      encodeModuleTransport(
+        input,
+        [{ name: "main.js", type: "js", bytes: new Uint8Array([0xff]) }],
+        {},
+        new Uint8Array([0xff, 0x00, 0x80]),
+      ),
+    );
+    const error = await response.text();
+    expect(response.status, error).toBe(400);
+    expect(error).toMatch(/decode|UTF/i);
+    expect(outboundRequests).toBe(before);
+  });
+
   it("rejects malformed cold uploads and boots a fresh worker from a full map", async () => {
     const input = { id: "framed-cold-validation", mode: "worker" };
     const response = await framedRun(input, [
@@ -490,6 +728,11 @@ describe("framed fixtures over workerd HTTP", () => {
       { id: "valid", mainModule: 4 },
       { id: "valid", entrypoint: [] },
       { id: "valid", path: false },
+      { id: "valid", method: "POST\r\nInjected" },
+      { id: "valid", method: "TRACE" },
+      { id: "valid", method: 3 },
+      { id: "valid", contentType: "application/octet-stream\r\nInjected: yes" },
+      { id: "valid", contentType: [] },
       { id: "valid", count: "2" },
       { id: "valid", generatedValue: {} },
     ]) {

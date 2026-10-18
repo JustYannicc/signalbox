@@ -93,8 +93,10 @@
         "src/kernel/Wasi.ts", // Public preview1 carry API.
         "infra/codexExecProof/prepare.ts",
         "infra/codexExecProof/prepareExecution.ts",
+        "infra/codexExecProof/prepareFileSystem.ts",
         "src/kernel/CodexExecProtocolProof.ts",
         "src/kernel/CodexExecExecutionProof.ts",
+        "src/kernel/CodexExecFileSystemProof.ts",
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
         "infra/isolateProbe/alchemy.run.ts!",

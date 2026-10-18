@@ -17,6 +17,8 @@ export const prepareFilePersistenceProof = async (destination: string) => {
   const modules: Record<string, { path: string; type: "js" }> = {};
   for (const name of [
     "FilePersistenceProof",
+    "PosixStorage",
+    "PosixStorageProof",
     "FacetFilePersistence",
     "FilePersistencePorts",
     "MemoryFilePersistencePorts",
@@ -26,7 +28,9 @@ export const prepareFilePersistenceProof = async (destination: string) => {
     "sqlite/SqliteDatabase",
     "sqlite/SqliteFileSystem",
     "sqlite/SqliteHydration",
+    "sqlite/SqlitePendingContentWait",
     "sqlite/SqliteInodes",
+    "sqlite/SqlitePosixMetadata",
     "sqlite/SqliteChunks",
     "sqlite/SqliteCommitSnapshot",
   ]) {
