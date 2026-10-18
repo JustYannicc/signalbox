@@ -1,0 +1,22 @@
+{
+  "version": "0.162.1",
+  "tag": "rust-v0.162.1",
+  "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+  "repository": "https://github.com/openai/codex.git",
+  "rust": "nightly-2026-03-01",
+  "targets": ["wasm32-wasip1"],
+  "references": {
+    "codex-wasi-agentos": {
+      "repository": "https://github.com/DigiBugCat/codex-wasi-agentos.git",
+      "commit": "45eca7daf24bbac603689cc3229693310d184e51"
+    },
+    "agentos": {
+      "repository": "https://github.com/rivet-dev/agentos.git",
+      "commit": "63ae3b256749d47c7b3a7c463128d5deda57d1bb"
+    },
+    "rivet-codex": {
+      "repository": "https://github.com/rivet-dev/codex.git",
+      "commit": "8f4655a9dbfc7db91768c78ccaea7357ba47127e"
+    }
+  }
+}

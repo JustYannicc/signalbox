@@ -1,0 +1,27 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "path-separator",
+      "path": "codex-rs/arg0/src/lib.rs",
+      "before": [
+        "}",
+        "",
+        "fn path_env_with_entry(path_entry: &Path, existing_path: Option<OsString>) -> OsString {",
+        "    #[cfg(unix)]",
+        "    const PATH_SEPARATOR: &str = \":\";",
+        "",
+        "    #[cfg(windows)]"
+      ],
+      "after": [
+        "}",
+        "",
+        "fn path_env_with_entry(path_entry: &Path, existing_path: Option<OsString>) -> OsString {",
+        "    #[cfg(any(unix, target_os = \"wasi\"))]",
+        "    const PATH_SEPARATOR: &str = \":\";",
+        "",
+        "    #[cfg(windows)]"
+      ]
+    }
+  ]
+}

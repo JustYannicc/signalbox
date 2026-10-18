@@ -13,7 +13,8 @@ import {
 } from "./moduleTransport.ts";
 
 describe("fixture measurement CLI", () => {
-  it("uploads every full map and records original inventory plus partial HTTP failures", async () => {
+  const optIn = it.each([undefined, true, "true"]);
+  optIn("uploads full maps with opt-in %s", async (allowGeneratedCode) => {
     const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "isolate-fixture-"));
     const requests: Awaited<ReturnType<typeof decodeModuleTransport>>[] = [];
     const failures: unknown[] = [];
@@ -58,6 +59,7 @@ describe("fixture measurement CLI", () => {
           id: "fixture",
           mainModule: "nested/main.js",
           entrypoint: "ProbeFacet",
+          allowGeneratedCode,
           modules: {
             "nested/main.js": { path: "source.js", type: "js" },
             "nested/engine.wasm": { path: "binary.wasm", type: "wasm" },
@@ -101,6 +103,7 @@ describe("fixture measurement CLI", () => {
           id: firstInput.id,
           mode: "facet",
           allowOutbound: false,
+          allowGeneratedCode: allowGeneratedCode === true,
           mainModule: "nested/main.js",
           entrypoint: "ProbeFacet",
           path: ["/first", "/fails", "/last"][index],
@@ -165,7 +168,7 @@ describe("fixture measurement CLI", () => {
     }
   });
 
-  it("sends request bodies as raw bytes and records request metadata and failures", async () => {
+  optIn("sends request bodies with opt-in %s", async (allowGeneratedCode) => {
     const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "isolate-requests-"));
     const received: Array<{ input: unknown; payload?: Uint8Array }> = [];
     const failures: unknown[] = [];
@@ -214,6 +217,7 @@ describe("fixture measurement CLI", () => {
           id: "upload-fixture",
           mainModule: "main.js",
           entrypoint: "ProbeFacet",
+          allowGeneratedCode,
           modules: {},
           requests: [
             {
@@ -256,11 +260,15 @@ describe("fixture measurement CLI", () => {
       expect(received[0]?.input).toMatchObject({
         id: expect.stringMatching(/^[a-f0-9]+-upload-fixture$/),
         path: "/upload",
+        allowGeneratedCode: allowGeneratedCode === true,
         method: "POST",
         contentType: "application/octet-stream",
       });
       expect(received[0]?.payload).toEqual(payload);
-      expect(received[1]?.input).toMatchObject({ path: "/fails" });
+      expect(received[1]?.input).toMatchObject({
+        path: "/fails",
+        allowGeneratedCode: allowGeneratedCode === true,
+      });
       expect(received[1]?.input).not.toHaveProperty("method");
       const evidence: unknown = JSON.parse(await NodeFSP.readFile(output, "utf8"));
       expect(evidence).toMatchObject({

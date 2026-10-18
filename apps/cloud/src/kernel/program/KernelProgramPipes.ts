@@ -3,6 +3,7 @@ import { KernelPipe } from "../KernelPipe.ts";
 import { currentKernelIoMode, currentKernelSignal } from "../process/KernelExecution.ts";
 import {
   RIGHTS,
+  FDFLAGS,
   type WasiDescriptorSpec,
   type WasiStdio,
 } from "../wasi/internal_wasi_descriptors.ts";
@@ -101,8 +102,9 @@ function readEndpoint(
   signal?: AbortSignal,
 ): PollableStdio {
   return {
-    readInto: (target) =>
-      currentKernelIoMode() === "sync"
+    supportsNonblocking: true,
+    readInto: (target, flags) =>
+      (flags & FDFLAGS.NONBLOCK) !== 0 || currentKernelIoMode() === "sync"
         ? pipe.tryReadInto(target)
         : pipe.readInto(target, { signal: currentKernelSignal() ?? signal }),
     poll: (direction, requestedSignal) =>
@@ -112,8 +114,9 @@ function readEndpoint(
 
 function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): PollableStdio {
   return {
-    write: (source) =>
-      currentKernelIoMode() === "sync"
+    supportsNonblocking: true,
+    write: (source, flags) =>
+      (flags & FDFLAGS.NONBLOCK) !== 0 || currentKernelIoMode() === "sync"
         ? pipe.tryWrite(source)
         : pipe.write(source, { signal: currentKernelSignal() }),
     poll: (direction, signal) => pollPipe(pipe, wakes, direction, signal ?? currentKernelSignal()),

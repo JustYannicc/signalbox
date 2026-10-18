@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off - measure the workerd wall clock without adding runtime overhead.
 import { DurableObject } from "cloudflare:workers";
+import { codeGenerationBinding } from "./codeGeneration.ts";
 import { FACET_SOURCE } from "./facetSource.ts";
 import { JSPI_WASM } from "./wasmFixture.ts";
 import { probe } from "./generated/runtime.js";
@@ -8,6 +9,8 @@ import {
   DEFAULT_MODULE_TRANSPORT_LIMITS,
 } from "./moduleTransport.ts";
 import { ModuleUploadStore } from "./moduleUpload.ts";
+
+export { CodeGeneration } from "./codeGeneration.ts";
 
 interface ProbeInput {
   id: string;
@@ -20,6 +23,7 @@ interface ProbeInput {
   count?: number;
   generatedValue?: number;
   allowOutbound?: unknown;
+  allowGeneratedCode?: boolean;
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -168,7 +172,15 @@ export class ProbeSession extends DurableObject<Env> {
         if (input.generatedValue !== undefined && !Number.isSafeInteger(input.generatedValue)) {
           return new Response("Invalid generated value", { status: 400 });
         }
-        const worker = this.env.LOADER.get(upload ? `staged:${input.id}` : input.id, async () => {
+        const generatedCode = input.allowGeneratedCode === true;
+        const namespace = JSON.stringify([
+          this.ctx.id.toString(),
+          input.id,
+          input.mode ?? "facet",
+          input.entrypoint ?? null,
+        ]);
+        const fixtureId = generatedCode ? `code-generation-fixture:${namespace}` : input.id;
+        const worker = this.env.LOADER.get(upload ? `staged:${fixtureId}` : fixtureId, async () => {
           const modules =
             input.generatedValue !== undefined
               ? {
@@ -196,6 +208,9 @@ export class ProbeSession extends DurableObject<Env> {
             compatibilityFlags: ["nodejs_compat"],
             mainModule: input.mainModule ?? "main.js",
             modules: decodedModules,
+            ...(generatedCode
+              ? { env: { CODE_GENERATION: codeGenerationBinding(namespace) } }
+              : {}),
             ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
           };
         });
@@ -208,7 +223,7 @@ export class ProbeSession extends DurableObject<Env> {
           const stub =
             input.mode === "worker"
               ? worker.getEntrypoint(input.entrypoint)
-              : this.ctx.facets.get(input.id, () => ({
+              : this.ctx.facets.get(fixtureId, () => ({
                   class: worker.getDurableObjectClass(input.entrypoint ?? "ProbeFacet"),
                 }));
           const response = await stub.fetch(probeRequest);

@@ -1,0 +1,206 @@
+name: Codex wasm
+
+on:
+  pull_request:
+    paths:
+      - native/codex-wasm/**
+      - .github/workflows/codex-wasm.yml
+  push:
+    branches: [main]
+    paths:
+      - native/codex-wasm/**
+      - .github/workflows/codex-wasm.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-wasm-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  unit:
+    name: Wrapper and loader tests
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            native/codex-wasm
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Python unit tests
+        working-directory: native/codex-wasm
+        run: python3.11 -m unittest discover -p 'test_*.py'
+
+      - name: Loader JSPI tests
+        working-directory: native/codex-wasm
+        run: node --experimental-wasm-jspi --test loader.test.mjs
+
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wasm32-wasip1]
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: native/codex-wasm
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Read release pin
+        id: pin
+        run: |
+          python3.11 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          pin = json.load(open("native/codex-wasm/upstream.json"))
+          print("version=" + pin["version"])
+          print(f"artifact-subdir={pin['version']}-{pin['commit'][:12]}/{os.environ['TARGET']}/artifact")
+          PY
+
+      # Only bootstrap rustup. The wrapper owns the pinned, patched toolchains.
+      - name: Ensure rustup is available
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
+            sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup --version
+
+      # Rebuild generated sources, patched toolchains and Cargo targets each run.
+      - name: Cache wrapper downloads
+        uses: actions/cache@v6
+        with:
+          path: native/codex-wasm/.cache/downloads
+          key: codex-wasm-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('native/codex-wasm/upstream.json', 'native/codex-wasm/binaryen.py', 'native/codex-wasm/toolchain.py', 'native/codex-wasm/dependencies/**') }}
+
+      # build.py installs pinned Binaryen and inspects the real module with Node.
+      - name: Build real engine
+        id: engine
+        run: |
+          mkdir -p "$RUNNER_TEMP/codex-build"
+          python3.11 native/codex-wasm/build.py \
+            --target "$TARGET" \
+            --output "$RUNNER_TEMP/codex-build" \
+            2>&1 | tee "$RUNNER_TEMP/codex-build/build.log"
+
+      - name: Record CI result
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.engine.outcome }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/codex-build"
+          printf '{"target":"%s","buildOutcome":"%s"}\n' "$TARGET" "$BUILD_OUTCOME" \
+            > "$RUNNER_TEMP/codex-build/ci-result.json"
+
+      - name: Upload target artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-wasm-${{ steps.pin.outputs.version }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/codex-build/${{ steps.pin.outputs.artifact-subdir }}/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload build reports and log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-wasm-${{ steps.pin.outputs.version }}-${{ matrix.target }}-reports
+          path: |
+            ${{ runner.temp }}/codex-build/**/build-report.json
+            ${{ runner.temp }}/codex-build/**/cargo-graph.json
+            ${{ runner.temp }}/codex-build/build.log
+            ${{ runner.temp }}/codex-build/ci-result.json
+          if-no-files-found: error
+          retention-days: 7
+
+  local-proof:
+    name: Local workerd ${{ matrix.target }}
+    needs: build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wasm32-wasip1]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Setup cloud probe dependencies
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+
+      - name: Read release pin
+        id: pin
+        run: |
+          python3.11 -c 'import json; print("version=" + json.load(open("native/codex-wasm/upstream.json"))["version"])' >> "$GITHUB_OUTPUT"
+
+      - name: Download target artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: codex-wasm-${{ steps.pin.outputs.version }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/codex-artifact
+
+      - name: Prepare engine fixture
+        run: |
+          python3.11 native/codex-wasm/prepare_probe.py \
+            "$RUNNER_TEMP/codex-artifact" "$RUNNER_TEMP/codex-fixture"
+
+      # The shared runner verifies the real module and exits nonzero on failure.
+      - name: Run actual engine in workerd
+        run: |
+          node apps/cloud/infra/isolateProbe/measure.ts \
+            --fixture "$RUNNER_TEMP/codex-fixture" \
+            --output "$RUNNER_TEMP/codex-local-proof.json"
+
+      - name: Upload runtime proof
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-wasm-${{ steps.pin.outputs.version }}-${{ matrix.target }}-local-proof
+          path: ${{ runner.temp }}/codex-local-proof.json
+          if-no-files-found: error
+          retention-days: 7

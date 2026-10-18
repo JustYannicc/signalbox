@@ -1,4 +1,5 @@
 import type { KernelCapability, KernelHandle, KernelResult } from "../KernelAbi.ts";
+import type { KernelAsyncProgram } from "../KernelAsyncProgram.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
 import { AgentOsFileSystemHost } from "../AgentOsFileSystemHost.ts";
 import type { AgentOsSpawnRequest } from "../AgentOsProcessWire.ts";
@@ -22,7 +23,8 @@ export type KernelInlineProgram = (context: KernelInlineProgramContext) => numbe
 
 export type KernelProgramImplementation =
   | { readonly kind: "wasm"; readonly module: WebAssembly.Module }
-  | { readonly kind: "javascript"; readonly runInline: KernelInlineProgram };
+  | { readonly kind: "javascript"; readonly runInline: KernelInlineProgram }
+  | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] };
 
 export interface KernelProgramBinding {
   /** Exact manifest passed to KernelProgramRegistry.register by the owner. */
@@ -37,7 +39,8 @@ export interface KernelProgramBinding {
 }
 
 export interface KernelWasiRuntimeOptions {
-  readonly prepared: KernelPreparedProgram;
+  readonly prepared: Pick<KernelPreparedProgram, "filesystem">;
+  readonly descriptorOwnership?: "owned" | "borrowed";
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly asyncMode: boolean;
@@ -48,7 +51,7 @@ export interface KernelWasiRuntimeOptions {
   readonly spawn: (request: AgentOsSpawnRequest) => Promise<KernelResult<KernelHandle<"process">>>;
 }
 
-/** Binds one precompiled module to its owned descriptor table and exact imports. */
+/** Binds one precompiled module to its descriptor table and exact imports. */
 export function createKernelWasiRuntime(
   module: WebAssembly.Module,
   options: KernelWasiRuntimeOptions,
@@ -66,7 +69,10 @@ export function createKernelWasiRuntime(
       mounts: [],
     }),
     options.asyncMode,
-    { table: options.prepared.filesystem.descriptors, ownership: "owned" },
+    {
+      table: options.prepared.filesystem.descriptors,
+      ownership: options.descriptorOwnership ?? "owned",
+    },
   );
 
   const importObject = Object.create(null) as WebAssembly.Imports;
@@ -120,7 +126,7 @@ export function createKernelWasiRuntime(
 
 export function runInlineJavaScript(
   runInline: KernelInlineProgram,
-  prepared: KernelPreparedProgram,
+  prepared: Pick<KernelPreparedProgram, "filesystem" | "home">,
   args: readonly string[],
   env: Readonly<Record<string, string>>,
 ): number {
