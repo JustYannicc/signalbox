@@ -1,6 +1,8 @@
 import {
   type ProviderAuthCancelInput,
   type ProviderAuthCompleteInput,
+  type ProviderAuthLogoutInput,
+  type ProviderAuthRespondInput,
   type ProviderAuthStartInput,
   type ProviderAuthState,
   type ProviderInstanceId,
@@ -44,6 +46,7 @@ const VERIFY_POLL_MS = 250;
 const VERIFY_POLLS = 60;
 
 interface Login {
+  readonly userId: string;
   readonly flowId: string;
   readonly objectName: string;
   readonly state: string;
@@ -73,6 +76,14 @@ export class PoolSignIns extends Context.Service<
     readonly cancel: (
       actor: PoolActor,
       input: ProviderAuthCancelInput,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly respond: (
+      actor: PoolActor,
+      input: ProviderAuthRespondInput,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly logout: (
+      actor: PoolActor,
+      input: ProviderAuthLogoutInput,
     ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   }
 >()("@signalbox/cloud/user/PoolSignIns") {}
@@ -115,6 +126,33 @@ const make = Effect.gen(function* () {
     new ProviderSetupError({ instanceId, operation, detail });
 
   const reason = PoolDirectory.poolErrorMessage;
+
+  const poolCall = <A>(
+    instanceId: ProviderInstanceId,
+    operation: string,
+    effect: Effect.Effect<A, PoolDirectory.PoolObjectError | PoolRejectedError>,
+  ) =>
+    effect.pipe(
+      Effect.catch((error) =>
+        reason(error).pipe(Effect.flatMap((message) => setupError(instanceId, operation)(message))),
+      ),
+    );
+
+  const targetOf = (actor: PoolActor, instanceId: ProviderInstanceId, operation: string) =>
+    Effect.gen(function* () {
+      const fail = setupError(instanceId, operation);
+      const target = yield* pools
+        .poolOfInstance(actor, instanceId)
+        .pipe(Effect.mapError((error) => fail(error.detail)));
+      if (target === null) return yield* fail("That provider isn't one of your pools.");
+      const info = yield* poolCall(
+        instanceId,
+        operation,
+        directory.forPool(target.pool.objectName).info(actor),
+      );
+      if (info.role !== "admin") return yield* fail("Only a pool admin can manage sign-ins.");
+      return target;
+    });
 
   const markFinishing = (instanceId: ProviderInstanceId, login: Pick<Login, "flowId">) =>
     Effect.flatMap(stateOf(instanceId), (ref) =>
@@ -293,6 +331,7 @@ const make = Effect.gen(function* () {
           awaitLogin(actor, instanceId, pool, { flowId, state: login.state, handedBack }, ttlMs),
         );
         logins.set(instanceId, {
+          userId: actor.userId,
           flowId,
           objectName: target.pool.objectName,
           state: login.state,
@@ -306,9 +345,14 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const currentLogin = (instanceId: ProviderInstanceId, flowId: string, operation: string) => {
+  const currentLogin = (
+    actor: PoolActor,
+    instanceId: ProviderInstanceId,
+    flowId: string,
+    operation: string,
+  ) => {
     const login = logins.get(instanceId);
-    return login && login.flowId === flowId
+    return login && login.userId === actor.userId && login.flowId === flowId
       ? Effect.succeed(login)
       : Effect.fail(setupError(instanceId, operation)("This sign-in has ended. Start again."));
   };
@@ -329,6 +373,7 @@ const make = Effect.gen(function* () {
   const complete: PoolSignIns["Service"]["complete"] = (actor, input) =>
     Effect.gen(function* () {
       const { instanceId, flowId } = input;
+      yield* targetOf(actor, instanceId, "complete");
       const login = logins.get(instanceId);
       const ref = states.get(instanceId);
       // Handed back already (a second click, another device): that one finishes it.
@@ -339,7 +384,7 @@ const make = Effect.gen(function* () {
       ) {
         return handedBack;
       }
-      if (!login || login.flowId !== flowId || !ref) {
+      if (!login || login.userId !== actor.userId || login.flowId !== flowId || !ref) {
         return yield* setupError(instanceId, "complete")("This sign-in has ended. Start again.");
       }
       if (login.deviceCode) {
@@ -386,13 +431,66 @@ const make = Effect.gen(function* () {
   const cancel: PoolSignIns["Service"]["cancel"] = (actor, input) =>
     starting.withPermits(1)(
       Effect.gen(function* () {
-        yield* currentLogin(input.instanceId, input.flowId, "cancel");
+        yield* targetOf(actor, input.instanceId, "cancel");
+        yield* currentLogin(actor, input.instanceId, input.flowId, "cancel");
         const stopped = yield* stopLogin(actor, input.instanceId, "cancel");
         if (!stopped) return yield* SubscriptionRef.get(yield* stateOf(input.instanceId));
         return yield* update(input.instanceId, {
           phase: "cancelled",
           message: null,
           interaction: null,
+        });
+      }),
+    );
+
+  const respond: PoolSignIns["Service"]["respond"] = (actor, input) =>
+    starting.withPermits(1)(
+      Effect.gen(function* () {
+        const { instanceId, flowId, interactionId, response } = input;
+        const target = yield* targetOf(actor, instanceId, "respond");
+        const login = yield* currentLogin(actor, instanceId, flowId, "respond");
+        const state = yield* SubscriptionRef.get(yield* stateOf(instanceId));
+        if (
+          login.objectName !== target.pool.objectName ||
+          state.flowId !== flowId ||
+          state.phase !== "waiting" ||
+          state.interaction?.id !== interactionId ||
+          state.interaction.type !== response.type ||
+          response.type !== "browser"
+        ) {
+          return yield* setupError(
+            instanceId,
+            "respond",
+          )("This sign-in interaction is no longer available.");
+        }
+        // Consent happens on the provider's page. Accepting here never completes OAuth.
+        if (response.action === "accept") return state;
+        if (!(yield* stopLogin(actor, instanceId, "respond"))) {
+          return yield* SubscriptionRef.get(yield* stateOf(instanceId));
+        }
+        return yield* update(instanceId, { phase: "cancelled", message: null, interaction: null });
+      }),
+    );
+
+  const logout: PoolSignIns["Service"]["logout"] = (actor, input) =>
+    starting.withPermits(1)(
+      Effect.gen(function* () {
+        const { instanceId, accountId } = input;
+        const fail = setupError(instanceId, "logout");
+        const target = yield* targetOf(actor, instanceId, "logout");
+        if (accountId === undefined)
+          return yield* fail("Choose the account to sign out of this pool.");
+        if (logins.has(instanceId))
+          return yield* fail("Finish or cancel this sign-in before signing out.");
+        yield* poolCall(
+          instanceId,
+          "logout",
+          directory.forPool(target.pool.objectName).logoutAccount(actor, target.kind, accountId),
+        );
+        yield* pools.refresh(actor).pipe(Effect.mapError((error) => fail(error.detail)));
+        return yield* update(instanceId, {
+          ...idle(instanceId),
+          message: "Account signed out of this pool.",
         });
       }),
     );
@@ -412,6 +510,8 @@ const make = Effect.gen(function* () {
     start,
     complete,
     cancel,
+    respond,
+    logout,
   });
 });
 

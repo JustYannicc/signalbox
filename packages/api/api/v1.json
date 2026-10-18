@@ -1070,7 +1070,7 @@
       "name": "provider.auth.logout",
       "rpc": "provider.auth.logout",
       "access": "write",
-      "input": "096e33e2",
+      "input": "06f80587",
       "output": "f7a44f3d"
     },
     {
