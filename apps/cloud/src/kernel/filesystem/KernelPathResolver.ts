@@ -43,7 +43,9 @@ export function mountedStorageForTable(
 export class KernelPathResolver {
   readonly mounts: readonly WasiMountedStorage[];
   readonly #byPath: readonly WasiMountedStorage[];
-  readonly #resolver = new WasiPathResolver(complete);
+  readonly #resolver = new WasiPathResolver(complete, (mount, components) =>
+    this.#assertResolvedMount(mount, components),
+  );
   readonly #descriptors: WasiDescriptorTable;
   readonly #fallbackCwd: string;
   #cwdAnchor: WasiPathAnchor | undefined;

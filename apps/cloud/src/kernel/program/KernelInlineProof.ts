@@ -1,4 +1,9 @@
-import { ABI_VERSION, callKernel, KernelProgramRegistry } from "../KernelAbi.ts";
+import {
+  ABI_VERSION,
+  callKernel,
+  KernelProgramRegistry,
+  type ResolvedProgram,
+} from "../KernelAbi.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import { KernelProgramHost } from "../KernelProgramHost.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
@@ -90,6 +95,7 @@ export async function runKernelInlineProof(
         throw new Error(JSON.stringify({ cancellation, calls }));
       }
       host.reap(child.value);
+      const callbackCancellation = await cancelledWrite(host, filesystem, resolved.value);
       if (host.processes.size !== 0 || wakes.size !== 0)
         throw new Error("Inline process or wake leaked");
       return {
@@ -97,6 +103,7 @@ export async function runKernelInlineProof(
         stderr,
         exitCode: status.value.exitCode,
         cancellation: cancellation.error.code,
+        callbackCancellation,
       };
     } finally {
       await cancelled.release();
@@ -104,6 +111,49 @@ export async function runKernelInlineProof(
   } finally {
     await piped.prepared.release();
     await host.processes.dispose();
+  }
+}
+
+async function cancelledWrite(
+  host: KernelProgramHost,
+  filesystem: KernelFileSystem,
+  program: ResolvedProgram,
+) {
+  const controller = new AbortController();
+  const prepared = host.prepare(
+    { filesystem, signal: controller.signal },
+    {
+      stdio: [
+        {
+          readInto: (target) => {
+            target[0] = 1;
+            return 1;
+          },
+        },
+        {
+          write() {
+            controller.abort();
+            throw Object.assign(new Error("Output cancelled"), { code: "ECANCELED" });
+          },
+        },
+        {},
+      ],
+    },
+  );
+  try {
+    const spawned = callKernel(host.backend(prepared), "process.spawn", {
+      program,
+      args: [],
+      env: {},
+    });
+    if (spawned.status !== "ok") throw new Error("Callback cancellation admission failed");
+    const result = await host.exitStatus(spawned.value);
+    if (result.status !== "error" || result.error.code !== "CANCELLED")
+      throw new Error(JSON.stringify(result));
+    host.reap(spawned.value);
+    return result.error.code;
+  } finally {
+    await prepared.release();
   }
 }
 

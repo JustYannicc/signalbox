@@ -21,5 +21,11 @@
     "src/node/wasi.ts": "abd4dbcc2e04a3c1b2bef2fdf5f91c5c43bbe4cf22b4ffbeac596143877057ce"
   },
   "deltaSha256": "6212dc7cf19a53dc66d47186462a115505ac20a4c2b93da08e01ddeaf0d378ad",
-  "v3ToV4DeltaSha256": "8b397753ed562cbaf742e35ef81ea528071fe27458a01449936883d9c056d13d"
+  "v3ToV4DeltaSha256": "8b397753ed562cbaf742e35ef81ea528071fe27458a01449936883d9c056d13d",
+  "portableAdaptations": [
+    {
+      "file": "internal_wasi_paths.ts",
+      "reason": "Optional internal per-component guard lets the Node personality enforce configured mount masking before intermediate symlink traversal. Public WASI behavior and Storage contract are unchanged."
+    }
+  ]
 }

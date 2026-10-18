@@ -10,6 +10,55 @@ const now = () => 1_800_000_000_000_000_001n;
 const bytes = (text: string) => new TextEncoder().encode(text);
 
 describe("KernelFileSystem compatibility", () => {
+  it("rejects intermediate symlinks through a hidden mount before they can escape and mutate", () => {
+    const rootFixture = sqliteFixture();
+    const childFixture = sqliteFixture();
+    const rootStorage = createFacetSqliteStorage(rootFixture.storage, now);
+    const childStorage = createFacetSqliteStorage(childFixture.storage, now);
+    const setup = new KernelFileSystem({ mounts: [{ path: "/", storage: rootStorage }] });
+    setup.mkdir("/m");
+    setup.mkdir("/outside");
+    const target = setup.open(
+      "/outside/target",
+      KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY,
+    );
+    setup.write(target, bytes("preserved"), null);
+    setup.close(target);
+    setup.symlink("/outside", "/m/jump");
+    setup.symlink("/m/jump", "/shortcut");
+    setup.dispose();
+    const filesystem = new KernelFileSystem({
+      mounts: [
+        { path: "/", storage: rootStorage },
+        { path: "/m", storage: childStorage, readOnly: true },
+      ],
+    });
+    try {
+      expect(() =>
+        filesystem.open("/m/jump/target", KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC),
+      ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+      expect(() =>
+        filesystem.open("/shortcut/target", KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC),
+      ).toThrow(expect.objectContaining({ code: "ENOTCAPABLE" }));
+      expect(() =>
+        filesystem.open("shortcut/new", KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_CREAT),
+      ).toThrow(expect.objectContaining({ code: "ENOTCAPABLE" }));
+      expect(() => filesystem.unlink("/shortcut/target")).toThrow(
+        expect.objectContaining({ code: "ENOTCAPABLE" }),
+      );
+      const fd = filesystem.open("/outside/target", KernelOpenFlags.O_RDONLY);
+      const output = new Uint8Array(16);
+      const count = filesystem.read(fd, output, null);
+      expect(new TextDecoder().decode(output.subarray(0, count))).toBe("preserved");
+      filesystem.close(fd);
+      expect(filesystem.readdir("/outside")).toEqual(["target"]);
+    } finally {
+      filesystem.dispose();
+      rootFixture.close();
+      childFixture.close();
+    }
+  });
+
   it("routes a relative path into the mounted filesystem instead of a hidden parent entry", () => {
     const rootFixture = sqliteFixture();
     const mountedFixture = sqliteFixture();

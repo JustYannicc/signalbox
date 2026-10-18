@@ -274,12 +274,17 @@ export class KernelProgramSpawner {
     if (implementation.kind === "javascript") {
       const completion = Promise.resolve().then(() => {
         if (controller.signal.aborted) return terminatedStatus(sentSignal);
-        const exitCode = runKernelInlineExecution(controller.signal, () =>
-          runInlineJavaScript(implementation.runInline, prepared, args, env),
-        );
-        return controller.signal.aborted
-          ? terminatedStatus(sentSignal)
-          : { exitCode, signal: 0, coreDumped: false };
+        try {
+          const exitCode = runKernelInlineExecution(controller.signal, () =>
+            runInlineJavaScript(implementation.runInline, prepared, args, env),
+          );
+          return controller.signal.aborted
+            ? terminatedStatus(sentSignal)
+            : { exitCode, signal: 0, coreDumped: false };
+        } catch (error) {
+          if (controller.signal.aborted) return terminatedStatus(sentSignal);
+          throw error;
+        }
       });
       return { process: { completion, signal } };
     }

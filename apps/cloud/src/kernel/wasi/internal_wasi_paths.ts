@@ -82,9 +82,17 @@ export function normalizeMounts(mounts: Mount<WasiStorage>[]): WasiMountedStorag
 
 export class WasiPathResolver {
   readonly #complete: typeof complete;
+  // signalbox: personality mount overlays must reject hidden entries before traversal.
+  readonly #checkPath:
+    | ((mount: WasiMountedStorage, components: readonly string[]) => void)
+    | undefined;
 
-  constructor(completeCall: typeof complete) {
+  constructor(
+    completeCall: typeof complete,
+    checkPath?: (mount: WasiMountedStorage, components: readonly string[]) => void,
+  ) {
     this.#complete = completeCall;
+    this.#checkPath = checkPath;
   }
 
   /** Validates the recorded parent chain and returns its current names. */
@@ -98,6 +106,7 @@ export class WasiPathResolver {
       throw new WasiError(EINVAL);
     }
     const pathComponents: string[] = [];
+    this.#checkPath?.(mount, pathComponents);
     for (let index = 1; index < ancestors.length; index++) {
       const parent = ancestors[index - 1];
       const child = ancestors[index];
@@ -119,6 +128,7 @@ export class WasiPathResolver {
       // cannot be used to reconstruct a path inside this capability.
       if (entry === undefined) throw new WasiError(ESTALE);
       pathComponents.push(entry.name);
+      this.#checkPath?.(mount, pathComponents);
     }
     return { mount, inode, ancestors: [...ancestors], pathComponents };
   }
@@ -176,6 +186,7 @@ export class WasiPathResolver {
       if (parentStat.type !== "directory") throw new WasiError(ENOTDIR);
 
       const isLast = index === pending.length;
+      this.#checkPath?.(base.mount, [...pathComponents, name]);
       let inode: Inode;
       try {
         inode = yield* this.#complete(base.mount.storage.lookup(current, name));
@@ -266,6 +277,7 @@ export class WasiPathResolver {
     const parentPath = segments.join("/");
     const resolved = yield* this.resolve(base, parentPath || ".", true);
     if (resolved.stat.type !== "directory") throw new WasiError(ENOTDIR);
+    this.#checkPath?.(base.mount, [...resolved.pathComponents, name]);
     return {
       mount: base.mount,
       parent: resolved.inode,
