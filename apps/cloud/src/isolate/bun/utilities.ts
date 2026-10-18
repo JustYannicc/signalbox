@@ -29,7 +29,12 @@ export const bunUtilities = {
     },
   },
   deepEquals,
-  semver: { order: Semver.compare, satisfies: Semver.satisfies },
+  semver: {
+    // Bun accepts leading zeroes in version components, which npm-semver rejects by default.
+    order: (left: string, right: string) => Semver.compare(left, right, { loose: true }),
+    satisfies: (version: string, range: string) =>
+      Semver.satisfies(version, range, { loose: true }),
+  },
   YAML: {
     parse: Yaml.parse,
     stringify(value: unknown, replacer: null = null, space = 2) {

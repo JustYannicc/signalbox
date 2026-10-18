@@ -1,6 +1,7 @@
-// Wyhash follows Bun's final4 implementation in src/wyhash/lib.rs (MIT).
-// XXH64 follows the reference algorithm used by Bun's src/hash/xxhash.rs and
-// src/jsc/bindings/xxhash3.cpp (Bun MIT; xxHash reference code is BSD-2-Clause).
+// Wyhash is adapted from Bun 25ef6936's src/wyhash/lib.rs, declared MIT in its LICENSE.md.
+// Bun cites Wang Yi's public-domain wyhash 77e50f2 as the reference for final4.
+// XXH64 is adapted from Bun's scalar xxhash3.cpp and xxHash v0.8.2.
+// Copyright (c) 2012-2021 Yann Collet. BSD-2-Clause; see LICENSE.xxhash.
 
 export type BunHashInput = string | ArrayBuffer | ArrayBufferView;
 export type BunHashSeed = number | bigint;
@@ -223,7 +224,3 @@ export const bunHash: BunHashFunction = Object.assign(wyhashMethod, {
   crc32: crc32Method,
   xxHash64: xxHash64Method,
 });
-
-export function createBunHash(): BunHashFunction {
-  return bunHash;
-}

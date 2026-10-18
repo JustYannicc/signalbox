@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { createBunHash, toBytes } from "../bun/hashes.ts";
+import { createBunShim } from "../BunShim.ts";
 
 // Captured from the Bun 1.4.3 oracle. Input byte i is (i * 191 + 17) & 0xff.
 const VECTORS = [
@@ -39,9 +39,17 @@ const VECTORS = [
 const makeInput = (length: number) =>
   Uint8Array.from({ length }, (_, index) => (index * 191 + 17) & 0xff);
 
+const bun = () =>
+  createBunShim({
+    env: {},
+    main: "/test",
+    version: "1.4.3",
+    onMissing: () => {},
+  }).bun;
+
 describe("Bun hash compatibility", () => {
   it("matches Bun's wyhash, crc32, and xxHash64 vectors across length and seed boundaries", () => {
-    const hash = createBunHash();
+    const hash = bun().hash;
 
     for (const [length, seed, expectedWyhash, expectedCrc32, expectedXxHash64] of VECTORS) {
       const input = makeInput(length);
@@ -53,7 +61,7 @@ describe("Bun hash compatibility", () => {
   });
 
   it("hashes strings as UTF-8 and preserves byte-view offsets", () => {
-    const hash = createBunHash();
+    const hash = bun().hash;
     const input = "Aé😀𝌆\u0000ñ";
     const encoded = new TextEncoder().encode(input);
     const padded = new Uint8Array(encoded.length + 4);
@@ -67,7 +75,6 @@ describe("Bun hash compatibility", () => {
     expect(hash.xxHash64(input)).toBe(0x80b6ce9891ad989dn);
     expect(hash.xxHash64(input, 123n)).toBe(0x595f5372870406b3n);
 
-    expect(toBytes(view)).toEqual(encoded);
     expect(hash(view)).toBe(hash(encoded));
     expect(hash(new Uint8Array(padded.buffer, 2, encoded.length))).toBe(hash(encoded));
     expect(hash(encoded.buffer)).toBe(hash(encoded));

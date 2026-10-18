@@ -12,14 +12,24 @@ type ValueScan =
   | { status: "incomplete"; end?: number }
   | { status: "invalid" };
 
+type ContainerFrame =
+  | { kind: "object"; state: "keyOrEnd" | "key" | "colon" | "value" | "separator" }
+  | { kind: "array"; state: "valueOrEnd" | "value" | "separator" };
+
 interface InputWindow {
   text: string;
   readAt(characterOffset: number): number;
   initialRead: number;
 }
 
-const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+
+function utf8ByteLength(codePoint: number): number {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+}
 
 function clampOffset(value: number | undefined, fallback: number, length: number): number {
   if (value === undefined || Number.isNaN(value)) return fallback;
@@ -72,11 +82,19 @@ function inputWindow(input: BunJsonlInput, start?: number, end?: number): InputW
     initialRead += 3;
   }
   const text = textDecoder.decode(content);
+  let mappedCharacterOffset = 0;
+  let mappedByteOffset = initialRead;
   return {
     text,
     initialRead,
-    readAt: (characterOffset) =>
-      initialRead + textEncoder.encode(text.slice(0, characterOffset)).byteLength,
+    readAt(characterOffset) {
+      while (mappedCharacterOffset < characterOffset) {
+        const codePoint = text.codePointAt(mappedCharacterOffset)!;
+        mappedByteOffset += utf8ByteLength(codePoint);
+        mappedCharacterOffset += codePoint > 0xffff ? 2 : 1;
+      }
+      return mappedByteOffset;
+    },
   };
 }
 
@@ -118,21 +136,95 @@ function scanString(text: string, start: number): ValueScan {
 }
 
 function scanContainer(text: string, start: number): ValueScan {
-  const closes = [text[start] === "{" ? "}" : "]"];
-  for (let offset = start + 1; offset < text.length; offset++) {
+  const first = text[start]!;
+  const frames: ContainerFrame[] = [
+    first === "{" ? { kind: "object", state: "keyOrEnd" } : { kind: "array", state: "valueOrEnd" },
+  ];
+  let offset = start + 1;
+
+  while (frames.length > 0) {
+    offset = skipWhitespace(text, offset).offset;
+    if (offset === text.length) return { status: "incomplete" };
+
     const character = text[offset]!;
-    if (character === '"') {
-      const string = scanString(text, offset);
-      if (string.status !== "value") return string;
-      offset = string.end - 1;
-    } else if (character === "{" || character === "[") {
-      closes.push(character === "{" ? "}" : "]");
-    } else if (character === "}" || character === "]") {
-      if (closes.pop() !== character) return { status: "invalid" };
-      if (closes.length === 0) return { status: "value", end: offset + 1 };
+    const frame = frames[frames.length - 1]!;
+    if (frame.kind === "object") {
+      if (frame.state === "keyOrEnd" || frame.state === "key") {
+        if (frame.state === "keyOrEnd" && character === "}") {
+          offset++;
+          frames.pop();
+          if (frames.length === 0) return { status: "value", end: offset };
+          continue;
+        }
+        if (character !== '"') return { status: "invalid" };
+        const key = scanString(text, offset);
+        if (key.status !== "value") return key;
+        offset = key.end;
+        frame.state = "colon";
+        continue;
+      }
+
+      if (frame.state === "colon") {
+        if (character !== ":") return { status: "invalid" };
+        frame.state = "value";
+        offset++;
+        continue;
+      }
+
+      if (frame.state === "separator") {
+        if (character === "}") {
+          offset++;
+          frames.pop();
+          if (frames.length === 0) return { status: "value", end: offset };
+          continue;
+        }
+        if (character !== ",") return { status: "invalid" };
+        frame.state = "key";
+        offset++;
+        continue;
+      }
+
+      frame.state = "separator";
+    } else {
+      if (frame.state === "valueOrEnd" && character === "]") {
+        offset++;
+        frames.pop();
+        if (frames.length === 0) return { status: "value", end: offset };
+        continue;
+      }
+
+      if (frame.state === "separator") {
+        if (character === "]") {
+          offset++;
+          frames.pop();
+          if (frames.length === 0) return { status: "value", end: offset };
+          continue;
+        }
+        if (character !== ",") return { status: "invalid" };
+        frame.state = "value";
+        offset++;
+        continue;
+      }
+
+      frame.state = "separator";
     }
+
+    if (character === "{" || character === "[") {
+      frames.push(
+        character === "{"
+          ? { kind: "object", state: "keyOrEnd" }
+          : { kind: "array", state: "valueOrEnd" },
+      );
+      offset++;
+      continue;
+    }
+
+    const value = character === '"' ? scanString(text, offset) : scanPrimitive(text, offset, true);
+    if (value.status !== "value") return value;
+    offset = value.end;
   }
-  return { status: "incomplete" };
+
+  return { status: "invalid" };
 }
 
 function isIncompletePrimitive(token: string): boolean {
@@ -148,13 +240,13 @@ function isIncompletePrimitive(token: string): boolean {
   return token.length === 1 && !/[0-9]/.test(token);
 }
 
-function scanValue(text: string, start: number): ValueScan {
-  const first = text[start]!;
-  if (first === '"') return scanString(text, start);
-  if (first === "{" || first === "[") return scanContainer(text, start);
-
+function scanPrimitive(text: string, start: number, inContainer = false): ValueScan {
   let end = start;
-  while (end < text.length && !isWhitespace(text[end]!)) end++;
+  while (end < text.length && !isWhitespace(text[end]!)) {
+    if (inContainer && ",]}".includes(text[end]!)) break;
+    end++;
+  }
+  if (end === start) return { status: "invalid" };
   const token = text.slice(start, end);
   try {
     JSON.parse(token);
@@ -166,9 +258,11 @@ function scanValue(text: string, start: number): ValueScan {
   }
 }
 
-function hasIncompleteContainerTail(value: string): boolean {
-  const body = value.slice(0, -1).trimEnd();
-  return body.endsWith(",") || body.endsWith(":");
+function scanValue(text: string, start: number): ValueScan {
+  const first = text[start]!;
+  if (first === '"') return scanString(text, start);
+  if (first === "{" || first === "[") return scanContainer(text, start);
+  return scanPrimitive(text, start);
 }
 
 function syntaxError(): SyntaxError {
@@ -195,10 +289,6 @@ function parseChunk(input: BunJsonlInput, start?: number, end?: number): BunJson
     try {
       value = JSON.parse(raw);
     } catch {
-      const tail = skipWhitespace(text, scanned.end);
-      if (tail.offset === text.length && !tail.lineFeed && hasIncompleteContainerTail(raw)) {
-        return { values, read, done: false, error: null };
-      }
       return { values, read, done: false, error: syntaxError() };
     }
 

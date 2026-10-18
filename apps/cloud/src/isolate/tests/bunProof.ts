@@ -1,7 +1,13 @@
 import * as NodeBuffer from "node:buffer";
 
-import { BunCapabilityUnavailable, createBunShim, installBunShim } from "../BunShim.ts";
-import type { BunFileHost, BunFileTarget } from "../bun/files.ts";
+import {
+  BunCapabilityUnavailable,
+  createBunShim,
+  installBunShim,
+  type BunFileHost,
+  type BunFileTarget,
+  type BunShimHost,
+} from "../BunShim.ts";
 
 export function memoryFileHost(): BunFileHost {
   const files = new Map<BunFileTarget, Uint8Array>();
@@ -27,6 +33,7 @@ export function memoryFileHost(): BunFileHost {
 
 export async function runBunShimProof(files = memoryFileHost()) {
   const checks: string[] = [];
+  const missingMembers: string[] = [];
   function check(name: string, actual: unknown, expected: unknown) {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(
@@ -42,15 +49,15 @@ export async function runBunShimProof(files = memoryFileHost()) {
     main: "/claude/cli",
     version: "1.4.3",
     files,
+    onMissing: (name: string) => {
+      missingMembers.push(name);
+    },
     stdin: new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("input ✓"));
         controller.close();
       },
     }),
-    onMissing: (name: string) => {
-      events.push(name);
-    },
     which: (command: string) => (command === "bash" ? "/bin/bash" : null),
     spawn: (command: readonly string[]) => {
       events.push(command.join(" "));
@@ -80,7 +87,7 @@ export async function runBunShimProof(files = memoryFileHost()) {
         },
       };
     },
-  };
+  } satisfies BunShimHost;
   const shim = createBunShim(host);
   const bun = shim.bun;
   check("wyhash", bun.hash("Aé😀𝌆\u0000ñ").toString(16), "1f60eb7e59a9a399");
@@ -96,6 +103,11 @@ export async function runBunShimProof(files = memoryFileHost()) {
     "semver",
     [bun.semver.order("1.2.3", "1.2.4"), bun.semver.satisfies("2.3.4", "^2.0.0")],
     [-1, true],
+  );
+  check(
+    "semver-leading-zeroes",
+    [bun.semver.order("01.2.3", "1.2.3"), bun.semver.satisfies("01.2.3", ">=1.0.0")],
+    [0, true],
   );
   check("yaml", bun.YAML.parse("items:\n  - name: test\n"), { items: [{ name: "test" }] });
   check("yaml-roundtrip", bun.YAML.parse(bun.YAML.stringify({ answer: 42 }, null, 2)), {
@@ -119,6 +131,19 @@ export async function runBunShimProof(files = memoryFileHost()) {
       bun.deepEquals({ a: undefined }, {}, true),
     ],
     [true, true, false],
+  );
+  class Entry {
+    value = 1;
+  }
+  check(
+    "strict-equality-prototypes",
+    [bun.deepEquals(new Entry(), { value: 1 }), bun.deepEquals(new Entry(), { value: 1 }, true)],
+    [true, false],
+  );
+  check(
+    "jsonl-corrupt-prefix",
+    bun.JSONL.parseChunk('{bad\n{"ok":1}\n').error instanceof SyntaxError,
+    true,
   );
   check("ansi-width", bun.stringWidth("\u001b[31m中e\u0301😀\u001b[39m"), 5);
   check("ansi-strip", bun.stripANSI("\u001b[31mred\u001b[39m"), "red");
@@ -163,7 +188,7 @@ export async function runBunShimProof(files = memoryFileHost()) {
   void reads.futureApi;
   void bun.ant.getPeerPid;
   check("unknown-inventory", shim.missingMembers, ["ant.getPeerPid", "futureApi"]);
-  check("unknown-once", events.slice(-2), ["futureApi", "ant.getPeerPid"]);
+  check("unknown-once", missingMembers, ["futureApi", "ant.getPeerPid"]);
   try {
     bun.sleepSync();
     throw new Error("sleepSync unexpectedly returned");

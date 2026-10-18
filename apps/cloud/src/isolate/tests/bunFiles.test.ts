@@ -1,11 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
-  createBunFiles,
+  createBunShim,
   type BunFileHost,
   type BunFileStat,
   type BunFileTarget,
-} from "../bun/files.ts";
+} from "../BunShim.ts";
 
 type Entry = { readonly kind: "file"; bytes: Uint8Array } | { readonly kind: "directory" };
 
@@ -60,11 +60,21 @@ function makeHost(initial: ReadonlyArray<readonly [BunFileTarget, Entry]> = []) 
 const emptyInput = () =>
   new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
 
+const bun = (files: BunFileHost, stdin = emptyInput()) =>
+  createBunShim({
+    env: {},
+    main: "/test",
+    version: "1.4.3",
+    files,
+    stdin,
+    onMissing: () => {},
+  }).bun;
+
 describe("Bun file compatibility", () => {
   it("keeps file creation lazy and reads current contents on each operation", async () => {
     const store = makeHost([["notes.txt", { kind: "file", bytes: encoder.encode("first") }]]);
-    const files = createBunFiles(store.host, emptyInput());
-    const note = files.file("notes.txt");
+    const shim = bun(store.host);
+    const note = shim.file("notes.txt");
 
     expect(store.reads).toEqual([]);
     expect(store.stats).toEqual([]);
@@ -77,8 +87,7 @@ describe("Bun file compatibility", () => {
   });
 
   it("returns zero size and false exists for missing paths while reads retain the filesystem error", async () => {
-    const files = createBunFiles(makeHost().host, emptyInput());
-    const missing = files.file("missing.txt");
+    const missing = bun(makeHost().host).file("missing.txt");
 
     expect(missing.size).toBe(0);
     expect(await missing.exists()).toBe(false);
@@ -88,7 +97,7 @@ describe("Bun file compatibility", () => {
   it("does not hide real filesystem errors from size or exists", async () => {
     const store = makeHost();
     store.failures.set("private.txt", accessDenied);
-    const privateFile = createBunFiles(store.host, emptyInput()).file("private.txt");
+    const privateFile = bun(store.host).file("private.txt");
 
     expect(() => privateFile.size).toThrow(accessDenied);
     await expect(privateFile.exists()).rejects.toBe(accessDenied);
@@ -96,7 +105,7 @@ describe("Bun file compatibility", () => {
 
   it("reports directories as not existing files", async () => {
     const store = makeHost([["folder", { kind: "directory" }]]);
-    const folder = createBunFiles(store.host, emptyInput()).file("folder");
+    const folder = bun(store.host).file("folder");
 
     expect(folder.size).toBe(0);
     expect(await folder.exists()).toBe(false);
@@ -104,14 +113,14 @@ describe("Bun file compatibility", () => {
 
   it("writes only the selected view bytes and returns their byte count", async () => {
     const store = makeHost();
-    const files = createBunFiles(store.host, emptyInput());
+    const shim = bun(store.host);
     const padded = Uint8Array.from([0xff, 0x61, 0x62, 0xee]);
 
-    expect(await files.write("slice.bin", padded.subarray(1, 3))).toBe(2);
+    expect(await shim.write("slice.bin", padded.subarray(1, 3))).toBe(2);
     expect([...(store.entries.get("slice.bin") as Extract<Entry, { kind: "file" }>).bytes]).toEqual(
       [0x61, 0x62],
     );
-    expect(await files.write("view.bin", new DataView(padded.buffer, 2, 1))).toBe(1);
+    expect(await shim.write("view.bin", new DataView(padded.buffer, 2, 1))).toBe(1);
     expect([...(store.entries.get("view.bin") as Extract<Entry, { kind: "file" }>).bytes]).toEqual([
       0x62,
     ]);
@@ -121,15 +130,15 @@ describe("Bun file compatibility", () => {
     const store = makeHost([
       ["source.txt", { kind: "file", bytes: encoder.encode("file source") }],
     ]);
-    const files = createBunFiles(store.host, emptyInput());
+    const shim = bun(store.host);
 
-    expect(await files.write("string.txt", "snowman ☃")).toBe(encoder.encode("snowman ☃").length);
+    expect(await shim.write("string.txt", "snowman ☃")).toBe(encoder.encode("snowman ☃").length);
     expect((store.entries.get("string.txt") as Extract<Entry, { kind: "file" }>).bytes).toEqual(
       encoder.encode("snowman ☃"),
     );
-    expect(await files.write("blob.txt", new Blob(["blob"]))).toBe(4);
-    expect(await files.write("response.txt", new Response("response"))).toBe(8);
-    expect(await files.write("file.txt", files.file("source.txt"))).toBe(11);
+    expect(await shim.write("blob.txt", new Blob(["blob"]))).toBe(4);
+    expect(await shim.write("response.txt", new Response("response"))).toBe(8);
+    expect(await shim.write("file.txt", shim.file("source.txt"))).toBe(11);
   });
 
   it("accepts file URLs and file descriptors through the injected host", async () => {
@@ -137,9 +146,9 @@ describe("Bun file compatibility", () => {
       ["/data/hello world.txt", { kind: "file", bytes: encoder.encode("url") }],
       [7, { kind: "file", bytes: encoder.encode("descriptor") }],
     ]);
-    const files = createBunFiles(store.host, emptyInput());
-    const fromUrl = files.file(new URL("file:///data/hello%20world.txt"));
-    const fromFd = files.file(7);
+    const shim = bun(store.host);
+    const fromUrl = shim.file(new URL("file:///data/hello%20world.txt"));
+    const fromFd = shim.file(7);
 
     expect(fromUrl.name).toBe("/data/hello world.txt");
     expect(await fromUrl.text()).toBe("url");
@@ -150,7 +159,7 @@ describe("Bun file compatibility", () => {
 
   it("does not read a file stream until consumed and rejects failed reads through the stream", async () => {
     const store = makeHost([["stream.txt", { kind: "file", bytes: encoder.encode("streamed") }]]);
-    const file = createBunFiles(store.host, emptyInput()).file("stream.txt");
+    const file = bun(store.host).file("stream.txt");
     const stream = file.stream();
 
     expect(store.reads).toEqual([]);
@@ -160,10 +169,7 @@ describe("Bun file compatibility", () => {
 
     const failed = makeHost();
     failed.failures.set("bad.txt", accessDenied);
-    const failedReader = createBunFiles(failed.host, emptyInput())
-      .file("bad.txt")
-      .stream()
-      .getReader();
+    const failedReader = bun(failed.host).file("bad.txt").stream().getReader();
     await expect(failedReader.read()).rejects.toBe(accessDenied);
   });
 
@@ -176,7 +182,7 @@ describe("Bun file compatibility", () => {
         controller.close();
       },
     });
-    const stdin = createBunFiles(makeHost().host, source).stdin;
+    const stdin = bun(makeHost().host, source).stdin;
 
     expect(stdin.stream()).toBe(source);
     expect(await stdin.text()).toBe("☃");

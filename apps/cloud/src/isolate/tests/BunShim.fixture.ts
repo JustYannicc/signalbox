@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 import { runBunShimProof } from "./bunProof.ts";
-import type { BunFileHost, BunFileTarget } from "../bun/files.ts";
+import type { BunFileHost, BunFileTarget } from "../BunShim.ts";
 
 export class BunShimProof extends DurableObject {
   override async fetch(request: Request) {

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - build the workerd fixture through the pinned Wrangler CLI.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
@@ -15,9 +15,9 @@ const wrangler = NodePath.join(
   NodePath.dirname(require.resolve("wrangler/package.json")),
   "bin/wrangler.js",
 );
-await NodeFS.mkdir(directory, { recursive: true });
+await NodeFSP.mkdir(directory, { recursive: true });
 const config = NodePath.join(directory, "wrangler.json");
-await NodeFS.writeFile(
+await NodeFSP.writeFile(
   config,
   JSON.stringify(
     {
@@ -39,7 +39,7 @@ const result = NodeChildProcess.spawnSync(
 );
 if (result.error) throw result.error;
 if (result.status !== 0) throw new Error(`Wrangler dry run failed with status ${result.status}`);
-await NodeFS.writeFile(
+await NodeFSP.writeFile(
   NodePath.join(directory, "manifest.json"),
   JSON.stringify(
     {

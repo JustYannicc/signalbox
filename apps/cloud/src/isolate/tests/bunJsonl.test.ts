@@ -1,16 +1,23 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { bunJsonl } from "../bun/jsonl.ts";
+import { createBunShim } from "../BunShim.ts";
+
+const JSONL = createBunShim({
+  env: {},
+  main: "/test",
+  version: "1.4.3",
+  onMissing: () => {},
+}).bun.JSONL;
 
 describe("Bun.JSONL compatibility", () => {
   it("parses pretty-printed values and newline-separated records", () => {
-    expect(bunJsonl.parse('{\n  "a": 1\n}\n\n{"b":2}\n')).toEqual([{ a: 1 }, { b: 2 }]);
+    expect(JSONL.parse('{\n  "a": 1\n}\n\n{"b":2}\n')).toEqual([{ a: 1 }, { b: 2 }]);
   });
 
   it("reports string character offsets and byte offsets within selected windows", () => {
     const input = 'prefix\n{"é":"😀"}\n{"n":2}\nignore';
     const stringEnd = input.indexOf("\nignore") + 1;
-    const stringResult = bunJsonl.parseChunk(input, 7, stringEnd);
+    const stringResult = JSONL.parseChunk(input, 7, stringEnd);
     expect(stringResult).toEqual({
       values: [{ é: "😀" }, { n: 2 }],
       read: stringEnd - 1,
@@ -27,7 +34,7 @@ describe("Bun.JSONL compatibility", () => {
     const byteEnd = new TextEncoder().encode(input.slice(0, stringEnd)).byteLength;
 
     for (const bytes of [view, new DataView(view.buffer, view.byteOffset, view.byteLength)]) {
-      expect(bunJsonl.parseChunk(bytes, 7, byteEnd)).toEqual({
+      expect(JSONL.parseChunk(bytes, 7, byteEnd)).toEqual({
         values: [{ é: "😀" }, { n: 2 }],
         read: byteEnd - 1,
         done: true,
@@ -36,27 +43,27 @@ describe("Bun.JSONL compatibility", () => {
     }
 
     const arrayBuffer = new TextEncoder().encode('{"a":1}\n').buffer;
-    expect(bunJsonl.parse(arrayBuffer)).toEqual([{ a: 1 }]);
+    expect(JSONL.parse(arrayBuffer)).toEqual([{ a: 1 }]);
   });
 
   it("keeps valid values and the read offset before an incomplete trailing value", () => {
-    const result = bunJsonl.parseChunk('{"a":1}\n{"b":');
+    const result = JSONL.parseChunk('{"a":1}\n{"b":');
     expect(result.values).toEqual([{ a: 1 }]);
     expect(result.read).toBe(7);
     expect(result.done).toBe(false);
     expect(result.error).toBeNull();
-    expect(bunJsonl.parse('{"a":1}\n{"b":')).toEqual([{ a: 1 }]);
+    expect(JSONL.parse('{"a":1}\n{"b":')).toEqual([{ a: 1 }]);
   });
 
   it("retains a valid prefix on a malformed record and throws only without one", () => {
-    const result = bunJsonl.parseChunk('{"a":1}\n{bad}\n');
+    const result = JSONL.parseChunk('{"a":1}\n{bad}\n');
     expect(result.values).toEqual([{ a: 1 }]);
     expect(result.read).toBe(7);
     expect(result.done).toBe(false);
     expect(result.error).toBeInstanceOf(SyntaxError);
     expect(result.error?.message).toBe("Failed to parse JSONL");
 
-    expect(bunJsonl.parse('{"a":1}\n{bad}\n')).toEqual([{ a: 1 }]);
-    expect(() => bunJsonl.parse("{bad}\n")).toThrow(SyntaxError);
+    expect(JSONL.parse('{"a":1}\n{bad}\n')).toEqual([{ a: 1 }]);
+    expect(() => JSONL.parse("{bad}\n")).toThrow(SyntaxError);
   });
 });
