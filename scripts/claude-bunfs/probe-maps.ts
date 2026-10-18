@@ -1,9 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - build-time fixtures from the official Claude release.
-import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - standalone Node fixture generation uses console for its CLI result.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { binaryHash } from "./releases.ts";
 import {
   binarySha256,
   digest,
@@ -123,7 +122,7 @@ function makeMap(
 async function writeFixture(
   dir: string,
   map: ReturnType<typeof makeMap>["map"],
-  details: Record<string, unknown>,
+  details: ReturnType<typeof makeMap>["details"],
 ) {
   const modulesDir = NodePath.join(dir, "modules");
   await NodeFSP.mkdir(modulesDir, { recursive: true });
@@ -142,14 +141,7 @@ async function writeFixture(
     }
   > = {};
   const sourceMetadata = new Map(
-    (
-      details.selectedModules as Array<{
-        name: string;
-        actualBytes: number;
-        sha256: string;
-        encoding: Encoding;
-      }>
-    ).map((module) => [module.name.replace(/^\/+/, ""), module]),
+    details.selectedModules.map((module) => [module.name.replace(/^\/+/, ""), module] as const),
   );
   for (const [name, module] of Object.entries(map.modules)) {
     const filename = `${digest(Buffer.from(name, "utf8")).slice(0, 24)}.js`;
@@ -195,12 +187,6 @@ async function writeFixture(
   );
 }
 
-async function hashFile(path: string) {
-  const hash = NodeCrypto.createHash("sha256");
-  for await (const chunk of NodeFS.createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
-}
-
 function parseArgs(args: string[]) {
   const positional: string[] = [];
   let manifest: string | undefined;
@@ -237,27 +223,16 @@ export async function generateProbeMaps(args: string[]) {
   const manifestPath = options.manifest
     ? NodePath.resolve(options.manifest)
     : NodePath.join(options.root, "manifest.json");
-  let useManifest = options.manifest;
-  try {
-    await NodeFSP.readFile(manifestPath);
-    useManifest = manifestPath;
-  } catch (error) {
-    if (options.manifest || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
   let verifiedBinary = false;
   if (options.binary) {
-    const actual = await hashFile(NodePath.resolve(options.binary));
+    const actual = await binaryHash(NodePath.resolve(options.binary));
     if (actual !== binarySha256)
       throw new Error(`Binary SHA-256 mismatch: expected ${binarySha256}, got ${actual}`);
     verifiedBinary = true;
   }
-  if (!useManifest)
-    throw new Error(
-      "Probe maps require the extractor manifest; extension scans cannot identify source modules.",
-    );
-  const modules = await reachableSources(options.root, useManifest, options.output);
+  const modules = await reachableSources(options.root, manifestPath, options.output);
   await NodeFSP.mkdir(options.output, { recursive: true });
-  const summaries: Array<Record<string, unknown>> = [];
+  const summaries = [];
   for (const target of targets) {
     const { selected, bytes } = selectModules(modules, target);
     const label = `${target / 1_000_000}mb`;

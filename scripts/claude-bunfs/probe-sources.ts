@@ -3,9 +3,23 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import TypeScript from "typescript-legacy";
+import { decodeModule } from "./bun-graph.ts";
 export const binarySha256 = "60d7eb7f12fbb28a52533fe8be5884097403562aa02dc73991a021c7067e29a5";
 export const probeModule = "__signalbox_probe__/entry.js";
+const jsLoader = 1;
 export type Encoding = "latin1" | "utf8" | "utf16le";
+type ModuleEncoding = 0 | 1 | 2;
+type SourceManifest = {
+  binary?: { sha256?: unknown };
+  graph: { entry: number };
+  modules: {
+    index: number;
+    name: string;
+    encoding: unknown;
+    loader: number;
+    artifacts: Record<string, unknown>;
+  }[];
+};
 export type SourceModule = {
   name: string;
   path: string;
@@ -19,26 +33,20 @@ export function digest(bytes: Uint8Array) {
   return NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 }
 
-function normalizeEncoding(value: unknown): Encoding {
-  if (value === 1 || value === "latin1" || value === "latin-1" || value === "iso-8859-1")
-    return "latin1";
-  if (value === 2 || value === "utf16le" || value === "utf-16le") return "utf16le";
-  if (value === 0 || value === "utf8" || value === "utf-8" || value === undefined || value === null)
-    return "utf8";
+function normalizeEncoding(value: unknown): ModuleEncoding {
+  if (value === 0 || value === 1 || value === 2) return value;
   throw new Error(`Unsupported module encoding: ${String(value)}`);
 }
 
-function decode(bytes: Uint8Array, encoding: Encoding) {
-  if (encoding === "latin1") {
-    let source = "";
-    for (let at = 0; at < bytes.length; at += 8192) {
-      source += String.fromCharCode(...bytes.subarray(at, at + 8192));
-    }
-    return source;
+function encodingName(encoding: ModuleEncoding): Encoding {
+  switch (encoding) {
+    case 0:
+      return "utf8";
+    case 1:
+      return "latin1";
+    case 2:
+      return "utf16le";
   }
-  return new TextDecoder(encoding === "utf16le" ? "utf-16le" : "utf-8", { fatal: true }).decode(
-    bytes,
-  );
 }
 
 function safeSourcePath(root: string, relativePath: string) {
@@ -51,56 +59,67 @@ function safeSourcePath(root: string, relativePath: string) {
   return resolved;
 }
 
-function manifestRows(value: unknown): Array<[string | undefined, Record<string, unknown>]> {
-  if (!value || typeof value !== "object") throw new Error("Invalid source manifest");
-  const modules = (value as { modules?: unknown }).modules;
-  if (Array.isArray(modules)) {
-    return modules.map((module) => [undefined, module as Record<string, unknown>]);
-  }
-  if (modules && typeof modules === "object") {
-    return Object.entries(modules as Record<string, Record<string, unknown>>);
-  }
-  throw new Error("Source manifest has no modules");
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function readSources(
-  root: string,
-  manifestPath: string | undefined,
-): Promise<SourceModule[]> {
+function parseManifest(value: unknown): SourceManifest {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.graph) ||
+    !Number.isSafeInteger(value.graph.entry) ||
+    !Array.isArray(value.modules) ||
+    !value.modules.every(
+      (module) =>
+        isRecord(module) &&
+        Number.isSafeInteger(module.index) &&
+        typeof module.name === "string" &&
+        typeof module.loader === "number" &&
+        isRecord(module.artifacts),
+    )
+  )
+    throw new Error("Invalid extraction manifest");
+  return value as unknown as SourceManifest;
+}
+
+async function readManifest(path: string) {
+  try {
+    return parseManifest(JSON.parse(await NodeFSP.readFile(path, "utf8")));
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT")
+      throw new Error(`Extraction manifest not found: ${path}`, { cause: error });
+    throw error;
+  }
+}
+
+async function readSources(root: string, manifest: SourceManifest): Promise<SourceModule[]> {
   const modules: SourceModule[] = [];
-  if (manifestPath) {
-    const manifest = JSON.parse(await NodeFSP.readFile(manifestPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    const pin = (manifest.binary as { sha256?: unknown } | undefined)?.sha256;
-    if (pin && pin !== binarySha256)
-      throw new Error(`Manifest binary hash does not match Claude 2.1.302: ${String(pin)}`);
-    for (const [key, record] of manifestRows(manifest)) {
-      const name = String(record.name ?? key ?? "");
-      if (record.loader !== 1) continue;
-      const contents =
-        record.artifacts && typeof record.artifacts === "object"
-          ? (record.artifacts as Record<string, Record<string, unknown>>).contents
-          : undefined;
-      const relativePath = String(contents?.path ?? record.path ?? "");
-      if (!relativePath) throw new Error(`Manifest has no contents path for ${name}`);
-      const bytes = await NodeFSP.readFile(safeSourcePath(root, relativePath));
-      if (typeof contents?.sha256 !== "string" || digest(bytes) !== contents.sha256)
-        throw new Error(`Source hash differs from the extraction manifest: ${name}`);
-      const encoding = normalizeEncoding(record.encoding ?? contents?.encoding ?? 1);
-      modules.push({
-        name,
-        path: relativePath,
-        encoding,
-        bytes,
-        source: decode(bytes, encoding),
-        sha256: digest(bytes),
-      });
-    }
+  const pin = manifest.binary?.sha256;
+  if (pin && pin !== binarySha256)
+    throw new Error(`Manifest binary hash does not match Claude 2.1.302: ${String(pin)}`);
+  for (const record of manifest.modules) {
+    if (record.loader !== jsLoader) continue;
+    const contents = record.artifacts.contents;
+    if (!isRecord(contents) || typeof contents.path !== "string" || !contents.path)
+      throw new Error(`Manifest has no contents path for ${record.name}`);
+    if (typeof contents.sha256 !== "string")
+      throw new Error(`Manifest has no contents hash for ${record.name}`);
+    const bytes = await NodeFSP.readFile(safeSourcePath(root, contents.path));
+    const sha256 = digest(bytes);
+    if (sha256 !== contents.sha256)
+      throw new Error(`Source hash differs from the extraction manifest: ${record.name}`);
+    const encoding = normalizeEncoding(record.encoding);
+    modules.push({
+      name: record.name,
+      path: contents.path,
+      encoding: encodingName(encoding),
+      bytes,
+      source: decodeModule(bytes, encoding),
+      sha256,
+    });
   }
 
-  if (!modules.length) throw new Error(`No .js or .mjs source modules found below ${root}`);
+  if (!modules.length) throw new Error("No JavaScript source modules found in extraction manifest");
   if (modules.some((module) => module.name === probeModule))
     throw new Error(`Source module collides with ${probeModule}`);
   return modules.sort(
@@ -110,16 +129,8 @@ async function readSources(
 }
 
 export async function reachableSources(root: string, manifestPath: string, output: string) {
-  const manifest = JSON.parse(await NodeFSP.readFile(manifestPath, "utf8")) as {
-    graph: { entry: number };
-    modules: {
-      index: number;
-      name: string;
-      loader: number;
-      artifacts: Record<string, { path: string; bytes: number; sha256: string }>;
-    }[];
-  };
-  const sources = await readSources(root, manifestPath);
+  const manifest = await readManifest(manifestPath);
+  const sources = await readSources(root, manifest);
   const byName = new Map(sources.map((module) => [module.name, module]));
   const entry = manifest.modules.find((module) => module.index === manifest.graph.entry);
   if (!entry || !byName.has(entry.name))
@@ -173,7 +184,7 @@ export async function reachableSources(root: string, manifestPath: string, outpu
     visit(ast);
   }
   const excluded = manifest.modules
-    .filter((module) => module.loader !== 1)
+    .filter((module) => module.loader !== jsLoader)
     .map((module) => ({
       index: module.index,
       name: module.name,

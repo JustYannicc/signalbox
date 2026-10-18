@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - downloads and verifies build inputs.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalConsole:off - standalone Node release downloader and CLI.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -14,7 +14,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function binaryHash(path: string) {
+export async function binaryHash(path: string) {
   const hash = NodeCrypto.createHash("sha256");
   for await (const chunk of NodeFS.createReadStream(path)) hash.update(chunk);
   return hash.digest("hex");
