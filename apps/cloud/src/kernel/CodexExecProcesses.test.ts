@@ -579,16 +579,9 @@ describe("Codex exec-server process handling", () => {
       await writeEntered.promise;
 
       firstCleanup = fixture.handler.dispose();
-      let timer!: ReturnType<typeof setTimeout>;
-      const cleanupStarted = await Promise.race([
-        cleanupEntered.promise.then(() => true),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(false), 1_000);
-        }),
-      ]);
-      clearTimeout(timer);
-      expect(cleanupStarted).toBe(true);
-      await expect(firstCleanup).rejects.toThrow("process cleanup failed");
+      const cleanupRejected = expect(firstCleanup).rejects.toThrow("process cleanup failed");
+      await cleanupEntered.promise;
+      await cleanupRejected;
       expect(child.disposeCalls).toBe(1);
 
       await fixture.handler.dispose();
