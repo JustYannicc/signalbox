@@ -366,8 +366,11 @@ The linked pull request participates in automatic settlement.
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
-across connected environments. Message search starts after two characters and
-includes your messages and final agent responses.
+across connected environments. On mobile, search from Home. Content search starts
+after two characters. In Signalbox Cloud it searches messages, summaries and tool
+excerpts across your folders, including archived threads. Open a content result
+to jump to its matching item. If older threads are still being indexed, search
+shows how many are missing.
 
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request

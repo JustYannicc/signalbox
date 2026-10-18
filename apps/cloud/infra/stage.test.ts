@@ -256,10 +256,16 @@ describe("wrangler.jsonc", () => {
     expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
   });
 
-  it("adds the token binding as a new Durable Object migration", () => {
-    expect(wrangler.migrations.at(-1)).toEqual({
-      tag: "v6",
-      new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.EXECUTOR_TOKEN_BINDINGS],
-    });
+  it("retains the token binding before the additive search migration", () => {
+    expect(wrangler.migrations.slice(-2)).toEqual([
+      {
+        tag: "v6",
+        new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.EXECUTOR_TOKEN_BINDINGS],
+      },
+      {
+        tag: "search-index-v1",
+        new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.SEARCH_INDEX],
+      },
+    ]);
   });
 });

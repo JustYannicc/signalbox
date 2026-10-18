@@ -170,6 +170,7 @@ type RawThreadFeedEntry =
   | {
       readonly type: "html-render";
       readonly id: string;
+      readonly itemId: TurnItemId; // signalbox: Find names the source item, not its rendered row.
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly render: HtmlRenderReference;
@@ -222,6 +223,7 @@ type ThreadFeedEntryContent =
       readonly runId: RunId;
       readonly label: string;
       readonly expanded: boolean;
+      readonly hiddenEntryIds: ReadonlySet<string>; // signalbox: Find resolves the owning fold for runless items too.
     }
   | {
       readonly type: "thinking";
@@ -785,6 +787,12 @@ export function formatItemFullDetail(
   row: OrchestrationV2ProjectedTurnItem,
   item: OrchestrationV2TurnItem,
 ): string {
+  // signalbox: task-list search matches open the actual plan text and step statuses.
+  if (item.type === "todo_list") {
+    return [item.explanation?.trim(), ...item.steps.map((step) => `${step.text} (${step.status})`)]
+      .filter(Boolean)
+      .join("\n");
+  }
   return JSON.stringify(
     {
       visibility: row.visibility,
@@ -837,7 +845,9 @@ function toFeedActivity(
       !(item.type === "error" && item.status === "failed") &&
       (readPaths
         ? readPaths.length > 0 || turnItemNeedsDetailFetch(item)
-        : turnItemHasDetail(item) || workEntry.questionAnswer !== undefined),
+        : turnItemHasDetail(item) ||
+          (item.type === "todo_list" && Boolean(item.explanation?.trim())) || // signalbox: explanation-only lists are searchable too.
+          workEntry.questionAnswer !== undefined),
     fetchesDetail: turnItemNeedsDetailFetch(item),
     getFullDetail,
     getCopyText,
@@ -1330,7 +1340,9 @@ export function deriveThreadFeedPresentation(
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
-        row.expanded !== expanded
+        row.expanded !== expanded ||
+        row.hiddenEntryIds.size !== fold.hiddenEntryIds.size || // signalbox: preserve exact fold ownership as history loads.
+        [...fold.hiddenEntryIds].some((id) => !row?.hiddenEntryIds.has(id))
       ) {
         row = {
           type: "run-fold",
@@ -1339,6 +1351,7 @@ export function deriveThreadFeedPresentation(
           runId: fold.runId,
           label: fold.label,
           expanded,
+          hiddenEntryIds: fold.hiddenEntryIds, // signalbox: use presentation ownership instead of guessing from an item's run ID.
         };
         runFoldRowsCache.set(entry, row);
       }
@@ -1805,7 +1818,7 @@ export function buildThreadFeed(
   for (const row of visibleTurnItems) {
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
-    if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (item.type === "checkpoint") continue; // signalbox: keep searchable task lists reachable in the work log.
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     if (item.type === "run_interrupt_request") {
       continue;
@@ -1825,6 +1838,7 @@ export function buildThreadFeed(
       const entry: RawThreadFeedEntry = {
         type: "html-render",
         id: `html-render:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        itemId: row.sourceItemId, // signalbox: preserve the canonical Find target through render conversion.
         createdAt,
         runId: item.runId,
         render,

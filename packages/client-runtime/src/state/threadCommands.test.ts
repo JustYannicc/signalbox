@@ -11,7 +11,6 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -168,18 +167,24 @@ describe("remote thread lifecycle commands", () => {
           input: {
             threadId: THREAD_ID,
             commandId: CommandId.make(action),
-            reason: "user" as const,
+            reason: "user",
             enabled: false,
             orderKey: "a",
             snoozedUntil: "2099-01-01T00:00:00.000Z",
             ...input,
           },
-        };
-        const run: (
-          registry: typeof h.registry,
-          targetInput: typeof target,
-        ) => Promise<AtomCommandResult<unknown, unknown>> = h.commands[action].run;
-        const result = run(h.registry, target);
+        } as const;
+        const result = {
+          settle: () => h.commands.settle.run(h.registry, target),
+          unsettle: () => h.commands.unsettle.run(h.registry, target),
+          snooze: () => h.commands.snooze.run(h.registry, target),
+          unsnooze: () => h.commands.unsnooze.run(h.registry, target),
+          pin: () => h.commands.pin.run(h.registry, target),
+          unpin: () => h.commands.unpin.run(h.registry, target),
+          setAutoSettle: () => h.commands.setAutoSettle.run(h.registry, target),
+          reorderPin: () => h.commands.reorderPin.run(h.registry, target),
+          reorderActive: () => h.commands.reorderActive.run(h.registry, target),
+        }[action]();
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         const request = yield* Queue.take(h.requests);
         expect(h.registry.get(source)).toBe(initial);
