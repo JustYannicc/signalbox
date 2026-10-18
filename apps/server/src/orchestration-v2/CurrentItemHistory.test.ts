@@ -20,6 +20,7 @@ import * as EventStore from "./EventStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import { projectTurnItemForWire } from "./WireProjection.ts";
 
 const testLayer = Layer.mergeAll(
   EventSink.layer,
@@ -32,6 +33,7 @@ const testLayer = Layer.mergeAll(
 const now = DateTime.makeUnsafe("2026-10-17T00:00:00.000Z");
 const threadId = ThreadId.make("canonical-item-rebuild");
 const instanceId = ProviderInstanceId.make("codex");
+const finalCommandOutput = `${"line\n".repeat(15_000)}SERVER_CANONICAL_TAIL\n`;
 const create: OrchestrationV2DomainEvent = {
   id: EventId.make("create-thread"),
   type: "thread.created",
@@ -81,7 +83,8 @@ function item(index: number, id = "first"): OrchestrationV2DomainEvent {
       status: index === 99 ? "completed" : "running",
       title: "Synthetic command",
       input: "echo synthetic",
-      output: "line\n".repeat(index + 1),
+      output: index === 99 ? finalCommandOutput : "line\n".repeat(index + 1),
+      ...(index === 99 ? { outputTruncated: true } : {}),
       startedAt: now,
       completedAt: index === 99 ? now : null,
       updatedAt: now,
@@ -127,6 +130,19 @@ it.effect(
         assert.deepEqual(yield* pull, committed);
       }
       const before = yield* projection.getThreadProjection(threadId);
+      const fullCommand = yield* projection.getTurnItem({
+        threadId,
+        itemId: TurnItemId.make("first"),
+      });
+      assert.isTrue(fullCommand?.type === "command_execution");
+      if (fullCommand?.type !== "command_execution") return;
+      assert.equal(fullCommand.output, finalCommandOutput);
+      assert.isTrue(fullCommand.outputTruncated);
+      const wireCommand = projectTurnItemForWire(fullCommand);
+      assert.isTrue(
+        wireCommand.type === "command_execution" && wireCommand.outputTruncated === true,
+      );
+      assert.isFalse("output" in wireCommand);
       assert.deepEqual(
         before.turnItems.map((row) => row.id),
         ["first", "second"],
@@ -145,6 +161,10 @@ it.effect(
       assert.equal(Option.getOrThrow(claimed).id, "synthetic-effect");
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projection.getThreadProjection(threadId), before);
+      assert.deepEqual(
+        yield* projection.getTurnItem({ threadId, itemId: fullCommand.id }),
+        fullCommand,
+      );
       assert.equal(yield* sink.latestSequence({ threadId }), head);
       assert.deepEqual(
         yield* sql`SELECT ordinal FROM orchestration_v2_turn_item_positions ORDER BY ordinal`,

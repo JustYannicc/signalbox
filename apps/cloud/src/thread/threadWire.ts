@@ -1,7 +1,15 @@
 import {
   ModelSelection,
   NonNegativeInt,
+  OrchestrationV2GetWorkflowScriptInput,
+  OrchestrationV2GetWorkflowScriptResult,
+  OrchestrationGetWorkflowScriptError,
+  OrchestrationV2StopWorkflowInput,
+  OrchestrationV2StopWorkflowError,
+  SecretRequestAnswerInput,
   OrchestrationV2Command,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DomainEventJson,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchInput,
@@ -97,6 +105,21 @@ const PullInputWire = Schema.Struct({
 export type PullInput = typeof PullInputWire.Type;
 
 export const wire = {
+  workflowScriptInput: jsonCodec(OrchestrationV2GetWorkflowScriptInput),
+  workflowStopInput: jsonCodec(OrchestrationV2StopWorkflowInput),
+  workflowScriptReply: jsonCodec(
+    Schema.Union([
+      Schema.TaggedStruct("ok", { value: OrchestrationV2GetWorkflowScriptResult }),
+      Schema.TaggedStruct("error", { error: OrchestrationGetWorkflowScriptError }),
+    ]),
+  ),
+  workflowStopReply: jsonCodec(
+    Schema.Union([
+      Schema.TaggedStruct("ok", {}),
+      Schema.TaggedStruct("error", { error: OrchestrationV2StopWorkflowError }),
+    ]),
+  ),
+  secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),
   launchInput: jsonCodec(LaunchInputWire),
@@ -104,6 +127,8 @@ export const wire = {
   snapshot: jsonCodec(ThreadSnapshotWire),
   workspace: jsonCodec(ThreadWorkspaceWire),
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
+  commandOutputInput: jsonCodec(OrchestrationV2SubscribeCommandOutputInput),
+  commandOutputFrame: jsonCodec(OrchestrationV2CommandOutputFrame),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
   /** `SignalboxThreadPreviews` without its thread id, which the stream's caller knows. */
   previews: jsonCodec(

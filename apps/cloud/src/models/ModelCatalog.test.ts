@@ -83,6 +83,15 @@ const served = (ownedBy: string, ...ids: ReadonlyArray<string>) =>
   ids.map((id) => ({ id, ownedBy, created: 1_790_000_000 }));
 
 describe("ModelCatalog public entry point", () => {
+  it.effect("offers plan questions for both native harnesses", () =>
+    Effect.gen(function* () {
+      const catalog = yield* view([poolEntry()]);
+      for (const kind of ["claude", "codex"] as const) {
+        expect(provider(catalog.providers, `${kind}_hub`)?.showInteractionModeToggle).toBe(true);
+      }
+    }),
+  );
+
   it.effect("uses served models in manifest order with fallback names and a pool default", () =>
     Effect.gen(function* () {
       const manifest: ModelManifestCatalogs = {

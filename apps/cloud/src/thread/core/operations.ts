@@ -2,6 +2,7 @@ import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
   type ChatAttachment,
   type OrchestrationV2Command,
+  OrchestrationV2CommandOutputError,
   type OrchestrationV2ThreadStreamItem,
   type ProjectId,
   ThreadId,
@@ -97,6 +98,7 @@ const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.create",
   "message.dispatch",
   "thread.model-selection.set",
+  "runtime-request.respond",
 ]);
 
 /** What a command sends, for the thread's kind (`ThreadKindTurns`). */
@@ -141,7 +143,7 @@ export const makeThreads = Effect.gen(function* () {
       if (threadId === null) {
         return yield* ThreadCommandRejectedError.forCommand(
           { id: command.commandId, type: command.type },
-          unsupported(command.type),
+          unsupported(),
         );
       }
       if (
@@ -335,11 +337,37 @@ export const makeThreads = Effect.gen(function* () {
     );
 
   return Threads.Threads.of({
+    getWorkflowScript: (actor, input) =>
+      directory.forThread(input.threadId).getWorkflowScript(actor, input),
+    stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),
     launch: launchThread,
     dispatch: dispatchCommand,
     refreshRemoteWorkspace,
     snapshot: threadSnapshot,
     history: threadHistoryPage,
     subscribe: subscribeThread,
+    commandOutput: (actor, input) =>
+      directory
+        .forThread(input.threadId)
+        .commandOutput(actor, input)
+        .pipe(
+          Stream.mapError(
+            (cause) =>
+              new OrchestrationV2CommandOutputError({
+                threadId: input.threadId,
+                message: "Couldn't read this command's output. It may no longer be available.",
+                cause,
+              }),
+          ),
+          Stream.concat(
+            Stream.fail(
+              new OrchestrationV2CommandOutputError({
+                threadId: input.threadId,
+                message: "Lost the command output stream. Reopen it to read the retained output.",
+              }),
+            ),
+          ),
+          Stream.takeUntil((frame) => !frame.running),
+        ),
   });
 });
