@@ -81,10 +81,72 @@ test("counts only changed paths present at the upstream merge base", (t) => {
   assert.match(body, /7 lines/);
   assert.match(body, /4 upstream-owned files/);
   assert.match(body, /binary change \(line count unavailable\)/);
-  assert.match(body, /src\/weird�&lt;name&gt;\.txt/);
+  assert.match(body, /`src\/weird�<name>\.txt`/);
   assert.doesNotMatch(body, /src\/fork-only\.ts/);
   assert.doesNotMatch(body, /added-to-upstream-later\.ts/);
   assert.equal(body.includes(fixture.cwd), false);
+});
+
+test("renders paths in safe Markdown code spans, including image syntax and backticks", () => {
+  assert.equal(
+    report.markdownCodeSpan("src/![fake-report](evidence.png).ts"),
+    "`src/![fake-report](evidence.png).ts`",
+  );
+  assert.equal(report.markdownCodeSpan("src/a`b.ts"), "``src/a`b.ts``");
+  assert.equal(report.markdownCodeSpan("`leading-and-trailing`"), "`` `leading-and-trailing` ``");
+});
+
+test("bounds the comment and discloses omitted paths while linking the full artifact", () => {
+  const files = Array.from({ length: 1_000 }, (_, index) => ({
+    path: `packages/${String(index).padStart(4, "0")}/${"long-name-".repeat(6)}.ts`,
+    binary: false,
+    additions: 10,
+    deletions: 2,
+  }));
+  const result = {
+    files,
+    additions: 10_000,
+    deletions: 2_000,
+    changedLines: 12_000,
+  };
+  const maxBytes = 4_000;
+  const body = report.formatComment(result, {
+    artifactUrl: "https://github.com/JustYannicc/signalbox/actions/runs/123/artifacts/456",
+    maxBytes,
+  });
+
+  assert.ok(Buffer.byteLength(body, "utf8") <= maxBytes);
+  assert.match(body, /12,?000 lines/);
+  assert.match(body, /upstream-owned files/);
+  assert.match(
+    body,
+    /Full report artifact: https:\/\/github\.com\/JustYannicc\/signalbox\/actions\/runs\/123\/artifacts\/456/,
+  );
+  assert.match(body, /changed files omitted from this comment/);
+  assert.match(body, /Informational only/);
+  assert.doesNotMatch(body, /packages\/0999\//);
+});
+
+test("checks both event commits before allowing a report to publish", () => {
+  const eventPullRequest = {
+    head: { sha: "event-head" },
+    base: { sha: "event-base" },
+  };
+  assert.equal(report.matchesPullRequestEvent(eventPullRequest, eventPullRequest), true);
+  assert.equal(
+    report.matchesPullRequestEvent(eventPullRequest, {
+      head: { sha: "new-head" },
+      base: { sha: "event-base" },
+    }),
+    false,
+  );
+  assert.equal(
+    report.matchesPullRequestEvent(eventPullRequest, {
+      head: { sha: "event-head" },
+      base: { sha: "new-base" },
+    }),
+    false,
+  );
 });
 
 test("reports no owned changes without failing or inventing a baseline budget", (t) => {
@@ -214,4 +276,16 @@ test("creates a report comment when no bot-owned report exists", async () => {
     issue_number: 42,
     body,
   });
+});
+
+test("unavailable summaries link the full artifact when one exists", () => {
+  const body = report.formatUnavailableComment({
+    artifactUrl: "https://github.com/JustYannicc/signalbox/actions/runs/123/artifacts/456",
+  });
+  assert.match(body, /No count is available/);
+  assert.match(
+    body,
+    /Full report artifact: https:\/\/github\.com\/JustYannicc\/signalbox\/actions\/runs\/123\/artifacts\/456/,
+  );
+  assert.match(body, /Informational only/);
 });

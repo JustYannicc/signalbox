@@ -2,6 +2,7 @@ const { execFileSync } = require("node:child_process");
 
 const COMMENT_MARKER = "<!-- signalbox-upstream-owned-file-report -->";
 const MAX_GIT_OUTPUT_BYTES = 32 * 1024 * 1024;
+const MAX_COMMENT_BYTES = 60_000;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 
 function git(cwd, args, failureMessage) {
@@ -143,19 +144,18 @@ function calculateReport({ cwd = process.cwd(), base, head = "HEAD", upstream = 
   };
 }
 
-function escapeFilePath(path) {
+function markdownCodeSpan(path) {
   const cleaned = path.replace(CONTROL_CHARACTERS, "�");
-  const escaped = cleaned.replace(/[&<>"']/g, (character) => {
-    const entities = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return entities[character];
-  });
-  return `<code>${escaped}</code>`;
+  const content =
+    cleaned.startsWith(" ") ||
+    cleaned.endsWith(" ") ||
+    cleaned.startsWith("`") ||
+    cleaned.endsWith("`")
+      ? ` ${cleaned} `
+      : cleaned;
+  const longestRun = Math.max(0, ...(content.match(/`+/g) ?? []).map((run) => run.length));
+  const delimiter = "`".repeat(longestRun + 1);
+  return `${delimiter}${content}${delimiter}`;
 }
 
 function formatReport(report) {
@@ -163,7 +163,7 @@ function formatReport(report) {
     const change = file.binary
       ? "binary change (line count unavailable)"
       : `+${file.additions} / −${file.deletions}`;
-    return `- ${escapeFilePath(file.path)}: ${change}`;
+    return `- ${markdownCodeSpan(file.path)}: ${change}`;
   });
 
   return [
@@ -178,6 +178,87 @@ function formatReport(report) {
     "",
     "Informational only. There is no line-change budget.",
   ].join("\n");
+}
+
+function formatComment(report, { artifactUrl, maxBytes = MAX_COMMENT_BYTES } = {}) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new Error("A positive comment byte limit is required.");
+  }
+
+  const fileLines = report.files.map((file) => {
+    const change = file.binary
+      ? "binary change (line count unavailable)"
+      : `+${file.additions} / −${file.deletions}`;
+    return `- ${markdownCodeSpan(file.path)}: ${change}`;
+  });
+  const artifactLine = artifactUrl
+    ? `Full report artifact: ${artifactUrl}`
+    : "Full report artifact unavailable for this run.";
+  const header = [
+    COMMENT_MARKER,
+    "## Upstream-owned file changes",
+    "",
+    `This PR changes **${report.changedLines} lines** (+${report.additions} / −${report.deletions}) across **${report.files.length} upstream-owned files**.`,
+    "",
+    "Ownership uses paths present at `merge-base(PR head, upstream/main)`. Line counts compare the PR merge base with its head.",
+    "",
+    artifactLine,
+    "",
+  ];
+  const footer = ["", "Informational only. There is no line-change budget."];
+
+  const build = (includedCount) => {
+    const omittedCount = fileLines.length - includedCount;
+    const omission =
+      omittedCount > 0
+        ? [
+            `${omittedCount} changed file${omittedCount === 1 ? "" : "s"} omitted from this comment to stay within GitHub's comment limit.`,
+          ]
+        : [];
+    const listedFiles =
+      fileLines.length === 0
+        ? ["- No upstream-owned files changed."]
+        : fileLines.slice(0, includedCount);
+    return [...header, ...listedFiles, ...omission, ...footer].join("\n");
+  };
+
+  let low = 0;
+  let high = fileLines.length;
+  let best = null;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const body = build(middle);
+    if (Buffer.byteLength(body, "utf8") <= maxBytes) {
+      best = body;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (best !== null) return best;
+  throw new Error("The report summary exceeds the GitHub comment limit.");
+}
+
+function formatUnavailableComment({ artifactUrl } = {}) {
+  return [
+    COMMENT_MARKER,
+    "## Upstream-owned file changes",
+    "",
+    "No count is available for this update. The report could not calculate the required Git comparison, so it does not assert that no upstream-owned files changed.",
+    "",
+    artifactUrl
+      ? `Full report artifact: ${artifactUrl}`
+      : "Full report artifact unavailable for this run.",
+    "",
+    "Informational only. There is no line-change budget.",
+  ].join("\n");
+}
+
+function matchesPullRequestEvent(eventPullRequest, currentPullRequest) {
+  return (
+    eventPullRequest?.head?.sha === currentPullRequest?.head?.sha &&
+    eventPullRequest?.base?.sha === currentPullRequest?.base?.sha
+  );
 }
 
 function generateReport(options) {
@@ -262,9 +343,12 @@ if (require.main === module) {
 module.exports = {
   COMMENT_MARKER,
   calculateReport,
-  escapeFilePath,
+  markdownCodeSpan,
   formatReport,
+  formatComment,
+  formatUnavailableComment,
   generateReport,
+  matchesPullRequestEvent,
   publishComment,
   unavailableReport,
 };
