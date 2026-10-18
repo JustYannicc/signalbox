@@ -2112,7 +2112,7 @@ export const make = (
 
 export const layer = Layer.effect(DeviceService, make()).pipe(Layer.provide(LocalDeviceHost.layer));
 
-export const makeForJanitor = Effect.gen(function* () {
+const makeForJanitor = Effect.gen(function* () {
   const localHost = yield* DeviceHost.DeviceHost;
   const homeDirectory = yield* HostProcess.HomeDirectory;
   return yield* makeWithHosts(
