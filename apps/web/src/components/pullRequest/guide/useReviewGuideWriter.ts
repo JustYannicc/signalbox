@@ -54,6 +54,18 @@ export function useReviewGuideWriter({
     if (data?.run?._tag === "Running") watchRun();
   }, [data?.run?._tag]);
 
+  const reportFailure = (cause: unknown) => {
+    useGuideRunStore.getState().settle(guideRunKey(environmentId, reference));
+    toastManager.add({
+      type: "error",
+      title: "Could not start a review guide",
+      description: readableFailure(
+        cause,
+        "Check the review guide model in Settings → Source Control.",
+      ),
+    });
+  };
+
   const write = async () => {
     if (running || pending.current) return;
     pending.current = true;
@@ -71,16 +83,10 @@ export function useReviewGuideWriter({
       const result = await generate({ environmentId, input: prepared.input });
       if (result._tag === "Success") attempt.current = undefined;
       if (result._tag === "Failure") {
-        useGuideRunStore.getState().settle(guideRunKey(environmentId, reference));
-        toastManager.add({
-          type: "error",
-          title: "Could not start a review guide",
-          description: readableFailure(
-            squashAtomCommandFailure(result),
-            "Check the review guide model in Settings → Source Control.",
-          ),
-        });
+        reportFailure(squashAtomCommandFailure(result));
       }
+    } catch (cause) {
+      reportFailure(cause);
     } finally {
       pending.current = false;
       setStarting(false);
