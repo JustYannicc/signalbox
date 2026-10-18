@@ -29,6 +29,7 @@ it.effect("returns the explicit cloud-only failure for automation MCP calls", ()
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const inputs: Record<string, Record<string, unknown>> = {
+      task_lifecycle: { action: "read" },
       automation_reference: {},
       automation_validate: { source: "" },
       automation_save: { source: "" },

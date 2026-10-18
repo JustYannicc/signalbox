@@ -70,7 +70,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "pools.advice": gap("#819"),
   "provider.auth.respond": gap("#205"),
   "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),

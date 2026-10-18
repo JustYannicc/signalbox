@@ -1,6 +1,7 @@
 import {
   type AccountHubConnection,
   type AccountPool,
+  type AccountPoolAdvice,
   AccountHubRpcError,
   type AccountPoolCreateInput,
   type AccountPoolDeleteInput,
@@ -80,6 +81,9 @@ export class UserPools extends Context.Service<
     readonly state: (actor: PoolActor) => Effect.Effect<PoolsState, AccountHubRpcError>;
     /** The pools now, then again after every change to them or their accounts. */
     readonly changes: (actor: PoolActor) => Stream.Stream<PoolsState, AccountHubRpcError>;
+    readonly advice: (
+      actor: PoolActor,
+    ) => Stream.Stream<ReadonlyArray<AccountPoolAdvice>, AccountHubRpcError>;
     /** Reads every pool's accounts again, e.g. after a sign-in, and tells every subscriber. */
     readonly refresh: (actor: PoolActor) => Effect.Effect<PoolsState, AccountHubRpcError>;
     readonly create: (
@@ -413,6 +417,36 @@ const make = Effect.gen(function* () {
   const call = <A>(effect: Effect.Effect<A, PoolDirectory.PoolObjectError | PoolRejectedError>) =>
     effect.pipe(Effect.catchTags({ PoolRejectedError: poolFailure, PoolObjectError: poolFailure }));
 
+  const advice: UserPools["Service"]["advice"] = (actor) =>
+    changes(actor).pipe(
+      Stream.mapEffect((state) =>
+        Effect.forEach(
+          state,
+          ({ pool }) =>
+            directory
+              .forPool(pool.objectName)
+              .advice(actor)
+              .pipe(
+                Effect.timeoutOrElse({
+                  duration: POOL_ACCOUNT_READ_TIMEOUT_MS,
+                  orElse: () => Effect.succeed(null),
+                }),
+                Effect.catchTags({
+                  PoolRejectedError: () => Effect.succeed(null),
+                  PoolObjectError: (cause) =>
+                    Effect.logWarning("pool advice unavailable", { cause }).pipe(Effect.as(null)),
+                }),
+                Effect.map((providers): ReadonlyArray<AccountPoolAdvice> =>
+                  providers === null ? [] : [{ poolId: pool.id, providers }],
+                ),
+              ),
+          { concurrency: 4 },
+        ),
+      ),
+      Stream.map((advice) => advice.flat()),
+      Stream.changesWith<ReadonlyArray<AccountPoolAdvice>>(Equal.equals),
+    );
+
   const createPool = (actor: PoolActor, name: string, poolId?: string) =>
     Effect.gen(function* () {
       const id = poolId ?? (yield* newPoolId);
@@ -548,6 +582,7 @@ const make = Effect.gen(function* () {
   return UserPools.of({
     state,
     changes,
+    advice,
     refresh,
     create,
     rename,

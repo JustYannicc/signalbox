@@ -137,9 +137,12 @@ const indexThread = (
   shell: {
     readonly updatedAtMs: number;
     readonly archived?: boolean;
+    readonly deleted?: boolean;
     readonly pinned?: boolean;
     readonly running?: boolean;
     readonly messaged?: boolean;
+    readonly settledAt?: boolean;
+    readonly settledOverride?: "settled" | "active";
   },
 ) =>
   Effect.flatMap(SqlClient.SqlClient, (sql) => {
@@ -148,12 +151,14 @@ const indexThread = (
       title: "Indexed title",
       updatedAt: iso(shell.updatedAtMs),
       archivedAt: shell.archived === true ? iso(shell.updatedAtMs) : null,
-      deletedAt: null,
+      deletedAt: shell.deleted === true ? iso(shell.updatedAtMs) : null,
       pinnedAt: shell.pinned === true ? iso(shell.updatedAtMs) : null,
       activeRunId: shell.running === true ? "run:1" : null,
       activityRunStatus: shell.running === true ? "running" : null,
       pendingRuntimeRequest: null,
       latestUserMessageAt: shell.messaged === false ? null : iso(shell.updatedAtMs),
+      settledAt: shell.settledAt === true ? iso(shell.updatedAtMs) : null,
+      settledOverride: shell.settledOverride ?? null,
     });
     return sql`INSERT INTO thread_index (thread_id, context_id, revision, shell, updated_at)
       VALUES (${threadId}, ${PERSONAL_CONTEXT_ID}, 1, ${json}, 0)
@@ -164,6 +169,21 @@ const first = (text: string, title?: string) => ({ text, ...(title ? { title } :
 const thread = (id: string) => ThreadId.make(id);
 
 describe("UserThreadKinds", () => {
+  it.effect("returns the effective kind and defaults an unknown thread to a task", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const { kinds } = yield* services;
+      expect(yield* kinds.kindOf(thread("unknown"))).toBe("task");
+
+      yield* indexThread("chat", { updatedAtMs: T0, messaged: false });
+      yield* kinds.beforeTurn(thread("chat"), first("What should I call this?"));
+      expect(yield* kinds.kindOf(thread("chat"))).toBe("chat");
+
+      yield* kinds.setKind({ threadId: thread("chat"), kind: "task" });
+      expect(yield* kinds.kindOf(thread("chat"))).toBe("task");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("classifies a thread once, from its first message, and tells its turns", () => {
     const { asked, layer } = setup();
     return Effect.gen(function* () {
@@ -273,6 +293,44 @@ describe("UserThreadKinds", () => {
       yield* kinds.recordSummary(summary, indexThread("t1", { updatedAtMs: T0 + DAY }));
       expect(yield* next).toEqual(["t1"]);
     }).pipe(Effect.scoped, Effect.provide(layer));
+  });
+
+  it.effect("keeps kinds for settled archives but not idle archives or deleted threads", () => {
+    const { layer } = setup({ answer: "task" });
+    return Effect.gen(function* () {
+      const { kinds } = yield* services;
+      const records: ReadonlyArray<{
+        readonly id: string;
+        readonly kind: ThreadKind | null;
+        readonly flags: Omit<Parameters<typeof indexThread>[1], "updatedAtMs">;
+      }> = [
+        { id: "settled-chat", kind: "chat", flags: { archived: true, settledAt: true } },
+        {
+          id: "settled-task",
+          kind: null,
+          flags: { archived: true, messaged: false, settledOverride: "settled" },
+        },
+        { id: "idle-archived-chat", kind: "chat", flags: { archived: true } },
+        {
+          id: "deleted-settled-chat",
+          kind: "chat",
+          flags: { archived: true, deleted: true, settledAt: true },
+        },
+      ];
+      for (const { id, kind, flags } of records) {
+        yield* indexThread(id, { updatedAtMs: T0, ...flags });
+        if (kind === null) {
+          yield* kinds.beforeTurn(thread(id), first("Fix the bug"));
+        } else {
+          yield* kinds.setKind({ threadId: thread(id), kind });
+        }
+      }
+
+      expect((yield* kinds.snapshot).threads).toEqual([
+        { threadId: "settled-chat", classified: null, override: "chat", workStartedAt: null },
+        { threadId: "settled-task", classified: "task", override: null, workStartedAt: null },
+      ]);
+    }).pipe(Effect.provide(layer));
   });
 });
 

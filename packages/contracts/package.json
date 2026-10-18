@@ -15,6 +15,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./taskLifecycle": {
+      "types": "./src/taskLifecycle.ts",
+      "import": "./src/taskLifecycle.ts"
+    },
     "./settings": {
       "types": "./src/settings.ts",
       "import": "./src/settings.ts"

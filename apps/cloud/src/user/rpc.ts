@@ -12,6 +12,8 @@ import {
   AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
+  AUTOMATION_WS_METHODS,
+  clientRpcRequiredScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -433,9 +435,13 @@ const REQUIRED_SCOPES = {
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
 export const layerScopeAuthorization = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
-    const requiredScope = REQUIRED_SCOPES[rpc._tag as ServedTag];
-    return scopes.includes(requiredScope)
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    // Task lifecycle reads need only read scope; its writes operate, as on a self-hosted server.
+    const requiredScope =
+      rpc._tag === AUTOMATION_WS_METHODS.automationsTaskLifecycle
+        ? clientRpcRequiredScopes(rpc._tag, payload).find((scope) => !scopes.includes(scope))
+        : REQUIRED_SCOPES[rpc._tag as ServedTag];
+    return requiredScope === undefined || scopes.includes(requiredScope)
       ? effect
       : Effect.fail(
           new EnvironmentAuthorizationError({

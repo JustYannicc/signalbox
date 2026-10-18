@@ -4,7 +4,11 @@ import {
   createArchivedThreadSnapshotsAtomFamily,
   makeArchivedThreadsEnvironmentKey,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  presentThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 
 import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -43,4 +47,18 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
     ...result,
     refresh,
   };
+}
+
+const NO_ENVIRONMENTS: ReadonlyArray<EnvironmentId> = [];
+
+/** signalbox: a settled task's shell, which lives in the archive rather than the live shell (#671). */
+export function useArchivedThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadShell | null {
+  const { snapshots } = useArchivedThreadSnapshots(
+    ref === null ? NO_ENVIRONMENTS : [ref.environmentId],
+  );
+  if (ref === null) return null;
+  const thread = snapshots
+    .find((entry) => entry.environmentId === ref.environmentId)
+    ?.snapshot.threads.find((candidate) => candidate.id === ref.threadId);
+  return thread ? presentThreadShell(ref.environmentId, thread) : null;
 }

@@ -1,4 +1,8 @@
-import { PersistChatAttachmentsResult, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  type AuthEnvironmentScope,
+  PersistChatAttachmentsResult,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -71,58 +75,77 @@ const bodyOf = (text: string) =>
         ?.slice(5) ?? "{}");
 
 /** An MCP client of `userId`, through the Worker's `/mcp` with a personal key. */
-const connect = Effect.gen(function* () {
-  const cloud = makeMemoryCloud();
-  const handle = cloud.userDirectory.forUser(userId);
-  yield* handle.recordSignIn({ id: userId, email: "a@b.c" });
-  const created = yield* handle.createLocalKey("agent", {
-    scopes: ["orchestration:read", "orchestration:operate", "filesystem:read"],
-    model: false,
-  });
-  if (created._tag !== "created") throw new Error("no key");
-  const layer = Layer.mergeAll(
-    CloudTokens.layer.pipe(Layer.provide(layerConfig())),
-    Layer.succeed(UserDirectory.UserDirectory, cloud.userDirectory),
-  );
-  const key = yield* signLocalKey(userId, created.secret).pipe(Effect.provide(layer));
-  let session: string | null = null;
-  let id = 0;
-  const rpc = (method: string, params: object = {}) =>
-    handleMcpRequest(
-      new Request("https://cloud.test/mcp", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${key}`,
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          ...(session === null
-            ? {}
-            : { "mcp-session-id": session, "mcp-protocol-version": "2025-06-18" }),
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
-      }),
-    ).pipe(
-      Effect.provide(layer),
-      Effect.flatMap((response) =>
-        Effect.promise(async () => {
-          session = response.headers.get("mcp-session-id") ?? session;
-          return decodeAnswer(bodyOf(await response.text()));
+const connectWithScopes = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+  Effect.gen(function* () {
+    const cloud = makeMemoryCloud();
+    const handle = cloud.userDirectory.forUser(userId);
+    yield* handle.recordSignIn({ id: userId, email: "a@b.c" });
+    const created = yield* handle.createLocalKey("agent", {
+      scopes,
+      model: false,
+    });
+    if (created._tag !== "created") throw new Error("no key");
+    const layer = Layer.mergeAll(
+      CloudTokens.layer.pipe(Layer.provide(layerConfig())),
+      Layer.succeed(UserDirectory.UserDirectory, cloud.userDirectory),
+    );
+    const key = yield* signLocalKey(userId, created.secret).pipe(Effect.provide(layer));
+    let session: string | null = null;
+    let id = 0;
+    const rpc = (method: string, params: object = {}) =>
+      handleMcpRequest(
+        new Request("https://cloud.test/mcp", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${key}`,
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            ...(session === null
+              ? {}
+              : { "mcp-session-id": session, "mcp-protocol-version": "2025-06-18" }),
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
         }),
-      ),
-    );
-  yield* rpc("initialize", {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "test", version: "1" },
+      ).pipe(
+        Effect.provide(layer),
+        Effect.flatMap((response) =>
+          Effect.promise(async () => {
+            session = response.headers.get("mcp-session-id") ?? session;
+            return decodeAnswer(bodyOf(await response.text()));
+          }),
+        ),
+      );
+    yield* rpc("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "test", version: "1" },
+    });
+    const tool = (name: string, args: object) =>
+      Effect.flatMap(rpc("tools/call", { name, arguments: args }), (answer) =>
+        decodeToolResult(answer.result),
+      );
+    return { rpc, tool, cloud };
   });
-  const tool = (name: string, args: object) =>
-    Effect.flatMap(rpc("tools/call", { name, arguments: args }), (answer) =>
-      decodeToolResult(answer.result),
-    );
-  return { rpc, tool, cloud };
-});
+
+const connect = connectWithScopes([
+  "orchestration:read",
+  "orchestration:operate",
+  "filesystem:read",
+]);
 
 describe("Signalbox's MCP", () => {
+  it.effect("serves pool advice through an authorized agent key", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connectWithScopes(["providers:manage"]);
+      const result = yield* tool("signalbox_call", { operation: "pools.advice", input: {} });
+      expect(result.isError ?? false).toBe(false);
+      expect(JSON.parse(result.content[0]!.text)).toEqual([{ poolId: "personal", providers: [] }]);
+      const reader = yield* connect;
+      const denied = yield* reader.tool("signalbox_call", { operation: "pools.advice", input: {} });
+      expect(denied.isError).toBe(true);
+    }),
+  );
+
   it.effect(
     "lets an agent explicitly request provider feedback and reports unsupported harnesses",
     () =>
