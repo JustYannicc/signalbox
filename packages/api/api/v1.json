@@ -1803,7 +1803,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "d5a4dd19",
-      "output": "350fc1ee"
+      "output": "52f9de1a"
     },
     {
       "name": "threads.delete",
@@ -1836,7 +1836,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "2789dd82"
+      "output": "ee88fbda"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1863,8 +1863,8 @@
       "name": "threads.getWorkflowScript",
       "rpc": "orchestration.getWorkflowScript",
       "access": "read",
-      "input": "81c8125b",
-      "output": "6ac5e7bf"
+      "input": "5e5c20a0",
+      "output": "eb77b4fc"
     },
     {
       "name": "threads.interactionMode.set",
@@ -2116,7 +2116,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "9e83fe59"
+      "output": "d1bad755"
     },
     {
       "name": "threads.subscribeArchived",

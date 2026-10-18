@@ -1145,7 +1145,7 @@ function deriveTurnFolds(input: {
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
     const workStartedAt =
-      (run && "workStartedAt" in run ? run.workStartedAt : null) ?? run?.startedAt;
+      run && "workStartedAt" in run ? (run.workStartedAt ?? run.startedAt) : run?.startedAt;
     const elapsedMs =
       workStartedAt && run?.completedAt
         ? computeElapsedMs(workStartedAt, run.completedAt)
