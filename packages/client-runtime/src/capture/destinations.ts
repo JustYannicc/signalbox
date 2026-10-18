@@ -7,11 +7,17 @@ import {
   folderDestinations,
   inOwnerLevel,
   ownerLevelName,
+  ownerFilesProject,
 } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { FolderId } from "@t3tools/contracts/signalboxFolders";
+import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxContexts";
+import type { FolderId, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 
-import type { FolderEnvironmentTree } from "../sidebar/folders/folderThreads";
+export interface CaptureEnvironmentTree {
+  readonly environmentId: EnvironmentId;
+  readonly snapshot: SignalboxFoldersSnapshot;
+  readonly contexts: SignalboxContextsSnapshot;
+}
 
 export interface CaptureDestination {
   readonly key: string;
@@ -28,26 +34,26 @@ export interface CaptureDestination {
 }
 
 export function captureDestinations(
-  trees: Iterable<FolderEnvironmentTree>,
+  trees: Iterable<CaptureEnvironmentTree>,
 ): ReadonlyArray<CaptureDestination> {
   const tops: CaptureDestination[] = [];
   const folders: CaptureDestination[] = [];
   for (const tree of trees) {
-    const several = tree.owners.length > 1;
-    for (const owner of tree.owners) {
-      if (owner.filesProjectId === null) continue;
-      const ownerProjectId = owner.filesProjectId;
-      const detail = several && owner.context.kind !== "personal" ? owner.context.name : null;
+    const several = tree.contexts.contexts.length > 1;
+    for (const context of tree.contexts.contexts) {
+      const ownerProjectId = ownerFilesProject(context);
+      if (ownerProjectId === null) continue;
+      const detail = several && context.kind !== "personal" ? context.name : null;
       tops.push({
-        key: `${tree.environmentId}:${owner.context.id}:top`,
+        key: `${tree.environmentId}:${context.id}:top`,
         environmentId: tree.environmentId,
         folderId: null,
         ownerProjectId,
-        label: ownerLevelName(owner.context),
+        label: ownerLevelName(context),
         detail: null,
-        inPlace: inOwnerLevel(owner.context),
+        inPlace: inOwnerLevel(context),
       });
-      for (const destination of folderDestinations(tree.snapshot, owner.context.id)) {
+      for (const destination of folderDestinations(tree.snapshot, context.id)) {
         folders.push({
           key: `${tree.environmentId}:${destination.folder.id}`,
           environmentId: tree.environmentId,

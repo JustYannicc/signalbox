@@ -61,6 +61,7 @@ const PROVIDERS = Object.keys(MODEL_GATEWAY_PATHS) as ReadonlyArray<ModelGateway
 /** The runtime decodes the upstream body, so its encoding and length no longer apply. */
 const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding"];
 
+// This Worker HTTP adapter returns a native stream so consumers keep pull-based back-pressure.
 export async function handleModelRequest(
   request: Request,
   deps: ModelGatewayDeps,

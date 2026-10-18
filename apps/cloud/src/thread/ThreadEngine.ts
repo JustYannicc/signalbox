@@ -1,3 +1,7 @@
+import { type ThreadCommand } from "./threadCommands.ts";
+import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
+import { compactAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxNativeAsks";
 import type { RetainedWorkflowScript } from "@signalbox/runner-protocol/RunnerProtocol";
 import { workflowEvent, stoppedWorkflowEvents } from "./workflowControl.ts";
 import {
@@ -13,7 +17,6 @@ import {
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2SubscribeCommandOutputInput,
   EventId,
-  type OrchestrationV2Command,
   type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2SearchThreadInput,
@@ -204,7 +207,7 @@ export class ThreadEngine extends Context.Service<
   {
     readonly dispatch: (
       actor: Actor,
-      command: OrchestrationV2Command,
+      command: ThreadCommand,
       creation: ThreadCreation,
     ) => Effect.Effect<
       OrchestrationV2DispatchCommandResult,
@@ -553,7 +556,18 @@ const make = Effect.gen(function* () {
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
-    const decidedEvents = yield* stamp(input.events);
+    const decidedEvents = yield* stamp(
+      current.thread === null
+        ? input.events
+        : compactAskEvents(
+            current.thread.projection.thread.id,
+            current.thread.projection.thread.asks,
+            mirrorNativeAskEvents(
+              current.thread.projection,
+              expireRuntimeRequests(current.thread.projection, input.events),
+            ),
+          ),
+    );
     const candidate = applyEvents(current.thread?.projection ?? null, decidedEvents);
     if (owner === undefined || candidate === null) {
       return yield* Effect.die("A thread's first commit must create it.");
@@ -794,7 +808,11 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
         }
-        if (current.thread !== null && current.thread.projection.thread.deletedAt !== null) {
+        if (
+          current.thread !== null &&
+          current.thread.projection.thread.deletedAt !== null &&
+          command.type !== "thread.ask.sync"
+        ) {
           return yield* ThreadCommandRejectedError.forCommand(command, "This thread is in Trash.");
         }
         const { place } = creation;
@@ -881,6 +899,13 @@ const make = Effect.gen(function* () {
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
+        const selected = decision.events.flatMap((event) =>
+          event.type === "thread.provider-switched" ||
+          event.type === "thread.model-selection-updated"
+            ? [event.payload.modelSelection]
+            : [],
+        )[0];
+        const selection = started?.payload.modelSelection ?? selected;
         if (
           started !== undefined &&
           current.thread !== null &&
@@ -894,19 +919,24 @@ const make = Effect.gen(function* () {
         // that can't be asked right now leaves no receipt, so a retry asks
         // again. Asked under the lock, from the pool's cache: only a pool whose
         // models were never read wakes its container here, once.
-        if (started !== undefined) {
+        if (selection !== undefined) {
           if (pool === undefined) return yield* refuse(POOLS_UNRESOLVED, { record: false });
+          const target = applyEvents(projection, decision.events)?.thread;
           yield* turnModels
             .check({
               ownerId: current.thread?.owner.userId ?? actor.userId,
               pool,
-              selection: started.payload.modelSelection,
+              selection,
+              ...(target === undefined
+                ? {}
+                : { runtimeMode: target.runtimeMode, interactionMode: target.interactionMode }),
             })
             .pipe(
               Effect.catchTags({
                 ModelNotServedError: (error) => refuse(error.message, { record: true }),
                 PoolNeededError: (error) => refuse(error.message, { record: true }),
                 ProviderUnavailableError: (error) => refuse(error.message, { record: true }),
+                ProviderModeUnavailableError: (error) => refuse(error.message, { record: true }),
                 PoolRejectedError: (error) => refusePool(error),
                 PoolObjectError: (error) => refusePool(error),
               }),
@@ -956,7 +986,9 @@ const make = Effect.gen(function* () {
       },
       (projection, ctx, pool, preparation) => {
         const onItsPool =
-          typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
+          typeof pool === "string" && command.type !== "thread.ask.sync"
+            ? commandOnPool(command, projection, pool)
+            : command;
         return decide(
           projection,
           onItsPool.type === "thread.create"
@@ -969,6 +1001,7 @@ const make = Effect.gen(function* () {
           ctx,
           {
             ...(creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs }),
+            personId: actor.userId,
             preparation,
           },
         );
