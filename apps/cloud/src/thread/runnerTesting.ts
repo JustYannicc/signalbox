@@ -6,7 +6,6 @@ import * as NodePath from "node:path";
 
 import {
   runnerFrame,
-  RUNNER_PROTOCOL_VERSION,
   type RunnerItem,
   type RunnerMessage,
   type ThreadMessage,
@@ -187,9 +186,10 @@ export const readTurnReport = (
   runId: RunId,
 ) => Context.get(context, TurnReports.TurnReports).turn(projection, runId);
 
+/** Existing execution fixtures exercise the v6 rollout path; preparation tests opt into v7. */
 export const hello = (generation: number, token: string) => ({
   type: "hello" as const,
-  protocolVersion: RUNNER_PROTOCOL_VERSION,
+  protocolVersion: 6,
   imageVersion: "test",
   machineId: "machine-1",
   threadId,

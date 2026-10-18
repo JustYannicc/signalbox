@@ -33,6 +33,7 @@ import {
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
+  WorktreeSetupError,
 } from "@t3tools/contracts";
 import {
   SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
@@ -182,6 +183,8 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  WS_METHODS.subscribeWorktreeSetup,
+  WS_METHODS.worktreeSetupCancel,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverUpdateSettings,
@@ -298,6 +301,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
+  [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
@@ -699,6 +704,20 @@ export const layerHandlers = (input: {
                   cause,
                 }),
             ),
+          ),
+        [WS_METHODS.subscribeWorktreeSetup]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) =>
+              coreThreads.subscribePreparation(actor, request.threadId),
+            ),
+          ).pipe(
+            Stream.interruptWhen(lostSight(request.threadId)),
+            Stream.mapError((error) => new WorktreeSetupError({ message: failureMessage(error) })),
+          ),
+        [WS_METHODS.worktreeSetupCancel]: (request) =>
+          threadCall(
+            Effect.flatMap(actorNow, (actor) => coreThreads.cancelPreparation(actor, request)),
+            (message) => new WorktreeSetupError({ message }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           threadCall(
