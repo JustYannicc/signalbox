@@ -1,7 +1,14 @@
+import type { RetainedWorkflowScript } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  migrateWorkflowScripts,
+  readWorkflowScript,
+  retainWorkflowScripts,
+} from "./workflowScripts.ts";
 import { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { MachineClass } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   CommandId,
+  type NodeId,
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
   RunId,
@@ -22,6 +29,18 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import {
+  advanceCommandOutputSequence,
+  readCommandOutputSequence,
+  migrateCommandOutput,
+  readCommandOutput,
+  writeCommandOutput,
+} from "./commandOutput/outputTables.ts";
+import type {
+  CommandOutputDelta,
+  CommandOutputKey,
+  RetainedCommandOutput,
+} from "./commandOutput/retainedOutput.ts";
 import * as Migrations from "../storage/migrations.ts";
 import type { SecretEnvironmentNames } from "./turnPool.ts";
 import {
@@ -110,6 +129,11 @@ export interface MachineLease {
   readonly secretScopes?: boolean | undefined;
   /** The run that already replaced an incapable Runner; kept across leases to bound rollout retries. */
   readonly secretUpgradeRunId?: RunId | undefined;
+  readonly workflowStops?: boolean | undefined;
+  /** This generation's Runner can receive committed native answers. */
+  readonly runtimeResponses?: boolean | undefined;
+  /** Already replaced an older Runner for this capability; don't loop on a stale image. */
+  readonly runtimeResponsesUpgrade?: boolean | undefined;
   readonly pulls?: boolean | undefined;
   /**
    * The idle machine was asked to save everything before it goes (#493), at
@@ -148,6 +172,10 @@ export class ThreadStore extends Context.Service<
   ThreadStore,
   {
     /** Whether the thread's tables exist. They are created with the thread, never before. */
+    readonly workflowScript: (
+      subagentId: NodeId,
+      revision: string,
+    ) => Effect.Effect<RetainedWorkflowScript | null, SqlError>;
     readonly initialized: Effect.Effect<boolean, SqlError>;
     /** Creates or upgrades the tables. */
     readonly initialize: Effect.Effect<void, SqlError | Migrator.MigrationError>;
@@ -157,6 +185,10 @@ export class ThreadStore extends Context.Service<
       afterSequence: number,
       limit?: number,
     ) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
+    readonly commandOutputSequence: Effect.Effect<number, SqlError>;
+    readonly commandOutput: (
+      key: CommandOutputKey,
+    ) => Effect.Effect<RetainedCommandOutput | null, SqlError>;
     readonly receipt: (commandId: CommandId) => Effect.Effect<CommandReceipt | null, SqlError>;
     /**
      * Appends events after `head`, the command's receipt, the owner (when the
@@ -164,6 +196,7 @@ export class ThreadStore extends Context.Service<
      * Returns the new head.
      */
     readonly commit: (input: {
+      readonly scripts?: ReadonlyArray<RetainedWorkflowScript>;
       readonly head: number;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       /** `traceId`: the turn the command started, if it started one. */
@@ -176,6 +209,8 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      readonly commandOutputSeeds?: ReadonlyArray<CommandOutputKey>;
+      readonly commandOutput?: ReadonlyArray<CommandOutputDelta>;
       /** The instructions of the thread's chain, for the run these events start. */
       readonly instructions?: {
         readonly runId: string;
@@ -335,6 +370,8 @@ const migrations = Migrator.fromRecord({
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE thread_secrets ADD COLUMN environment_names TEXT NOT NULL DEFAULT '[]'`;
   }),
+  "0012_workflow_scripts": migrateWorkflowScripts,
+  "0012_command_output": migrateCommandOutput,
   "0012_git_pulls": migratePulls,
   "0012_current_item_history": migrateCurrentItemHistory,
   "0013_current_item_expansion": migrateCurrentItemExpansion,
@@ -414,6 +451,9 @@ const MachineLeaseJson = Schema.fromJsonString(
     steers: Schema.optional(Schema.Boolean),
     secretScopes: Schema.optional(Schema.Boolean),
     secretUpgradeRunId: Schema.optional(RunId),
+    workflowStops: Schema.optional(Schema.Boolean),
+    runtimeResponses: Schema.optional(Schema.Boolean),
+    runtimeResponsesUpgrade: Schema.optional(Schema.Boolean),
     pulls: Schema.optional(Schema.Boolean),
     drain: Schema.optional(
       Schema.Union([
@@ -532,6 +572,16 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
+    if (input.scripts)
+      yield* retainWorkflowScripts(input.scripts).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
+    if (input.events.length > 0 || (input.commandOutput?.length ?? 0) > 0) {
+      yield* advanceCommandOutputSequence.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    }
+    yield* writeCommandOutput(input.commandOutputSeeds ?? [], input.commandOutput ?? []).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    );
     if (input.instructions) {
       yield* sql`INSERT INTO run_instructions (run_id, levels)
           VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
@@ -616,6 +666,10 @@ const make = Effect.gen(function* () {
     );
 
   return ThreadStore.of({
+    workflowScript: (subagentId, revision) =>
+      readWorkflowScript(subagentId, revision).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      ),
     initialized,
     initialize: migrate.pipe(
       Effect.andThen(backfillCurrentItemState),
@@ -625,6 +679,11 @@ const make = Effect.gen(function* () {
     owner,
     events,
     receipt,
+    commandOutputSequence: readCommandOutputSequence.pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    ),
+    commandOutput: (key) =>
+      readCommandOutput(key).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
     commit,
     recordRejection,
     outbox,

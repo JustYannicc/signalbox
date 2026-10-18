@@ -137,7 +137,7 @@ const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
-  it("carries command failure metadata through runtime and JSON schemas without output text", () => {
+  it("carries command output metadata through runtime and JSON schemas without output text", () => {
     const base = {
       id: "command-item",
       type: "command_execution",
@@ -159,6 +159,8 @@ describe("orchestration V2 contracts", () => {
       {},
       { outputIndicatesFailure: true },
       { outputIndicatesFailure: false },
+      { outputTruncated: true },
+      { outputTruncated: false },
     ]) {
       const runtime = decodeOrchestrationV2TurnItem({ ...base, ...metadata, updatedAt: now });
       const json = decodeOrchestrationV2TurnItemJson({

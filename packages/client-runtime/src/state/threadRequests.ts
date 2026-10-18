@@ -82,7 +82,10 @@ export function derivePendingThreadRequests(
           multiSelect: question.multiSelect ?? false,
         })),
         responseCapability,
-        dismissible: item.responseMode === "message" || responseCapability === "message",
+        dismissible:
+          responseCapability === "live" ||
+          item.responseMode === "message" ||
+          responseCapability === "message",
         ...(item.responseMode === "message" || responseCapability === "message"
           ? { responseMode: "message" as const }
           : {}),
