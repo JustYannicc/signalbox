@@ -5,6 +5,9 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const WaitingCost = Schema.Literals(["none", "low", "high"]);
 export type WaitingCost = typeof WaitingCost.Type;
 
+export const WaitingCostPolicy = Schema.Struct({ nearDeadlineMs: NonNegativeInt });
+export type WaitingCostPolicy = typeof WaitingCostPolicy.Type;
+
 const Reason = TrimmedNonEmptyString.check(Schema.isMaxLength(2_000));
 const Deadline = Schema.Number.check(
   Schema.isBetween({ minimum: -8_640_000_000_000_000, maximum: 8_640_000_000_000_000 }),

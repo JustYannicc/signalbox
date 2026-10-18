@@ -1,5 +1,6 @@
 import type { WaitingCostSignals } from "@t3tools/contracts/waitingCost";
 import {
+  DEFAULT_WAITING_COST_POLICY,
   compareWaitingCost,
   waitingCostFromSignals,
   waitingCostPlacement,
@@ -36,23 +37,41 @@ describe("Ready waiting cost", () => {
         deadline: now - 1,
         owner: { kind: "urgency", cost: "none", reason: "No rush." },
       }),
-    ).toEqual({ cost: "high", reason: "Deadline: 2026-10-18T11:59:59.999Z.", source: "fact" });
+    ).toEqual({ cost: "high", reason: "The deadline has passed.", source: "fact" });
     expect(evaluate({ branch: "conflicting" })?.cost).toBe("high");
     expect(evaluate({ waitingDependents: 1 })?.source).toBe("fact");
     expect(evaluate({ waitingPeople: 1 })?.cost).toBe("high");
   });
 
-  it("recomputes as deadlines pass and facts disappear", () => {
-    const signals = { ...empty, deadline: now + 1 };
+  it("recomputes before a deadline is missed and when facts disappear", () => {
+    const signals = { ...empty, deadline: now + DEFAULT_WAITING_COST_POLICY.nearDeadlineMs + 1 };
     expect(waitingCostFromSignals(signals, now)?.cost).toBe("low");
     expect(waitingCostFromSignals(signals, now + 1)?.cost).toBe("high");
-    expect(evaluate({ expiry: now })?.cost).toBe("high");
+    expect(
+      waitingCostFromSignals(signals, now, { nearDeadlineMs: 48 * 60 * 60 * 1_000 })?.cost,
+    ).toBe("high");
+    expect(waitingCostFromSignals(signals, signals.deadline + 1)?.cost).toBe("high");
     expect(evaluate({ branch: "stale" })?.cost).toBe("low");
     expect(evaluate({ branch: "current" })).toBeNull();
     expect(evaluate({ owner: { kind: "deadline", at: now, reason: "By Sunday." } })).toEqual({
       cost: "high",
       reason: "By Sunday.",
       source: "owner",
+    });
+  });
+
+  it("stops charging for an expired opportunity but preserves other waiting costs", () => {
+    const signals = { ...empty, expiry: now + 1 };
+    expect(waitingCostFromSignals(signals, now)?.cost).toBe("high");
+    expect(waitingCostFromSignals(signals, now + 1)).toEqual({
+      cost: "none",
+      source: "fact",
+      reason: "The opportunity has expired.",
+    });
+    expect(evaluate({ expiry: now, waitingPeople: 1 })).toEqual({
+      cost: "high",
+      source: "fact",
+      reason: "1 person is waiting.",
     });
   });
 
@@ -80,12 +99,19 @@ describe("Ready waiting cost", () => {
       item("dependent", { waitingDependents: 1 }),
       item("deadline", { deadline: now + 1 }),
     ];
-    expect(items.toSorted(compareWaitingCost).map(({ id }) => id)).toEqual([
+    expect(items.toSorted((a, b) => compareWaitingCost(a, b, now)).map(({ id }) => id)).toEqual([
       "deadline",
       "dependent",
       "old",
       "new",
     ]);
-    expect(compareWaitingCost(items[0]!, items[0]!)).toBe(0);
+    expect(compareWaitingCost(items[0]!, items[0]!, now)).toBe(0);
+    expect(
+      compareWaitingCost(
+        item("expired", { expiry: now - 1 }),
+        item("live", { deadline: now + 1 }),
+        now,
+      ),
+    ).toBeGreaterThan(0);
   });
 });
