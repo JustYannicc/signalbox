@@ -3,21 +3,6 @@ export interface NodeNativeAddonDeclaration {
   readonly members: readonly string[];
 }
 
-// Observed callable exports, independent of the release's embedded path or package version.
-export const NODE_NATIVE_ADDON_MEMBERS = Object.freeze({
-  "image-processor.node": Object.freeze(["processImage"]),
-  "audio-capture.node": Object.freeze([
-    "startRecording",
-    "stopRecording",
-    "isRecording",
-    "startPlayback",
-    "writePlaybackData",
-    "stopPlayback",
-    "isPlaying",
-    "microphoneAuthorizationStatus",
-  ]),
-});
-
 export class NodeCapabilityNeedsMachineError extends Error {
   readonly code = "ERR_NODE_CAPABILITY_NEEDS_MACHINE";
   readonly addon: string;
@@ -55,18 +40,3 @@ function invokeNativeAddon(addon: string, member: string): never {
   throw new NodeCapabilityNeedsMachineError(addon, member);
 }
 
-/** Only inventoried exact specifiers enter the release's layer module map. */
-export function createNodeNativeAddonLayerModules(
-  declarations: readonly NodeNativeAddonDeclaration[],
-  referrer: string,
-) {
-  const modules = createNodeNativeAddonModules(declarations);
-  return Object.freeze(
-    Object.fromEntries(
-      [...modules.keys()].map((specifier) => [
-        specifier,
-        `module.exports = require("node:module").createRequire(${JSON.stringify(referrer)})(${JSON.stringify(specifier)});\n`,
-      ]),
-    ),
-  );
-}
