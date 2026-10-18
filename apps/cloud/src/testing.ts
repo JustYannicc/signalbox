@@ -465,10 +465,10 @@ export const makeMemoryCloud = (
           A,
           E,
           | ThreadEngine.ThreadEngine
+          | ThreadRunner.ThreadRunner
           | ThreadStore.ThreadStore
           | UserDirectory.UserDirectory
           | ThreadBrowsing.ThreadBrowsing
-          | ThreadRunner.ThreadRunner
           | PullRequestSync.PullRequestSync
           | PullRequestPolls.PullRequestPolls
         >,
@@ -571,13 +571,13 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadRunner.ThreadRunner
         | ThreadSecretRequests.ThreadSecretRequests
         | ThreadStore.ThreadStore
         | ThreadPulls.ThreadPulls
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
         | ThreadBrowsing.ThreadBrowsing
-        | ThreadRunner.ThreadRunner
         | PullRequestSync.PullRequestSync
         | PullRequestPolls.PullRequestPolls
       >,
@@ -662,6 +662,7 @@ export const makeMemoryCloud = (
         A,
         E,
         | ThreadEngine.ThreadEngine
+        | ThreadRunner.ThreadRunner
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | ThreadBrowsing.ThreadBrowsing

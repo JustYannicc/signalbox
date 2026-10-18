@@ -1,6 +1,7 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { AccountSettingsSection } from "../../account/AccountSettingsSection"; // signalbox: accounts
 import { ProductAnalyticsSettingsSection } from "../../analytics/ProductAnalyticsSettingsSection"; // signalbox: analytics
+import { PersonTimezoneSettingsRow } from "./PersonTimezoneSettingsRow"; // signalbox: person timezone
 import { SettingsCapability } from "./SettingsCapability";
 import { ArchiveIdleChatsSetting } from "../threadKind/ArchiveIdleChatsSetting"; // signalbox: thread kinds
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
@@ -2419,6 +2420,7 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+        <PersonTimezoneSettingsRow /* signalbox: person timezone */ />
         <SettingsRow
           serverScoped
           settingKeys={["responseStreamingMode"]}

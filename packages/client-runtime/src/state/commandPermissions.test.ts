@@ -27,6 +27,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
 import { SIGNALBOX_ANALYTICS_WS_METHODS } from "@t3tools/contracts/signalboxAnalytics";
+import { PERSON_TIMEZONE_WS_METHODS } from "@t3tools/contracts/personTimezone";
 
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -61,6 +62,24 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination's orchestration grant to cancel preparation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cancel = createCommandPermissions(runtime, WS_METHODS.worktreeSetupCancel);
+        registry.set(sessions(other), AsyncResult.success(grant(true)));
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(cancel.permissionAtom(env))).toBe(false);
+        expect((yield* cancel.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+          AuthOrchestrationOperateScope,
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cancel.permissionAtom(env))).toBe(true);
+        yield* cancel.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect.each([WS_METHODS.serverUpsertKeybinding, WS_METHODS.serverRemoveKeybinding])(
     "requires the destination settings grant for %s",
     (method) =>
@@ -85,6 +104,34 @@ describe("command permissions", () => {
           yield* command.authorize(registry, env);
           registry.set(sessions(other), AsyncResult.success(grant(false)));
           expect(registry.get(command.permissionAtom(other))).toBe(false);
+        }),
+      ),
+  );
+
+  it.effect.each([PERSON_TIMEZONE_WS_METHODS.set, PERSON_TIMEZONE_WS_METHODS.report])(
+    "requires the destination settings grant for %s",
+    (method) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const timezone = createCommandPermissions(runtime, method);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(timezone.permissionAtom(env))).toBe(false);
+          expect((yield* timezone.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(true),
+              scopes: [AuthSettingsWriteScope],
+              permissions: [AuthSettingsWriteScope],
+            }),
+          );
+          expect(registry.get(timezone.permissionAtom(env))).toBe(true);
+          yield* timezone.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(timezone.permissionAtom(other))).toBe(false);
         }),
       ),
   );
@@ -190,6 +237,23 @@ describe("command permissions", () => {
         );
         expect(registry.get(check.permissionAtom(env))).toBe(true);
         yield* check.authorize(registry, env);
+      }),
+    ),
+  );
+
+  it.effect("guards device-open cancellation with the destination operate grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cancelOpen = createCommandPermissions(runtime, WS_METHODS.deviceCancelOpen);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(cancelOpen.permissionAtom(env))).toBe(false);
+        expect((yield* cancelOpen.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cancelOpen.permissionAtom(env))).toBe(true);
+        yield* cancelOpen.authorize(registry, env);
       }),
     ),
   );

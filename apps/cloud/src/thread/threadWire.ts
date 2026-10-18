@@ -18,6 +18,7 @@ import {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  WorktreeSetupStreamEvent,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import {
@@ -97,6 +98,7 @@ const PullInputWire = Schema.Struct({
 export type PullInput = typeof PullInputWire.Type;
 
 export const wire = {
+  preparation: jsonCodec(WorktreeSetupStreamEvent),
   workflowScriptInput: jsonCodec(OrchestrationV2GetWorkflowScriptInput),
   workflowStopInput: jsonCodec(OrchestrationV2StopWorkflowInput),
   workflowScriptReply: jsonCodec(

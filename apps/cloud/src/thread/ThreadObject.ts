@@ -485,6 +485,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.contextMatch(...args);
   }
 
+  subscribePreparation(...args: Parameters<ThreadObjectApi["subscribePreparation"]>) {
+    return this.api.subscribePreparation(...args);
+  }
+
+  cancelPreparation(...args: Parameters<ThreadObjectApi["cancelPreparation"]>) {
+    return this.api.cancelPreparation(...args);
+  }
+
   contextTurns(...args: Parameters<ThreadObjectApi["contextTurns"]>) {
     return this.api.contextTurns(...args);
   }

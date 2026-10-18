@@ -13,6 +13,8 @@ import type {
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  WorktreeSetupSnapshot,
+  WorktreeSetupCancelInput,
 } from "@t3tools/contracts";
 import { SecretRequestError } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
@@ -148,6 +150,11 @@ export interface ThreadObjectApi {
     input: unknown,
     creation: ThreadCreation,
   ) => Promise<ThreadObjectReply<unknown>>;
+  readonly subscribePreparation: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly cancelPreparation: (
+    actor: Actor,
+    input: WorktreeSetupCancelInput,
+  ) => Promise<ThreadObjectReply<{ readonly cancelled: boolean }>>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
@@ -289,6 +296,13 @@ export interface ThreadHandle {
     input: typeof LaunchInputWire.Type,
     creation: ThreadCreation,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, CommandFailure>;
+  readonly subscribePreparation: (
+    actor: Actor,
+  ) => Stream.Stream<WorktreeSetupSnapshot | null, ThreadNotFoundError | ThreadObjectError>;
+  readonly cancelPreparation: (
+    actor: Actor,
+    input: WorktreeSetupCancelInput,
+  ) => Effect.Effect<{ readonly cancelled: boolean }, CommandFailure>;
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
@@ -490,6 +504,16 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
     trash: (actor, input) => lifecycle("trash", () => api.trash(actor, input)),
     restore: (actor, input) => lifecycle("restore", () => api.restore(actor, input)),
     purge: (actor, input) => lifecycle("purge", () => api.purge(actor, input)),
+    subscribePreparation: (actor) =>
+      lines(
+        "subscribePreparation",
+        () => api.subscribePreparation(actor),
+        (line) => wire.preparation.decode(line),
+      ),
+    cancelPreparation: (actor, input) =>
+      call("cancelPreparation", () => api.cancelPreparation(actor, input)).pipe(
+        Effect.flatMap(fromReply),
+      ),
     getWorkflowScript: (actor, input) =>
       call("getWorkflowScript", () =>
         api.getWorkflowScript(actor, wire.workflowScriptInput.encode(input)),

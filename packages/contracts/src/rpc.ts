@@ -150,6 +150,7 @@ import {
 import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
+  WorktreeSetupError,
   WorktreeSetupStreamEvent,
   WorktreeSetupSubscribeInput,
 } from "./worktreeSetup.ts";
@@ -310,6 +311,7 @@ import {
 } from "./preview.ts";
 import {
   DeviceActionInput,
+  DeviceCancelOpenInput,
   DeviceCloseInput,
   DeviceConfigureInput,
   DeviceDetail,
@@ -323,6 +325,7 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
+import { DeviceAgentCommandFailure } from "./deviceAgentDiagnostics.ts";
 import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
@@ -518,6 +521,7 @@ export const WS_METHODS = {
   deviceList: "device.list",
   deviceTestHost: "device.testHost",
   deviceOpen: "device.open",
+  deviceCancelOpen: "device.cancelOpen",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
@@ -626,6 +630,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribeDeviceAgentDiagnostics: "subscribeDeviceAgentDiagnostics",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1508,14 +1513,14 @@ const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
 const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, {
   payload: WorktreeSetupSubscribeInput,
   success: WorktreeSetupStreamEvent,
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([WorktreeSetupError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
   payload: WorktreeSetupCancelInput,
   success: WorktreeSetupCancelResult,
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([WorktreeSetupError, EnvironmentAuthorizationError]),
 });
 
 const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
@@ -1727,6 +1732,11 @@ const WsDeviceOpenRpc = Rpc.make(WS_METHODS.deviceOpen, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceCancelOpenRpc = Rpc.make(WS_METHODS.deviceCancelOpen, {
+  payload: DeviceCancelOpenInput,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceCloseRpc = Rpc.make(WS_METHODS.deviceClose, {
   payload: DeviceCloseInput,
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
@@ -1752,6 +1762,13 @@ const WsDeviceActionRpc = Rpc.make(WS_METHODS.deviceAction, {
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsSubscribeDeviceAgentDiagnosticsRpc = Rpc.make(WS_METHODS.subscribeDeviceAgentDiagnostics, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(DeviceAgentCommandFailure),
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -2213,11 +2230,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceListRpc,
   WsDeviceTestHostRpc,
   WsDeviceOpenRpc,
+  WsDeviceCancelOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsSubscribeDeviceAgentDiagnosticsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

@@ -237,6 +237,7 @@ export interface CancelQueuedRunInput extends ThreadCommandInput {
 
 export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
   readonly runId: RunId;
+  readonly preparationGeneration?: number;
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
@@ -1029,6 +1030,9 @@ export const retryWorkspacePreparation = Effect.fn("EnvironmentCommands.retryWor
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       runId: input.runId,
+      ...(input.preparationGeneration === undefined
+        ? {}
+        : { preparationGeneration: input.preparationGeneration }),
     });
   },
 );

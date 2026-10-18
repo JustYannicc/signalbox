@@ -190,6 +190,14 @@ function SettingsIndexSections() {
     <>
       <SettingsSection title="Interface">
         <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        {targetsSupporting(selectedTargets, "personTimezone").length === 0 &&
+        !(noServerTargets && showsEnvironments) ? null : (
+          <SettingsRow
+            /* signalbox: person timezone */ icon="globe"
+            label="Time zone"
+            target="SettingsTimeZone"
+          />
+        )}
         {Platform.OS === "ios" ? (
           <>
             <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />

@@ -5,6 +5,7 @@ import {
   DeviceId,
   EnvironmentId,
   ProviderInstanceId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -83,11 +84,26 @@ new DataView(png.buffer).setUint32(12, 0x49484452);
 new DataView(png.buffer).setUint32(16, 1206);
 new DataView(png.buffer).setUint32(20, 2622);
 
+const sessionId = "agent-device-session-1";
+const leaseId = "device-lease-1";
+const agentReadiness = {
+  hostId: "local",
+  nodePath: process.execPath,
+  hub: { origin: "http://device.test" },
+  helpers: { serveSimAxSettings: null, serveSimCli: null },
+  run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+  agentDevice: { baseUrl: "http://agent-device.test", token: "token", entryPath: "/cli" },
+};
+
 const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   state: Effect.succeed(state),
   list: Effect.succeed(state),
   open: (input) =>
     Effect.succeed({
+      sessionId,
+      leaseId,
+      ownerKind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("provider-session-device-test"),
       threadId: input.threadId,
       hostId: "local",
       deviceId: input.deviceId,
@@ -100,6 +116,10 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
       id === threadId
         ? [
             {
+              sessionId,
+              leaseId,
+              ownerKind: "agent" as const,
+              providerSessionId: ProviderSessionId.make("provider-session-device-test"),
               threadId,
               hostId: "local",
               deviceId: DeviceId.make("UDID-1"),
@@ -112,8 +132,13 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
   agentCli: Effect.succeed("/cli"),
+  agentReadinessIfSupported: () => Effect.succeed(agentReadiness),
   testHost: () => Effect.die("not used"),
-  agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
+  agentTarget: (input) =>
+    Effect.succeed({
+      args: ["--config", "/host.json", "--session", input.sessionId],
+      sessionId: input.sessionId,
+    }),
 });
 
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
@@ -138,8 +163,17 @@ it.effect("registers the device tools and returns the screenshot as image conten
         .callTool({ name: "device_open", arguments: { platform: "ios" } })
         .pipe(callWith(["device"]), Effect.provideService(McpSchema.McpServerClient, client));
       expect(opened.isError).toBe(false);
-      const openedContent = opened.structuredContent as { quickStart: string };
+      const openedContent = opened.structuredContent as {
+        quickStart: string;
+        sessionId: string;
+        leaseId: string;
+        agentDevice: { targetArgs: ReadonlyArray<string> };
+      };
       expect(openedContent.quickStart).toContain("--udid UDID-1");
+      const sessionFlag = openedContent.agentDevice.targetArgs.indexOf("--session");
+      expect(openedContent.agentDevice.targetArgs[sessionFlag + 1]).toBe(openedContent.sessionId);
+      expect(openedContent.sessionId).toBe(sessionId);
+      expect(openedContent.leaseId).toBe(leaseId);
 
       const shot = yield* server
         .callTool({ name: "device_screenshot", arguments: { deviceId: "UDID-1" } })
@@ -167,6 +201,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
 it.effect("rejects unavailable agent access before booting or opening a device", () => {
   const layerUnavailable = Layer.mock(DeviceService.DeviceService)({
     list: Effect.succeed(state),
+    agentReadinessIfSupported: () => Effect.succeed(null),
     agentTarget: () =>
       Effect.fail(
         new DeviceHostUnavailableError({ hostId: "local", reason: "Agent access is disabled." }),
@@ -186,7 +221,7 @@ it.effect("rejects unavailable agent access before booting or opening a device",
       expect.arrayContaining([
         expect.objectContaining({
           type: "text",
-          text: expect.stringContaining("Agent access is disabled."),
+          text: expect.stringContaining("Agent device access requires enabled device support"),
         }),
       ]),
     );
