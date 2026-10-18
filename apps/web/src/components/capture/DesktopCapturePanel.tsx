@@ -281,8 +281,8 @@ export function DesktopCapturePanel() {
                 initialCapture={draft?.capture ?? null}
                 dismissRequest={dismissRequest}
                 registerFlush={flush.register}
-                onDraftChange={(capture) =>
-                  desktopPanelDraftStorage().write({ id: captureId, capture })
+                onDraftChange={(capture, options) =>
+                  desktopPanelDraftStorage().write({ id: captureId, capture }, options)
                 }
                 onSave={save}
                 onClose={close}

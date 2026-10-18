@@ -44,7 +44,10 @@ export function QuickCaptureForm(props: {
   readonly canSave?: boolean;
   readonly beforeSave?: (capture: Capture) => Promise<Capture>;
   readonly draftFiles?: ReadonlyArray<CaptureFile>;
-  readonly onDraftChange?: (capture: Capture) => void | Promise<void>;
+  readonly onDraftChange?: (
+    capture: Capture,
+    options?: { readonly immediate: boolean },
+  ) => void | Promise<void>;
   readonly registerFlush?: (flush: () => Promise<void>) => () => void;
   readonly allowHideWhileSaving?: boolean;
   readonly onSave: (capture: Capture, open: boolean) => Promise<boolean>;
@@ -111,7 +114,7 @@ export function QuickCaptureForm(props: {
       const ready = props.beforeSave
         ? await props.beforeSave(capture)
         : { ...capture, files: [...capture.files, ...(props.draftFiles ?? [])] };
-      await props.onDraftChange?.(ready);
+      await props.onDraftChange?.(ready, { immediate: true });
       return ready;
     });
     preparation.current = pending;

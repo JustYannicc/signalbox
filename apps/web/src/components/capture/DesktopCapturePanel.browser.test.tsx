@@ -100,6 +100,7 @@ beforeEach(async () => {
   root = createRoot(container);
 });
 afterEach(async () => {
+  vi.useRealTimers();
   await act(() => root.unmount());
   vi.restoreAllMocks();
   await desktopPanelDraftStorage().write(null);
@@ -196,6 +197,7 @@ describe("desktop capture completion", () => {
       throw new Error("delete failed");
     });
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.useFakeTimers();
     const hidden = deferred<void>();
     bridge.hideCapture.mockImplementation(async () => {
       hidden.resolve();

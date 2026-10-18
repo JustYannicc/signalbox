@@ -174,7 +174,10 @@ export function createDesktopPanelDraftStorage(factory: IDBFactory) {
     });
     return draining;
   };
-  const write = async (draft: DesktopPanelDraft | null): Promise<void> => {
+  const write = async (
+    draft: DesktopPanelDraft | null,
+    options?: { readonly immediate: boolean },
+  ): Promise<void> => {
     try {
       if (draft) checkBounds(draft);
       validationFailure = null;
@@ -186,7 +189,7 @@ export function createDesktopPanelDraftStorage(factory: IDBFactory) {
     pending = draft;
     const committed = new Promise<void>((resolve, reject) => waiters.push({ resolve, reject }));
     clearTimeout(timer);
-    if (draft === null) void drain();
+    if (draft === null || options?.immediate) void drain();
     else timer = setTimeout(() => void drain(), WRITE_DELAY_MS);
     await committed;
   };
