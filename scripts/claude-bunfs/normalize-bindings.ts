@@ -15,7 +15,7 @@ export function shadowedMetaRequires(
   const hasStrictDirective = (statements: ts.NodeArray<ts.Statement>): boolean => {
     for (const statement of statements) {
       if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break;
-      if (statement.expression.text === "use strict") return true;
+      if (statement.expression.getText(file).slice(1, -1) === "use strict") return true;
     }
     return false;
   };

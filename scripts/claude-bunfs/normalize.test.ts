@@ -141,6 +141,14 @@ describe("Bun module normalization", () => {
         source: `(function(exports,require,module,__filename,__dirname){${body}})`,
       }),
     ).toThrow("BUN_REQUIRE_SHADOWED");
+    expect(() =>
+      normalizeModule({
+        name: "cli",
+        key: "cli",
+        format: 2,
+        source: `(function(exports,require,module,__filename,__dirname){"use\\x20strict";${body}})`,
+      }),
+    ).toThrow("BUN_REQUIRE_SHADOWED");
     for (const source of [
       `"use strict";${body}`,
       'switch(0){case 0: let require;} export const result=import.meta.require("node:path");',
