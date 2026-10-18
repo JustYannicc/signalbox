@@ -82,6 +82,7 @@
         "infra/check-plan.ts",
         "infra/nodeProof/*.ts",
         "infra/kernelProof/*.ts",
+        "src/kernel/KernelPipeProof.ts", // Loaded by the static pipe fixture's generated entry.
         "infra/codexExecProof/prepare.ts",
         "src/kernel/CodexExecProtocolProof.ts",
         "infra/syncProbe/alchemy.run.ts!",
