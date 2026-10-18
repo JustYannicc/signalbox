@@ -1,5 +1,6 @@
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewGuideStop } from "@t3tools/contracts";
-import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
+import { parseGitPatchHeaderPath, type GitPatchHeaderPath } from "@t3tools/shared/gitPatchPath";
+import type { ReviewGuideGenerationResult } from "./textGeneration.ts";
 
 const MAX_EXCERPT_LINES = 25;
 
@@ -20,6 +21,35 @@ export interface ReviewGuideChange {
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+const filePathFromHeaders = (
+  oldPath: GitPatchHeaderPath | null,
+  newPath: GitPatchHeaderPath | null,
+): string | null => {
+  if (oldPath === null || newPath === null) return null;
+  if (newPath._tag === "Path") return newPath.path;
+  return oldPath._tag === "Path" ? oldPath.path : null;
+};
+
+function patchPaths(patch: string): Array<string> {
+  const paths: Array<string> = [];
+  let oldPath: GitPatchHeaderPath | null = null;
+  let inHunks = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      oldPath = null;
+      inHunks = false;
+    } else if (!inHunks && line.startsWith("--- ")) {
+      oldPath = parseGitPatchHeaderPath(line, "a");
+    } else if (!inHunks && line.startsWith("+++ ")) {
+      const path = filePathFromHeaders(oldPath, parseGitPatchHeaderPath(line, "b"));
+      if (path !== null) paths.push(path);
+    } else if (HUNK_HEADER.test(line)) {
+      inHunks = true;
+    }
+  }
+  return paths;
+}
+
 const hunkRange = (start: string, count: string | undefined): LineRange | null => {
   const lines = count === undefined ? 1 : Number(count);
   return lines === 0 ? null : { start: Number(start), end: Number(start) + lines - 1 };
@@ -27,7 +57,7 @@ const hunkRange = (start: string, count: string | undefined): LineRange | null =
 
 export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewGuideChange {
   const hunks = new Map<string, FileHunks>();
-  let oldPath: string | null = null;
+  let oldPath: GitPatchHeaderPath | null = null;
   let current: FileHunks | null = null;
   // Inside a file's hunks a `--- ` or `+++ ` line is a removed or added source line, not a header.
   let inHunks = false;
@@ -37,10 +67,13 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
       current = null;
       inHunks = false;
     } else if (!inHunks && line.startsWith("--- ")) {
-      oldPath = line.startsWith("--- a/") ? line.slice(6) : null;
+      oldPath = parseGitPatchHeaderPath(line, "a");
     } else if (!inHunks && line.startsWith("+++ ")) {
-      const path = line.startsWith("+++ b/") ? line.slice(6) : oldPath;
-      if (path === null) continue;
+      const path = filePathFromHeaders(oldPath, parseGitPatchHeaderPath(line, "b"));
+      if (path === null) {
+        current = null;
+        continue;
+      }
       current = hunks.get(path) ?? { new: [], old: [] };
       hunks.set(path, current);
     } else if (current !== null) {
@@ -54,6 +87,11 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
     }
   }
   return { files: nameOnly.split("\0").filter((path) => path !== ""), hunks };
+}
+
+/** Parse GitHub's assembled unified patch, whose file list is carried by its `+++` headers. */
+export function parseReviewGuidePatch(patch: string): ReviewGuideChange {
+  return parseReviewGuideChange(patchPaths(patch).join("\0"), patch);
 }
 
 function clampExcerpt(

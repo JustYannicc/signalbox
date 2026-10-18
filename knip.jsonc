@@ -26,6 +26,7 @@
       // worktree setup (from t3.json) run directly.
       "entry": [
         "knip-schemas.ts",
+        "claude-bunfs/prepare-bun-proof.ts", // signalbox: standalone isolate proof builder
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "release-artifacts-smoke.ts", // signalbox: invoked as a subprocess by release-smoke.ts
@@ -79,7 +80,10 @@
         "infra/boxd-spike.alchemy.ts!",
         "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
+        "infra/nodeProof/*.ts",
         "infra/kernelProof/*.ts",
+        "infra/codexExecProof/prepare.ts",
+        "src/kernel/CodexExecProtocolProof.ts",
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
         "infra/isolateProbe/alchemy.run.ts!",
