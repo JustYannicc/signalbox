@@ -94,7 +94,7 @@ type PreviewCleanupResult =
 class PreviewCleanupDependenciesService extends Context.Service<
   PreviewCleanupDependenciesService,
   PreviewCleanupDependencies
->()("@signalbox/cloud/previewSetup/PreviewCleanupDependencies") {}
+>()("@signalbox/cloud/previewSetup/PreviewCleanupService/PreviewCleanupDependenciesService") {}
 
 export class PreviewCleanupService extends Context.Service<
   PreviewCleanupService,
