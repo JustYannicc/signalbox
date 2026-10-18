@@ -22,6 +22,8 @@ describe("Runner provider events", () => {
     const projection = {
       thread: { id: parentThreadId, providerInstanceId: ProviderInstanceId.make("codex") },
       runs: [{ id: parentRunId, providerInstanceId: ProviderInstanceId.make("codex") }],
+      subagents: [],
+      nodes: [],
     } as unknown as OrchestrationV2ThreadProjection;
     const item: RunnerItem = {
       kind: "provider",
@@ -51,6 +53,8 @@ describe("Runner provider events", () => {
     const childProjection = {
       thread: { id: childThreadId, providerInstanceId: ProviderInstanceId.make("codex") },
       runs: [],
+      subagents: [],
+      nodes: [],
     } as unknown as OrchestrationV2ThreadProjection;
     const recorded = recordedNativeChildEvents(childProjection, item, ctx);
 

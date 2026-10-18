@@ -62,6 +62,8 @@ const setup = (
           archived.push({ threadId, commandId, idleSinceMs: creation.idleSinceMs });
           return { _tag: "ok", value: { sequence: 1 } };
         },
+        getWorkflowScript: async () => ({ _tag: "not_found" }),
+        stopWorkflow: async () => ({ _tag: "not_found" }),
         launch: async () => ({ _tag: "not_found" }),
         recordNativeChildBatch: async () => ({ _tag: "saved" }),
         commandOutput: async () => null,

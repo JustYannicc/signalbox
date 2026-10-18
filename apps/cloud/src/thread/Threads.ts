@@ -1,6 +1,11 @@
 import type {
   OrchestrationV2Command,
   OrchestrationV2AppThreadLineage,
+  OrchestrationV2GetWorkflowScriptInput,
+  OrchestrationV2GetWorkflowScriptResult,
+  OrchestrationGetWorkflowScriptError,
+  OrchestrationV2StopWorkflowInput,
+  OrchestrationV2StopWorkflowError,
   OrchestrationV2CommandOutputError,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2Run,
@@ -42,6 +47,17 @@ export class Threads extends Context.Service<
       command: OrchestrationV2Command,
       expectedRun?: Pick<OrchestrationV2Run, "id" | "status"> | null,
     ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    readonly getWorkflowScript: (
+      actor: Actor,
+      input: OrchestrationV2GetWorkflowScriptInput,
+    ) => Effect.Effect<
+      OrchestrationV2GetWorkflowScriptResult,
+      ThreadReadError | OrchestrationGetWorkflowScriptError
+    >;
+    readonly stopWorkflow: (
+      actor: Actor,
+      input: OrchestrationV2StopWorkflowInput,
+    ) => Effect.Effect<void, ThreadReadError | OrchestrationV2StopWorkflowError>;
     readonly snapshot: (
       actor: Actor,
       threadId: ThreadId,

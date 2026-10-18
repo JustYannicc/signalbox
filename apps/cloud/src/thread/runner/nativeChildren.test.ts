@@ -87,6 +87,14 @@ describe("provider-native child history", () => {
               const now = parent.thread.updatedAt;
               const subagentId = NodeId.make("native-child-task");
               const childProviderId = ProviderThreadId.make("native-child-provider");
+              const retainedScript = {
+                subagentId,
+                runId: turn.runId,
+                scriptPath: "/workflows/native-parent.js",
+                revision: "native-parent-r1",
+                contents: "await parentWorkflow();",
+                truncated: false,
+              };
               const appThread: typeof OrchestrationV2AppThread.Type = {
                 ...parent.thread,
                 id: childThreadId,
@@ -121,6 +129,14 @@ describe("provider-native child history", () => {
                 startedAt: now,
                 completedAt: null,
                 updatedAt: now,
+                workflow: {
+                  phases: [],
+                  agents: [],
+                  runHandles: {
+                    scriptPath: retainedScript.scriptPath,
+                    scriptRevision: retainedScript.revision,
+                  },
+                },
               };
               const message: typeof OrchestrationV2ConversationMessage.Type = {
                 createdBy: "agent",
@@ -284,6 +300,12 @@ describe("provider-native child history", () => {
                 generation: machine.generation,
                 runId: turn.runId,
                 command: commandItem(turn),
+                script: item({ type: "workflow.script", ...retainedScript }),
+                scriptInput: {
+                  threadId: parent.thread.id,
+                  subagentId,
+                  scriptPath: retainedScript.scriptPath,
+                },
                 attestation: item({
                   type: "subagent.updated",
                   subagent: yield* encodeSubagent(attestation),
@@ -317,6 +339,7 @@ describe("provider-native child history", () => {
                   reportCommand(first.runId, first.command),
                   delta(first.runId, "PARENT_OUTPUT\n"),
                   first.attestation,
+                  first.script,
                 ],
               };
               expect(Exit.isFailure(yield* Effect.exit(runner.batch(batch)))).toBe(true);
@@ -326,6 +349,10 @@ describe("provider-native child history", () => {
               ]);
               expect(yield* runner.batch(batch)).toEqual({ _tag: "ack", sequence: 3 });
               expect((yield* firstFrame(engine)).text).toBe("PARENT_OUTPUT\n");
+              expect(yield* engine.getWorkflowScript(owner, first.scriptInput)).toMatchObject({
+                contents: "await parentWorkflow();",
+                revision: "native-parent-r1",
+              });
               expect((yield* withObject(childDatabase, (child) => snapshot(child))).head).toBe(
                 saved.head,
               );
@@ -341,11 +368,17 @@ describe("provider-native child history", () => {
         // Creation metadata must remain available for later transcript-only batches.
         yield* withObject(
           parentDatabase,
-          (_engine, runner) =>
-            runner.batch({
-              generation: first.generation,
-              sequence: 4,
-              items: [first.finalMessage, first.transcript],
+          (engine, runner) =>
+            Effect.gen(function* () {
+              expect(yield* engine.getWorkflowScript(owner, first.scriptInput)).toMatchObject({
+                contents: "await parentWorkflow();",
+                revision: "native-parent-r1",
+              });
+              yield* runner.batch({
+                generation: first.generation,
+                sequence: 4,
+                items: [first.finalMessage, first.transcript],
+              });
             }),
           options,
         );

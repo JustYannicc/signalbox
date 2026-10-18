@@ -313,6 +313,9 @@ export const makeThreads = Effect.gen(function* () {
     );
 
   return Threads.Threads.of({
+    getWorkflowScript: (actor, input) =>
+      directory.forThread(input.threadId).getWorkflowScript(actor, input),
+    stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),
     launch: launchThread,
     dispatch: dispatchCommand,
     snapshot: threadSnapshot,
