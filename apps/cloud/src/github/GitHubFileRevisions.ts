@@ -5,11 +5,8 @@ import * as Schema from "effect/Schema";
 
 import { decodeGraphqlData } from "./GitHubGraphql.ts";
 import type { GitHubApi, GitHubError } from "./GitHubApi.ts";
-import type {
-  PullRequestDiffFile,
-  PullRequestFileRevisionTarget,
-  PullRequestReadError,
-} from "./PullRequestViewedFiles.ts";
+import type { PullRequestDiffFile, PullRequestFileRevisionTarget } from "./PullRequestDiffFiles.ts";
+import type { PullRequestReadError } from "./CloudPullRequestsService.ts";
 
 const MAX_FILES = 500;
 const FILES_PER_QUERY = 50;

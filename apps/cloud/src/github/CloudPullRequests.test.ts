@@ -316,6 +316,8 @@ describe("CloudPullRequests", () => {
         expect(authored.capabilities).toMatchObject({
           comment: true,
           reactions: true,
+          viewedFiles: "environment",
+          viewedFilesInCommitDiff: false,
           edit: { comment: true },
           review: { inlineComment: true, reply: true, resolve: true },
         });

@@ -89,12 +89,9 @@ const completePatch = (patch: string, fileCount: number) => {
     .split(/(?=^diff --git )/mu)
     .filter((section) => section.startsWith("diff --git "));
   if (sections.length !== fileCount) return false;
-  return sections.every((section) => {
-    const hasHunk = /^@@ -\d+/mu.test(section);
-    const hasCompleteMetadataOnlyChange =
-      /^(?:rename from |new file mode |deleted file mode |old mode |new mode )/mu.test(section);
-    return hasHunk || hasCompleteMetadataOnlyChange;
-  });
+  // GitHub supplies only the file headers for a modified binary. Missing text hunks
+  // are reported separately by the adapter's truncated and omitted-file flags.
+  return sections.every((section) => /^--- /mu.test(section) && /^\+\+\+ /mu.test(section));
 };
 
 const make = Effect.gen(function* () {

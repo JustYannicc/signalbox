@@ -8,8 +8,8 @@ import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ModelCatalog from "../models/ModelCatalog.ts";
 import * as UserFolders from "../user/UserFolders.ts";
@@ -27,6 +27,8 @@ const request = { ...reference, headSha: HEAD, operationId: "guide-1" };
 
 const setup = Effect.gen(function* () {
   const base = yield* fixture;
+  const sql = yield* SqlClient.SqlClient;
+  const completions = yield* Queue.unbounded<void>();
   const state = {
     head: HEAD,
     allowed: true,
@@ -147,11 +149,15 @@ const setup = Effect.gen(function* () {
         nextCursor: null,
       }),
     invalidate: () =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         state.refreshes += 1;
+        const [latest] = yield* sql<{ readonly status: string }>`
+          SELECT status FROM pull_request_guide_jobs ORDER BY sequence DESC LIMIT 1`;
+        if (latest?.status === "finished" || latest?.status === "failed")
+          yield* Queue.offer(completions, undefined);
       }),
   }).pipe(Effect.provide(dependencies));
-  return { base, state, make, guides: yield* make, sql: yield* SqlClient.SqlClient };
+  return { base, state, make, guides: yield* make, sql, completed: Queue.take(completions) };
 });
 
 describe("durable cloud review guides", () => {
@@ -163,6 +169,7 @@ describe("durable cloud review guides", () => {
         f.state.servesModel = false;
         yield* f.guides.generateReviewGuide(request);
         yield* f.guides.wakeReviewGuides;
+        yield* f.completed;
         expect(f.state.calls).toBe(0);
         expect((yield* f.guides.reviewGuide(reference)).run).toMatchObject({
           _tag: "Failed",
@@ -189,6 +196,7 @@ describe("durable cloud review guides", () => {
         expect(f.state.calls).toBe(0);
         expect((yield* f.sql`SELECT id FROM pull_request_guide_jobs`).length).toBe(1);
         yield* restarted.wakeReviewGuides;
+        yield* f.completed;
         expect(f.state.calls).toBe(1);
         expect(f.state.selections[0]).toMatchObject({
           pool: { objectName: "user-1:work", userId: "user-1" },
@@ -230,6 +238,7 @@ describe("durable cloud review guides", () => {
           reason: "operation-conflict",
         });
         yield* f.guides.wakeReviewGuides;
+        yield* f.completed;
         expect(f.state.calls).toBe(0);
         f.base.state.accountId = "123";
         expect((yield* f.guides.reviewGuide(reference)).run).toMatchObject({ _tag: "Failed" });
@@ -245,11 +254,14 @@ describe("durable cloud review guides", () => {
         Effect.andThen(Deferred.await(finish)),
       );
       yield* f.guides.generateReviewGuide(request);
-      const worker = yield* Effect.forkChild(f.guides.wakeReviewGuides);
+      yield* f.guides.wakeReviewGuides;
       yield* Deferred.await(started);
+      // The alarm has returned while the model is suspended; another alarm cannot duplicate it.
+      yield* f.guides.wakeReviewGuides;
+      expect(f.state.calls).toBe(1);
       f.base.state.accountId = "other-account";
       yield* Deferred.succeed(finish, undefined);
-      yield* Fiber.join(worker);
+      yield* f.completed;
       f.base.state.accountId = "123";
       const result = yield* f.guides.reviewGuide(reference);
       expect(result.guide).toBeNull();
@@ -262,6 +274,7 @@ describe("durable cloud review guides", () => {
       const f = yield* setup;
       yield* f.guides.generateReviewGuide(request);
       yield* f.guides.wakeReviewGuides;
+      yield* f.completed;
       f.state.head = "c".repeat(40);
       expect(yield* f.guides.reviewGuide(reference)).toMatchObject({
         guide: { headSha: HEAD },
@@ -275,6 +288,7 @@ describe("durable cloud review guides", () => {
       f.state.head = HEAD;
       yield* f.guides.generateReviewGuide({ ...request, operationId: "regenerate" });
       yield* f.guides.wakeReviewGuides;
+      yield* f.completed;
       expect(f.state.calls).toBe(2);
     }).pipe(Effect.provide(storage)),
   );

@@ -273,6 +273,7 @@ export const PullRequestCapabilities = Schema.Struct({
   search: Schema.Boolean,
   reactions: Schema.optional(Schema.Boolean),
   viewedFiles: Schema.optional(PullRequestViewedFilesStore),
+  viewedFilesInCommitDiff: Schema.optional(Schema.Boolean),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   edit: Schema.optional(PullRequestEditCapabilities),

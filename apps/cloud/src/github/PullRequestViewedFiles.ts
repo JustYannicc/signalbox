@@ -1,6 +1,5 @@
 import {
   PullRequestOperationError,
-  PullRequestUnavailableError,
   type PullRequestDiffInput,
   type PullRequestDiffResult,
   type PullRequestDiffRevision,
@@ -9,30 +8,19 @@ import {
   type PullRequestRef,
   type PullRequestSetFilesViewedInput,
 } from "@t3tools/contracts";
-import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as UserDrives from "../user/UserDrives.ts";
+import type { PullRequestReadError } from "./CloudPullRequestsService.ts";
+import * as PullRequestDiffFiles from "./PullRequestDiffFiles.ts";
+import type { PullRequestDiffFile, PullRequestFileRevisionTarget } from "./PullRequestDiffFiles.ts";
 import {
   PullRequestRepository,
   type ResolvedPullRequestRepository,
 } from "./PullRequestRepository.ts";
-
-export type PullRequestReadError = PullRequestUnavailableError | PullRequestOperationError;
-
-export interface PullRequestDiffFile {
-  readonly path: string;
-  readonly oldPath: string | null;
-  readonly newPath: string | null;
-}
-
-export interface PullRequestFileRevisionTarget {
-  readonly repository: string;
-  readonly token: string;
-}
 
 export interface Dependencies {
   readonly invalidate: (input: PullRequestInvalidateInput) => Effect.Effect<void>;
@@ -49,7 +37,6 @@ export interface Dependencies {
 }
 
 const MAX_FILES_VIEWED_ROWS = 500;
-const MAX_DIFF_PAGES = 30;
 
 const operationError = (
   operation: string,
@@ -62,106 +49,6 @@ const operationError = (
     detail,
     ...(reason ? { reason } : {}),
     ...(cause === undefined ? {} : { cause }),
-  });
-
-const sameRevision = (
-  left: PullRequestDiffRevision | undefined,
-  right: PullRequestDiffRevision | undefined,
-) =>
-  left !== undefined &&
-  right !== undefined &&
-  left.baseSha.toLowerCase() === right.baseSha.toLowerCase() &&
-  left.headSha.toLowerCase() === right.headSha.toLowerCase();
-
-const patchPath = (line: string | undefined, side: "a" | "b"): string | null => {
-  if (line === undefined) return null;
-  const token = line.slice(4).replace(/\r$/u, "");
-  if (token === "/dev/null") return null;
-  const unquoted = unquoteGitPatchPath(token);
-  const prefix = `${side}/`;
-  const path = unquoted.startsWith(prefix) ? unquoted.slice(prefix.length) : unquoted;
-  return path.length === 0 ? null : path;
-};
-
-const diffFile = (section: string): PullRequestDiffFile | null => {
-  const lines = section.split("\n");
-  const oldPath = patchPath(
-    lines.find((line) => line.startsWith("--- ")),
-    "a",
-  );
-  const newPath = patchPath(
-    lines.find((line) => line.startsWith("+++ ")),
-    "b",
-  );
-  const path = newPath ?? oldPath;
-  return path === null ? null : { path, oldPath, newPath };
-};
-
-const readDiffFiles = (
-  diff: Dependencies["diff"],
-  reference: PullRequestRef,
-): Effect.Effect<
-  {
-    readonly revision: PullRequestDiffRevision;
-    readonly files: ReadonlyMap<string, PullRequestDiffFile>;
-  },
-  PullRequestReadError | PullRequestOperationError
-> =>
-  Effect.gen(function* () {
-    const files = new Map<string, PullRequestDiffFile>();
-    let cursor: string | undefined;
-    let revision: PullRequestDiffRevision | undefined;
-    const seenCursors = new Set<string>();
-
-    for (let page = 0; page < MAX_DIFF_PAGES; page += 1) {
-      const input: PullRequestDiffInput = {
-        ...reference,
-        ...(cursor === undefined ? {} : { cursor }),
-      };
-      const result = yield* diff(input);
-      if (result.revision === undefined)
-        return yield* operationError(
-          "filesViewed",
-          "The current diff has no immutable revision.",
-          "conflict",
-        );
-      if (revision !== undefined && !sameRevision(revision, result.revision))
-        return yield* operationError(
-          "filesViewed",
-          "The pull request changed while its diff was being read. Try again.",
-          "conflict",
-        );
-      revision = result.revision;
-
-      const sections = result.patch
-        .split(/(?=^diff --git )/mu)
-        .filter((section) => section.startsWith("diff --git "));
-      for (const section of sections) {
-        const file = diffFile(section);
-        if (file === null)
-          return yield* operationError(
-            "filesViewed",
-            "A changed file path could not be verified.",
-            "invalid",
-          );
-        files.set(file.path, file);
-      }
-
-      if (result.nextCursor === null) return { revision, files };
-      if (seenCursors.has(result.nextCursor))
-        return yield* operationError(
-          "filesViewed",
-          "The pull request diff did not advance.",
-          "conflict",
-        );
-      seenCursors.add(result.nextCursor);
-      cursor = result.nextCursor;
-    }
-    return yield* operationError(
-      "filesViewed",
-      "The pull request diff has too many pages.",
-      "invalid",
-    );
   });
 
 const storeError = (operation: string) => (cause: unknown) =>
@@ -247,7 +134,10 @@ export const makePullRequestViewedFiles = (dependencies: Dependencies) =>
         const held = rows.slice(0, MAX_FILES_VIEWED_ROWS);
         if (held.length === 0) return { files: [], truncated: rows.length > MAX_FILES_VIEWED_ROWS };
 
-        const current = yield* readDiffFiles(dependencies.diff, referenceFor(input, target));
+        const current = yield* PullRequestDiffFiles.readPullRequestDiffFiles(
+          dependencies.diff,
+          referenceFor(input, target),
+        );
         const filesToResolve = held.flatMap((mark) => {
           const file = current.files.get(mark.path);
           return file === undefined ? [] : [file];
@@ -318,11 +208,16 @@ export const makePullRequestViewedFiles = (dependencies: Dependencies) =>
               );
 
             const marking = input.files.some((file) => file.viewed);
-            const current = marking ? yield* readDiffFiles(dependencies.diff, reference) : null;
+            const current = marking
+              ? yield* PullRequestDiffFiles.readPullRequestDiffFiles(dependencies.diff, reference)
+              : null;
             if (
               current !== null &&
               input.displayedRevision !== undefined &&
-              !sameRevision(input.displayedRevision, current.revision)
+              !PullRequestDiffFiles.samePullRequestDiffRevision(
+                input.displayedRevision,
+                current.revision,
+              )
             )
               return yield* operationError(
                 "setFilesViewed",

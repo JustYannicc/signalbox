@@ -248,29 +248,37 @@ export const makePullRequestReviewGuides = (reads: {
       const job = yield* store.startNext(now + 12 * 60_000).pipe(Effect.mapError(storeError));
       yield* arm.pipe(Effect.mapError(storeError));
       if (job === null) return;
-      yield* generate(job.reference, job.head_sha, job.account_id).pipe(
-        Effect.timeout("10 minutes"),
-        Effect.matchEffect({
-          onSuccess: (guide) =>
-            Effect.flatMap(Clock.currentTimeMillis, (at) => store.finish(job.id, guide, at)).pipe(
-              Effect.mapError(storeError),
-            ),
-          onFailure: (cause) =>
-            Effect.flatMap(Clock.currentTimeMillis, (at) =>
-              store.fail(
-                job.id,
-                isOperationError(cause)
-                  ? cause.detail
-                  : isGenerationError(cause) || isCompletionError(cause)
-                    ? cause.reason
-                    : "The review guide could not be written. Generate it again.",
-                at,
-              ),
-            ).pipe(Effect.mapError(storeError)),
-        }),
+      // The durable claim and recovery alarm precede detachment. A slow model must not hold
+      // the person's session expiry, automation crons or other alarm work until it finishes.
+      yield* Effect.forkDetach(
+        Effect.gen(function* () {
+          yield* generate(job.reference, job.head_sha, job.account_id).pipe(
+            Effect.timeout("10 minutes"),
+            Effect.matchEffect({
+              onSuccess: (guide) =>
+                Effect.flatMap(Clock.currentTimeMillis, (at) =>
+                  store.finish(job.id, guide, at),
+                ).pipe(Effect.mapError(storeError)),
+              onFailure: (cause) =>
+                Effect.flatMap(Clock.currentTimeMillis, (at) =>
+                  store.fail(
+                    job.id,
+                    isOperationError(cause)
+                      ? cause.detail
+                      : isGenerationError(cause) || isCompletionError(cause)
+                        ? cause.reason
+                        : "The review guide could not be written. Generate it again.",
+                    at,
+                  ),
+                ).pipe(Effect.mapError(storeError)),
+            }),
+          );
+          yield* reads.invalidate({ reference: job.reference });
+          yield* arm.pipe(Effect.mapError(storeError));
+        }).pipe(
+          Effect.catchCause((cause) => Effect.logError("review guide job failed", { cause })),
+        ),
       );
-      yield* reads.invalidate({ reference: job.reference });
-      yield* arm.pipe(Effect.mapError(storeError));
     });
     yield* arm;
     return { reviewGuide, generateReviewGuide, wakeReviewGuides };

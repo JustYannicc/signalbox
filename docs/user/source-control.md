@@ -272,7 +272,9 @@ ordering, not the guide's layout or which files it covers.
 
 Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a
 running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
-single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
+single commit keeps them. In the cloud you tick files off with the whole pull request in view;
+while the tab shows a single commit, your ticks show but can't be changed. A file pushed to after
+you cleared it comes back marked **Changed**.
 
 In the cloud, viewed marks belong to you and follow you across Signalbox devices. They do not
 change GitHub's viewed marks. On a self-hosted server, GitHub's own viewed marks carry between
@@ -280,8 +282,9 @@ Signalbox and github.com in either direction. Forgejo, GitLab, Bitbucket, and Az
 server you are connected to keeps them instead: they follow you across the apps connected to that
 server, but the host's own site will not show them, and the count reads **viewed in Signalbox**.
 
-On mobile, open a changed file and mark it viewed from its header. Viewed files collapse,
-and their marks follow the same rules as on web and desktop.
+On mobile, open a changed file and mark it viewed from its header. Viewed files collapse. With
+the whole pull request in view, marks follow the same rules as on web and desktop. While you view a
+single commit, ticks only collapse files on that screen: they start empty and aren't saved.
 
 ## Troubleshooting
 

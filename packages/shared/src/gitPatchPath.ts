@@ -116,3 +116,62 @@ export function unquoteGitPatchPath(token: string): string {
   }
   return unescapeBody(token);
 }
+
+export type GitPatchHeaderPath =
+  | { readonly _tag: "Path"; readonly path: string }
+  | { readonly _tag: "Absent" };
+
+const isValidEscapedPath = (body: string): boolean => {
+  for (let at = 0; at < body.length;) {
+    const character = body.charAt(at);
+    const codePoint = character.codePointAt(0);
+    if (
+      character === '"' ||
+      codePoint === undefined ||
+      codePoint < LOWEST_PRINTABLE ||
+      codePoint === DELETE_CHARACTER
+    )
+      return false;
+    if (character !== "\\") {
+      at += 1;
+      continue;
+    }
+
+    const escaped = body.charAt(at + 1);
+    if (CHARACTER_BY_ESCAPE[escaped] !== undefined) {
+      at += 2;
+      continue;
+    }
+    const octal = body.slice(at + 1, at + 4);
+    if (!/^[0-7]{3}$/u.test(octal)) return false;
+    const byte = Number.parseInt(octal, 8);
+    if (byte === 0 || byte > 0xff) return false;
+    at += 4;
+  }
+  return true;
+};
+
+/**
+ * Parses a unified diff's `---` or `+++` header, requiring the side prefix Git wrote.
+ * `null` means the header is malformed; `Absent` represents the `/dev/null` side.
+ */
+export function parseGitPatchHeaderPath(
+  line: string | undefined,
+  side: "a" | "b",
+): GitPatchHeaderPath | null {
+  if (line === undefined) return null;
+  const header = side === "a" ? "--- " : "+++ ";
+  if (!line.startsWith(header)) return null;
+
+  const token = line.slice(header.length).replace(/\r$/u, "");
+  const quoted = token.startsWith(QUOTE);
+  if (quoted !== token.endsWith(QUOTE)) return null;
+  const body = quoted ? token.slice(1, -1) : token;
+  if (!isValidEscapedPath(body)) return null;
+
+  const path = unquoteGitPatchPath(token);
+  if (path === "/dev/null") return { _tag: "Absent" };
+  const prefix = `${side}/`;
+  if (!path.startsWith(prefix) || path.length === prefix.length || path.includes("\0")) return null;
+  return { _tag: "Path", path: path.slice(prefix.length) };
+}

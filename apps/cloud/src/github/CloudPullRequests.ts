@@ -65,6 +65,7 @@ const capabilities: PullRequestCapabilities = {
   reviewers: { request: false, listCandidates: false },
   stacks: true,
   viewedFiles: "environment",
+  viewedFilesInCommitDiff: false,
 };
 const provider = SourceControlProviderKind.make("github");
 const scopeOf = (target: ResolvedPullRequestRepository) =>

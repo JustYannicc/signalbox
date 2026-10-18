@@ -217,6 +217,28 @@ it.effect("rejects stale revisions and paths outside the current diff", () => {
   }).pipe(Effect.provide(f.dependencies));
 });
 
+it.effect("rejects a diff whose file header has the wrong side prefix", () => {
+  const f = fixture();
+  f.state.pages[0] = {
+    revision: revision("a", "b"),
+    patch: [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- b/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n"),
+  };
+  return Effect.gen(function* () {
+    const viewed = yield* f.make();
+    const error = yield* Effect.flip(viewed.setFilesViewed(mark()));
+    expect(error).toMatchObject({ reason: "invalid" });
+    expect(yield* viewed.filesViewed(reference())).toMatchObject({ files: [] });
+    expect(f.state.invalidations).toBe(0);
+  }).pipe(Effect.provide(f.dependencies));
+});
+
 it.effect("dismisses only the file whose exact patch changed", () => {
   const f = fixture();
   return Effect.gen(function* () {

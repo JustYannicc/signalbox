@@ -253,35 +253,54 @@ describe("PullRequestGuideGeneration", () => {
     }).pipe(Effect.provide(layer(() => Effect.succeed(generated())))),
   );
 
-  it.effect(
-    "rejects a missing changed-file entry or a file with no hunk or complete metadata",
-    () =>
-      Effect.gen(function* () {
-        const model = yield* PullRequestGuideGeneration.PullRequestGuideGeneration;
-        const missingFile = yield* Effect.flip(
-          model.generate(
-            input(() => Effect.succeed(diff(filePatch("src/a.ts", "a", "b"))), {
-              detail: detail(2),
-            }),
-          ),
-        );
-        const missingPatch = yield* Effect.flip(
-          model.generate(
-            input(() =>
-              Effect.succeed(
-                diff(
-                  ["diff --git a/src/a.ts b/src/a.ts", "--- a/src/a.ts", "+++ b/src/a.ts", ""].join(
-                    "\n",
-                  ),
-                ),
-              ),
+  it.effect("rejects a missing changed-file entry or malformed file headers", () =>
+    Effect.gen(function* () {
+      const model = yield* PullRequestGuideGeneration.PullRequestGuideGeneration;
+      const missingFile = yield* Effect.flip(
+        model.generate(
+          input(() => Effect.succeed(diff(filePatch("src/a.ts", "a", "b"))), {
+            detail: detail(2),
+          }),
+        ),
+      );
+      const missingPatch = yield* Effect.flip(
+        model.generate(
+          input(() =>
+            Effect.succeed(
+              diff(["diff --git a/src/a.ts b/src/a.ts", "+++ b/src/a.ts", ""].join("\n")),
             ),
           ),
-        );
+        ),
+      );
 
-        expect(missingFile).toMatchObject({ code: "incomplete-diff" });
-        expect(missingPatch).toMatchObject({ code: "incomplete-diff" });
-      }).pipe(Effect.provide(layer(() => Effect.succeed(generated())))),
+      expect(missingFile).toMatchObject({ code: "incomplete-diff" });
+      expect(missingPatch).toMatchObject({ code: "incomplete-diff" });
+    }).pipe(Effect.provide(layer(() => Effect.succeed(generated())))),
+  );
+
+  it.effect("keeps modified binary files in the guide without inventing source excerpts", () =>
+    Effect.gen(function* () {
+      const model = yield* PullRequestGuideGeneration.PullRequestGuideGeneration;
+      const result = yield* model.generate(
+        input(() =>
+          Effect.succeed(
+            diff(
+              [
+                "diff --git a/assets/logo.png b/assets/logo.png",
+                "--- a/assets/logo.png",
+                "+++ b/assets/logo.png",
+                "",
+              ].join("\n"),
+            ),
+          ),
+        ),
+      );
+      expect(result.revision.headSha).toBe(HEAD);
+      expect(result.guide.stops.flatMap((stop) => stop.files)).toContainEqual({
+        path: "assets/logo.png",
+      });
+      expect(result.guide.stops.flatMap((stop) => stop.excerpts)).toEqual([]);
+    }).pipe(Effect.provide(layer(() => Effect.succeed(generated())))),
   );
 
   it.effect("rejects invalid structured output", () =>

@@ -4,7 +4,7 @@ import { expect, it } from "@effect/vitest";
 
 import type { GitHubApi } from "./GitHubApi.ts";
 import { makePullRequestFileRevisions } from "./GitHubFileRevisions.ts";
-import type { PullRequestDiffFile } from "./PullRequestViewedFiles.ts";
+import type { PullRequestDiffFile } from "./PullRequestDiffFiles.ts";
 
 const revision: PullRequestDiffRevision = {
   baseSha: "a".repeat(40),
@@ -35,6 +35,7 @@ const apiWith = (
         )) {
           const alias = match[1];
           const variable = match[2];
+          if (variable === undefined) continue;
           const expression = variables[variable];
           if (alias === undefined || typeof expression !== "string") continue;
           repository[alias] = answer(expression);
@@ -85,7 +86,9 @@ it.effect("fails closed when GitHub cannot resolve a path to a blob", () => {
           ]),
         );
         expect(error).toBeInstanceOf(PullRequestOperationError);
-        expect(error.detail).toContain("blob revision");
+        expect(error._tag === "PullRequestOperationError" && error.detail).toContain(
+          "blob revision",
+        );
       }),
   );
 });
@@ -109,7 +112,9 @@ it.effect("batches 500 changed paths by 50 and rejects a larger request", () => 
       makePullRequestFileRevisions(f.api)(target, revision, [...files, files[0]!]),
     );
     expect(error).toBeInstanceOf(PullRequestOperationError);
-    expect(error.detail).toContain("Too many changed files");
+    expect(error._tag === "PullRequestOperationError" && error.detail).toContain(
+      "Too many changed files",
+    );
     expect(f.queries).toHaveLength(10);
   });
 });
