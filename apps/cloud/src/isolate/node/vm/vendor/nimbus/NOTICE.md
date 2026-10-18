@@ -10,8 +10,10 @@ The Acorn primordial rewrite in
 `packages/worker/scripts/acorn-primordials.mjs` at the same commit. The
 corresponding MIT license is in `../LICENSE`.
 
-Only the interpreter and its parser/build support are included. Nimbus
-filesystem and operating-system runtime code is not vendored.
+The generated-function builder also includes the pinned `_shared/commonjs-cell.ts`.
+It selects `runtimeFunctionModule`, its `REALM` and its AST helper declarations
+before bundling. Those declaration bodies are unchanged; unrelated registry
+templates, filesystem/runtime support and node:crypto are not bundled.
 
 The Acorn transform imports the local vendored binding-pattern helper. Its other source bytes are unchanged.
 

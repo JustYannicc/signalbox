@@ -7,6 +7,9 @@ import * as Esbuild from "esbuild";
 import {
   primordialAcorn,
   NODE_VM_EXPRESSION_ANALYSIS_SOURCE,
+  NODE_VM_FUNCTION_RUNTIME_SOURCE,
+  NODE_VM_FUNCTION_PARSER_SOURCE,
+  nimbusFunctionBuildSource,
 } from "../../src/isolate/NodeVmBuild.ts";
 
 const CORE_SRC = NodeURL.fileURLToPath(
@@ -20,6 +23,7 @@ export const NODE_VM_PREPARED_MODULES = Object.freeze({
   hostOps: "node/vm/host-ops.js",
   moduleHelpers: "node/vm/module-helpers.js",
   expressionAnalysis: "node/vm/expression-analysis.js",
+  functionRuntime: "node/vm/function-runtime.js",
 });
 
 // Canonical runtime builder, shared by tests and the workerd proof.
@@ -123,6 +127,43 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
     format: "esm",
     plugins: [parserPlugin("nimbus-expression-analysis-parser")],
   });
+  const functionRuntimeBuild = await Esbuild.build({
+    ...common,
+    stdin: {
+      contents: `export { runtimeFunctionModule } from ${JSON.stringify(NodeURL.fileURLToPath(NODE_VM_FUNCTION_RUNTIME_SOURCE))};`,
+      resolveDir: CORE_SRC,
+    },
+    format: "esm",
+    plugins: [
+      {
+        name: "nimbus-function-runtime-closure",
+        setup(build) {
+          externalizePrimordials(build);
+          build.onResolve({ filter: /^acorn$/ }, () => ({
+            path: NodeURL.fileURLToPath(NODE_VM_FUNCTION_PARSER_SOURCE),
+          }));
+          build.onResolve({ filter: /^\.\/(parser|interpreter-primordials)\.js$/ }, ({ path }) => ({
+            path,
+            external: true,
+          }));
+          build.onLoad({ filter: /[\\/](commonjs-cell|javascript-ast)\.ts$/ }, async ({ path }) => {
+            const stripped = await Esbuild.transform(await NodeFSP.readFile(path, "utf8"), {
+              loader: "ts",
+              target: "esnext",
+            });
+            return {
+              contents: nimbusFunctionBuildSource(
+                stripped.code,
+                path.endsWith("commonjs-cell.ts") ? "commonjs-cell" : "javascript-ast",
+              ),
+              loader: "js",
+              resolveDir: NodePath.dirname(path),
+            };
+          });
+        },
+      },
+    ],
+  });
   const interpreterMetafile = interpreterBuild.metafile;
   if (!interpreterMetafile) {
     throw new Error("[node-vm] interpreter bundle did not return a metafile");
@@ -175,9 +216,15 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
   const parser = asCommonJs(parserBuild.outputFiles?.[0]?.text, "parser");
   const interpreter = asCommonJs(interpreterBuild.outputFiles?.[0]?.text, "interpreter");
   const analysis = asCommonJs(analysisBuild.outputFiles?.[0]?.text, "expression analysis");
-  const missingParserExports = [...interpreter.imports, ...analysis.imports].filter(
-    (name) => !parser.exports.includes(name),
+  const functionRuntime = asCommonJs(
+    functionRuntimeBuild.outputFiles?.[0]?.text,
+    "function runtime",
   );
+  const missingParserExports = [
+    ...interpreter.imports,
+    ...analysis.imports,
+    ...functionRuntime.imports,
+  ].filter((name) => !parser.exports.includes(name));
   if (missingParserExports.length > 0) {
     throw new Error(`[node-vm] parser is missing exports: ${missingParserExports.join(", ")}`);
   }
@@ -192,6 +239,7 @@ async function bundleNodeVmModules(): Promise<Readonly<Record<string, string>>> 
     [NODE_VM_PREPARED_MODULES.hostOps]: hostOpsSource,
     [NODE_VM_PREPARED_MODULES.moduleHelpers]: `module.exports = ${moduleHelpersSource};`,
     [NODE_VM_PREPARED_MODULES.expressionAnalysis]: analysis.text,
+    [NODE_VM_PREPARED_MODULES.functionRuntime]: functionRuntime.text,
   });
 }
 
@@ -213,7 +261,7 @@ function requiredOutput(source: string | undefined, label: string): string {
 
 function asCommonJs(
   source: string | undefined,
-  label: "parser" | "interpreter" | "expression analysis",
+  label: "parser" | "interpreter" | "expression analysis" | "function runtime",
 ) {
   if (!source) throw new Error(`[node-vm] ${label} bundle was empty`);
   const program = parse(source, { ecmaVersion: "latest", sourceType: "module" });
