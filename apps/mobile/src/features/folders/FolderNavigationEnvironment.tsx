@@ -19,6 +19,7 @@ import { folderCountsAtom, folderPoolChoicesAtom, folderStatusSummariesAtom } fr
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
 import { FolderInstructionsSheet } from "./FolderInstructionsSheet";
+import { FolderSecretsSheet } from "./FolderSecretsSheet";
 import { FolderPhasesSheet } from "./FolderPhasesSheet";
 import { FolderNodeRow, OwnerTopLevelRow } from "./FolderNavigationRows";
 import { useFolderActions } from "./use-folder-actions";
@@ -191,6 +192,16 @@ export function FolderNavigationEnvironment(props: {
           editing={actions.editing}
           onSave={actions.saveInstructions}
           onClose={actions.closeEditor}
+        />
+      ) : null}
+      {actions.editingSecrets ? (
+        <FolderSecretsSheet
+          key={`${actions.editingSecrets.level._tag}:${actions.editingSecrets.name}`}
+          editing={actions.editingSecrets}
+          onSave={actions.saveSecrets}
+          onRemove={actions.removeSecrets}
+          onDisconnect={actions.disconnectOnePassword}
+          onClose={actions.closeSecretsEditor}
         />
       ) : null}
       {actions.editingPhases ? (

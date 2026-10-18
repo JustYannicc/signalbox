@@ -379,6 +379,8 @@ export const RunnerHello = Schema.Struct({
   ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** The Runner enforces per-Environment name filters. Older Runners must be replaced before loading secrets. */
+  secretScopes: Schema.optional(Schema.Boolean),
   /** Accepts one-shot provider feedback requests. Older runners must never receive them. */
   feedback: Schema.optional(Schema.Boolean),
   workflowStops: Schema.optional(Schema.Boolean),

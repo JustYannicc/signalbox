@@ -5,10 +5,10 @@
  * folders on a computer. A folder holds threads, a pool, instructions and,
  * optionally, its own files: a drive, shown as one source. Every thread has a
  * home folder (or the top level) and runs on its home's chain, the home and
- * every level above it: the nearest pool on the chain, and every level's
- * instructions and secrets, top level first. Moving a thread changes them
- * from its next turn; the files it works in stay the ones it started in. See
- * #225, #227 and #395.
+ * every level above it: the nearest pool, and every level's instructions.
+ * Secrets stay in their own folder by default; a level can allow named keys
+ * into subfolders. Moving a thread changes these from its next turn. See #225,
+ * #227, #395 and #695.
  *
  * Folders replace sections and projects in Signalbox Cloud, which still
  * serves `sections.*` for older clients as a view of its folders. Only
@@ -71,8 +71,9 @@ const Instructions = Schema.String.check(Schema.isMaxLength(FOLDER_INSTRUCTIONS_
 
 /**
  * A 1Password Environment's id, as the desktop app's "Copy environment ID"
- * gives it. A level that names one gives the threads on its chain that
- * Environment's variables (#395). It's a reference, not a secret.
+ * gives it. Its own level can read every variable; subfolders get only the
+ * names explicitly allowed by that source (#395, #695). It's a reference,
+ * not a secret.
  */
 export const OnePasswordEnvironmentId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(128),
@@ -80,8 +81,18 @@ export const OnePasswordEnvironmentId = TrimmedNonEmptyString.check(
 ).pipe(Schema.brand("OnePasswordEnvironmentId"));
 export type OnePasswordEnvironmentId = typeof OnePasswordEnvironmentId.Type;
 
-/** Where a level's secrets come from: one 1Password Environment. */
-export const FolderSecrets = Schema.Struct({ environmentId: OnePasswordEnvironmentId });
+/** A key in a 1Password Environment, named as an environment variable. */
+export const SecretEnvironmentName = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
+);
+export type SecretEnvironmentName = typeof SecretEnvironmentName.Type;
+
+/** Where a level's secrets come from, and which names may reach subfolders. */
+export const FolderSecrets = Schema.Struct({
+  environmentId: OnePasswordEnvironmentId,
+  /** Names from this source that descendant folders may use; omitted means none. */
+  includeSubfolders: Schema.optionalKey(Schema.Array(SecretEnvironmentName)),
+});
 export type FolderSecrets = typeof FolderSecrets.Type;
 
 /** One stage a folder can be in, as people name it. */
@@ -173,7 +184,7 @@ export const Folder = Schema.Struct({
   poolId: Schema.optionalKey(AccountPoolId),
   /** Its `AGENTS.md`: what agents in it and below follow, after the levels above. */
   instructions: Schema.optionalKey(Instructions),
-  /** Its secrets: what threads in it and below get, over the same names from above. */
+  /** Its own secrets; subfolders get only names in `includeSubfolders`. */
   secrets: Schema.optionalKey(FolderSecrets),
   /** Its phase. Absent: none, as for a folder already in production. */
   phase: Schema.optionalKey(FolderPhase),
@@ -213,9 +224,9 @@ export const SignalboxFoldersSnapshot = Schema.Struct({
     secrets: Schema.optionalKey(FolderSecrets),
   }),
   /**
-   * The user's 1Password service account, which reads every level's
-   * Environment when a thread starts. Absent: none connected, so no level's
-   * secrets load. Its token never leaves the cloud but for the thread's machine.
+   * The user's 1Password service account, which reads each allowed Environment
+   * when a thread starts. Absent: none connected, so no level's secrets load.
+   * Its token never leaves the cloud but for the thread's machine.
    */
   onePassword: Schema.optionalKey(Schema.Struct({ connectedAt: NonNegativeInt })),
   folders: Schema.Array(Folder),

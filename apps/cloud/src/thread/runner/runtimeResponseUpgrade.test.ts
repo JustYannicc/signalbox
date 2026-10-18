@@ -129,7 +129,12 @@ describe("native answer Runner upgrades", () => {
           );
           const first = (yield* runner.reconcile).ensure!;
           const store = Context.get(context, ThreadStore);
-          yield* store.saveMachine({ ...(yield* store.machine), machineClass });
+          const secretUpgradeRunId = (yield* snapshot(engine)).projection.runs[0]!.id;
+          yield* store.saveMachine({
+            ...(yield* store.machine),
+            machineClass,
+            secretUpgradeRunId,
+          });
           const oldHello = {
             ...hello(first.generation, first.token),
             runtimeResponses: false,
@@ -150,6 +155,7 @@ describe("native answer Runner upgrades", () => {
           expect(upgraded.ensure?.generation).toBe(first.generation + 1);
           expect(upgraded.release).toBe(first.generation);
           expect(upgraded.machineClass).toBe(machineClass);
+          expect((yield* store.machine).secretUpgradeRunId).toBe(secretUpgradeRunId);
           const next = upgraded.ensure!;
           // An old image even after the update stays visible, rather than bumping forever.
           yield* runner.hello({ ...oldHello, generation: next.generation, token: next.token });

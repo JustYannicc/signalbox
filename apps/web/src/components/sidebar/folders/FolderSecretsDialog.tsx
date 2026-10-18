@@ -6,9 +6,13 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { useId, useState, type FormEvent } from "react";
+import {
+  addSubfolderSecretName,
+  isSecretEnvironmentName,
+  resetSubfolderSecretNamesForEnvironment,
+} from "@t3tools/client-runtime/state/folderSecrets";
 
 import { environmentFoldersAtom } from "../../../state/signalboxFolders";
-import { formatRelativeTimeLabel } from "../../../timestampFormat";
 import { Button } from "../../ui/button";
 import {
   DialogDescription,
@@ -20,6 +24,8 @@ import {
 import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import { closeFolderDialog, type FolderDialog } from "./folderDialogStore";
+import { FolderOnePasswordConnectionField } from "./FolderOnePasswordConnectionField";
+import { FolderSecretSubfoldersField } from "./FolderSecretSubfoldersField";
 import {
   formatSources,
   levelSecrets,
@@ -40,10 +46,16 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
   const above = snapshot ? secretSourcesAbove(snapshot, dialog.level) : [];
   const connectedAt = snapshot?.onePassword?.connectedAt ?? null;
 
-  const [environmentId, setEnvironmentId] = useState<string>(current ?? "");
+  const [environmentId, setEnvironmentId] = useState<string>(current?.environmentId ?? "");
+  const [keyName, setKeyName] = useState("");
+  const [keyNames, setKeyNames] = useState<ReadonlyArray<string>>(current?.includeSubfolders ?? []);
+  const [includedNames, setIncludedNames] = useState<ReadonlyArray<string>>(
+    current?.includeSubfolders ?? [],
+  );
   const [token, setToken] = useState("");
   const [tokenMode, setTokenMode] = useState<TokenMode>("connected");
   const [error, setError] = useState<string | null>(null);
+  const [keyNameError, setKeyNameError] = useState<string | null>(null);
   const [running, setRunning] = useState<Action | null>(null);
   const pending = running !== null;
   const askToken = connectedAt === null || tokenMode === "replace";
@@ -73,11 +85,12 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
     const plan = planSecretsSave({
       current,
       environmentId,
+      includeSubfolders: includedNames,
       token: askToken ? token : null,
       connected: connectedAt !== null,
     });
     if ("error" in plan) return setError(plan.error);
-    if (plan.connect === null && plan.environmentId === undefined) return closeFolderDialog();
+    if (plan.connect === null && plan.secrets === undefined) return closeFolderDialog();
     void run("save", async (step) => {
       if (plan.connect !== null) {
         if (!(await step(commands.setOnePassword(dialog.environmentId, plan.connect)))) {
@@ -86,9 +99,9 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
         setToken("");
         setTokenMode("connected");
       }
-      return plan.environmentId === undefined
+      return plan.secrets === undefined
         ? true
-        : step(commands.setSecrets(dialog.environmentId, dialog.level, plan.environmentId));
+        : step(commands.setSecrets(dialog.environmentId, dialog.level, plan.secrets));
     });
   };
 
@@ -108,6 +121,32 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
 
   const named = environmentId.trim().length > 0;
 
+  const addKeyName = () => {
+    const name = keyName.trim();
+    if (name.length === 0) return setKeyNameError("Enter an environment variable name.");
+    if (!isSecretEnvironmentName(name)) {
+      return setKeyNameError(
+        "Use letters, numbers and underscores; start with a letter or underscore.",
+      );
+    }
+    const next = addSubfolderSecretName(keyNames, name);
+    if (next === keyNames) return setKeyNameError("That name is already listed.");
+    setKeyNames(next);
+    setKeyName("");
+    setKeyNameError(null);
+  };
+
+  const updateEnvironmentId = (value: string) => {
+    setKeyNames((names) => resetSubfolderSecretNamesForEnvironment(environmentId, value, names));
+    setIncludedNames((names) =>
+      resetSubfolderSecretNamesForEnvironment(environmentId, value, names),
+    );
+    setKeyName("");
+    setKeyNameError(null);
+    setError(null);
+    setEnvironmentId(value);
+  };
+
   return (
     <>
       <DialogHeader>
@@ -116,9 +155,13 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
         </DialogTitle>
         <DialogDescription>
           {dialog.name === null
-            ? "Every thread gets this 1Password Environment's variables when it starts."
-            : "Threads in this folder and below get this 1Password Environment's variables when they start."}{" "}
-          Values never show in Signalbox.
+            ? named
+              ? "Threads at this level get this 1Password Environment's variables. Child folders only get names you include below."
+              : "Add a 1Password Environment to load its variables into threads at this level."
+            : named
+              ? "Threads in this folder get this 1Password Environment's variables. Child folders only get names you include below."
+              : "Add a 1Password Environment to load its variables into threads in this folder."}{" "}
+          This dialog shows names only, not Environment values.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -133,7 +176,7 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
               placeholder="Environment ID"
               spellCheck={false}
               value={environmentId}
-              onChange={(event) => setEnvironmentId(event.target.value)}
+              onChange={(event) => updateEnvironmentId(event.target.value)}
             />
             <p className="text-xs text-muted-foreground">
               In the 1Password app: Developer › View Environments › Manage environment › Copy
@@ -142,95 +185,50 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
             {above.length > 0 ? (
               <p className="text-xs text-muted-foreground">
                 {named
-                  ? `Threads here also get secrets from ${formatSources(above)}. Where names clash, this folder's win.`
+                  ? `Threads here also get secrets from ${formatSources(above)}. This level wins when names clash.`
                   : `Threads here already get secrets from ${formatSources(above)}.`}
               </p>
             ) : null}
           </div>
 
-          {askToken ? (
-            <div className="grid gap-1.5">
-              <Label htmlFor={`${formId}-token`}>Service account token</Label>
-              <Input
-                id={`${formId}-token`}
-                autoComplete="off"
-                autoFocus={tokenMode === "replace"}
-                disabled={pending}
-                placeholder="ops_…"
-                spellCheck={false}
-                type="password"
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                1Password shows it once, when you create a service account with read access to this
-                Environment. One token covers all your folders.
-              </p>
-              {connectedAt !== null ? (
-                <div>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={pending}
-                    onClick={() => {
-                      setToken("");
-                      setTokenMode("connected");
-                    }}
-                  >
-                    Keep current token
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          ) : tokenMode === "disconnect" ? (
-            <div className="grid gap-2 rounded-lg border px-3 py-2.5">
-              <p className="text-sm">
-                Disconnect 1Password? Secrets stop loading in all your folders until you connect it
-                again.
-              </p>
-              <div className="flex justify-end gap-2">
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() => setTokenMode("connected")}
-                >
-                  Cancel
-                </Button>
-                <Button size="xs" variant="destructive" disabled={pending} onClick={disconnect}>
-                  {running === "disconnect" ? "Disconnecting…" : "Disconnect"}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 rounded-lg border px-3 py-2">
-              <p className="min-w-0 flex-1 text-sm">
-                1Password connected
-                {connectedAt === null ? null : (
-                  <span className="text-muted-foreground">
-                    {" "}
-                    · {formatRelativeTimeLabel(new Date(connectedAt).toISOString())}
-                  </span>
-                )}
-              </p>
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={pending}
-                onClick={() => setTokenMode("replace")}
-              >
-                Replace token
-              </Button>
-              <Button
-                size="xs"
-                variant="ghost-destructive"
-                disabled={pending}
-                onClick={() => setTokenMode("disconnect")}
-              >
-                Disconnect
-              </Button>
-            </div>
-          )}
+          <FolderSecretSubfoldersField
+            formId={formId}
+            topLevel={dialog.level._tag === "top"}
+            named={named}
+            pending={pending}
+            keyName={keyName}
+            keyNames={keyNames}
+            includedNames={includedNames}
+            keyNameError={keyNameError}
+            setIncludedNames={setIncludedNames}
+            onKeyNameChange={(value) => {
+              setKeyName(value);
+              setKeyNameError(null);
+            }}
+            onAddKeyName={addKeyName}
+          />
+
+          <FolderOnePasswordConnectionField
+            formId={formId}
+            connectedAt={connectedAt}
+            askToken={askToken}
+            tokenMode={tokenMode}
+            token={token}
+            pending={pending}
+            disconnecting={running === "disconnect"}
+            onTokenChange={(value) => {
+              setToken(value);
+              setError(null);
+            }}
+            onKeepCurrentToken={() => {
+              setToken("");
+              setTokenMode("connected");
+            }}
+            onReplaceToken={() => setTokenMode("replace")}
+            onStartDisconnect={() => setTokenMode("disconnect")}
+            onConfirmDisconnect={disconnect}
+            onCancelDisconnect={() => setTokenMode("connected")}
+          />
 
           {error === null ? null : (
             <p role="alert" className="text-xs text-destructive">

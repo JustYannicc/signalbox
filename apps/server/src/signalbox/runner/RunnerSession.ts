@@ -285,6 +285,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         build: input.build,
         drains: true,
         steers: true,
+        secretScopes: true,
         feedback: turns.uploadFeedback !== undefined,
         workflowStops: turns.stopWorkflow !== undefined,
         runtimeResponses: true,

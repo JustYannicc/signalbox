@@ -160,7 +160,7 @@ describe("folder secrets", () => {
         const work = (yield* folders.create({ name: "Work", parentId: null })).folders[0]!.id;
         yield* folders.setSecrets({
           level: { _tag: "top" },
-          secrets: { environmentId: environments[0]! },
+          secrets: { environmentId: environments[0]!, includeSubfolders: ["SHARED"] },
         });
         yield* folders.setSecrets({
           level: { _tag: "folder", folderId: work },

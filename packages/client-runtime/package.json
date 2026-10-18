@@ -327,6 +327,10 @@
       "types": "./src/state/folders.ts",
       "default": "./src/state/folders.ts"
     },
+    "./state/folderSecrets": {
+      "types": "./src/state/folderSecrets.ts",
+      "default": "./src/state/folderSecrets.ts"
+    },
     "./state/foldersModel": {
       "types": "./src/state/foldersModel.ts",
       "default": "./src/state/foldersModel.ts"

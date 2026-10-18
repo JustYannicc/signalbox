@@ -662,6 +662,12 @@ export const makeMemoryCloud = (
           ThreadStore.ThreadStore.use((store) => Effect.orDie(store.secrets)),
         ),
       ),
+    threadSecretEnvironmentNames: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          ThreadStore.ThreadStore.use((store) => Effect.orDie(store.secretEnvironmentNames)),
+        ),
+      ),
     /** The next alarm a refresh requested for a thread would arm, for tests. */
     threadAlarmAt: (threadId: string) => threadAlarms.get(threadId),
     /** The in-memory object's clock, for comparing its alarm with its current time. */

@@ -5,7 +5,10 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { poolInstanceId } from "@t3tools/contracts/accountHub";
-import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import type {
+  OnePasswordEnvironmentId,
+  SecretEnvironmentName,
+} from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 
 import { poolKindOfInstance } from "../models/ModelRouting.ts";
@@ -33,8 +36,13 @@ export interface ByHome<A> {
 export type TurnPools = ByHome<string | null>;
 /** Top level first. */
 export type TurnInstructions = ByHome<ReadonlyArray<FolderInstructions>>;
-/** The 1Password Environments on the chain, top level first (#395). */
-export type TurnSecrets = ByHome<ReadonlyArray<OnePasswordEnvironmentId>>;
+/** One name filter per Environment, in the same order. Null gives the home its full Environment. */
+export type SecretEnvironmentNames = ReadonlyArray<ReadonlyArray<SecretEnvironmentName> | null>;
+/** The 1Password Environments and their subfolder access rules, per home (#395, #695). */
+export interface TurnSecrets extends ByHome<ReadonlyArray<OnePasswordEnvironmentId>> {
+  /** Mirrors the home keys; omitted by callers predating #695. */
+  readonly environmentNames?: ByHome<SecretEnvironmentNames>;
+}
 
 /** The value for a thread in `projectId`. */
 export const forThread = <A>(byHome: ByHome<A>, projectId: string): A =>

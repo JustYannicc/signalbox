@@ -11,9 +11,13 @@ import {
   type NodeId,
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
+  RunId,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import {
+  OnePasswordEnvironmentId,
+  SecretEnvironmentName,
+} from "@t3tools/contracts/signalboxFolders";
 import type { ThreadStatusNote } from "@t3tools/contracts/signalboxStatusLine";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import {
@@ -45,6 +49,7 @@ import type {
   RetainedCommandOutput,
 } from "./commandOutput/retainedOutput.ts";
 import * as Migrations from "../storage/migrations.ts";
+import type { SecretEnvironmentNames } from "./turnPool.ts";
 import { PreparationState } from "./preparation/preparationState.ts";
 import {
   migrateCurrentItemExpansion,
@@ -169,6 +174,10 @@ export interface MachineLease {
   readonly drains?: boolean | undefined;
   /** This generation's Runner takes `steer` (#562), as its `hello` said. */
   readonly steers?: boolean | undefined;
+  /** This generation enforces per-Environment secret name filters. */
+  readonly secretScopes?: boolean | undefined;
+  /** The run that already replaced an incapable Runner; kept across leases to bound rollout retries. */
+  readonly secretUpgradeRunId?: RunId | undefined;
   readonly preparations?: boolean | undefined;
   readonly workflowStops?: boolean | undefined;
   /** This generation's Runner can receive committed native answers. */
@@ -287,8 +296,11 @@ export class ThreadStore extends Context.Service<
         readonly runId: string;
         readonly levels: ReadonlyArray<FolderInstructions>;
       };
-      /** The 1Password Environments of the thread's chain as of the run these events start. */
-      readonly secrets?: ReadonlyArray<OnePasswordEnvironmentId>;
+      /** The 1Password Environments and access rules as of the run these events start. */
+      readonly secrets?: {
+        readonly environments: ReadonlyArray<OnePasswordEnvironmentId>;
+        readonly environmentNames?: SecretEnvironmentNames;
+      };
       /** Search rows are committed with the events that changed them. */
       readonly searchDeliveries?: ReadonlyArray<SearchDeliveryDraft>;
     }) => Effect.Effect<number, SqlError>;
@@ -350,6 +362,8 @@ export class ThreadStore extends Context.Service<
      * keeps its thread's. Empty when none.
      */
     readonly secrets: Effect.Effect<ReadonlyArray<OnePasswordEnvironmentId>, SqlError>;
+    /** Empty for turns persisted before #695 or started with an older cloud, until their next dispatch. */
+    readonly secretEnvironmentNames: Effect.Effect<SecretEnvironmentNames, SqlError>;
     /** Their values, as the machine registered them (`runner/secretValues.ts`). Never log them. */
     readonly secretValues: Effect.Effect<SecretValues, SqlError>;
     /** Run it in the transaction that checks `generation` still holds the lease. */
@@ -457,6 +471,11 @@ const migrations = Migrator.fromRecord({
   "0010_browsing": migrateBrowsing,
   // The thread's status note and the runtime's cursor through ended runs (#670, `statusLine/`).
   "0011_status_note": migrateStatusNote,
+  // Old turns fail closed until dispatched again with their per-Environment rules (#695).
+  "0012_secret_environment_names": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE thread_secrets ADD COLUMN environment_names TEXT NOT NULL DEFAULT '[]'`;
+  }),
   "0012_trash": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE thread_trash (
@@ -571,6 +590,14 @@ const SecretsJson = Schema.fromJsonString(Schema.Array(OnePasswordEnvironmentId)
 const encodeSecrets = Schema.encodeSync(SecretsJson);
 const decodeSecretRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ environments: SecretsJson })),
+);
+const SecretEnvironmentNamesSchema = Schema.Array(
+  Schema.NullOr(Schema.Array(SecretEnvironmentName)),
+);
+const SecretEnvironmentNamesJson = Schema.fromJsonString(SecretEnvironmentNamesSchema);
+const encodeSecretEnvironmentNames = Schema.encodeSync(SecretEnvironmentNamesJson);
+const decodeSecretEnvironmentNameRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ environment_names: SecretEnvironmentNamesJson })),
 );
 
 const EventJson = Schema.fromJsonString(OrchestrationV2DomainEventJson);
@@ -722,6 +749,8 @@ const MachineLeaseJson = Schema.fromJsonString(
     movedUp: Schema.optional(Schema.Boolean),
     drains: Schema.optional(Schema.Boolean),
     steers: Schema.optional(Schema.Boolean),
+    secretScopes: Schema.optional(Schema.Boolean),
+    secretUpgradeRunId: Schema.optional(RunId),
     preparations: Schema.optional(Schema.Boolean),
     workflowStops: Schema.optional(Schema.Boolean),
     runtimeResponses: Schema.optional(Schema.Boolean),
@@ -1085,9 +1114,11 @@ const make = Effect.gen(function* () {
           ON CONFLICT (run_id) DO NOTHING`;
     }
     if (input.secrets) {
-      yield* sql`INSERT INTO thread_secrets (id, environments)
-          VALUES (1, ${encodeSecrets(input.secrets)})
-          ON CONFLICT (id) DO UPDATE SET environments = excluded.environments`;
+      yield* sql`INSERT INTO thread_secrets (id, environments, environment_names)
+          VALUES (1, ${encodeSecrets(input.secrets.environments)},
+            ${encodeSecretEnvironmentNames(input.secrets.environmentNames ?? [])})
+          ON CONFLICT (id) DO UPDATE SET environments = excluded.environments,
+            environment_names = excluded.environment_names`;
     }
     return sequence;
   }, sql.withTransaction);
@@ -1100,6 +1131,11 @@ const make = Effect.gen(function* () {
   const secrets: ThreadStore["Service"]["secrets"] =
     sql`SELECT environments FROM thread_secrets WHERE id = 1`.pipe(
       Effect.map((rows) => decodeSecretRows(rows)[0]?.environments ?? []),
+    );
+
+  const secretEnvironmentNames: ThreadStore["Service"]["secretEnvironmentNames"] =
+    sql`SELECT environment_names FROM thread_secrets WHERE id = 1`.pipe(
+      Effect.map((rows) => decodeSecretEnvironmentNameRows(rows)[0]?.environment_names ?? []),
     );
 
   const recordRejection: ThreadStore["Service"]["recordRejection"] = Effect.fn(
@@ -1763,6 +1799,7 @@ const make = Effect.gen(function* () {
     machineRecord,
     instructions,
     secrets,
+    secretEnvironmentNames,
     secretValues: readSecretValues.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
     registerSecretValues: (generation, values) =>
       registerSecretValues(generation, values).pipe(

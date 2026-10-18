@@ -1,5 +1,5 @@
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
-import { type SecretsAccess, secretsJson } from "@signalbox/runner-protocol/SecretsProtocol";
+import { SecretsAccess, secretsJson } from "@signalbox/runner-protocol/SecretsProtocol";
 import { SESSION_PATHS } from "@signalbox/runner-protocol/SessionProtocol";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -71,9 +71,7 @@ export interface RunnerSecrets {
 }
 
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-const sameStrings = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
-  left.length === right.length && left.every((value, index) => value === right[index]);
+const sameAccess = Schema.toEquivalence(SecretsAccess);
 
 const sameVariables = (
   left: Readonly<Record<string, string>>,
@@ -99,7 +97,7 @@ export const makeRunnerSecrets = (input: {
   let variables: Readonly<Record<string, string>> = {};
   let version = 0;
   /** What was last read in full; null after a read that fell short, or none. */
-  let read: { readonly token: string; readonly environments: ReadonlyArray<string> } | null = null;
+  let read: SecretsAccess | null = null;
 
   const use = (next: Readonly<Record<string, string>>) => {
     if (sameVariables(variables, next)) return;
@@ -109,10 +107,17 @@ export const makeRunnerSecrets = (input: {
 
   const load: RunnerSecrets["load"] = (access, report) =>
     Effect.gen(function* () {
-      const environments = access?.environments ?? [];
-      if (environments.length === 0) {
+      const sources = (access?.environments ?? []).flatMap((environmentId, index) => {
+        const names = access?.environmentNames?.[index];
+        // Older turns carry no rules. They get nothing until the next dispatch.
+        return names === null || (names !== undefined && names.length > 0)
+          ? [{ environmentId, names }]
+          : [];
+      });
+      if (sources.length === 0) {
         read = null;
         use({});
+        if ((access?.environments.length ?? 0) > 0) yield* report.register([]);
         return version;
       }
       const token = access?.token ?? null;
@@ -126,7 +131,12 @@ export const makeRunnerSecrets = (input: {
         yield* report.register([]);
         return version;
       }
-      if (read !== null && read.token === token && sameStrings(read.environments, environments)) {
+      const selection = {
+        token,
+        environments: sources.map((source) => source.environmentId),
+        environmentNames: sources.map((source) => source.names),
+      };
+      if (read !== null && sameAccess(read, selection)) {
         return version;
       }
       input.mask.add([{ name: TOKEN_NAME, value: token }]);
@@ -148,9 +158,14 @@ export const makeRunnerSecrets = (input: {
         client === null
           ? []
           : yield* Effect.forEach(
-              environments,
-              (environmentId) =>
+              sources,
+              ({ environmentId, names }) =>
                 client.variables(environmentId).pipe(
+                  Effect.map((variables) =>
+                    names === null
+                      ? variables
+                      : variables.filter((variable) => names.includes(variable.name)),
+                  ),
                   Effect.catchTags({
                     OnePasswordError: (error) => {
                       failures.push(`Environment ${environmentId}: ${error.message}`);
@@ -187,11 +202,11 @@ export const makeRunnerSecrets = (input: {
           }),
         ),
       );
-      read = failures.length === 0 ? { token, environments } : null;
+      read = failures.length === 0 ? selection : null;
       use(next);
       const count = Object.keys(next).length;
       yield* report.info(
-        `loaded ${plural(count, "secret", "secrets")} from ${plural(environments.length, "1Password Environment", "1Password Environments")}`,
+        `loaded ${plural(count, "secret", "secrets")} from ${plural(sources.length, "1Password Environment", "1Password Environments")}`,
       );
       if (failures.length > 0) {
         yield* report.notice(

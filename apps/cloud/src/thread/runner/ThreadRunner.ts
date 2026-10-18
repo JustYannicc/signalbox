@@ -71,6 +71,7 @@ import * as ThreadStore from "../ThreadStore.ts";
 import * as PullState from "../PullState.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
+import type { SecretEnvironmentNames } from "../turnPool.ts";
 import { MachineBackend, type MachineExit, type MachineStartupProblem } from "./MachineBackend.ts";
 import { MAX_STARTUP_RETRIES, startupFailure } from "./machineStartup.ts";
 import { machineClassFor } from "./machineClass.ts";
@@ -269,6 +270,8 @@ export interface RunnerWork {
    * without a turn. The owner's token to read them is `secretsToken`.
    */
   readonly secrets: ReadonlyArray<OnePasswordEnvironmentId>;
+  /** Present for turns whose owner resolved per-Environment subfolder access. */
+  readonly environmentNames?: SecretEnvironmentNames;
   readonly activeRunId: RunId | null;
   /** The messages steered into the live run while its harness runs it, oldest first (#562). */
   readonly steers: ReadonlyArray<RunnerMessageInput>;
@@ -417,6 +420,17 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
       );
   }
 };
+
+const needsSecretUpgrade = (
+  lease: ThreadStore.MachineLease,
+  run: ReturnType<typeof harnessRun>,
+  hasSecrets: boolean,
+) =>
+  lease.status === "connected" &&
+  lease.secretScopes !== true &&
+  run !== undefined &&
+  awaitsHandoff(run) &&
+  hasSecrets;
 
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
@@ -568,6 +582,7 @@ const make = Effect.gen(function* () {
             steers: hello.steers === true,
             preparations: hello.protocolVersion >= 7,
             pulls: hello.pulls === true,
+            secretScopes: hello.secretScopes === true,
             terminals: hello.terminalProcessId !== undefined,
             workflowStops: hello.workflowStops === true,
             runtimeResponses: hello.runtimeResponses === true,
@@ -714,6 +729,7 @@ const make = Effect.gen(function* () {
     generation: lease.generation,
     machineClass: lease.machineClass,
     movedUp: lease.movedUp,
+    secretUpgradeRunId: lease.secretUpgradeRunId,
   });
 
   /** Ends the lease's machine session in the diagnostics. */
@@ -944,6 +960,8 @@ const make = Effect.gen(function* () {
           (item) => item.id === `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
         );
       const untraced = projection === null ? null : yield* turnFor(projection);
+      const secrets = untraced === null ? [] : yield* Effect.orDie(store.secrets);
+      const upgrading = needsSecretUpgrade(lease, run, secrets.length > 0);
       let preparation = yield* engine.preparation;
       const previous = preparation;
       const stoppingPrevious = preparation?.status === "cancelling";
@@ -952,6 +970,7 @@ const make = Effect.gen(function* () {
         untraced !== null &&
         lease.status === "connected" &&
         upgrade.type === "none" &&
+        !upgrading &&
         !stoppingPrevious
       ) {
         if (preparation === null || preparation.runId !== untraced.runId) {
@@ -1024,6 +1043,8 @@ const make = Effect.gen(function* () {
         yield* Effect.orDie(pullState.assign(pull.operation.id, lease.generation));
       }
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
+      const environmentNames =
+        turn === null ? undefined : yield* Effect.orDie(store.secretEnvironmentNames);
       const settled = projection === null ? [] : lostWorkflowStopEvents(projection, lease, ctx);
       const result: RunnerWork = {
         connection: lease.connection ?? 0,
@@ -1035,6 +1056,7 @@ const make = Effect.gen(function* () {
         preparation,
         pull,
         needsUpkeep:
+          upgrading ||
           (upgrade.type !== "none" && upgrade.type !== "blocked") ||
           blockedNoticeMissing ||
           pending?.retry_at != null ||
@@ -1049,9 +1071,9 @@ const make = Effect.gen(function* () {
                 : yield* previews.held),
           ),
         drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
-        turn,
+        turn: upgrading ? null : turn,
         modelToken:
-          turn === null || grant === undefined || lease.token === null
+          upgrading || turn === null || grant === undefined || lease.token === null
             ? null
             : yield* modelToken(lease.token, grant),
         drive:
@@ -1073,7 +1095,8 @@ const make = Effect.gen(function* () {
           turn === null || lease.token === null || projection === null
             ? null
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
-        secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
+        secrets: upgrading || turn === null ? [] : secrets,
+        ...(environmentNames === undefined ? {} : { environmentNames }),
         activeRunId: run?.id ?? null,
         runtimeResponses:
           projection === null || run === undefined ? [] : runtimeResponses(projection, run.id),
@@ -1496,6 +1519,7 @@ const make = Effect.gen(function* () {
               machineClass: lease.machineClass,
               movedUp: lease.movedUp,
               runtimeResponsesUpgrade: true,
+              secretUpgradeRunId: lease.secretUpgradeRunId,
             },
             result: {
               ...IDLE,
@@ -1518,6 +1542,7 @@ const make = Effect.gen(function* () {
           readonly recover?: boolean;
           readonly lost?: boolean;
           readonly idleSince?: number;
+          readonly secretUpgradeRunId?: RunId;
         }) => {
           const settledPreparation =
             cancelled ??
@@ -1550,7 +1575,10 @@ const make = Effect.gen(function* () {
             projection === null ? Effect.void : sessionEnded(lease, { ...input, runId, now }),
             {
               events,
-              machine: released(lease),
+              machine: {
+                ...released(lease),
+                secretUpgradeRunId: input.secretUpgradeRunId ?? lease.secretUpgradeRunId,
+              },
               ...(settledPreparation === null ? {} : { preparation: settledPreparation }),
               result: {
                 ...UNNEEDED,
@@ -1597,6 +1625,7 @@ const make = Effect.gen(function* () {
               requestedAt: now,
               machineClass,
               movedUp: lease.movedUp,
+              secretUpgradeRunId: lease.secretUpgradeRunId,
             },
             result: {
               ...IDLE,
@@ -1700,6 +1729,25 @@ const make = Effect.gen(function* () {
             detail: `The Runner did not reconnect within ${RECONNECT_TIMEOUT_MS / 1000} s.`,
             lost: true,
             recover: run !== undefined,
+          });
+        }
+        if (
+          run !== undefined &&
+          needsSecretUpgrade(lease, run, (yield* Effect.orDie(store.secrets)).length > 0)
+        ) {
+          const exhausted = lease.secretUpgradeRunId === run.id;
+          return yield* release({
+            reason: "error",
+            detail: exhausted
+              ? "The replacement Runner still cannot enforce secret name filters."
+              : "Replacing a Runner that cannot enforce secret name filters.",
+            secretUpgradeRunId: run.id,
+            ...(exhausted
+              ? {
+                  failure:
+                    "This machine's Runner is too old to load folder secrets. Try again after the Runner update finishes.",
+                }
+              : {}),
           });
         }
         if (

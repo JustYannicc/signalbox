@@ -241,6 +241,7 @@ const migrations = Migrator.fromRecord({
     )`;
   }),
   "0020_folder_phases": FolderTables.addPhases,
+  "0021_folder_secret_subfolders": FolderTables.addSecretSubfolders,
   "0021_folder_trash": FolderTrash.createTables,
   "0022_trash": migrateTrash,
   "0021_keybindings": UserKeybindings.createTables,

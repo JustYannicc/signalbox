@@ -24,7 +24,14 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
     revision: current.revision,
     top: {
       ...(tree.topInstructions === null ? {} : { instructions: tree.topInstructions }),
-      ...(tree.topSecrets === null ? {} : { secrets: { environmentId: tree.topSecrets } }),
+      ...(tree.topSecrets === null
+        ? {}
+        : {
+            secrets: {
+              environmentId: tree.topSecrets.environmentId,
+              includeSubfolders: tree.topSecrets.includeSubfolders ?? [],
+            },
+          }),
     },
     // When it was connected, never the token.
     ...(current.onePasswordConnectedAt === null
@@ -44,7 +51,14 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
         ...(files === null ? {} : { files: { projectId: files } }),
         ...(poolId === undefined ? {} : { poolId }),
         ...(folder.instructions === null ? {} : { instructions: folder.instructions }),
-        ...(folder.secrets === null ? {} : { secrets: { environmentId: folder.secrets } }),
+        ...(folder.secrets === null
+          ? {}
+          : {
+              secrets: {
+                environmentId: folder.secrets.environmentId,
+                includeSubfolders: folder.secrets.includeSubfolders ?? [],
+              },
+            }),
         ...(folder.phase === null ? {} : { phase: folder.phase }),
         ...(githubLend === undefined ? {} : { githubLend }),
       };
