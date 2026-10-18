@@ -822,6 +822,29 @@ describe("inventoryBunApis", () => {
     }
   });
 
+  it("evaluates comma bases once before classifying member calls", () => {
+    for (const source of [
+      "let a; (a = Bun.fs, a).readFile();",
+      "let a; (a = Bun.fs, a)[(a = other, 'readFile')]();",
+      "let a; (a = Bun.fs, a).nested.readFile();",
+    ]) {
+      const inventory = inventoryBunApis([{ name: "comma-member.js", source }]);
+
+      assert.ok(
+        inventory.members.some(
+          ({ path, occurrences }) =>
+            path.endsWith("readFile") && occurrences.some(({ access }) => access === "call"),
+        ) || inventory.dynamicAccesses.some(({ access }) => access === "call"),
+        source,
+      );
+      assert.equal(
+        inventory.members.find(({ path }) => path === "fs")?.occurrences.length,
+        2,
+        source,
+      );
+    }
+  });
+
   it("keeps short-circuit Bun aliases as uncertain accesses", () => {
     const inventory = inventoryBunApis([
       {

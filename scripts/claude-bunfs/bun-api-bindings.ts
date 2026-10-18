@@ -170,9 +170,11 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
   };
   bindImports(file.statements, moduleScope, (node, path) => addMember(node, path, "read"));
 
+  const evaluatedAccesses = new WeakMap<ts.Expression, BunValue | undefined>();
   const valueOf = (node: ts.Expression | undefined, scope: Scope): BunValue | undefined => {
     if (!node) return undefined;
     const expression = unwrap(node);
+    if (evaluatedAccesses.has(expression)) return evaluatedAccesses.get(expression);
     if (ts.isIdentifier(expression)) {
       const binding = scope.lookup(expression.text);
       if (binding.found) return binding.value;
@@ -533,8 +535,14 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
       return;
     }
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      visit(node.expression, scope);
+      const base = valueOf(node.expression, scope);
+      const key = ts.isPropertyAccessExpression(node)
+        ? node.name.text
+        : staticKey(node.argumentExpression);
+      const value = append(base, key);
+      evaluatedAccesses.set(node, value);
       if (!isNestedAccess(node) && !isWriteTarget(node) && !isDestructuringBase(node)) {
-        const value = valueOf(node, scope);
         if (value?.kind === "member") addMember(node, value.path, accessKind(node));
         else if (value?.kind === "uncertainBun" && !hasDynamicElement(node))
           addDynamic(node, bunRoot, accessKind(node));
@@ -546,11 +554,13 @@ export function findBunApiUses(moduleName: string, source: string): ReadonlyArra
         staticKey(node.argumentExpression) === undefined &&
         !isWriteTarget(node)
       ) {
-        const base = valueOf(node.expression, scope);
         if (base?.kind === "bun" || base?.kind === "member")
           addDynamic(node, base, accessKind(node));
         else if (base?.kind === "uncertainBun") addDynamic(node, bunRoot, accessKind(node));
       }
+      if (ts.isElementAccessExpression(node) && node.argumentExpression)
+        visit(node.argumentExpression, scope);
+      return;
     }
     if (
       ts.isIdentifier(node) &&
