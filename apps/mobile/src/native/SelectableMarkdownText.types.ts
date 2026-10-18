@@ -20,12 +20,10 @@ export interface NativeMarkdownTextStyle {
   readonly headingFontFamily: string;
   readonly boldFontFamily: string;
   readonly headingFontSizes?: ReadonlyArray<number>;
+  readonly paragraphMarginBottom?: number;
 }
 
-export interface SelectableMarkdownSkill {
-  readonly name: string;
-  readonly displayName?: string | null;
-}
+export type SelectableMarkdownSkill = import("@t3tools/shared/inlineSkills").InlineSkill;
 
 export interface MarkdownImageRequest {
   readonly href: string;
@@ -67,6 +65,16 @@ export interface MarkdownLinkCustomization {
 
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
+  /** A mapped document has already applied HTML and table-break transformations. */
+  readonly preparedMarkdown?: boolean;
+  readonly numberOfLines?: number;
+  readonly sourceDocumentRevision?: string;
+  readonly sourceSelection?: MarkdownSourceSelection | null;
+  readonly sourceLinkPillContent?: readonly MarkdownSourceLinkPillContent[];
+  readonly onSourceSelection?: (
+    result: MarkdownSourceSelectionResult,
+    rootRef: RefObject<ViewInstance | null>,
+  ) => void;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;
@@ -81,3 +89,10 @@ export interface SelectableMarkdownTextProps {
   readonly marginTop?: number;
   readonly marginBottom?: number;
 }
+import type { RefObject } from "react";
+import type { ViewInstance } from "react-native";
+import type {
+  MarkdownSourceLinkPillContent,
+  MarkdownSourceSelection,
+  MarkdownSourceSelectionResult,
+} from "react-native-enriched-markdown";

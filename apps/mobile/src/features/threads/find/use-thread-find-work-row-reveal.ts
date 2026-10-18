@@ -11,7 +11,7 @@ interface WorkList {
   }): Promise<void>;
 }
 
-/** A work group has its own capped viewport; scrolling its parent cannot reveal a row inside it. */
+/** Mount an expanded target inside its cap. Only measured glyphs can finish exact reveal. */
 export function useThreadFindWorkRowReveal(input: {
   readonly request: ThreadFindWorkRowRevealRequest | null | undefined;
   readonly rows: ReadonlyArray<{ readonly id: string }>;
@@ -19,9 +19,9 @@ export function useThreadFindWorkRowReveal(input: {
   readonly loaded: boolean;
   readonly listRef: RefObject<WorkList | null>;
   readonly onBeforeScroll: () => void;
-  readonly onRevealed: ((key: string) => void) | undefined;
+  readonly onRowMounted: ((key: string) => void) | undefined;
 }) {
-  const { request, expandedRows, loaded, listRef, onBeforeScroll, onRevealed } = input;
+  const { request, expandedRows, loaded, listRef, onBeforeScroll, onRowMounted } = input;
   const rowId =
     request && input.rows.some((row) => row.id === request.rowId) ? request.rowId : null;
   useEffect(() => {
@@ -34,7 +34,7 @@ export function useThreadFindWorkRowReveal(input: {
     void list
       .scrollToIndex({ index, animated: false, viewPosition: 0 })
       .then(() => {
-        if (current) onRevealed?.(request.key);
+        if (current) onRowMounted?.(request.key);
       })
       .catch(() => {
         // A superseded or unmounted list leaves the request available for its next mount.
@@ -42,6 +42,6 @@ export function useThreadFindWorkRowReveal(input: {
     return () => {
       current = false;
     };
-  }, [loaded, request, rowId, expandedRows, listRef, onBeforeScroll, onRevealed]);
+  }, [loaded, request, rowId, expandedRows, listRef, onBeforeScroll, onRowMounted]);
   return rowId;
 }

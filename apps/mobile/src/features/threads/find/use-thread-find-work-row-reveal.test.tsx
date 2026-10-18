@@ -38,10 +38,10 @@ describe("Find inside a capped work-list viewport", () => {
     vi.unstubAllGlobals();
   });
 
-  it("waits for loading and row expansion, then completes only after scrolling to the last activity", async () => {
+  it("waits for loading and row expansion, then acknowledges mounting only after scrolling to the last activity", async () => {
     const pending = pendingScroll();
     const list = { getState: () => ({ data: rows }), scrollToIndex: vi.fn(() => pending.promise) };
-    const onRevealed = vi.fn();
+    const onRowMounted = vi.fn();
     const onBeforeScroll = vi.fn();
     const input: Input = {
       request: { key: "find-last", rowId: "activity-24", anchorKey: "work-group" },
@@ -50,7 +50,7 @@ describe("Find inside a capped work-list viewport", () => {
       loaded: false,
       listRef: { current: list },
       onBeforeScroll,
-      onRevealed,
+      onRowMounted,
     };
     await act(async () => {
       root.render(<Harness {...input} />);
@@ -69,21 +69,21 @@ describe("Find inside a capped work-list viewport", () => {
       animated: false,
       viewPosition: 0,
     });
-    expect(onRevealed).not.toHaveBeenCalled();
+    expect(onRowMounted).not.toHaveBeenCalled();
     await act(async () => {
       pending.finish();
     });
-    expect(onRevealed).toHaveBeenCalledExactlyOnceWith("find-last");
+    expect(onRowMounted).toHaveBeenCalledExactlyOnceWith("find-last");
   });
 
-  it("does not let an old inner scroll complete a newer Find selection or a closed Find session", async () => {
+  it("does not let an old inner scroll acknowledge a newer Find selection or a closed Find session", async () => {
     const first = pendingScroll();
     const second = pendingScroll();
     const list = {
       getState: () => ({ data: rows }),
       scrollToIndex: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
     };
-    const onRevealed = vi.fn();
+    const onRowMounted = vi.fn();
     const input: Input = {
       request: { key: "first", rowId: "activity-24", anchorKey: "work-group" },
       rows,
@@ -91,7 +91,7 @@ describe("Find inside a capped work-list viewport", () => {
       loaded: true,
       listRef: { current: list },
       onBeforeScroll: () => {},
-      onRevealed,
+      onRowMounted,
     };
     await act(async () => {
       root.render(<Harness {...input} />);
@@ -107,7 +107,7 @@ describe("Find inside a capped work-list viewport", () => {
     await act(async () => {
       first.finish();
     });
-    expect(onRevealed).not.toHaveBeenCalled();
+    expect(onRowMounted).not.toHaveBeenCalled();
     expect(list.scrollToIndex).toHaveBeenLastCalledWith({
       index: 4,
       animated: false,
@@ -119,6 +119,6 @@ describe("Find inside a capped work-list viewport", () => {
     await act(async () => {
       second.finish();
     });
-    expect(onRevealed).not.toHaveBeenCalled();
+    expect(onRowMounted).not.toHaveBeenCalled();
   });
 });

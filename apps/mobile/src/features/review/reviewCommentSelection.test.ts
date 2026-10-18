@@ -4,9 +4,25 @@ import {
   countReviewCommentContexts,
   formatReviewCommentContext,
   parseReviewCommentMessageSegments,
+  parseReviewCommentMessageSegmentsWithSource,
   parseReviewInlineComments,
   type ReviewCommentTarget,
 } from "./reviewCommentSelection";
+
+it("keeps source ownership for identical text on both sides of an omitted review card", () => {
+  const card = formatReviewCommentContext(makeTarget(), "same phrase");
+  const source = `same phrase\n${card}\nsame phrase`;
+  const segments = parseReviewCommentMessageSegmentsWithSource(source);
+  const text = segments.filter((segment) => segment.kind === "text");
+  expect(text).toHaveLength(2);
+  expect(
+    text.map((segment) =>
+      source.slice(segment.sourceOffset, segment.sourceOffset + segment.text.length),
+    ),
+  ).toEqual(text.map((segment) => segment.text));
+  expect(text[1]!.sourceOffset).toBe(source.lastIndexOf("\nsame phrase"));
+  expect(segments.some((segment) => segment.kind === "review-comment")).toBe(true);
+});
 
 function makeTarget(): ReviewCommentTarget {
   return {

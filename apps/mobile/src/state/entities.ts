@@ -14,7 +14,8 @@ import type {
   ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
-import { hasThreadLinks, relabelThreadLinks } from "@t3tools/shared/threadLinks";
+import { hasThreadLinks, relabelThreadLinksSourceMap } from "@t3tools/shared/threadLinks";
+import { identityTextSourceMap } from "@t3tools/shared/textSourceMap";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
@@ -103,15 +104,15 @@ export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
 }
 
-export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
+export function useLiveThreadLinkLabelsSourceMap(markdown: string, environmentId: EnvironmentId) {
   const titles = useAtomValue(
     hasThreadLinks(markdown) ? threadTitlesAtom(environmentId) : EMPTY_THREAD_TITLES_ATOM,
   );
   return useMemo(
     () =>
       titles.size === 0
-        ? markdown
-        : relabelThreadLinks(markdown, (threadId) => titles.get(threadId)),
+        ? identityTextSourceMap(markdown)
+        : relabelThreadLinksSourceMap(markdown, (threadId) => titles.get(threadId)),
     [markdown, titles],
   );
 }

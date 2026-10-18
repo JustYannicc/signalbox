@@ -5,19 +5,23 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { markdownWithHtml, markdownWithTableBreaks } from "../lib/markdownDocument";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { Platform, Share, StyleSheet, View } from "react-native";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Platform, Share, StyleSheet, View, type ViewInstance } from "react-native";
+import type { AssistantCitation } from "@t3tools/contracts";
+import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import {
   EnrichedMarkdownText,
   type DocumentAssetsEvent,
   type MarkdownStyle,
   type MarkdownMediaAsset,
+  type MarkdownSourceSelectionResult,
 } from "react-native-enriched-markdown";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
+import { MarkdownCitationSheet } from "./MarkdownCitationSheet";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
@@ -44,7 +48,7 @@ function enrichedStyle(
     fontSize: style.fontSize,
     lineHeight: style.lineHeight,
     marginTop: 0,
-    marginBottom: 8,
+    marginBottom: style.paragraphMarginBottom ?? 8,
   };
   const heading = (level: number) => {
     const fontSize = style.headingFontSizes?.[level - 1] ?? style.fontSize * (1.6 - level * 0.1);
@@ -140,9 +144,56 @@ function enrichedStyle(
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource } = props;
+  const [citation, setCitation] = useState<AssistantCitation | null>(null);
+  const handleLinkPress = useCallback(
+    (url: string) => {
+      const quote = parseAssistantCitationHref(url);
+      if (quote) setCitation(quote);
+      else props.onLinkPress?.(url);
+    },
+    [props.onLinkPress],
+  );
   const markdown = useMemo(
-    () => markdownWithTableBreaks(markdownWithHtml(props.markdown)),
-    [props.markdown],
+    () =>
+      props.preparedMarkdown
+        ? props.markdown
+        : markdownWithTableBreaks(markdownWithHtml(props.markdown)),
+    [props.markdown, props.preparedMarkdown],
+  );
+  const rootRef = useRef<ViewInstance>(null);
+  const activeSelection = useRef({
+    selection: props.sourceSelection,
+    revision: props.sourceDocumentRevision,
+    markdown,
+    onLayout: props.onSourceSelection,
+  });
+  useLayoutEffect(() => {
+    activeSelection.current = {
+      selection: props.sourceSelection,
+      revision: props.sourceDocumentRevision,
+      markdown,
+      onLayout: props.onSourceSelection,
+    };
+    return () => {
+      activeSelection.current.selection = null;
+    };
+  }, [props.sourceSelection, props.sourceDocumentRevision, markdown, props.onSourceSelection]);
+  const onSourceSelection = useCallback(
+    ({ nativeEvent }: { nativeEvent: MarkdownSourceSelectionResult }) => {
+      const active = activeSelection.current;
+      const selection = active.selection;
+      if (
+        !selection ||
+        nativeEvent.version !== 1 ||
+        nativeEvent.requestId !== selection.requestId ||
+        nativeEvent.revision !== active.revision ||
+        nativeEvent.revision !== selection.revision ||
+        selection.sourceMarkdown !== active.markdown
+      )
+        return;
+      active.onLayout?.(nativeEvent, rootRef);
+    },
+    [],
   );
   const { themeAppearance } = useAppearancePreferences();
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
@@ -180,12 +231,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { fileContextMenu, onLinkPress, onFileContextMenuAction } = props;
   const performMenuAction = useCallback(
     (url: string, actionId: string) => {
-      if (actionId === "enriched-open-link") onLinkPress?.(url);
+      if (actionId === "enriched-open-link") handleLinkPress(url);
       else if (actionId === "enriched-copy-link") copyTextWithHaptic(url);
       else if (actionId === "enriched-share-link") void Share.share({ message: url });
       else onFileContextMenuAction?.(url, actionId);
     },
-    [onLinkPress, onFileContextMenuAction],
+    [handleLinkPress, onFileContextMenuAction],
   );
   const linkContextMenuItems = useMemo(
     () =>
@@ -282,6 +333,8 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
 
     return (
       <View
+        ref={rootRef}
+        collapsable={false}
         style={{
           flexShrink: 1,
           minWidth: 0,
@@ -291,6 +344,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       >
         <EnrichedMarkdownText
           markdown={markdown}
+          sourceDocumentRevision={props.sourceDocumentRevision}
+          sourceSelection={
+            props.sourceSelection?.sourceMarkdown === markdown ? props.sourceSelection : null
+          }
+          sourceLinkPillContent={props.sourceLinkPillContent}
+          onSourceSelection={onSourceSelection}
           markdownStyle={markdownStyle}
           onDocumentAssets={onDocumentAssets}
           renderMedia={renderImage ? renderMedia : undefined}
@@ -303,6 +362,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           linkRecognition={linkRecognition}
           containerStyle={{ flexShrink: 1, minWidth: 0 }}
           flavor="github"
+          numberOfLines={props.numberOfLines}
           selectable
           selectionClipboard={selectionClipboard}
           selectionColor={props.textStyle.selectionColor}
@@ -315,7 +375,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           enableTaskListItemToggle={false}
           enableCodeBlockWrapToggle
           spoilerOverlay="solid"
-          onLinkPress={props.onLinkPress ? ({ url }) => props.onLinkPress?.(url) : undefined}
+          onLinkPress={({ url }) => handleLinkPress(url)}
           onLinkLongPress={onLinkLongPress}
           linkContextMenuItems={linkContextMenuItems}
           linkPillContent={linkPillContent}
@@ -324,26 +384,35 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     );
   };
 
-  return Platform.OS === "android" && props.fileContextMenu ? (
-    <Menu
-      shouldOpenOnLongPress
-      title={activeMenu?.menu.title}
-      actions={
-        activeMenu?.menu.actions.map((action) => ({
-          id: action.id,
-          title: action.title,
-          attributes: { disabled: action.disabled },
-        })) ?? []
-      }
-      onPressAction={({ nativeEvent }) => {
-        if (activeMenu) performMenuAction(activeMenu.url, nativeEvent.event);
-      }}
-      style={{ flexShrink: 1, minWidth: 0 }}
-    >
-      <MarkdownMenuAnchor renderMarkdown={renderMarkdown} />
-    </Menu>
-  ) : (
-    renderMarkdown()
+  const content =
+    Platform.OS === "android" && props.fileContextMenu ? (
+      <Menu
+        shouldOpenOnLongPress
+        title={activeMenu?.menu.title}
+        actions={
+          activeMenu?.menu.actions.map((action) => ({
+            id: action.id,
+            title: action.title,
+            attributes: { disabled: action.disabled },
+          })) ?? []
+        }
+        onPressAction={({ nativeEvent }) => {
+          if (activeMenu) performMenuAction(activeMenu.url, nativeEvent.event);
+        }}
+        style={{ flexShrink: 1, minWidth: 0 }}
+      >
+        <MarkdownMenuAnchor renderMarkdown={renderMarkdown} />
+      </Menu>
+    ) : (
+      renderMarkdown()
+    );
+  return (
+    <>
+      {content}
+      {citation ? (
+        <MarkdownCitationSheet citation={citation} onClose={() => setCitation(null)} />
+      ) : null}
+    </>
   );
 }
 

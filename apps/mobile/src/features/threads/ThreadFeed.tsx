@@ -14,6 +14,7 @@ import {
 } from "./worktree-setup-card";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
+import { useKeyboardState } from "react-native-keyboard-controller";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
@@ -34,7 +35,18 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   RunId,
 } from "@t3tools/contracts";
-import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import {
+  searchableMessageDocument,
+  searchablePlanDocument,
+  type ThreadFindDocument,
+} from "@t3tools/shared/threadFindText";
+import {
+  composeTextSourceMaps,
+  identityTextSourceMap,
+  sliceTextSourceMap,
+  textRangeToSource,
+  type TextSourceMap,
+} from "@t3tools/shared/textSourceMap";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -42,16 +54,13 @@ import {
   parseComposerContextHref,
   collectComposerContextReferences,
   replaceComposerContextReferences,
+  replaceComposerContextReferencesSourceMap,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
 import { writeComposerContextClipboard } from "../../lib/composerContextClipboard";
-import {
-  codexArtifactTemplatePresentationLabel,
-  type CodexArtifactTemplate,
-} from "@t3tools/shared/codexArtifactTemplates";
+import { type CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -60,20 +69,19 @@ import {
 } from "@t3tools/client-runtime/markdown-images";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
-  renderCodexInlineDirectivesAsMarkdown,
+  renderCodexInlineDirectivesWithSourceMap,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
 import {
-  createContext,
   memo,
   useCallback,
   useContext,
@@ -87,16 +95,13 @@ import {
   type RefObject,
 } from "react";
 import {
-  ActivityIndicator,
   Image,
   Platform,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
-  ScrollView,
   StyleSheet,
-  Text as NativeText,
   type ColorValue,
   useWindowDimensions,
   View,
@@ -118,12 +123,9 @@ import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
-import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import {
-  SelectableMarkdownText,
   type MarkdownFileContextMenu,
   type MarkdownImageRenderer,
   type MarkdownImageSourceResolver,
@@ -135,19 +137,12 @@ import {
 import { AppText as Text } from "../../components/ui/AppText";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
-import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
-import {
-  attachmentVideoPreviewSource,
-  mediaVideoPreviewUri,
-  mediaVideoThumbnailKey,
-  type MediaVideoPreviewSource,
-} from "../../lib/videoPreviewSource";
+import { attachmentVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
 import { Menu } from "../../components/ui/Menu";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
-import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
-import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
+import { parseReviewCommentMessageSegmentsWithSource } from "../review/reviewCommentSelection";
 import {
   ReviewCommentCard,
   useReviewCommentColors,
@@ -161,18 +156,12 @@ import {
   type LayoutVariant,
 } from "../../lib/layout";
 import { uuidv4 } from "../../lib/uuid";
-import {
-  resolveMarkdownFontSizes,
-  resolveNativeMarkdownTypography,
-} from "../../lib/appearancePreferences";
+import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { markdownFileIconSource } from "../../lib/markdownFileIcons";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-import { markdownLinkIconSource } from "../../lib/markdownLinkIcons";
 import {
   normalizeNativeMarkdownUrl,
-  resolveMarkdownInlineCodePresentation,
-  resolveMarkdownLinkIcon,
   resolveMarkdownLinkPresentation,
 } from "../../lib/markdownLinks";
 import {
@@ -183,6 +172,7 @@ import {
   isContextHandoffActivityGroup,
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
+  type ThreadFeedMessage,
   type ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -205,23 +195,29 @@ import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import {
   feedIndexForFindTarget,
   threadFindRevealAction,
+  threadFindRequestForSource,
   type ThreadFindWorkRowRevealRequest,
   type ThreadFindRevealRequest,
 } from "./find/thread-find-model";
+import { useThreadFindListViewport } from "./find/thread-find-list-viewport";
+import type { ThreadFindRect } from "./find/thread-find-geometry";
+import { ThreadFindRevealProvider } from "./find/thread-find-reveal-context";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
-import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
-import {
-  assetEnvironment,
-  useAssetUrl,
-  useAssetUrlState,
-  useRefreshAssetUrl,
-} from "../../state/assets";
+import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
-import { useLiveThreadLinkLabels } from "../../state/entities";
+import { useLiveThreadLinkLabelsSourceMap } from "../../state/entities";
+import { ThreadFindMarkdownText } from "./find/ThreadFindMarkdownText";
+import { ThreadArtifactTemplateCard } from "./ThreadArtifactTemplateCard";
+import { ThreadFindGeneratedText } from "./find/ThreadFindGeneratedText";
+import {
+  stripDisplayedPlanWithSourceMap,
+  proposedPlanTitle,
+} from "@t3tools/shared/proposedPlanText";
+import { threadMessageSource } from "./find/thread-message-source";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -305,6 +301,7 @@ export interface ThreadFeedProps {
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly findRevealRequest?: ThreadFindRevealRequest | null;
+  readonly findBarRect?: ThreadFindRect | null;
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
   readonly listRef: RefObject<LegendListRef | null>;
@@ -746,66 +743,6 @@ interface MarkdownStyleSet {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
-const ARTIFACT_TEMPLATE_SYMBOL_BY_KIND: Record<
-  CodexArtifactTemplate["artifactKind"],
-  AppSymbolName
-> = {
-  document: "doc.text",
-  presentation: "chart.bar.xaxis",
-  spreadsheet: "chart.bar.xaxis",
-  site: "safari",
-  "google-docs": "doc.text",
-  "google-slides": "chart.bar.xaxis",
-  "google-sheets": "chart.bar.xaxis",
-  image: "camera",
-  email: "text.bubble",
-  slack: "text.bubble",
-};
-
-function ArtifactTemplateCard(props: {
-  readonly template: CodexArtifactTemplate;
-  readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
-}) {
-  return (
-    <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
-      <View className="relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
-        <SymbolView
-          name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
-          size={20}
-          tintColorClassName="accent-foreground-muted"
-          type="monochrome"
-        />
-        <View className="absolute -right-1 -bottom-1 h-4 w-4 items-center justify-center rounded-full bg-fuchsia-500">
-          <SymbolView
-            name={{ ios: "sparkles", android: "auto_awesome" }}
-            size={9}
-            tintColor="white"
-            type="monochrome"
-          />
-        </View>
-      </View>
-      <View className="min-w-0 flex-1">
-        <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
-          {props.template.displayName}
-        </Text>
-        <Text className="text-xs text-foreground-muted">
-          {codexArtifactTemplatePresentationLabel(props.template.artifactKind)}
-        </Text>
-      </View>
-      {props.onUse ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Use ${props.template.displayName} template`}
-          className="min-h-9 justify-center rounded-lg border border-border bg-subtle px-3 active:opacity-65"
-          onPress={() => props.onUse?.(props.template)}
-        >
-          <Text className="font-t3-bold text-xs text-foreground">Use template</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
@@ -814,27 +751,71 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly entryId?: string;
+  readonly sourceMap?: TextSourceMap;
+  readonly findDocument?: ThreadFindDocument;
 }) {
-  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
+  const liveMap = useLiveThreadLinkLabelsSourceMap(props.markdown, props.environmentId);
+  const sourceMap = useMemo(
+    () => composeTextSourceMaps(props.sourceMap ?? identityTextSourceMap(props.markdown), liveMap),
+    [props.sourceMap, props.markdown, liveMap],
+  );
+  const document = useMemo(
+    () =>
+      props.findDocument ??
+      searchableMessageDocument(
+        {
+          role: "assistant",
+          text: props.markdown,
+          streaming: false,
+          context: undefined,
+        },
+        undefined,
+        props.skills,
+      )!,
+    [props.findDocument, props.markdown, props.skills],
+  );
+  const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMap.text), [liveMap.text]);
 
-  return segments.map((segment) => {
+  return segments.map((segment, index) => {
     if (segment.kind === "artifact-template") {
+      const ranges = textRangeToSource(sourceMap, {
+        start: segment.sourceOffset,
+        end: segments[index + 1]?.sourceOffset ?? liveMap.text.length,
+      });
       return (
-        <ArtifactTemplateCard
+        <ThreadArtifactTemplateCard
           key={`artifact-template:${segment.sourceOffset}`}
           template={segment.template}
           onUse={props.onUseArtifactTemplate}
+          find={
+            props.entryId && ranges?.length === 1
+              ? {
+                  entryId: props.entryId,
+                  document,
+                  sourceRange: ranges[0]!,
+                  textStyle: props.markdownStyles.nativeTextStyle,
+                }
+              : undefined
+          }
         />
       );
     }
     if (segment.markdown.trim().length === 0) return null;
 
-    const markdown = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
+    const map = composeTextSourceMaps(
+      sliceTextSourceMap(sourceMap, {
+        start: segment.sourceOffset,
+        end: segment.sourceOffset + segment.markdown.length,
+      }),
+      renderCodexInlineDirectivesWithSourceMap(segment.markdown),
+    );
     return (
-      <SelectableMarkdownText
+      <ThreadFindMarkdownText
         key={`markdown:${segment.sourceOffset}`}
-        markdown={markdown}
+        entryId={props.entryId ?? ""}
+        document={document}
+        sourceMap={map}
         skills={props.skills}
         textStyle={props.markdownStyles.nativeTextStyle}
         {...props.linkHandlers}
@@ -842,6 +823,49 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       />
     );
   });
+});
+
+const ThreadPlanMarkdownContent = memo(function ThreadPlanMarkdownContent(
+  props: Omit<
+    Parameters<typeof AssistantMarkdownContent>[0],
+    "markdown" | "skills" | "entryId" | "sourceMap" | "findDocument"
+  > & {
+    readonly plan: { id: string; markdown: string };
+    readonly workspaceRoot?: string | null;
+  },
+) {
+  const { plan } = props;
+  const document = useMemo(
+    () => searchablePlanDocument(plan.markdown, props.workspaceRoot ?? undefined),
+    [plan.markdown, props.workspaceRoot],
+  );
+  const sourceMap = useMemo(() => stripDisplayedPlanWithSourceMap(plan.markdown), [plan.markdown]);
+  return (
+    <View className="gap-2">
+      <ThreadFindGeneratedText
+        entryId={plan.id}
+        document={document}
+        slot={{
+          kind: "plan-title",
+          sourceStart: 0,
+          sourceEnd: plan.markdown.length,
+          text: proposedPlanTitle(plan.markdown) ?? "Proposed plan",
+        }}
+        textStyle={{
+          ...props.markdownStyles.nativeTextStyle,
+          fontFamily: props.markdownStyles.nativeTextStyle.boldFontFamily,
+        }}
+      />
+      <AssistantMarkdownContent
+        {...props}
+        markdown={sourceMap.text}
+        entryId={plan.id}
+        findDocument={document}
+        sourceMap={sourceMap}
+        skills={[]}
+      />
+    </View>
+  );
 });
 
 function useMarkdownStyles(): MarkdownStyleSets {
@@ -1006,7 +1030,7 @@ function renderFeedEntry(
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
-    readonly renderReasoning: (text: string) => ReactNode;
+    readonly renderReasoning: (text: string, plan?: { id: string; markdown: string }) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly screenColor: string;
     readonly userBubbleColor: string | import("react-native").ColorValue;
@@ -1145,7 +1169,7 @@ function renderFeedEntry(
     const { message } = entry;
     const isUser = message.role === "user";
     const presentation = resolveUserMessagePresentation(message);
-    const renderedText = renderAssistantCitationsAsText(presentation.text);
+    const renderedText = presentation.text;
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
@@ -1283,10 +1307,10 @@ function renderFeedEntry(
               <MarkdownImageAvailableWidthContext
                 value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
               >
-                <UserMessageContent
-                  text={renderedText}
+                <ThreadMessageMarkdownContent
+                  message={message}
+                  workspaceRoot={props.workspaceRoot}
                   environmentId={props.environmentId}
-                  context={message.context}
                   markdownStyles={styles}
                   reviewCommentColors={props.reviewCommentColors}
                   skills={props.skills}
@@ -1366,7 +1390,10 @@ function renderFeedEntry(
       );
     }
 
-    if (renderedText.trim().length === 0 && attachments.length === 0) {
+    const showAssistantBody =
+      renderedText.trim().length > 0 ||
+      (message.role === "assistant" && message.text.length === 0 && !message.streaming);
+    if (!showAssistantBody && attachments.length === 0) {
       return null;
     }
 
@@ -1381,16 +1408,18 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {renderedText.trim().length > 0 ? (
+        {showAssistantBody ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              markdown={renderedText}
+            <ThreadMessageMarkdownContent
+              message={message}
+              workspaceRoot={props.workspaceRoot}
               environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
+              reviewCommentColors={props.reviewCommentColors}
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}
@@ -1470,6 +1499,9 @@ function renderFeedEntry(
 
 type UserMessageContentProps = {
   readonly text: string;
+  readonly entryId: string;
+  readonly findDocument: ThreadFindDocument;
+  readonly sourceMap: TextSourceMap;
   readonly environmentId: EnvironmentId;
   readonly context?: OrchestrationMessageContext;
   readonly markdownStyles: MarkdownStyleSet;
@@ -1479,15 +1511,72 @@ type UserMessageContentProps = {
   readonly renderImage: MarkdownImageRenderer;
 };
 
+const ThreadMessageMarkdownContent = memo(function ThreadMessageMarkdownContent(
+  props: Omit<
+    UserMessageContentProps,
+    "text" | "context" | "entryId" | "findDocument" | "sourceMap"
+  > & {
+    readonly message: ThreadFeedMessage;
+    readonly workspaceRoot?: string | null;
+    readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  },
+) {
+  const source = useMemo(() => threadMessageSource(props.message), [props.message]);
+  const document = useMemo(
+    () => searchableMessageDocument(props.message, props.workspaceRoot ?? undefined, props.skills),
+    [props.message, props.workspaceRoot, props.skills],
+  );
+  if (!document) return null;
+  if (props.message.role === "assistant" && !props.message.text && !props.message.streaming)
+    return (
+      <ThreadFindGeneratedText
+        entryId={props.message.id}
+        document={document}
+        slot={{ kind: "empty-response", sourceStart: 0, sourceEnd: 0, text: "(empty response)" }}
+        textStyle={props.markdownStyles.nativeTextStyle}
+      />
+    );
+  if (props.message.role === "user")
+    return (
+      <UserMessageContent
+        {...props}
+        text={source.sourceMap.text}
+        context={source.context}
+        entryId={props.message.id}
+        findDocument={document}
+        sourceMap={source.sourceMap}
+      />
+    );
+  return (
+    <AssistantMarkdownContent
+      {...props}
+      markdown={source.sourceMap.text}
+      entryId={props.message.id}
+      findDocument={document}
+      sourceMap={source.sourceMap}
+    />
+  );
+});
+
 function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
-  const liveText = useLiveThreadLinkLabels(props.text, props.environmentId);
-  const text = replaceComposerContextReferences(liveText, (ref) => {
-    const available = props.context?.records.some((record) => record.contextId === ref.contextId);
-    return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
-  });
+  const liveMap = useLiveThreadLinkLabelsSourceMap(props.text, props.environmentId);
+  const sourceMap = useMemo(
+    () =>
+      composeTextSourceMaps(
+        composeTextSourceMaps(props.sourceMap, liveMap),
+        replaceComposerContextReferencesSourceMap(liveMap.text, (ref) => {
+          const available = props.context?.records.some(
+            (record) => record.contextId === ref.contextId,
+          );
+          return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
+        }),
+      ),
+    [props.sourceMap, liveMap, props.context],
+  );
+  const text = sourceMap.text;
   const onLinkPress = (href: string) => {
     const reference = parseComposerContextHref(href);
     if (!reference) return props.linkHandlers.onLinkPress?.(href);
@@ -1524,6 +1613,7 @@ function UserMessageContent(props: UserMessageContentProps) {
       <UserMessageMarkdownContent
         {...props}
         text={text}
+        sourceMap={sourceMap}
         linkHandlers={{
           ...props.linkHandlers,
           onLinkPress,
@@ -1589,7 +1679,7 @@ function UserMessageContent(props: UserMessageContentProps) {
 
 function UserMessageMarkdownContent(props: UserMessageContentProps) {
   const text = props.text;
-  const segments = parseReviewCommentMessageSegments(text);
+  const segments = parseReviewCommentMessageSegmentsWithSource(text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
   const contextClipboardFragment = props.context
     ? (encodeComposerContextFragment({
@@ -1600,8 +1690,10 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
     : undefined;
   if (!hasReviewComment) {
     return (
-      <SelectableMarkdownText
-        markdown={text}
+      <ThreadFindMarkdownText
+        entryId={props.entryId}
+        document={props.findDocument}
+        sourceMap={props.sourceMap}
         contextClipboardFragment={contextClipboardFragment}
         skills={props.skills}
         textStyle={props.markdownStyles.nativeTextStyle}
@@ -1631,9 +1723,14 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
         }
 
         return (
-          <SelectableMarkdownText
+          <ThreadFindMarkdownText
             key={segment.id}
-            markdown={text}
+            entryId={props.entryId}
+            document={props.findDocument}
+            sourceMap={sliceTextSourceMap(props.sourceMap, {
+              start: segment.sourceOffset + segment.text.length - segment.text.trimStart().length,
+              end: segment.sourceOffset + segment.text.trimEnd().length,
+            })}
             contextClipboardFragment={contextClipboardFragment}
             skills={props.skills}
             textStyle={props.markdownStyles.nativeTextStyle}
@@ -1678,6 +1775,7 @@ function ThreadFeedPlaceholder(props: {
 }
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
   const openPullRequest = useOpenPullRequest();
@@ -1691,7 +1789,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const runContinuations = props.latestRun?.runContinuations;
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
-  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight, fontScale } = useWindowDimensions();
+  const keyboardHeight = useKeyboardState((state) => state.height);
   const { appearance } = useAppearancePreferences();
   const workRowSizing = useMemo(
     () => deriveThreadWorkLogSizing({ baseFontSize: appearance.baseFontSize, fontScale }),
@@ -1750,16 +1849,32 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
   const appliedFindRevealStepRef = useRef<string | null>(null);
   const lastFindRevealRequestKeyRef = useRef<string | null>(null);
-  const scrolledFindRevealRequestKeyRef = useRef<string | null>(null);
+  const mountedFindRevealRequestKeyRef = useRef<string | null>(null);
   const outerScrolledFindRevealRequestKeyRef = useRef<string | null>(null); // signalbox: inner and outer lists complete separate scrolls.
+  const outerMountedFindRevealKeyRef = useRef<string | null>(null);
+  const innerMountedFindRevealKeyRef = useRef<string | null>(null);
+  const [mountedFindRevealKey, setMountedFindRevealKey] = useState<string | null>(null);
   const [findWorkRowReveal, setFindWorkRowReveal] = useState<ThreadFindWorkRowRevealRequest | null>(
     null,
   );
-  const onFindWorkRowRevealed = useCallback((key: string) => {
-    if (lastFindRevealRequestKeyRef.current !== key) return;
-    scrolledFindRevealRequestKeyRef.current = key;
-    setFindWorkRowReveal((current) => (current?.key === key ? null : current));
-  }, []);
+  const onFindGlyphRevealed = useCallback(
+    (requestId: string) => {
+      if (props.findRevealRequest?.requestId === requestId) setFindWorkRowReveal(null);
+    },
+    [props.findRevealRequest?.requestId],
+  );
+  const onFindWorkRowRevealed = useCallback(
+    (key: string) => {
+      if (lastFindRevealRequestKeyRef.current !== key) return;
+      innerMountedFindRevealKeyRef.current = key;
+      if (outerMountedFindRevealKeyRef.current === key) {
+        mountedFindRevealRequestKeyRef.current = key;
+        setMountedFindRevealKey(key);
+      }
+      if (!props.findRevealRequest?.evidence) setFindWorkRowReveal(null);
+    },
+    [props.findRevealRequest?.evidence],
+  );
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
@@ -1805,6 +1920,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const anchorTopInset = usesNativeAutomaticInsets
     ? (navigationHeaderHeight ?? insets.top + IOS_NAV_BAR_HEIGHT)
     : topContentInset;
+
+  const findViewport = useThreadFindListViewport({
+    listRef: props.listRef,
+    insets: (rect) => ({
+      top: anchorTopInset,
+      bottom:
+        Math.max(
+          bottomContentInset,
+          props.contentInsetEndAdjustment.value + (usesNativeAutomaticInsets ? insets.bottom : 0),
+        ) + Math.max(0, rect.y + rect.height - (windowHeight - keyboardHeight)),
+      left: contentLeftInset,
+      right: contentRightInset,
+    }),
+    topOcclusion: () => props.findBarRect ?? null,
+    onBeforeScroll: () => setEndFollow(false),
+  });
+  const activeGlyphRequest =
+    mountedFindRevealKey === props.findRevealRequest?.key
+      ? threadFindRequestForSource(props.findRevealRequest, feedThreadKey)
+      : null;
 
   const theme = useUniwindTheme();
   const iconSubtleColor = theme["--color-icon-subtle"];
@@ -2001,22 +2136,33 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const markdownStyles = useMarkdownStyles();
   const renderReasoning = useCallback(
-    (text: string) => (
-      <AssistantMarkdownContent
-        markdown={text}
-        environmentId={props.environmentId}
-        markdownStyles={markdownStyles.assistant}
-        linkHandlers={markdownLinkHandlers}
-        renderImage={renderMarkdownImage}
-        skills={props.skills}
-      />
-    ),
+    (text: string, plan?: { id: string; markdown: string }) =>
+      plan ? (
+        <ThreadPlanMarkdownContent
+          plan={plan}
+          workspaceRoot={props.workspaceRoot}
+          environmentId={props.environmentId}
+          markdownStyles={markdownStyles.assistant}
+          linkHandlers={markdownLinkHandlers}
+          renderImage={renderMarkdownImage}
+        />
+      ) : (
+        <AssistantMarkdownContent
+          markdown={text}
+          environmentId={props.environmentId}
+          markdownStyles={markdownStyles.assistant}
+          linkHandlers={markdownLinkHandlers}
+          renderImage={renderMarkdownImage}
+          skills={props.skills}
+        />
+      ),
     [
       markdownStyles.assistant,
       markdownLinkHandlers,
       renderMarkdownImage,
       props.skills,
       props.environmentId,
+      props.workspaceRoot,
     ],
   );
   const reviewCommentColors = useReviewCommentColors();
@@ -2136,7 +2282,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   useEffect(() => clearUserScrollSettle, [clearUserScrollSettle]);
 
-  const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
   const workGroupScrollPositions = useMemo(
     () => new Map<string, ThreadWorkGroupScrollPosition>(),
     [feedThreadKey],
@@ -2387,20 +2532,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const request = props.findRevealRequest;
     if (request === null || request === undefined || request.threadKey !== feedThreadKey) {
       lastFindRevealRequestKeyRef.current = null;
+      setMountedFindRevealKey(null);
+      outerMountedFindRevealKeyRef.current = null;
+      innerMountedFindRevealKeyRef.current = null;
       appliedFindRevealStepRef.current = null;
-      scrolledFindRevealRequestKeyRef.current = null;
+      mountedFindRevealRequestKeyRef.current = null;
       outerScrolledFindRevealRequestKeyRef.current = null; // signalbox: clear inner work-list targets on Find close or a thread change.
       setFindWorkRowReveal(null);
       return;
     }
     if (lastFindRevealRequestKeyRef.current !== request.key) {
       lastFindRevealRequestKeyRef.current = request.key;
+      setMountedFindRevealKey(null);
+      outerMountedFindRevealKeyRef.current = null;
+      innerMountedFindRevealKeyRef.current = null;
       appliedFindRevealStepRef.current = null;
-      scrolledFindRevealRequestKeyRef.current = null; // signalbox: revisiting a completed match starts a new reveal.
+      mountedFindRevealRequestKeyRef.current = null; // signalbox: revisiting a completed match starts a new reveal.
       outerScrolledFindRevealRequestKeyRef.current = null;
       setFindWorkRowReveal(null); // signalbox: stale inner-list requests must not finish a new selection.
     }
-    if (scrolledFindRevealRequestKeyRef.current === request.key) return;
+    if (mountedFindRevealRequestKeyRef.current === request.key) return;
 
     const action = threadFindRevealAction(
       presentedFeed,
@@ -2455,7 +2606,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const index = feedIndexForFindTarget(list.getState().data, request.target);
     if (index === -1) return;
     if (action.type === "scroll-work-row") {
-      // signalbox: the capped work list acknowledges its own scroll before reveal completes.
+      // signalbox: this only mounts the inner row; measured glyphs complete reveal.
       setFindWorkRowReveal((current) =>
         current?.key === request.key &&
         current.rowId === action.rowId &&
@@ -2463,13 +2614,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ? current
           : { key: request.key, rowId: action.rowId, anchorKey: action.anchorKey },
       );
-    } else {
-      scrolledFindRevealRequestKeyRef.current = request.key;
     }
     if (outerScrolledFindRevealRequestKeyRef.current === request.key) return;
     outerScrolledFindRevealRequestKeyRef.current = request.key;
     setEndFollow(false);
-    list.scrollToIndex({ index, animated: true, viewPosition: 0.25 });
+    void list
+      .scrollToIndex({ index, animated: false, viewPosition: 0.25 })
+      .then(() => {
+        if (lastFindRevealRequestKeyRef.current !== request.key || props.listRef.current !== list)
+          return;
+        outerMountedFindRevealKeyRef.current = request.key;
+        if (action.type === "scroll" || innerMountedFindRevealKeyRef.current === request.key) {
+          mountedFindRevealRequestKeyRef.current = request.key;
+          setMountedFindRevealKey(request.key);
+        }
+      })
+      .catch(() => {
+        if (lastFindRevealRequestKeyRef.current === request.key) {
+          outerScrolledFindRevealRequestKeyRef.current = null;
+        }
+      });
   }, [
     expandedWorkRows,
     feedThreadKey,
@@ -2670,167 +2834,179 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }
 
   return (
-    <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
-      <View className="flex-1" onLayout={handleViewportLayout}>
-        <View className="flex-1">
-          <KeyboardAwareLegendList
-            ref={props.listRef}
-            // LegendList's maintainScrollAtEnd calls scrollToEnd(), which is
-            // blind to UIKit's adjustedContentInset — inserting into an
-            // already-attached list under a transparent header can pin short
-            // content at offset 0 (one header-height too high). A fresh mount
-            // positions during attach, where UIKit applies the inset.
-            key={listMountKey}
-            style={{ flex: 1 }}
-            // RN 0.81+ drops touches inside the contentInset area
-            // (facebook/react-native#54123); the anchored end space after a send
-            // is pure inset, so without this the blank region can't be scrolled.
-            applyWorkaroundForContentInsetHitTestBug
-            // Horizontal Duo reservations are already included in the row padding.
-            contentInsetAdjustmentBehavior={
-              usesNativeAutomaticInsets
-                ? duoColumns && props.layoutVariant === "split"
-                  ? "scrollableAxes"
-                  : "automatic"
-                : "never"
-            }
-            automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
-            {...(usesNativeAutomaticInsets
-              ? {
-                  // Like the Home ScrollView, we rely purely on
-                  // `contentInsetAdjustmentBehavior: "automatic"` so UIKit derives the
-                  // top inset from the transparent header. A manual contentInset
-                  // (which LegendList consumes into its own layout math) collapses the
-                  // scroll view's adjustedContentInset top to 0, leaving the iOS 26/27
-                  // scroll-edge effect no region to render into — which is why the
-                  // header blur was missing on threads.
-                  scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
-                }
-              : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            // Patched LegendList prop (patches/@legendapp__list@3.2.0.patch):
-            // lets its scroll math clamp programmatic scrolls to -headerInset
-            // instead of 0, so initialScrollAtEnd/maintainScrollAtEnd on short
-            // content rest below the transparent header rather than at frame top.
-            contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
-            contentInsetEndAdjustment={props.contentInsetEndAdjustment}
-            // UIKit's automatic behavior adds the safe-area bottom on top of the
-            // raw contentInset the keyboard integration writes. The detail screen
-            // under-reports the composer inset by this amount (see
-            // ThreadDetailScreen); this tells LegendList's scroll math about the
-            // extra so programmatic end scrolls land at the true resting offset.
-            contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
-            // Android's initial end scroll can run before the keyboard integration
-            // reports the composer height. Seed that estimate for LegendList's
-            // scroll math until the first reported inset replaces it.
-            {...(initialContentInset ? { contentInset: initialContentInset } : {})}
-            adjustedInsetCompensation={usesNativeAutomaticInsets ? insets.bottom : 0}
-            freeze={props.freeze}
-            // Follow the measured end immediately. Animating toward an estimated
-            // end races row measurement when a pending message is acknowledged.
-            maintainScrollAtEnd={
-              disclosureToggleSettling || !endFollowEnabled
-                ? false
-                : {
-                    animated: false,
-                    on: {
-                      dataChange: true,
-                      itemLayout: true,
-                      layout: true,
-                    },
+    <ThreadFindRevealProvider
+      request={activeGlyphRequest}
+      sourceIdentity={activeGlyphRequest?.evidence?.documentId}
+      viewport={findViewport}
+      onRevealed={onFindGlyphRevealed}
+    >
+      <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
+        <View className="flex-1" onLayout={handleViewportLayout}>
+          <View className="flex-1">
+            <KeyboardAwareLegendList
+              ref={props.listRef}
+              // LegendList's maintainScrollAtEnd calls scrollToEnd(), which is
+              // blind to UIKit's adjustedContentInset — inserting into an
+              // already-attached list under a transparent header can pin short
+              // content at offset 0 (one header-height too high). A fresh mount
+              // positions during attach, where UIKit applies the inset.
+              key={listMountKey}
+              style={{ flex: 1 }}
+              // RN 0.81+ drops touches inside the contentInset area
+              // (facebook/react-native#54123); the anchored end space after a send
+              // is pure inset, so without this the blank region can't be scrolled.
+              applyWorkaroundForContentInsetHitTestBug
+              // Horizontal Duo reservations are already included in the row padding.
+              contentInsetAdjustmentBehavior={
+                usesNativeAutomaticInsets
+                  ? duoColumns && props.layoutVariant === "split"
+                    ? "scrollableAxes"
+                    : "automatic"
+                  : "never"
+              }
+              automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
+              {...(usesNativeAutomaticInsets
+                ? {
+                    // Like the Home ScrollView, we rely purely on
+                    // `contentInsetAdjustmentBehavior: "automatic"` so UIKit derives the
+                    // top inset from the transparent header. A manual contentInset
+                    // (which LegendList consumes into its own layout math) collapses the
+                    // scroll view's adjustedContentInset top to 0, leaving the iOS 26/27
+                    // scroll-edge effect no region to render into — which is why the
+                    // header blur was missing on threads.
+                    scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
                   }
-            }
-            maintainVisibleContentPosition={
-              endFollowEnabled && !disclosureToggleSettling ? false : maintainVisibleContentPosition
-            }
-            data={presentedFeed}
-            extraData={listAppearanceData}
-            renderItem={renderItem}
-            viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
-            keyExtractor={(entry) => entry.id}
-            getItemType={(entry) =>
-              entry.type === "message" ? `message:${entry.message.role}` : entry.type
-            }
-            getFixedItemSize={getFixedItemSize}
-            // Virtualized rows must move with their measurements. Native layout
-            // transitions can retain stale positions during sync, even at duration 0.
-            onItemSizeChanged={handleItemSizeChanged}
-            drawDistance={500}
-            keyboardShouldPersistTaps="always"
-            keyboardDismissMode="none"
-            keyboardLiftBehavior="whenAtEnd"
-            // Seed the list's scroll math with the real viewport before its own
-            // onLayout: the empty→filled remount can then tell at mount that
-            // short content underflows the viewport and skip programmatic
-            // positioning entirely (any offset write during screen attach races
-            // UIKit's adjustedContentInset application and lands high or low).
-            {...(viewportHeight > 0 && viewportWidth > 0
-              ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
-              : {})}
-            // RN's native scrollTo command clamps targets to a floor of
-            // -contentInset.top using the RAW inset — under automatic insets the
-            // header inset only exists in adjustedContentInset, so scrolls to
-            // negative offsets (content top below the transparent header) get
-            // clamped to 0.
-            scrollToOverflowEnabled
-            estimatedItemSize={180}
-            alignItemsAtEnd
-            initialScrollAtEnd
-            onScroll={handleScroll}
-            onScrollBeginDrag={handleScrollBeginDrag}
-            onScrollEndDrag={handleScrollEndDrag}
-            onMomentumScrollBegin={handleMomentumScrollBegin}
-            onMomentumScrollEnd={handleMomentumScrollEnd}
-            scrollEventThrottle={16}
-            ListHeaderComponent={
-              <>
-                {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
-                {setupAnchorIndex < 0 && props.worktreeSetup ? (
-                  <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
-                ) : null}
-                {props.historyControls ? (
-                  <ThreadFeedLoadEarlierControl {...props.historyControls} />
-                ) : null}
-              </>
-            }
-            ListFooterComponent={
-              props.pendingHandoff ? (
-                <ThreadHandoffDivider
-                  environmentId={props.environmentId}
-                  endpoints={props.pendingHandoff}
-                  iconColor={iconSubtleColor}
-                  label="Context handoff pending"
-                />
-              ) : null
-            }
-            contentContainerStyle={{
-              paddingTop: 12,
-              paddingLeft: contentHorizontalPadding + contentLeftInset,
-              paddingRight: contentHorizontalPadding + contentRightInset,
-            }}
-          />
-        </View>
-        {presentedFeed.length === 0 &&
-        !props.worktreeSetup &&
-        props.activeWorkStartedAt === null &&
-        props.contentPresentation.kind === "ready" ? (
-          <View
-            pointerEvents="none"
-            style={[StyleSheet.absoluteFill, { left: contentLeftInset, right: contentRightInset }]}
-          >
-            <ThreadFeedPlaceholder
-              title="No conversation yet"
-              detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
-              topInset={topContentInset}
-              bottomInset={bottomContentInset}
-              horizontalPadding={horizontalPadding}
+                : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
+              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+              // Patched LegendList prop (patches/@legendapp__list@3.2.0.patch):
+              // lets its scroll math clamp programmatic scrolls to -headerInset
+              // instead of 0, so initialScrollAtEnd/maintainScrollAtEnd on short
+              // content rest below the transparent header rather than at frame top.
+              contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
+              contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+              // UIKit's automatic behavior adds the safe-area bottom on top of the
+              // raw contentInset the keyboard integration writes. The detail screen
+              // under-reports the composer inset by this amount (see
+              // ThreadDetailScreen); this tells LegendList's scroll math about the
+              // extra so programmatic end scrolls land at the true resting offset.
+              contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
+              // Android's initial end scroll can run before the keyboard integration
+              // reports the composer height. Seed that estimate for LegendList's
+              // scroll math until the first reported inset replaces it.
+              {...(initialContentInset ? { contentInset: initialContentInset } : {})}
+              adjustedInsetCompensation={usesNativeAutomaticInsets ? insets.bottom : 0}
+              freeze={props.freeze}
+              // Follow the measured end immediately. Animating toward an estimated
+              // end races row measurement when a pending message is acknowledged.
+              maintainScrollAtEnd={
+                disclosureToggleSettling || !endFollowEnabled
+                  ? false
+                  : {
+                      animated: false,
+                      on: {
+                        dataChange: true,
+                        itemLayout: true,
+                        layout: true,
+                      },
+                    }
+              }
+              maintainVisibleContentPosition={
+                endFollowEnabled && !disclosureToggleSettling
+                  ? false
+                  : maintainVisibleContentPosition
+              }
+              data={presentedFeed}
+              extraData={listAppearanceData}
+              renderItem={renderItem}
+              viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
+              keyExtractor={(entry) => entry.id}
+              getItemType={(entry) =>
+                entry.type === "message" ? `message:${entry.message.role}` : entry.type
+              }
+              getFixedItemSize={getFixedItemSize}
+              // Virtualized rows must move with their measurements. Native layout
+              // transitions can retain stale positions during sync, even at duration 0.
+              onItemSizeChanged={handleItemSizeChanged}
+              drawDistance={500}
+              keyboardShouldPersistTaps="always"
+              keyboardDismissMode="none"
+              keyboardLiftBehavior="whenAtEnd"
+              // Seed the list's scroll math with the real viewport before its own
+              // onLayout: the empty→filled remount can then tell at mount that
+              // short content underflows the viewport and skip programmatic
+              // positioning entirely (any offset write during screen attach races
+              // UIKit's adjustedContentInset application and lands high or low).
+              {...(viewportHeight > 0 && viewportWidth > 0
+                ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
+                : {})}
+              // RN's native scrollTo command clamps targets to a floor of
+              // -contentInset.top using the RAW inset — under automatic insets the
+              // header inset only exists in adjustedContentInset, so scrolls to
+              // negative offsets (content top below the transparent header) get
+              // clamped to 0.
+              scrollToOverflowEnabled
+              estimatedItemSize={180}
+              alignItemsAtEnd
+              initialScrollAtEnd
+              onScroll={handleScroll}
+              onScrollBeginDrag={handleScrollBeginDrag}
+              onScrollEndDrag={handleScrollEndDrag}
+              onMomentumScrollBegin={handleMomentumScrollBegin}
+              onMomentumScrollEnd={handleMomentumScrollEnd}
+              scrollEventThrottle={16}
+              ListHeaderComponent={
+                <>
+                  {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                  {setupAnchorIndex < 0 && props.worktreeSetup ? (
+                    <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+                  ) : null}
+                  {props.historyControls ? (
+                    <ThreadFeedLoadEarlierControl {...props.historyControls} />
+                  ) : null}
+                </>
+              }
+              ListFooterComponent={
+                props.pendingHandoff ? (
+                  <ThreadHandoffDivider
+                    environmentId={props.environmentId}
+                    endpoints={props.pendingHandoff}
+                    iconColor={iconSubtleColor}
+                    label="Context handoff pending"
+                  />
+                ) : null
+              }
+              contentContainerStyle={{
+                paddingTop: 12,
+                paddingLeft: contentHorizontalPadding + contentLeftInset,
+                paddingRight: contentHorizontalPadding + contentRightInset,
+              }}
             />
           </View>
-        ) : null}
-        <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
-        <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
-      </View>
-    </PresentationSource>
+          {presentedFeed.length === 0 &&
+          !props.worktreeSetup &&
+          props.activeWorkStartedAt === null &&
+          props.contentPresentation.kind === "ready" ? (
+            <View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFill,
+                { left: contentLeftInset, right: contentRightInset },
+              ]}
+            >
+              <ThreadFeedPlaceholder
+                title="No conversation yet"
+                detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
+                topInset={topContentInset}
+                bottomInset={bottomContentInset}
+                horizontalPadding={horizontalPadding}
+              />
+            </View>
+          ) : null}
+          <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
+          <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
+        </View>
+      </PresentationSource>
+    </ThreadFindRevealProvider>
   );
 });
 

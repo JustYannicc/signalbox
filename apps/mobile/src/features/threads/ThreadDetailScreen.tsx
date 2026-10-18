@@ -157,6 +157,7 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 import type { ThreadFindRevealRequest } from "./find/thread-find-model";
+import type { ThreadFindRect } from "./find/thread-find-geometry";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -417,6 +418,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const [findRevealRequest, setFindRevealRequest] = useState<ThreadFindRevealRequest | null>(null);
+  const [findBarRect, setFindBarRect] = useState<ThreadFindRect | null>(null);
   const handleFindRevealRequestChange = useCallback(
     (request: ThreadFindRevealRequest | null) => setFindRevealRequest(request),
     [],
@@ -1100,6 +1102,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
               findRevealRequest={findRevealRequest}
+              findBarRect={findBarRect}
               pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
@@ -1143,9 +1146,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       {showContent ? ( // signalbox: thread find (#792)
         <ThreadFindBar
           key={`find:${selectedThreadKey}`}
+          skills={selectedProviderSkills}
           environmentId={props.environmentId}
           threadId={props.selectedThread.id}
           onRevealRequestChange={handleFindRevealRequestChange}
+          onOcclusionChange={setFindBarRect}
           top={navigationHeaderHeight}
         />
       ) : null}
