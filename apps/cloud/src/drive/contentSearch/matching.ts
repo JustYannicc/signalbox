@@ -1,7 +1,7 @@
 import type { ProjectContentMatch, ProjectSearchContentsInput } from "@t3tools/contracts";
 import { RE2JS } from "re2js";
 
-const decoder = new TextDecoder();
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 const wordCharacter = /[\p{Letter}\p{Mark}\p{Number}_]/u;
 const SNIPPET_BYTES = 512;
 
@@ -45,35 +45,91 @@ const wholeWord = (line: string, start: number, end: number) =>
     !wordCharacter.test(codePointAt(line, end)) ||
     !wordCharacter.test(codePointBefore(line, end)));
 
+function replaceNewlineEscapes(text: string) {
+  let result = "";
+  let backslashes = 0;
+  for (const character of text) {
+    if (character === "n" && backslashes % 2 === 1) {
+      result = `${result.slice(0, -1)}\n`;
+    } else {
+      result += character;
+    }
+    backslashes = character === "\\" ? backslashes + 1 : 0;
+  }
+  return result;
+}
+
+interface FilePosition {
+  readonly byteOffset: number;
+  readonly lineNumber: number;
+  readonly searchOffset: number;
+}
+
 export function makeContentMatcher(input: Omit<ProjectSearchContentsInput, "cwd">) {
   let regexFallbackError: string | undefined;
   let pattern: RE2JS;
-  const flags = input.caseSensitive ? 0 : RE2JS.CASE_INSENSITIVE;
+  const flags = RE2JS.MULTILINE | (input.caseSensitive ? 0 : RE2JS.CASE_INSENSITIVE);
+  const literal = replaceNewlineEscapes(input.query);
   try {
-    pattern = RE2JS.compile(input.useRegex ? input.query : RE2JS.quote(input.query), flags);
+    pattern = RE2JS.compile(input.useRegex ? input.query : RE2JS.quote(literal), flags);
   } catch (error) {
     regexFallbackError = error instanceof Error ? error.message : "Invalid regular expression.";
-    pattern = RE2JS.compile(RE2JS.quote(input.query), flags);
+    pattern = RE2JS.compile(RE2JS.quote(literal), flags);
   }
   return {
     regexFallbackError,
-    test: (line: string) => pattern.test(line),
-    ranges: (line: string, snippet: string) => {
-      const matcher = pattern.matcher(line);
-      const ranges: ProjectContentMatch["matchRanges"][number][] = [];
-      let from = 0;
-      while (from <= snippet.length && matcher.find(from)) {
-        const start = matcher.start();
-        const end = matcher.end();
-        if (start >= snippet.length) break;
-        if (end > start && (!input.wholeWord || wholeWord(line, start, end))) {
-          ranges.push({ start, end: Math.min(end, snippet.length) });
+    *lines(bytes: Uint8Array, position: FilePosition) {
+      const text = decoder.decode(bytes);
+      const matcher = pattern.matcher(text);
+      let byteStart = position.byteOffset;
+      let textStart = decoder.decode(bytes.subarray(0, byteStart)).length;
+      let lineNumber = position.lineNumber;
+      let from = position.searchOffset;
+      const regex = input.useRegex && regexFallbackError === undefined;
+      while (from <= text.length && matcher.find(from)) {
+        const first = matcher.start();
+        let newline = text.indexOf("\n", textStart);
+        while (newline !== -1 && first > newline) {
+          textStart = newline + 1;
+          byteStart = bytes.indexOf(10, byteStart) + 1;
+          lineNumber++;
+          newline = text.indexOf("\n", textStart);
         }
-        // Literal highlighting includes overlapping occurrences. Regex follows RE2's
-        // non-overlapping matches; either mode must advance past empty matches.
-        from = input.useRegex && regexFallbackError === undefined && end > start ? end : start + 1;
+        const byteNewline = bytes.indexOf(10, byteStart);
+        let byteEnd = byteNewline === -1 ? bytes.length : byteNewline;
+        while (byteEnd > byteStart && bytes[byteEnd - 1] === 13) byteEnd--;
+        const lineContent = contentSnippet(bytes.subarray(byteStart, byteEnd));
+        const lineEnd = newline === -1 ? text.length : newline;
+        const line = text.slice(textStart, lineEnd).replace(/\r+$/u, "");
+        const ranges: ProjectContentMatch["matchRanges"][number][] = [];
+        do {
+          const start = matcher.start();
+          const end = matcher.end();
+          const relativeStart = start - textStart;
+          const relativeEnd = Math.min(end - textStart, line.length);
+          if (
+            relativeStart < lineContent.length &&
+            relativeEnd > relativeStart &&
+            (!input.wholeWord || wholeWord(line, relativeStart, relativeEnd))
+          ) {
+            ranges.push({ start: relativeStart, end: Math.min(relativeEnd, lineContent.length) });
+          }
+          from = regex && end > start ? end : start + 1;
+          if (from >= lineEnd || start - textStart >= lineContent.length) break;
+        } while (matcher.find(from) && matcher.start() < lineEnd);
+        yield {
+          lineNumber,
+          lineContent,
+          matchRanges: ranges,
+          byteOffset: byteNewline === -1 ? bytes.length : byteNewline + 1,
+          searchOffset: Math.max(from, lineEnd + (newline === -1 ? 0 : 1)),
+        };
+        if (newline === -1) break;
+        textStart = newline + 1;
+        byteStart = byteNewline + 1;
+        lineNumber++;
+        from = Math.max(from, textStart);
       }
-      return ranges;
     },
   };
 }

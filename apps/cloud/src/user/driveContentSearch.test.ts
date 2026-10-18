@@ -21,13 +21,14 @@ import * as RpcTest from "effect/rpc/RpcTest";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { DriveFiles } from "../drive/DriveFiles.ts";
+import { DriveReadError } from "../drive/DriveReader.ts";
 import { threadRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { driveRoot, remoteThreadWorktree } from "./contextProjects.ts";
-import { makeDriveContentSearch } from "./driveContentSearch.ts";
+import * as DriveContentSearch from "./DriveContentSearch.ts";
 import * as CloudRpc from "./rpc.ts";
 import { UserDrives } from "./UserDrives.ts";
 
@@ -118,10 +119,14 @@ const searchFor = (
   Effect.gen(function* () {
     const files = decorate(yield* DriveFiles);
     const drives = yield* UserDrives;
-    return yield* makeDriveContentSearch(
-      userId,
-      Effect.map(Effect.orDie(drives.contextIds), (contextIds) => ({ userId, contextIds })),
-    ).pipe(Effect.provideService(DriveFiles, files));
+    const service = yield* DriveContentSearch.DriveContentSearch.pipe(
+      Effect.provide(DriveContentSearch.layer),
+      Effect.provideService(DriveFiles, files),
+    );
+    return (input: ProjectSearchContentsInput) =>
+      Effect.flatMap(Effect.orDie(drives.contextIds), (contextIds) =>
+        service.query({ userId, contextIds }, input),
+      );
   }).pipe(Effect.provide(cloud.layerFor(userId)));
 type Search = Effect.Success<ReturnType<typeof searchFor>>;
 const input = (driveId: string, limit = 20): ProjectSearchContentsInput => ({
@@ -185,7 +190,10 @@ describe("cloud drive content search (#812)", () => {
             ...input(shared.id, 1),
             ...(cursor === undefined ? {} : { cursor }),
           }).pipe(Effect.flip),
-        ).toBe("You don't have access to this folder's files.");
+        ).toMatchObject({
+          _tag: "ContentSearchDenied",
+          message: "You don't have access to this folder's files.",
+        });
       }
       expect(reads).toEqual(before);
       const denied = yield* bob[WS_METHODS.projectsSearchContents](input(shared.id)).pipe(
@@ -276,9 +284,10 @@ describe("cloud drive content search (#812)", () => {
             return result;
           }),
       }));
-      expect(yield* search(input(shared.id)).pipe(Effect.flip)).toBe(
-        "You don't have access to this folder's files.",
-      );
+      expect(yield* search(input(shared.id)).pipe(Effect.flip)).toMatchObject({
+        _tag: "ContentSearchDenied",
+        message: "You don't have access to this folder's files.",
+      });
       expect(scanned.map((match) => match.lineContent)).toEqual(["needle secret"]);
     }).pipe(Effect.scoped),
   );
@@ -311,9 +320,10 @@ describe("cloud drive content search (#812)", () => {
             return result;
           }),
       }));
-      expect(yield* search(input(driveId)).pipe(Effect.flip)).toBe(
-        "Folder references changed. Start a new search.",
-      );
+      expect(yield* search(input(driveId)).pipe(Effect.flip)).toMatchObject({
+        _tag: "ContentSearchReferencesChanged",
+        message: "Folder references changed. Start a new search.",
+      });
       expect(scanned.map((match) => match.lineContent)).toEqual(["needle original source"]);
     }).pipe(Effect.scoped),
   );
@@ -355,12 +365,143 @@ describe("cloud drive content search (#812)", () => {
           "d.md",
           "renamed.md",
         ]);
-        expect(yield* resumed({ ...continuation, query: "different" }).pipe(Effect.flip)).toBe(
-          "This search expired or changed. Start a new search.",
+        expect(
+          yield* resumed({ ...continuation, query: "different" }).pipe(Effect.flip),
+        ).toMatchObject({
+          _tag: "ContentSearchExpired",
+          message: "This search expired or changed. Start a new search.",
+        });
+        expect(
+          yield* resumed({ ...request, cursor: "unknown-cursor" }).pipe(Effect.flip),
+        ).toMatchObject({
+          _tag: "ContentSearchExpired",
+          message: "This search expired or changed. Start a new search.",
+        });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "binds a queued shortcut cursor on first use so replay keeps the target's old commit",
+    () =>
+      Effect.gen(function* () {
+        const { cloud, alice, bob } = yield* setup;
+        const own = SignalboxDriveId.make("my/org_acme/user_bob");
+        yield* land(cloud, own, "user_bob", { "own.md": "No match here.\n" });
+        const target = yield* alice[SIGNALBOX_DRIVES_WS_METHODS.create]({
+          contextId: ACME,
+          name: "Shared target",
+        });
+        yield* alice[SIGNALBOX_DRIVES_WS_METHODS.share]({
+          driveId: target.id,
+          email: PEOPLE[1].email,
+          role: "viewer",
+        });
+        const { git } = yield* land(cloud, target.id, "user_alice", {
+          "a.md": "needle old first\n",
+          "b.md": "needle old second\n",
+        });
+        yield* bob[SIGNALBOX_DRIVES_WS_METHODS.addShortcut]({
+          driveId: own,
+          path: "shared",
+          target: target.id,
+        });
+        const request = input(own, 1);
+        const search = yield* searchFor(cloud, "user_bob");
+        const rootPage = yield* search(request);
+        expect(rootPage.matches).toEqual([]);
+        expect(rootPage.truncated).toBe(true);
+        if (rootPage.nextCursor === undefined)
+          return yield* Effect.die("Expected a queued source.");
+        const queued = { ...request, cursor: rootPage.nextCursor };
+        const firstTargetPage = yield* search(queued);
+        expect(firstTargetPage.matches.map((match) => [match.path, match.lineContent])).toEqual([
+          ["shared/a.md", "needle old first"],
+        ]);
+        expect(firstTargetPage.nextCursor).toBeDefined();
+
+        git.git(["mv", "a.md", "renamed.md"]);
+        git.git(["rm", "b.md"]);
+        git.write("renamed.md", "needle changed\n");
+        git.write("c.md", "needle new\n");
+        yield* publish(cloud, target.id, "user_alice", git, git.commit("Change shortcut target"));
+        const resumed = yield* searchFor(cloud, "user_bob");
+        const replay = yield* resumed(queued);
+        expect(replay.matches).toEqual(firstTargetPage.matches);
+        expect(replay.truncated).toBe(firstTargetPage.truncated);
+        expect(
+          (yield* collect(resumed, queued)).map((match) => [match.path, match.lineContent]),
+        ).toEqual([
+          ["shared/a.md", "needle old first"],
+          ["shared/b.md", "needle old second"],
+        ]);
+        expect(
+          (yield* collect(resumed, request)).map((match) => [match.path, match.lineContent]),
+        ).toEqual([
+          ["shared/c.md", "needle new"],
+          ["shared/renamed.md", "needle changed"],
+        ]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "keeps scanner failure causes through the service and RPC without exposing internal messages",
+    () =>
+      Effect.gen(function* () {
+        const { cloud } = yield* setup;
+        const driveId = "my/personal/user_alice";
+        yield* land(cloud, driveId, "user_alice", { "file.md": "needle result\n" });
+        const original = new DriveReadError({ message: "internal fixture" });
+        const search = yield* searchFor(cloud, "user_alice", (files) => ({
+          ...files,
+          searchContents: () => Effect.fail(original),
+        }));
+        const failure = yield* search(input(driveId)).pipe(Effect.flip);
+        expect(failure).toMatchObject({ _tag: "ContentSearchFailed", stage: "scan" });
+        if (failure._tag !== "ContentSearchFailed") return yield* Effect.die(failure);
+        expect(failure.cause).toBe(original);
+        expect(failure.message).toBe("The folder could not be searched. Try again.");
+
+        const failures: Array<Effect.Error<ReturnType<Search>>> = [];
+        const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              CloudRpc.layerHandlers({
+                identity: { environmentId: EnvironmentId.make("search-test"), label: "Cloud" },
+                userId: "user_alice",
+                sid: "search-failure-session",
+              }),
+              CloudRpc.layerScopeAuthorization([AuthFilesystemReadScope]),
+            ).pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  cloud.layerFor("user_alice"),
+                  Layer.succeed(DriveContentSearch.DriveContentSearch, {
+                    query: (_actor, request) =>
+                      search(request).pipe(
+                        Effect.tapError((error) => Effect.sync(() => failures.push(error))),
+                      ),
+                  }),
+                ),
+              ),
+            ),
+          ),
         );
-        expect(yield* resumed({ ...request, cursor: "unknown-cursor" }).pipe(Effect.flip)).toBe(
-          "This search expired or changed. Start a new search.",
+        const error = yield* rpc[WS_METHODS.projectsSearchContents](input(driveId)).pipe(
+          Effect.flip,
         );
+        expect(error).toMatchObject({
+          _tag: "ProjectSearchContentsError",
+          detail: "The folder could not be searched. Try again.",
+        });
+        if (error._tag !== "ProjectSearchContentsError") return yield* Effect.die(error);
+        expect(error.cause).toBe(failures[0]);
+        expect(error.cause).toMatchObject({
+          _tag: "ContentSearchFailed",
+          stage: "scan",
+          cause: original,
+        });
+        expect(error.message).not.toContain(original.message);
+        expect(error.detail).not.toContain(original.message);
       }).pipe(Effect.scoped),
   );
 
@@ -418,7 +559,9 @@ describe("cloud drive content search (#812)", () => {
           ),
       }));
       const request = { ...input(shared.id), cwd: remoteThreadWorktree(shared.id, threadId).path };
-      expect(typeof (yield* bobSearch(request).pipe(Effect.flip))).toBe("string");
+      expect(yield* bobSearch(request).pipe(Effect.flip)).toMatchObject({
+        _tag: "ContentSearchDenied",
+      });
       expect(reads).toEqual([]);
       expect(yield* collect(bobSearch, input(shared.id))).toEqual([]);
       const aliceSearch = yield* searchFor(cloud, "user_alice");

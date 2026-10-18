@@ -1,4 +1,7 @@
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Layer from "effect/Layer";
+import type { SqlError } from "effect/sql/SqlError";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -35,24 +38,48 @@ const codec = Schema.fromJsonString(Cursor);
 const decode = Schema.decodeUnknownOption(codec);
 const encode = Schema.encodeSync(codec);
 
+export class ContentSearchCursors extends Context.Service<
+  ContentSearchCursors,
+  {
+    readonly read: (token: string) => Effect.Effect<ContentSearchCursor | null, SqlError>;
+    readonly save: (state: ContentSearchCursor) => Effect.Effect<string, SqlError>;
+    readonly bind: (
+      token: string,
+      expected: ContentSearchCursor,
+      resolved: ContentSearchCursor,
+    ) => Effect.Effect<ContentSearchCursor | null, SqlError>;
+  }
+>()("@signalbox/cloud/user/ContentSearchCursors") {}
+
 /** Tokens contain no source paths and are replayable until expiry, including after a cold start. */
-export const makeContentSearchCursors = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
   const ensure = sql`CREATE TABLE IF NOT EXISTS drive_content_search_cursors (
     token TEXT PRIMARY KEY, state TEXT NOT NULL, expires_at INTEGER NOT NULL
   )`;
-  return {
-    read: (token: string) =>
-      Effect.gen(function* () {
-        yield* ensure;
-        const now = yield* Clock.currentTimeMillis;
-        const rows = yield* sql<{
-          readonly state: string;
-        }>`SELECT state FROM drive_content_search_cursors
+  const read = (token: string) =>
+    Effect.gen(function* () {
+      yield* ensure;
+      const now = yield* Clock.currentTimeMillis;
+      const rows = yield* sql<{
+        readonly state: string;
+      }>`SELECT state FROM drive_content_search_cursors
         WHERE token = ${token} AND expires_at > ${now}`;
-        return rows[0] === undefined ? null : Option.getOrNull(decode(rows[0].state));
-      }),
+      return rows[0] === undefined ? null : Option.getOrNull(decode(rows[0].state));
+    });
+  return ContentSearchCursors.of({
+    read,
+    bind: (token, expected, resolved) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* ensure;
+          const now = yield* Clock.currentTimeMillis;
+          yield* sql`UPDATE drive_content_search_cursors SET state = ${encode(resolved)}
+        WHERE token = ${token} AND state = ${encode(expected)} AND expires_at > ${now}`;
+          return yield* read(token);
+        }),
+      ),
     save: (state: ContentSearchCursor) =>
       Effect.gen(function* () {
         yield* ensure;
@@ -67,5 +94,7 @@ export const makeContentSearchCursors = Effect.gen(function* () {
         );
         return token;
       }),
-  };
+  });
 });
+
+export const layerSql = Layer.effect(ContentSearchCursors, make);

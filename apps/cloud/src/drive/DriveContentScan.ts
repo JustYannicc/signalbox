@@ -6,7 +6,7 @@ import ignore from "ignore";
 
 import { DriveReadError, type DriveReader } from "./DriveReader.ts";
 import type { Oid, TreeEntry } from "./git/gitObjects.ts";
-import { contentSnippet, isKnownBinaryPath, makeContentMatcher } from "./contentSearch/matching.ts";
+import { isKnownBinaryPath, makeContentMatcher } from "./contentSearch/matching.ts";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_IGNORE_BYTES = 64 * 1024;
@@ -28,6 +28,7 @@ const FilePosition = Schema.Struct({
   path: Schema.String,
   byteOffset: Schema.Number,
   lineNumber: Schema.Number,
+  searchOffset: Schema.Number,
   matchingLines: Schema.Number,
 });
 
@@ -179,28 +180,26 @@ export const scanDriveContents = Effect.fn("scanDriveContents")(function* (
         continue;
       }
       const bytes = loaded.bytes;
-      while (file.byteOffset < bytes.length && matches.length < input.limit) {
-        const start = file.byteOffset;
-        const newline = bytes.indexOf(10, start);
-        let end = newline === -1 ? bytes.length : newline;
-        file.byteOffset = newline === -1 ? bytes.length : newline + 1;
-        while (end > start && bytes[end - 1] === 13) end--;
-        const lineBytes = bytes.subarray(start, end);
-        const line = decoder.decode(lineBytes);
-        const lineNumber = file.lineNumber++;
-        if (!matcher.test(line)) continue;
+      let paused = false;
+      for (const match of matcher.lines(bytes, file)) {
         if (file.matchingLines >= MAX_MATCHING_LINES) {
           omitted = true;
           file = null;
           break;
         }
         file.matchingLines++;
-        const lineContent = contentSnippet(lineBytes);
-        const matchRanges = matcher.ranges(line, lineContent);
+        file.byteOffset = match.byteOffset;
+        file.lineNumber = match.lineNumber + 1;
+        file.searchOffset = match.searchOffset;
+        const { lineNumber, lineContent, matchRanges } = match;
         if (matchRanges.length > 0)
           matches.push({ path: file.path, lineNumber, lineContent, matchRanges });
+        if (matches.length >= input.limit) {
+          paused = true;
+          break;
+        }
       }
-      if (file !== null && file.byteOffset >= bytes.length) file = null;
+      if (file !== null && (!paused || file.byteOffset >= bytes.length)) file = null;
       continue;
     }
 
@@ -263,7 +262,14 @@ export const scanDriveContents = Effect.fn("scanDriveContents")(function* (
         rules: [],
       });
     } else if ((entry.kind === "file" || entry.kind === "executable") && !isKnownBinaryPath(path)) {
-      file = { oid: entry.oid, path, byteOffset: 0, lineNumber: 1, matchingLines: 0 };
+      file = {
+        oid: entry.oid,
+        path,
+        byteOffset: 0,
+        lineNumber: 1,
+        searchOffset: 0,
+        matchingLines: 0,
+      };
     }
   }
   while (stack.length > 0) {

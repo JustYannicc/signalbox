@@ -6,7 +6,9 @@ import { vi } from "vite-plus/test";
 
 import { DriveContentScanState, scanDriveContents } from "./DriveContentScan.ts";
 import type { DriveReader } from "./DriveReader.ts";
-import type { Bytes, TreeEntry, TreeEntryKind } from "./git/gitObjects.ts";
+type Bytes = Effect.Success<ReturnType<DriveReader["blob"]>>;
+type TreeEntry = Effect.Success<ReturnType<DriveReader["tree"]>>[number];
+type TreeEntryKind = TreeEntry["kind"];
 
 const encoder = new TextEncoder();
 const input = {
@@ -119,6 +121,112 @@ describe("immutable drive content pages", () => {
         { start: 0, end: 5 },
         { start: 6, end: 11 },
       ]);
+    }),
+  );
+
+  it.effect(
+    "matches native multiline literal and regex examples with only the first line highlighted",
+    () =>
+      Effect.gen(function* () {
+        const { reader } = fixture({
+          "multi.txt": "hello unicorn\nrainbow world\n",
+          "noise.txt": "unicorn\nno rainbow here\n",
+        });
+        for (const useRegex of [false, true]) {
+          for (const query of ["unicorn\\nrainbow", "unicorn\nrainbow"]) {
+            const result = yield* scanDriveContents(reader, "commit", {
+              ...input,
+              query,
+              useRegex,
+            });
+            expect(result.matches).toEqual([
+              {
+                path: "multi.txt",
+                lineNumber: 1,
+                lineContent: "hello unicorn",
+                matchRanges: [{ start: 6, end: 13 }],
+              },
+            ]);
+          }
+        }
+      }),
+  );
+
+  it.effect("keeps escaped backslash-newline text literal in plain queries", () =>
+    Effect.gen(function* () {
+      const { reader } = fixture({
+        "winpath.txt": String.raw`let p = "C:\\Users\\nvim-data";`,
+        "newline.txt": "Users\nnvim-data",
+      });
+      const result = yield* scanDriveContents(reader, "commit", {
+        ...input,
+        query: String.raw`\\nvim-data`,
+      });
+      expect(result.matches.map((match) => match.path)).toEqual(["winpath.txt"]);
+      expect(
+        result.matches[0]!.lineContent.slice(
+          result.matches[0]!.matchRanges[0]!.start,
+          result.matches[0]!.matchRanges[0]!.end,
+        ),
+      ).toBe(String.raw`\\nvim-data`);
+    }),
+  );
+
+  it.effect("supports whole-file regex spans and multiline anchors", () =>
+    Effect.gen(function* () {
+      const { reader } = fixture({ "multi.txt": "noise\nhello unicorn\nrainbow world\n" });
+      const span = yield* scanDriveContents(reader, "commit", {
+        ...input,
+        query: "(?s)unicorn.*?rainbow",
+        useRegex: true,
+      });
+      expect(span.matches).toEqual([
+        {
+          path: "multi.txt",
+          lineNumber: 2,
+          lineContent: "hello unicorn",
+          matchRanges: [{ start: 6, end: 13 }],
+        },
+      ]);
+      const anchor = yield* scanDriveContents(reader, "commit", {
+        ...input,
+        query: "^hello unicorn$",
+        useRegex: true,
+      });
+      expect(anchor.matches.map((match) => match.lineNumber)).toEqual([2]);
+    }),
+  );
+
+  it.effect("resumes multiline regex spans after their consumed text across persisted pages", () =>
+    Effect.gen(function* () {
+      const { reader } = fixture({ "multi.txt": "foo\nfoo\nfoo\nfoo\nfoo\nfoo\n" });
+      const query = { ...input, query: "foo\\nfoo", useRegex: true, limit: 1 };
+      let state: DriveContentScanState | null = null;
+      const lines: number[] = [];
+      for (let page = 0; page < 6; page++) {
+        const result = yield* scanDriveContents(reader, "commit", query, state);
+        lines.push(...result.matches.map((match) => match.lineNumber));
+        if (result.nextState === undefined) break;
+        state = roundTrip(result.nextState);
+      }
+      expect(lines).toEqual([1, 3, 5]);
+      expect(reader.treeOf).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("keeps literal newline overlaps when continuing inside a file", () =>
+    Effect.gen(function* () {
+      const { reader } = fixture({ "multi.txt": "foo\nfoo\nfoo\nfoo\n" });
+      const query = { ...input, query: "foo\\nfoo", limit: 1 };
+      let state: DriveContentScanState | null = null;
+      const lines: number[] = [];
+      for (let page = 0; page < 6; page++) {
+        const result = yield* scanDriveContents(reader, "commit", query, state);
+        lines.push(...result.matches.map((match) => match.lineNumber));
+        if (result.nextState === undefined) break;
+        state = roundTrip(result.nextState);
+      }
+      expect(lines).toEqual([1, 2, 3]);
     }),
   );
 

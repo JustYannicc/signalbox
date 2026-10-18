@@ -125,7 +125,8 @@ import { makeRepositoryPublication } from "../github/GitHubRepositoryPublication
 import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
-import { makeDriveContentSearch } from "./driveContentSearch.ts";
+import * as DriveContentSearch from "./DriveContentSearch.ts";
+import { messages as contentSearchMessages } from "./DriveContentSearchErrors.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
@@ -586,7 +587,7 @@ export const layerHandlers = (input: {
         (contextIds) => ({ userId, contextIds }),
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
-      const searchContents = yield* makeDriveContentSearch(userId, actorNow);
+      const contentSearch = yield* DriveContentSearch.DriveContentSearch;
       const githubImport = yield* makeGitHubImport();
       const publishRepository = yield* makeRepositoryPublication(userDrives.access);
       const browsing = yield* makeBrowsingHandlers({
@@ -942,15 +943,16 @@ export const layerHandlers = (input: {
             ),
           ),
         [WS_METHODS.projectsSearchContents]: (request) =>
-          searchContents(request).pipe(
+          actorNow.pipe(Effect.flatMap((actor) => contentSearch.query(actor, request))).pipe(
             Effect.mapError(
-              (detail) =>
+              (cause) =>
                 new ProjectSearchContentsError({
                   cwd: request.cwd,
                   queryLength: request.query.length,
                   limit: request.limit,
                   failure: "search_index_search_failed",
-                  detail,
+                  detail: contentSearchMessages[cause._tag],
+                  cause,
                 }),
             ),
           ),
