@@ -1,12 +1,17 @@
 import type { KernelBashCredentials } from "./BashContext.ts";
+import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import { range, errno } from "./BashMemory.ts";
 
 export function createBashEnvironment(options: {
   readonly memory: () => WebAssembly.Memory;
   readonly credentials: KernelBashCredentials;
   readonly pid: () => number;
+  readonly filesystem?: KernelFileSystem;
 }) {
   const { credentials } = options;
+  assertBashPosixCredentials(credentials, options.filesystem);
+  const initialPolicy = options.filesystem?.posixPolicy;
+  if (initialPolicy !== undefined) credentials.umask = initialPolicy.umask;
   let loaderError = false;
   let loaderErrorPointer: number | undefined;
   return {
@@ -21,9 +26,18 @@ export function createBashEnvironment(options: {
     setgid: (gid: number) =>
       gid >>> 0 === credentials.gid && credentials.gid === credentials.egid ? 0 : -63,
     umask: (mask: number) => {
-      const previous = credentials.umask;
-      credentials.umask = mask & 0o777;
-      return previous;
+      try {
+        const next = mask & 0o777;
+        const filesystem = options.filesystem;
+        const previous =
+          filesystem !== undefined && filesystem.posixPolicy !== undefined
+            ? filesystem.setUmask(next)
+            : credentials.umask;
+        credentials.umask = next;
+        return previous;
+      } catch (error) {
+        return -errno(error);
+      }
     },
     gethostname: (pointer: number, capacity: number) => {
       try {
@@ -63,4 +77,23 @@ export function createBashEnvironment(options: {
       return loaderErrorPointer;
     },
   };
+}
+
+/** A guest may report only the identity already bound to its filesystem policy. */
+export function assertBashPosixCredentials(
+  credentials: Pick<KernelBashCredentials, "uid" | "gid" | "euid" | "egid">,
+  filesystem?: KernelFileSystem,
+): void {
+  const actual = filesystem?.posixCredentials;
+  if (actual === undefined) return;
+  if (
+    actual.uid !== credentials.uid ||
+    actual.gid !== credentials.gid ||
+    actual.euid !== credentials.euid ||
+    actual.egid !== credentials.egid
+  ) {
+    throw Object.assign(new Error("GNU Bash credentials do not match its filesystem policy"), {
+      code: "EINVAL",
+    });
+  }
 }

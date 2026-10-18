@@ -3,25 +3,25 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 
-const revision = "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3";
-const path = "packages/worker/wasm/bash/bash.async.wasm";
-const sha256 = "ddc86c1422556654f02edf083f70017275bbc52f53781d1b74ac538bc7d0b102";
+const sha256 = "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87";
 export const bashArtifactPath = NodeURL.fileURLToPath(
   new URL("./build/bash.async.wasm", import.meta.url),
 );
 
-/** Download only during preparation; the deployed adapter uses a static module. */
+/** Validate build output during preparation; the deployed adapter uses a static module. */
 export async function prepareBashArtifact(source?: string): Promise<string> {
+  const input = source ?? bashArtifactPath;
   let bytes: Uint8Array;
-  if (source === undefined) {
-    const response = await fetch(
-      `https://raw.githubusercontent.com/AshishKumar4/Nimbus/${revision}/${path}`,
+  try {
+    bytes = await NodeFSP.readFile(input);
+  } catch (cause) {
+    throw new Error(
+      "Build the pinned GNU Bash shim with infra/kernelPrograms/bash/build.sh, then pass its output/bash.async.wasm to this preparer",
+      { cause },
     );
-    if (!response.ok) throw new Error(`Pinned GNU Bash download failed: ${response.status}`);
-    bytes = new Uint8Array(await response.arrayBuffer());
-  } else bytes = await NodeFSP.readFile(source);
+  }
   if (
-    bytes.byteLength !== 3_887_678 ||
+    bytes.byteLength !== 3_887_571 ||
     NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== sha256
   ) {
     throw new Error("GNU Bash artifact does not match its frozen source pin");

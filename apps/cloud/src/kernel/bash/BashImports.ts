@@ -3,7 +3,7 @@
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
 import { range, string, flatStrings, environment, errno, resultErrno } from "./BashMemory.ts";
 import { createBashEnvironment } from "./BashEnvironment.ts";
-import { createBashMetadata } from "./BashMetadata.ts";
+import { createKernelNimbusMetadata } from "../KernelNimbusMetadata.ts";
 import type { BashProcess } from "./BashProcess.ts";
 
 type Suspending = new (handler: (...args: number[]) => Promise<number>) => WebAssembly.ImportValue;
@@ -19,10 +19,11 @@ export function bashImports(process: BashProcess): WebAssembly.Imports {
     asyncMode: true,
     currentSignal: () => context.signal,
   });
-  const metadata = createBashMetadata({
+  const metadata = createKernelNimbusMetadata({
     memory,
     filesystem: context.filesystem,
     credentials: process.credentials,
+    directoryFd: (fd) => Number(process.preopens.transformArguments("path_open", [fd])[0]),
   });
   const suspend = (handler: (...args: number[]) => Promise<number>): WebAssembly.ImportValue => {
     const wasm = WebAssembly as unknown as { Suspending: Suspending };
@@ -107,6 +108,14 @@ export function bashImports(process: BashProcess): WebAssembly.Imports {
       const result = descriptorHost.imports.fd_pipe(pointer, (pointer >>> 0) + 4);
       return result === 0 ? 0 : -result;
     },
+    fd_getfd: (fd: number) => {
+      try {
+        descriptors.get(fd >>> 0);
+        return 0;
+      } catch (error) {
+        return errno(error);
+      }
+    },
     dup: (fd: number) => {
       try {
         return descriptors.duplicate(fd >>> 0);
@@ -153,6 +162,7 @@ export function bashImports(process: BashProcess): WebAssembly.Imports {
     env: createBashEnvironment({
       memory,
       credentials: process.credentials,
+      filesystem: context.filesystem,
       pid: () => context.identity.pid,
     }),
     nimbus_procenv: { full: () => process.captures.applyLog(memory()) },

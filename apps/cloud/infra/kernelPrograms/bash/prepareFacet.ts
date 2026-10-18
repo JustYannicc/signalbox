@@ -8,9 +8,11 @@ import * as Esbuild from "esbuild";
 const artifact = Object.freeze({
   repository: "https://github.com/AshishKumar4/Nimbus",
   revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
-  path: "packages/worker/wasm/bash/bash.async.wasm",
-  sha256: "ddc86c1422556654f02edf083f70017275bbc52f53781d1b74ac538bc7d0b102",
-  bytes: 3_887_678,
+  path: "build/bash.async.wasm",
+  version: "5.2.37+nimbus.e9f019ab.fd-getfd.1",
+  patchSha256: "4ea7a980f9ae121ab1382064ceabf91ead51f0735218a2bdeb372547297fc388",
+  sha256: "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
+  bytes: 3_887_571,
 });
 const digest = (bytes: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
@@ -192,7 +194,7 @@ export class ProbeFacet extends DurableObject {
       try { filesystem.mkdir("/workspace"); }
       catch (error) { if (!(error && error.code === "EEXIST")) throw error; }
       const registry = new KernelProgramRegistry();
-      const manifest = { name: "gnu-bash", version: artifact.revision, abiVersion: ABI_VERSION, requiredCapabilities: ["process.wait"], entrypoint: "/bin/bash" };
+      const manifest = { name: "gnu-bash", version: artifact.version, abiVersion: ABI_VERSION, requiredCapabilities: ["process.wait"], entrypoint: "/bin/bash" };
       assert(registry.register(manifest).status === "ok", "GNU Bash registration failed");
       host = new KernelProgramHost({ registry, wakes, programs: new Map([["/bin/bash", { manifest, implementation: createKernelBashProgram({ module: bash, credentials }) }]]) });
       await check("exact non-login Codex exec_command", async () => {

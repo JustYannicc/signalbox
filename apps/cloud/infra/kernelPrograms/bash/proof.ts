@@ -26,17 +26,32 @@ const credentials = {
   hostname: "bash-test",
 };
 
-async function run(script: string, passwd?: string, fault?: "missing" | "running") {
-  const bytes = await NodeFSP.readFile(new URL("./build/bash.async.wasm", import.meta.url));
+interface BashProofArtifact {
+  readonly path: string | URL;
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+async function run(
+  script: string,
+  passwd?: string,
+  fault?: "missing" | "running",
+  candidate?: BashProofArtifact,
+) {
+  const bytes = await NodeFSP.readFile(
+    candidate?.path ?? new URL("./build/bash.async.wasm", import.meta.url),
+  );
   NodeAssert.equal(
     NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
-    KERNEL_BASH_ARTIFACT.sha256,
+    candidate?.sha256 ?? KERNEL_BASH_ARTIFACT.sha256,
   );
+  NodeAssert.equal(bytes.length, candidate?.bytes ?? KERNEL_BASH_ARTIFACT.bytes);
   const module = new WebAssembly.Module(bytes);
   const fixture = bashSqliteFixture();
   const wakes = new KernelWakeRegistry();
   const output: Uint8Array[] = [];
   const errors: Uint8Array[] = [];
+  let descriptorsAtExec: number | undefined;
   const filesystem = new KernelFileSystem({
     mounts: [
       {
@@ -75,7 +90,7 @@ async function run(script: string, passwd?: string, fault?: "missing" | "running
   const registry = new KernelProgramRegistry();
   const manifest = {
     name: "gnu-bash",
-    version: KERNEL_BASH_ARTIFACT.revision,
+    version: KERNEL_BASH_ARTIFACT.version,
     abiVersion: ABI_VERSION,
     requiredCapabilities: ["process.wait"] as const,
     entrypoint: "/bin/bash",
@@ -84,8 +99,23 @@ async function run(script: string, passwd?: string, fault?: "missing" | "running
   const programs = new Map<string, KernelProgramBinding>([
     ["/bin/bash", { manifest, implementation: program }],
   ]);
+  filesystem.mkdir("/bin");
+  filesystem.close(
+    filesystem.open("/bin/fd-count", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY),
+  );
+  const counter = { ...manifest, name: "fd-count", version: "1", entrypoint: "/bin/fd-count" };
+  if (registry.register(counter).status !== "ok") throw new Error("FD counter registration failed");
+  programs.set(counter.entrypoint, {
+    manifest: counter,
+    implementation: {
+      kind: "javascript",
+      runInline: ({ filesystem: replacementFs }) => {
+        descriptorsAtExec = [...replacementFs.descriptors.entries()].length;
+        return 0;
+      },
+    },
+  });
   if (fault !== undefined) {
-    filesystem.mkdir("/bin");
     filesystem.close(
       filesystem.open("/bin/exec-fault", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY),
     );
@@ -143,6 +173,7 @@ async function run(script: string, passwd?: string, fault?: "missing" | "running
       failure: exited.status === "ok" ? undefined : exited,
       stdout: output.map((chunk) => new TextDecoder().decode(chunk)).join(""),
       stderr: errors.map((chunk) => new TextDecoder().decode(chunk)).join(""),
+      descriptorsAtExec,
       file: script.includes("result") ? read("/workspace/result") : undefined,
     };
   } finally {
@@ -154,7 +185,9 @@ async function run(script: string, passwd?: string, fault?: "missing" | "running
   }
 }
 
-export async function proveKernelBashProgram() {
+export async function proveKernelBashProgram(candidate?: BashProofArtifact) {
+  const runProof = (script: string, passwd?: string, fault?: "missing" | "running") =>
+    run(script, passwd, fault, candidate);
   const cases = [
     {
       name: "exact non-login Codex exec_command",
@@ -197,6 +230,23 @@ export async function proveKernelBashProgram() {
     {
       name: "closing a claimed preopen number preserves libc's namespace",
       script: "exec 3>/workspace/log; exec 3>&-; printf after-close >/workspace/result",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      file: "after-close",
+    },
+    {
+      name: "ordinary fd probes distinguish a closed claimed preopen from its retained root",
+      script:
+        "exec 3>/workspace/log; exec 3>&-; : 3>/workspace/other; printf reopened >/workspace/result",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      file: "reopened",
+    },
+    {
+      name: "closing the original preopen preserves later pathname access",
+      script: "exec 3>&-; printf after-close >/workspace/result",
       exitCode: 0,
       stdout: "",
       stderr: "",
@@ -248,7 +298,7 @@ export async function proveKernelBashProgram() {
   ];
   const checks: string[] = [];
   for (const proof of cases) {
-    const result = await run(proof.script, proof.passwd);
+    const result = await runProof(proof.script, proof.passwd);
     NodeAssert.deepStrictEqual(
       result.exit,
       { exitCode: proof.exitCode, signal: 0, coreDumped: false },
@@ -259,7 +309,25 @@ export async function proveKernelBashProgram() {
     if (proof.file !== undefined) NodeAssert.equal(result.file, proof.file, proof.name);
     checks.push(proof.name);
   }
-  const rejected = await run("exec /bin/exec-fault; printf 'resumed\\n'", undefined, "missing");
+  const baseline = await runProof("exec /bin/fd-count");
+  const repeated = await runProof(
+    "for ((i=0; i<64; i++)); do : 3>/workspace/log; done; exec /bin/fd-count",
+  );
+  NodeAssert.equal(baseline.exit?.exitCode, 0);
+  NodeAssert.equal(repeated.exit?.exitCode, 0);
+  NodeAssert.equal(repeated.stderr, "");
+  NodeAssert.ok(baseline.descriptorsAtExec !== undefined);
+  NodeAssert.ok(repeated.descriptorsAtExec !== undefined);
+  NodeAssert.ok(
+    repeated.descriptorsAtExec <= baseline.descriptorsAtExec + 1,
+    `temporary redirections leaked descriptors: ${baseline.descriptorsAtExec} -> ${repeated.descriptorsAtExec}`,
+  );
+  checks.push("temporary redirections reuse one retained root capability across 64 iterations");
+  const rejected = await runProof(
+    "exec /bin/exec-fault; printf 'resumed\\n'",
+    undefined,
+    "missing",
+  );
   NodeAssert.equal(
     rejected.exit?.exitCode,
     127,
@@ -267,7 +335,7 @@ export async function proveKernelBashProgram() {
   );
   NodeAssert.equal(rejected.stdout, "", "exec failure must not run the following command");
   checks.push("pre-admission exec rejection returns to GNU Bash");
-  const replaced = await run(
+  const replaced = await runProof(
     "exec /bin/exec-fault; printf 'old-shell-resumed\\n'",
     undefined,
     "running",
@@ -284,7 +352,7 @@ export async function proveKernelBashProgram() {
     "an admitted replacement must never resume its old Bash continuation",
   );
   checks.push("an admitted replacement error never resumes the old Bash continuation");
-  return { ok: true, artifact: KERNEL_BASH_ARTIFACT, checks };
+  return { ok: true, artifact: candidate ?? KERNEL_BASH_ARTIFACT, checks };
 }
 
 if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {

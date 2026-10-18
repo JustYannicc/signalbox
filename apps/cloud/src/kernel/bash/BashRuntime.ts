@@ -46,7 +46,14 @@ function createProcess(
       returnOnExit: true,
     }),
     true,
-    { table: context.filesystem.descriptors, ownership: "borrowed" },
+    {
+      table: context.filesystem.descriptors,
+      ownership: "borrowed",
+      creation: {
+        createInode: context.filesystem.createInode.bind(context.filesystem),
+        takeCreateMode: context.filesystem.takeNextCreateMode.bind(context.filesystem),
+      },
+    },
     preopens.transformArguments,
   );
   // Imports close over this object; none can run until the instance has been bound.
