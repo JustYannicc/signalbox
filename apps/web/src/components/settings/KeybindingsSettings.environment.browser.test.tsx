@@ -46,6 +46,11 @@ vi.mock(import("../../state/session"), async (original) => {
       new Set(state.canWriteSettings ? ["primary-settings"] : [])) as never,
   };
 });
+// signalbox: these cover a server with other environments; the one-environment wording is tested on its own.
+vi.mock(import("../../state/environmentCapabilities"), async (original) => ({
+  ...(await original()),
+  useShowsEnvironmentUi: () => true,
+}));
 // signalbox: keybinding writes follow the upsert and remove grants, not settings:write alone.
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
