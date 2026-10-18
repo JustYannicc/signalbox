@@ -34,19 +34,22 @@ export function errno(error: unknown): number {
   }
 }
 
-export function resultErrno(result: Exclude<KernelResult<unknown>, { status: "ok" }>): number {
+export function resultErrno(
+  result: Exclude<KernelResult<unknown>, { status: "ok" }>,
+  operation: "fork" | "waitpid" | "kill" | "getpgid" | "getppid",
+): number {
   if (result.status === "would_block") return 6;
   switch (result.error.code) {
     case "NOT_FOUND":
-      return 44;
+      return operation === "waitpid" ? 12 : 71;
     case "PERMISSION_DENIED":
       return 63;
     case "INVALID_ARGUMENT":
       return 28;
     case "INVALID_HANDLE":
-      return 8;
+      return operation === "waitpid" ? 12 : 71;
     case "RESOURCE_LIMIT":
-      return 48;
+      return operation === "fork" ? 6 : 48;
     case "UNSUPPORTED":
       return 58;
     case "CANCELLED":

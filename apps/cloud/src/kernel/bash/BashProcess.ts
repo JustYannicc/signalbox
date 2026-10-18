@@ -1,6 +1,7 @@
 import type { KernelBashCredentials, KernelBashProgramContext } from "./BashContext.ts";
 import type { BashCaptureStore, CaptureStats } from "./BashCaptureStore.ts";
 import type { WasiLifecycle } from "../wasi/internal_wasi_lifecycle.ts";
+import type { BashPreopens } from "./BashPreopens.ts";
 
 export interface BashExports {
   readonly memory: WebAssembly.Memory;
@@ -37,6 +38,7 @@ export interface BashProcess {
   readonly credentials: KernelBashCredentials;
   readonly lifecycle: WasiLifecycle;
   readonly stats: CaptureStats;
+  readonly preopens: BashPreopens;
   instance: WebAssembly.Instance;
   exports: BashExports;
   captures: BashCaptureStore;

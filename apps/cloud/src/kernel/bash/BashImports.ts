@@ -1,7 +1,6 @@
 // Asyncify process transitions follow Nimbus e9f019ab4e40cb6037aff7e1a0eaf20842578ed3.
 // Copyright (c) 2026 Ashish Kumar Singh and Nimbus contributors. See NIMBUS-LICENSE.
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
-import { runAsync } from "../wasi/internal_wasi_calls.ts";
 import { range, string, flatStrings, environment, errno, resultErrno } from "./BashMemory.ts";
 import { createBashEnvironment } from "./BashEnvironment.ts";
 import { createBashMetadata } from "./BashMetadata.ts";
@@ -117,18 +116,18 @@ export function bashImports(process: BashProcess): WebAssembly.Imports {
     },
     dup2: suspend(async (oldFd: number, newFd: number) => {
       try {
-        return await runAsync(descriptors.duplicateTo(oldFd >>> 0, newFd >>> 0));
+        return await process.preopens.duplicateTo(oldFd >>> 0, newFd >>> 0);
       } catch (error) {
         return -errno(error);
       }
     }),
     kill: (pid: number, signal: number) => {
       const result = context.processes.signalPid(context.identity.handle, pid, signal);
-      return result.status === "ok" ? 0 : -resultErrno(result);
+      return result.status === "ok" ? 0 : -resultErrno(result, "kill");
     },
     getppid: () => {
       const result = context.processes.info(context.identity.handle);
-      return result.status === "ok" ? result.value.parentPid : -resultErrno(result);
+      return result.status === "ok" ? result.value.parentPid : -resultErrno(result, "getppid");
     },
     getpgid: (pid: number) => {
       const result =
@@ -139,7 +138,7 @@ export function bashImports(process: BashProcess): WebAssembly.Imports {
         ? "info" in result.value
           ? result.value.info.processGroupId
           : result.value.processGroupId
-        : -resultErrno(result);
+        : -resultErrno(result, "getpgid");
     },
     setpgid: (_pid: number, _group: number) => -58,
     tcgetpgrp: (_fd: number) => -59,

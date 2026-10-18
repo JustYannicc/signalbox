@@ -9,7 +9,10 @@ import {
 } from "../../../src/kernel/KernelBashProgram.ts";
 import { ABI_VERSION, KernelProgramRegistry, callKernel } from "../../../src/kernel/KernelAbi.ts";
 import { KernelFileSystem, KernelOpenFlags } from "../../../src/kernel/KernelFileSystem.ts";
-import { KernelProgramHost } from "../../../src/kernel/KernelProgramHost.ts";
+import {
+  KernelProgramHost,
+  type KernelProgramBinding,
+} from "../../../src/kernel/KernelProgramHost.ts";
 import { KernelWakeRegistry } from "../../../src/kernel/KernelWakeRegistry.ts";
 import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage.ts";
 import { bashSqliteFixture } from "./bashFixture.ts";
@@ -23,7 +26,7 @@ const credentials = {
   hostname: "bash-test",
 };
 
-async function run(script: string, passwd?: string) {
+async function run(script: string, passwd?: string, fault?: "missing" | "running") {
   const bytes = await NodeFSP.readFile(new URL("./build/bash.async.wasm", import.meta.url));
   NodeAssert.equal(
     NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
@@ -78,10 +81,41 @@ async function run(script: string, passwd?: string) {
     entrypoint: "/bin/bash",
   };
   if (registry.register(manifest).status !== "ok") throw new Error("Bash registration failed");
+  const programs = new Map<string, KernelProgramBinding>([
+    ["/bin/bash", { manifest, implementation: program }],
+  ]);
+  if (fault !== undefined) {
+    filesystem.mkdir("/bin");
+    filesystem.close(
+      filesystem.open("/bin/exec-fault", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY),
+    );
+    if (fault === "running") {
+      const replacement = {
+        ...manifest,
+        name: "exec-fault",
+        version: "1",
+        entrypoint: "/bin/exec-fault",
+      };
+      if (registry.register(replacement).status !== "ok")
+        throw new Error("Fault fixture registration failed");
+      programs.set("/bin/exec-fault", {
+        manifest: replacement,
+        implementation: {
+          kind: "javascript",
+          runInline: ({ filesystem: replacementFs }) => {
+            replacementFs.write(1, new TextEncoder().encode("replacement-started\n"), null);
+            throw Object.assign(new Error("Injected error after replacement started"), {
+              code: "EIO",
+            });
+          },
+        },
+      });
+    }
+  }
   const host = new KernelProgramHost({
     registry,
     wakes,
-    programs: new Map([["/bin/bash", { manifest, implementation: program }]]),
+    programs,
   });
   const prepared = host.prepare({ filesystem }, { cwd: "/workspace" });
   const resolved = host.resolve("/bin/bash");
@@ -94,8 +128,7 @@ async function run(script: string, passwd?: string) {
   if (spawned.status !== "ok") throw new Error("Bash admission failed");
   try {
     const exited = await host.exitStatus(spawned.value);
-    if (exited.status !== "ok") throw new Error(`Bash failed: ${JSON.stringify(exited)}`);
-    const exit = exited.value;
+    const exit = exited.status === "ok" ? exited.value : undefined;
     const read = (path: string) => {
       const fd = filesystem.open(path, KernelOpenFlags.O_RDONLY);
       try {
@@ -107,6 +140,7 @@ async function run(script: string, passwd?: string) {
     };
     return {
       exit,
+      failure: exited.status === "ok" ? undefined : exited,
       stdout: output.map((chunk) => new TextDecoder().decode(chunk)).join(""),
       stderr: errors.map((chunk) => new TextDecoder().decode(chunk)).join(""),
       file: script.includes("result") ? read("/workspace/result") : undefined,
@@ -145,6 +179,30 @@ export async function proveKernelBashProgram() {
       stderr: "",
     },
     {
+      name: "redirection can claim libc's cached root preopen descriptor",
+      script: "exec 3>/workspace/log; printf ok >/workspace/result; printf done >&3",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      file: "ok",
+    },
+    {
+      name: "forked Bash inherits a relocated root preopen",
+      script: "exec 3>/workspace/log; (printf child >/workspace/result); printf '%s\\n' parent >&3",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      file: "child",
+    },
+    {
+      name: "closing a claimed preopen number preserves libc's namespace",
+      script: "exec 3>/workspace/log; exec 3>&-; printf after-close >/workspace/result",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      file: "after-close",
+    },
+    {
       name: "two GNU Bash child continuations and a kernel pipe",
       script: "printf '%s\\n' piped | { IFS= read -r value; printf '<%s>\\n' \"$value\"; }",
       exitCode: 0,
@@ -180,6 +238,13 @@ export async function proveKernelBashProgram() {
       stdout: "/home/example\n",
       stderr: "",
     },
+    {
+      name: "kill reports ESRCH for a nonexistent process",
+      script: "kill 2147483647; printf '%s\\n' \"$?\"",
+      exitCode: 0,
+      stdout: "1\n",
+      stderr: "/bin/bash: line 1: kill: (2147483647) - No such process\n",
+    },
   ];
   const checks: string[] = [];
   for (const proof of cases) {
@@ -194,6 +259,31 @@ export async function proveKernelBashProgram() {
     if (proof.file !== undefined) NodeAssert.equal(result.file, proof.file, proof.name);
     checks.push(proof.name);
   }
+  const rejected = await run("exec /bin/exec-fault; printf 'resumed\\n'", undefined, "missing");
+  NodeAssert.equal(
+    rejected.exit?.exitCode,
+    127,
+    "a rejected exec keeps GNU Bash's failure semantics",
+  );
+  NodeAssert.equal(rejected.stdout, "", "exec failure must not run the following command");
+  checks.push("pre-admission exec rejection returns to GNU Bash");
+  const replaced = await run(
+    "exec /bin/exec-fault; printf 'old-shell-resumed\\n'",
+    undefined,
+    "running",
+  );
+  NodeAssert.equal(
+    replaced.exit,
+    undefined,
+    "an admitted replacement failure must terminate the owning shell process",
+  );
+  NodeAssert.equal(replaced.failure?.status, "error");
+  NodeAssert.equal(
+    replaced.stdout,
+    "replacement-started\n",
+    "an admitted replacement must never resume its old Bash continuation",
+  );
+  checks.push("an admitted replacement error never resumes the old Bash continuation");
   return { ok: true, artifact: KERNEL_BASH_ARTIFACT, checks };
 }
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Ashish Kumar Singh and Nimbus contributors. See NIMBUS-LICENSE.
 import { kernelError, kernelOk } from "../KernelAbi.ts";
 import type { KernelExitStatus } from "../KernelProcessTable.ts";
+import { KernelProgramExecAdmissionError } from "../KernelAsyncProgram.ts";
 import { runKernelExecution } from "../process/KernelExecution.ts";
 import { runAsync } from "../wasi/internal_wasi_calls.ts";
 import { WasiExit } from "../wasi/internal_wasi_memory.ts";
@@ -12,6 +13,7 @@ import type { KernelBashCredentials, KernelBashProgramContext } from "./BashCont
 import { bashImports } from "./BashImports.ts";
 import { errno, range, resultErrno } from "./BashMemory.ts";
 import type { BashExports, BashProcess } from "./BashProcess.ts";
+import { BashPreopens } from "./BashPreopens.ts";
 
 const PAGE = 65_536;
 const status = (exitCode: number, signal = 0): KernelExitStatus => ({
@@ -32,7 +34,9 @@ function createProcess(
   module: WebAssembly.Module,
   credentials: KernelBashCredentials,
   context: KernelBashProgramContext,
+  parentPreopens?: BashPreopens,
 ): BashProcess {
+  const preopens = new BashPreopens(context.filesystem.descriptors, parentPreopens);
   const lifecycle = new WasiLifecycle(
     validateOptions({
       version: "preview1",
@@ -43,10 +47,12 @@ function createProcess(
     }),
     true,
     { table: context.filesystem.descriptors, ownership: "borrowed" },
+    preopens.transformArguments,
   );
   // Imports close over this object; none can run until the instance has been bound.
   const process = {
     context,
+    preopens,
     credentials: { ...credentials },
     lifecycle,
     stats: { mainHi: 0, captureBytesHi: 0, captureCompactions: 0, captureLiveHi: 0 },
@@ -170,7 +176,7 @@ async function execute(
               range(ex.memory, pending.status, 4);
               new DataView(ex.memory.buffer).setInt32(pending.status >>> 0, raw, true);
             }
-          } else process.resume = -resultErrno(waited);
+          } else process.resume = -resultErrno(waited, "waitpid");
           rewind(process);
           break;
         }
@@ -186,16 +192,8 @@ async function execute(
               ...(context.home === undefined ? {} : { home: context.home }),
             });
           } catch (error) {
-            // Only POSIX failures return to execve. Host programming errors end the process.
-            if (
-              !(
-                error instanceof Error &&
-                "code" in error &&
-                typeof error.code === "string" &&
-                error.code.startsWith("E")
-              )
-            )
-              throw error;
+            // A replacement that started owns this PID even if its execution later fails.
+            if (!(error instanceof KernelProgramExecAdmissionError)) throw error;
             process.resume = -errno(error);
             rewind(process);
           }
@@ -229,12 +227,17 @@ function fork(module: WebAssembly.Module, parent: BashProcess): number {
   const spawned = context.processes.spawn(
     context.identity.handle,
     (identity) => {
-      const child = createProcess(module, parent.credentials, {
-        ...context,
-        filesystem: childFilesystem,
-        identity,
-        signal: controller.signal,
-      });
+      const child = createProcess(
+        module,
+        parent.credentials,
+        {
+          ...context,
+          filesystem: childFilesystem,
+          identity,
+          signal: controller.signal,
+        },
+        parent.preopens,
+      );
       const source = parent.exports.memory;
       const target = child.exports.memory;
       if (target.buffer.byteLength < source.buffer.byteLength)
@@ -274,7 +277,7 @@ function fork(module: WebAssembly.Module, parent: BashProcess): number {
       }
     },
   );
-  return spawned.status === "ok" ? spawned.value.pid : -resultErrno(spawned);
+  return spawned.status === "ok" ? spawned.value.pid : -resultErrno(spawned, "fork");
 }
 
 async function wait(process: BashProcess, pid: number, options: number) {
