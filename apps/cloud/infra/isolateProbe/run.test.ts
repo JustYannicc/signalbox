@@ -4,8 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { runProcess, type RunProcess } from "./process.ts";
+import { waitForProbeRouter } from "./readiness.ts";
 import { probeUrl, runProbe } from "./run.ts";
 import { withDriver } from "./testing/runDriver.ts";
+
+const routerReady: typeof waitForProbeRouter = async () => {};
 
 describe("isolated deployed probe lifecycle", () => {
   it("deploys, measures with private env, retains JSON, and destroys its owned resources", async () => {
@@ -13,7 +16,7 @@ describe("isolated deployed probe lifecycle", () => {
       const output = NodePath.join(dir, "proof.json");
       const stage = await runProbe(
         { fixture: ".", output },
-        { run, log: (line) => logs.push(line) },
+        { run, routerReady, log: (line) => logs.push(line) },
       );
       const recorded = await events();
       expect(recorded.map((event) => event.phase)).toEqual(["deploy", "measure", "destroy"]);
@@ -40,7 +43,7 @@ describe("isolated deployed probe lifecycle", () => {
   it("keeps failed proof JSON and cleans up before returning the measurement error", async () => {
     await withDriver("measure", async ({ dir, run, events }) => {
       const output = NodePath.join(dir, "failed.json");
-      await expect(runProbe({ output }, { run, log: () => {} })).rejects.toThrow(
+      await expect(runProbe({ output }, { run, routerReady, log: () => {} })).rejects.toThrow(
         "measurement exited 9",
       );
       expect(JSON.parse(await NodeFSP.readFile(output, "utf8")).verificationErrors).toEqual([
@@ -57,7 +60,29 @@ describe("isolated deployed probe lifecycle", () => {
 
   it("destroys a partially deployed Worker without starting measurement", async () => {
     await withDriver("partial", async ({ dir, run, events }) => {
-      await expect(runProbe({}, { run, log: () => {} })).rejects.toThrow("deployment exited 7");
+      await expect(runProbe({}, { run, routerReady, log: () => {} })).rejects.toThrow(
+        "deployment exited 7",
+      );
+      expect((await events()).map((event) => event.phase)).toEqual(["deploy", "destroy"]);
+      expect(await NodeFSP.readdir(dir)).toEqual(["events"]);
+    });
+  });
+
+  it("destroys the owned stage without measuring when router readiness fails", async () => {
+    await withDriver("success", async ({ dir, run, events }) => {
+      const readinessError = new Error("Probe router remained on Cloudflare's HTML 404.");
+      await expect(
+        runProbe(
+          {},
+          {
+            run,
+            log: () => {},
+            routerReady: async () => {
+              throw readinessError;
+            },
+          },
+        ),
+      ).rejects.toBe(readinessError);
       expect((await events()).map((event) => event.phase)).toEqual(["deploy", "destroy"]);
       expect(await NodeFSP.readdir(dir)).toEqual(["events"]);
     });
@@ -70,7 +95,7 @@ describe("isolated deployed probe lifecycle", () => {
         await expect(
           runProbe(
             { output: NodePath.join(dir, "proof.json") },
-            { run, log: (line) => logs.push(line) },
+            { run, routerReady, log: (line) => logs.push(line) },
           ),
         ).rejects.toThrow(mode === "cleanup" ? "cleanup exited 8" : "measurement exited 9");
         const recorded = await events();
@@ -103,6 +128,7 @@ describe("isolated deployed probe lifecycle", () => {
               {},
               {
                 run: concurrent(context.run),
+                routerReady,
                 log: () => {},
                 evidence: () => {},
               },
@@ -191,7 +217,10 @@ describe("probe subprocess bounds", () => {
         return result;
       };
       await expect(
-        runProbe({ signal: controller.signal }, { run: cancelAfterDeploy, log: () => {} }),
+        runProbe(
+          { signal: controller.signal },
+          { run: cancelAfterDeploy, routerReady, log: () => {} },
+        ),
       ).rejects.toThrow("interrupted");
       expect((await events()).map((event) => event.phase)).toEqual(["deploy", "destroy"]);
     });

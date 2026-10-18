@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { diagnostics, runProcess, type RunProcess } from "./process.ts";
+import { waitForProbeRouter } from "./readiness.ts";
 import { isolatedStage, stageFile } from "./stageFile.ts";
 
 const cloudDir = NodePath.resolve(import.meta.dirname, "../..");
@@ -43,6 +44,7 @@ export async function runProbe(
     run?: RunProcess;
     log?: (message: string) => void;
     evidence?: (json: string) => void;
+    routerReady?: typeof waitForProbeRouter;
   } = {},
 ) {
   const run = dependencies.run ?? runProcess;
@@ -126,6 +128,10 @@ export async function runProbe(
       const deployment = await alchemy("deploy");
       if (deployment.code !== 0) throw failure("deployment", deployment);
       const url = probeUrl(deployment.stdout, stage);
+      const routerReady = dependencies.routerReady ?? waitForProbeRouter;
+      if (options.signal) await routerReady(url, secret, { signal: options.signal });
+      else await routerReady(url, secret);
+      if (options.signal?.aborted) throw new Error("Probe run interrupted.");
       const measurement = await run({
         command: process.execPath,
         args: [

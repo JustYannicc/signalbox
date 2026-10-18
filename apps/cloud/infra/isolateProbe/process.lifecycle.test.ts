@@ -6,7 +6,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { runProcess } from "./process.ts";
+import { waitForProbeRouter } from "./readiness.ts";
 import { runProbe } from "./run.ts";
+
+const routerReady: typeof waitForProbeRouter = async () => {};
 
 const source = String.raw`
 const net = require('node:net');
@@ -87,6 +90,7 @@ describe("owned probe process group shutdown", () => {
       run = runProbe(
         {},
         {
+          routerReady,
           log: (line) => logs.push(line),
           run: async (input) => {
             if (input.args[0] === "destroy") {

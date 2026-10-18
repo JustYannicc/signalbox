@@ -2,9 +2,12 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { waitForProbeRouter } from "./readiness.ts";
 import { runProbe } from "./run.ts";
 import { stageFile } from "./stageFile.ts";
 import { withDriver } from "./testing/runDriver.ts";
+
+const routerReady: typeof waitForProbeRouter = async () => {};
 
 describe("probe stage-file lifecycle", () => {
   it.each(["success", "partial", "measure"])(
@@ -15,6 +18,7 @@ describe("probe stage-file lifecycle", () => {
         const probe = runProbe(
           { stageFile: path, output: NodePath.join(dir, "proof.json") },
           {
+            routerReady,
             log: () => {},
             run: async (input) => {
               if (input.args[0] === "deploy") {
@@ -62,6 +66,7 @@ describe("probe stage-file lifecycle", () => {
           { stageFile: path, output: NodePath.join(dir, "proof.json") },
           {
             run,
+            routerReady,
             log: (line) => logs.push(line),
           },
         ),
