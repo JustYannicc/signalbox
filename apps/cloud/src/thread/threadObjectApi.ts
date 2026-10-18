@@ -211,13 +211,6 @@ export const makeThreadObjectApi = (
     },
     fireConsideringAsk: async (actor, command) => {
       const decoded = wire.consideringFireCommand.decode(command);
-      if (decoded.expectedHome.kind !== "cloud")
-        return {
-          _tag: "rejected",
-          commandId: decoded.commandId,
-          commandType: decoded.type,
-          reason: "This Considering ask's home changed.",
-        };
       const result = await reply(
         engine.use((service) => service.fireConsideringAsk(actor, decoded)),
       );

@@ -161,7 +161,11 @@ export const makeThreads = Effect.gen(function* () {
       }),
     );
 
-  const validateConsideringAttachments = (actor: Actor, command: ThreadCommand) =>
+  const validateConsideringAttachments = (
+    actor: Actor,
+    command: ThreadCommand,
+    threadId: ThreadId,
+  ) =>
     Effect.gen(function* () {
       const considering =
         command.type === "thread.ask.raise" && command.ask.kind === "considering"
@@ -177,7 +181,7 @@ export const makeThreads = Effect.gen(function* () {
           "Preparation attachments must be unique.",
         );
       if (ids.length === 0) return;
-      const { projection } = yield* directory.forThread(command.threadId).snapshot(actor);
+      const { projection } = yield* directory.forThread(threadId).snapshot(actor);
       const heldByThread = new Set(
         projection.messages.flatMap((message) =>
           message.attachments.map((attachment) => attachment.id),
@@ -190,7 +194,7 @@ export const makeThreads = Effect.gen(function* () {
             "A preparation attachment isn't available in this thread.",
           );
         const readable = yield* attachments.canRead(actor.userId, attachmentId, (sourceThreadId) =>
-          Effect.succeed(sourceThreadId === String(command.threadId)),
+          Effect.succeed(sourceThreadId === String(threadId)),
         );
         if (!readable)
           return yield* ThreadCommandRejectedError.forCommand(
@@ -216,7 +220,7 @@ export const makeThreads = Effect.gen(function* () {
           unsupported(),
         );
       }
-      yield* validateConsideringAttachments(actor, command);
+      yield* validateConsideringAttachments(actor, command, threadId);
       // Only a create can make a thread, so only a create names its place. The
       // thread object rejects a new thread without one, after replaying retries.
       const place =

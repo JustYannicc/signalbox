@@ -112,7 +112,13 @@ it.effect("forces agent source and assistant answer provenance, with stable retr
       clientRequestId: "considering",
       kind: "considering",
       considering: {
-        exit: { kind: "evidence", reference: "support ticket update" },
+        exit: {
+          kind: "evidence",
+          reference: "support ticket update",
+          relatednessCriteria: "The same support ticket changes.",
+          materialChangeCriteria: "The blocked issue is resolved.",
+          sourceKinds: ["message.sent"],
+        },
         preparationAttachmentIds: [],
       },
     });

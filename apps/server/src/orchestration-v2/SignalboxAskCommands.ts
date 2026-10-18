@@ -65,7 +65,10 @@ function planAskCommand(
       return { ok: false as const, error: "This Considering ask's home changed." };
   }
   const considering =
-    command.type === "thread.ask.raise" && command.ask.kind === "considering"
+    command.type === "thread.ask.raise" &&
+    command.ask.kind === "considering" &&
+    "considering" in command.ask &&
+    command.ask.considering !== undefined
       ? command.ask.considering
       : command.type === "thread.ask.considering.redefer"
         ? command.considering

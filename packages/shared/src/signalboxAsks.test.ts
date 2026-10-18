@@ -58,7 +58,7 @@ const consideringRaise: SignalboxAskCommand = {
     },
   },
 };
-const consideringRaiseWithExit = (exit: SignalboxAskConsideringExit) => ({
+const consideringRaiseWithExit = (exit: SignalboxAskConsideringExit): SignalboxAskCommand => ({
   ...target,
   type: "thread.ask.raise" as const,
   ask: {
@@ -233,8 +233,8 @@ describe("Considering lifecycle", () => {
     expect(raised[0]?.considering).toMatchObject({
       revision: 1,
       revisionAt: now,
-      fired: undefined,
     });
+    expect(raised[0]?.considering?.fired).toBeUndefined();
     const fired = apply(raised, fire()).asks;
     expect(fired[0]?.considering?.fired).toEqual({
       at: now,
@@ -322,7 +322,7 @@ describe("Considering lifecycle", () => {
         eventAsk,
         fire(1, {
           ...matchingProof,
-          matchedFields: { repository: "other/repo", state: "closed" },
+          matchedFields: { repository: "unlisted/repo", state: "closed" },
         }),
         now,
       ).ok,

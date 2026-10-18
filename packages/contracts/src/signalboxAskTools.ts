@@ -12,15 +12,11 @@ const raiseFields = {
   clientRequestId: Schema.optional(TrimmedNonEmptyString),
   questions: Schema.NonEmptyArray(SignalboxAskQuestion),
 };
-const raiseParameters = Schema.Union([
-  Schema.Struct({ ...raiseFields, kind: Schema.Literal("blocker") }),
-  Schema.Struct({ ...raiseFields, kind: Schema.Literal("ready") }),
-  Schema.Struct({
-    ...raiseFields,
-    kind: Schema.Literal("considering"),
-    considering: SignalboxAskConsideringDraft,
-  }),
-]);
+const raiseParameters = Schema.Struct({
+  ...raiseFields,
+  kind: Schema.Literals(["blocker", "ready", "considering"]),
+  considering: Schema.optional(SignalboxAskConsideringDraft),
+});
 export const SIGNALBOX_ASK_TOOLS = {
   t3_ask_raise: {
     description:

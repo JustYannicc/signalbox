@@ -10950,9 +10950,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           respond: (response) => dispatchRuntimeRequestRespond(response, events, effects),
           loadProjection: (threadId) =>
             projectionStore
-              .getThreadRecords(threadId, ["runtimeRequests", "providerSessions", "turnItems"], {
-                turnItemTypes: ["user_input_request"],
-              })
+              .getThreadRecords(
+                threadId,
+                ["runtimeRequests", "providerSessions", "turnItems", "messages"],
+                { turnItemTypes: ["user_input_request"] },
+              )
               .pipe(mapDispatchError(command)),
         });
         break;
@@ -11191,7 +11193,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
-        command.type === "subagent.stop"
+        command.type === "subagent.stop" ||
+        command.type === "thread.ask.considering.fire" ||
+        command.type === "thread.ask.considering.resume"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

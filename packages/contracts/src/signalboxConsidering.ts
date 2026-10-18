@@ -126,18 +126,20 @@ export const SignalboxAskConsideringFired = Schema.Union([
 ]);
 export type SignalboxAskConsideringFired = typeof SignalboxAskConsideringFired.Type;
 
+export const SignalboxAskConsideringCloudHomeSchema = Schema.Struct({
+  kind: Schema.Literal("cloud"),
+  projectId: ProjectId,
+  contextId: SignalboxContextId,
+  driveId: TrimmedNonEmptyString,
+});
+export const SignalboxAskConsideringServerHomeSchema = Schema.Struct({
+  kind: Schema.Literal("server"),
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+});
 export const SignalboxAskConsideringHome = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("cloud"),
-    projectId: ProjectId,
-    contextId: SignalboxContextId,
-    driveId: TrimmedNonEmptyString,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("server"),
-    projectId: ProjectId,
-    workspaceRoot: TrimmedNonEmptyString,
-  }),
+  SignalboxAskConsideringCloudHomeSchema,
+  SignalboxAskConsideringServerHomeSchema,
 ]);
 export type SignalboxAskConsideringHome = typeof SignalboxAskConsideringHome.Type;
 export type SignalboxAskConsideringCloudHome = Extract<

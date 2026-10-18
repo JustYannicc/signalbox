@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import type {
   SignalboxAskAnswerCommand,
-  SignalboxAskRaiseCommand,
+  SignalboxAskRaiseCommandType,
 } from "@t3tools/contracts/signalboxAsks";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
@@ -21,6 +21,7 @@ import * as EventStore from "./EventStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
@@ -37,6 +38,7 @@ const db = SqlitePersistence.layerMemory;
 const stores = Layer.mergeAll(
   db,
   ProjectionStore.layer.pipe(Layer.provide(db)),
+  ProjectStore.layer.pipe(Layer.provide(db)),
   EventStore.layer.pipe(Layer.provide(db)),
   EffectOutbox.layer.pipe(Layer.provide(db)),
 );
@@ -82,7 +84,7 @@ const question = (id: string) => ({
   decisionOwner: "Owner",
   surface: { kind: "kit" as const, component: "text" },
 });
-export const raise: typeof SignalboxAskRaiseCommand.Type = {
+export const raise: SignalboxAskRaiseCommandType = {
   type: "thread.ask.raise",
   commandId: CommandId.make("raise"),
   threadId,

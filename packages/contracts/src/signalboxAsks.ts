@@ -3,7 +3,7 @@ import {
   SignalboxAskConsideringDraft,
   SignalboxAskConsideringFireProof,
   SignalboxAskConsideringHome,
-  type SignalboxAskConsideringCloudHome,
+  SignalboxAskConsideringCloudHomeSchema,
 } from "./signalboxConsidering.ts";
 import * as Schema from "effect/Schema";
 import { ProviderUserInputAnswers } from "./providerPolicy.ts";
@@ -89,7 +89,16 @@ export const SignalboxAskRaiseDraft = Schema.Union([
     considering: SignalboxAskConsideringDraft,
   }),
 ]);
-export type SignalboxAskRaiseDraft = typeof SignalboxAskRaiseDraft.Type;
+type SignalboxAskRaiseBase = Omit<SignalboxAskDraft, "kind" | "source"> & {
+  readonly source: { readonly kind: "agent" };
+};
+export type SignalboxAskRaiseDraft =
+  | (SignalboxAskRaiseBase & { readonly kind: "blocker" })
+  | (SignalboxAskRaiseBase & { readonly kind: "ready" })
+  | (SignalboxAskRaiseBase & {
+      readonly kind: "considering";
+      readonly considering: typeof SignalboxAskConsideringDraft.Type;
+    });
 
 export const SignalboxAskAnswerer = Schema.Struct({
   kind: Schema.Literals(["person", "assistant"]),
@@ -142,6 +151,9 @@ export const SignalboxAskRaiseCommand = Schema.Struct({
   ...target,
   ask: SignalboxAskRaiseDraft,
 });
+export type SignalboxAskRaiseCommandType = Omit<typeof SignalboxAskRaiseCommand.Type, "ask"> & {
+  readonly ask: SignalboxAskRaiseDraft;
+};
 /** Trusted mirrors may raise a native record internally; this schema is never in the public command union. */
 export const SignalboxAskTrustedRaiseCommand = Schema.Struct({
   type: Schema.Literal("thread.ask.raise"),
@@ -183,10 +195,12 @@ export const SignalboxAskConsideringFireCommand = Schema.Struct({
   proof: SignalboxAskConsideringFireProof,
   expectedHome: SignalboxAskConsideringHome,
 });
-export type SignalboxAskConsideringCloudFireCommand = Omit<
-  typeof SignalboxAskConsideringFireCommand.Type,
-  "expectedHome"
-> & { readonly expectedHome: SignalboxAskConsideringCloudHome };
+export const SignalboxAskConsideringCloudFireCommandSchema = Schema.Struct({
+  ...SignalboxAskConsideringFireCommand.fields,
+  expectedHome: SignalboxAskConsideringCloudHomeSchema,
+});
+export type SignalboxAskConsideringCloudFireCommand =
+  typeof SignalboxAskConsideringCloudFireCommandSchema.Type;
 /** Automation engines synchronize their journaled ask after validating a step's answer. */
 export const SignalboxAskSyncCommand = Schema.Struct({
   type: Schema.Literal("thread.ask.sync"),
@@ -202,7 +216,12 @@ export const SignalboxAskCommands = [
   SignalboxAskConsideringReDeferCommand,
 ] as const;
 export const SignalboxAskCommand = Schema.Union(SignalboxAskCommands);
-export type SignalboxAskCommand = typeof SignalboxAskCommand.Type;
+export type SignalboxAskCommand =
+  | SignalboxAskRaiseCommandType
+  | typeof SignalboxAskAnswerCommand.Type
+  | typeof SignalboxAskWithdrawCommand.Type
+  | typeof SignalboxAskConsideringResumeCommand.Type
+  | typeof SignalboxAskConsideringReDeferCommand.Type;
 
 export const SignalboxAskServerCommand = Schema.Union([
   ...SignalboxAskCommands,

@@ -8,6 +8,7 @@ import type {
 import type {
   SignalboxAskConsidering,
   SignalboxAskConsideringFireProof,
+  SignalboxAskConsideringFired,
   SignalboxAskConsideringProof,
 } from "@t3tools/contracts/signalboxConsidering";
 
@@ -110,6 +111,38 @@ function consideringProofWhatChanged(proof: SignalboxAskConsideringProof) {
   }
 }
 
+function consideringFired(
+  at: string,
+  proof: SignalboxAskConsideringProof,
+): SignalboxAskConsideringFired {
+  const whatChanged = consideringProofWhatChanged(proof);
+  switch (proof.kind) {
+    case "date":
+      return { at, source: "date", whatChanged, proof };
+    case "event":
+      return { at, source: "event", whatChanged, proof };
+    case "evidence":
+      return { at, source: "evidence", whatChanged, proof };
+    case "weekly-review":
+      return { at, source: "weekly-review", whatChanged, proof };
+    case "owner":
+      return { at, source: "owner", whatChanged, proof };
+  }
+}
+
+function updateConsideringAsk(
+  asks: readonly SignalboxAsk[],
+  ask: SignalboxAsk,
+  considering: SignalboxAskConsidering,
+  now: string,
+): AskResult {
+  const updated: SignalboxAsk = { ...ask, considering, updatedAt: now };
+  return {
+    ok: true,
+    asks: asks.map((entry) => (entry.id === ask.id ? updated : entry)),
+  };
+}
+
 /** Older shells without a linked ask retain their native waiting state. */
 export function runtimeRequestNeedsInput(
   request: { readonly id: string; readonly kind: string } | null,
@@ -202,15 +235,9 @@ export function applyAskCommand(
     const ids = command.ask.questions.map((question) => question.id);
     if (new Set(ids).size !== ids.length)
       return { ok: false, error: "Question IDs must be unique within an ask." };
-    const considering =
-      command.ask.kind === "considering" && "considering" in command.ask
-        ? { ...command.ask.considering, revision: 1, revisionAt: now }
-        : undefined;
-    const raised: SignalboxAsk = {
-      ...command.ask,
-      ...(considering === undefined ? {} : { considering }),
+    const fields = {
       id: command.askId,
-      status: "pending",
+      status: "pending" as const,
       createdAt: now,
       updatedAt: now,
       rounds: [
@@ -222,8 +249,23 @@ export function applyAskCommand(
           openedAt: now,
           closedAt: null,
         },
-      ],
+      ] as const,
     };
+    const raised: SignalboxAsk =
+      command.ask.kind === "considering" &&
+      "considering" in command.ask &&
+      command.ask.considering !== undefined
+        ? {
+            ...command.ask,
+            ...fields,
+            considering: { ...command.ask.considering, revision: 1, revisionAt: now },
+          }
+        : {
+            kind: command.ask.kind,
+            questions: command.ask.questions,
+            source: command.ask.source,
+            ...fields,
+          };
     return { ok: true, asks: [...asks, raised] };
   }
   if (!ask) return { ok: false, error: "The ask was not found." };
@@ -241,12 +283,7 @@ export function applyAskCommand(
       if (command.type !== "thread.ask.considering.redefer" || command.expectedRevision !== null)
         return { ok: false, error: "Set an exit condition before resuming this older ask." };
       const considering = { ...command.considering, revision: 1, revisionAt: now };
-      return {
-        ok: true,
-        asks: asks.map((entry) =>
-          entry.id === ask.id ? { ...entry, considering, updatedAt: now } : entry,
-        ),
-      };
+      return updateConsideringAsk(asks, ask, considering, now);
     }
     if (command.expectedRevision === null || current.revision !== command.expectedRevision)
       return { ok: false, error: "This Considering exit changed. Reload before continuing." };
@@ -256,12 +293,7 @@ export function applyAskCommand(
         revision: current.revision + 1,
         revisionAt: now,
       };
-      return {
-        ok: true,
-        asks: asks.map((entry) =>
-          entry.id === ask.id ? { ...entry, considering, updatedAt: now } : entry,
-        ),
-      };
+      return updateConsideringAsk(asks, ask, considering, now);
     }
     if (current.fired !== undefined) return { ok: true, asks };
     const proof =
@@ -273,19 +305,9 @@ export function applyAskCommand(
       !consideringFireProofMatches(current, command.proof, now)
     )
       return { ok: false, error: "This proof does not satisfy the current exit condition." };
-    const fired = {
-      at: now,
-      source: proof.kind,
-      whatChanged: consideringProofWhatChanged(proof),
-      proof,
-    };
+    const fired = consideringFired(now, proof);
     const considering = { ...current, fired };
-    return {
-      ok: true,
-      asks: asks.map((entry) =>
-        entry.id === ask.id ? { ...entry, considering, updatedAt: now } : entry,
-      ),
-    };
+    return updateConsideringAsk(asks, ask, considering, now);
   }
   if (command.type === "thread.ask.withdraw") {
     if (ask.status !== "pending") return { ok: true, asks };

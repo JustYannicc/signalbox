@@ -16,10 +16,11 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import { layer, threadId, create, raise, answer } from "./SignalboxAsks.testkit.ts";
 
 const automationAsk = (now: string): SignalboxAsk => ({
-  ...raise.ask,
+  kind: "ready",
+  questions: raise.ask.questions,
+  source: { kind: "automation", runId: "run", stepKey: "gate" },
   id: raise.askId,
   status: "pending",
-  source: { kind: "automation", runId: "run", stepKey: "gate" },
   rounds: [
     {
       number: 1,
@@ -202,17 +203,18 @@ it.effect("re-defers, resumes and fires Considering through the server-only comm
       considering: {
         revision: 2,
         exit: { kind: "evidence", reference: "support case" },
-        fired: undefined,
       },
     });
-    const resumed = yield* orchestrator.dispatch({
+    expect(changedAsks(redeferred)[0]?.considering?.fired).toBeUndefined();
+    const resume = {
       type: "thread.ask.considering.resume",
       commandId: CommandId.make("considering-resume"),
       threadId,
       askId: "considering-ask",
       expectedRevision: 2,
       whatChanged: "The owner has time to revisit this now.",
-    });
+    } as const;
+    const resumed = yield* orchestrator.dispatch(resume);
     expect(changedAsks(resumed)).toHaveLength(1);
     expect(changedAsks(resumed)[0]).toMatchObject({
       id: "considering-ask",
@@ -225,6 +227,13 @@ it.effect("re-defers, resumes and fires Considering through the server-only comm
         },
       },
     });
+    const repeatedResume = yield* orchestrator.dispatch({
+      ...resume,
+      commandId: CommandId.make("considering-resume-again"),
+    });
+    expect(repeatedResume.storedEvents).toEqual([]);
+    expect(repeatedResume.sequence).toBe(resumed.sequence);
+    expect((yield* orchestrator.dispatch(resume)).sequence).toBe(resumed.sequence);
     const redeferredAgain = yield* orchestrator.dispatch({
       type: "thread.ask.considering.redefer",
       commandId: CommandId.make("considering-redefer-after-resume"),
@@ -245,8 +254,9 @@ it.effect("re-defers, resumes and fires Considering through the server-only comm
     expect(changedAsks(redeferredAgain)).toHaveLength(1);
     expect(changedAsks(redeferredAgain)[0]).toMatchObject({
       id: "considering-ask",
-      considering: { revision: 3, fired: undefined },
+      considering: { revision: 3 },
     });
+    expect(changedAsks(redeferredAgain)[0]?.considering?.fired).toBeUndefined();
     const previousHome = {
       kind: "server" as const,
       projectId,

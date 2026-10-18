@@ -19,6 +19,15 @@ class AskNotFound extends Schema.TaggedError<AskNotFound>()("AskNotFound", {}) {
   }
 }
 
+class AskConsideringExitRequired extends Schema.TaggedError<AskConsideringExitRequired>()(
+  "AskConsideringExitRequired",
+  {},
+) {
+  override get message() {
+    return "Considering asks require an exit condition.";
+  }
+}
+
 export const isAskTool = (name: string): name is keyof typeof SIGNALBOX_ASK_TOOLS =>
   Object.hasOwn(SIGNALBOX_ASK_TOOLS, name);
 
@@ -41,6 +50,21 @@ export const askTool = (
         const threadId = target(params.threadId);
         const fresh = yield* commandId();
         const askId = params.askId ?? `ask:${caller}:${params.clientRequestId ?? fresh}`;
+        const ask =
+          params.kind === "considering"
+            ? params.considering === undefined
+              ? yield* new AskConsideringExitRequired()
+              : {
+                  kind: "considering" as const,
+                  questions: params.questions,
+                  source: { kind: "agent" as const },
+                  considering: params.considering,
+                }
+            : {
+                kind: params.kind,
+                questions: params.questions,
+                source: { kind: "agent" as const },
+              };
         const result = yield* threads.dispatchCommand(actor, {
           type: "thread.ask.raise",
           commandId: params.clientRequestId
@@ -48,12 +72,7 @@ export const askTool = (
             : fresh,
           threadId,
           askId,
-          ask: {
-            kind: params.kind,
-            questions: params.questions,
-            source: { kind: "agent" },
-            ...(params.kind === "considering" ? { considering: params.considering } : {}),
-          },
+          ask,
         });
         return { askId, round: 1, sequence: result.sequence };
       }
