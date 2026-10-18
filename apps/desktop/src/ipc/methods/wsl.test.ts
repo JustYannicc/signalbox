@@ -8,6 +8,7 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopShutdown from "../../app/DesktopShutdown.ts";
 import * as DesktopState from "../../app/DesktopState.ts";
+import * as DesktopCaptureShutdown from "../../capture/DesktopCaptureShutdown.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
@@ -52,6 +53,7 @@ function layerLifecycle(relaunchReasons: Array<string>) {
 }
 
 const layerUnusedLifecycleRuntime = Layer.mergeAll(
+  DesktopCaptureShutdown.layer,
   DesktopShutdown.layer,
   DesktopState.layer,
   Layer.succeed(
