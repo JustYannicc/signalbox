@@ -100,7 +100,8 @@ export class HomeObject extends CatalogHomeObject {
       typeof envelope === "object" &&
       envelope !== null &&
       "functionPath" in envelope &&
-      envelope.functionPath === "personalRecovery:sync_acknowledgeFence" &&
+      (envelope.functionPath === "personalRecovery:sync_acknowledgeFence" ||
+        envelope.functionPath === "organizationRecovery:sync_acknowledgeFence") &&
       "args" in envelope &&
       typeof envelope.args === "object" &&
       envelope.args !== null &&

@@ -44,6 +44,20 @@ export default defineSchema({
     expect(emitted.tables.counters.row).toBe(counter.row);
   });
 
+  it("escapes domain id fields in emitted columns and every generated index", () => {
+    const folders = table({
+      row: Schema.Struct({ id: Schema.String, parentId: Schema.NullOr(Schema.String) }),
+      key: ["id"],
+      indexes: { by_parent: { fields: ["parentId", "id"] } },
+    });
+    const emitted = emitLunoraSchema({ folders }).source;
+
+    expect(emitted).toContain('"__sync_domain_id": v.string()');
+    expect(emitted).toContain('.index("__sync_key", ["__sync_domain_id"])');
+    expect(emitted).toContain('.index("by_parent", ["parentId","__sync_domain_id"])');
+    expect(emitted).not.toContain('"id": v.string()');
+  });
+
   it("rejects codecs rather than widening them to Lunora's encoded validator", () => {
     const converted = table({
       row: Schema.Struct({ key: Schema.NumberFromString }),
@@ -91,12 +105,20 @@ export default defineSchema({
       key: ["key"],
       indexes: {},
     } as unknown as TableMap["withCreationTime"];
+    const withDomainIdAlias = {
+      row: Schema.Struct({ __sync_domain_id: Schema.String, key: Schema.String }),
+      key: ["key"],
+      indexes: {},
+    } as unknown as TableMap["withDomainIdAlias"];
 
     expect(() => emitLunoraSchema({ withId })).toThrow(
       /schema\.withId\.row\._id: field "_id" is reserved by Lunora/,
     );
     expect(() => emitLunoraSchema({ withCreationTime })).toThrow(
       /schema\.withCreationTime\.row\._creationTime: field "_creationTime" is reserved by Lunora/,
+    );
+    expect(() => emitLunoraSchema({ withDomainIdAlias })).toThrow(
+      /schema\.withDomainIdAlias\.row\.__sync_domain_id: field "__sync_domain_id" is reserved by Lunora/,
     );
   });
 });

@@ -78,18 +78,42 @@ export const catalogRelaySecret = (env: CatalogObjectEnv): string => {
 const sameRequestedShard = (request: Parameters<DeliveryAuthorization>[0], homeKey: string) =>
   request.shardKey === homeKey;
 
-const recoveryFunctions = new Set([
+const personalRecoveryFunctions = new Set([
   "personalRecovery:sync_pendingFences",
   "personalRecovery:sync_scheduleFenceRecovery",
   "personalRecovery:sync_acknowledgeFence",
   "personalRecovery:sync_recoverFences",
 ]);
 
-const publicFunctions = new Set([
+const organizationRecoveryFunctions = new Set([
+  "organizationRecovery:sync_pendingFences",
+  "organizationRecovery:sync_scheduleFenceRecovery",
+  "organizationRecovery:sync_acknowledgeFence",
+  "organizationRecovery:sync_recoverFences",
+]);
+
+const personalPublicFunctions = new Set([
   "personal:view_access",
+  "personal:view_children",
+  "personal:view_referencePlacements",
+  "personal:change_createFolder",
+  "personal:change_retireFolder",
+  "personal:change_reopenFolder",
   "personal:change_renameFolder",
   "personal:change_moveFolder",
   "personal:change_setGrant",
+  "personal:change_moveOrganizationReference",
+]);
+
+const organizationPublicFunctions = new Set([
+  "organization:view_access",
+  "organization:view_children",
+  "organization:change_createFolder",
+  "organization:change_retireFolder",
+  "organization:change_reopenFolder",
+  "organization:change_renameFolder",
+  "organization:change_moveFolder",
+  "organization:change_setGrant",
 ]);
 
 const isBoundHomeArgument = (value: unknown, homeKey: string) => {
@@ -117,7 +141,7 @@ const authorityPermit = (scope: string, epoch: number): DeliveryPermit => ({ sco
 
 /**
  * Native Lunora checks every RPC and subscription before receipt replay. System calls are
- * limited to the home bootstrap and fence recovery. Policy reads stay inside the object.
+ * limited to owner-specific projections and recovery; policy reads stay inside the object.
  */
 export const makeCatalogDeliveryAuthorization =
   (ports: CatalogRuntimePorts): DeliveryAuthorization =>
@@ -137,23 +161,42 @@ export const makeCatalogDeliveryAuthorization =
     const nativeScope = await nativeCatalogScope(homeKey);
     if (request.system) {
       if (request.transport !== "rpc") return undefined;
-      if (
-        request.functionPath === "personal:project_initialize" &&
-        home.owner._tag === "person" &&
-        home.legacySource === undefined &&
-        isBootstrapRequest(request)
-      ) {
-        return authorityPermit(nativeScope, ports.currentEpoch());
-      }
-      if (
-        recoveryFunctions.has(request.functionPath) &&
-        isBoundHomeArgument(request.args, homeKey)
-      ) {
-        return authorityPermit(nativeScope, ports.currentEpoch());
+      if (home.owner._tag === "person") {
+        if (
+          request.functionPath === "personal:project_initialize" &&
+          home.legacySource === undefined &&
+          isBootstrapRequest(request)
+        ) {
+          return authorityPermit(nativeScope, ports.currentEpoch());
+        }
+        if (request.functionPath === "personal:project_ensureOrganizationReference") {
+          return authorityPermit(nativeScope, ports.currentEpoch());
+        }
+        if (
+          personalRecoveryFunctions.has(request.functionPath) &&
+          isBoundHomeArgument(request.args, homeKey)
+        ) {
+          return authorityPermit(nativeScope, ports.currentEpoch());
+        }
+      } else {
+        if (
+          request.functionPath === "organization:project_bootstrap" ||
+          request.functionPath === "organization:project_syncMembership"
+        ) {
+          return authorityPermit(nativeScope, ports.currentEpoch());
+        }
+        if (
+          organizationRecoveryFunctions.has(request.functionPath) &&
+          isBoundHomeArgument(request.args, homeKey)
+        ) {
+          return authorityPermit(nativeScope, ports.currentEpoch());
+        }
       }
       return undefined;
     }
 
+    const publicFunctions =
+      home.owner._tag === "person" ? personalPublicFunctions : organizationPublicFunctions;
     if (
       (request.transport !== "rpc" && request.transport !== "subscription") ||
       !publicFunctions.has(request.functionPath)
