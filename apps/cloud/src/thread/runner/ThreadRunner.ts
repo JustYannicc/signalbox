@@ -1,3 +1,10 @@
+import type { WorkflowStopRequest } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  attachedWorkflowScripts,
+  lostWorkflowStopEvents,
+  pendingWorkflowStops,
+  workflowScriptsOf,
+} from "../workflowControl.ts";
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PullOperation } from "@signalbox/runner-protocol/PullProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
@@ -214,6 +221,8 @@ export interface MachinePlan {
 
 /** What the connected Runner should be doing right now. */
 export interface RunnerWork {
+  readonly workflowStops: ReadonlyArray<WorkflowStopRequest>;
+  readonly connection: number;
   readonly generation: number;
   readonly preparation?: PreparationState | null;
   readonly pull?: {
@@ -530,6 +539,7 @@ const make = Effect.gen(function* () {
             steers: hello.steers === true,
             preparations: hello.protocolVersion >= 7,
             pulls: hello.pulls === true,
+            workflowStops: hello.workflowStops === true,
             runtimeResponses: hello.runtimeResponses === true,
             runtimeResponsesUpgrade:
               hello.runtimeResponses === true ? undefined : lease.runtimeResponsesUpgrade,
@@ -579,7 +589,9 @@ const make = Effect.gen(function* () {
           drained,
         } = runnerOutputBatch(
           applyEvents(projection, prepared.events) ?? projection,
-          prepared.items,
+          prepared.items.filter(
+            (item) => item.kind !== "workflow.stopped" || item.generation === input.generation,
+          ),
           ctx,
           lease.steers === true,
         );
@@ -623,6 +635,8 @@ const make = Effect.gen(function* () {
               : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
           ),
         );
+        const after = applyEvents(projection, events) ?? projection;
+        const scripts = attachedWorkflowScripts(after, workflowScriptsOf(input.items));
         const acked = { _tag: "ack", sequence: input.sequence } as const;
         // The Runner saved everything and stopped reporting: its machine is done
         // either way, and only a light one's run moves up.
@@ -631,13 +645,14 @@ const make = Effect.gen(function* () {
             recorded,
             Effect.map(
               machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
-              (gone) => ({ ...gone, ...preparation, commandOutput, result: acked }),
+              (gone) => ({ ...gone, ...preparation, scripts, commandOutput, result: acked }),
             ),
           );
         }
         return yield* Effect.as(recorded, {
           events,
           ...preparation,
+          scripts,
           commandOutput,
           machine: {
             ...lease,
@@ -938,7 +953,13 @@ const make = Effect.gen(function* () {
         yield* Effect.orDie(pullState.assign(pull.operation.id, lease.generation));
       }
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
+      const settled = projection === null ? [] : lostWorkflowStopEvents(projection, lease, ctx);
       const result: RunnerWork = {
+        connection: lease.connection ?? 0,
+        workflowStops:
+          projection === null || lease.workflowStops !== true || lease.status !== "connected"
+            ? []
+            : pendingWorkflowStops(projection, lease.generation),
         generation: lease.generation,
         preparation,
         pull,
@@ -990,13 +1011,17 @@ const make = Effect.gen(function* () {
             ? []
             : steersOf(projection, run).map(runnerMessageOf),
       };
-      return preparation === previous || preparation === null
-        ? keep(result)
-        : {
-            events: projection === null ? [] : preparationEvents(projection, preparation, ctx),
-            preparation,
-            result,
-          };
+      const changed = preparation !== previous ? preparation : null;
+      return {
+        events: [
+          ...settled,
+          ...(changed !== null && projection !== null
+            ? preparationEvents(projection, changed, ctx)
+            : []),
+        ],
+        ...(changed === null ? {} : { preparation: changed }),
+        result,
+      };
     }),
   );
 

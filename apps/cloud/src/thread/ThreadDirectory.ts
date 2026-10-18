@@ -1,3 +1,4 @@
+import type { Threads } from "./Threads.ts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
@@ -91,6 +92,8 @@ const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly getWorkflowScript: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
+  readonly stopWorkflow: (actor: Actor, input: unknown) => Promise<ThreadObjectReply<unknown>>;
   readonly answerSecret: (
     actor: Actor,
     input: unknown,
@@ -209,6 +212,8 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly getWorkflowScript: Threads["Service"]["getWorkflowScript"];
+  readonly stopWorkflow: Threads["Service"]["stopWorkflow"];
   readonly answerSecret: (
     actor: Actor,
     input: SecretRequestAnswerInput,
@@ -425,6 +430,30 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
     cancelPreparation: (actor, input) =>
       call("cancelPreparation", () => api.cancelPreparation(actor, input)).pipe(
         Effect.flatMap(fromReply),
+      ),
+    getWorkflowScript: (actor, input) =>
+      call("getWorkflowScript", () =>
+        api.getWorkflowScript(actor, wire.workflowScriptInput.encode(input)),
+      ).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) =>
+          decodeIn("getWorkflowScript", () => wire.workflowScriptReply.decode(value)),
+        ),
+        Effect.flatMap((reply) =>
+          reply._tag === "ok" ? Effect.succeed(reply.value) : Effect.fail(reply.error),
+        ),
+      ),
+    stopWorkflow: (actor, input) =>
+      call("stopWorkflow", () =>
+        api.stopWorkflow(actor, wire.workflowStopInput.encode(input)),
+      ).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) =>
+          decodeIn("stopWorkflow", () => wire.workflowStopReply.decode(value)),
+        ),
+        Effect.flatMap((reply) => (reply._tag === "ok" ? Effect.void : Effect.fail(reply.error))),
       ),
     answerSecret: (actor, input) =>
       call("answerSecret", () => api.answerSecret(actor, wire.secretAnswer.encode(input))).pipe(

@@ -321,6 +321,9 @@ export const makeThreads = Effect.gen(function* () {
       ),
     cancelPreparation: (actor, input) =>
       directory.forThread(input.threadId).cancelPreparation(actor, input),
+    getWorkflowScript: (actor, input) =>
+      directory.forThread(input.threadId).getWorkflowScript(actor, input),
+    stopWorkflow: (actor, input) => directory.forThread(input.threadId).stopWorkflow(actor, input),
     launch: launchThread,
     dispatch: dispatchCommand,
     snapshot: threadSnapshot,

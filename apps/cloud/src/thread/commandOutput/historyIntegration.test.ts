@@ -61,6 +61,8 @@ describe("command output with current-item history", () => {
               { migration_id: 12, name: "command_output" },
               { migration_id: 12, name: "current_item_history" },
               { migration_id: 12, name: "git_pulls" },
+              { migration_id: 12, name: "preparation" },
+              { migration_id: 12, name: "workflow_scripts" },
               { migration_id: 13, name: "current_item_expansion" },
             ]);
             if (existing === "command-output") {

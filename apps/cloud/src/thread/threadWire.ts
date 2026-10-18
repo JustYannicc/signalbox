@@ -1,6 +1,11 @@
 import {
   ModelSelection,
   NonNegativeInt,
+  OrchestrationV2GetWorkflowScriptInput,
+  OrchestrationV2GetWorkflowScriptResult,
+  OrchestrationGetWorkflowScriptError,
+  OrchestrationV2StopWorkflowInput,
+  OrchestrationV2StopWorkflowError,
   SecretRequestAnswerInput,
   OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
@@ -94,6 +99,20 @@ export type PullInput = typeof PullInputWire.Type;
 
 export const wire = {
   preparation: jsonCodec(WorktreeSetupStreamEvent),
+  workflowScriptInput: jsonCodec(OrchestrationV2GetWorkflowScriptInput),
+  workflowStopInput: jsonCodec(OrchestrationV2StopWorkflowInput),
+  workflowScriptReply: jsonCodec(
+    Schema.Union([
+      Schema.TaggedStruct("ok", { value: OrchestrationV2GetWorkflowScriptResult }),
+      Schema.TaggedStruct("error", { error: OrchestrationGetWorkflowScriptError }),
+    ]),
+  ),
+  workflowStopReply: jsonCodec(
+    Schema.Union([
+      Schema.TaggedStruct("ok", {}),
+      Schema.TaggedStruct("error", { error: OrchestrationV2StopWorkflowError }),
+    ]),
+  ),
   secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),

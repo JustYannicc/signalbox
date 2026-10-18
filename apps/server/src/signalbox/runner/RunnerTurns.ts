@@ -1,3 +1,5 @@
+import { makeRunnerWorkflows } from "./RunnerWorkflows.ts";
+import type { WorkflowStopRequest } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { CheckpointViews, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import {
   type MachineClass,
@@ -120,6 +122,7 @@ export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("Runn
 }) {}
 
 export interface RunnerTurns {
+  readonly stopWorkflow?: (request: WorkflowStopRequest) => Effect.Effect<void>;
   /**
    * Starts a turn, as `turn.start` hands it over. A run already started is
    * ignored, so the thread can repeat itself.
@@ -280,6 +283,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly adapters: ReadonlyMap<ProviderInstanceId, ProviderAdapterV2["Service"]>;
   /** The thread's working directory on this machine. */
   readonly cwd: string;
+  /** CLAUDE_CONFIG_DIR used by this machine's Claude adapter. Absent: ~/.claude. */
+  readonly claudeConfigDir?: string;
   /** Makes `token` the one the harnesses present to the ModelGateway. */
   readonly useModelToken: (token: string) => Effect.Effect<void, PlatformError.PlatformError>;
   /** The machine's usage so far (`RunnerUsage.ts`). */
@@ -316,6 +321,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
   const sessions = new Map<ProviderInstanceId, OpenSession>();
+  const workflows = makeRunnerWorkflows(input.emit, undefined, input.claudeConfigDir);
+  const workflowThreads = new Map<RunId, OrchestrationV2ProviderThread>();
   const turns = new Map<RunId, Turn>();
   const pendingRuntimeRequests = new Map<
     RuntimeRequestId,
@@ -946,7 +953,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     /** Sends `event` as `runId`'s; a held end goes out under its own run, whatever runs since. */
     const deliver = (
       event: ProviderAdapterV2Event,
-      runId: RunId | null = latestRunId,
+      runId: RunId | null = event.type === "subagent.updated"
+        ? (event.subagent.runId ?? latestRunId)
+        : latestRunId,
       suppressTranscript = false,
     ) =>
       Effect.gen(function* () {
@@ -955,16 +964,31 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         // Complete only once the rows behind it would survive this machine.
         if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
         if (suppressTranscript) return;
+        const observed = yield* workflows.observe(
+          delivered,
+          runtime,
+          turns.get(runId)?.providerThread ?? workflowThreads.get(runId) ?? null,
+          runId,
+        );
         const stored =
           delivered.type === "turn_item.updated"
             ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
-            : delivered;
+            : observed.event;
         const item: RunnerItem = {
           kind: "provider",
           runId,
           event: encodeAdapterEvent(stored) as Record<string, unknown>,
         };
-        if (delivered.type !== "turn.terminal") return yield* input.emit(item);
+        if (delivered.type !== "turn.terminal") {
+          yield* input.emit(item);
+          if (observed.script !== null)
+            yield* input.emit({
+              kind: "provider",
+              runId,
+              event: { type: "workflow.script", ...observed.script },
+            });
+          return;
+        }
         // The run's end as reported: its last usage sample follows it.
         yield* ordered.withPermits(1)(
           Effect.gen(function* () {
@@ -1358,6 +1382,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           state.status = "running";
           state.session = session;
           state.providerThread = providerThread;
+          workflowThreads.set(turn.runId, providerThread);
           runningRunId = turn.runId;
           yield* reportUsage(turn.runId);
           yield* input.emit({
@@ -1627,6 +1652,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   ).pipe(Effect.forkIn(scope));
 
   return {
+    stopWorkflow: workflows.stop,
     start,
     cancelPreparation: preparations.cancel,
     handoffPreparation: preparations.handoff,

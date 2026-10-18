@@ -189,6 +189,25 @@ export const RunnerBuild = Schema.Struct({
 export type RunnerBuild = typeof RunnerBuild.Type;
 
 /** Something that happened on the machine, in the order it happened. */
+export const RetainedWorkflowScript = Schema.Struct({
+  subagentId: NodeId,
+  runId: RunId,
+  scriptPath: Schema.String,
+  revision: Schema.String,
+  contents: Schema.String.check(Schema.isMaxLength(256 * 1024)),
+  truncated: Schema.Boolean,
+});
+export type RetainedWorkflowScript = typeof RetainedWorkflowScript.Type;
+
+export const WorkflowStopRequest = Schema.Struct({
+  attempt: Schema.optional(PositiveInt),
+  subagentId: NodeId,
+  runId: RunId,
+  generation: PositiveInt,
+  taskId: Schema.String,
+});
+export type WorkflowStopRequest = typeof WorkflowStopRequest.Type;
+
 export const RunnerItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("preparation.progress"),
@@ -212,6 +231,11 @@ export const RunnerItem = Schema.Union([
     runId: RunId,
     preparationGeneration: PositiveInt,
     message: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workflow.stopped"),
+    ...WorkflowStopRequest.fields,
+    ok: Schema.Boolean,
   }),
   /** The harness has the turn: its session and provider thread as loaded. */
   Schema.Struct({
@@ -351,6 +375,7 @@ export const RunnerHello = Schema.Struct({
   ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  workflowStops: Schema.optional(Schema.Boolean),
   /** The Runner can answer a pending native provider request. */
   runtimeResponses: Schema.optional(Schema.Boolean),
   /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
@@ -382,6 +407,7 @@ export type RunnerRefusal = typeof RunnerRefusal.Type;
 
 /** Thread to Runner. */
 export const ThreadMessage = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("workflow.stop"), ...WorkflowStopRequest.fields }),
   Schema.Struct({
     type: Schema.Literal("welcome"),
     generation: PositiveInt,

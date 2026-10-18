@@ -92,6 +92,33 @@ export const makeThreadObjectApi = (
           ),
         ),
       ),
+    getWorkflowScript: (actor, input) =>
+      reply(
+        engine.use((service) =>
+          service.getWorkflowScript(actor, wire.workflowScriptInput.decode(input)).pipe(
+            Effect.map((value) => wire.workflowScriptReply.encode({ _tag: "ok", value })),
+            Effect.catchTags({
+              OrchestrationGetWorkflowScriptError: (error) =>
+                Effect.succeed(wire.workflowScriptReply.encode({ _tag: "error", error })),
+            }),
+          ),
+        ),
+      ),
+    stopWorkflow: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          service.stopWorkflow(actor, wire.workflowStopInput.decode(input)).pipe(
+            Effect.map(() => wire.workflowStopReply.encode({ _tag: "ok" })),
+            Effect.catchTags({
+              OrchestrationV2StopWorkflowError: (error) =>
+                Effect.succeed(wire.workflowStopReply.encode({ _tag: "error", error })),
+            }),
+          ),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
     answerSecret: async (actor, input) => {
       const result = await run(
         ThreadSecretRequests.use((service) =>
