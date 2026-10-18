@@ -22,7 +22,6 @@ import {
   WrenchIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useMemo } from "react";
 
 import { environmentContextsAtom } from "../../state/signalboxContexts";
 import { environmentFoldersAtom } from "../../state/signalboxFolders";
@@ -174,23 +173,12 @@ export function useContentSearchPalette<T extends SearchTitleThread>(input: {
   const contentEnvironmentIds = useContentSearchEnvironmentIds();
   const folders = useAtomValue(environmentFoldersAtom);
   const contexts = useAtomValue(environmentContextsAtom);
-  const threadByKey = useMemo(
-    () =>
-      new Map(
-        input.threads.map((thread) => [searchResultKey(thread.environmentId, thread.id), thread]),
-      ),
-    [input.threads],
+  const threadByKey = new Map(
+    input.threads.map((thread) => [searchResultKey(thread.environmentId, thread.id), thread]),
   );
-  const results = useMemo(
-    () => mergeHomeSearchResults({ titleMatches: [], threadByKey, hits: search.hits }),
-    [search.hits, threadByKey],
-  );
-  const legacyEnvironmentIds = useMemo(
-    () =>
-      input.environmentIds.filter(
-        (environmentId) => !contentEnvironmentIds.includes(environmentId),
-      ),
-    [contentEnvironmentIds, input.environmentIds],
+  const results = mergeHomeSearchResults({ titleMatches: [], threadByKey, hits: search.hits });
+  const legacyEnvironmentIds = input.environmentIds.filter(
+    (environmentId) => !contentEnvironmentIds.includes(environmentId),
   );
 
   const openResult = (result: HomeSearchResult<T>) => async () => {

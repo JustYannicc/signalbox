@@ -15,7 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useDebouncedValue } from "./queries";
@@ -167,14 +167,10 @@ const retrySearchPages = Atom.fn((key: string, get) =>
 /** Environments whose threads the search service answers for. */
 export function useContentSearchEnvironmentIds(): ReadonlyArray<EnvironmentId> {
   const configs = useAtomValue(environmentServerConfigsAtom);
-  return useMemo(
-    () =>
-      [...configs]
-        .filter(([, config]) => config.environment.capabilities.threadContentSearch === true)
-        .map(([environmentId]) => environmentId)
-        .toSorted(),
-    [configs],
-  );
+  return [...configs]
+    .filter(([, config]) => config.environment.capabilities.threadContentSearch === true)
+    .map(([environmentId]) => environmentId)
+    .toSorted();
 }
 
 export interface ContentSearchView extends ContentSearchState {
@@ -199,22 +195,19 @@ export function useContentSearch(rawQuery: string): ContentSearchView {
     readonly cursors: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>;
   }>({ query: null, cursors: new Map() });
   const cursors = extraPages.query === settledQuery ? extraPages.cursors : null;
-  const key = useMemo(
-    () =>
-      settledQuery === null
-        ? null
-        : encodeSearchPagesKey({
-            query: settledQuery,
-            targets: environmentIds.map((environmentId) => ({
-              environmentId,
-              cursors: [...(cursors?.get(environmentId) ?? [])],
-            })),
-          }),
-    [cursors, environmentIds, settledQuery],
-  );
+  const key =
+    settledQuery === null
+      ? null
+      : encodeSearchPagesKey({
+          query: settledQuery,
+          targets: environmentIds.map((environmentId) => ({
+            environmentId,
+            cursors: [...(cursors?.get(environmentId) ?? [])],
+          })),
+        });
   const state = useAtomValue(key === null ? EMPTY_SEARCH_ATOM : searchPagesAtom(key));
   const retryPages = useAtomSet(retrySearchPages);
-  const loadMore = useCallback(() => {
+  const loadMore = () => {
     if (settledQuery === null || state.nextCursors.size === 0) return;
     setExtraPages((previous) => {
       const base = previous.query === settledQuery ? previous.cursors : new Map();
@@ -225,15 +218,15 @@ export function useContentSearch(rawQuery: string): ContentSearchView {
       }
       return { query: settledQuery, cursors: next };
     });
-  }, [settledQuery, state.nextCursors]);
-  const retry = useCallback(() => {
+  };
+  const retry = () => {
     if (key === null) return;
     // An expired cursor can't be retried; search again from the first page.
     if (state.failure === "expired") {
       setExtraPages({ query: null, cursors: new Map() });
     }
     retryPages(key);
-  }, [key, retryPages, state.failure]);
+  };
 
   return {
     ...(key === null ? EMPTY_STATE : state),
