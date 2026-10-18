@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { automationDefaults, automationTriggers, runLogLines, runMarks } from "./columns.ts";
+import type { ChildRuns } from "./childRuns.ts";
 import type { WorkflowCompileResult } from "./compiled.ts";
 import { SavedWorkflowMeta, withDefaultCronTimezones } from "./cronTimezones.ts";
 import { liveColumns, makeDrafts, type DraftsShape } from "./drafts.ts";
@@ -76,6 +77,7 @@ export interface CatalogShape extends DraftsShape {
 
 export const makeCatalog = (deps: {
   readonly store: WorkflowStore;
+  readonly children: ChildRuns;
   readonly newId: (prefix: string) => Effect.Effect<string, AutomationError>;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly requireAutomation: (
@@ -273,6 +275,7 @@ export const makeCatalog = (deps: {
       if (!run) return yield* fail("That run doesn't exist.", { runId });
       const version = yield* versionView(run.automation_id, run.version);
       const steps = yield* store.listSteps(runId);
+      const children = yield* deps.children.forParent(runId);
       const watches = steps.flatMap((step) => {
         const watch = step.status === "waiting" ? stepWatch(step) : undefined;
         return watch ? [watch] : [];
@@ -284,7 +287,17 @@ export const makeCatalog = (deps: {
         graph: version?.graph ?? { nodes: [] },
         input: fromJson(run.input_json),
         output: fromJson(run.output_json),
-        steps: steps.map(stepView),
+        steps: steps.map((step) => {
+          const child = children.find(
+            (link) => link.step_key === step.step_key && link.attempt === step.attempt,
+          );
+          return {
+            ...stepView(step),
+            ...(child
+              ? { childRun: { runId: child.child_run_id, automationId: child.automation_id } }
+              : {}),
+          };
+        }),
         marks: runMarks(run),
         logs: runLogLines(run),
         ...(automation ? { watching: yield* deps.watching(scopeOf(automation), watches) } : {}),
