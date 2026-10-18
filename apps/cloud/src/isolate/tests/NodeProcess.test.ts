@@ -45,6 +45,16 @@ function host(pid: number, initialCwd = "/work/one"): NodeProcessHostContext {
   };
 }
 
+function monotonicClock(startNs: bigint) {
+  let nowNs = startNs;
+  return {
+    now: () => nowNs,
+    advanceBy: (durationNs: bigint) => {
+      nowNs += durationNs;
+    },
+  };
+}
+
 function thrownBy(run: () => unknown): unknown {
   try {
     run();
@@ -111,9 +121,11 @@ describe("Node process facet", () => {
   });
 
   it("exports own bound methods that remain callable after destructuring", async () => {
+    const clock = monotonicClock(9_000_000_000_000_000_000n);
     let killCall: { parentProcessHandle: unknown; selector: number; signal: number } | undefined;
     const context: NodeProcessHostContext = {
       ...host(45),
+      monotonicNowNs: clock.now,
       processes: {
         signalPid: (parentProcessHandle, selector, signal) => {
           killCall = { parentProcessHandle, selector, signal };
@@ -122,7 +134,7 @@ describe("Node process facet", () => {
       },
     };
     const process = createNodeProcess(context);
-    const { cwd, chdir, nextTick, kill } = process;
+    const { cwd, chdir, nextTick, kill, uptime } = process;
 
     expect(Object.hasOwn(process, "cwd")).toBe(true);
     expect(Object.hasOwn(process, "chdir")).toBe(true);
@@ -132,14 +144,32 @@ describe("Node process facet", () => {
     expect(Object.hasOwn(process, "exit")).toBe(true);
     expect(Object.hasOwn(process, "exitCode")).toBe(true);
     expect(Object.hasOwn(process, "hrtime")).toBe(true);
+    expect(Object.hasOwn(process, "uptime")).toBe(true);
     expect(Object.keys(process)).toContain("cwd");
     expect(Object.keys(process)).toContain("exitCode");
+    expect(Object.keys(process)).toContain("uptime");
     expect(cwd()).toBe("/work/one");
     chdir("/work/destructured");
     expect(cwd()).toBe("/work/destructured");
     expect(kill(45)).toBe(true);
     expect(killCall).toEqual({ parentProcessHandle: undefined, selector: 45, signal: 15 });
+    clock.advanceBy(1_234_567_890n);
+    expect(uptime()).toBe(1.23456789);
     await new Promise<void>((resolve) => nextTick(() => resolve()));
+  });
+
+  it("measures each logical process lifetime from its own captured monotonic start", () => {
+    const clock = monotonicClock(9_000_000_000_000_000_000n);
+    const first = createNodeProcess({ ...host(47), monotonicNowNs: clock.now });
+    clock.advanceBy(4_000_000_000n);
+    const second = createNodeProcess({ ...host(48), monotonicNowNs: clock.now });
+
+    clock.advanceBy(1_234_567_890n);
+
+    expect(first.uptime()).toBe(5.23456789);
+    expect(second.uptime()).toBe(1.23456789);
+    first.hrtime.bigint = () => 0n;
+    expect(first.uptime()).toBe(5.23456789);
   });
 
   it("reads cwd from the host resolver each time and preserves fail-closed ESTALE", () => {
