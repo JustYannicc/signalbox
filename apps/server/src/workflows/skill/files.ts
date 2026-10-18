@@ -13,8 +13,6 @@ import { TRIGGERS } from "./content/triggers.ts";
  * harness's skills folder; `automation_reference` serves the same text to
  * harnesses that don't load skills.
  */
-export const SKILL_NAME = "signalbox-automations";
-
 /** `automation_reference` topics and the files they serve. */
 export const SKILL_TOPICS = {
   steps: STEPS,
