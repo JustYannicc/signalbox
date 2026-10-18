@@ -85,6 +85,11 @@ export interface ClientTraceDimension {
   readonly orgId: string | null;
 }
 
+export interface ClientFolderDimension {
+  readonly folderId: string;
+  readonly orgId: string | null;
+}
+
 /** A PR diff response that keeps service failures typed across Durable Object RPC. */
 export type PullRequestDiffReply =
   | { readonly _tag: "success"; readonly value: PullRequestDiffResult }
@@ -222,6 +227,10 @@ export interface UserObjectApi {
   readonly clientTraceDimensions: (
     threadIds: ReadonlyArray<string>,
   ) => Promise<ReadonlyArray<ClientTraceDimension>>;
+  /** Resolves folder-only telemetry context from this user's current folder tree. */
+  readonly clientFolderDimensions: (
+    folderIds: ReadonlyArray<string>,
+  ) => Promise<ReadonlyArray<ClientFolderDimension>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
   readonly recordDriveAccess: (entry: DriveAccessEntry) => Promise<void>;
   /** The user's role in a drive right now, or null when they can't open it (`UserDrives`). */
@@ -374,6 +383,7 @@ const METHODS = Object.keys({
   onePasswordToken: true,
   contextIds: true,
   clientTraceDimensions: true,
+  clientFolderDimensions: true,
   recordDriveAccess: true,
   driveAccess: true,
   readableDrives: true,

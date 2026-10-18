@@ -1,5 +1,6 @@
 export * from "./remote.ts";
 export {
+  RemoteEnvironmentAuthorization,
   type AuthorizedRemoteEnvironment,
   type AuthorizedRemoteHttpEnvironment,
 } from "./service.ts";

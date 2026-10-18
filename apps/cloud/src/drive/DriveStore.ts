@@ -9,6 +9,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
 import type {
   DriveWriter,
   ThreadRefs,
@@ -24,6 +25,7 @@ import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
 import * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import * as DrivePullStore from "./DrivePullStore.ts";
 import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveRevisionStore from "./DriveRevisionStore.ts";
 import * as DriveRepositoryPublication from "./DriveRepositoryPublication.ts";
@@ -195,6 +197,16 @@ export class DriveStore extends Context.Service<
         readonly new: Oid;
       }>,
     ) => Effect.Effect<RefWrite, SqlError>;
+    /** Saves a pull's thread refs and immutable retry receipt in one transaction. */
+    readonly savePull: (
+      writer: DriveWriter,
+      request: PullSaveRequest,
+    ) => Effect.Effect<PullResult, SqlError>;
+    /** Reads the exact result retained for one thread's pull operation. */
+    readonly pullReceipt: (
+      writer: DriveWriter,
+      id: string,
+    ) => Effect.Effect<PullResult | null, SqlError>;
     readonly reconcile: (
       writer: DriveWriter,
       request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
@@ -418,6 +430,7 @@ const migrations = Migrator.fromRecord({
   "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
   "0009_ref_deletions": DriveEvents.allowDeletedRefs,
   "0010_drive_repository_publication": DriveRepositoryPublication.createTables,
+  "0010_drive_pull_receipts": DrivePullStore.createTables,
   "0010_shared_history_packs": DriveHistory.createTables,
   "0011_drive_publication_creation_attempts": DriveRepositoryPublication.addCreationAttempts,
   "0011_shared_history_transfers": DriveHistory.createTransferTables,
@@ -1031,6 +1044,19 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
     internalRef: storedRef,
     fence,
   });
+  const pullOperations = DrivePullStore.makeOperations({
+    sql,
+    role: members.role,
+    threadRow,
+    ref,
+    missing,
+    isCommit,
+    threadRef,
+    wipRef,
+    setRef,
+    removeRef: (name) => sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid),
+    land,
+  });
 
   /** Every commit `main` reaches, as a recursive CTE to join against. */
   const REACH = sql`reach(oid) AS (
@@ -1129,6 +1155,7 @@ const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
     unreconciled,
     ...revisionOperations,
     ...publicationOperations,
+    ...pullOperations,
   });
 });
 

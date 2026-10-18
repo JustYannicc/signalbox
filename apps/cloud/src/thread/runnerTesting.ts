@@ -186,6 +186,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  pulls: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>
@@ -425,3 +426,6 @@ export const hostFor = (
     holdsTurn: () => Promise.resolve(holds()),
     afterChange: () => Promise.resolve(),
   }));
+
+export { IDLE_TAIL_MS } from "./runner/MachineBackend.ts";
+export { onRunnerMessage, pushRunnerWork } from "./runner/runnerSockets.ts";
