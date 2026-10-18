@@ -865,6 +865,7 @@ const make = Effect.gen(function* () {
         projection !== null &&
         untraced !== null &&
         lease.status === "connected" &&
+        upgrade.type === "none" &&
         !stoppingPrevious
       ) {
         if (preparation === null || preparation.runId !== untraced.runId) {
