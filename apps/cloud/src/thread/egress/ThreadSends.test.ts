@@ -213,6 +213,72 @@ const pendingRequests = (engine: ThreadEngine.ThreadEngine["Service"]) =>
   );
 
 describe("ThreadSends", () => {
+  it.effect.each(["accept", "decline", "acceptAlways"] as const)(
+    "uses a %s answer committed after the send decision read its projection",
+    (decision) => {
+      const owned = fakeOwner();
+      return midTurn(owned, ({ engine, sends, asks }) =>
+        Effect.gen(function* () {
+          yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 });
+          const [request] = yield* pendingRequests(engine);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          owned.duringFolderLookup(
+            Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(release)),
+          );
+          const sending = yield* sends
+            .authorize({ host: HOST, names: ["KEY"], waitMs: 0 })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          yield* respond(engine, request!.id, decision);
+          yield* Deferred.succeed(release, undefined);
+          expect((yield* Fiber.join(sending))._tag).toBe(
+            decision === "decline" ? "refused" : "allowed",
+          );
+          yield* sends.settle;
+          expect(owned.kept).toEqual(
+            decision === "acceptAlways"
+              ? [{ environmentId: environment, name: "KEY", host: HOST }]
+              : [],
+          );
+          expect(yield* asks).toHaveLength(1);
+          expect((yield* snapshot(engine)).projection.runtimeRequests).toHaveLength(1);
+        }),
+      );
+    },
+  );
+
+  it.effect("does not restart a send decision for an unrelated runner node update", () => {
+    const owned = fakeOwner();
+    return midTurn(owned, ({ engine, sends, batch, asks }) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        owned.duringFolderLookup(
+          Effect.andThen(Deferred.succeed(entered, undefined), Deferred.await(release)),
+        );
+        const sending = yield* sends
+          .authorize({ host: HOST, names: ["KEY"], waitMs: 0 })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const before = (yield* snapshot(engine)).projection;
+        const run = before.runs[0]!;
+        const root = before.nodes.find((node) => node.id === run.rootNodeId)!;
+        yield* batch([
+          {
+            kind: "provider",
+            runId: run.id,
+            event: { type: "node.updated", node: encodeNode({ ...root, status: "waiting" }) },
+          },
+        ]);
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* Fiber.join(sending))._tag).toBe("waiting");
+        expect(owned.folderLookups).toHaveLength(2);
+        expect(yield* asks).toHaveLength(1);
+      }),
+    );
+  });
+
   it.effect("rolls back the approval events when saving their ask fails", () =>
     midTurn(fakeOwner(), ({ engine, sends, asks, sql }) =>
       Effect.gen(function* () {

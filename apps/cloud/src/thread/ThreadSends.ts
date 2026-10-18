@@ -180,17 +180,24 @@ export const layer = Layer.effect(
 
     /** Asks the person to let `names` go to `host` this turn; null when the run can't ask. */
     const ask = (
+      expected: OrchestrationV2ThreadProjection,
       run: OrchestrationV2Run,
       folderId: FolderId | null,
       host: string,
       names: ReadonlyArray<string>,
     ) =>
-      engine.apply((projection, ctx) =>
+      engine.apply<RuntimeRequestId | null | { readonly _tag: "retry" }>((projection, ctx) =>
         Effect.gen(function* () {
           const current = projection === null ? undefined : activeRun(projection);
           if (projection === null || current === undefined || current.id !== run.id) {
             return { events: [], result: null };
           }
+          const asks = yield* Effect.orDie(withSql(readSecretAsks({ host })));
+          const before = answersOf(expected);
+          const now = answersOf(projection);
+          // An answer committed since this decision must be read before another ask is allocated.
+          if (asks.some((ask) => before(ask) !== now(ask)))
+            return { events: [], result: { _tag: "retry" } as const };
           const ordinal = (yield* Effect.orDie(withSql(countSecretAsks))) + 1;
           const requestId = secretSendRequestId(current.id, ordinal);
           const plural = names.length === 1 ? "this secret" : "these secrets";
@@ -305,10 +312,11 @@ export const layer = Layer.effect(
                 wanted.every((name) => candidate.names.includes(name)),
             );
             return pending === undefined
-              ? yield* ask(run, folderId, host, wanted)
+              ? yield* ask(projection, run, folderId, host, wanted)
               : pending.requestId;
           }),
         );
+        if (requestId !== null && typeof requestId === "object") return yield* decide(host, names);
         return requestId === null
           ? ({
               _tag: "refused",
