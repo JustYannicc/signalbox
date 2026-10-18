@@ -1,3 +1,4 @@
+import * as NodeConsole from "node:console";
 import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import { describe, expect, it } from "@effect/vitest";
 import { createNodeBridge, installNodeBridge } from "../NodeBridge.ts";
@@ -51,6 +52,15 @@ describe("Node builtin routing", () => {
     );
     expect(() => bridge.require("node:unreviewed")).toThrow(
       expect.objectContaining({ code: "NODE_BUILTIN_UNKNOWN" }),
+    );
+  });
+
+  it("console routing preserves the supplied export and fails closed when absent", () => {
+    const bridge = createNodeBridge({ "node:console": NodeConsole });
+    expect(bridge.require("console")).toBe(NodeConsole);
+    expect(bridge.require("node:console")).toBe(NodeConsole);
+    expect(() => createNodeBridge({}).require("node:console")).toThrow(
+      expect.objectContaining({ code: "NODE_BUILTIN_UNAVAILABLE" }),
     );
   });
 
