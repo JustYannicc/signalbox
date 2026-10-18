@@ -34,6 +34,11 @@ export interface DeviceTabTarget {
   leaseId?: string;
 }
 
+export interface PendingDeviceOpen {
+  readonly requestId: string;
+  readonly hostId: string;
+}
+
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
@@ -108,6 +113,7 @@ export interface ThreadPanelVisibility {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  pendingDeviceOpenByThreadKey: Record<string, PendingDeviceOpen>;
   pendingMaximizeThreadKey: string | null;
   requestMaximize: (ref: ScopedThreadRef) => void;
   consumeMaximizeRequest: (ref: ScopedThreadRef) => boolean;
@@ -128,6 +134,12 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
   ) => void;
+  beginDeviceOpen: (
+    ref: ScopedThreadRef,
+    requestId: string,
+    target: Pick<PendingDeviceOpen, "hostId">,
+  ) => void;
+  endDeviceOpen: (ref: ScopedThreadRef, requestId: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -587,6 +599,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
       byThreadKey: {},
+      pendingDeviceOpenByThreadKey: {},
       pendingMaximizeThreadKey: null,
       requestMaximize: (ref) => set({ pendingMaximizeThreadKey: scopedThreadKey(ref) }),
       consumeMaximizeRequest: (ref) => {
@@ -597,6 +610,21 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
       closeRevisionByThreadKey: {},
+      beginDeviceOpen: (ref, requestId, target) =>
+        set((state) => ({
+          pendingDeviceOpenByThreadKey: {
+            ...state.pendingDeviceOpenByThreadKey,
+            [scopedThreadKey(ref)]: { requestId, ...target },
+          },
+        })),
+      endDeviceOpen: (ref, requestId) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if (state.pendingDeviceOpenByThreadKey[threadKey]?.requestId !== requestId) return state;
+          const { [threadKey]: _pending, ...pendingDeviceOpenByThreadKey } =
+            state.pendingDeviceOpenByThreadKey;
+          return { pendingDeviceOpenByThreadKey };
+        }),
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
       openProactive: (ref, surface, expectedUserActionRevision) => {
@@ -636,11 +664,27 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const id =
               `device:${encodeURIComponent(target.hostId)}:${encodeURIComponent(target.deviceId)}` as const;
             if (automatic && current.dismissedDeviceSurfaceIds?.includes(id)) return current;
-            const surface: RightPanelSurface = { id, kind: "device", target };
             const existing = current.surfaces.find((entry) => entry.id === id);
-            const surfaces = existing
-              ? current.surfaces.filter((entry) => entry.id !== "device")
-              : current.surfaces.map((entry) => (entry.id === "device" ? surface : entry));
+            const existingTarget = existing?.kind === "device" ? existing.target : undefined;
+            const owner =
+              target.sessionId !== undefined && target.leaseId !== undefined
+                ? { sessionId: target.sessionId, leaseId: target.leaseId }
+                : existingTarget?.sessionId !== undefined && existingTarget.leaseId !== undefined
+                  ? {
+                      sessionId: existingTarget.sessionId,
+                      leaseId: existingTarget.leaseId,
+                    }
+                  : {};
+            const surface: RightPanelSurface = {
+              ...(existing?.kind === "device" ? existing : {}),
+              id,
+              kind: "device",
+              target: { ...target, ...owner },
+            };
+            const surfaces = current.surfaces.flatMap((entry) => {
+              if (entry.id === "device") return [];
+              return entry.id === id ? [surface] : [entry];
+            });
             return upsertSurface(
               {
                 ...current,
@@ -649,7 +693,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   (entry) => entry !== id,
                 ),
               },
-              existing ?? surface,
+              surface,
             );
           }),
         ),
@@ -1041,7 +1085,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             !(threadKey in state.byThreadKey) &&
             !(threadKey in state.threadPanelVisibilityByThreadKey) &&
             !(threadKey in state.userActionRevisionByThreadKey) &&
-            !(threadKey in state.closeRevisionByThreadKey)
+            !(threadKey in state.closeRevisionByThreadKey) &&
+            !(threadKey in state.pendingDeviceOpenByThreadKey)
           ) {
             return state;
           }
@@ -1052,11 +1097,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             state.userActionRevisionByThreadKey;
           const { [threadKey]: _closeRevision, ...closeRevisionByThreadKey } =
             state.closeRevisionByThreadKey;
+          const { [threadKey]: _pending, ...pendingDeviceOpenByThreadKey } =
+            state.pendingDeviceOpenByThreadKey;
           return {
             byThreadKey,
             threadPanelVisibilityByThreadKey,
             userActionRevisionByThreadKey,
             closeRevisionByThreadKey,
+            pendingDeviceOpenByThreadKey,
           };
         }),
     }),

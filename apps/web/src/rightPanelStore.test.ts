@@ -23,6 +23,7 @@ beforeEach(() => {
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({
     byThreadKey: {},
+    pendingDeviceOpenByThreadKey: {},
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
@@ -171,6 +172,51 @@ describe("rightPanelStore", () => {
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
     ).toHaveLength(0);
+  });
+
+  it("transfers the exact device owner when reopening an existing device surface", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      name: "Pixel",
+      platform: "android",
+    } as const;
+    store.openDevice(refA, target);
+    store.renameDevice(refA, "device:nucbox:emulator-5580", "Android test");
+    store.openDevice(refA, {
+      ...target,
+      sessionId: "panel-owner",
+      leaseId: "device-walk-4",
+    });
+
+    let surface = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)
+      .surfaces[0];
+    expect(surface).toMatchObject({
+      id: "device:nucbox:emulator-5580",
+      title: "Android test",
+      target: { ...target, sessionId: "panel-owner", leaseId: "device-walk-4" },
+    });
+
+    store.openDevice(refA, target);
+    surface = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)
+      .surfaces[0];
+    expect(surface).toMatchObject({
+      target: { ...target, sessionId: "panel-owner", leaseId: "device-walk-4" },
+    });
+  });
+
+  it("clears only the current in-flight manual device reservation", () => {
+    const store = useRightPanelStore.getState();
+    const target = { hostId: "nucbox" } as const;
+    store.beginDeviceOpen(refA, "request-first", target);
+    store.beginDeviceOpen(refA, "request-second", target);
+    store.endDeviceOpen(refA, "request-first");
+    expect(useRightPanelStore.getState().pendingDeviceOpenByThreadKey).toMatchObject({
+      ["env-1:thread-A"]: { requestId: "request-second", ...target },
+    });
+    store.endDeviceOpen(refA, "request-second");
+    expect(useRightPanelStore.getState().pendingDeviceOpenByThreadKey).toEqual({});
   });
 
   it.each(["one", "all", "others", "right"])(

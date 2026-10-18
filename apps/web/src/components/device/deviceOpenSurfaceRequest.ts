@@ -13,12 +13,13 @@ export type DeviceOpenSurfaceSettlement<E> =
 export const settleDeviceOpenForSurface = async <E>(input: {
   readonly signal: AbortSignal;
   readonly isCurrent: () => boolean;
+  readonly requestId?: string;
   readonly open: (signal: AbortSignal, requestId: string) => Promise<DeviceOpenSurfaceResult<E>>;
   readonly cancel: (requestId: string) => Promise<unknown>;
   readonly release: (session: DeviceSession) => Promise<unknown>;
   readonly accept: (result: DeviceOpenSurfaceResult<E>) => void;
 }): Promise<DeviceOpenSurfaceSettlement<E>> => {
-  const requestId = randomUUID();
+  const requestId = input.requestId ?? randomUUID();
   let cancellation: Promise<unknown> | undefined;
   const cancel = () => (cancellation ??= input.cancel(requestId));
   const cancelQuietly = async () => {

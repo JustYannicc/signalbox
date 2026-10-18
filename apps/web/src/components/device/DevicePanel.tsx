@@ -19,7 +19,7 @@ import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list"
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { deviceEnvironment, useDeviceAgentCommandFailure, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -27,6 +27,7 @@ import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { settleDeviceOpenForSurface } from "./deviceOpenSurfaceRequest";
+import { deferDeviceLeaseRelease, retainDeviceLeaseOwner } from "./deviceLeaseOwnership";
 import { DeviceAgentCommandFailureNotice } from "./DeviceAgentCommandFailureNotice";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -54,7 +55,6 @@ export function DevicePanel(props: {
   const [panelSession, setPanelSession] = useState<DeviceSession | null>(null);
   const panelSessionRef = useRef<DeviceSession | null>(null);
   const preserveLeaseForFloat = useRef(false);
-  const targetLeaseConsumed = useRef(false);
   const selectionControllerRef = useRef<AbortController | null>(null);
   const selectionGenerationRef = useRef(0);
   const [leaseWaiting, setLeaseWaiting] = useState(false);
@@ -101,13 +101,28 @@ export function DevicePanel(props: {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let requestController: AbortController | null = null;
     let owner = panelSessionRef.current;
+    const targetOwner =
+      target.sessionId !== undefined && target.leaseId !== undefined
+        ? {
+            threadId,
+            hostId: target.hostId,
+            deviceId: target.deviceId,
+            sessionId: target.sessionId,
+            leaseId: target.leaseId,
+          }
+        : null;
     if (
       owner &&
       (owner.threadId !== threadId ||
         owner.hostId !== target.hostId ||
-        owner.deviceId !== target.deviceId)
+        owner.deviceId !== target.deviceId ||
+        (targetOwner !== null &&
+          (owner.sessionId !== targetOwner.sessionId || owner.leaseId !== targetOwner.leaseId)))
     )
       owner = null;
+    const retainedOwner = owner ?? targetOwner;
+    let targetLeaseConsumed = false;
+    if (retainedOwner !== null) retainDeviceLeaseOwner({ environmentId, ...retainedOwner });
     const heartbeat = async () => {
       const controller = new AbortController();
       requestController = controller;
@@ -126,10 +141,8 @@ export function DevicePanel(props: {
                 requestId,
                 ...(owner !== null
                   ? { sessionId: owner.sessionId, leaseId: owner.leaseId }
-                  : !targetLeaseConsumed.current &&
-                      target.sessionId !== undefined &&
-                      target.leaseId !== undefined
-                    ? { sessionId: target.sessionId, leaseId: target.leaseId }
+                  : !targetLeaseConsumed && targetOwner !== null
+                    ? { sessionId: targetOwner.sessionId, leaseId: targetOwner.leaseId }
                     : {}),
               },
             },
@@ -145,8 +158,14 @@ export function DevicePanel(props: {
               requestId,
             },
           }),
-        release: (session) =>
-          close({
+        release: (session) => {
+          if (
+            retainedOwner !== null &&
+            session.sessionId === retainedOwner.sessionId &&
+            session.leaseId === retainedOwner.leaseId
+          )
+            return Promise.resolve();
+          return close({
             environmentId,
             input: {
               threadId,
@@ -155,7 +174,8 @@ export function DevicePanel(props: {
               sessionId: session.sessionId,
               leaseId: session.leaseId,
             },
-          }),
+          });
+        },
         accept: () => undefined,
       });
       if (requestController === controller) requestController = null;
@@ -164,7 +184,7 @@ export function DevicePanel(props: {
       if (result._tag === "Success") {
         owner = result.value;
         panelSessionRef.current = owner;
-        targetLeaseConsumed.current = true;
+        targetLeaseConsumed = true;
         setPanelSession(owner);
         setLeaseWaiting(false);
         setOperationError(null);
@@ -178,16 +198,21 @@ export function DevicePanel(props: {
           "reason" in failure &&
           failure.reason === "stale_session";
         if (owner !== null && staleSession) {
+          const staleOwner = owner;
           owner = null;
           panelSessionRef.current = null;
           setPanelSession(null);
+          targetLeaseConsumed =
+            targetOwner !== null &&
+            staleOwner.sessionId === targetOwner.sessionId &&
+            staleOwner.leaseId === targetOwner.leaseId;
           setLeaseWaiting(true);
           timer = setTimeout(() => void heartbeat(), 0);
           return;
         }
         if (owner === null) {
-          if (!targetLeaseConsumed.current && target.sessionId !== undefined) {
-            targetLeaseConsumed.current = true;
+          if (!targetLeaseConsumed && targetOwner !== null) {
+            targetLeaseConsumed = true;
             setLeaseWaiting(true);
             timer = setTimeout(() => void heartbeat(), 0);
             return;
@@ -204,27 +229,24 @@ export function DevicePanel(props: {
       if (timer !== undefined) clearTimeout(timer);
       requestController?.abort();
       requestController = null;
-      const released = owner;
       if (preserveLeaseForFloat.current) {
         preserveLeaseForFloat.current = false;
-        targetLeaseConsumed.current = true;
-      } else if (released !== null) {
-        void close({
-          environmentId,
-          input: {
-            threadId,
-            hostId: released.hostId,
-            deviceId: released.deviceId,
-            sessionId: released.sessionId,
-            leaseId: released.leaseId,
-          },
-        });
-        panelSessionRef.current = null;
-        setPanelSession(null);
-        targetLeaseConsumed.current = true;
       } else {
-        targetLeaseConsumed.current = true;
-        setPanelSession(null);
+        const released = owner ?? targetOwner;
+        if (released !== null) {
+          deferDeviceLeaseRelease({ environmentId, ...released }, () =>
+            close({
+              environmentId,
+              input: {
+                threadId,
+                hostId: released.hostId,
+                deviceId: released.deviceId,
+                sessionId: released.sessionId,
+                leaseId: released.leaseId,
+              },
+            }),
+          );
+        }
       }
     };
   }, [cancelOpen, close, environmentId, open, props.surface.target, props.visible, threadId]);
@@ -253,11 +275,16 @@ export function DevicePanel(props: {
     const controller = new AbortController();
     selectionControllerRef.current = controller;
     const generation = ++selectionGenerationRef.current;
+    const requestId = randomUUID();
     setOperationError(null);
     setPendingDevice(device);
+    useRightPanelStore.getState().beginDeviceOpen(props.threadRef, requestId, {
+      hostId: device.hostId,
+    });
     try {
       await settleDeviceOpenForSurface({
         signal: controller.signal,
+        requestId,
         isCurrent: () => generation === selectionGenerationRef.current,
         open: (signal, requestId) =>
           open(
@@ -312,6 +339,7 @@ export function DevicePanel(props: {
         },
       });
     } finally {
+      useRightPanelStore.getState().endDeviceOpen(props.threadRef, requestId);
       if (generation === selectionGenerationRef.current) {
         selectionControllerRef.current = null;
         setPendingDevice(null);
