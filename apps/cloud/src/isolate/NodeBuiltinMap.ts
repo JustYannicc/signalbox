@@ -30,6 +30,7 @@ export const NODE_BUILTIN_ROUTES = {
   stream: "workerd",
   "stream/consumers": "workerd",
   "stream/promises": "workerd",
+  "stream/web": "workerd",
   string_decoder: "workerd",
   timers: "workerd",
   "timers/promises": "workerd",

@@ -108,7 +108,11 @@
       // Prepared by the VM builder from pinned source paths rather than runtime imports.
       "ignore": ["src/isolate/node/vm/vendor/**"],
       // `cloudflare:workers` is a Workers runtime module, not a package.
-      "ignoreDependencies": ["cloudflare", "wrangler"], // Wrangler runs through the process cleanup wrapper.
+      "ignoreDependencies": [
+        "cloudflare",
+        "wrangler", // Wrangler runs through the process cleanup wrapper.
+        "punycode", // The web package builder resolves punycode/ to select npm over the Node builtin.
+      ],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
