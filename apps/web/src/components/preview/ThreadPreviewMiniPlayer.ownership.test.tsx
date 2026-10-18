@@ -300,7 +300,8 @@ describe("ThreadPreviewMiniPlayer device ownership", () => {
       const input = (request as { input: DeviceCloseInput }).input;
       closeInputs.push(input);
       const current = owners.get(input.sessionId ?? "");
-      if (current?.leaseId === input.leaseId) owners.delete(current.sessionId);
+      if (current !== undefined && current.leaseId === input.leaseId)
+        owners.delete(current.sessionId);
       return Promise.resolve({ _tag: "Success" as const, value: undefined });
     });
     usePreviewMiniPlayerStore.getState().open(threadRef, source);
@@ -391,7 +392,8 @@ describe("ThreadPreviewMiniPlayer device ownership", () => {
       const input = (request as { input: DeviceCloseInput }).input;
       closeInputs.push(input);
       const current = owners.get(input.sessionId ?? "");
-      if (current?.leaseId === input.leaseId) owners.delete(current.sessionId);
+      if (current !== undefined && current.leaseId === input.leaseId)
+        owners.delete(current.sessionId);
       fake.snapshot = {
         ...(fake.snapshot as DeviceServiceState),
         sessions: [...owners.values()],

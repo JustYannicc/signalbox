@@ -339,7 +339,11 @@ function setupLeaseService() {
     const input = (request as { input: DeviceCloseInput }).input;
     closeInputs.push(input);
     const current = owners.get(input.sessionId ?? "");
-    if (current?.leaseId === input.leaseId && current.threadId === input.threadId)
+    if (
+      current !== undefined &&
+      current.leaseId === input.leaseId &&
+      current.threadId === input.threadId
+    )
       owners.delete(current.sessionId);
     publish([...owners.values()]);
     return { _tag: "Success" as const, value: undefined };
