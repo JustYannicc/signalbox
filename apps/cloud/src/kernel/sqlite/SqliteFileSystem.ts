@@ -1,9 +1,10 @@
-import type { Storage } from "../storage.ts";
+import type { PosixStorage } from "../PosixStorage.ts";
 import { SqliteChunks } from "./SqliteChunks.ts";
 import { SqliteInodes } from "./SqliteInodes.ts";
 import type { FacetStorage } from "./SqliteDatabase.ts";
 
 import { SqliteHydration } from "./SqliteHydration.ts";
+import { SqlitePosixMetadata } from "./SqlitePosixMetadata.ts";
 
 export class PendingContentError extends Error {
   readonly code = "EAGAIN";
@@ -23,7 +24,8 @@ export function createSqliteFileSystem(storage: FacetStorage, nowNs: () => bigin
     inodes.stat(inode);
     if (hydration.pending(inode)) throw new PendingContentError(inode);
   };
-  const fs: Storage = {
+  const fs: PosixStorage = {
+    posix: new SqlitePosixMetadata(inodes),
     root: inodes.root,
     lookup: inodes.lookup.bind(inodes),
     stat: inodes.stat.bind(inodes),

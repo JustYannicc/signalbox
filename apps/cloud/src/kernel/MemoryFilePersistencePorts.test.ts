@@ -97,6 +97,45 @@ describe("memory file persistence ports", () => {
     expect(canceled).toMatchObject({ status: "error", error: { code: "CANCELLED" } });
   });
 
+  it("captures detached POSIX metadata while leaving seeded legacy metadata unknown", async () => {
+    const ports = createMemoryFilePersistencePorts();
+    ports.seedFile(base, "file", new Uint8Array([1]));
+    expect(ports.inspectTree(base)?.["file"]?.posix).toBeUndefined();
+
+    const metadata = { mode: 0o6751, uid: 42, gid: 24 };
+    const result = await ports.commits.commit({
+      at: base,
+      turnId: "posix-copy",
+      changedInodes: [
+        {
+          ...changed(1n, ["file"], [], stat("file", 1n), async function* () {
+            yield new Uint8Array([2]);
+          }),
+          posix: metadata,
+        },
+      ],
+      signal: new AbortController().signal,
+    });
+    if (result.status !== "ok") throw new Error(result.error.message);
+
+    metadata.mode = 0o640;
+    const committedAt = { ...base, commit: result.value.commit };
+    expect(ports.inspectTree(committedAt)?.["file"]?.posix).toEqual({
+      mode: 0o6751,
+      uid: 42,
+      gid: 24,
+    });
+
+    const detached = ports.inspectTree(committedAt)?.["file"]?.posix;
+    if (!detached) throw new Error("Expected the committed inode to have POSIX metadata");
+    Object.assign(detached, { mode: 0o600 });
+    expect(ports.inspectTree(committedAt)?.["file"]?.posix).toEqual({
+      mode: 0o6751,
+      uid: 42,
+      gid: 24,
+    });
+  });
+
   it("applies renames, deletions, directories, and symlinks while preserving other files", async () => {
     const ports = createMemoryFilePersistencePorts();
     ports.seedFile(base, "old-name", new Uint8Array([1, 2]));
