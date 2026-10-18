@@ -320,7 +320,8 @@ export const makeHostedDriver = (core: EngineInternals) =>
     const finish: HostedRunsShape["finish"] = (runId, end, marks) =>
       Effect.gen(function* () {
         const run = yield* store.getRun(runId);
-        if (!run || run.status !== "running") return;
+        if (!run) return;
+        if (run.status !== "running") return yield* core.settleChild(runId);
         const current = (yield* saveMarks(run, marks))
           ? ((yield* store.getRun(runId)) ?? run)
           : run;

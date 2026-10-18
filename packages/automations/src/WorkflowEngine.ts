@@ -3,6 +3,7 @@ import {
   ProjectId,
   resolveAutomationAskAnswer,
   ThreadId,
+  WorkflowMeta,
   type Automation,
   type AutomationAskAnswerInput,
   type AutomationBuiltIn,
@@ -22,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -37,10 +39,13 @@ import { makeTaskLifecycleActions } from "./taskLifecycleActions.ts";
 import { makeTaskLifecycleRuns } from "./taskLifecycleRuns.ts";
 
 import { makeAttachments } from "./attachments.ts";
+import { decodeWorkflowInput, decodeWorkflowOutput } from "./blockContracts.ts";
+import { childSettlement, makeChildRuns } from "./childRuns.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
 import { makeExternalRuns, type ExternalRuns } from "./external.ts";
+import { AutomationFolders } from "./folderScope.ts";
 import { makeCatalog, type AuthorizeAutomation, type CatalogShape } from "./catalog.ts";
-import { automationDefaults, runLogLines, stepAsk } from "./columns.ts";
+import { automationDefaults, errorDetailOf, runLogLines, stepAsk } from "./columns.ts";
 import { makeConnections } from "./connections.ts";
 import type {
   EndRun,
@@ -88,6 +93,7 @@ import * as WorkflowStore from "./WorkflowStore.ts";
 
 const decodeTaskLifecycle = Schema.decodeUnknownEffect(TaskLifecycleInputSchema);
 const encodeTaskLifecycleResult = Schema.encodeSync(Schema.toCodecJson(TaskLifecycleResultSchema));
+const decodeWorkflowMeta = Schema.decodeUnknownEffect(WorkflowMeta);
 
 type Store = WorkflowStore.WorkflowStore;
 
@@ -201,6 +207,8 @@ export const makeEngine = <R>(
   Effect.gen(function* () {
     const store: Store = yield* WorkflowStore.make;
     const links = yield* RunLinkStore.make;
+    const children = yield* makeChildRuns;
+    const folders = yield* Effect.serviceOption(AutomationFolders);
     const hosts = yield* HostStore.make;
     const builtinTools = makeBuiltinTools({
       approvalOf: (runId) =>
@@ -415,25 +423,102 @@ export const makeEngine = <R>(
       connections,
       builtinTools,
       callback: (runId) => ingress.createCallback(runId),
+      projects: (projectId) =>
+        Option.isSome(folders) ? folders.value.projects(projectId) : Effect.succeed([projectId]),
+      existingChild: (step) =>
+        Effect.gen(function* () {
+          const link = yield* children.get(step.run_id, step.step_key, step.attempt);
+          return link
+            ? { runId: link.child_run_id, run: yield* store.getRun(link.child_run_id) }
+            : undefined;
+        }),
       resolveBuiltIn: (name, automation) =>
         builtIns.resolveName(name, {
           projectId: automation.project_id,
           defaults: automationDefaults(automation),
         }),
-      launchChild: ({ automation, input, parent }) =>
-        launchRun({ automation, input, trigger: "automation", parent }).pipe(
-          Effect.map(({ run }) => run),
-        ),
+      launchChild: ({ automation, input, parent, step, wait }) =>
+        launchRun({
+          automation,
+          input,
+          trigger: "automation",
+          parent,
+          claim: (childRunId) =>
+            Effect.gen(function* () {
+              const prior = yield* children.get(parent.run_id, step.step_key, step.attempt);
+              if (prior) return prior.child_run_id;
+              const current = yield* store.getRun(parent.run_id);
+              if (current?.status !== "running")
+                return yield* fail("The parent run already ended.");
+              yield* children.claim({
+                parent_run_id: parent.run_id,
+                step_key: step.step_key,
+                attempt: step.attempt,
+                child_run_id: childRunId,
+                wait: wait ? 1 : 0,
+              });
+              return undefined;
+            }),
+        }).pipe(Effect.map(({ run }) => run)),
     });
 
+    const settleChild = (runId: string) =>
+      Effect.gen(function* () {
+        const link = yield* children.parent(runId);
+        if (!link || link.wait !== 1) return;
+        if ((yield* store.getRunMeta(link.parent_run_id))?.status !== "running") return;
+        const step = yield* store.getStep(link.parent_run_id, link.step_key);
+        if (!step || step.attempt !== link.attempt) return;
+        const child = yield* store.getRun(runId);
+        const outcome = child ? childSettlement(child) : undefined;
+        if (!outcome || (yield* complete(link.parent_run_id, link.step_key, outcome))) return;
+        const settled = yield* store.getStep(link.parent_run_id, link.step_key);
+        if (settled?.status === "succeeded")
+          yield* theDriver().settled(link.parent_run_id, link.step_key, {
+            ok: true,
+            value: fromJson(settled.result_json),
+          });
+        else if (settled?.status === "failed")
+          yield* theDriver().settled(link.parent_run_id, link.step_key, {
+            ok: false,
+            error: settled.error ?? "The step failed.",
+            detail: errorDetailOf(settled.error_detail_json),
+          });
+      });
+    const recoverChildren = Effect.gen(function* () {
+      for (const link of yield* children.pending()) yield* settleChild(link.child_run_id);
+    });
+
+    const contractFor = (automationId: string, version: number) =>
+      Effect.gen(function* () {
+        const metaJson = yield* store.getVersionMeta(automationId, version);
+        return yield* decodeWorkflowMeta(
+          metaJson ? fromJson(metaJson) : { name: "Automation" },
+        ).pipe(
+          Effect.mapError((cause) =>
+            automationError("Couldn't load the automation's contract.", { cause }),
+          ),
+        );
+      });
     /**
      * Ends a running run once, and everything still working for it: step
      * fibers, agent threads, open steps, and on cancel the runs it started.
      * False when it had already ended. The run's `logs_json` is what its event
      * records, so a replay passes the lines it just saved.
      */
-    const endRun: EndRun = (run, outcome) =>
+    const endRun: EndRun = (run, candidate) =>
       Effect.gen(function* () {
+        let outcome = candidate;
+        if (outcome.status === "succeeded" && outcome.restartedAs === undefined) {
+          const meta = yield* contractFor(run.automation_id, run.version);
+          const decoded = decodeWorkflowOutput(meta, outcome.output);
+          outcome = Result.isSuccess(decoded)
+            ? { ...outcome, output: decoded.success }
+            : {
+                status: "failed",
+                error: `Output doesn't match meta.output: ${decoded.failure.message}`,
+              };
+        }
         const { status } = outcome;
         const steps = yield* store.listSteps(run.run_id);
         const now = yield* DateTime.now;
@@ -441,16 +526,23 @@ export const makeEngine = <R>(
         const title = outcome.status === "succeeded" ? runTitle(steps, outcome.output) : null;
         const error = outcome.status === "failed" ? outcome.error : null;
         const detail = outcome.status === "failed" ? (outcome.detail ?? null) : null;
-        const ended = yield* store.finishRun(
-          run.run_id,
-          {
-            status,
-            output: outcome.status === "succeeded" ? toJson(outcome.output ?? null) : null,
-            error,
-            errorDetail: detail ? toJson(detail) : null,
-            title,
-          },
-          nowText,
+        const ended = yield* store.withTransaction(
+          Effect.gen(function* () {
+            const ended = yield* store.finishRun(
+              run.run_id,
+              {
+                status,
+                output: outcome.status === "succeeded" ? toJson(outcome.output ?? null) : null,
+                error,
+                errorDetail: detail ? toJson(detail) : null,
+                title,
+              },
+              nowText,
+            );
+            if (ended && outcome.status === "succeeded" && outcome.restartedAs)
+              yield* children.follow(run.run_id, outcome.restartedAs);
+            return ended;
+          }),
         );
         if (!ended) return false;
         yield* theDriver().ended(run.run_id, status);
@@ -493,6 +585,7 @@ export const makeEngine = <R>(
           run.run_id,
           status === "failed" ? { error } : status === "succeeded" ? { title } : {},
         );
+        yield* settleChild(run.run_id);
         if (status === "failed" && automation) {
           yield* PubSub.publish(
             notices,
@@ -520,6 +613,14 @@ export const makeEngine = <R>(
           ),
         );
 
+    const validateInput = (automationId: string, version: number, input: unknown) =>
+      Effect.gen(function* () {
+        const meta = yield* contractFor(automationId, version);
+        const decoded = decodeWorkflowInput(meta, input ?? null);
+        if (Result.isFailure(decoded))
+          return yield* fail(`Input doesn't match meta.input: ${decoded.failure.message}`);
+        return decoded.success;
+      });
     const launchRun: LaunchRun = (launch: Launch) =>
       Effect.gen(function* () {
         const { retryOf } = launch;
@@ -529,6 +630,11 @@ export const makeEngine = <R>(
             { automationId: launch.automation.automation_id },
           );
         }
+        const validatedInput = yield* validateInput(
+          launch.automation.automation_id,
+          launch.version ?? launch.automation.version,
+          launch.input,
+        );
         const now = yield* DateTime.now;
         const startedAt = DateTime.formatIso(now);
         const row = {
@@ -537,7 +643,7 @@ export const makeEngine = <R>(
           version: launch.version ?? launch.automation.version,
           status: "running",
           trigger: launch.trigger,
-          input_json: toJson(launch.input ?? null),
+          input_json: toJson(validatedInput),
           output_json: null,
           error: null,
           marks_json: "{}",
@@ -581,7 +687,11 @@ export const makeEngine = <R>(
           finished_at: null,
         } satisfies WorkflowStore.NewRun;
         const link = launch.link;
-        const insert = store.insertRun(row).pipe(
+        const insert = Effect.gen(function* () {
+          if (launch.parent && (yield* store.getRun(launch.parent.run_id))?.status === "cancelled")
+            return yield* fail("The parent run was cancelled.");
+          yield* store.insertRun(row);
+        }).pipe(
           Effect.andThen(
             link
               ? links.insertLink({
@@ -715,7 +825,15 @@ export const makeEngine = <R>(
       });
 
     const retryRun = makeRetryRun({ store, requireAutomation, launchRun });
-    const restart = makeRestart({ store, links, newId, endRun, launchRun });
+    const restart = makeRestart({
+      store,
+      links,
+      newId,
+      endRun,
+      launchRun,
+      validateInput: (automation, input) =>
+        validateInput(automation.automation_id, automation.version, input),
+    });
     const projectOfThread = (threadId: string) =>
       threads.getThreadShell(ThreadId.make(threadId)).pipe(
         Effect.map((shell) => shell?.projectId),
@@ -724,6 +842,7 @@ export const makeEngine = <R>(
 
     const catalog = makeCatalog({
       store,
+      children,
       newId,
       changed,
       requireAutomation,
@@ -776,6 +895,8 @@ export const makeEngine = <R>(
       notices,
       scope,
       startStep,
+      pruneChildren: children.prune.pipe(Effect.asVoid),
+      settleChild,
       changed,
       runChanged,
       announce,
@@ -845,6 +966,7 @@ export const makeEngine = <R>(
 
     // Attached runs' monitors come back after a restart (the driver recovers its own runs).
     yield* forkRoot(attachments.recover.pipe(logFailure("Automation recovery failed")));
+    yield* forkRoot(recoverChildren.pipe(logFailure("Child automation recovery failed")));
     yield* taskLifecycleRuns.recoverPending.pipe(logFailure("Task completion recovery failed"));
 
     return {
@@ -916,6 +1038,7 @@ export const makeEngine = <R>(
       subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
       // One failing doesn't hold up the other.
       tick: built.tick.pipe(
+        Effect.ensuring(recoverChildren.pipe(logFailure("Child automation recovery failed"))),
         Effect.ensuring(sources.tick),
         Effect.ensuring(external.poll),
         Effect.ensuring(

@@ -1,6 +1,7 @@
 import type { AutomationError } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 import type { EndRun, LaunchRun } from "./engineTypes.ts";
 import { logFailure } from "./errors.ts";
@@ -27,12 +28,21 @@ export interface RestartDependencies {
   readonly newId: (prefix: string) => Effect.Effect<string, AutomationError>;
   readonly endRun: EndRun;
   readonly launchRun: LaunchRun;
+  readonly validateInput: (
+    automation: AutomationRow,
+    input: unknown,
+  ) => Effect.Effect<unknown, AutomationError>;
 }
 
 export const makeRestart =
   (deps: RestartDependencies) =>
   (run: RunRow, automation: AutomationRow, input: unknown): Effect.Effect<void, AutomationError> =>
     Effect.gen(function* () {
+      const validated = yield* Effect.result(deps.validateInput(automation, input));
+      if (Result.isFailure(validated)) {
+        yield* deps.endRun(run, { status: "failed", error: validated.failure.message });
+        return;
+      }
       const link = yield* deps.links.getLink(run.run_id);
       const lineage = link?.lineage_id ?? run.run_id;
       const now = yield* DateTime.now;
@@ -56,13 +66,14 @@ export const makeRestart =
       const ended = yield* deps.endRun(run, {
         status: "succeeded",
         output: { restartedAs: runId },
+        restartedAs: runId,
       });
       if (!ended) return;
       const parent = run.parent_run_id ? yield* deps.store.getRun(run.parent_run_id) : undefined;
       yield* deps
         .launchRun({
           automation,
-          input,
+          input: validated.success,
           trigger: run.trigger,
           runId,
           ...(parent ? { parent } : { depth: run.depth }),

@@ -1,5 +1,6 @@
-import { AutomationError, ThreadId, type AutomationNotice } from "@t3tools/contracts";
+import { AutomationError, ProjectId, ThreadId, type AutomationNotice } from "@t3tools/contracts";
 import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
+import { AutomationFolders } from "@signalbox/automations/folderScope";
 import { explained } from "@signalbox/automations/runLog";
 import {
   AutomationFunctions,
@@ -425,11 +426,30 @@ const make = Effect.gen(function* () {
 });
 
 /** The engine on the user object: give it the object's SQLite, threads, pushes and its runner. */
+const layerAutomationFolders = Layer.effect(
+  AutomationFolders,
+  Effect.gen(function* () {
+    const folders = yield* UserFolders.UserFolders;
+    return AutomationFolders.of({
+      projects: (projectId) =>
+        folders.automationProjects(ProjectId.make(projectId)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AutomationError({
+                message: "Couldn't resolve automation folder scopes.",
+                cause,
+              }),
+          ),
+        ),
+    });
+  }),
+);
+
 export const layer = Layer.effect(CloudAutomations, make).pipe(
   Layer.provideMerge(
     GitHubWebhooksModule.layer.pipe(Layer.provideMerge(PullRequestMergesModule.layer)),
   ),
-  Layer.provideMerge(HostedEngine.layer),
+  Layer.provideMerge(HostedEngine.layer.pipe(Layer.provide(layerAutomationFolders))),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudThreads.layer,

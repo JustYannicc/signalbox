@@ -11,6 +11,14 @@ import * as SqlClient from "effect/sql/SqlClient";
  */
 
 const TABLES = [
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_children (
+    parent_run_id TEXT NOT NULL,
+    step_key TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    child_run_id TEXT NOT NULL UNIQUE,
+    wait INTEGER NOT NULL,
+    PRIMARY KEY (parent_run_id, step_key, attempt)
+  )`,
   /** Names are unique per project: two projects can each have a "Weekly report". */
   `CREATE TABLE IF NOT EXISTS signalbox_automations (
     automation_id TEXT PRIMARY KEY,

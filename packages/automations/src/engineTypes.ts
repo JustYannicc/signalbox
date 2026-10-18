@@ -55,7 +55,7 @@ export type LaunchRun = (
 
 /** How a run ended. */
 export type RunOutcome =
-  | { readonly status: "succeeded"; readonly output: unknown }
+  | { readonly status: "succeeded"; readonly output: unknown; readonly restartedAs?: string }
   | {
       readonly status: "failed";
       readonly error: string;

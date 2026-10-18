@@ -429,6 +429,14 @@ export const make = Effect.gen(function* () {
           WHERE automation_id = ${automationId} AND version = ${version}
         `,
       ).pipe(Effect.map((rows) => rows[0])),
+    getVersionMeta: (automationId: string, version: number) =>
+      run(
+        "getVersionMeta",
+        sql<{ meta_json: string | null }>`
+          SELECT meta_json FROM signalbox_automation_versions
+          WHERE automation_id = ${automationId} AND version = ${version}
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.meta_json ?? null)),
     /** A version's file and diagram, without the compiled script. */
     getVersionView: (automationId: string, version: number) =>
       run(
