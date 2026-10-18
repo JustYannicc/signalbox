@@ -17,6 +17,7 @@ import { deviceInfoForDescriptor, virtualDevicePath } from "./KernelVirtualDevic
 export interface ResolveOptions {
   readonly followFinal?: boolean;
   readonly cwd?: string;
+  readonly checkSearch?: WasiPathSearchCheck;
 }
 
 export function mountedStorageForTable(
@@ -121,25 +122,11 @@ export class KernelPathResolver {
   resolve(path: string, options: ResolveOptions = {}): WasiResolvedPath {
     const context = this.#context(path, options.cwd);
     const resolved = this.#run(
-      this.#resolver.resolve(context.anchor, context.relative, options.followFinal ?? true),
-    );
-    this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
-    return resolved;
-  }
-
-  /** Keep search checks on the traversed path, including symlink target rewrites. */
-  resolveForAccess(
-    path: string,
-    checkSearch: WasiPathSearchCheck,
-    options: ResolveOptions = {},
-  ): WasiResolvedPath {
-    const context = this.#context(path, options.cwd);
-    const resolved = this.#run(
       this.#resolver.resolve(
         context.anchor,
         context.relative,
         options.followFinal ?? true,
-        checkSearch,
+        this.#searchCheck(path, context.relative, options.checkSearch),
       ),
     );
     this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
@@ -155,7 +142,12 @@ export class KernelPathResolver {
   resolveOrCreate(path: string, options: ResolveOptions = {}): WasiPathLookup {
     const context = this.#context(path, options.cwd);
     const lookup = this.#run(
-      this.#resolver.resolveOrCreate(context.anchor, context.relative, options.followFinal ?? true),
+      this.#resolver.resolveOrCreate(
+        context.anchor,
+        context.relative,
+        options.followFinal ?? true,
+        this.#searchCheck(path, context.relative, options.checkSearch),
+      ),
     );
     if (lookup.kind === "existing") {
       this.#assertResolvedMount(lookup.path.mount, lookup.path.pathComponents);
@@ -163,6 +155,15 @@ export class KernelPathResolver {
       this.#assertResolvedMount(lookup.parent.mount, lookup.parent.pathComponents);
     }
     return lookup;
+  }
+
+  #searchCheck(
+    path: string,
+    relative: string,
+    check?: WasiPathSearchCheck,
+  ): WasiPathSearchCheck | undefined {
+    // A mount root becomes "." internally, but does not traverse a literal dot entry.
+    return relative === "." && !/(^|\/)\.$/.test(path) ? undefined : check;
   }
 
   resolveParent(

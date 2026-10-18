@@ -167,10 +167,7 @@ export class WasiPathResolver {
     while (index < pending.length) {
       const name = pending[index++];
       if (name === undefined) continue;
-      if (name === "") {
-        if (requireDirectory && index === pending.length) checkSearch?.(base.mount, current);
-        continue;
-      }
+      if (name === "") continue;
       if (name === ".") {
         checkSearch?.(base.mount, current);
         continue;

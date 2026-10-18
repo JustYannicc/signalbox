@@ -46,7 +46,7 @@ export class KernelFileSystemPaths {
       }
 
       const followFinal = options.followFinal ?? true;
-      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options.cwd);
+      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options);
       return this.resolver.resolve(path, options);
     });
   }
@@ -55,7 +55,7 @@ export class KernelFileSystemPaths {
     return withKernelErrors(() => {
       this.#rejectVirtualMutation(path);
       const followFinal = options.followFinal ?? true;
-      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options.cwd);
+      if (followFinal) this.#checkFinalAbsoluteSymlink(path, options);
       return this.resolver.resolveOrCreate(path, options);
     });
   }
@@ -192,10 +192,23 @@ export class KernelFileSystemPaths {
       throw kernelError("EINVAL");
     }
     const requested = mode;
+    const alias = descriptorPathAlias(path);
+    const virtualAlias =
+      alias !== undefined && deviceInfoForDescriptor(this.#getAlias(alias)) !== undefined;
+    if (
+      this.#posix.credentials === undefined ||
+      virtualDevice(path) !== undefined ||
+      virtualAlias ||
+      (alias !== undefined && requested === 0)
+    ) {
+      this.stat(path);
+      if (requested !== 0) throw kernelError("ENOTSUP");
+      return;
+    }
     const checkSearch = (mount: WasiResolvedPath["mount"], directory: Inode): void => {
       this.#posix.checkAccess(mount.storage, directory, "directory", 1, effectiveIds);
     };
-    const resolved = this.resolver.resolveForAccess(path, checkSearch);
+    const resolved = this.resolve(path, { checkSearch });
 
     if ((requested & 2) !== 0 && resolved.mount.readOnly) throw kernelError("EROFS");
     if (requested !== 0) {
@@ -374,10 +387,10 @@ export class KernelFileSystemPaths {
     }
   }
 
-  #checkFinalAbsoluteSymlink(path: string, cwd?: string): void {
+  #checkFinalAbsoluteSymlink(path: string, options: ResolveOptions): void {
     const lookup = this.resolver.resolveOrCreate(path, {
+      ...options,
       followFinal: false,
-      ...(cwd === undefined ? {} : { cwd }),
     });
     if (lookup.kind === "missing" || lookup.path.stat.type !== "symlink") return;
     const unresolved = lookup.path;
