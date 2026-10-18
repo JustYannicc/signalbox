@@ -75,6 +75,9 @@ export function execKernelProgram(
       const runtime = beforeExecCommit(() =>
         createKernelWasiRuntime(implementation.module, {
           ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
+          ...(implementation.cwdEnvironment === undefined
+            ? {}
+            : { cwdEnvironment: implementation.cwdEnvironment }),
           prepared,
           descriptorOwnership: "borrowed",
           args: request.args,

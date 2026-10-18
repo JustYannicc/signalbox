@@ -2,6 +2,15 @@
 name: Isolate limits probe
 
 on:
+  workflow_dispatch:
+    inputs:
+      releaseTag:
+        description: Frozen pristine R4 control archive
+        required: true
+        type: choice
+        default: probe-1057-r4-5459d40b
+        options:
+          - probe-1057-r4-5459d40b
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -19,6 +28,7 @@ env:
 jobs:
   isolate-probe:
     if: >-
+      github.event_name == 'pull_request' &&
       github.event.pull_request.user.login == github.repository_owner &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -29,7 +39,6 @@ jobs:
       group: isolate-probe-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     env:
-      STAGE: isolate-probe-pr-${{ github.event.pull_request.number }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
@@ -65,80 +74,23 @@ jobs:
       - name: Measure local workerd probe
         run: node --experimental-strip-types apps/cloud/infra/isolateProbe/measure.ts --output "$RUNNER_TEMP/isolate-local.json"
 
-      - name: Make a short-lived probe credential
+      - name: Run deployed isolated probe
+        id: deployed
+        timeout-minutes: 14
+        run: >-
+          node --experimental-strip-types apps/cloud/infra/isolateProbe/run.ts
+          --stage-file "$RUNNER_TEMP/isolate-probe-stage"
+          --output "$RUNNER_TEMP/deployed.json"
+
+      - name: Recover interrupted probe stage
+        if: always()
+        timeout-minutes: 3
         shell: bash
         run: |
-          secret="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
-          echo "::add-mask::$secret"
-          echo "PROBE_SECRET=$secret" >> "$GITHUB_ENV"
-
-      - name: Deploy isolated probe
-        id: deploy
-        working-directory: apps/cloud
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./node_modules/.bin/alchemy deploy infra/isolateProbe/alchemy.run.ts --stage "$STAGE" --yes --no-input | tee "$RUNNER_TEMP/isolate-probe-deploy.log"
-          node --input-type=module - "$RUNNER_TEMP/isolate-probe-deploy.log" <<'NODE'
-          import { appendFileSync, readFileSync } from "node:fs";
-
-          const log = readFileSync(process.argv[2], "utf8");
-          const urls = [...log.matchAll(/\burl:\s*(['"])(https:\/\/[^'"\s]+)\1/gu)];
-          const workerUrl = urls.at(-1)?.[2];
-          if (workerUrl === undefined) throw new Error("Alchemy output did not contain the probe Worker URL.");
-          const url = new URL(workerUrl);
-          const expectedName = `sb-${process.env.STAGE}`;
-          if (
-            url.protocol !== "https:" ||
-            !url.hostname.endsWith(".workers.dev") ||
-            url.hostname.split(".")[0] !== expectedName
-          ) {
-            throw new Error("Alchemy returned a URL outside the isolated probe Worker.");
-          }
-          appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${url.toString()}\n`);
-          NODE
-
-      - name: Measure deployed probe
-        env:
-          PROBE_URL: ${{ steps.deploy.outputs.worker_url }}
-        run: node --experimental-strip-types apps/cloud/infra/isolateProbe/measure.ts --url "$PROBE_URL" --output "$RUNNER_TEMP/deployed.json"
-
-      - name: Destroy isolated probe stack
-        if: always() && contains(fromJSON('["success", "failure", "cancelled"]'), steps.deploy.outcome)
-        working-directory: apps/cloud
-        shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          import { spawnSync } from "node:child_process";
-
-          const command = "./node_modules/.bin/alchemy";
-          const args = ["destroy", "infra/isolateProbe/alchemy.run.ts", "--stage", process.env.STAGE, "--yes", "--no-input"];
-          const transientReason = /\b(?:429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|ENETUNREACH|socket hang up|fetch failed|timed? out|temporarily unavailable|rate limit|too many requests|service unavailable|gateway timeout|internal server error/giu;
-
-          let previousFailure;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            const result = spawnSync(command, args, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
-            const output = `${result.stdout ?? ""}${result.stderr ?? ""}${result.error ? `\n${result.error.message}` : ""}`;
-            process.stdout.write(result.stdout ?? "");
-            process.stderr.write(result.stderr ?? "");
-            if (result.error) process.stderr.write(`${result.error.message}\n`);
-            if (result.status === 0 && !result.error) process.exit(0);
-
-            const reasons = [...output.matchAll(transientReason)]
-              .map(([reason]) => reason.toUpperCase().replace(/\s+/gu, " "));
-            const signature = [...new Set(reasons)].sort().join("|");
-            if (!signature) {
-              throw new Error("Destroy failed for a non-transient reason; stopping without retry.");
-            }
-            if (signature === previousFailure) {
-              throw new Error("Destroy repeated the same transient failure; stopping without a blind retry.");
-            }
-            if (attempt === 3) throw new Error("Destroy kept failing with changed transient reasons after three attempts.");
-
-            previousFailure = signature;
-            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
-          }
-          NODE
+          if [[ -e "$RUNNER_TEMP/isolate-probe-stage" || -L "$RUNNER_TEMP/isolate-probe-stage" ]]; then
+            node --experimental-strip-types apps/cloud/infra/isolateProbe/run.ts \
+              --recover-stage-file "$RUNNER_TEMP/isolate-probe-stage"
+          fi
 
       - name: Upload probe results
         if: always()
@@ -148,5 +100,76 @@ jobs:
           path: |
             ${{ runner.temp }}/isolate-local.json
             ${{ runner.temp }}/deployed.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  pristine-r4-profile:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: cloud-preview
+    permissions:
+      # Draft release assets require push visibility. This grant is limited to owner dispatch on main.
+      contents: write
+    concurrency:
+      group: isolate-probe-pristine-r4
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RELEASE_TAG: ${{ inputs.releaseTag }}
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        id: setup
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+              - --filter=@t3tools/monorepo
+
+      - name: Test CI capture lifecycle
+        working-directory: apps/cloud
+        run: ../../node_modules/.bin/vp test run --config ../../vite.config.ts infra/isolateProbe/ci*.test.ts --maxWorkers=2
+
+      - name: Typecheck CI capture
+        run: ./node_modules/.bin/tsc-rs --noEmit -p apps/cloud/infra/isolateProbe/tsconfig.ci.json
+
+      - name: Make a short-lived probe credential
+        shell: bash
+        run: |
+          secret="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
+          echo "::add-mask::$secret"
+          echo "PROBE_SECRET=$secret" >> "$GITHUB_ENV"
+
+      - name: Run five sequential pristine cold controls and capture profiles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types apps/cloud/infra/isolateProbe/ci.ts
+
+      - name: Recover cleanup of all owned Workers and namespaces
+        if: always() && steps.setup.outcome == 'success'
+        run: node --experimental-strip-types apps/cloud/infra/isolateProbe/ci.ts --cleanup
+
+      - name: Upload pristine control and supervisor profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolate-probe-pristine-r4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pristine-r4-evidence/
           if-no-files-found: warn
           retention-days: 14
