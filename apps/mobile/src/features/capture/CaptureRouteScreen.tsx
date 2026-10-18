@@ -84,6 +84,11 @@ export function CaptureRouteScreen() {
     (initialPersonalDestinationKey !== null || selectedDestinationKey !== null);
   const captureDraft = useCaptureDraft(selectedTarget);
   const { addAttachments, draft, draftKey, prepare, retarget, setText } = captureDraft;
+  useEffect(() => {
+    if (!selectedTarget || draftKey !== null) return;
+    // The editor consumes native context paste only when it has a durable draft key.
+    prepare();
+  }, [draftKey, prepare, selectedTarget]);
   const selectedConfig = useEnvironmentServerConfig(selectedTarget?.start.environmentId ?? null);
   const hasContent = draft.text.length > 0 || draft.attachments.length > 0;
   const draftEnvironmentId = selectedTarget?.start.environmentId ?? draft.project?.environmentId;
@@ -238,8 +243,10 @@ export function CaptureRouteScreen() {
         } else {
           setErrorMessage(null);
         }
-      } catch {
-        setErrorMessage("Couldn't add that image. Try again.");
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Couldn't add that image. Try again.",
+        );
       }
     },
     [addAttachments, draft.attachments.length, draft.text, selectedTarget],
@@ -250,7 +257,7 @@ export function CaptureRouteScreen() {
   }, [openDraft]);
 
   const noPersonalDestination = personal === null && !destinationUnavailable;
-  const showPersonalLoading = noPersonalDestination && projects.length === 0;
+  const showPersonalLoading = noPersonalDestination && (projects.length === 0 || folderEnvironments.size === 0);
   const attachmentMaxVideoBytes =
     selectedConfig?.environment.capabilities.attachmentUploads === true
       ? selectedConfig.environment.capabilities.fileAttachments?.maxUploadBytes
@@ -332,7 +339,7 @@ export function CaptureRouteScreen() {
             environmentId={draftEnvironmentId}
             ref={inputRef}
             autoFocus
-            editable={(selectedTarget !== null || draftKey !== null) && !isSaving}
+            readOnly={isSaving || draftKey === null}
             multiline
             onChangeText={handleTextChange}
             onSelectionChange={handleSelectionChange}
