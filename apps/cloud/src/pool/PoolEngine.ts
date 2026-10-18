@@ -38,6 +38,7 @@ import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
 import * as PoolUsageHistory from "./poolUsageHistory.ts";
+import * as PoolUsageLedger from "./PoolUsageLedger.ts";
 import * as PoolStore from "./poolStore.ts";
 import * as ThreadAccounts from "./threadAccounts.ts";
 
@@ -319,6 +320,7 @@ const migrations = Migrator.fromRecord({
   "0009_model_metadata": PoolModels.addMetadata,
   "0010_usage_history": PoolUsageHistory.createTables,
   "0011_usage_sampling": PoolUsageHistory.addSampling,
+  "0012_usage_ledger": PoolUsageLedger.createTable,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
