@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: write
       # Deletes the preview's Runner image (pr-<number>).
       packages: write
     env:
@@ -43,6 +44,13 @@ jobs:
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
+
+      - name: Stop this PR's preview deploys
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const cancelPreviewDeploys = require('./.github/scripts/cancel-preview-deploys.cjs');
+            await cancelPreviewDeploys({ github, context, core, prNumber: process.env.PR_NUMBER });
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
