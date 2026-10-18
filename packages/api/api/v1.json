@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "24d42c5f"
+      "output": "db56df35"
     },
     {
       "name": "automations.githubSubscriptions",
@@ -261,7 +261,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "022797fa"
+      "output": "3998d94e"
     },
     {
       "name": "automations.runs.retry",
@@ -276,7 +276,7 @@
       "access": "write",
       "compiles": true,
       "input": "e4a20fc8",
-      "output": "ca09aba7"
+      "output": "07cb0ccd"
     },
     {
       "name": "automations.setEnabled",
@@ -305,7 +305,7 @@
       "access": "read",
       "compiles": true,
       "input": "b2a7717d",
-      "output": "7c407bde"
+      "output": "c6e7ea50"
     },
     {
       "name": "backgroundPolicy.subscribe",

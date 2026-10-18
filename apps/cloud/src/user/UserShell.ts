@@ -1,7 +1,9 @@
 import type {
+  OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2SubscribeShellInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -33,7 +35,13 @@ import * as UserStore from "./UserStore.ts";
  */
 
 type ShellItem = Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }>;
-type ShellUpdate = ShellItem | { readonly kind: "projects.changed" };
+type ShellUpdate =
+  | {
+      readonly kind: "thread.changed";
+      readonly item: ShellItem;
+      readonly contextId: ThreadSummary["contextId"];
+    }
+  | { readonly kind: "projects.changed" };
 const PROJECTS_CHANGED: ShellUpdate = { kind: "projects.changed" };
 
 export class UserShell extends Context.Service<
@@ -43,6 +51,10 @@ export class UserShell extends Context.Service<
     readonly subscribe: (
       input: OrchestrationV2SubscribeShellInput,
     ) => Effect.Effect<Stream.Stream<OrchestrationV2ShellStreamItem>, SqlError>;
+    readonly subscribeArchived: Effect.Effect<
+      Stream.Stream<OrchestrationV2ArchivedShellStreamItem>,
+      SqlError
+    >;
     /** A thread object's outbox delivery. Idempotent: an old revision changes nothing. */
     readonly recordThreadSummary: (summary: ThreadSummary) => Effect.Effect<void, SqlError>;
     /**
@@ -103,7 +115,11 @@ const make = Effect.gen(function* () {
             Effect.as(Effect.logWarning("cloud shell project update failed", { cause }), null),
           ),
         )
-      : Effect.succeed(update);
+      : Effect.map(contextIds, (ids) =>
+          contextAllows(ids, update.contextId) ? update.item : null,
+        ).pipe(
+          Effect.catch(() => Effect.as(Effect.logWarning("cloud shell access check failed"), null)),
+        );
 
   const publish = (summary: ThreadSummary, sequence: number) => {
     const item: ShellItem = {
@@ -112,7 +128,9 @@ const make = Effect.gen(function* () {
       location: summary.shell.archivedAt === null ? "active" : "archive",
       thread: summary.shell,
     };
-    return Effect.asVoid(PubSub.publish(updates, item));
+    return Effect.asVoid(
+      PubSub.publish(updates, { kind: "thread.changed", item, contextId: summary.contextId }),
+    );
   };
 
   /** Indexes the summary; open sidebars hear of it only while its context is the user's. */
@@ -144,13 +162,55 @@ const make = Effect.gen(function* () {
         Stream.fromSubscription(subscription).pipe(
           Stream.filter(
             (update) =>
-              update.kind === "projects.changed" || update.sequence > current.snapshotSequence,
+              update.kind === "projects.changed" || update.item.sequence > current.snapshotSequence,
           ),
           Stream.mapEffect(toItem),
           Stream.filter((item) => item !== null),
         ),
       ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)));
     });
+
+  const subscribeArchived: UserShell["Service"]["subscribeArchived"] = Effect.map(
+    subscribe({}),
+    (stream) =>
+      stream.pipe(
+        Stream.mapAccum(
+          () => new Set<ThreadId>(),
+          (archivedIds, item): [Set<ThreadId>, Array<OrchestrationV2ArchivedShellStreamItem>] => {
+            if (item.kind === "snapshot") {
+              return [
+                new Set(item.snapshot.archivedThreads.map((thread) => thread.id)),
+                [
+                  {
+                    kind: "snapshot",
+                    snapshot: {
+                      schemaVersion: item.snapshot.schemaVersion,
+                      snapshotSequence: item.snapshot.snapshotSequence,
+                      projects: item.snapshot.projects,
+                      threads: item.snapshot.archivedThreads,
+                    },
+                  },
+                ],
+              ];
+            }
+            if (item.kind !== "thread.updated") return [archivedIds, []];
+            if (item.location === "archive" && item.thread.deletedAt === null) {
+              archivedIds.add(item.thread.id);
+              return [
+                archivedIds,
+                [{ kind: "thread.updated", sequence: item.sequence, thread: item.thread }],
+              ];
+            }
+            return [
+              archivedIds,
+              archivedIds.delete(item.thread.id)
+                ? [{ kind: "thread.removed", sequence: item.sequence, threadId: item.thread.id }]
+                : [],
+            ];
+          },
+        ),
+      ),
+  );
 
   const rebuildThreadIndex: UserShell["Service"]["rebuildThreadIndex"] = Effect.gen(function* () {
     const profile = yield* store.profile;
@@ -176,6 +236,7 @@ const make = Effect.gen(function* () {
   return UserShell.of({
     snapshot,
     subscribe,
+    subscribeArchived,
     recordThreadSummary: record,
     rebuildThreadIndex,
   });
