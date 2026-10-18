@@ -595,6 +595,10 @@
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
     },
+    "./pull-request-query": {
+      "types": "./src/pullRequestQuery.ts",
+      "default": "./src/pullRequestQuery.ts"
+    },
     "./pull-request-diff-revision": {
       "types": "./src/pullRequestDiffRevision.ts",
       "default": "./src/pullRequestDiffRevision.ts"

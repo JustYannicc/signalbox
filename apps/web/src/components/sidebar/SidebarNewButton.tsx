@@ -5,7 +5,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { SquarePenIcon } from "lucide-react";
-import { useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { type MouseEvent as ReactMouseEvent } from "react";
 
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -21,22 +21,19 @@ export function SidebarNewButton() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "capture.open");
 
-  const handleNew = useCallback(
-    (event: ReactMouseEvent) => {
-      if (isMobile) setOpenMobile(false);
-      if (!event.shiftKey) {
-        openQuickCapture();
-        return;
-      }
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread: newThreadContext.handleNewThread,
-      });
-    },
-    [isMobile, newThreadContext, setOpenMobile],
-  );
+  const handleNew = (event: ReactMouseEvent) => {
+    if (isMobile) setOpenMobile(false);
+    if (!event.shiftKey) {
+      openQuickCapture();
+      return;
+    }
+    void startNewThreadFromContext({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread: newThreadContext.handleNewThread,
+    });
+  };
 
   return (
     <div className="shrink-0 px-2 pt-2">

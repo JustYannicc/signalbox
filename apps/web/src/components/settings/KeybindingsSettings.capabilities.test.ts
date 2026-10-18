@@ -5,6 +5,7 @@ import {
   buildKeybindingRows,
   buildWhenVariableOptions,
   commandLabel,
+  filterKeybindingRows,
   filterKeybindingRowsForEnvironment,
   keybindingWhenWithoutTerminal,
 } from "./KeybindingsSettings.logic";
@@ -17,7 +18,7 @@ describe("keybinding labels without machine features", () => {
   });
 
   it("searches the displayed cloud labels and conditions without changing bindings", () => {
-    const all = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    const all = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
     const capabilities = { localFilesystem: false, terminal: false };
     const rows = filterKeybindingRowsForEnvironment(all, "current folder", capabilities);
     expect(rows).toContainEqual(expect.objectContaining({ command: "chat.newLocal" }));
@@ -28,11 +29,11 @@ describe("keybinding labels without machine features", () => {
   });
 
   it("matches upstream's search where every capability is supported", () => {
-    const all = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    const all = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
     const supported = { localFilesystem: true, terminal: true };
     for (const query of ["", "terminalFocus", "new local", "mod+"]) {
       expect(filterKeybindingRowsForEnvironment(all, query, supported)).toEqual(
-        buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query),
+        filterKeybindingRows(all, query),
       );
     }
   });
@@ -47,7 +48,7 @@ describe("keybinding labels without machine features", () => {
   });
 
   it("removes terminal conditions without dropping other requirements", () => {
-    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
     const newChat = rows.find((row) => row.command === "chat.new");
     const newPanel = rows.find((row) => row.command === "rightPanel.new");
     expect(keybindingWhenWithoutTerminal(newChat?.binding.whenAst)).toBe("");
