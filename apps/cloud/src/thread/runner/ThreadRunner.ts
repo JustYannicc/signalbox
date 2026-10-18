@@ -960,6 +960,8 @@ const make = Effect.gen(function* () {
           (item) => item.id === `turn-item:${run.id}:runner-update-blocked:${lease.generation}`,
         );
       const untraced = projection === null ? null : yield* turnFor(projection);
+      const secrets = untraced === null ? [] : yield* Effect.orDie(store.secrets);
+      const upgrading = needsSecretUpgrade(lease, run, secrets.length > 0);
       let preparation = yield* engine.preparation;
       const previous = preparation;
       const stoppingPrevious = preparation?.status === "cancelling";
@@ -968,6 +970,7 @@ const make = Effect.gen(function* () {
         untraced !== null &&
         lease.status === "connected" &&
         upgrade.type === "none" &&
+        !upgrading &&
         !stoppingPrevious
       ) {
         if (preparation === null || preparation.runId !== untraced.runId) {
@@ -1002,8 +1005,6 @@ const make = Effect.gen(function* () {
               traceId: yield* withCrypto(traceIdOf(untraced.runId)),
             };
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
-      const secrets = turn === null ? [] : yield* Effect.orDie(store.secrets);
-      const upgrading = needsSecretUpgrade(lease, run, secrets.length > 0);
       let pending = projection === null ? null : yield* Effect.orDie(pullState.pending);
       if (pending !== null && lease.status === "connected" && lease.pulls !== true) {
         yield* pulls.revoke(
@@ -1094,7 +1095,7 @@ const make = Effect.gen(function* () {
           turn === null || lease.token === null || projection === null
             ? null
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
-        secrets: upgrading ? [] : secrets,
+        secrets: upgrading || turn === null ? [] : secrets,
         ...(environmentNames === undefined ? {} : { environmentNames }),
         activeRunId: run?.id ?? null,
         runtimeResponses:

@@ -1506,6 +1506,73 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("keeps preparation unbound until a Runner can enforce secret filters", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine, "launch-secret-preparation", {
+          ...personal,
+          secrets: {
+            top: [],
+            projects: {},
+            thread: [OnePasswordEnvironmentId.make("env-preparation")],
+            environmentNames: { top: [], projects: {}, thread: [["SHARED"]] },
+          },
+        });
+        const first = (yield* runner.reconcile).ensure!;
+        yield* runner.hello({
+          ...hello(first.generation, first.token),
+          protocolVersion: RUNNER_PROTOCOL_VERSION,
+          secretScopes: false,
+          takenRunIds: [],
+        });
+        expect((yield* runner.work).turn).toBeNull();
+        expect(yield* engine.preparation).toMatchObject({
+          status: "preparing",
+          machineGeneration: 0,
+        });
+        yield* runner.reconcile;
+        const next = (yield* runner.reconcile).ensure!;
+        yield* runner.hello({
+          ...hello(next.generation, next.token),
+          protocolVersion: RUNNER_PROTOCOL_VERSION,
+          takenRunIds: [],
+        });
+        const work = yield* runner.work;
+        expect(work.turn).not.toBeNull();
+        expect(work.environmentNames).toEqual([["SHARED"]]);
+        expect(yield* engine.preparation).toMatchObject({
+          status: "preparing",
+          machineGeneration: next.generation,
+        });
+        const turn = work.turn;
+        if (turn === null || turn.preparationGeneration === undefined)
+          throw new Error("Expected a prepared turn");
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: next.generation,
+          sequence: 1,
+          items: [
+            {
+              kind: "preparation.ready",
+              runId: turn.runId,
+              preparationGeneration: turn.preparationGeneration,
+            },
+            { ...report.started, preparationGeneration: turn.preparationGeneration },
+          ],
+        });
+        const afterStarted = yield* snapshot(engine);
+        expect(afterStarted.projection.runs.find((run) => run.id === turn.runId)?.status).toBe(
+          "running",
+        );
+        expect(yield* engine.preparation).toMatchObject({
+          status: "done",
+          machineGeneration: next.generation,
+          snapshot: { turnStarted: true },
+        });
+      }),
+    ),
+  );
+
   it.effect("refreshes folder secret names on the next turn without restarting the Runner", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
