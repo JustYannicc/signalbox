@@ -143,6 +143,10 @@
       "types": "./src/signalboxCloudActivity.ts",
       "default": "./src/signalboxCloudActivity.ts"
     },
+    "./personTimezone": {
+      "types": "./src/personTimezone.ts",
+      "default": "./src/personTimezone.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
@@ -219,6 +223,10 @@
       "types": "./src/state/automations.ts",
       "default": "./src/state/automations.ts"
     },
+    "./state/personTimezone": {
+      "types": "./src/state/personTimezone.ts",
+      "default": "./src/state/personTimezone.ts"
+    },
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
@@ -278,6 +286,10 @@
     "./state/orchestration-v2-projection": {
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
+    },
+    "./state/optimistic-ledger": {
+      "types": "./src/state/optimisticLedger.ts",
+      "default": "./src/state/optimisticLedger.ts"
     },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",

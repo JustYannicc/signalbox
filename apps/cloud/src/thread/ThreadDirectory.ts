@@ -8,10 +8,13 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2SubscribeCommandOutputInput,
+  OrchestrationV2DispatchCommandResult,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  WorktreeSetupSnapshot,
+  WorktreeSetupCancelInput,
 } from "@t3tools/contracts";
 import { SecretRequestError } from "@t3tools/contracts";
 import type { PullResult } from "@signalbox/runner-protocol/PullProtocol";
@@ -100,12 +103,17 @@ export interface ThreadObjectApi {
     actor: Actor,
     command: unknown,
     creation: ThreadCreation,
-  ) => Promise<ThreadObjectReply<{ readonly sequence: number }>>;
+  ) => Promise<ThreadObjectReply<OrchestrationV2DispatchCommandResult>>;
   readonly launch: (
     actor: Actor,
     input: unknown,
     creation: ThreadCreation,
   ) => Promise<ThreadObjectReply<unknown>>;
+  readonly subscribePreparation: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly cancelPreparation: (
+    actor: Actor,
+    input: WorktreeSetupCancelInput,
+  ) => Promise<ThreadObjectReply<{ readonly cancelled: boolean }>>;
   readonly snapshot: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
   /** Newline-delimited JSON batches, or null when the actor cannot see the thread. */
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
@@ -220,12 +228,19 @@ export interface ThreadHandle {
     actor: Actor,
     command: OrchestrationV2Command,
     creation: ThreadCreation,
-  ) => Effect.Effect<{ readonly sequence: number }, CommandFailure>;
+  ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CommandFailure>;
   readonly launch: (
     actor: Actor,
     input: typeof LaunchInputWire.Type,
     creation: ThreadCreation,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, CommandFailure>;
+  readonly subscribePreparation: (
+    actor: Actor,
+  ) => Stream.Stream<WorktreeSetupSnapshot | null, ThreadNotFoundError | ThreadObjectError>;
+  readonly cancelPreparation: (
+    actor: Actor,
+    input: WorktreeSetupCancelInput,
+  ) => Effect.Effect<{ readonly cancelled: boolean }, CommandFailure>;
   readonly snapshot: (
     actor: Actor,
   ) => Effect.Effect<ThreadSnapshot, ThreadNotFoundError | ThreadObjectError>;
@@ -416,6 +431,16 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    subscribePreparation: (actor) =>
+      lines(
+        "subscribePreparation",
+        () => api.subscribePreparation(actor),
+        (line) => wire.preparation.decode(line),
+      ),
+    cancelPreparation: (actor, input) =>
+      call("cancelPreparation", () => api.cancelPreparation(actor, input)).pipe(
+        Effect.flatMap(fromReply),
+      ),
     getWorkflowScript: (actor, input) =>
       call("getWorkflowScript", () =>
         api.getWorkflowScript(actor, wire.workflowScriptInput.encode(input)),

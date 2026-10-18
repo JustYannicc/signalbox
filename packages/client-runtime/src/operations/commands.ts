@@ -34,7 +34,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import { stopAttachedAutomations } from "../automations/attached.ts"; // signalbox: Stop cancels attached automation runs
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { getInitialServerConfig, request, requestGuarded } from "../rpc/client.ts"; // signalbox: optimistic ledger
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -236,6 +236,7 @@ export interface CancelQueuedRunInput extends ThreadCommandInput {
 
 export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
   readonly runId: RunId;
+  readonly preparationGeneration?: number;
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
@@ -261,7 +262,7 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 });
 
 const dispatch = (command: OrchestrationV2Command) =>
-  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
+  requestGuarded(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command); // signalbox: optimistic ledger
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
@@ -1023,6 +1024,9 @@ export const retryWorkspacePreparation = Effect.fn("EnvironmentCommands.retryWor
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       runId: input.runId,
+      ...(input.preparationGeneration === undefined
+        ? {}
+        : { preparationGeneration: input.preparationGeneration }),
     });
   },
 );

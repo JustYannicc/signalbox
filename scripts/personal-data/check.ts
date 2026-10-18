@@ -45,7 +45,7 @@ const EMAIL = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,
 
 /** `icon@2x.png` and friends look like addresses; real TLDs this short collide with file types. */
 const FILE_EXTENSIONS = new Set(
-  "png jpg jpeg gif svg webp avif ico js mjs cjs ts mts cts jsx tsx json css scss html md txt map wasm".split(
+  "png jpg jpeg gif svg webp avif ico js mjs cjs ts mts cts jsx tsx json css scss html md txt map wasm patch".split(
     " ",
   ),
 );

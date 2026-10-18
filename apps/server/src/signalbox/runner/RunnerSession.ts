@@ -194,12 +194,16 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return acknowledge(message.sequence);
       case "turn.start":
         return turns.start(message);
+      case "preparation.cancel":
+        return turns.cancelPreparation(message.runId, message.preparationGeneration);
+      case "preparation.handoff":
+        return turns.handoffPreparation(message.runId, message.preparationGeneration);
       case "workflow.stop":
         return message.generation === input.generation && turns.stopWorkflow !== undefined
           ? turns.stopWorkflow(message).pipe(Effect.forkIn(scope), Effect.asVoid)
           : Effect.void;
       case "interrupt":
-        return turns.interrupt(message.runId);
+        return turns.interrupt(message.runId, message.preparationGeneration);
       case "steer":
         return turns.steer(message.runId, message.message);
       case "runtime-request.respond":
@@ -245,6 +249,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         pulls: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
+        takenPreparations: yield* turns.preparationsTaken,
       });
       const answer = yield* connection.receive;
       if (answer.type === "refused") {

@@ -6,10 +6,25 @@ import type {
   ThreadId,
   WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { workspacePreparationRetryRunIds } from "@t3tools/client-runtime/state/turn-item-presentation";
+import {
+  grantedWorktreeSetupActions,
+  pendingWorktreeSetupAction,
+  resolveWorktreeSetupActions,
+  runAwaitsSetup,
+  worktreeSetupAttemptKey,
+  worktreeSetupCancelOutcome,
+  type WorktreeSetupActionStatus,
+  type WorktreeSetupCancelOutcome,
+  type WorktreeSetupPendingRequest,
+} from "@t3tools/client-runtime/worktree-setup";
 import { useState } from "react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -17,6 +32,13 @@ import { useTerminalUiStateStore } from "../../terminalUiStateStore";
 import type { Thread } from "../../types";
 import { resolveVisibleWorktreeSetup, resolveWorktreeSetupProgress } from "../ChatView.logic";
 import { worktreeSetupAgentStarted } from "./MessagesTimeline.logic";
+
+export interface WorktreeSetupActions {
+  readonly cancel: WorktreeSetupActionStatus | null;
+  readonly retry: WorktreeSetupActionStatus | null;
+  readonly onCancel: () => void;
+  readonly onRetry: () => void;
+}
 
 /** Runs with a workspace preparation retry in flight, across ChatView instances. */
 const retryingWorkspacePreparationRunIds = new Set<RunId>();
@@ -52,10 +74,9 @@ export function useWorktreeSetup(input: {
     sendQueuesBehindSetup,
     followUpSent,
   } = input;
-  const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
-    reportFailure: false,
-  });
+  const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup);
   const retryWorkspacePreparation = useAtomCommand(threadEnvironment.retryWorkspacePreparation);
+  const [pendingRequest, setPendingRequest] = useState<WorktreeSetupPendingRequest | null>(null);
   const storeEnsureTerminal = useTerminalUiStateStore((state) => state.ensureTerminal);
   // The thread a send is setting up, recorded by begin() before the server knows it.
   const [startedSetup, setStartedSetup] = useState<{
@@ -71,11 +92,19 @@ export function useWorktreeSetup(input: {
   // Keep the sending environment during local draft setup; revisiting a
   // canonical thread subscribes by its durable identity.
   const target = started ? startedSetup : routeThreadRef;
-  const runPreparing = activityRun?.status === "preparing";
-  const snapshotQuery = useEnvironmentQuery(
+  // Cloud keeps every attempt's snapshot, failed and cancelled ones included,
+  // so any device opening the thread reads it. A self-hosted server only has
+  // one while a worktree is being set up.
+  const durableSetup =
+    useAtomValue(serverEnvironment.configValueAtom(target.environmentId))?.environment.capabilities
+      .signalboxCloud === true;
+  const runPreparing = runAwaitsSetup(activityRun, durableSetup);
+  const subscribed =
     started ||
-      (activeThread?.id === routeThreadRef.threadId &&
-        (localPreparing || runPreparing || activeThread.worktreePath !== null))
+    (activeThread?.id === routeThreadRef.threadId &&
+      (durableSetup || localPreparing || runPreparing || activeThread.worktreePath !== null));
+  const snapshotQuery = useEnvironmentQuery(
+    subscribed
       ? vcsEnvironment.worktreeSetup({
           environmentId: target.environmentId,
           input: { threadId: target.threadId },
@@ -109,11 +138,20 @@ export function useWorktreeSetup(input: {
     latest: latestSnapshot,
     held: heldSnapshot,
   });
+  // Preparation is under way but the stream has not answered yet. A null
+  // answer means no setup, and a failed stream must not strand the thread.
+  const awaitingSnapshot =
+    subscribed &&
+    (localPreparing || runPreparing) &&
+    liveSnapshot === null &&
+    !snapshotQuery.isSuccess &&
+    snapshotQuery.error === null;
   const worktreeSetup = resolveVisibleWorktreeSetup({
     live: liveSnapshot,
     recorded: null,
     turnStarted: activityRun?.startedAt != null,
-    followUpSent,
+    // A cloud snapshot is always the latest run's, so a follow-up never makes it stale.
+    followUpSent: followUpSent && !durableSetup,
   });
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
@@ -149,15 +187,68 @@ export function useWorktreeSetup(input: {
     (thread: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null) =>
       setStartedSetup(thread === null ? null : { ...thread, ownerKey }),
   );
-  /** Cancels a running setup. Resolves true once the server cancelled it. */
-  const cancel = useStableCallback(async () => {
-    if (!worktreeSetup || worktreeSetup.phase !== "running") return false;
-    const result = await cancelWorktreeSetup({
-      environmentId: target.environmentId,
-      input: { threadId: worktreeSetup.threadId },
-    });
-    return result._tag === "Success" && result.value.cancelled;
+  const canCancel = useAtomValue(
+    vcsEnvironment.cancelWorktreeSetup.permissionAtom(target.environmentId),
+  );
+  // Retry dispatches an orchestration command, which needs the operate grant.
+  const canRetry = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);
+  const actionState = worktreeSetup
+    ? resolveWorktreeSetupActions(
+        worktreeSetup,
+        pendingWorktreeSetupAction(pendingRequest, liveSnapshot),
+      )
+    : null;
+  const settleRequest = (
+    action: WorktreeSetupPendingRequest["action"],
+    outcome: "landed" | "failed",
+  ) =>
+    setPendingRequest((current) =>
+      current?.action !== action
+        ? current
+        : outcome === "failed"
+          ? null
+          : { ...current, settled: true },
+    );
+  /**
+   * Asks the server to stop the shown attempt. Resolves "stopped" only once the
+   * server confirms the attempt has stopped.
+   */
+  const cancel = useStableCallback(async (): Promise<WorktreeSetupCancelOutcome> => {
+    const cancelInput = actionState?.cancelInput;
+    if (!worktreeSetup || !liveSnapshot || !cancelInput || !canCancel) return "not-stopped";
+    const action = { kind: "cancel", attempt: worktreeSetupAttemptKey(worktreeSetup) } as const;
+    setPendingRequest({ action, sentWith: liveSnapshot, settled: false });
+    const outcome = worktreeSetupCancelOutcome(
+      await cancelWorktreeSetup({ environmentId: target.environmentId, input: cancelInput }),
+    );
+    // Not stopped: the button comes back unless the snapshot still says a stop is under way.
+    settleRequest(action, outcome === "not-stopped" ? "failed" : "landed");
+    return outcome;
   });
+  /** Retries the shown failed or cancelled attempt; the server starts the next one. */
+  const retrySetup = useStableCallback(() => {
+    const retryTarget = actionState?.retry === "available" ? actionState.retryTarget : null;
+    if (!worktreeSetup || !liveSnapshot || !retryTarget || !canRetry) return;
+    const action = { kind: "retry", attempt: worktreeSetupAttemptKey(worktreeSetup) } as const;
+    setPendingRequest({ action, sentWith: liveSnapshot, settled: false });
+    void retryWorkspacePreparation({
+      environmentId: target.environmentId,
+      input: { ...retryTarget },
+    }).then((result) => settleRequest(action, result._tag === "Success" ? "landed" : "failed"));
+  });
+  const { cancel: cancelStatus, retry: retryStatus } = grantedWorktreeSetupActions(actionState, {
+    cancel: canCancel,
+    retry: canRetry,
+  });
+  const actions: WorktreeSetupActions | null =
+    cancelStatus === null && retryStatus === null
+      ? null
+      : {
+          cancel: cancelStatus,
+          retry: retryStatus,
+          onCancel: () => void cancel(),
+          onRetry: retrySetup,
+        };
   const retryPreparation = useStableCallback((runId: RunId) => {
     // One retry per failed run: a second click lands after the run is preparing again.
     if (!threadRef || retryingWorkspacePreparationRunIds.has(runId)) return;
@@ -183,6 +274,8 @@ export function useWorktreeSetup(input: {
     isPreparingWorktree,
     blocksSend,
     retryableRunIds: retryableRunIds.ids,
+    actions,
+    awaitingSnapshot,
     begin,
     cancel,
     retryPreparation,

@@ -27,6 +27,7 @@ import { SIGNALBOX_ANALYTICS_WS_METHODS } from "./signalboxAnalytics.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [SIGNALBOX_ANALYTICS_WS_METHODS.setEnabled]: AuthSettingsWriteScope,
@@ -60,12 +61,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
+  [WS_METHODS.deviceCancelOpen]: AuthOrchestrationOperateScope,
 
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope, // signalbox: optimistic ledger
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   [SIGNALBOX_DRIVES_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_DRIVES_WS_METHODS.share]: AuthOrchestrationOperateScope, // signalbox: drives

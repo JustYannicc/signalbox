@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeId } from "@t3tools/contracts";
+import { RUNNER_PROTOCOL_VERSION } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as Effect from "effect/Effect";
 
 import {
@@ -21,6 +22,7 @@ import { workflowEvent } from "./workflowControl.ts";
 const setup = (
   engine: Parameters<Parameters<typeof withObject>[1]>[0],
   runner: Parameters<Parameters<typeof withObject>[1]>[1],
+  protocolVersion = 6,
 ) =>
   Effect.gen(function* () {
     yield* launch(engine);
@@ -39,16 +41,46 @@ const setup = (
       onRunnerMessage(
         host,
         socket.socket,
-        JSON.stringify({ ...hello(generation, token), workflowStops: true }),
+        JSON.stringify({ ...hello(generation, token), protocolVersion, workflowStops: true }),
       ),
     );
     const start = socket.sent.find((message) => message.type === "turn.start");
     if (start?.type !== "turn.start") throw new Error("No turn");
     const { turn } = start;
+    let sequence = 0;
+    if (turn.preparationGeneration !== undefined) {
+      yield* Effect.promise(() =>
+        onRunnerMessage(
+          host,
+          socket.socket,
+          JSON.stringify({
+            type: "batch",
+            sequence: ++sequence,
+            items: [
+              {
+                kind: "preparation.ready",
+                runId: turn.runId,
+                preparationGeneration: turn.preparationGeneration,
+              },
+            ],
+          }),
+        ),
+      );
+      expect(socket.sent).toContainEqual({
+        type: "preparation.handoff",
+        runId: turn.runId,
+        preparationGeneration: turn.preparationGeneration,
+      });
+    }
     yield* runner.batch({
       generation,
-      sequence: 1,
-      items: [turnReport(turn.runId, turn.runOrdinal, turn.providerThread).started],
+      sequence: ++sequence,
+      items: [
+        {
+          ...turnReport(turn.runId, turn.runOrdinal, turn.providerThread).started,
+          preparationGeneration: turn.preparationGeneration,
+        },
+      ],
     });
     const tasks = yield* engine.apply((projection, ctx) => {
       const template = workflowFixture(projection!, ctx).tasks[0]!;
@@ -69,7 +101,18 @@ const setup = (
     });
     const stops = () => socket.sent.filter((message) => message.type === "workflow.stop");
     const push = Effect.promise(() => pushRunnerWork(host));
-    return { host, socket, sockets, generation, token, turn, tasks, stops, push };
+    return {
+      host,
+      socket,
+      sockets,
+      generation,
+      token,
+      turn,
+      tasks,
+      stops,
+      push,
+      lastAckedSequence: sequence,
+    };
   });
 
 describe("workflow stop delivery attachments", () => {
@@ -112,13 +155,23 @@ describe("workflow stop delivery attachments", () => {
     ),
   );
 
-  it.effect(
-    "bounds a simultaneous pending batch, detects same-size replacement and replays on reconnect",
-    () =>
+  it.effect.each([6, RUNNER_PROTOCOL_VERSION])(
+    "bounds pending stops and replays on reconnect after protocol %i handoff",
+    (protocolVersion) =>
       withObject(freshDatabase(), (engine, runner) =>
         Effect.gen(function* () {
-          const { host, socket, sockets, generation, token, turn, tasks, stops, push } =
-            yield* setup(engine, runner);
+          const {
+            host,
+            socket,
+            sockets,
+            generation,
+            token,
+            turn,
+            tasks,
+            stops,
+            push,
+            lastAckedSequence,
+          } = yield* setup(engine, runner, protocolVersion);
           for (const task of tasks.slice(0, 48)) {
             yield* engine.stopWorkflow(owner, { threadId, subagentId: task.id });
           }
@@ -136,7 +189,7 @@ describe("workflow stop delivery attachments", () => {
           const first = stops()[0]!;
           yield* runner.batch({
             generation,
-            sequence: 2,
+            sequence: lastAckedSequence + 1,
             items: [{ ...first, kind: "workflow.stopped", ok: true }],
           });
           yield* engine.stopWorkflow(owner, { threadId, subagentId: tasks[48]!.id });
@@ -155,7 +208,8 @@ describe("workflow stop delivery attachments", () => {
               again.socket,
               JSON.stringify({
                 ...hello(generation, token),
-                lastAckedSequence: 2,
+                protocolVersion,
+                lastAckedSequence: lastAckedSequence + 1,
                 takenRunIds: [turn.runId],
                 workflowStops: true,
               }),
