@@ -1,0 +1,129 @@
+name: Upstream-owned file report
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    name: Upstream-owned file report (informational)
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: upstream-owned-file-report-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      # This workflow has a write-capable token. Execute only reporter code
+      # from the trusted default branch; PR commits are fetched as Git data.
+      - name: Checkout trusted default branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          # Only trusted code runs here. Git uses the token for explicit
+          # commit-object fetches; no PR code is checked out or executed.
+          persist-credentials: true
+
+      - name: Test trusted report code
+        run: node --test .github/scripts/upstream-owned-file-report.test.cjs
+
+      - name: Generate full report artifact
+        id: generate
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const { execFileSync } = require("node:child_process");
+            const reporter = require("./.github/scripts/upstream-owned-file-report.cjs");
+            const pullRequest = context.payload.pull_request;
+            const reportPath = path.join(process.env.RUNNER_TEMP, "upstream-owned-file-report.md");
+            const dataPath = path.join(process.env.RUNNER_TEMP, "upstream-owned-file-report.json");
+            let reportData = null;
+            let fullReport;
+
+            try {
+              execFileSync("git", ["fetch", "--no-tags", "origin", pullRequest.base.sha], { stdio: "ignore" });
+              execFileSync(
+                "git",
+                [
+                  "fetch",
+                  "--no-tags",
+                  "origin",
+                  `+refs/pull/${pullRequest.number}/head:refs/remotes/pr/${pullRequest.number}/head`,
+                ],
+                { stdio: "ignore" },
+              );
+              execFileSync(
+                "git",
+                [
+                  "fetch",
+                  "--no-tags",
+                  "https://github.com/pingdotgg/t3code.git",
+                  "main:refs/remotes/upstream/main",
+                ],
+                { stdio: "ignore" },
+              );
+              reportData = reporter.calculateReport({
+                cwd: process.cwd(),
+                base: pullRequest.base.sha,
+                head: pullRequest.head.sha,
+                upstream: "upstream/main",
+              });
+              fullReport = reporter.formatReport(reportData);
+            } catch {
+              core.warning("The upstream-owned file report could not be calculated for this update.");
+              fullReport = reporter.unavailableReport();
+            }
+
+            fs.writeFileSync(reportPath, `${fullReport}\n`);
+            fs.writeFileSync(dataPath, reportData ? JSON.stringify(reportData) : "");
+            core.setOutput("report-path", reportPath);
+            core.setOutput("data-path", dataPath);
+
+      - name: Upload full report
+        id: artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-owned-file-report-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ steps.generate.outputs.report-path }}
+          if-no-files-found: error
+
+      - name: Publish report comment
+        uses: actions/github-script@v8
+        env:
+          REPORT_DATA_PATH: ${{ steps.generate.outputs.data-path }}
+          REPORT_ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const reporter = require("./.github/scripts/upstream-owned-file-report.cjs");
+            const eventPullRequest = context.payload.pull_request;
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: eventPullRequest.number,
+            });
+
+            if (!reporter.matchesPullRequestEvent(eventPullRequest, currentPullRequest)) {
+              core.info("Skipping this report because a newer PR head or base is current.");
+              return;
+            }
+
+            const serializedReport = fs.readFileSync(process.env.REPORT_DATA_PATH, "utf8");
+            const options = { artifactUrl: process.env.REPORT_ARTIFACT_URL };
+            const body = serializedReport
+              ? reporter.formatComment(JSON.parse(serializedReport), options)
+              : reporter.formatUnavailableComment(options);
+
+            await reporter.publishComment({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pullNumber: eventPullRequest.number,
+              body,
+            });
