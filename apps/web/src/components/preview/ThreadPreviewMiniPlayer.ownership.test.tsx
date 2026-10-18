@@ -164,8 +164,7 @@ function MiniPlayerHost() {
   ) : null;
 }
 
-function AgentMiniPlayerHost() {
-  const snapshot = fake.snapshot as DeviceServiceState;
+function AgentMiniPlayerHost({ snapshot }: { readonly snapshot: DeviceServiceState }) {
   const panelSurfaces = useRightPanelStore(
     (state) => state.byThreadKey[threadKey]?.surfaces ?? EMPTY_PANEL_SURFACES,
   );
@@ -380,7 +379,8 @@ describe("ThreadPreviewMiniPlayer device ownership", () => {
       openedAt: "2026-10-18T00:00:00.000Z",
     };
     const owners = new Map([[agentOwner.sessionId, agentOwner]]);
-    fake.snapshot = { ...deviceState, sessions: [] };
+    const emptySnapshot = { ...deviceState, sessions: [] };
+    fake.snapshot = emptySnapshot;
     let resolveCancel: (() => void) | undefined;
     fake.cancelOpen.mockReset().mockImplementation(
       () =>
@@ -401,10 +401,11 @@ describe("ThreadPreviewMiniPlayer device ownership", () => {
       return Promise.resolve({ _tag: "Success" as const, value: undefined });
     });
 
-    await act(async () => root.render(<AgentMiniPlayerHost />));
+    await act(async () => root.render(<AgentMiniPlayerHost snapshot={emptySnapshot} />));
     owners.set(agentOwner.sessionId, agentOwner);
-    fake.snapshot = { ...deviceState, sessions: [agentOwner] };
-    await act(async () => root.render(<AgentMiniPlayerHost />));
+    const agentSnapshot = { ...deviceState, sessions: [agentOwner] };
+    fake.snapshot = agentSnapshot;
+    await act(async () => root.render(<AgentMiniPlayerHost snapshot={agentSnapshot} />));
 
     expect(openInputs).toHaveLength(1);
     const requestId = openInputs[0]?.requestId;
@@ -444,8 +445,9 @@ describe("ThreadPreviewMiniPlayer device ownership", () => {
       openedAt: "2026-10-18T00:02:00.000Z",
     };
     owners.set(observer.sessionId, observer);
-    fake.snapshot = { ...deviceState, sessions: [agentOwner, observer] };
-    await act(async () => root.render(<AgentMiniPlayerHost />));
+    const observerSnapshot = { ...deviceState, sessions: [agentOwner, observer] };
+    fake.snapshot = observerSnapshot;
+    await act(async () => root.render(<AgentMiniPlayerHost snapshot={observerSnapshot} />));
 
     expect(openInputs).toHaveLength(1);
     expect(usePreviewMiniPlayerStore.getState().byThreadKey[threadKey]).toBeUndefined();
