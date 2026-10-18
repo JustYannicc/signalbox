@@ -1,18 +1,9 @@
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import {
-  copyFileSync,
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
+import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 const PACKAGE = "@agentos-software/coreutils";
 const VERSION = "0.3.5";
 const PACKAGE_URL = "https://registry.npmjs.org/@agentos-software/coreutils/-/coreutils-0.3.5.tgz";
@@ -20,8 +11,8 @@ const TARBALL_SHA512 =
   "0ebc6ad10b18608471c11bd9e6893874a8d7f0547564a2130a37a8a7dca814770037b35563d5e6e22aba7c2eec5f91580fe6facaa1b528aae0d1b9a0f6fefd84";
 const TARBALL_SHA256 = "6dbfa3aa16077e697d71897adc1c6634c3045dae891c9c06264c751fe18fe7bc";
 const AOSPKG_SHA256 = "a291a48ce90b0ad12d3937e771d9aaec37b289c1f5b047fe3d1d61151dbeee51";
-const ABI_LOCK_PATH = join(scriptDirPlaceholder(), "import-abi.json");
-const ABI_LOCK = JSON.parse(readFileSync(ABI_LOCK_PATH, "utf8"));
+const ABI_LOCK_PATH = NodePath.join(scriptDirPlaceholder(), "import-abi.json");
+const ABI_LOCK = JSON.parse(NodeFS.readFileSync(ABI_LOCK_PATH, "utf8"));
 const SELECTED = ABI_LOCK.commands;
 const ALLOWED_IMPORTS = new Set([
   "host_fs",
@@ -31,20 +22,23 @@ const ALLOWED_IMPORTS = new Set([
   "wasi_snapshot_preview1",
 ]);
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
+const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const sourcePath = process.argv[2];
-const outputDir = resolve(process.argv[3] ?? scriptDir);
+const outputDir = NodePath.resolve(process.argv[3] ?? scriptDir);
 const mkdirCandidatePath = process.argv[4];
 if (mkdirCandidatePath === undefined) {
   throw new Error("Pass the rebuilt, pinned mkdir.wasm as the fourth argument");
 }
-const mkdirManifestPath = join(dirname(resolve(mkdirCandidatePath)), "mkdir.manifest.json");
+const mkdirManifestPath = NodePath.join(
+  NodePath.dirname(NodePath.resolve(mkdirCandidatePath)),
+  "mkdir.manifest.json",
+);
 
 let sourceBytes;
 if (sourcePath !== undefined) {
-  if (!existsSync(sourcePath))
+  if (!NodeFS.existsSync(sourcePath))
     throw new Error(`Missing ${PACKAGE}@${VERSION} tarball: ${sourcePath}`);
-  sourceBytes = readFileSync(sourcePath);
+  sourceBytes = NodeFS.readFileSync(sourcePath);
 } else {
   const response = await fetch(PACKAGE_URL);
   if (!response.ok) throw new Error(`Could not download ${PACKAGE}@${VERSION}: ${response.status}`);
@@ -54,11 +48,11 @@ if (sourcePath !== undefined) {
 assertHash("sha512", sourceBytes, TARBALL_SHA512, sourcePath ?? PACKAGE_URL);
 assertHash("sha256", sourceBytes, TARBALL_SHA256, sourcePath ?? PACKAGE_URL);
 
-const scratch = mkdtempSync(join(tmpdir(), "signalbox-coreutils-"));
+const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-coreutils-"));
 try {
-  const stagedTarball = join(scratch, "coreutils.tgz");
-  writeFileSync(stagedTarball, sourceBytes);
-  execFileSync("tar", [
+  const stagedTarball = NodePath.join(scratch, "coreutils.tgz");
+  NodeFS.writeFileSync(stagedTarball, sourceBytes);
+  NodeChildProcess.execFileSync("tar", [
     "-xzf",
     stagedTarball,
     "-C",
@@ -66,8 +60,8 @@ try {
     "package/dist/package.aospkg",
     "package/LICENSE",
   ]);
-  const containerPath = join(scratch, "package/dist/package.aospkg");
-  const container = readFileSync(containerPath);
+  const containerPath = NodePath.join(scratch, "package/dist/package.aospkg");
+  const container = NodeFS.readFileSync(containerPath);
   assertHash("sha256", container, AOSPKG_SHA256, "package/dist/package.aospkg");
 
   if (
@@ -84,12 +78,12 @@ try {
     throw new Error(`Unexpected coreutils .aospkg header (format ${formatVersion})`);
   }
 
-  const mountTar = join(scratch, "mount.tar");
-  writeFileSync(mountTar, container.subarray(mountOffset));
+  const mountTar = NodePath.join(scratch, "mount.tar");
+  NodeFS.writeFileSync(mountTar, container.subarray(mountOffset));
   const programs = {};
   let totalBytes = 0;
   for (const [name, expected] of Object.entries(SELECTED)) {
-    const bytes = execFileSync("tar", ["-xOf", mountTar, `./bin/${name}`], {
+    const bytes = NodeChildProcess.execFileSync("tar", ["-xOf", mountTar, `./bin/${name}`], {
       maxBuffer: 8 * 1024 * 1024,
     });
     assertHash("sha256", bytes, expected.sha256, `./bin/${name}`);
@@ -120,15 +114,15 @@ try {
       imports: expected.imports,
     };
     totalBytes += bytes.byteLength;
-    mkdirSync(join(outputDir, "bin"), { recursive: true });
-    writeFileSync(join(outputDir, "bin", `${name}.wasm`), bytes);
+    NodeFS.mkdirSync(NodePath.join(outputDir, "bin"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(outputDir, "bin", `${name}.wasm`), bytes);
   }
 
   const packagedMkdir = programs.mkdir;
   const mkdirPin = ABI_LOCK.overrides?.mkdir;
   if (mkdirPin === undefined) throw new Error("No rebuilt mkdir import and source pin is recorded");
-  const mkdirBytes = readFileSync(mkdirCandidatePath);
-  const mkdirSha256 = createHash("sha256").update(mkdirBytes).digest("hex");
+  const mkdirBytes = NodeFS.readFileSync(mkdirCandidatePath);
+  const mkdirSha256 = NodeCrypto.createHash("sha256").update(mkdirBytes).digest("hex");
   if (mkdirPin.sha256 !== undefined) {
     assertHash("sha256", mkdirBytes, mkdirPin.sha256, "rebuilt mkdir.wasm");
   }
@@ -145,7 +139,7 @@ try {
   if (JSON.stringify(mkdirImports) !== JSON.stringify(pinnedMkdirImports)) {
     throw new Error("Rebuilt mkdir WASM imports do not match the ABI pin");
   }
-  const mkdirManifest = JSON.parse(readFileSync(mkdirManifestPath, "utf8"));
+  const mkdirManifest = JSON.parse(NodeFS.readFileSync(mkdirManifestPath, "utf8"));
   if (
     mkdirManifest.artifact?.sha256 !== mkdirSha256 ||
     mkdirManifest.artifact?.bytes !== mkdirBytes.byteLength ||
@@ -168,9 +162,12 @@ try {
     imports: mkdirPin.imports,
   };
   totalBytes += mkdirBytes.byteLength - packagedMkdir.bytes;
-  writeFileSync(join(outputDir, "bin", "mkdir.wasm"), mkdirBytes);
-  copyFileSync(mkdirManifestPath, join(outputDir, "mkdir.manifest.json"));
-  copyFileSync(join(scratch, "package/LICENSE"), join(outputDir, "LICENSE"));
+  NodeFS.writeFileSync(NodePath.join(outputDir, "bin", "mkdir.wasm"), mkdirBytes);
+  NodeFS.copyFileSync(mkdirManifestPath, NodePath.join(outputDir, "mkdir.manifest.json"));
+  NodeFS.copyFileSync(
+    NodePath.join(scratch, "package/LICENSE"),
+    NodePath.join(outputDir, "LICENSE"),
+  );
   const provenance = {
     package: PACKAGE,
     version: VERSION,
@@ -187,7 +184,9 @@ try {
         packageArtifact: packagedMkdir,
         buildManifest: {
           path: "mkdir.manifest.json",
-          sha256: createHash("sha256").update(readFileSync(mkdirManifestPath)).digest("hex"),
+          sha256: NodeCrypto.createHash("sha256")
+            .update(NodeFS.readFileSync(mkdirManifestPath))
+            .digest("hex"),
         },
       },
     },
@@ -201,14 +200,17 @@ try {
       bash: "Omitted: the package's bin/bash is an sh alias, not GNU Bash.",
     },
   };
-  writeFileSync(join(outputDir, "provenance.json"), `${JSON.stringify(provenance, null, 2)}\n`);
+  NodeFS.writeFileSync(
+    NodePath.join(outputDir, "provenance.json"),
+    `${JSON.stringify(provenance, null, 2)}\n`,
+  );
   console.log(JSON.stringify({ outputDir, totalBytes, commands: Object.keys(programs) }));
 } finally {
-  rmSync(scratch, { recursive: true, force: true });
+  NodeFS.rmSync(scratch, { recursive: true, force: true });
 }
 
 function assertHash(algorithm, bytes, expected, label) {
-  const actual = createHash(algorithm).update(bytes).digest("hex");
+  const actual = NodeCrypto.createHash(algorithm).update(bytes).digest("hex");
   if (actual !== expected) {
     throw new Error(`${label} ${algorithm} mismatch: expected ${expected}, got ${actual}`);
   }
@@ -221,5 +223,5 @@ function compareImports(left, right) {
 }
 
 function scriptDirPlaceholder() {
-  return dirname(fileURLToPath(import.meta.url));
+  return NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 }

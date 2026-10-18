@@ -1,8 +1,8 @@
-import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage.ts";
 import {
   KernelProgramRegistry,
@@ -42,9 +42,13 @@ class RecordingProcessTable extends KernelProcessTable {
   }
 }
 
-const preparedDirectory = resolve(process.argv[2] ?? fileURLToPath(new URL("./", import.meta.url)));
-const artifactDirectory = join(preparedDirectory, "bin");
-const provenance = JSON.parse(readFileSync(join(preparedDirectory, "provenance.json"), "utf8"));
+const preparedDirectory = NodePath.resolve(
+  process.argv[2] ?? NodeURL.fileURLToPath(new URL("./", import.meta.url)),
+);
+const artifactDirectory = NodePath.join(preparedDirectory, "bin");
+const provenance = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(preparedDirectory, "provenance.json"), "utf8"),
+);
 const modules = Object.fromEntries(
   KERNEL_COREUTILS_COMMANDS.map((command) => [command, loadModule(command)]),
 );
@@ -61,7 +65,7 @@ const filesystem = new KernelFileSystem({
 const wakes = new KernelWakeRegistry();
 const registry = new KernelProgramRegistry();
 const programs = registerKernelCoreutilsPrograms(registry, modules);
-assert.equal(programs.size, 13, "all 13 pinned commands must be registered");
+NodeAssert.equal(programs.size, 13, "all 13 pinned commands must be registered");
 const processes = new RecordingProcessTable({ wakes });
 const host = new KernelProgramHost({ registry, wakes, processes, programs });
 const encoder = new TextEncoder();
@@ -72,9 +76,9 @@ try {
   writeFile(filesystem, "/work/source.txt", "alpha line\nalpha line\nbeta\n", 0o640);
   writeFile(filesystem, "/source.txt", "wrong root decoy\n", 0o600);
   const mkdirModeProbe = await probeMkdirMode();
-  assert.equal(mkdirModeProbe.exitCode, 0);
-  assert.equal(mkdirModeProbe.mode, 0o700);
-  assert.ok(
+  NodeAssert.equal(mkdirModeProbe.exitCode, 0);
+  NodeAssert.equal(mkdirModeProbe.mode, 0o700);
+  NodeAssert.ok(
     mkdirModeProbe.events.some((event) => event.namespace === "host_fs" && event.name === "chmod"),
     "mkdir -m must reach the supported host_fs.chmod import",
   );
@@ -92,55 +96,55 @@ try {
   results.push(await run("wc", ["-l", "-w", "-c", "source.txt"]));
   results.push(await run("uniq", ["source.txt"]));
   results.push(await run("cp", ["source.txt", "copied.txt"]));
-  assert.equal(readFile(filesystem, "/work/copied.txt"), "alpha line\nalpha line\nbeta\n");
+  NodeAssert.equal(readFile(filesystem, "/work/copied.txt"), "alpha line\nalpha line\nbeta\n");
   results.push(await run("mv", ["copied.txt", "moved.txt"]));
-  assert.equal(readFile(filesystem, "/work/copied.txt"), undefined);
-  assert.equal(readFile(filesystem, "/work/moved.txt"), "alpha line\nalpha line\nbeta\n");
+  NodeAssert.equal(readFile(filesystem, "/work/copied.txt"), undefined);
+  NodeAssert.equal(readFile(filesystem, "/work/moved.txt"), "alpha line\nalpha line\nbeta\n");
   results.push(await run("rm", ["moved.txt"]));
-  assert.equal(readFile(filesystem, "/work/moved.txt"), undefined);
+  NodeAssert.equal(readFile(filesystem, "/work/moved.txt"), undefined);
 
-  assert.equal(results.length, KERNEL_COREUTILS_COMMANDS.length);
+  NodeAssert.equal(results.length, KERNEL_COREUTILS_COMMANDS.length);
   assertResult(results[0], "coreutils echo\n");
   assertResult(results[1], "coreutils printf\n");
   assertResult(results[2], "/work\n");
   assertResult(results[3], "");
-  assert.match(results[4].stdout, /(?:^|\n)relative-dir(?:\n|$)/);
+  NodeAssert.match(results[4].stdout, /(?:^|\n)relative-dir(?:\n|$)/);
   assertResult(results[5], "alpha line\nalpha line\nbeta\n");
   assertResult(results[6], "alpha line\n");
   assertResult(results[7], "beta\n");
-  assert.match(results[8].stdout, /^\s*3\s+5\s+27\s+source\.txt\n$/);
+  NodeAssert.match(results[8].stdout, /^\s*3\s+5\s+27\s+source\.txt\n$/);
   assertResult(results[9], "alpha line\nbeta\n");
   assertResult(results[10], "");
   assertResult(results[11], "");
   assertResult(results[12], "");
 
-  assert.equal(filesystem.stat("/work/relative-dir").type, "directory");
-  assert.deepEqual(filesystem.getPosixMetadata("/work/relative-dir"), {
+  NodeAssert.equal(filesystem.stat("/work/relative-dir").type, "directory");
+  NodeAssert.deepEqual(filesystem.getPosixMetadata("/work/relative-dir"), {
     mode: 0o700,
     uid: 1000,
     gid: 1000,
   });
-  assert.equal(readFile(filesystem, "/work/source.txt"), "alpha line\nalpha line\nbeta\n");
-  assert.equal(filesystem.getPosixMetadata("/work/source.txt").mode, 0o640);
+  NodeAssert.equal(readFile(filesystem, "/work/source.txt"), "alpha line\nalpha line\nbeta\n");
+  NodeAssert.equal(filesystem.getPosixMetadata("/work/source.txt").mode, 0o640);
 
   const mkdirModes = [];
   mkdirModes.push(await run("mkdir", ["-p", "-m", "711", "nested-parent/leaf"]));
   assertResult(mkdirModes[0], "");
-  assert.equal(filesystem.getPosixMetadata("/work/nested-parent").mode, 0o755);
-  assert.equal(filesystem.getPosixMetadata("/work/nested-parent/leaf").mode, 0o711);
+  NodeAssert.equal(filesystem.getPosixMetadata("/work/nested-parent").mode, 0o755);
+  NodeAssert.equal(filesystem.getPosixMetadata("/work/nested-parent/leaf").mode, 0o711);
 
   const previousUmask = filesystem.setUmask(0o077);
-  assert.equal(previousUmask, 0o022);
+  NodeAssert.equal(previousUmask, 0o022);
   mkdirModes.push(await run("mkdir", ["-p", "private-parent/leaf"]));
   assertResult(mkdirModes[1], "");
-  assert.equal(filesystem.getPosixMetadata("/work/private-parent").mode, 0o700);
-  assert.equal(filesystem.getPosixMetadata("/work/private-parent/leaf").mode, 0o700);
-  assert.equal(filesystem.posixPolicy?.umask, 0o077);
-  assert.equal(filesystem.setUmask(previousUmask), 0o077);
-  assert.equal(filesystem.posixPolicy?.umask, 0o022);
+  NodeAssert.equal(filesystem.getPosixMetadata("/work/private-parent").mode, 0o700);
+  NodeAssert.equal(filesystem.getPosixMetadata("/work/private-parent/leaf").mode, 0o700);
+  NodeAssert.equal(filesystem.posixPolicy?.umask, 0o077);
+  NodeAssert.equal(filesystem.setUmask(previousUmask), 0o077);
+  NodeAssert.equal(filesystem.posixPolicy?.umask, 0o022);
 
-  assert.equal(host.processes.size, 0, "each command process must be reaped");
-  assert.equal(wakes.size, 0, "command completion must leave no wake registrations");
+  NodeAssert.equal(host.processes.size, 0, "each command process must be reaped");
+  NodeAssert.equal(wakes.size, 0, "command completion must leave no wake registrations");
 
   process.stdout.write(
     `${JSON.stringify({
@@ -173,7 +177,7 @@ try {
 async function run(command, args) {
   const executable = `/bin/${command}`;
   const resolved = host.resolve(executable);
-  assert.equal(resolved.status, "ok", `${executable} must resolve from the real registry`);
+  NodeAssert.equal(resolved.status, "ok", `${executable} must resolve from the real registry`);
   if (resolved.status !== "ok") throw new Error(`Could not resolve ${executable}`);
 
   const piped = host.preparePiped({ filesystem }, { cwd: "/work" });
@@ -193,19 +197,19 @@ async function run(command, args) {
       args: [executable, ...args],
       env: { PATH: "/bin", PWD: "/work" },
     });
-    assert.equal(spawned.status, "ok", `${command} process admission must succeed`);
+    NodeAssert.equal(spawned.status, "ok", `${command} process admission must succeed`);
     if (spawned.status !== "ok") throw new Error(`${command} admission failed`);
     handle = spawned.value;
 
     const completed = await host.exitStatus(handle);
-    assert.equal(
+    NodeAssert.equal(
       completed.status,
       "ok",
       `${command} process must complete: ${JSON.stringify(completed)}; cause=${String(processes.failure)}`,
     );
     if (completed.status !== "ok") throw new Error(`${command} failed before returning status`);
     const reaped = host.reap(handle);
-    assert.equal(reaped.status, "ok", `${command} process must be reaped`);
+    NodeAssert.equal(reaped.status, "ok", `${command} process must be reaped`);
     handle = undefined;
 
     const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
@@ -279,11 +283,13 @@ async function probeMkdirMode() {
 
 function loadModule(command) {
   const record = provenance.commands?.[command];
-  assert.ok(record, `provenance must pin ${command}`);
-  const bytes = new Uint8Array(readFileSync(join(artifactDirectory, `${command}.wasm`)));
-  assert.equal(bytes.byteLength, record.bytes, `${command} byte length must match provenance`);
-  assert.equal(
-    createHash("sha256").update(bytes).digest("hex"),
+  NodeAssert.ok(record, `provenance must pin ${command}`);
+  const bytes = new Uint8Array(
+    NodeFS.readFileSync(NodePath.join(artifactDirectory, `${command}.wasm`)),
+  );
+  NodeAssert.equal(bytes.byteLength, record.bytes, `${command} byte length must match provenance`);
+  NodeAssert.equal(
+    NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
     record.sha256,
     `${command} hash must match provenance`,
   );
@@ -342,9 +348,9 @@ async function readStream(stream) {
 }
 
 function assertResult(result, stdout) {
-  assert.equal(result.exitCode, 0, `${result.command} must exit successfully`);
-  assert.equal(result.stdout, stdout, `${result.command} output must match`);
-  assert.equal(result.stderr, "", `${result.command} must not write to stderr`);
-  assert.equal(result.stdoutEof, true, `${result.command} stdout must reach EOF`);
-  assert.equal(result.stderrEof, true, `${result.command} stderr must reach EOF`);
+  NodeAssert.equal(result.exitCode, 0, `${result.command} must exit successfully`);
+  NodeAssert.equal(result.stdout, stdout, `${result.command} output must match`);
+  NodeAssert.equal(result.stderr, "", `${result.command} must not write to stderr`);
+  NodeAssert.equal(result.stdoutEof, true, `${result.command} stdout must reach EOF`);
+  NodeAssert.equal(result.stderrEof, true, `${result.command} stderr must reach EOF`);
 }
