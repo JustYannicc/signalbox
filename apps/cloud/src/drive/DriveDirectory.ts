@@ -6,6 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { Oid } from "./git/gitObjects.ts";
+import type {
+  HistoryOrigin,
+  HistoryResult,
+  HistorySnapshot,
+  HistoryStartResult,
+} from "./DriveHistory.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
@@ -25,6 +31,7 @@ import type {
   ThreadRefs,
 } from "./DriveStore.ts";
 import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
 
 /**
  * How the Worker, thread and user objects reach drive objects. Every drive
@@ -38,6 +45,13 @@ export const DRIVE_OBJECT_JURISDICTION = "eu";
 
 /** What a drive object answers. `DriveObject` implements it method for method. */
 export interface DriveObjectApi {
+  readonly packStorage: (name: string) => Promise<string | null>;
+  readonly history: (userId: string) => Promise<HistoryResult>;
+  readonly historyOrigin: (userId: string) => Promise<HistoryOrigin | null>;
+  readonly startFromHistory: (
+    userId: string,
+    history: HistorySnapshot,
+  ) => Promise<HistoryStartResult>;
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
   readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
@@ -55,6 +69,8 @@ export interface DriveObjectApi {
     writer: DriveWriter,
     updates: ReadonlyArray<{ readonly name: string; readonly old: Oid | null; readonly new: Oid }>,
   ) => Promise<RefWrite>;
+  readonly savePull: (writer: DriveWriter, request: PullSaveRequest) => Promise<PullResult>;
+  readonly pullReceipt: (writer: DriveWriter, id: string) => Promise<PullResult | null>;
   readonly reconcile: (
     writer: DriveWriter,
     request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
@@ -153,6 +169,10 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
         catch: (cause) => new DriveObjectError({ operation, cause }),
       });
   return {
+    packStorage: wrap("packStorage"),
+    history: wrap("history"),
+    historyOrigin: wrap("historyOrigin"),
+    startFromHistory: wrap("startFromHistory"),
     open: wrap("open"),
     refs: wrap("refs"),
     ref: wrap("ref"),
@@ -160,6 +180,8 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     promised: wrap("promised"),
     registerPack: wrap("registerPack"),
     updateRefs: wrap("updateRefs"),
+    savePull: wrap("savePull"),
+    pullReceipt: wrap("pullReceipt"),
     reconcile: wrap("reconcile"),
     setRemote: wrap("setRemote"),
     remote: wrap("remote"),
