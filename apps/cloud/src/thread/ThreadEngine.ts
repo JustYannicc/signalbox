@@ -13,6 +13,7 @@ import {
   type OrchestrationV2SubscribeCommandOutputInput,
   EventId,
   type OrchestrationV2Command,
+  type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadLaunchInput,
@@ -168,7 +169,7 @@ export class ThreadEngine extends Context.Service<
       command: OrchestrationV2Command,
       creation: ThreadCreation,
     ) => Effect.Effect<
-      { readonly sequence: number },
+      OrchestrationV2DispatchCommandResult,
       ThreadNotFoundError | ThreadCommandRejectedError
     >;
     /** Creates the thread and starts its first turn as one command. */
@@ -746,7 +747,15 @@ const make = Effect.gen(function* () {
           },
         );
       },
-    ).pipe(Effect.map(({ sequence }) => ({ sequence })));
+    ).pipe(
+      Effect.flatMap(({ sequence }) =>
+        Effect.map(Effect.orDie(store.outbox), ({ revision }) => ({
+          sequence,
+          // Replays confirm against the current summary, including later replacements.
+          summaryRevision: revision,
+        })),
+      ),
+    );
 
   const launch: ThreadEngine["Service"]["launch"] = (actor, input, creation) =>
     Effect.gen(function* () {
@@ -1104,29 +1113,36 @@ const make = Effect.gen(function* () {
       threadId: thread.projection.thread.id,
       contextId: thread.owner.contextId,
       revision,
-      shell: threadShellFromProjection(thread.projection, current.monitors),
+      shell: {
+        ...threadShellFromProjection(thread.projection, current.monitors),
+        summaryRevision: revision,
+      },
       ...(started === null ? {} : { workStartedAt: started }),
       ...(current.statusNote === null ? {} : { statusNote: current.statusNote }),
     };
   };
 
   const summary: ThreadEngine["Service"]["summary"] = (actor) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = ownedBy(current, actor);
+        if (thread === null) return null;
+        const outbox = yield* Effect.orDie(store.outbox);
+        return summaryOf(thread, current, outbox.revision);
+      }),
+    );
+
+  const undelivered = serialized(
     Effect.gen(function* () {
       const current = yield* Ref.get(state);
-      const thread = ownedBy(current, actor);
-      if (thread === null) return null;
+      if (current.thread === null) return null;
       const outbox = yield* Effect.orDie(store.outbox);
-      return summaryOf(thread, current, outbox.revision);
-    });
-
-  const undelivered = Effect.gen(function* () {
-    const current = yield* Ref.get(state);
-    if (current.thread === null) return null;
-    const outbox = yield* Effect.orDie(store.outbox);
-    return outbox.revision > outbox.delivered
-      ? { thread: current.thread, current, revision: outbox.revision }
-      : null;
-  });
+      return outbox.revision > outbox.delivered
+        ? { thread: current.thread, current, revision: outbox.revision }
+        : null;
+    }),
+  );
 
   const hasPendingSummary: ThreadEngine["Service"]["hasPendingSummary"] = Effect.map(
     undelivered,
