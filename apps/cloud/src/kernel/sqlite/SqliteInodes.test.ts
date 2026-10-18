@@ -2,8 +2,7 @@ import * as NodeSqlite from "node:sqlite";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { CreateOptions } from "../storage.ts";
-import { type FacetStorage } from "./SqliteDatabase.ts";
-import { SqliteInodes } from "./SqliteInodes.ts";
+import { createFacetSqliteStorage, type FacetStorage } from "../FacetSqliteStorage.ts";
 
 const databases: NodeSqlite.DatabaseSync[] = [];
 afterEach(() => {
@@ -44,7 +43,7 @@ const fixture = () => {
     },
   };
   const nowNs = () => now;
-  const fs = new SqliteInodes(storage, nowNs);
+  const fs = createFacetSqliteStorage(storage, nowNs);
   const file = (name = "file", parent = fs.root) =>
     fs.create(parent, name, { type: "file", exclusive: true });
   const directory = (name: string, parent = fs.root) =>
@@ -65,12 +64,10 @@ const fixture = () => {
 
 const error = (code: string) => expect.objectContaining({ code });
 
-describe("SqliteInodes", () => {
+describe("facet SQLite inode behavior", () => {
   it("roundtrips exact bigint metadata and stores symbolic types", () => {
-    const { fs, storage, nowNs, file, tick, db } = fixture();
+    const { fs, nowNs, file, tick, db } = fixture();
     expect(fs.root).toBe(1n);
-    expect(fs.storage).toBe(storage);
-    expect(fs.nowNs).toBe(nowNs);
     expect(fs.stat(fs.root)).toEqual({
       type: "directory",
       size: 0n,
@@ -305,7 +302,7 @@ describe("SqliteInodes", () => {
       kept.toString(),
       new Uint8Array([1]).buffer,
     );
-    const reopened = new SqliteInodes(storage, nowNs);
+    const reopened = createFacetSqliteStorage(storage, nowNs);
     expect(() => reopened.stat(orphan)).toThrowError(error("ENOENT"));
     expect(reopened.lookup(reopened.root, "kept")).toBe(kept);
     expect(db.prepare("SELECT ino FROM kernel_fs_chunk ORDER BY ino").all()).toEqual([
@@ -316,7 +313,10 @@ describe("SqliteInodes", () => {
     db.prepare("UPDATE kernel_fs_meta SET v = ? WHERE k = 'next_inode'").run(huge.toString());
     expect(reopened.create(reopened.root, "huge", { type: "file", exclusive: true })).toBe(huge);
     expect(
-      new SqliteInodes(storage, nowNs).create(fs.root, "next", { type: "file", exclusive: true }),
+      createFacetSqliteStorage(storage, nowNs).create(fs.root, "next", {
+        type: "file",
+        exclusive: true,
+      }),
     ).toBe(huge + 1n);
   });
 
@@ -324,7 +324,9 @@ describe("SqliteInodes", () => {
     const { db, file, storage, nowNs } = fixture();
     const inode = file();
     db.prepare("UPDATE kernel_fs_meta SET v = '2' WHERE k = 'schema'").run();
-    expect(() => new SqliteInodes(storage, nowNs)).toThrow("Unsupported kernel filesystem schema");
+    expect(() => createFacetSqliteStorage(storage, nowNs)).toThrow(
+      "Unsupported kernel filesystem schema",
+    );
     expect(db.prepare("SELECT v FROM kernel_fs_meta WHERE k = 'schema'").get()).toMatchObject({
       v: "2",
     });

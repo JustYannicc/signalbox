@@ -11,11 +11,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { catalogRootTables } from "../catalogHomeTables.ts";
-import {
-  CatalogPersonalRoot,
-  CatalogPolicyActor,
-  type CatalogPolicyWriteContext,
-} from "../catalogPolicy.ts";
+import type { CatalogPersonalWriteContext } from "../catalogOrganizationReferences.ts";
+import type { catalogPersonalTables } from "../catalogPersonalTables.ts";
+import { CatalogPersonalRoot, CatalogPolicyActor } from "../catalogPolicy.ts";
 
 const memoryTable = <T extends Table>(
   initial: ReadonlyArray<Row<T>>,
@@ -109,11 +107,21 @@ export const policyContext = (userId = "owner", seeds: Seeds = {}) => {
     seeds.grants ?? [],
     ({ folderId, incarnation, personId }) => ({ folderId, incarnation, personId }),
   );
+  const references = memoryTable<typeof catalogPersonalTables.organizationReferences>(
+    [],
+    (row) => row.organizationId,
+  );
   const fences: Array<{ readonly scope: string; readonly epoch: number }> = [];
-  const ctx: CatalogPolicyWriteContext = {
+  const ctx: CatalogPersonalWriteContext = {
     actor: decodeActor({ userId }),
     home,
-    tables: { state: state.table, root: root.table, folders: folderTable, grants: grants.table },
+    tables: {
+      state: state.table,
+      root: root.table,
+      folders: folderTable,
+      grants: grants.table,
+      organizationReferences: references.table,
+    },
     requireAuthorizationFence: (fence) =>
       Effect.sync(() => {
         fences.push(fence);

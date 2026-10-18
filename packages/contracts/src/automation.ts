@@ -152,6 +152,12 @@ export const AutomationStep = Schema.Struct({
   commonAsk: Schema.optional(SignalboxAsk),
   /** The run in another system this step started, e.g. on GitHub Actions, as last read. */
   external: Schema.optional(Schema.NullOr(ExternalRun)),
+  childRun: Schema.optional(
+    Schema.Struct({
+      runId: Schema.String,
+      automationId: Schema.String,
+    }),
+  ),
 });
 export type AutomationStep = typeof AutomationStep.Type;
 
