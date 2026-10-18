@@ -36,11 +36,21 @@ vi.mock("@effect/atom-react", async (original) => ({
 }));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 let worktreesSupported = true;
+let hostCheckout = true;
 vi.mock("~/state/environmentCapabilities", () => ({
   useEnvironmentSupports: (_environmentId: unknown, capability: string) =>
-    capability === "worktrees" ? worktreesSupported : true,
+    capability === "worktrees"
+      ? worktreesSupported
+      : capability === "localFilesystem"
+        ? hostCheckout
+        : true,
 }));
-vi.mock("~/state/entities", () => ({ useProjects: () => [], useServerConfigs: () => new Map() }));
+const { waitForThreadShell } = vi.hoisted(() => ({ waitForThreadShell: vi.fn() }));
+vi.mock("~/state/entities", () => ({
+  useProjects: () => [],
+  useServerConfigs: () => new Map(),
+  waitForThreadShell,
+}));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: [] }),
   usePrimaryEnvironmentId: () => EnvironmentId.make("env-1"),
@@ -373,6 +383,75 @@ describe.each([
     } else {
       expect(newThread).toHaveBeenCalled();
     }
+  });
+});
+
+describe("a thread-per-branch environment (no worktrees, no host checkout)", () => {
+  beforeEach(() => {
+    worktreesSupported = false;
+    hostCheckout = false;
+    waitForThreadShell.mockReset().mockResolvedValue(true);
+    prepareThread.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        branch: "feature",
+        worktreePath: "/drive/new-thread",
+        threadId: ThreadId.make("new-thread"),
+        isOnPullRequestHead: true,
+      },
+    });
+  });
+  afterEach(() => {
+    worktreesSupported = true;
+    hostCheckout = true;
+  });
+
+  function renderPage() {
+    renderer = create(
+      <PullRequestDetailPanel
+        environmentId={threadRef.environmentId}
+        reference={detail}
+        context="page"
+        shortcutsEnabled={false}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />,
+    );
+  }
+
+  it("adopts the prepared thread in the draft it opened, without a second draft", async () => {
+    await act(async () => renderPage());
+    await click("Resolve conflicts");
+
+    expect(newThread).toHaveBeenCalledTimes(1);
+    expect(prepareThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: ThreadId.make("new-thread"),
+        operationId: expect.any(String),
+      }),
+    );
+    expect(waitForThreadShell).toHaveBeenCalledWith({
+      environmentId: threadRef.environmentId,
+      threadId: ThreadId.make("new-thread"),
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(newDraftId)?.prompt).toContain(
+      "resolve every conflict",
+    );
+  });
+
+  it("starts an empty thread on the pull request from the header", async () => {
+    await act(async () => renderPage());
+    await click("New thread");
+
+    expect(prepareThread).toHaveBeenCalledTimes(1);
+    expect(newThread).toHaveBeenCalledTimes(1);
+    expect(useComposerDraftStore.getState().getComposerDraft(newDraftId)?.prompt ?? "").toBe("");
   });
 });
 

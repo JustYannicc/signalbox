@@ -487,6 +487,16 @@ it.effect(
           (yield* prepare.authorize(registry, env, input).pipe(Effect.flip)).requiredScope,
         ).toBe(AuthOrchestrationOperateScope);
         yield* prepare.authorize(registry, env, { ...input, threadId: undefined });
+        expect(
+          (yield* prepare
+            .authorize(registry, env, {
+              ...input,
+              mode: "local",
+              threadId: undefined,
+              operationId: "prepare-pr",
+            })
+            .pipe(Effect.flip)).requiredScope,
+        ).toBe(AuthOrchestrationOperateScope);
         registry.set(
           sessions(env),
           AsyncResult.success({

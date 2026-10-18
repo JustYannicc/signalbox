@@ -1,4 +1,4 @@
-import { NonNegativeInt } from "@t3tools/contracts";
+import { NonNegativeInt, PositiveInt } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
@@ -191,6 +191,14 @@ export const DriveRemote = Schema.Struct({
 });
 export type DriveRemote = typeof DriveRemote.Type;
 
+/** A pull-request commit a new thread is required to materialize before work starts. */
+export const InitialRemoteHead = Schema.Struct({
+  repository: Schema.String,
+  number: PositiveInt,
+  headSha: Oid,
+});
+export type InitialRemoteHead = typeof InitialRemoteHead.Type;
+
 /** A shortcut target's version, recorded with a turn checkpoint. */
 export const CheckpointShortcutView = Schema.Struct({
   path: Schema.String,
@@ -261,6 +269,8 @@ export const DriveState = Schema.Struct({
   revision: Schema.optional(Schema.NullOr(Schema.String)),
   /** Where the thread's branch started: `main` when the thread first opened the drive. */
   base: Schema.NullOr(Oid),
+  /** A selected pull-request head still waiting for its first pack and branch ref. */
+  pendingInitialRemoteHead: Schema.optional(Schema.NullOr(InitialRemoteHead)),
   /** The drive's packs after the caller's `PACKS_AFTER_HEADER`, oldest first. */
   packs: Schema.Array(DrivePack),
   /** The remote repository this drive is backed by; null for a drive that is its own home. */

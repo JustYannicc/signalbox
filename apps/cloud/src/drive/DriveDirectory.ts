@@ -27,6 +27,8 @@ import type {
   ShortcutChange,
   StoredCommit,
   UpdateToLatestRequest,
+  PrepareThreadRequest,
+  PrepareThreadResult,
   UnreconciledWork,
   ThreadRefs,
 } from "./DriveStore.ts";
@@ -78,6 +80,10 @@ export interface DriveObjectApi {
     history: HistorySnapshot,
   ) => Promise<HistoryStartResult>;
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
+  readonly prepareThread: (
+    userId: string,
+    request: PrepareThreadRequest,
+  ) => Promise<PrepareThreadResult>;
   readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
   readonly missing: (
@@ -205,6 +211,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     historyOrigin: wrap("historyOrigin"),
     startFromHistory: wrap("startFromHistory"),
     open: wrap("open"),
+    prepareThread: wrap("prepareThread"),
     refs: wrap("refs"),
     ref: wrap("ref"),
     missing: wrap("missing"),

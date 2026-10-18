@@ -6,6 +6,15 @@ import { descriptor } from "../environment.ts";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves PR preparation and watch commands through the API and MCP reach", () => {
+    for (const name of ["git.preparePullRequestThread", "threads.pullRequest.watch"]) {
+      const operation = operations.find((candidate) => candidate.name === name)!;
+      expect(operation.access).toBe("write");
+      expect(cloudServes(operation)).toBe(true);
+      expect(cloudUnserved(operation)).toBeUndefined();
+    }
+  });
+
   it("serves provider switching through the generated API and MCP command reach", () => {
     const operation = operations.find((candidate) => candidate.name === "threads.switchProvider")!;
     expect(operation.command).toBe("provider.switch");

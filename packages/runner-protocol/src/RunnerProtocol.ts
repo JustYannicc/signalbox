@@ -387,6 +387,8 @@ export const RunnerHello = Schema.Struct({
   runtimeResponses: Schema.optional(Schema.Boolean),
   /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
   pulls: Schema.optional(Schema.Boolean),
+  /** The Runner materializes an immutable pull-request seed before its first turn. */
+  pullRequestSeeds: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 

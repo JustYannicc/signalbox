@@ -4,6 +4,7 @@ import {
   ThreadId,
   type AutomationDefaults,
   type OrchestrationV2ThreadShell,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { runtimeModeWithin } from "@signalbox/automations/access";
 import type { AuthorizeAutomation } from "@signalbox/automations/catalog";
@@ -117,8 +118,28 @@ const pullRequestTarget = (caller: OrchestrationV2ThreadShell, input: Input) =>
     };
   });
 
+/** Starts the editable watch automation under the calling thread's access and defaults. */
+export const watchPullRequestForThread = (
+  engine: Pick<WorkflowEngineShape, "watchPullRequest">,
+  caller: OrchestrationV2ThreadShell,
+  target: Pick<ThreadPullRequestLink, "host" | "repository" | "number" | "url">,
+  watching: boolean,
+) =>
+  engine.watchPullRequest(
+    { threadId: caller.id, ...target, watching },
+    { authorize: withinCaller(caller), builtInDefaults: defaultsOf(caller) },
+  );
+
 export const makeCloudTools = (deps: {
   readonly engine: WorkflowEngineShape;
+  readonly recordWatch: (
+    caller: OrchestrationV2ThreadShell,
+    target: Pick<ThreadPullRequestLink, "host" | "repository" | "number" | "url">,
+    watching: boolean,
+  ) => Effect.Effect<
+    { readonly watching: boolean; readonly wasWatching: boolean },
+    AutomationError
+  >;
   readonly compiler: CloudCompiler["Service"];
   readonly timezone: Effect.Effect<string, AutomationError>;
   readonly threads: AutomationThreadsShape;
@@ -132,10 +153,7 @@ export const makeCloudTools = (deps: {
     (caller, input) =>
       Effect.gen(function* () {
         const target = yield* pullRequestTarget(caller, input);
-        const result = yield* engine.watchPullRequest(
-          { threadId: caller.id, ...target, watching },
-          { authorize: withinCaller(caller), builtInDefaults: defaultsOf(caller) },
-        );
+        const result = yield* deps.recordWatch(caller, target, watching);
         return { ...target, ...result };
       });
 

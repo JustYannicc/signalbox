@@ -2,6 +2,7 @@ import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3too
 
 import type { MachineLease } from "../ThreadStore.ts";
 import { awaitsHandoff } from "./runnerTurn.ts";
+import { runnerCapabilityUpgrade } from "./runnerCapabilityUpgrade.ts";
 
 /** A warm Runner needs updating only when this turn can use a native callback. */
 export function needsRuntimeResponses(
@@ -29,19 +30,12 @@ export function runtimeResponseUpgrade(
   now: number,
   drainTimeoutMs: number,
 ) {
-  if (
-    lease.status !== "connected" ||
-    lease.disconnectedAt !== null ||
-    lease.runtimeResponses === true ||
-    projection === null ||
-    run === undefined ||
-    !needsRuntimeResponses(projection, run)
-  )
-    return { type: "none" } as const;
-  if (lease.runtimeResponsesUpgrade === true) return { type: "blocked" } as const;
-  if (lease.drains !== true) return { type: "replace" } as const;
-  if (lease.drain === undefined) return { type: "drain" } as const;
-  if (lease.drain._tag === "answered") return { type: "replace" } as const;
-  const deadline = lease.drain.id + drainTimeoutMs;
-  return now >= deadline ? ({ type: "replace" } as const) : ({ type: "wait", deadline } as const);
+  return runnerCapabilityUpgrade(
+    lease,
+    projection !== null && run !== undefined && needsRuntimeResponses(projection, run),
+    lease.runtimeResponses === true,
+    lease.runtimeResponsesUpgrade === true,
+    now,
+    drainTimeoutMs,
+  );
 }

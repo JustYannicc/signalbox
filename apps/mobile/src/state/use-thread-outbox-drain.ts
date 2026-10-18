@@ -6,6 +6,10 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  queuedPullRequestThreadOperationId,
+  resolvePreparedPullRequestThread,
+} from "@t3tools/client-runtime/state/pull-request-thread-preparation";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   AuthOrchestrationOperateScope,
@@ -22,7 +26,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createDebugLogger } from "../lib/debugLog";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
+import {
+  buildPreparedThreadStartTurnInput,
+  buildProjectThreadStartTurnInput,
+} from "../lib/projectThreadStartTurn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
@@ -1007,10 +1014,19 @@ export function useThreadOutboxDrain(): void {
       if (!hasAccess()) return true;
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
       let workspace = creation;
+      // A cloud preparation makes this very thread, so the first message joins it instead of
+      // creating it a second time.
+      let threadPrepared = false;
       if (creation.pullRequestReference) {
         const checkout = await preparePullRequest({
           environmentId: queuedMessage.environmentId,
-          input: { cwd: projectCwd, reference: creation.pullRequestReference, mode: "worktree" },
+          input: {
+            cwd: projectCwd,
+            reference: creation.pullRequestReference,
+            mode: "worktree",
+            threadId: queuedMessage.threadId,
+            operationId: queuedPullRequestThreadOperationId(queuedMessage.commandId),
+          },
         });
         if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision) || !hasAccess())
           return true;
@@ -1019,47 +1035,63 @@ export function useThreadOutboxDrain(): void {
         if (failure?.action === "restore")
           return restoreQueuedMessage(persistedMessage, failure.message);
         if (!AsyncResult.isSuccess(checkout)) return false;
-        if (!checkout.value.worktreePath || !checkout.value.isOnPullRequestHead)
+        const preparation = resolvePreparedPullRequestThread(
+          queuedMessage.threadId,
+          checkout.value,
+        );
+        if (preparation.kind === "mismatch")
           return restoreQueuedMessage(
             persistedMessage,
-            "The PR worktree has local changes and could not update to the PR head. Resolve them before trying again.",
+            "The pull request came back for a different thread, so nothing was sent. Try again.",
           );
-        workspace = {
-          ...creation,
-          workspaceMode: "local",
-          branch: checkout.value.branch,
-          worktreePath: checkout.value.worktreePath,
-          startFromOrigin: false,
-        };
+        if (preparation.kind === "server-thread") {
+          threadPrepared = true;
+        } else {
+          if (!preparation.worktreePath || !preparation.isOnPullRequestHead)
+            return restoreQueuedMessage(
+              persistedMessage,
+              "The PR worktree has local changes and could not update to the PR head. Resolve them before trying again.",
+            );
+          workspace = {
+            ...creation,
+            workspaceMode: "local",
+            branch: preparation.branch,
+            worktreePath: preparation.worktreePath,
+            startFromOrigin: false,
+          };
+        }
       }
+      const turnSpec = {
+        projectId: creation.projectId,
+        projectCwd,
+        threadId: queuedMessage.threadId,
+        commandId: queuedMessage.commandId,
+        messageId: queuedMessage.messageId,
+        createdAt: queuedMessage.createdAt,
+        ...serializeComposerMessageForServer(
+          queuedMessage.text.trim(),
+          uploadedComposerContext(
+            queuedMessage.context,
+            queuedMessage.attachments,
+            prepared.attachments,
+          ),
+          currentConfig.environment.capabilities.inlineMessageContext === true,
+        ),
+        uploadedAttachments: prepared.attachments,
+        modelSelection: sendSettings.modelSelection,
+        runtimeMode: sendSettings.runtimeMode,
+        interactionMode: sendSettings.interactionMode,
+        workspaceMode: workspace.workspaceMode,
+        branch: workspace.branch,
+        worktreePath: workspace.worktreePath,
+        startFromOrigin: workspace.startFromOrigin ?? false,
+        worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+      };
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
-        input: buildProjectThreadStartTurnInput({
-          projectId: creation.projectId,
-          projectCwd,
-          threadId: queuedMessage.threadId,
-          commandId: queuedMessage.commandId,
-          messageId: queuedMessage.messageId,
-          createdAt: queuedMessage.createdAt,
-          ...serializeComposerMessageForServer(
-            queuedMessage.text.trim(),
-            uploadedComposerContext(
-              queuedMessage.context,
-              queuedMessage.attachments,
-              prepared.attachments,
-            ),
-            currentConfig.environment.capabilities.inlineMessageContext === true,
-          ),
-          uploadedAttachments: prepared.attachments,
-          modelSelection: sendSettings.modelSelection,
-          runtimeMode: sendSettings.runtimeMode,
-          interactionMode: sendSettings.interactionMode,
-          workspaceMode: workspace.workspaceMode,
-          branch: workspace.branch,
-          worktreePath: workspace.worktreePath,
-          startFromOrigin: workspace.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
-        }),
+        input: threadPrepared
+          ? buildPreparedThreadStartTurnInput(turnSpec)
+          : buildProjectThreadStartTurnInput(turnSpec),
       });
       if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
       const failure = reportFailure(deliveryResult, "start-turn");

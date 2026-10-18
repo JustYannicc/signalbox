@@ -451,6 +451,33 @@ describe("RunnerDrive", () => {
     return { dir, commit };
   };
 
+  const makePullHead = (
+    upstream: ReturnType<typeof makeUpstream>,
+    number: number,
+    selectedText = "selected pull request\n",
+    currentText = selectedText,
+  ) => {
+    git(upstream.dir, "switch", "-q", "-c", `pr-${number}-selected`);
+    const selected = upstream.commit("pull-request.txt", selectedText, "Selected PR head");
+    let current = selected;
+    if (currentText !== selectedText) {
+      git(upstream.dir, "switch", "-q", "main");
+      git(upstream.dir, "switch", "-q", "-c", `pr-${number}-moved`);
+      current = upstream.commit("newer-only.txt", currentText, "Moved PR head");
+    }
+    git(upstream.dir, "update-ref", `refs/pull/${number}/head`, current);
+    git(upstream.dir, "switch", "-q", "main");
+    git(upstream.dir, "branch", "-D", `pr-${number}-selected`);
+    if (currentText !== selectedText) git(upstream.dir, "branch", "-D", `pr-${number}-moved`);
+    return { selected, current };
+  };
+
+  const pendingSeed = (headSha: string, number = 7) => ({
+    repository: "owner/repo",
+    number,
+    headSha,
+  });
+
   it.effect("doesn't save a branch to publish on a drive with no remote", () =>
     scopedTest((root) =>
       Effect.gen(function* () {
@@ -465,6 +492,137 @@ describe("RunnerDrive", () => {
   );
 
   describe("backed by a remote", () => {
+    it.effect("materializes the reserved SHA when a fork pull-request ref has moved", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const { selected, current } = makePullHead(
+            upstream,
+            7,
+            "reserved fork head\n",
+            "newer fork head\n",
+          );
+          const drive = makeFakeDrive(root, {
+            upstream: upstream.dir,
+            pendingInitialRemoteHead: pendingSeed(selected),
+          });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+
+          yield* runner.prepare("remote-token");
+
+          expect(git(cwd, "rev-parse", "HEAD")).toBe(selected);
+          expect(read(cwd, "pull-request.txt")).toBe("reserved fork head\n");
+          expect(git(upstream.dir, "rev-parse", "refs/pull/7/head")).toBe(current);
+          expect(drive.refs("t1")).toMatchObject({
+            thread: selected,
+            base: selected,
+            pendingInitialRemoteHead: null,
+          });
+          expect(drive.refs("t1").main).not.toBe(selected);
+          const selectedBlob = git(upstream.dir, "rev-parse", `${selected}:pull-request.txt`);
+          expect(drive.remoteCommitUploads()).toContainEqual([selected]);
+          expect(drive.promised()).toContain(selectedBlob);
+          expect(gitOk(drive.store, "cat-file", "-e", selectedBlob)).toBe(false);
+          expect(NodeFS.existsSync(NodePath.join(cwd, "newer-only.txt"))).toBe(false);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("fetches the pinned SHA when the pull-request ref is missing", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          git(upstream.dir, "switch", "-q", "-c", "unadvertised-pr-head");
+          const selected = upstream.commit(
+            "pull-request.txt",
+            "reserved head\n",
+            "Selected PR head",
+          );
+          git(upstream.dir, "update-ref", "refs/forks/7/head", selected);
+          git(upstream.dir, "switch", "-q", "main");
+          git(upstream.dir, "branch", "-D", "unadvertised-pr-head");
+          const drive = makeFakeDrive(root, {
+            upstream: upstream.dir,
+            pendingInitialRemoteHead: pendingSeed(selected),
+          });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+
+          yield* runner.prepare("remote-token");
+
+          expect(git(cwd, "rev-parse", "HEAD")).toBe(selected);
+          expect(read(cwd, "pull-request.txt")).toBe("reserved head\n");
+          expect(drive.refs("t1")).toMatchObject({ thread: selected, base: selected });
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("fails closed when neither the pull-request ref nor pinned SHA can be fetched", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const unavailable = "f".repeat(40);
+          const drive = makeFakeDrive(root, {
+            upstream: upstream.dir,
+            pendingInitialRemoteHead: pendingSeed(unavailable),
+          });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+
+          const failed = yield* Effect.exit(runner.prepare("remote-token"));
+
+          expect(failed._tag).toBe("Failure");
+          expect(drive.refs("t1")).toMatchObject({
+            thread: null,
+            base: null,
+            pendingInitialRemoteHead: pendingSeed(unavailable),
+          });
+          expect(gitOk(cwd, "rev-parse", "HEAD")).toBe(false);
+          expect(drive.refs("t1").main).not.toBeNull();
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect(
+      "keeps materialized pull-request work across repeated prepare and machine replacement",
+      () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const { selected } = makePullHead(upstream, 7, "reserved head\n");
+            const drive = makeFakeDrive(root, {
+              upstream: upstream.dir,
+              pendingInitialRemoteHead: pendingSeed(selected),
+            });
+            const first = yield* machine(drive, root, "vm-1", "t1");
+
+            yield* first.runner.prepare("remote-token");
+            const packsAfterMaterialization = drive.packs.length;
+            yield* first.runner.prepare("remote-token");
+            expect(drive.packs).toHaveLength(packsAfterMaterialization);
+            expect(git(first.cwd, "rev-parse", "HEAD")).toBe(selected);
+
+            write(first.cwd, "agent-work.txt", "keep this saved work\n");
+            const finished = yield* first.runner.finishTurn();
+            expect(finished.outcome._tag).toBe("saved");
+            const saved = finished.checkpoint!.commit;
+            const packsAfterSave = drive.packs.length;
+
+            const replacement = yield* machine(drive, root, "vm-2", "t1");
+            yield* replacement.runner.prepare("remote-token");
+
+            expect(git(replacement.cwd, "rev-parse", "HEAD")).toBe(saved);
+            expect(git(replacement.cwd, "rev-parse", "HEAD^1")).toBe(selected);
+            expect(read(replacement.cwd, "pull-request.txt")).toBe("reserved head\n");
+            expect(read(replacement.cwd, "agent-work.txt")).toBe("keep this saved work\n");
+            expect(drive.packs).toHaveLength(packsAfterSave);
+            expect(drive.refs("t1")).toMatchObject({
+              thread: saved,
+              base: selected,
+              pendingInitialRemoteHead: null,
+            });
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+    );
+
     it.effect("starts a new thread from the remote's head and keeps its history there", () =>
       scopedTest((root) =>
         Effect.gen(function* () {

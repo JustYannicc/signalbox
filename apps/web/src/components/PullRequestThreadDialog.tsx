@@ -3,6 +3,11 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  pullRequestThreadPreparationOperationId,
+  resolvePreparedPullRequestThread,
+} from "@t3tools/client-runtime/state/pull-request-thread-preparation";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -18,6 +23,7 @@ import {
 import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
+import { waitForThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentSupports } from "~/state/environmentCapabilities"; // signalbox
@@ -43,6 +49,23 @@ interface PullRequestThreadDialogProps {
   initialReference: string | null;
   onOpenChange: (open: boolean) => void;
   onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<void> | void;
+}
+
+/**
+ * React Compiler supports no `finally`, so the dialog settles its post-preparation work into a
+ * value, clears its pending state on both outcomes, and only then lets a failure escape.
+ */
+async function settle(work: () => unknown): Promise<{ readonly failure: unknown } | null> {
+  return Promise.resolve()
+    .then(work)
+    .then(
+      () => null,
+      (failure: unknown) => ({ failure }),
+    );
+}
+
+function rethrow(failure: unknown): never {
+  throw failure;
 }
 
 function pullRequestStatusTone(state: string | undefined): string {
@@ -117,6 +140,10 @@ export function PullRequestThreadDialog({
   const preparePullRequestThreadAction = usePreparePullRequestThreadAction({ environmentId, cwd });
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const worktreesSupported = useEnvironmentSupports(environmentId, "worktrees"); // signalbox
+  // signalbox: without a filesystem the user reaches, preparing makes this draft's thread on the
+  // pull request; there is no checkout or worktree to pick between.
+  const preparesThread = !useEnvironmentSupports(environmentId, "localFilesystem");
+  const defaultMode = worktreesSupported ? "worktree" : "local";
 
   const liveResolvedPullRequest =
     parsedReference !== null && parsedReference === parsedDebouncedReference
@@ -132,13 +159,20 @@ export function PullRequestThreadDialog({
       pullRequestResolution.isPending ||
       pullRequestResolution.isFetching);
   const statusTone = pullRequestStatusTone(resolvedPullRequest?.state);
+  // Preparing outlives the request: an adopted thread is awaited before the dialog closes.
+  const busy = preparePullRequestThreadAction.isPending || preparingMode !== null;
+  const canPrepare =
+    preparePullRequestThreadAction.isAllowed &&
+    canOperateThread &&
+    cwd !== null &&
+    resolvedPullRequest !== null &&
+    !isResolving &&
+    !busy;
 
   const handleConfirm = async (mode: "local" | "worktree") => {
     if (!preparePullRequestThreadAction.isAllowed) return;
-    if (
-      mode === "worktree" &&
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-    ) {
+    // Every preparation names this thread, which takes thread access whatever the mode.
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       return;
     }
     if (!parsedReference) {
@@ -153,10 +187,15 @@ export function PullRequestThreadDialog({
     const result = await preparePullRequestThreadAction.run({
       reference: parsedReference,
       mode,
-      ...(mode === "worktree" ? { threadId } : {}),
+      threadId,
+      operationId: pullRequestThreadPreparationOperationId({
+        threadId,
+        reference: parsedReference,
+        mode,
+      }),
     });
-    setPreparingMode(null);
     if (result._tag === "Failure") {
+      setPreparingMode(null);
       if (isAtomCommandInterrupted(result)) {
         preparePullRequestThreadAction.resetError();
       } else {
@@ -169,10 +208,23 @@ export function PullRequestThreadDialog({
       }
       return;
     }
-    await onPrepared({
-      branch: result.value.branch,
-      worktreePath: result.value.worktreePath,
-    });
+    const outcome = resolvePreparedPullRequestThread(threadId, result.value);
+    if (outcome.kind === "mismatch") {
+      setPreparingMode(null);
+      setPrepareErrorMessage(
+        "It came back for a different thread, so nothing was opened. Try again.",
+      );
+      return;
+    }
+    // This draft carries the thread id, so it adopts the new thread, typed text and all, once the
+    // shell arrives. Closing first would let a send try to create the thread again.
+    const settled = await settle(() =>
+      outcome.kind === "server-thread"
+        ? waitForThreadShell(scopeThreadRef(environmentId, outcome.threadId))
+        : onPrepared({ branch: outcome.branch, worktreePath: outcome.worktreePath }),
+    );
+    setPreparingMode(null);
+    if (settled !== null) rethrow(settled.failure);
     onOpenChange(false);
   };
 
@@ -198,7 +250,7 @@ export function PullRequestThreadDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!preparePullRequestThreadAction.isPending) {
+        if (!busy) {
           onOpenChange(nextOpen);
         }
       }}
@@ -207,12 +259,18 @@ export function PullRequestThreadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center">
             <SourceControlIcon className="me-2 size-4" />
-            Checkout {terminology.singular}
+            {preparesThread
+              ? `Work on a ${terminology.singular}`
+              : `Checkout ${terminology.singular}`}
           </DialogTitle>
           <DialogDescription>
-            Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread{" "}
-            {worktreesSupported ? "in the main repo or in a dedicated worktree" : "on its branch"}.
+            {preparesThread
+              ? `Resolve a ${sourceControlPresentation.providerName} ${terminology.singular}. This thread then works on its latest commit.`
+              : `Resolve a ${sourceControlPresentation.providerName} ${terminology.singular}, then create the draft thread ${
+                  worktreesSupported
+                    ? "in the main repo or in a dedicated worktree"
+                    : "on its branch"
+                }.`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -236,8 +294,8 @@ export function PullRequestThreadDialog({
                   return;
                 }
                 event.preventDefault();
-                if (!isResolving && !preparePullRequestThreadAction.isPending) {
-                  void handleConfirm(worktreesSupported ? "worktree" : "local"); // signalbox
+                if (!isResolving && !busy) {
+                  void handleConfirm(defaultMode); // signalbox
                 }
               }}
             />
@@ -275,41 +333,41 @@ export function PullRequestThreadDialog({
             variant="outline"
             size="sm"
             onClick={() => onOpenChange(false)}
-            disabled={preparePullRequestThreadAction.isPending}
+            disabled={busy}
           >
             Cancel
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => handleConfirm("local")}
-            disabled={
-              !preparePullRequestThreadAction.isAllowed ||
-              !cwd ||
-              !resolvedPullRequest ||
-              isResolving ||
-              preparePullRequestThreadAction.isPending
-            }
-          >
-            {preparingMode === "local" ? "Preparing local..." : "Local"}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => handleConfirm("worktree")}
-            hidden={!worktreesSupported} // signalbox
-            disabled={
-              !preparePullRequestThreadAction.isAllowed ||
-              !canOperateThread ||
-              !cwd ||
-              !resolvedPullRequest ||
-              isResolving ||
-              preparePullRequestThreadAction.isPending
-            }
-          >
-            {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
-          </Button>
+          {preparesThread ? (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => handleConfirm(defaultMode)}
+              disabled={!canPrepare}
+            >
+              {preparingMode !== null ? "Preparing..." : `Use ${terminology.singular}`}
+            </Button>
+          ) : (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => handleConfirm("local")}
+                disabled={!canPrepare}
+              >
+                {preparingMode === "local" ? "Preparing local..." : "Local"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => handleConfirm("worktree")}
+                hidden={!worktreesSupported} // signalbox
+                disabled={!canPrepare}
+              >
+                {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogPopup>
     </Dialog>

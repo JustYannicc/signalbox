@@ -311,6 +311,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
     reference: string;
     mode: "local" | "worktree";
     threadId?: ThreadId;
+    operationId?: string;
   }) => {
     const target = resolveScope(scope);
     if (target === null) {
@@ -325,8 +326,8 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
       );
     }
     if (
-      input.mode === "worktree" &&
-      input.threadId !== undefined &&
+      (input.operationId !== undefined ||
+        (input.mode === "worktree" && input.threadId !== undefined)) &&
       !readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
     ) {
       return AsyncResult.failure<never, EnvironmentAuthorizationError>(
@@ -345,6 +346,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
         reference: input.reference,
         mode: input.mode,
         ...(input.threadId ? { threadId: input.threadId } : {}),
+        ...(input.operationId ? { operationId: input.operationId } : {}),
       },
     });
   };

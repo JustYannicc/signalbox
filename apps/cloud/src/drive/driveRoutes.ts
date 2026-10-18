@@ -2,6 +2,8 @@ import {
   DRIVE_API_PREFIX,
   DRIVE_PATHS,
   type DriveState,
+  type DriveRemote,
+  type InitialRemoteHead,
   driveJson,
   MAX_DIRECT_PACK_BYTES,
   MAX_REMOTE_COMMITS,
@@ -111,12 +113,23 @@ const toState = (driveId: string, refs: ThreadRefs): DriveState => ({
   notes: refs.notes,
   pinnedViews: refs.pinnedViews,
   revision: refs.revision,
+  pendingInitialRemoteHead: refs.pendingInitialRemoteHead,
 });
 
 const decodeOid = Schema.decodeUnknownOption(Oid);
 
 const toResult = (driveId: string, write: RefWrite): RefWriteResult =>
   write._tag === "refused" ? write : { _tag: write._tag, state: toState(driveId, write.refs) };
+
+/** Only a still-pending head selected from this exact remote skips the ordinary commit lookup. */
+export const remoteCommitsWithoutInitialSeed = (
+  remote: DriveRemote | null,
+  pending: InitialRemoteHead | null | undefined,
+  commits: ReadonlyArray<Oid>,
+) =>
+  pending === null || pending === undefined || remote?.repository !== pending.repository
+    ? commits
+    : commits.filter((oid) => oid !== pending.headSha);
 
 async function authorize(
   env: DriveRouteEnv,
@@ -200,7 +213,7 @@ export async function handleDriveRequest(
  */
 async function checkedRemote(
   run: <A, E>(effect: Effect.Effect<A, E, Services>) => Promise<A>,
-  auth: { readonly driveId: string; readonly userId: string },
+  auth: { readonly driveId: string; readonly userId: string; readonly threadId: string },
   remoteHead: Oid | null,
   remoteCommits: ReadonlyArray<Oid>,
 ) {
@@ -210,9 +223,25 @@ async function checkedRemote(
   if (remoteHead !== null && !(await run(isRemoteHead(auth.driveId, auth.userId, remoteHead)))) {
     return text("That is not the remote's head.", 422);
   }
+  let ordinaryRemoteCommits = remoteCommits;
+  if (remoteCommits.length > 0) {
+    const refs = await run(
+      Effect.flatMap(DriveDirectory.DriveDirectory, (directory) =>
+        directory.forDrive(auth.driveId).refs(auth.threadId),
+      ),
+    );
+    // A selected PR head can be from a fork. The immutable seed authorizes only
+    // that exact commit for this still-unstarted thread; every other commit is
+    // checked against the drive's repository as usual.
+    ordinaryRemoteCommits = remoteCommitsWithoutInitialSeed(
+      refs.remote,
+      refs.pendingInitialRemoteHead,
+      remoteCommits,
+    );
+  }
   if (
-    remoteCommits.length > 0 &&
-    !(await run(areRemoteCommits(auth.driveId, auth.userId, remoteCommits)))
+    ordinaryRemoteCommits.length > 0 &&
+    !(await run(areRemoteCommits(auth.driveId, auth.userId, ordinaryRemoteCommits)))
   ) {
     return text("The remote doesn't hold those commits.", 422);
   }

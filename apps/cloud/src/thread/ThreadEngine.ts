@@ -986,7 +986,9 @@ const make = Effect.gen(function* () {
       },
       (projection, ctx, pool, preparation) => {
         const onItsPool =
-          typeof pool === "string" && command.type !== "thread.ask.sync"
+          typeof pool === "string" &&
+          command.type !== "thread.ask.sync" &&
+          command.type !== "thread.pull-request-watch.sync"
             ? commandOnPool(command, projection, pool)
             : command;
         return decide(

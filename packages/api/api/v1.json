@@ -650,8 +650,8 @@
       "name": "git.preparePullRequestThread",
       "rpc": "git.preparePullRequestThread",
       "access": "write",
-      "input": "2262718d",
-      "output": "407b46b8"
+      "input": "a9c8098e",
+      "output": "04969cf6"
     },
     {
       "name": "git.resolvePullRequest",

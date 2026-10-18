@@ -1,5 +1,7 @@
 import type {
   GitManagerError,
+  GitPreparePullRequestThreadInput,
+  GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
   GitResolvePullRequestResult,
   PullRequestActivity,
@@ -36,6 +38,7 @@ import type {
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
+import type { Actor } from "../thread/ThreadAccess.ts";
 
 export type PullRequestReadError = PullRequestUnavailableError | PullRequestOperationError;
 
@@ -105,5 +108,9 @@ export class CloudPullRequests extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerError>;
+    readonly preparePullRequestThread: (
+      actor: Actor,
+      input: GitPreparePullRequestThreadInput,
+    ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerError>;
   }
 >()("@signalbox/cloud/github/CloudPullRequestsService/CloudPullRequests") {}

@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type ThreadPullRequestWatchSyncCommand,
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
@@ -50,7 +51,7 @@ const created = (): OrchestrationV2ThreadProjection => {
 /** Decides `command` and folds what it decided; the events too. */
 const run = (
   projection: OrchestrationV2ThreadProjection,
-  command: OrchestrationV2Command,
+  command: OrchestrationV2Command | ThreadPullRequestWatchSyncCommand,
   iso = "2026-10-15T10:01:00.000Z",
 ) => {
   const decision = decide(projection, command, at(iso));
@@ -94,6 +95,29 @@ const sync = (
   ...key,
   snapshot: value,
   stack: null,
+});
+
+const watch = (
+  watching: boolean,
+  commandId: string,
+): Extract<OrchestrationV2Command, { readonly type: "thread.pull-request.watch" }> => ({
+  type: "thread.pull-request.watch",
+  commandId: CommandId.make(commandId),
+  threadId,
+  ...key,
+  watching,
+});
+
+const stopAutomationWatch = (
+  startedAt: string,
+  commandId = `stop-automation-watch-${startedAt}`,
+): ThreadPullRequestWatchSyncCommand => ({
+  type: "thread.pull-request-watch.sync",
+  commandId: CommandId.make(commandId),
+  threadId,
+  ...key,
+  startedAt,
+  watch: null,
 });
 
 describe("cloud pull request links", () => {
@@ -166,6 +190,104 @@ describe("cloud pull request links", () => {
     const dismissed = run(stacked, unlink).projection;
     expect(dismissed.thread.pullRequests?.[0]?.source).toBe("stack-dismissed");
     expect(threadShellFromProjection(dismissed).pullRequests?.[0]?.source).toBe("stack-dismissed");
+  });
+
+  it("records a watch on the thread, dedupes a repeated watch, and visibly clears it on unwatch", () => {
+    const linked = run(created(), link()).projection;
+    const started = run(linked, watch(true, "watch"), "2026-10-15T10:03:00.000Z");
+    expect(started.events.map((event) => event.type)).toEqual(["thread.pull-request-synced"]);
+    expect(started.projection.thread.pullRequests?.[0]).toMatchObject({
+      number: 7,
+      watch: {
+        startedAt: "2026-10-15T10:03:00.000Z",
+        headSha: null,
+        failedChecks: [],
+        passed: false,
+        passedChecks: [],
+        remarksThrough: "2026-10-15T10:03:00.000Z",
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      },
+    });
+
+    expect(run(started.projection, watch(true, "watch-again")).events).toEqual([]);
+
+    const stopped = run(started.projection, watch(false, "unwatch"));
+    expect(stopped.events.map((event) => event.type)).toEqual(["thread.pull-request-synced"]);
+    expect(stopped.projection.thread.pullRequests?.[0]).not.toHaveProperty("watch");
+    expect(run(stopped.projection, watch(false, "unwatch-again")).events).toEqual([]);
+  });
+
+  it("clears only the automation watch generation that ended", () => {
+    const linked = run(created(), link()).projection;
+    const first = run(linked, watch(true, "watch-first"), "2026-10-15T10:03:00.000Z");
+    const firstStartedAt = first.projection.thread.pullRequests?.[0]?.watch?.startedAt;
+    if (firstStartedAt === undefined) throw new Error("The first watch wasn't recorded.");
+
+    const cleared = run(first.projection, stopAutomationWatch(firstStartedAt));
+    expect(cleared.events.map((event) => event.type)).toEqual(["thread.pull-request-synced"]);
+    expect(cleared.projection.thread.pullRequests?.[0]).not.toHaveProperty("watch");
+
+    const second = run(cleared.projection, watch(true, "watch-second"), "2026-10-15T10:04:00.000Z");
+    const secondStartedAt = second.projection.thread.pullRequests?.[0]?.watch?.startedAt;
+    expect(secondStartedAt).not.toBe(firstStartedAt);
+    expect(run(second.projection, stopAutomationWatch(firstStartedAt)).events).toEqual([]);
+    expect(second.projection.thread.pullRequests?.[0]?.watch?.startedAt).toBe(secondStartedAt);
+
+    expect(
+      run(second.projection, stopAutomationWatch(secondStartedAt!)).projection.thread
+        .pullRequests?.[0],
+    ).not.toHaveProperty("watch");
+  });
+
+  it("rejects automation watch syncs other than a guarded stop", () => {
+    const linked = run(created(), link()).projection;
+    const started = run(linked, watch(true, "watch-for-rejected-sync"));
+    const startedWatch = started.projection.thread.pullRequests?.[0]?.watch;
+    if (startedWatch === undefined) throw new Error("The test watch wasn't recorded.");
+
+    expect(
+      decide(
+        started.projection,
+        { ...stopAutomationWatch(startedWatch.startedAt), watch: startedWatch },
+        at("2026-10-15T10:03:00.000Z"),
+      ),
+    ).toMatchObject({
+      _tag: "rejected",
+      message: "Cloud only supports stopping an ended pull request watch.",
+    });
+  });
+
+  it("can link and watch in one command", () => {
+    const command: OrchestrationV2Command = {
+      ...watch(true, "watch-new"),
+      link: { url, source: "manual" },
+    };
+    const started = run(created(), command);
+    expect(started.projection.thread.pullRequests).toHaveLength(1);
+    expect(started.projection.thread.pullRequests?.[0]).toMatchObject({
+      url,
+      source: "manual",
+      watch: { passed: false, wakes: 0 },
+    });
+  });
+
+  it("requires an available linked pull request for a new watch", () => {
+    expect(decide(created(), watch(true, "watch-unlinked"), at(T0))).toMatchObject({
+      _tag: "rejected",
+      message: "Link the pull request to this thread before watching it.",
+    });
+
+    const linked = run(created(), link()).projection;
+    const archived = {
+      ...linked,
+      thread: { ...linked.thread, archivedAt: DateTime.makeUnsafe(T0) },
+    };
+    expect(decide(archived, watch(true, "watch-archived"), at(T0))).toMatchObject({
+      _tag: "rejected",
+      message: "An archived thread can't watch pull requests.",
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildPreparedThreadStartTurnInput,
   buildProjectThreadStartTurnInput,
   deriveThreadTitleFromPrompt,
 } from "./projectThreadStartTurn";
@@ -134,4 +135,31 @@ describe("new thread on an existing branch", () => {
       expect(input.threadId).toBe("new-thread");
     },
   );
+});
+
+describe("first message in a thread the environment prepared", () => {
+  it("sends the turn without creating the thread again", () => {
+    const input = buildPreparedThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "prepared-thread",
+      commandId: "command",
+      messageId: "message",
+      createdAt: "2026-10-18T00:00:00Z",
+      text: "Fix the failing check",
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "local",
+      branch: "fix-thing",
+      worktreePath: "/drive/prepared-thread",
+      startFromOrigin: false,
+      worktreeBranchName: "unused",
+    });
+
+    expect(input).not.toHaveProperty("bootstrap");
+    expect(input.threadId).toBe("prepared-thread");
+    expect(input.message.text).toBe("Fix the failing check");
+  });
 });

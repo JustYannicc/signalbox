@@ -10,6 +10,14 @@ export function pullRequestAgentThread(
   return threads.length === 1 ? threads[0] : undefined;
 }
 
+/**
+ * Questions read the pull request through its context and leave any checkout alone; only work on
+ * the code prepares a thread on the pull request's head.
+ */
+export function pullRequestAgentTaskPreparesThread(task: PullRequestAgentTask): boolean {
+  return task !== "ask" && task !== "explain";
+}
+
 export function pullRequestAgentPrompt(task: PullRequestAgentTask): string {
   switch (task) {
     case "ask":

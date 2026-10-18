@@ -683,6 +683,7 @@ describe("drive checkpoints and revisions", () => {
         [10, "shared_history_packs"],
         [11, "drive_publication_creation_attempts"],
         [11, "shared_history_transfers"],
+        [12, "pull_request_thread_seeds"],
       ]);
     }).pipe(Effect.provide(layer));
   });

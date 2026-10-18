@@ -26,6 +26,7 @@ import { useScratchProject } from "~/hooks/useScratchProject";
 import { newProjectId } from "~/lib/utils";
 import { useProjects, useThreadShells, waitForProject } from "~/state/entities";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { environmentPresentations } from "~/state/presentation";
 import { allReachableShellsLiveAtom } from "~/state/shell";
@@ -320,8 +321,8 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
 }
 
 /**
- * The checkout runs the project's setup script on code from the pull request, so a link alone
- * never starts it.
+ * The checkout runs the project's setup script on code from the pull request, and a thread on it
+ * carries whatever prompt the link brought, so a link alone never starts either.
  */
 function PullRequestLinkCheckout({
   link,
@@ -338,6 +339,7 @@ function PullRequestLinkCheckout({
       url: promptLinkPullRequestUrl(link.pullRequest),
     },
   });
+  const hostCheckout = useEnvironmentSupports(project.environmentId, "localFilesystem");
   const warnedRef = useRef(false);
   useEffect(() => {
     if (warnedRef.current || link.prompt === null) return;
@@ -347,8 +349,16 @@ function PullRequestLinkCheckout({
   const { owner, name, number } = link.pullRequest;
   return (
     <LinkPage
-      title={`Check out ${owner}/${name}#${number}?`}
-      description="This puts the pull request's code in a new worktree and runs your project's setup script on it."
+      title={
+        hostCheckout
+          ? `Check out ${owner}/${name}#${number}?`
+          : `Work on ${owner}/${name}#${number}?`
+      }
+      description={
+        hostCheckout
+          ? "This puts the pull request's code in a new worktree and runs your project's setup script on it."
+          : "This starts a thread on the pull request's latest commit. Nothing runs until you send."
+      }
     >
       <Button
         size="sm"
@@ -360,7 +370,13 @@ function PullRequestLinkCheckout({
           )
         }
       >
-        {handoff !== null ? "Checking out..." : "Check out"}
+        {hostCheckout
+          ? handoff !== null
+            ? "Checking out..."
+            : "Check out"
+          : handoff !== null
+            ? "Starting..."
+            : "Start thread"}
       </Button>
     </LinkPage>
   );

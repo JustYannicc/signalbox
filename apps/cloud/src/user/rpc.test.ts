@@ -3,6 +3,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
   type ChatAttachment,
   CommandId,
@@ -603,6 +604,52 @@ describe("cloud RPC", () => {
       const send = yield* launch(readOnly).pipe(Effect.flip);
       expect(send).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "requires both source-control write and orchestration operate to prepare a PR thread",
+    () =>
+      Effect.gen(function* () {
+        const input = {
+          cwd: Environment.scratchProject.workspaceRoot,
+          reference: "12",
+          mode: "worktree" as const,
+        };
+
+        const sourceControlOnly = yield* client([
+          AuthOrchestrationReadScope,
+          AuthSourceControlWriteScope,
+        ]);
+        const missingOperate = yield* sourceControlOnly[WS_METHODS.gitPreparePullRequestThread](
+          input,
+        ).pipe(Effect.flip);
+        expect(missingOperate).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredScope: AuthOrchestrationOperateScope,
+        });
+
+        const operateOnly = yield* client([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+        const missingSourceControl = yield* operateOnly[WS_METHODS.gitPreparePullRequestThread](
+          input,
+        ).pipe(Effect.flip);
+        expect(missingSourceControl).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredScope: AuthSourceControlWriteScope,
+        });
+
+        const fullScopes = yield* client([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+          AuthSourceControlWriteScope,
+        ]);
+        const serviceFailure = yield* fullScopes[WS_METHODS.gitPreparePullRequestThread](
+          input,
+        ).pipe(Effect.flip);
+        expect(serviceFailure._tag).toBe("GitManagerError");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("lets a read-only session read a task's lifecycle but not change it", () =>

@@ -42,9 +42,9 @@ A link opens in Signalbox Cloud in your browser. With Signalbox set as your
 - **`provider` and `model`**: used when you have that provider set up. Otherwise your default
   model is used, and Signalbox tells you.
 - **`pr`**: opens the thread linked to that pull request on any connected machine, with the prompt
-  in its composer. When no thread is linked, the draft goes on the pull request branch in a new
-  worktree. Signalbox checks the code out only after you confirm, because the checkout runs your
-  setup script on it.
+  in its composer. When no thread is linked, Signalbox starts one on the pull request's latest
+  commit, but only after you confirm. On a self-hosted server, that puts the code in a new worktree
+  and runs your setup script on it.
 
 A thread link with a prompt, such as `https://app.signalbox.run/<environment>/<thread>?prompt=…`,
 puts the prompt in that thread's composer. If you already typed a draft there, Signalbox asks
