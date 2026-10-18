@@ -134,6 +134,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     modelSettingsWrite: true,
     keybindingsWrite: true,
     analyticsSettings: true,
+    personTimezone: true,
     devices: false,
     scheduledTasks: false,
     localFilesystem: false,
