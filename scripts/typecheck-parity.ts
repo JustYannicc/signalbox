@@ -64,8 +64,11 @@ export function compilerProjects(directory: string, command: string) {
     // Cloud generates its native modules before parity compares the two compiler configs.
     if (
       directory === "apps/cloud" &&
-      (part === "node infra/syncProbe/prepare.mjs" ||
-        part === "node infra/catalogRuntime/prepare.mjs")
+      [
+        "node infra/syncProbe/prepare.mjs",
+        "node infra/catalogRuntime/prepare.mjs",
+        "node --experimental-strip-types infra/isolateProbe/prepare.ts",
+      ].includes(part)
     )
       continue;
     const match = /^(?:tsc|tsc-rs) --noEmit(?: -p (\S+))?$/.exec(part);

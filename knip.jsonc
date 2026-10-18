@@ -80,8 +80,12 @@
         "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
         "infra/kernelProof/*.ts",
+        "infra/codexExecProof/prepare.ts",
+        "src/kernel/CodexExecProtocolProof.ts",
         "infra/syncProbe/alchemy.run.ts!",
         "infra/syncProbe/worker.ts!",
+        "infra/isolateProbe/alchemy.run.ts!",
+        "infra/isolateProbe/worker.ts!",
         "infra/syncProbe/lunora/identity.ts",
       ],
       // `cloudflare:workers` is a Workers runtime module, not a package.

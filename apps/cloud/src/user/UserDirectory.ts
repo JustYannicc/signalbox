@@ -152,6 +152,13 @@ export interface UserObjectApi {
   }) => Promise<SessionRecord | null>;
   /** Makes the user's work contexts exactly these organizations (see `UserContexts`). */
   readonly syncOrganizations: (organizations: ReadonlyArray<WorkOSOrganization>) => Promise<void>;
+  /** Reserves ordering before a WorkOS snapshot starts fetching. */
+  readonly reserveOrganizationRefresh: () => Promise<number>;
+  /** Applies only the newest reserved snapshot, including an unchanged one. */
+  readonly completeOrganizationRefresh: (
+    sequence: number,
+    organizations: ReadonlyArray<WorkOSOrganization>,
+  ) => Promise<boolean>;
   /**
    * The user's sidebar, as `GET /api/orchestration/shell` and `subscribeShell`
    * serve it, in its JSON encoding (`shellSnapshotWire`).
@@ -378,6 +385,8 @@ const METHODS = Object.keys({
   redeemHandoff: true,
   exchangeCredential: true,
   syncOrganizations: true,
+  reserveOrganizationRefresh: true,
+  completeOrganizationRefresh: true,
   shellSnapshot: true,
   recordThreadSummary: true,
   recordTerminalEvents: true,

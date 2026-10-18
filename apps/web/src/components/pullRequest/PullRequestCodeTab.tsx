@@ -168,6 +168,7 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
 
 interface FileViewedToggleState {
   readonly enabled: boolean;
+  readonly canToggle: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, path: string, viewed: boolean) => void;
@@ -195,12 +196,16 @@ function FileViewedToggle({
       {stat}
       <label
         data-viewed-toggle=""
-        className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
+        className={cn(
+          "flex select-none items-center gap-1.5 text-2xs text-muted-foreground",
+          viewedFiles.canToggle && "cursor-pointer",
+        )}
         onClick={(event) => event.stopPropagation()}
       >
         <Checkbox
           aria-label={stale ? "Changed" : "Viewed"}
           checked={viewed}
+          disabled={!viewedFiles.canToggle}
           onCheckedChange={(next) => viewedFiles.setFileViewed(fileKey, path, next === true)}
         />
         {stale ? (
@@ -679,13 +684,16 @@ function PullRequestCodeTab({
     });
 
   const setFileViewed = (fileKey: string, path: string, viewed: boolean) => {
-    setViewed(path, viewed);
+    setViewed(path, viewed, displayedRevision);
     setToggledFiles((current) =>
       toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
     );
   };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
+    // A store that checks each tick against the pull request's base and head would reject one
+    // sent from a commit's diff, which carries that commit's revision instead.
+    canToggle: commit === null || detail.capabilities.viewedFilesInCommitDiff !== false,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
     setFileViewed,
