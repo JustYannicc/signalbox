@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - The probe bounds and stops its compiler subprocess.
 import * as NodeChildProcess from "node:child_process";
 import * as NodePerfHooks from "node:perf_hooks";
+import * as NodeProcess from "node:process";
 
 export type JsonRpcMessage = {
   error?: { code: number; message: string };
@@ -27,20 +28,6 @@ export type LspSmokeShutdown = LspSmokeExit & {
   responseReceived: boolean;
 };
 
-export function isShutdownCancellation(stderr: string) {
-  const withoutTime = stderr.split(/^\s*\d+(?:\.\d+)? real\s+/m)[0]!;
-  const messages = withoutTime
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(
-      (line) =>
-        line &&
-        !/^LSP_PEAK_RSS_KIB=\d+$/.test(line) &&
-        line !== "Command exited with non-zero status 1",
-    );
-  return messages.length > 0 && messages.every((line) => line.includes("context canceled"));
-}
-
 export class LspSmokeTimeoutError extends Error {}
 
 export class LspSmokeClient {
@@ -54,7 +41,8 @@ export class LspSmokeClient {
   private resolveClosed!: (result: CloseResult) => void;
   private stdoutBuffer = Buffer.alloc(0);
   private stderrText = "";
-  private shutdownStderrOffset: number | undefined;
+  private shutdownRequestId: number | undefined;
+  private shutdownAcknowledged = false;
   private serverLogMessageCount = 0;
   private isClosed = false;
   private closeResult: CloseResult | undefined;
@@ -99,6 +87,11 @@ export class LspSmokeClient {
     child.stdout.on("data", (chunk: Buffer) => this.receiveBytes(chunk));
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderrText += chunk.toString("utf8");
+    });
+    child.stdin.on("error", (error) => {
+      if (this.shutdownAcknowledged) return;
+      this.protocolError = error;
+      this.rejectPending(error);
     });
     child.once("error", (error) => this.finish({ code: null, error, signal: null }));
     child.once("close", (code, signal) => this.finish({ code, signal }));
@@ -151,6 +144,7 @@ export class LspSmokeClient {
   private receive(message: JsonRpcMessage) {
     if (message.method && message.id !== undefined && message.id !== null) {
       this.traceEvent(`server request ${message.method} id=${String(message.id)}`);
+      if (this.shutdownAcknowledged) return;
       const items = (message.params as { items?: unknown[] } | undefined)?.items;
       const result =
         message.method === "workspace/configuration"
@@ -160,6 +154,15 @@ export class LspSmokeClient {
             : null;
       this.send({ id: message.id, result });
       return;
+    }
+    if (
+      this.shutdownRequestId !== undefined &&
+      !message.method &&
+      message.id === this.shutdownRequestId &&
+      !message.error
+    ) {
+      // A response and a late server request can share the same stdout chunk.
+      this.shutdownAcknowledged = true;
     }
     if (message.method) {
       if (message.method === "window/logMessage") {
@@ -230,6 +233,7 @@ export class LspSmokeClient {
 
   async request(method: string, params: unknown, timeoutMs?: number) {
     const id = this.nextRequestId++;
+    if (method === "shutdown") this.shutdownRequestId = id;
     const response = this.waitFor(
       (message) => message.id === id,
       `${method} response id=${id}`,
@@ -273,10 +277,6 @@ export class LspSmokeClient {
     return this.stderrText;
   }
 
-  shutdownStderr() {
-    return this.stderrText.slice(this.shutdownStderrOffset ?? this.stderrText.length);
-  }
-
   peakRssBytes() {
     const match = this.stderrText.match(/^\s*(\d+)\s+maximum resident set size\s*$/im);
     if (match) return Number(match[1]);
@@ -289,13 +289,16 @@ export class LspSmokeClient {
     try {
       await this.request("shutdown", undefined, 5_000);
       responseReceived = true;
-      this.shutdownStderrOffset = this.stderrText.length;
-      this.notify("exit");
+      if (!this.isClosed && !this.child.stdin.destroyed) this.notify("exit");
       const result = await this.waitUntilClosed(5_000);
+      // time reports its own exit status when its measured child dies from a signal.
+      const crash = this.stderrText.match(
+        /^(?:time: command terminated abnormally|Command terminated by signal \d+|panic:.*|fatal(?: error)?:.*|thread '[^'\r\n]*'(?: \(\d+\))? panicked at .*)$/m,
+      );
       const error =
-        result.code === 0
-          ? null
-          : `LSP server exited with code ${result.code ?? result.signal ?? "unknown"}${this.stderr().trim() ? `; stderr: ${this.stderr().trim().slice(-2_000)}` : ""}`;
+        this.protocolError?.message ??
+        result.error?.message ??
+        (result.signal ? `LSP server stopped by ${result.signal}` : (crash?.[0] ?? null));
       return {
         code: result.code,
         error,
@@ -350,10 +353,11 @@ export class LspSmokeClient {
       if (taskkill.error) this.child.kill(signal === "TERM" ? "SIGTERM" : "SIGKILL");
       return;
     }
-    const result = NodeChildProcess.spawnSync("/bin/kill", [`-${signal}`, `-${pid}`], {
-      stdio: "ignore",
-    });
-    if (result.error) this.child.kill(signal === "TERM" ? "SIGTERM" : "SIGKILL");
+    try {
+      NodeProcess.kill(-pid, signal === "TERM" ? "SIGTERM" : "SIGKILL");
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    }
   }
 
   private waitUntilClosed(timeoutMs: number): Promise<CloseResult>;

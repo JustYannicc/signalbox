@@ -12,7 +12,6 @@ import {
   AuthSettingsWriteScope,
   AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
-  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -138,9 +137,11 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -187,6 +188,7 @@ const SERVED = [
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
   ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
@@ -288,6 +290,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
@@ -500,6 +503,7 @@ export const layerHandlers = (input: {
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
+      const folderStarts = yield* FolderStarts.FolderStarts;
       const kinds = yield* UserThreadKinds.UserThreadKinds;
       const statusNotes = yield* UserThreadStatus.UserThreadStatus;
       const userDrives = yield* UserDrives.UserDrives;
@@ -590,7 +594,7 @@ export const layerHandlers = (input: {
       const notes = yield* makeNotesHandlers({ newThreadModel });
       const keys = yield* makeKeysHandlers({
         userId,
-        scopes: input.scopes ?? AuthStandardClientScopes,
+        scopes: input.scopes ?? CLOUD_CLIENT_SCOPES,
       });
       const signIn = yield* makeSignInHandlers({ userId });
       const keybindings = yield* makeKeybindingHandlers;
@@ -649,6 +653,18 @@ export const layerHandlers = (input: {
                 (cause) =>
                   new OrchestrationV2GetShellSnapshotError({
                     message: "The sidebar is unavailable right now.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
+          Stream.unwrap(
+            shell.subscribeArchived.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Archived threads are unavailable right now.",
                     cause,
                   }),
               ),
@@ -924,6 +940,7 @@ export const layerHandlers = (input: {
             ),
           ),
         [SIGNALBOX_FOLDERS_WS_METHODS.create]: (request) => folderCall(folders.create(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: (request) => folderStarts.startFrom(request),
         [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) => folderCall(folders.delete(request)),

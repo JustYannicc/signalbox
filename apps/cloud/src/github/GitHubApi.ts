@@ -10,47 +10,17 @@ import * as Stream from "effect/Stream";
 import * as HttpClientError from "effect/http/HttpClientError";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
-/**
- * The GitHub calls Signalbox Cloud makes: a few REST and GraphQL reads, opening pull requests, and git's
- * smart HTTP. Every call takes the user's token it acts with; nothing here
- * keeps one. Only the fields used are decoded.
- */
+import {
+  defaultGitHubEndpoints,
+  GitHubError,
+  type GitHubEndpoints,
+  unreadable,
+} from "./GitHubApiSupport.ts";
+import { makeAgentGitHubApi } from "./agentGitHubApi.ts";
 
-export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError", {
-  operation: Schema.String,
-  /** HTTP status, or 0 when no answer arrived. */
-  status: Schema.Number,
-  message: Schema.String,
-  /** The protocol used for the request that produced this answer. */
-  requestKind: Schema.optional(Schema.Literals(["rest", "graphql", "git"])),
-  /** A short, sanitized excerpt of the response body, when an answer arrived. */
-  responseExcerpt: Schema.optional(Schema.String),
-  /** Sanitized response headers that help identify malformed GitHub answers. */
-  responseContentType: Schema.optional(Schema.String),
-  responseContentLength: Schema.optional(Schema.String),
-  /** GitHub's bounded rate-limit headers, when present on an answer. */
-  responseRateLimits: Schema.optional(
-    Schema.Struct({
-      remaining: Schema.optional(Schema.String),
-      reset: Schema.optional(Schema.String),
-      resource: Schema.optional(Schema.String),
-      used: Schema.optional(Schema.String),
-      retryAfter: Schema.optional(Schema.String),
-    }),
-  ),
-  /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
-  retryAt: Schema.optional(Schema.Number),
-}) {}
+export { GitHubError, type GitHubEndpoints, unreadable };
 
 type GitHubRequestKind = "rest" | "graphql" | "git";
-
-/** An answer GitHub sent that doesn't decode as expected. */
-export const unreadable = (operation: string) =>
-  new GitHubError({
-    operation,
-    status: 200,
-    message: "GitHub sent an answer Signalbox does not understand.",
-  });
 
 /**
  * When a refused request may be retried: `retry-after` (secondary limits), or
@@ -65,17 +35,11 @@ const rateLimitRetryAt = (response: HttpClientResponse.HttpClientResponse, now: 
   return Number.isFinite(reset) ? reset * 1_000 : now + 60_000;
 };
 
-export interface GitHubEndpoints {
-  /** Where OAuth and git live, e.g. `https://github.com`. */
-  readonly web: string;
-  /** The REST API, e.g. `https://api.github.com`. */
-  readonly api: string;
-}
-
-const GITHUB_ENDPOINTS: GitHubEndpoints = {
-  web: "https://github.com",
-  api: "https://api.github.com",
-};
+/**
+ * The GitHub calls Signalbox Cloud makes: a few REST and GraphQL reads, opening pull requests, and git's
+ * smart HTTP. Every call takes the user's token it acts with; nothing here
+ * keeps one. Only the fields used are decoded.
+ */
 
 const MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024;
 
@@ -277,7 +241,7 @@ export const parseRepository = (input: string): string | null => {
 
 export const makeGitHubApi = (
   client: HttpClient.HttpClient,
-  endpoints: GitHubEndpoints = GITHUB_ENDPOINTS,
+  endpoints: GitHubEndpoints = defaultGitHubEndpoints,
 ) => {
   const web = endpoints.web.replace(/\/+$/, "");
   const api = endpoints.api.replace(/\/+$/, "");
@@ -546,6 +510,7 @@ export const makeGitHubApi = (
     });
 
   return {
+    ...makeAgentGitHubApi(client, endpoints),
     viewer: (token: string) => json("viewer", Viewer, HttpClientRequest.get(`${api}/user`), token),
     repository: (token: string, repository: string) =>
       json("repository", Repository, HttpClientRequest.get(`${api}/repos/${repository}`), token),
