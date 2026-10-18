@@ -1,0 +1,78 @@
+name: Upstream-owned file report
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    name: Upstream-owned file report (informational)
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: upstream-owned-file-report-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      # Load the publisher and its tests from the trusted PR base. Never check
+      # out the PR head here because this workflow has a write-capable token.
+      - name: Checkout trusted PR base
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test trusted report code
+        run: node --test .github/scripts/upstream-owned-file-report.test.cjs
+
+      - name: Publish report comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { execFileSync } = require("node:child_process");
+            const reporter = require("./.github/scripts/upstream-owned-file-report.cjs");
+            const pullRequest = context.payload.pull_request;
+            let body;
+
+            try {
+              execFileSync(
+                "git",
+                [
+                  "fetch",
+                  "--no-tags",
+                  "origin",
+                  `+refs/pull/${pullRequest.number}/head:refs/remotes/pr/${pullRequest.number}/head`,
+                ],
+                { stdio: "ignore" },
+              );
+              execFileSync(
+                "git",
+                [
+                  "fetch",
+                  "--no-tags",
+                  "https://github.com/pingdotgg/t3code.git",
+                  "main:refs/remotes/upstream/main",
+                ],
+                { stdio: "ignore" },
+              );
+              body = reporter.generateReport({
+                cwd: process.cwd(),
+                base: pullRequest.base.sha,
+                head: pullRequest.head.sha,
+                upstream: "upstream/main",
+              });
+            } catch {
+              core.warning("The upstream-owned file report could not be calculated for this update.");
+              body = reporter.unavailableReport();
+            }
+
+            await reporter.publishComment({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pullNumber: pullRequest.number,
+              body,
+            });
