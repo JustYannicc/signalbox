@@ -158,6 +158,7 @@ export function AskCompare(props: {
                 size="xs"
                 variant={picked ? "secondary" : "outline"}
                 aria-pressed={picked}
+                aria-label={`Pick ${option?.label ?? "this option"}`}
                 disabled={props.disabled}
                 onClick={() => props.onChange(picked ? undefined : pane.option)}
               >

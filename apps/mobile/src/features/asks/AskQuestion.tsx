@@ -71,9 +71,19 @@ export function AskQuestion(props: {
                 })}
           />
           {draft.html ? (
-            <Text className="font-sans text-xs text-foreground-muted">
-              From the view: {askValueText(draft.html.value)}
-            </Text>
+            <View className="flex-row items-center gap-2">
+              <Text className="flex-1 font-sans text-xs text-foreground-muted">
+                From the view: {askValueText(draft.html.value)}
+              </Text>
+              {/* Unsets only the view's answer; the comment below stays. */}
+              <RequestActionButton
+                label="Clear"
+                tone="secondary"
+                accessibilityLabel={`Clear the view's answer: ${question.question}`}
+                disabled={disabled}
+                onPress={() => onChange(updateAskDraft(draft, { html: undefined }))}
+              />
+            </View>
           ) : null}
         </View>
       ) : null}

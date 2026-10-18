@@ -7,7 +7,7 @@ import {
   buildAskRoundAnswer,
   sameAskKitValue,
   visiblePendingAsks,
-} from "./signalboxAsks.ts";
+} from "@t3tools/client-runtime/state/signalboxAsks";
 
 const now = "2026-10-16T12:00:00.000Z";
 const question = (id: string): SignalboxAskQuestion => ({

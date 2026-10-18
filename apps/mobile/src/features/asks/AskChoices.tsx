@@ -23,7 +23,8 @@ const GENERIC_FONTS: Partial<Record<string, string | null>> = {
 /** A device font by name; a name the device lacks falls back to the system font. */
 export function nativeFontStyle(font: AskKitFont | undefined) {
   if (font === undefined) return undefined;
-  const family = font in GENERIC_FONTS ? GENERIC_FONTS[font] : font;
+  // Own keys only: a font named "constructor" must not find Object.prototype's.
+  const family = Object.hasOwn(GENERIC_FONTS, font) ? GENERIC_FONTS[font] : font;
   return family ? { fontFamily: family } : undefined;
 }
 

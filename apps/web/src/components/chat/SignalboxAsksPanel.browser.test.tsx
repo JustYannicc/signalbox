@@ -200,6 +200,44 @@ describe("durable ask answering", () => {
     );
   });
 
+  it("clears one custom view's answer without its comment, and defers only that question", async () => {
+    // A real view that answers through the sandboxed bridge as soon as it loads.
+    const viewQuestion = (id: string): SignalboxAskQuestion => ({
+      ...question(id),
+      options: [],
+      recommendation: null,
+      surface: { kind: "html", html: '<script>signalbox.answer({ pick: "blue" })</script>' },
+    });
+    const viewAsk: SignalboxAsk = { ...ask, questions: [viewQuestion("one"), viewQuestion("two")] };
+    const clear = (id: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `button[aria-label="Clear the view's answer: Question ${id}?"]`,
+      );
+    await render(viewAsk);
+    await vi.waitFor(() => {
+      expect(clear("one")).not.toBeNull();
+      expect(clear("two")).not.toBeNull();
+    });
+
+    await type(answerField("one"), "Draft note");
+    await userEvent.click(clear("one")!);
+    expect(clear("one")).toBeNull();
+    expect(clear("two")).not.toBeNull();
+    expect(answerField("one").value).toBe("Draft note");
+
+    await userEvent.clear(answerField("one"));
+    await type(answerField("two"), "Blue reads best");
+    await userEvent.click(button("Save answers, defer remainder"));
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          answers: [{ questionId: "two", value: { pick: "blue" }, comment: "Blue reads best" }],
+          deferredQuestionIds: ["one"],
+        }),
+      }),
+    );
+  });
+
   it("stops submission when permission is revoked", async () => {
     await render();
     await type(answerField("one"), "My answer");

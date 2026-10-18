@@ -99,9 +99,22 @@ export function AskQuestion(props: {
             {...(disabled ? {} : { onAnswer: onHtmlAnswer })}
           />
           {draft.html ? (
-            <p className="text-xs text-muted-foreground">
-              From the view: {askValueText(draft.html.value)}
-            </p>
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                From the view: {askValueText(draft.html.value)}
+              </span>
+              {/* Unsets only the view's answer; the comment below stays. */}
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost-muted"
+                aria-label={`Clear the view's answer: ${question.question}`}
+                disabled={disabled}
+                onClick={() => onChange(updateAskDraft(draft, { html: undefined }))}
+              >
+                Clear
+              </Button>
+            </div>
           ) : null}
         </div>
       ) : null}

@@ -16,6 +16,8 @@ type SliderSpec = Extract<AskKitComponentSpec, { component: "slider" }>;
 
 const TRACK_HEIGHT = 40;
 const THUMB = 24;
+// Points a finger must move sideways, more than it moves up or down, before the slider takes it.
+const HORIZONTAL_SLOP = 4;
 
 /**
  * Untouched, the thumb rests dimmed at the start and nothing is sent. A touch, a drag or the
@@ -39,31 +41,39 @@ export function AskSlider(props: {
   });
 
   // The responder lives for the component's life; its handlers read the latest values through
-  // refs. Each move is the grant point plus the drag, so no layout measuring is needed.
+  // refs. Only a deliberate horizontal drag answers: a touch, a tap or a vertical scroll that
+  // crosses the track never claims it. Each move is the touch origin plus the drag.
   const trackWidth = useRef(0);
   // oxlint-disable-next-line react/refs -- Builds handlers only; they read refs when a touch arrives.
   const [responder] = useState(() => {
     const start = { x: 0 };
     const setAt = (x: number) => {
-      const current = latest.current.spec;
-      if (trackWidth.current <= 0) return;
-      const count = sliderStepCount(current);
-      latest.current.onChange(sliderValueAt(current, (x / trackWidth.current) * count));
+      const current = latest.current;
+      if (current.disabled || trackWidth.current <= 0) return;
+      const count = sliderStepCount(current.spec);
+      current.onChange(sliderValueAt(current.spec, (x / trackWidth.current) * count));
     };
     return PanResponder.create({
-      onStartShouldSetPanResponder: () => !latest.current.disabled,
-      onMoveShouldSetPanResponder: () => !latest.current.disabled,
-      // Keep the drag when the surrounding list would like to scroll.
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        !latest.current.disabled &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) &&
+        Math.abs(gesture.dx) > HORIZONTAL_SLOP,
+      // Keep the drag once it's ours, even if the surrounding list would like to scroll.
       onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: (event) => {
-        start.x = event.nativeEvent.locationX;
-        setAt(start.x);
+      // By the time a drag is claimed the finger has moved; the origin is where it started.
+      onPanResponderGrant: (event, gesture) => {
+        start.x = event.nativeEvent.locationX - gesture.dx;
       },
       onPanResponderMove: (_event, gesture) => setAt(start.x + gesture.dx),
     });
   });
-  const nudge = (by: number) =>
-    props.onChange(sliderValueAt(spec, value === undefined ? 0 : position + by));
+  // From unset, + takes the first step and − settles on the start.
+  const nudge = (by: number) => {
+    if (disabled) return;
+    const next = value === undefined ? Math.max(0, by) : position + by;
+    props.onChange(sliderValueAt(spec, next));
+  };
 
   return (
     <View className="gap-2">

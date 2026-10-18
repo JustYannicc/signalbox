@@ -70,6 +70,7 @@ vi.mock("../../components/ui/AppText", () => ({
   ),
 }));
 
+import { nativeFontStyle } from "../asks/AskChoices";
 import { SignalboxAsksCard } from "./SignalboxAsksCard";
 
 const now = "2026-10-17T12:00:00.000Z";
@@ -279,4 +280,12 @@ describe("mobile durable ask answering", () => {
       }),
     );
   });
+});
+
+it("maps generic fonts but never takes a font name from Object's prototype", () => {
+  expect(nativeFontStyle("monospace")).toEqual({ fontFamily: "Menlo" });
+  expect(nativeFontStyle("system-ui")).toBeUndefined();
+  // A valid font name that is also an Object.prototype key stays a plain font name.
+  expect(nativeFontStyle("constructor")).toEqual({ fontFamily: "constructor" });
+  expect(nativeFontStyle("toString")).toEqual({ fontFamily: "toString" });
 });
