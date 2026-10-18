@@ -74,6 +74,9 @@
       // Workers and Alchemy stacks load these entries by filename.
       "entry": [
         "src/models/gatewayWorker.ts!",
+        "src/automations/compiler/parserWorker.ts!",
+        "src/automations/compiler/transformerWorker.ts!",
+        "src/automations/tests/compilerHarnessWorker.ts",
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",

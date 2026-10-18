@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 export type CloudCompileResult =
   | { readonly ok: true; readonly compiled: AutomationCompiled }
@@ -84,7 +85,8 @@ export const acceptCompiled = (
 const makeLayer = (compileSource?: CloudSourceCompiler) =>
   Layer.effectContext(
     Effect.sync(() => {
-      const staged = new Map<string, Array<{ readonly compiled: CompiledWorkflow }>>();
+      const staged = new Map<string, CompiledWorkflow>();
+      const lanes = new Map<string, { readonly lock: Semaphore.Semaphore; users: number }>();
       const builtIns = new Map(
         BUILT_IN_AUTOMATIONS.flatMap((builtIn) => {
           const compiled = PRECOMPILED_BUILT_INS[builtIn.slug];
@@ -92,7 +94,7 @@ const makeLayer = (compileSource?: CloudSourceCompiler) =>
         }),
       );
       const compile = (source: string) => {
-        const compiled = staged.get(source)?.at(-1)?.compiled ?? builtIns.get(source);
+        const compiled = staged.get(source) ?? builtIns.get(source);
         return compiled ? ({ ok: true, workflow: compiled } as const) : NOT_COMPILED;
       };
       return Context.make(AutomationCompiler, AutomationCompiler.of({ compile })).pipe(
@@ -114,24 +116,33 @@ const makeLayer = (compileSource?: CloudSourceCompiler) =>
                         cause,
                       }),
                   }),
-            // Saves of the same source can finish in either order. Each owns one registration.
+            // The synchronous engine compile runs after yielding. Hold this source's lane for the entire save.
             withStaged: (source, compiled, use) =>
               Effect.acquireUseRelease(
                 Effect.sync(() => {
-                  const entry = { compiled };
-                  const active = staged.get(source) ?? [];
-                  active.push(entry);
-                  staged.set(source, active);
-                  return entry;
+                  let lane = lanes.get(source);
+                  if (!lane) {
+                    lane = { lock: Semaphore.makeUnsafe(1), users: 0 };
+                    lanes.set(source, lane);
+                  }
+                  lane.users++;
+                  return lane;
                 }),
-                () => use,
-                (entry) =>
+                (lane) =>
+                  lane.lock.withPermit(
+                    Effect.acquireUseRelease(
+                      Effect.sync(() => staged.set(source, compiled)),
+                      () => use,
+                      () =>
+                        Effect.sync(() => {
+                          staged.delete(source);
+                        }),
+                    ),
+                  ),
+                (lane) =>
                   Effect.sync(() => {
-                    const active = staged.get(source);
-                    if (!active) return;
-                    const index = active.indexOf(entry);
-                    if (index !== -1) active.splice(index, 1);
-                    if (active.length === 0) staged.delete(source);
+                    lane.users--;
+                    if (lane.users === 0) lanes.delete(source);
                   }),
               ),
           }),

@@ -12,6 +12,8 @@ import {
   runCompiler,
 } from "./typecheck-parity.ts";
 
+import cloudPackage from "../apps/cloud/package.json" with { type: "json" };
+
 const typeError =
   "src/file.ts(4,2): error TS2322: Type 'string' is not assignable to type 'number'.\n";
 const effectError = "src/file.ts(9,3): error TS377033: Use the Effect clock. effect(globalDate)\n";
@@ -25,8 +27,24 @@ test("parity retains both Cloud compiler configs after its known codegen prerequ
   ).toEqual(["apps/cloud/tsconfig.json", "apps/cloud/tsconfig.infra.json"]);
 });
 
+test("parity retains both Cloud compiler configs with its current compiler and probe prerequisites", () => {
+  expect(compilerProjects("apps/cloud", cloudPackage.scripts.typecheck)).toEqual([
+    "apps/cloud/tsconfig.json",
+    "apps/cloud/tsconfig.infra.json",
+  ]);
+});
+
 test("parity rejects unknown commands and the Cloud prerequisite in other workspaces", () => {
   expect(() => compilerProjects("apps/cloud", "node other-check.mjs && tsc-rs --noEmit")).toThrow(
+    "Unrecognized typecheck",
+  );
+  for (const command of [
+    "node infra/automationCompiler/prepare.js",
+    "node infra/automationCompiler/prepare.ts --other",
+  ]) {
+    expect(() => compilerProjects("apps/cloud", command)).toThrow("Unrecognized typecheck");
+  }
+  expect(() => compilerProjects("apps/web", "node infra/automationCompiler/prepare.ts")).toThrow(
     "Unrecognized typecheck",
   );
   expect(() => compilerProjects("apps/web", "node infra/syncProbe/prepare.mjs")).toThrow(
