@@ -11,8 +11,13 @@ import { type FacetStorage, StorageError } from "./sqlite/SqliteDatabase.ts";
 import { createSqliteFileSystem, PendingContentError } from "./sqlite/SqliteFileSystem.ts";
 import type { PendingFile } from "./sqlite/SqliteHydration.ts";
 import { SqliteCommitSnapshot } from "./sqlite/SqliteCommitSnapshot.ts";
+import {
+  registerPendingContent,
+  runPendingContentLeaf,
+} from "./sqlite/SqlitePendingContentWait.ts";
 
 type Failure = Extract<FilePersistenceResult<never>, { status: "error" }>;
+type HydrationFailure = Failure["error"];
 type FetchAttempt = {
   readonly waiters: Set<() => void>;
   readonly controller: AbortController;
@@ -36,6 +41,19 @@ const abiFailure = (failure: Failure) =>
         : failure.error.code,
     failure.error.message,
   );
+
+/** Preserves the persistence port's typed failure for a leaf waiting on hydration. */
+export class FacetFileHydrationError extends Error {
+  readonly persistenceError: HydrationFailure;
+  readonly code: HydrationFailure["code"];
+
+  constructor(persistenceError: HydrationFailure) {
+    super(persistenceError.message);
+    this.name = "FacetFileHydrationError";
+    this.persistenceError = persistenceError;
+    this.code = persistenceError.code;
+  }
+}
 
 /** The syscall owner calls attempt again after its wake. Storage itself never starts remote I/O. */
 export function createFacetFilePersistence(
@@ -118,25 +136,38 @@ export function createFacetFilePersistence(
           String(error),
         );
       }
-      const previous = fetches.get(error.inode);
-      if (previous?.failure) {
-        return abiFailure(previous.failure);
-      }
-      const file = hydration.pending(error.inode);
-      if (!file) return kernelError("IO_ERROR", "Hydration marker disappeared");
-      // Register first so a token-limit failure never starts an unobserved fetch.
-      let entry = previous;
-      const registration = options.wakes.register((wake) => {
-        entry ??= start(file);
-        entry.waiters.add(wake);
-        const subscribed = entry;
-        return () => subscribed.waiters.delete(wake);
+      const registration = registerPendingContent<Failure, FetchAttempt>({
+        inode: error.inode,
+        pending: hydration.pending.bind(hydration),
+        fetches,
+        start,
+        wakes: options.wakes,
       });
-      return registration.status === "ok"
-        ? { status: "would_block", wakeToken: registration.value }
-        : registration;
+      switch (registration.status) {
+        case "registered":
+          return { status: "would_block", wakeToken: registration.token };
+        case "failed":
+          return abiFailure(registration.failure);
+        case "missing":
+          return kernelError("IO_ERROR", "Hydration marker disappeared");
+        case "registration_error":
+          return kernelError(registration.error.code, registration.error.message);
+      }
     }
   };
+
+  const runLeaf = <T>(operation: () => T, signal?: AbortSignal): Promise<T> =>
+    runPendingContentLeaf({
+      operation,
+      ...(signal ? { signal } : {}),
+      ownerSignal: owner.signal,
+      ownerFailure: cancelled,
+      fetches,
+      pending: hydration.pending.bind(hydration),
+      start,
+      wakes: options.wakes,
+      hydrationError: (failure) => new FacetFileHydrationError(failure),
+    });
 
   const markUnhydrated = (file: PendingFile) => {
     if (owner.signal.aborted) throw new StorageError("ECANCELED");
@@ -226,6 +257,7 @@ export function createFacetFilePersistence(
   return {
     storage,
     attempt,
+    runLeaf,
     markUnhydrated,
     commitTurn,
     retryHydration(inode: Inode) {
