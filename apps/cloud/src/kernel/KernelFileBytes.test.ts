@@ -6,23 +6,72 @@ import {
   type KernelFileByteView,
 } from "./KernelFileBytes.ts";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
-import type { Storage } from "./storage.ts";
+import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
+import { createKernelSyscallHost } from "./KernelSyscallHost.ts";
+import type { KernelSyscallResponse } from "./KernelSyscallPort.ts";
+import type { Storage } from "./Wasi.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
-import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
-import { runSync } from "./wasi/internal_wasi_calls.ts";
-import {
-  ALL_RIGHTS,
-  READ_ONLY_RIGHTS,
-  WasiDescriptorTable,
-} from "./wasi/internal_wasi_descriptors.ts";
-import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
-import type { WasiMountedStorage } from "./wasi/internal_wasi_paths.ts";
 
 const now = () => 1_800_000_000_000_000_001n;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const ALL_WASI_RIGHTS = (1n << 28n) - 1n;
 const O_TRUNCATE = 8;
 const APPEND = 1;
+
+function bytesAt(response: KernelSyscallResponse, pointer: number, length: number): Uint8Array {
+  if (response.kind !== "return") throw new Error("Expected a syscall return value");
+  const region = response.regions.find(
+    (candidate) =>
+      pointer >= candidate.pointer &&
+      pointer + length <= candidate.pointer + candidate.bytes.length,
+  );
+  if (!region) throw new Error(`No returned syscall memory at ${pointer}`);
+  const offset = pointer - region.pointer;
+  return region.bytes.subarray(offset, offset + length);
+}
+
+function u32At(response: KernelSyscallResponse, pointer: number): number {
+  const bytes = bytesAt(response, pointer, 4);
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
+}
+
+function u64At(response: KernelSyscallResponse, pointer: number): bigint {
+  const bytes = bytesAt(response, pointer, 8);
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0, true);
+}
+
+async function pathStat(host: ReturnType<typeof createKernelSyscallHost>, path: string) {
+  const pathBytes = encoder.encode(path);
+  return host.call({
+    name: "path_filestat_get",
+    args: [3, 0, 16, pathBytes.byteLength, 1024],
+    memorySize: 4096,
+    regions: [
+      { pointer: 16, bytes: pathBytes },
+      { pointer: 1024, bytes: new Uint8Array(64) },
+    ],
+  });
+}
+
+async function pathOpen(
+  host: ReturnType<typeof createKernelSyscallHost>,
+  path: string,
+  oflags = 0,
+  fdflags = 0,
+  rightsBase = ALL_WASI_RIGHTS,
+) {
+  const pathBytes = encoder.encode(path);
+  return host.call({
+    name: "path_open",
+    args: [3, 0, 16, pathBytes.byteLength, oflags, rightsBase, 0n, fdflags, 32],
+    memorySize: 4096,
+    regions: [
+      { pointer: 16, bytes: pathBytes },
+      { pointer: 32, bytes: new Uint8Array(4) },
+    ],
+  });
+}
 
 describe("KernelFileByteSelection", () => {
   it("rejects a view bound to another storage before calling bind", () => {
@@ -52,7 +101,7 @@ describe("KernelFileByteSelection", () => {
     }
   });
 
-  it("routes path and fd byte operations through one shared open description", () => {
+  it("routes path and fd byte operations through one shared open description", async () => {
     const fixture = sqliteFixture();
     const baseStorage = createFacetSqliteStorage(fixture.storage, now);
     let storageReleases = 0;
@@ -133,154 +182,176 @@ describe("KernelFileByteSelection", () => {
       },
     };
 
-    const memory = new WasiMemory();
-    memory.set(new WebAssembly.Memory({ initial: 2 }));
-    const table = new WasiDescriptorTable();
-    const mount: WasiMountedStorage = {
-      id: 0,
-      path: "/",
-      storage,
-      root: storage.root,
-      readOnly: false,
-      device: 1n,
-    };
-    storage.retain(storage.root);
-    const rootFd = table.allocate({
-      kind: "directory",
-      mount,
-      inode: storage.root,
-      capabilityRoot: storage.root,
-      ancestors: [storage.root],
-      pathComponents: [],
-      preopenPath: "/",
-      preopen: true,
-      offset: 0n,
-      rightsBase: ALL_RIGHTS,
-      rightsInheriting: ALL_RIGHTS,
-      flags: 0,
+    const selection: KernelFileByteSelection = { kind: "view", view };
+    const filesystem = new KernelFileSystem({
+      mounts: [{ path: "/", storage }],
+      fileBytes: selection,
     });
-
-    let selection: KernelFileByteSelection = { kind: "view", view };
-    let selectionReads = 0;
-    const wasi = new WasiFileSystem(memory, [], [], {
-      table,
-      ownership: "borrowed",
-      fileBytes: () => {
-        selectionReads++;
-        return selection;
-      },
+    const host = createKernelSyscallHost({
+      filesystem,
+      args: [],
+      env: {},
+      signal: new AbortController().signal,
     });
-    memory.range(16, 4).set(encoder.encode("file"));
-
-    const pathStatSize = () => {
-      runSync(wasi.imports.path_filestat_get(rootFd, 0, 16, 4, 1024));
-      return memory.view(1024, 64).getBigUint64(32, true);
-    };
-    const open = (oflags = 0, fdflags = 0, rightsBase = ALL_RIGHTS, path = "file") => {
-      const pathBytes = encoder.encode(path);
-      memory.range(16, pathBytes.byteLength).set(pathBytes);
-      runSync(
-        wasi.imports.path_open(
-          rootFd,
-          0,
-          16,
-          pathBytes.byteLength,
-          oflags,
-          rightsBase,
-          0n,
-          fdflags,
-          32,
-        ),
-      );
-      return memory.readU32(32);
-    };
+    const readOnlyFilesystem = new KernelFileSystem({
+      mounts: [{ path: "/", storage, readOnly: true }],
+      fileBytes: selection,
+    });
 
     try {
-      expect(pathStatSize()).toBe(4n);
+      const initialStat = await pathStat(host, "file");
+      expect(initialStat).toMatchObject({ kind: "return", value: 0 });
+      expect(u64At(initialStat, 1024 + 32)).toBe(4n);
       expect(calls.binds).toBe(1);
       expect(calls.releases).toBe(1);
 
-      selection = canonicalFileByteSelection;
-      expect(pathStatSize()).toBe(9n);
+      filesystem.setFileBytes(canonicalFileByteSelection);
+      const canonicalStat = await pathStat(host, "file");
+      expect(canonicalStat).toMatchObject({ kind: "return", value: 0 });
+      expect(u64At(canonicalStat, 1024 + 32)).toBe(9n);
       expect(calls.binds).toBe(1);
 
-      selection = { kind: "view", view };
-      const beforeRejectedOpens = { binds: calls.binds, selections: selectionReads };
-      expect(() => open(0, 0, 1n << 60n)).toThrow(expect.objectContaining({ errno: 76 }));
-      expect(calls.binds).toBe(beforeRejectedOpens.binds);
-      expect(selectionReads).toBe(beforeRejectedOpens.selections);
+      filesystem.setFileBytes(selection);
+      const beforeRejectedOpens = calls.binds;
+      const rejectedRights = await pathOpen(host, "file", 0, 0, 1n << 60n);
+      expect(rejectedRights).toMatchObject({ kind: "return", value: 76 });
+      expect(calls.binds).toBe(beforeRejectedOpens);
 
-      Object.assign(mount, { readOnly: true });
-      expect(() => open(O_TRUNCATE, 0, READ_ONLY_RIGHTS)).toThrow(
-        expect.objectContaining({ errno: 69 }),
-      );
-      Object.assign(mount, { readOnly: false });
-      expect(calls.binds).toBe(beforeRejectedOpens.binds);
-      expect(selectionReads).toBe(beforeRejectedOpens.selections);
+      expect(() =>
+        readOnlyFilesystem.open("/file", KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC),
+      ).toThrow(expect.objectContaining({ code: "EROFS" }));
+      expect(() =>
+        filesystem.open("/directory", KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC),
+      ).toThrow(expect.objectContaining({ code: "EISDIR" }));
+      expect(calls.binds).toBe(beforeRejectedOpens);
 
-      expect(() => open(O_TRUNCATE, 0, ALL_RIGHTS, "directory")).toThrow(
-        expect.objectContaining({ errno: 31 }),
-      );
-      expect(calls.binds).toBe(beforeRejectedOpens.binds);
-      expect(selectionReads).toBe(beforeRejectedOpens.selections);
-
-      const releasesBeforeOpenedFiles = storageReleases;
-      const fd = open();
-      expect(selectionReads).toBe(3);
-      expect(table.get(fd).byteView).toBe(view);
+      const opened = await pathOpen(host, "file");
+      expect(opened).toMatchObject({ kind: "return", value: 0 });
+      const fd = u32At(opened, 32);
+      expect(filesystem.descriptors.get(fd).byteView).toBe(view);
       expect(calls.binds).toBe(2);
 
-      runSync(wasi.imports.fd_seek(fd, 0n, 2, 600));
-      expect(memory.view(600, 8).getBigUint64(0, true)).toBe(4n);
-      runSync(wasi.imports.fd_seek(fd, 0n, 0, 600));
-      memory.view(256, 8).setUint32(0, 4096, true);
-      memory.view(256, 8).setUint32(4, 4, true);
-      runSync(wasi.imports.fd_read(fd, 256, 1, 300));
-      expect(memory.readU32(300)).toBe(4);
-      expect(decoder.decode(memory.range(4096, 4))).toBe("view");
+      const seekEnd = await host.call({
+        name: "fd_seek",
+        args: [fd, 0n, 2, 600],
+        memorySize: 608,
+        regions: [{ pointer: 600, bytes: new Uint8Array(8) }],
+      });
+      expect(seekEnd).toMatchObject({ kind: "return", value: 0 });
+      expect(u64At(seekEnd, 600)).toBe(4n);
+      const seekStart = await host.call({
+        name: "fd_seek",
+        args: [fd, 0n, 0, 600],
+        memorySize: 608,
+        regions: [{ pointer: 600, bytes: new Uint8Array(8) }],
+      });
+      expect(seekStart).toMatchObject({ kind: "return", value: 0 });
 
+      const read = await host.call({
+        name: "fd_read",
+        args: [fd, 256, 1, 300],
+        memorySize: 4100,
+        regions: [
+          { pointer: 256, bytes: Uint8Array.from([0, 16, 0, 0, 4, 0, 0, 0]) },
+          { pointer: 300, bytes: new Uint8Array(4) },
+          { pointer: 4096, bytes: new Uint8Array(4) },
+        ],
+      });
+      expect(read).toMatchObject({ kind: "return", value: 0 });
+      expect(u32At(read, 300)).toBe(4);
+      expect(decoder.decode(bytesAt(read, 4096, 4))).toBe("view");
+
+      const alias = filesystem.descriptors.duplicate(fd);
       const largeWrite = new Uint8Array(70_000).fill(0x7a);
-      memory.range(8192, largeWrite.byteLength).set(largeWrite);
-      memory.view(256, 8).setUint32(0, 8192, true);
-      memory.view(256, 8).setUint32(4, largeWrite.byteLength, true);
-      runSync(wasi.imports.fd_pwrite(fd, 256, 1, 1n, 304));
-      expect(memory.readU32(304)).toBe(largeWrite.byteLength);
+      const pwrite = await host.call({
+        name: "fd_pwrite",
+        args: [fd, 256, 1, 1n, 304],
+        memorySize: 81_920,
+        regions: [
+          { pointer: 256, bytes: Uint8Array.from([0, 32, 0, 0, 0x70, 0x11, 1, 0]) },
+          { pointer: 304, bytes: new Uint8Array(4) },
+          { pointer: 8192, bytes: largeWrite },
+        ],
+      });
+      expect(pwrite).toMatchObject({ kind: "return", value: 0 });
+      expect(u32At(pwrite, 304)).toBe(largeWrite.byteLength);
       expect(calls.writes).toEqual([{ offset: 1n, length: largeWrite.byteLength }]);
-      expect(table.get(fd).offset).toBe(4n);
+      expect(filesystem.descriptors.get(fd).offset).toBe(4n);
+      expect(filesystem.descriptors.get(alias).offset).toBe(4n);
 
-      runSync(wasi.imports.fd_filestat_get(fd, 1024));
-      expect(memory.view(1024, 64).getBigUint64(32, true)).toBe(70_001n);
-      runSync(wasi.imports.fd_sync(fd));
-      runSync(wasi.imports.fd_datasync(fd));
+      const fileStat = await host.call({
+        name: "fd_filestat_get",
+        args: [fd, 1024],
+        memorySize: 1088,
+        regions: [{ pointer: 1024, bytes: new Uint8Array(64) }],
+      });
+      expect(fileStat).toMatchObject({ kind: "return", value: 0 });
+      expect(u64At(fileStat, 1024 + 32)).toBe(70_001n);
+
+      const sync = await host.call({ name: "fd_sync", args: [fd], memorySize: 0, regions: [] });
+      const datasync = await host.call({
+        name: "fd_datasync",
+        args: [fd],
+        memorySize: 0,
+        regions: [],
+      });
+      expect(sync).toMatchObject({ kind: "return", value: 0 });
+      expect(datasync).toMatchObject({ kind: "return", value: 0 });
       expect(calls.syncs).toEqual([false, true]);
 
-      const alias = table.duplicate(fd);
-      runSync(wasi.imports.fd_close(fd));
+      const releasesBeforeOpenedFiles = storageReleases;
+      const closeOriginal = await host.call({
+        name: "fd_close",
+        args: [fd],
+        memorySize: 0,
+        regions: [],
+      });
+      expect(closeOriginal).toMatchObject({ kind: "return", value: 0 });
       expect(calls.releases).toBe(1);
       expect(storageReleases).toBe(releasesBeforeOpenedFiles);
-      runSync(wasi.imports.fd_close(alias));
+      const closeAlias = await host.call({
+        name: "fd_close",
+        args: [alias],
+        memorySize: 0,
+        regions: [],
+      });
+      expect(closeAlias).toMatchObject({ kind: "return", value: 0 });
       expect(calls.releases).toBe(2);
       expect(storageReleases).toBe(releasesBeforeOpenedFiles + 1);
 
-      const appendFd = open(0, APPEND);
-      memory.range(8192, 4).set(encoder.encode("tail"));
-      memory.view(256, 8).setUint32(0, 8192, true);
-      memory.view(256, 8).setUint32(4, 4, true);
-      runSync(wasi.imports.fd_write(appendFd, 256, 1, 304));
+      const appendOpened = await pathOpen(host, "file", 0, APPEND);
+      expect(appendOpened).toMatchObject({ kind: "return", value: 0 });
+      const appendFd = u32At(appendOpened, 32);
+      const append = await host.call({
+        name: "fd_write",
+        args: [appendFd, 256, 1, 304],
+        memorySize: 8200,
+        regions: [
+          { pointer: 256, bytes: Uint8Array.from([0, 32, 0, 0, 4, 0, 0, 0]) },
+          { pointer: 304, bytes: new Uint8Array(4) },
+          { pointer: 8192, bytes: encoder.encode("tail") },
+        ],
+      });
+      expect(append).toMatchObject({ kind: "return", value: 0 });
+      expect(u32At(append, 304)).toBe(4);
       expect(calls.appends).toEqual([{ offset: 70_001n, length: 4 }]);
-      expect(table.get(appendFd).offset).toBe(70_005n);
-      runSync(wasi.imports.fd_close(appendFd));
+      expect(filesystem.descriptors.get(appendFd).offset).toBe(70_005n);
+      await host.call({ name: "fd_close", args: [appendFd], memorySize: 0, regions: [] });
       expect(calls.releases).toBe(3);
       expect(storageReleases).toBe(releasesBeforeOpenedFiles + 2);
 
-      const truncatedFd = open(O_TRUNCATE);
+      const truncated = await pathOpen(host, "file", O_TRUNCATE);
+      expect(truncated).toMatchObject({ kind: "return", value: 0 });
+      const truncatedFd = u32At(truncated, 32);
       expect(calls.truncates).toEqual([0n]);
-      runSync(wasi.imports.fd_close(truncatedFd));
+      await host.call({ name: "fd_close", args: [truncatedFd], memorySize: 0, regions: [] });
       expect(calls.releases).toBe(4);
       expect(storageReleases).toBe(releasesBeforeOpenedFiles + 3);
       expect(storage.stat(inode).size).toBe(9n);
     } finally {
-      runSync(table.closeAll());
+      host.close();
+      readOnlyFilesystem.dispose();
+      filesystem.dispose();
       fixture.close();
     }
   });

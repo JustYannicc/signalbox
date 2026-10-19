@@ -1,17 +1,83 @@
 import { describe, expect, it } from "vite-plus/test";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
-import type { KernelFileByteAccess } from "./KernelFileBytes.ts";
-import type { AsyncStorage, Storage } from "./storage.ts";
+import type { KernelFileByteAccess, KernelFileByteView } from "./KernelFileBytes.ts";
+import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
+import { AsyncWASI, type AsyncStorage, type Storage } from "./Wasi.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
-import { ALL_RIGHTS, WasiDescriptorTable } from "./wasi/internal_wasi_descriptors.ts";
-import { runAsync, runSync } from "./wasi/internal_wasi_calls.ts";
-import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
-import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
-import type { WasiMountedStorage } from "./wasi/internal_wasi_paths.ts";
 
 const now = () => 1_800_000_000_000_000_001n;
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+
+type WasmValueType = "i32" | "i64";
+interface WasiImportSpec {
+  readonly name: string;
+  readonly params: readonly WasmValueType[];
+}
+
+function leb(value: number): number[] {
+  const bytes: number[] = [];
+  do {
+    const next = value & 0x7f;
+    value >>>= 7;
+    bytes.push(next | (value === 0 ? 0 : 0x80));
+  } while (value !== 0);
+  return bytes;
+}
+
+function wasmName(value: string): number[] {
+  const bytes = [...encoder.encode(value)];
+  return [...leb(bytes.length), ...bytes];
+}
+
+function wasmSection(id: number, content: number[]): number[] {
+  return [id, ...leb(content.length), ...content];
+}
+
+function wasmWasiImports(imports: readonly WasiImportSpec[]): WebAssembly.Module {
+  const valueType = (type: WasmValueType) => (type === "i32" ? 0x7f : 0x7e);
+  const types = imports.flatMap((item) => [
+    0x60,
+    ...leb(item.params.length),
+    ...item.params.map(valueType),
+    1,
+    0x7f,
+  ]);
+  const importEntries = imports.flatMap((item, index) => [
+    ...wasmName("wasi_snapshot_preview1"),
+    ...wasmName(item.name),
+    0,
+    ...leb(index),
+  ]);
+  const exported = [
+    ...wasmName("memory"),
+    2,
+    0,
+    ...imports.flatMap((item, index) => [...wasmName(item.name), 0, ...leb(index)]),
+  ];
+
+  return new WebAssembly.Module(
+    Uint8Array.from([
+      0,
+      0x61,
+      0x73,
+      0x6d,
+      1,
+      0,
+      0,
+      0,
+      ...wasmSection(1, [imports.length, ...types]),
+      ...wasmSection(2, [imports.length, ...importEntries]),
+      ...wasmSection(5, [1, 0, 1]),
+      ...wasmSection(7, [imports.length + 1, ...exported]),
+    ]),
+  );
+}
+
+function exportedFunction(instance: WebAssembly.Instance, name: string) {
+  const fn = instance.exports[name];
+  if (typeof fn !== "function") throw new Error(`Missing WASI import export ${name}`);
+  return fn as (...args: Array<number | bigint>) => unknown;
+}
 
 describe("KernelFileByteAccess storage lifetime", () => {
   it("releases the backing inode pin even when final view release fails", () => {
@@ -28,46 +94,39 @@ describe("KernelFileByteAccess storage lifetime", () => {
     const inode = storage.create(storage.root, "file", { type: "file", exclusive: true });
     storage.release(inode);
     releases = 0;
-    const mount: WasiMountedStorage = {
-      id: 0,
-      path: "/",
-      storage,
-      root: storage.root,
-      readOnly: false,
-      device: 1n,
-    };
-    const table = new WasiDescriptorTable();
-    storage.retain(inode);
+    const filesystem = new KernelFileSystem({ mounts: [{ path: "/", storage }] });
     let accessReleases = 0;
     const releaseError = new Error("view cleanup failed");
-    const byteAccess: KernelFileByteAccess = {
-      stat: () => storage.stat(inode),
-      readInto: (offset, target) => storage.readInto(inode, offset, target),
-      write: (offset, source) => storage.write(inode, offset, source),
-      append: (source) => storage.append(inode, source),
-      truncate: (size) => storage.truncate(inode, size),
-      sync: (dataOnly) => storage.sync(inode, dataOnly),
-      release() {
-        accessReleases++;
-        throw releaseError;
+    const view: KernelFileByteView = {
+      completion: "sync",
+      storage,
+      bind(boundInode) {
+        const byteAccess: KernelFileByteAccess = {
+          stat: () => storage.stat(boundInode),
+          readInto: (offset, target) => storage.readInto(boundInode, offset, target),
+          write: (offset, source) => storage.write(boundInode, offset, source),
+          append: (source) => storage.append(boundInode, source),
+          truncate: (size) => storage.truncate(boundInode, size),
+          sync: (dataOnly) => storage.sync(boundInode, dataOnly),
+          release() {
+            accessReleases++;
+            throw releaseError;
+          },
+        };
+        return byteAccess;
       },
     };
-    const fd = table.allocate({
-      kind: "file",
-      mount,
-      inode,
-      offset: 0n,
-      rightsBase: ALL_RIGHTS,
-      rightsInheriting: 0n,
-      flags: 0,
-      byteAccess,
-    });
 
     try {
-      expect(() => runSync(table.close(fd))).toThrow(releaseError);
+      filesystem.setFileBytes({ kind: "view", view });
+      const fd = filesystem.open("/file", KernelOpenFlags.O_RDONLY);
+      filesystem.unlink("/file");
+      expect(() => filesystem.close(fd)).toThrow(releaseError);
       expect(accessReleases).toBe(1);
       expect(releases).toBe(1);
+      expect(() => storage.stat(inode)).toThrow(expect.objectContaining({ code: "ENOENT" }));
     } finally {
+      filesystem.dispose();
       fixture.close();
     }
   });
@@ -79,33 +138,63 @@ describe("KernelFileByteAccess storage lifetime", () => {
     storage.write(inode, 0n, encoder.encode("abc"));
     storage.release(inode);
     const asyncStorage = asAsyncStorage(storage);
-    const memory = new WasiMemory();
-    memory.set(new WebAssembly.Memory({ initial: 1 }));
-    const wasi = new WasiFileSystem(memory, [{ path: "/", storage: asyncStorage }], []);
+    const wasi = new AsyncWASI({
+      version: "preview1",
+      mounts: [{ path: "/", storage: asyncStorage }],
+    });
+    const imports = [
+      { name: "path_filestat_get", params: ["i32", "i32", "i32", "i32", "i32"] },
+      {
+        name: "path_open",
+        params: ["i32", "i32", "i32", "i32", "i32", "i64", "i64", "i32", "i32"],
+      },
+      { name: "fd_read", params: ["i32", "i32", "i32", "i32"] },
+      { name: "fd_write", params: ["i32", "i32", "i32", "i32"] },
+      { name: "fd_close", params: ["i32"] },
+    ] satisfies readonly WasiImportSpec[];
+    const instance = new WebAssembly.Instance(wasmWasiImports(imports), wasi.getImportObject());
 
     try {
-      await runAsync(wasi.initialize());
-      memory.range(16, 4).set(encoder.encode("file"));
-      await runAsync(wasi.imports.path_filestat_get(3, 0, 16, 4, 1024));
-      expect(memory.view(1024, 64).getBigUint64(32, true)).toBe(3n);
+      await wasi.initialize(instance);
+      const memory = instance.exports.memory as WebAssembly.Memory;
+      const memoryView = new DataView(memory.buffer);
+      const memoryBytes = new Uint8Array(memory.buffer);
+      memoryBytes.set(encoder.encode("file"), 16);
+      expect(
+        await wasi.run(exportedFunction(instance, "path_filestat_get"), 3, 0, 16, 4, 1024),
+      ).toBe(0);
+      expect(memoryView.getBigUint64(1024 + 32, true)).toBe(3n);
 
-      await runAsync(wasi.imports.path_open(3, 0, 16, 4, 0, ALL_RIGHTS, 0n, 0, 32));
-      const fd = memory.readU32(32);
-      memory.view(256, 8).setUint32(0, 4096, true);
-      memory.view(256, 8).setUint32(4, 3, true);
-      await runAsync(wasi.imports.fd_read(fd, 256, 1, 300));
-      expect(memory.readU32(300)).toBe(3);
-      expect(decoder.decode(memory.range(4096, 3))).toBe("abc");
+      expect(
+        await wasi.run(
+          exportedFunction(instance, "path_open"),
+          3,
+          0,
+          16,
+          4,
+          0,
+          (1n << 28n) - 1n,
+          0n,
+          0,
+          32,
+        ),
+      ).toBe(0);
+      const fd = memoryView.getUint32(32, true);
+      memoryView.setUint32(256, 4096, true);
+      memoryView.setUint32(260, 3, true);
+      expect(await wasi.run(exportedFunction(instance, "fd_read"), fd, 256, 1, 300)).toBe(0);
+      expect(memoryView.getUint32(300, true)).toBe(3);
+      expect(new Uint8Array(memory.buffer, 4096, 3)).toEqual(encoder.encode("abc"));
 
-      memory.range(8192, 1).set(encoder.encode("!"));
-      memory.view(256, 8).setUint32(0, 8192, true);
-      memory.view(256, 8).setUint32(4, 1, true);
-      await runAsync(wasi.imports.fd_write(fd, 256, 1, 304));
-      expect(memory.readU32(304)).toBe(1);
+      memoryBytes.set(encoder.encode("!"), 8192);
+      memoryView.setUint32(256, 8192, true);
+      memoryView.setUint32(260, 1, true);
+      expect(await wasi.run(exportedFunction(instance, "fd_write"), fd, 256, 1, 304)).toBe(0);
+      expect(memoryView.getUint32(304, true)).toBe(1);
       expect(storage.stat(inode).size).toBe(4n);
-      await runAsync(wasi.imports.fd_close(fd));
+      expect(await wasi.run(exportedFunction(instance, "fd_close"), fd)).toBe(0);
     } finally {
-      await runAsync(wasi.close());
+      await wasi.close();
       fixture.close();
     }
   });
