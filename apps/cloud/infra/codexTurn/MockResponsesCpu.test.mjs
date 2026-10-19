@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import { test } from "vite-plus/test";
 
 import { createMockResponsesWebSocket } from "./MockResponsesWebSocket.mjs";
 import { CPU_ONLY_MESSAGE, createMockResponsesCpu } from "./MockResponsesCpu.mjs";
@@ -45,7 +45,7 @@ class FakeWebSocketPair {
   }
 }
 
-NodeTest.test("emits one nine-frame assistant response with exact text and no tools", () => {
+test("emits one nine-frame assistant response with exact text and no tools", () => {
   const mock = createMockResponsesCpu();
   const peer = createMockResponsesWebSocket({ mock, WebSocketPair: FakeWebSocketPair });
   const result = peer.route({
@@ -111,7 +111,7 @@ NodeTest.test("emits one nine-frame assistant response with exact text and no to
   NodeAssert.equal(peer.metrics.mockCalls, 1);
 });
 
-NodeTest.test("CPU-only mock rejects invalid input without consuming its single response", () => {
+test("CPU-only mock rejects invalid input without consuming its single response", () => {
   const mock = createMockResponsesCpu();
 
   NodeAssert.throws(() => mock.respond({ input: "not-an-array" }), /input array/);

@@ -1,9 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import { test } from "vite-plus/test";
 
 import { nativeTimingRecord, nativeTimingRow } from "./ModelProofTimingProjection.mjs";
 
-NodeTest.test("stores allowlisted native timings and drops trace payloads", () => {
+test("stores allowlisted native timings and drops trace payloads", () => {
   const row = nativeTimingRecord(
     {
       eventTimestamp: 1_776_000_000_123,
@@ -49,7 +49,7 @@ NodeTest.test("stores allowlisted native timings and drops trace payloads", () =
   }
 });
 
-NodeTest.test("uses only known phases and finite nonnegative native values", () => {
+test("uses only known phases and finite nonnegative native values", () => {
   const row = nativeTimingRecord(
     {
       eventTimestamp: Infinity,

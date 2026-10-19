@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import { test } from "vite-plus/test";
 
 import { createMockResponses } from "./MockResponses.mjs";
 import { createMockResponsesWebSocket } from "./MockResponsesWebSocket.mjs";
@@ -147,7 +147,7 @@ function patchOutput() {
   ];
 }
 
-NodeTest.test("serves JSON events and reconstructs warmup and previous-response input", () => {
+test("serves JSON events and reconstructs warmup and previous-response input", () => {
   const mock = createMockResponses();
   const peer = createRoute(mock);
   const socket = openSocket(peer);
@@ -213,105 +213,102 @@ NodeTest.test("serves JSON events and reconstructs warmup and previous-response 
   NodeAssert.equal(peer.metrics.closes.length, 0);
 });
 
-NodeTest.test(
-  "replays an incremental request after reconnect with full input and fresh metadata",
-  () => {
-    const mock = createMockResponses();
-    const peer = createRoute(mock, {
-      closeBeforeCompletedOnce: true,
-      closeBeforeCompletedOnCall: 2,
-    });
-    const firstSocket = openSocket(peer);
-    const first = observe(firstSocket);
-    const createResponse = createResponseSender();
-    createResponse(firstSocket, { input: userInput() });
-    createResponse(firstSocket, {
-      previous_response_id: "resp-1069-exec",
-      input: execOutput(),
-    });
+test("replays an incremental request after reconnect with full input and fresh metadata", () => {
+  const mock = createMockResponses();
+  const peer = createRoute(mock, {
+    closeBeforeCompletedOnce: true,
+    closeBeforeCompletedOnCall: 2,
+  });
+  const firstSocket = openSocket(peer);
+  const first = observe(firstSocket);
+  const createResponse = createResponseSender();
+  createResponse(firstSocket, { input: userInput() });
+  createResponse(firstSocket, {
+    previous_response_id: "resp-1069-exec",
+    input: execOutput(),
+  });
 
-    NodeAssert.deepEqual(
-      first.events.map(({ type }) => type),
-      [
-        "response.created",
-        "response.output_item.done",
-        "response.completed",
-        "response.created",
-        "response.output_item.done",
-      ],
-    );
-    NodeAssert.deepEqual(first.closes, [
-      { code: 1012, reason: "Injected close before response.completed" },
-    ]);
+  NodeAssert.deepEqual(
+    first.events.map(({ type }) => type),
+    [
+      "response.created",
+      "response.output_item.done",
+      "response.completed",
+      "response.created",
+      "response.output_item.done",
+    ],
+  );
+  NodeAssert.deepEqual(first.closes, [
+    { code: 1012, reason: "Injected close before response.completed" },
+  ]);
 
-    const secondSocket = openSocket(peer);
-    const second = observe(secondSocket);
-    createResponse(secondSocket, {
-      previous_response_id: null,
-      input: [...userInput(), first.events[1].item, ...execOutput()],
-    });
+  const secondSocket = openSocket(peer);
+  const second = observe(secondSocket);
+  createResponse(secondSocket, {
+    previous_response_id: null,
+    input: [...userInput(), first.events[1].item, ...execOutput()],
+  });
 
-    NodeAssert.deepEqual(
-      second.events.map(({ type }) => type),
-      ["response.created", "response.output_item.done", "response.completed"],
-    );
-    createResponse(secondSocket, {
-      previous_response_id: "resp-1069-patch",
-      input: patchOutput(),
-    });
-    NodeAssert.equal(second.events.at(-2).item.type, "message");
-    NodeAssert.equal(mock.requests.length, 3);
-    NodeAssert.equal(peer.metrics.mockCalls, 3);
-    NodeAssert.equal(peer.metrics.opens, 2);
-    NodeAssert.deepEqual(
-      peer.metrics.requests.map(({ replay }) => replay),
-      [false, false, true, false],
-    );
-    NodeAssert.equal(peer.metrics.closes.length, 1);
-    NodeAssert.equal(peer.metrics.httpFallbacks, 0);
-    NodeAssert.deepEqual(
-      mock.requests[1].input.map(({ type }) => type),
-      ["message", "function_call", "function_call_output"],
-    );
-    NodeAssert.deepEqual(peer.metrics.requests[2].mockRequest.input, mock.requests[1].input);
-    const inboundFrames = peer.metrics.frames
-      .filter(({ direction }) => direction === "in")
-      .map(({ data }) => JSON.parse(data));
-    NodeAssert.deepEqual(
-      inboundFrames.map(({ type, stream, client_metadata }) => [
-        type,
-        stream,
-        client_metadata["x-codex-ws-stream-request-start-ms"],
-      ]),
-      [
-        ["response.create", true, "1000"],
-        ["response.create", true, "1001"],
-        ["response.create", true, "1002"],
-        ["response.create", true, "1003"],
-      ],
-    );
-    NodeAssert.equal(inboundFrames[1].client_metadata.session_id, "session-1");
-    NodeAssert.equal(inboundFrames[2].client_metadata.session_id, "session-2");
-    NodeAssert.deepEqual(
-      peer.metrics.events.map(({ type, replay }) => [type, replay]),
-      [
-        ["response.created", false],
-        ["response.output_item.done", false],
-        ["response.completed", false],
-        ["response.created", false],
-        ["response.output_item.done", false],
-        ["response.created", true],
-        ["response.output_item.done", true],
-        ["response.completed", true],
-        ["response.created", false],
-        ["response.output_item.done", false],
-        ["response.completed", false],
-      ],
-    );
-  },
-);
+  NodeAssert.deepEqual(
+    second.events.map(({ type }) => type),
+    ["response.created", "response.output_item.done", "response.completed"],
+  );
+  createResponse(secondSocket, {
+    previous_response_id: "resp-1069-patch",
+    input: patchOutput(),
+  });
+  NodeAssert.equal(second.events.at(-2).item.type, "message");
+  NodeAssert.equal(mock.requests.length, 3);
+  NodeAssert.equal(peer.metrics.mockCalls, 3);
+  NodeAssert.equal(peer.metrics.opens, 2);
+  NodeAssert.deepEqual(
+    peer.metrics.requests.map(({ replay }) => replay),
+    [false, false, true, false],
+  );
+  NodeAssert.equal(peer.metrics.closes.length, 1);
+  NodeAssert.equal(peer.metrics.httpFallbacks, 0);
+  NodeAssert.deepEqual(
+    mock.requests[1].input.map(({ type }) => type),
+    ["message", "function_call", "function_call_output"],
+  );
+  NodeAssert.deepEqual(peer.metrics.requests[2].mockRequest.input, mock.requests[1].input);
+  const inboundFrames = peer.metrics.frames
+    .filter(({ direction }) => direction === "in")
+    .map(({ data }) => JSON.parse(data));
+  NodeAssert.deepEqual(
+    inboundFrames.map(({ type, stream, client_metadata }) => [
+      type,
+      stream,
+      client_metadata["x-codex-ws-stream-request-start-ms"],
+    ]),
+    [
+      ["response.create", true, "1000"],
+      ["response.create", true, "1001"],
+      ["response.create", true, "1002"],
+      ["response.create", true, "1003"],
+    ],
+  );
+  NodeAssert.equal(inboundFrames[1].client_metadata.session_id, "session-1");
+  NodeAssert.equal(inboundFrames[2].client_metadata.session_id, "session-2");
+  NodeAssert.deepEqual(
+    peer.metrics.events.map(({ type, replay }) => [type, replay]),
+    [
+      ["response.created", false],
+      ["response.output_item.done", false],
+      ["response.completed", false],
+      ["response.created", false],
+      ["response.output_item.done", false],
+      ["response.created", true],
+      ["response.output_item.done", true],
+      ["response.completed", true],
+      ["response.created", false],
+      ["response.output_item.done", false],
+      ["response.completed", false],
+    ],
+  );
+});
 
-NodeTest.test("replays the same response when reconnect follows response.created", () => {
+test("replays the same response when reconnect follows response.created", () => {
   const mock = createMockResponses();
   NodeAssert.throws(
     () => createMockResponsesWebSocket({ mock, faults: { closeBeforeOutputOnce: "yes" } }),
@@ -374,7 +371,7 @@ NodeTest.test("replays the same response when reconnect follows response.created
   NodeAssert.deepEqual(peer.metrics.requests[1].mockRequest.input, mock.requests[0].input);
 });
 
-NodeTest.test("holds before output, then releases the remaining response events once", async () => {
+test("holds before output, then releases the remaining response events once", async () => {
   const mock = createMockResponses();
   NodeAssert.throws(
     () => createRoute(mock, { holdBeforeOutputOnce: 1 }),
@@ -432,7 +429,7 @@ NodeTest.test("holds before output, then releases the remaining response events 
   );
 });
 
-NodeTest.test("drops a held response when its socket closes", async () => {
+test("drops a held response when its socket closes", async () => {
   const peer = createRoute(createMockResponses(), { holdBeforeOutputOnce: true });
   const socket = openSocket(peer);
   const observed = observe(socket);
@@ -453,7 +450,7 @@ NodeTest.test("drops a held response when its socket closes", async () => {
   NodeAssert.equal(peer.metrics.closes.length, 1);
 });
 
-NodeTest.test("paces warmup and response events behind proof acknowledgements", async () => {
+test("paces warmup and response events behind proof acknowledgements", async () => {
   const mock = createMockResponses();
   const peer = createRoute(mock, { paceFrames: true });
   const socket = openSocket(peer);
@@ -505,52 +502,46 @@ NodeTest.test("paces warmup and response events behind proof acknowledgements", 
   );
 });
 
-NodeTest.test(
-  "rejects unsolicited acknowledgements, overlapping requests, and incompatible faults",
-  () => {
-    const mock = createMockResponses();
-    NodeAssert.throws(
-      () => createRoute(mock, { paceFrames: "yes" }),
-      /paceFrames must be a boolean/,
-    );
-    NodeAssert.throws(
-      () => createRoute(mock, { paceFrames: true, closeBeforeOutputOnce: true }),
-      /cannot be combined with hold or disconnect faults/,
-    );
-    NodeAssert.throws(
-      () => createRoute(mock, { paceFrames: true, holdBeforeOutputOnce: true }),
-      /cannot be combined with hold or disconnect faults/,
-    );
+test("rejects unsolicited acknowledgements, overlapping requests, and incompatible faults", () => {
+  const mock = createMockResponses();
+  NodeAssert.throws(() => createRoute(mock, { paceFrames: "yes" }), /paceFrames must be a boolean/);
+  NodeAssert.throws(
+    () => createRoute(mock, { paceFrames: true, closeBeforeOutputOnce: true }),
+    /cannot be combined with hold or disconnect faults/,
+  );
+  NodeAssert.throws(
+    () => createRoute(mock, { paceFrames: true, holdBeforeOutputOnce: true }),
+    /cannot be combined with hold or disconnect faults/,
+  );
 
-    const unsolicitedPeer = createRoute(mock, { paceFrames: true });
-    const unsolicitedSocket = openSocket(unsolicitedPeer);
-    const unsolicited = observe(unsolicitedSocket);
-    unsolicitedSocket.send("signalbox-proof-frame-ack");
-    NodeAssert.deepEqual(unsolicited.closes, [
-      { code: 1008, reason: "Unsolicited proof frame acknowledgement" },
-    ]);
-    NodeAssert.equal(unsolicitedPeer.metrics.acks, 0);
-    NodeAssert.equal(unsolicitedPeer.metrics.requests.length, 0);
+  const unsolicitedPeer = createRoute(mock, { paceFrames: true });
+  const unsolicitedSocket = openSocket(unsolicitedPeer);
+  const unsolicited = observe(unsolicitedSocket);
+  unsolicitedSocket.send("signalbox-proof-frame-ack");
+  NodeAssert.deepEqual(unsolicited.closes, [
+    { code: 1008, reason: "Unsolicited proof frame acknowledgement" },
+  ]);
+  NodeAssert.equal(unsolicitedPeer.metrics.acks, 0);
+  NodeAssert.equal(unsolicitedPeer.metrics.requests.length, 0);
 
-    const concurrentPeer = createRoute(mock, { paceFrames: true });
-    const concurrentSocket = openSocket(concurrentPeer);
-    const concurrent = observe(concurrentSocket);
-    const createResponse = createResponseSender();
-    createResponse(concurrentSocket, { input: userInput() });
-    NodeAssert.deepEqual(
-      concurrent.events.map(({ type }) => type),
-      ["response.created"],
-    );
-    createResponse(concurrentSocket, { input: userInput() });
-    NodeAssert.deepEqual(concurrent.closes, [
-      { code: 1008, reason: "Expected signalbox-proof-frame-ack while pacing response frames" },
-    ]);
-    NodeAssert.equal(concurrentPeer.metrics.requests.length, 1);
-    NodeAssert.equal(concurrentPeer.metrics.acks, 0);
-  },
-);
+  const concurrentPeer = createRoute(mock, { paceFrames: true });
+  const concurrentSocket = openSocket(concurrentPeer);
+  const concurrent = observe(concurrentSocket);
+  const createResponse = createResponseSender();
+  createResponse(concurrentSocket, { input: userInput() });
+  NodeAssert.deepEqual(
+    concurrent.events.map(({ type }) => type),
+    ["response.created"],
+  );
+  createResponse(concurrentSocket, { input: userInput() });
+  NodeAssert.deepEqual(concurrent.closes, [
+    { code: 1008, reason: "Expected signalbox-proof-frame-ack while pacing response frames" },
+  ]);
+  NodeAssert.equal(concurrentPeer.metrics.requests.length, 1);
+  NodeAssert.equal(concurrentPeer.metrics.acks, 0);
+});
 
-NodeTest.test("clears a pending pace acknowledgement when the socket closes", () => {
+test("clears a pending pace acknowledgement when the socket closes", () => {
   const peer = createRoute(createMockResponses(), { paceFrames: true });
   const socket = openSocket(peer);
   const observed = observe(socket);
@@ -566,7 +557,7 @@ NodeTest.test("clears a pending pace acknowledgement when the socket closes", ()
   NodeAssert.equal(peer.metrics.closes.length, 1);
 });
 
-NodeTest.test("closes on an SSE event whose JSON type disagrees with its event name", () => {
+test("closes on an SSE event whose JSON type disagrees with its event name", () => {
   const mock = {
     respond() {
       return 'event: response.created\ndata: {"type":"response.completed","response":{"id":"resp-bad"}}\n\n';

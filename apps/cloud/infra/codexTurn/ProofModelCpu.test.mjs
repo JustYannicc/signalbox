@@ -1,15 +1,15 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import { test } from "vite-plus/test";
 import { modelCpuChunk, observeProofSocket } from "./ProofModelCpu.mjs";
 
-NodeTest.test("the work checksum matches an independent integer recurrence", () => {
+test("the work checksum matches an independent integer recurrence", () => {
   let expected = 1n;
   for (let index = 0; index < 10_000; index++)
     expected = (expected * 1664525n + 1013904223n) % (1n << 32n);
   NodeAssert.equal(modelCpuChunk(1, 10_000), Number(expected));
 });
 
-NodeTest.test("the native frame waits for work before ACK and guest delivery", async () => {
+test("the native frame waits for work before ACK and guest delivery", async () => {
   const socket = new EventTarget();
   const actions = [];
   socket.send = (value) => actions.push(value);
@@ -34,7 +34,7 @@ NodeTest.test("the native frame waits for work before ACK and guest delivery", a
   NodeAssert.deepEqual(actions, ["receive", "work-complete", "signalbox-proof-frame-ack", "guest"]);
 });
 
-NodeTest.test("a completed response does not send an unsolicited pacing ACK", async () => {
+test("a completed response does not send an unsolicited pacing ACK", async () => {
   const socket = new EventTarget();
   const sent = [];
   socket.send = (value) => sent.push(value);
@@ -50,7 +50,7 @@ NodeTest.test("a completed response does not send an unsolicited pacing ACK", as
   NodeAssert.deepEqual(sent, []);
 });
 
-NodeTest.test("native close events reach the CPU proof even without a guest close listener", () => {
+test("native close events reach the CPU proof even without a guest close listener", () => {
   const socket = new EventTarget();
   let closed = 0;
   observeProofSocket(socket, { closedSocket: () => closed++ });
@@ -58,7 +58,7 @@ NodeTest.test("native close events reach the CPU proof even without a guest clos
   NodeAssert.equal(closed, 1);
 });
 
-NodeTest.test("socket setters retain their native receiver", () => {
+test("socket setters retain their native receiver", () => {
   class BrandedSocket extends EventTarget {
     #binaryType = "blob";
     set binaryType(value) {
