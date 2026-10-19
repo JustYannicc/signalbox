@@ -78,6 +78,7 @@ model {
         description 'harness heap + live FS · durable seed receipts'
         technology 'Worker Loader isolate + SQLite'
         metadata {
+          liveFsResidency 'authority until the turn-end commit, then cache; idle live-FS eviction (default automation) drops contents, keeps the manifest, rehydrates from the fork'
           seeding 'seed receipts are durable: a facet reincarnated between seeding and boot resumes from them'
         }
       }

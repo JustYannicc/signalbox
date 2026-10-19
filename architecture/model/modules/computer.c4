@@ -35,7 +35,7 @@ model {
         metadata { adapters '1' }
         boxdMachines = adapter 'boxd' {
           icon bootstrap:pc-display
-          technology '@boxd-sh/sdk/web · grpc-web :9443'
+          technology '@boxd-sh/sdk/web · grpc-web on a Cloudflare HTTPS port (443 · 2053 · 2083 · 2087 · 2096 · 8443; not :9443)'
         }
       }
 
@@ -61,6 +61,8 @@ model {
         metadata {
           secretViews 'canonical view (placeholders) for every record, revision and git object; raw view in memory only, for live exec and VM materialization (#1242)'
           git 'always in the kernel on the canonical view; never escalated; VMs get .git read-only and it is never pulled back'
+          concurrentWrites 'while an escalated exec runs, the last write per path wins, by write time, as on one machine'
+          attachedProcess 'a long-lived VM process gets kernel source writes as a debounced delta stream until it exits or the VM hibernates'
         }
       }
       childIsolates = part 'Child Dynamic Workers' {
