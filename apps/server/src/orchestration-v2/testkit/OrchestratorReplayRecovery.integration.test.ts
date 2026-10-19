@@ -68,7 +68,38 @@ const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* (
   const transcript = yield* readRawTranscript(
     new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
   );
-  return yield* decodeCodexTranscript(materializeReplayTranscriptWorkspace(transcript, workspace));
+  const decodeObject = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown));
+  // signalbox: The recording predates standard-form negotiation and user thread sources.
+  const entries = yield* Effect.forEach(transcript.entries, (entry) =>
+    Effect.gen(function* () {
+      if (entry.type !== "expect_outbound") return entry;
+      const frame = yield* decodeObject(entry.frame);
+      if (frame.method === "thread/start") {
+        const params = yield* decodeObject(frame.params);
+        return { ...entry, frame: { ...frame, params: { ...params, threadSource: "user" } } };
+      }
+      if (frame.method !== "initialize") return entry;
+      const params = yield* decodeObject(frame.params);
+      const capabilities = yield* decodeObject(params.capabilities);
+      const extensions = yield* decodeObject(capabilities.extensions);
+      return {
+        ...entry,
+        frame: {
+          ...frame,
+          params: {
+            ...params,
+            capabilities: {
+              ...capabilities,
+              extensions: { ...extensions, "openai/standard-form-input": {} },
+            },
+          },
+        },
+      };
+    }),
+  );
+  return yield* decodeCodexTranscript(
+    materializeReplayTranscriptWorkspace({ ...transcript, entries }, workspace),
+  );
 });
 const decodePromptPair = Schema.decodeUnknownEffect(Schema.Tuple([Schema.String, Schema.String]));
 const readClaudeSubagentResumeTranscript = Effect.fn("readClaudeSubagentResumeTranscript")(
