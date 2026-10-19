@@ -8,6 +8,7 @@ import type { ComputerExecPort } from "./Computer.ts";
 import type { ComputerEscalationEvidence, ComputerEscalationTable } from "./EscalationTable.ts";
 
 export interface ComputerCommandOptions {
+  readonly mode?: "legacy";
   /** The host's registered program bodies dispatch to children; the facet retains their descriptors. */
   readonly kernel: Omit<KernelCommandExecutorOptions, "forwarder">;
   readonly escalation: ComputerEscalationTable;
@@ -18,10 +19,21 @@ export interface ComputerCommandOptions {
   ) => Promise<ComputerEscalationEvidence>;
 }
 
+export interface AdmittedComputerCommandOptions {
+  readonly mode: "admitted";
+  readonly kernel: Omit<KernelCommandExecutorOptions, "forwarder" | "admitted">;
+  readonly isolateKernel: Omit<KernelCommandExecutorOptions, "forwarder" | "admitted">;
+}
+
 /** Only composition code receives the isolate binding. Guest commands have no placement option. */
-export function createComputerCommands(options: ComputerCommandOptions): ComputerExecPort & {
+export function createComputerCommands(
+  options: ComputerCommandOptions | AdmittedComputerCommandOptions,
+): ComputerExecPort & {
   readonly isolate: ComputerExecPort;
 } {
+  if (options.mode === "admitted") {
+    return admittedCommands(options);
+  }
   const commands = new KernelCommandExecutor({
     ...options.kernel,
     forwarder: options.machine,
@@ -62,6 +74,31 @@ export function createComputerCommands(options: ComputerCommandOptions): Compute
         : commands.spawn(captured, signal);
     },
   });
+}
+
+function admittedCommands(options: AdmittedComputerCommandOptions) {
+  const forwarder: KernelCommandForwarder = {
+    async spawn() {
+      throw new KernelForwardingUnavailable("POLICY_NOT_READY", "Command admission is required");
+    },
+  };
+  const port = (kernel: AdmittedComputerCommandOptions["kernel"]): ComputerExecPort => {
+    const executor = new KernelCommandExecutor({ ...kernel, admitted: true, forwarder });
+    return Object.freeze({
+      exec(command: KernelCommand, signal: AbortSignal) {
+        signal.throwIfAborted();
+        const captured = snapshotCommand(command);
+        if (kernel.filesystem.realpath(captured.cwd) !== captured.cwd) {
+          throw new KernelForwardingUnavailable(
+            "WORKSPACE_NOT_READY",
+            "Command cwd must be canonical",
+          );
+        }
+        return executor.spawn(captured, signal);
+      },
+    });
+  };
+  return Object.freeze({ ...port(options.kernel), isolate: port(options.isolateKernel) });
 }
 
 function snapshotCommand(command: KernelCommand): KernelCommand {

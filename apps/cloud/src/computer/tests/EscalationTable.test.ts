@@ -56,8 +56,8 @@ describe("ComputerEscalationTable", () => {
     });
   });
 
-  it("exports the 34 exact policy spellings as opt-in frozen data", () => {
-    expect(COMPUTER_ISOLATE_EXECUTABLES).toHaveLength(34);
+  it("exports the 37 exact policy spellings as opt-in frozen data", () => {
+    expect(COMPUTER_ISOLATE_EXECUTABLES).toHaveLength(37);
     expect(COMPUTER_ISOLATE_EXECUTABLES).toEqual([
       "sed",
       "git",
@@ -81,6 +81,9 @@ describe("ComputerEscalationTable", () => {
       "/bin/bash",
       "/bin/sh",
       "/bin/cat",
+      "/bin/sed",
+      "/bin/grep",
+      "/bin/touch",
       "/bin/rg",
       "/bin/echo",
       "/bin/printf",
