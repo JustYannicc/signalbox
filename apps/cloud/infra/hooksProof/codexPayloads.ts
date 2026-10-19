@@ -27,6 +27,12 @@ export type CodexStandardHookInspection = Pick<StandardInspection, "ok"> & {
   >;
 };
 
+export interface CodexHookBashExpectation {
+  readonly command: string;
+  readonly output: string;
+  readonly postToolUseResponse?: () => unknown;
+}
+
 export const CODEX_STANDARD_DISPATCH_IDS = new Set<string>([
   CODEX_HOOK_IDS.sessionStart,
   ...CODEX_STANDARD_HOOK_REGISTRATIONS.map(({ id }) => id),
@@ -38,6 +44,12 @@ export const CODEX_SECRET_PATCH_INPUT = createSecretPatchInput(
   CODEX_SECRET_FILE_PATH,
   STANDARD_PROOF_WRITE,
 );
+
+const CODEX_EXEC_CALL_ID = "call-1069-exec";
+const legacyBashExpectation: CodexHookBashExpectation = {
+  command: EXEC_ARGUMENTS.cmd,
+  output: "codex-exec-proof",
+};
 
 const expected = [
   { event: "session-start" },
@@ -89,6 +101,7 @@ const expected = [
 /** Verifies native event identity and pairing independently of callback output. */
 export function verifyCodexHookPayloads(
   invocations: readonly { readonly id: string; readonly event: string; readonly input: unknown }[],
+  bashExpectation: CodexHookBashExpectation = legacyBashExpectation,
 ) {
   const failures: string[] = [];
   const originalIds = new Set<string>(CODEX_HOOK_REGISTRATIONS.map(({ id }) => id));
@@ -115,7 +128,8 @@ export function verifyCodexHookPayloads(
       payload?.tool_name !== wanted.tool ||
       payload.tool_use_id !== wanted.id ||
       typeof input?.command !== "string" ||
-      input.command !== wanted.command
+      input.command !==
+        (wanted.id === CODEX_EXEC_CALL_ID ? bashExpectation.command : wanted.command)
     )
       failures.push(`${entry.id} lost the expected native tool call`);
     if (entry.event === "post-tool-use") {
@@ -123,8 +137,12 @@ export function verifyCodexHookPayloads(
       if (JSON.stringify(pre?.tool_input) !== JSON.stringify(payload?.tool_input))
         failures.push(`${entry.id} changed tool_input between PreToolUse and PostToolUse`);
       const response = payload?.tool_response;
-      if (typeof response !== "string" || !response.includes(wanted.response))
-        failures.push(`${entry.id} lost the real tool_response`);
+      const responseMatches =
+        typeof response === "string" &&
+        (wanted.id === CODEX_EXEC_CALL_ID
+          ? matchesBashToolResponse(response, bashExpectation)
+          : response.includes(wanted.response));
+      if (!responseMatches) failures.push(`${entry.id} lost the real tool_response`);
     }
   }
   return failures;
@@ -132,6 +150,7 @@ export function verifyCodexHookPayloads(
 
 export function verifyCodexStandardHookPayloads(
   invocations: readonly { readonly id: string; readonly event: string; readonly input: unknown }[],
+  bashExpectation: CodexHookBashExpectation = legacyBashExpectation,
 ) {
   const failures: string[] = [];
   const standardIds = [
@@ -174,7 +193,8 @@ export function verifyCodexStandardHookPayloads(
       payload?.tool_name !== wanted.tool ||
       payload.tool_use_id !== wanted.id ||
       typeof input?.command !== "string" ||
-      input.command !== wanted.command
+      input.command !==
+        (wanted.id === CODEX_EXEC_CALL_ID ? bashExpectation.command : wanted.command)
     )
       failures.push(`${entry.id} lost the expected standard tool payload`);
     if (entry.event === "post-tool-use") {
@@ -182,8 +202,12 @@ export function verifyCodexStandardHookPayloads(
       if (JSON.stringify(pre?.tool_input) !== JSON.stringify(payload?.tool_input))
         failures.push(`${entry.id} changed tool_input between standard pre and post hooks`);
       const response = payload?.tool_response;
-      if (typeof response !== "string" || !response.includes(wanted.response))
-        failures.push(`${entry.id} lost the real standard tool_response`);
+      const responseMatches =
+        typeof response === "string" &&
+        (wanted.id === CODEX_EXEC_CALL_ID
+          ? matchesBashToolResponse(response, bashExpectation)
+          : response.includes(wanted.response));
+      if (!responseMatches) failures.push(`${entry.id} lost the real standard tool_response`);
     }
 
     const originalId =
@@ -207,6 +231,18 @@ export function verifyCodexStandardHookPayloads(
       failures.push(`${id} ran ${actualCount} times instead of ${expectedCount}`);
   }
   return failures;
+}
+
+function matchesBashToolResponse(response: string, expectation: CodexHookBashExpectation): boolean {
+  if (expectation.postToolUseResponse === undefined) {
+    return response.includes(expectation.output);
+  }
+  try {
+    const terminalResponse = expectation.postToolUseResponse();
+    return typeof terminalResponse === "string" && response === terminalResponse;
+  } catch {
+    return false;
+  }
 }
 
 export function verifyCodexStandardHookResults(
