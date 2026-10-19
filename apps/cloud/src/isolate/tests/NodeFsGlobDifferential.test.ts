@@ -43,8 +43,7 @@ function errorCode(error: unknown): string | undefined {
 
 describe("Node fs/promises glob differential behavior", () => {
   it("matches Node for braces, classes, extglobs, dotfiles, arrays, and exclusions", async () => {
-    // Node 24.22 changed symlink traversal. Its pinned 24.18 contract has a separate test.
-    const fixture = await nodeFsGlobOracleFixture({ symlinks: false });
+    const fixture = await nodeFsGlobOracleFixture();
     const kernelGlob = globApi(fixture.promises.glob);
     const nativeGlob = globApi(NodeFSP.glob);
     try {
@@ -104,7 +103,17 @@ describe("Node fs/promises glob differential behavior", () => {
       );
       expect(kernelCallbackExclusions.toSorted()).toEqual(nativeCallbackExclusions.toSorted());
       expect(kernelExcludeValues.toSorted()).toEqual(nativeExcludeValues.toSorted());
+    } finally {
+      await fixture.close();
+    }
+  });
 
+  it("matches Node Dirent exclusions", async () => {
+    // Node 24.22 changed Dirent symlink traversal. The pinned 24.18 contract has a separate test.
+    const fixture = await nodeFsGlobOracleFixture({ symlinks: false });
+    const kernelGlob = globApi(fixture.promises.glob);
+    const nativeGlob = globApi(NodeFSP.glob);
+    try {
       const kernelDirentExclusions: string[] = [];
       const nativeDirentExclusions: string[] = [];
       const kernelDirents = await collect(
