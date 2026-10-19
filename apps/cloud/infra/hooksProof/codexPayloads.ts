@@ -1,3 +1,4 @@
+import { secretPlaceholder } from "@signalbox/runner-protocol/SecretScrubber";
 // @ts-expect-error The shared MJS fixture has no declaration.
 import { EXEC_ARGUMENTS, PATCH_INPUT } from "../codexTurn/MockResponses.mjs";
 import {
@@ -9,17 +10,21 @@ import {
 import {
   STANDARD_PROOF_NAMED_SECRET,
   STANDARD_PROOF_VAULT_SECRET,
+  type StandardProofAdapter,
 } from "./standardProofAdapter.ts";
 
-export interface CodexStandardHookInspection {
-  readonly ok: boolean;
-  readonly [key: string]: unknown;
-}
+type StandardInspection = ReturnType<StandardProofAdapter["inspect"]>;
+export type CodexStandardHookInspection = Pick<StandardInspection, "ok"> & {
+  readonly gateway: Pick<
+    StandardInspection["gateway"],
+    "beforeToolUse" | "afterToolUse" | "commandEnvironments"
+  >;
+};
 
 export const CODEX_STANDARD_DISPATCH_IDS = new Set<string>([
-  CODEX_HOOK_REGISTRATIONS[0]!.id,
+  CODEX_HOOK_IDS.sessionStart,
   ...CODEX_STANDARD_HOOK_REGISTRATIONS.map(({ id }) => id),
-  CODEX_HOOK_REGISTRATIONS[3]!.id,
+  CODEX_HOOK_IDS.stop,
 ]);
 
 const expected = [
@@ -164,9 +169,9 @@ export function verifyCodexStandardHookResults(
 ) {
   const failures: string[] = [];
   if (!inspection.ok) failures.push("Standard hook adapter inspection failed");
-  const gateway = record(inspection.gateway);
+  const gateway = inspection.gateway;
   for (const key of ["beforeToolUse", "afterToolUse", "commandEnvironments"] as const) {
-    const count = gateway?.[key];
+    const count = gateway[key];
     if (typeof count !== "number" || count <= 0)
       failures.push(`Standard hook proof recorded no Gateway ${key} activity`);
   }
@@ -183,8 +188,14 @@ export function verifyCodexStandardHookResults(
 
 export function redactCodexProofText(value: string): string {
   return value
-    .replaceAll(STANDARD_PROOF_NAMED_SECRET.value, "{{secret:API_TOKEN}}")
-    .replaceAll(STANDARD_PROOF_VAULT_SECRET.value, "{{op://proof/item/password}}");
+    .replaceAll(
+      STANDARD_PROOF_NAMED_SECRET.value,
+      secretPlaceholder(STANDARD_PROOF_NAMED_SECRET.name),
+    )
+    .replaceAll(
+      STANDARD_PROOF_VAULT_SECRET.value,
+      secretPlaceholder(STANDARD_PROOF_VAULT_SECRET.name),
+    );
 }
 
 export function redactCodexProofValue(value: unknown): unknown {

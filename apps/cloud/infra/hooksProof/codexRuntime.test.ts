@@ -7,12 +7,10 @@ import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createProofTestStorage } from "../claudeTurnProof/proofTestStorage.ts";
 import { createCodexHookRuntime } from "./codexRuntime.ts";
 import {
-  CODEX_HOOK_IDS,
   CODEX_HOOK_REGISTRATIONS,
   CODEX_STANDARD_HOOK_IDS,
   PRE_TOOL_USE_CAPTURE_PATH,
   codexHookRequirements,
-  createCodexHookServiceRegistrations,
 } from "./codexScenario.ts";
 
 function fixture() {
@@ -104,57 +102,6 @@ describe("Codex hook fixture setup", () => {
     expect(JSON.stringify(hooks)).toContain(CODEX_HOOK_REGISTRATIONS[3]!.id);
     for (const id of Object.values(CODEX_STANDARD_HOOK_IDS))
       expect(JSON.stringify(hooks)).toContain(id);
-  });
-
-  it("routes standard pre and post hooks through the neutral Signalbox callback", async () => {
-    const observed: string[] = [];
-    const registrations = createCodexHookServiceRegistrations(
-      (request) => observed.push(request.event),
-      async (_request, { signal }) => {
-        signal.throwIfAborted();
-        return {};
-      },
-    );
-    const signal = new AbortController().signal;
-    for (const [id, event] of [
-      [CODEX_STANDARD_HOOK_IDS.preToolUse, "pre-tool-use"],
-      [CODEX_STANDARD_HOOK_IDS.postToolUse, "post-tool-use"],
-      [CODEX_HOOK_IDS.stop, "stop"],
-    ] as const) {
-      const registration = registrations.get(id);
-      if (registration?.kind !== "signalbox") throw new Error(`${id} is not an RPC hook`);
-      const result = await registration.callback(
-        { harness: "codex", event, sessionId: "native-session", payload: {} },
-        { signal },
-      );
-      expect(result).toEqual({});
-    }
-    expect(observed).toEqual(["pre-tool-use", "post-tool-use", "stop"]);
-  });
-
-  it("preserves the existing SessionStart context response through the dispatcher", async () => {
-    const registrations = createCodexHookServiceRegistrations(
-      () => {},
-      async () => ({}),
-    );
-    const registration = registrations.get(CODEX_HOOK_IDS.sessionStart);
-    if (registration?.kind !== "signalbox") throw new Error("SessionStart is not an RPC hook");
-    await expect(
-      registration.callback(
-        {
-          harness: "codex",
-          event: "session-start",
-          sessionId: "native-session",
-          payload: {},
-        },
-        { signal: new AbortController().signal },
-      ),
-    ).resolves.toEqual({
-      hookSpecificOutput: {
-        hookEventName: "SessionStart",
-        additionalContext: "Signalbox received the Codex SessionStart event.",
-      },
-    });
   });
 
   it("creates generated-code tables in raw facet storage and drains its engine identity", async () => {

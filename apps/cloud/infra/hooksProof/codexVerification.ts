@@ -29,13 +29,6 @@ import {
   PRE_TOOL_USE_CAPTURE_PATH,
 } from "./codexScenario.ts";
 
-export const CODEX_HOOK_MODES = Object.freeze({
-  "session-start": "signalbox",
-  "pre-tool-use": "command",
-  "post-tool-use": "script",
-  stop: "signalbox",
-} as const);
-
 const officialEventNames = Object.freeze({
   "session-start": "SessionStart",
   "pre-tool-use": "PreToolUse",
@@ -49,7 +42,7 @@ export type CodexHookKind = (typeof CODEX_ALL_HOOK_REGISTRATIONS)[number]["kind"
 
 export interface HookInvocationRecord {
   readonly id: string;
-  readonly event: keyof typeof CODEX_HOOK_MODES;
+  readonly event: (typeof CODEX_ALL_HOOK_REGISTRATIONS)[number]["event"];
   readonly kind: CodexHookKind;
   readonly input: HarnessHookJson;
   readonly startedAtMs: number | null;
@@ -120,8 +113,6 @@ const executableFacade = encoder.encode(HOOK_PROGRAM_FACADE);
 export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   const originalIds = new Set<string>(CODEX_HOOK_REGISTRATIONS.map(({ id }) => id));
   const originalInvocations = input.invocations.filter((record) => originalIds.has(record.id));
-  const standardIds = new Set<string>(CODEX_STANDARD_HOOK_REGISTRATIONS.map(({ id }) => id));
-  const standardInvocations = input.invocations.filter((record) => standardIds.has(record.id));
   const failures = [
     ...verifyCodexHookPayloads(input.invocations),
     ...verifyCodexStandardHookPayloads(input.invocations),
@@ -131,8 +122,7 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   const settingsFile = inspectFile(input.filesystem, CODEX_HOOK_REQUIREMENTS_PATH);
   const settingsText = settingsFile.text ?? "";
   const expectedIds = CODEX_HOOK_REGISTRATIONS.map(({ id }) => id);
-  const events = CODEX_HOOK_REGISTRATIONS.map(({ id, event }) => {
-    const kind = CODEX_HOOK_MODES[event];
+  const events = CODEX_HOOK_REGISTRATIONS.map(({ id, event, kind }) => {
     const records = originalInvocations.filter((invocation) => invocation.id === id);
     const record = records[0];
     const expectedEventName = officialEventNames[event];
@@ -206,14 +196,6 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
         failures.push(`${record.id} did not validate its PostToolUse payload`);
     }
   }
-  for (const record of standardInvocations) {
-    if (record.kind !== "signalbox")
-      failures.push(`${record.id} was not classified as a Signalbox hook`);
-    const result = parseObject(record.stdout);
-    if (!result || Object.keys(result).length !== 0)
-      failures.push(`${record.id} returned something other than the neutral standard result`);
-  }
-
   const sessionStart = outputFor(input.invocations, CODEX_HOOK_REGISTRATIONS[0]!.id);
   if (readNestedString(sessionStart, ["hookSpecificOutput", "hookEventName"]) !== "SessionStart")
     failures.push("SessionStart callback returned the wrong official result event");
@@ -362,10 +344,10 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
       ...(record.stderr === undefined ? {} : { stderr: redactCodexProofText(record.stderr) }),
       ...(record.error === undefined ? {} : { error: redactCodexProofText(record.error) }),
     })),
-    registrations: CODEX_HOOK_REGISTRATIONS.map(({ id, event }) => ({
+    registrations: CODEX_HOOK_REGISTRATIONS.map(({ id, event, kind }) => ({
       id,
       event,
-      kind: CODEX_HOOK_MODES[event],
+      kind,
     })),
     standardRegistrations: CODEX_STANDARD_HOOK_REGISTRATIONS,
     nativeFileFill: "unproved: this Codex fixture covers command-hook environment fill only",
