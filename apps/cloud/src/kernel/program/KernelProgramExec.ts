@@ -90,7 +90,14 @@ export function execKernelProgram(
 
     const { implementation } = binding;
     const prepared = { filesystem: request.filesystem, home: request.home };
-    const spawn = beforeExecCommit(() => options.spawnFor(request));
+    const spawn = beforeExecCommit(() =>
+      options.spawnFor({
+        filesystem: request.filesystem,
+        identity: request.identity,
+        signal: request.signal,
+        ...(request.home === undefined ? {} : { home: request.home }),
+      }),
+    );
     const fileBytes: KernelFileByteSelection = beforeExecCommit(() =>
       resolveKernelProgramFileBytes({
         executable: request.path,
@@ -167,6 +174,7 @@ export function execKernelProgram(
         signal: request.signal,
         processes: options.processes,
         wakes: options.wakes,
+        ...(request.admission === undefined ? {} : { admission: request.admission }),
         ...(cpu === undefined ? {} : { cpu }),
         spawn,
       });
