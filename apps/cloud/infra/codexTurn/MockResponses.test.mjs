@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import { test } from "vite-plus/test";
 
 import { createMockResponses, FINAL_MESSAGE, PATCH_INPUT } from "./MockResponses.mjs";
 
@@ -83,7 +83,7 @@ function patchContinuation(output = PATCH_OUTPUT, includeName = true) {
   };
 }
 
-NodeTest.test("scripts exec_command, freeform apply_patch, and a final assistant message", () => {
+test("scripts exec_command, freeform apply_patch, and a final assistant message", () => {
   const mock = createMockResponses();
   const first = parseSse(
     mock.respond({
@@ -137,7 +137,7 @@ NodeTest.test("scripts exec_command, freeform apply_patch, and a final assistant
   NodeAssert.throws(() => mock.respond({ input: [] }), /turn is complete/);
 });
 
-NodeTest.test("allows one empty-input startup response without advancing the forced turn", () => {
+test("allows one empty-input startup response without advancing the forced turn", () => {
   const mock = createMockResponses();
   const startup = parseSse(mock.respond({ input: [] }));
 
@@ -154,45 +154,38 @@ NodeTest.test("allows one empty-input startup response without advancing the for
   NodeAssert.throws(() => mock.respond({ input: [] }), /input must be an array|exactly one/);
 });
 
-NodeTest.test(
-  "rejects missing or failed exec output and leaves the expected step retryable",
-  () => {
-    const mock = createMockResponses();
-    mock.respond({ input: [{ type: "message", role: "user", content: [] }] });
+test("rejects missing or failed exec output and leaves the expected step retryable", () => {
+  const mock = createMockResponses();
+  mock.respond({ input: [{ type: "message", role: "user", content: [] }] });
 
-    NodeAssert.throws(
-      () =>
-        mock.respond({
-          input: [
-            {
-              type: "function_call",
-              call_id: EXEC_CALL_ID,
-              name: "exec_command",
-              arguments: JSON.stringify(EXEC_ARGUMENTS),
-            },
-          ],
-        }),
-      /exactly one function_call_output/,
-    );
-    NodeAssert.throws(
-      () =>
-        mock.respond(execContinuation("Process exited with code 1\nOutput:\ncodex-exec-proof\n")),
-      /exit code 0/,
-    );
-    NodeAssert.throws(
-      () => mock.respond(execContinuation("Process exited with code 0\nOutput:\nwrong-output\n")),
-      /exact stdout proof line/,
-    );
-    NodeAssert.equal(mock.phase, "awaiting-exec-output");
+  NodeAssert.throws(
+    () =>
+      mock.respond({
+        input: [
+          {
+            type: "function_call",
+            call_id: EXEC_CALL_ID,
+            name: "exec_command",
+            arguments: JSON.stringify(EXEC_ARGUMENTS),
+          },
+        ],
+      }),
+    /exactly one function_call_output/,
+  );
+  NodeAssert.throws(
+    () => mock.respond(execContinuation("Process exited with code 1\nOutput:\ncodex-exec-proof\n")),
+    /exit code 0/,
+  );
+  NodeAssert.throws(
+    () => mock.respond(execContinuation("Process exited with code 0\nOutput:\nwrong-output\n")),
+    /exact stdout proof line/,
+  );
+  NodeAssert.equal(mock.phase, "awaiting-exec-output");
 
-    NodeAssert.equal(
-      parseSse(mock.respond(execContinuation()))[1].payload.item.name,
-      "apply_patch",
-    );
-  },
-);
+  NodeAssert.equal(parseSse(mock.respond(execContinuation()))[1].payload.item.name, "apply_patch");
+});
 
-NodeTest.test("requires the exact patch result before returning assistant done", () => {
+test("requires the exact patch result before returning assistant done", () => {
   const mock = createMockResponses();
   mock.respond({ input: [{ type: "message", role: "user", content: [] }] });
   mock.respond(execContinuation());

@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import { test } from "vite-plus/test";
 import { createMockResponses } from "./MockResponses.mjs";
 import { createMockHttpAdapter } from "./MockHttpAdapter.mjs";
 
@@ -146,7 +146,7 @@ function expectedSseResponse(sse) {
   );
 }
 
-NodeTest.test("matches the R3 host_net imports and AgentOS socket constants", () => {
+test("matches the R3 host_net imports and AgentOS socket constants", () => {
   const harness = createHarness();
   const imports = harness.adapter.getImportObject().host_net;
   NodeAssert.deepEqual(
@@ -191,7 +191,7 @@ NodeTest.test("matches the R3 host_net imports and AgentOS socket constants", ()
   NodeAssert.equal(harness.adapter.imports.net_recvfrom(fd, 0, 0, 0, 0, 0, 0), NOTSUP);
 });
 
-NodeTest.test("buffers fragmented HTTP by Content-Length and returns exact HTTP/SSE bytes", () => {
+test("buffers fragmented HTTP by Content-Length and returns exact HTTP/SSE bytes", () => {
   const harness = createHarness();
   const fd = openSocket(harness);
   connectMock(harness, fd);
@@ -238,7 +238,7 @@ NodeTest.test("buffers fragmented HTTP by Content-Length and returns exact HTTP/
   NodeAssert.equal(readWakeups, 1, "unsubscribed readiness listeners are cleaned up");
 });
 
-NodeTest.test("rejects a request outside /v1/responses without calling the mock", () => {
+test("rejects a request outside /v1/responses without calling the mock", () => {
   let mockCalls = 0;
   const harness = createHarness({
     respond() {
@@ -256,7 +256,7 @@ NodeTest.test("rejects a request outside /v1/responses without calling the mock"
   NodeAssert.equal(mockCalls, 0);
 });
 
-NodeTest.test("rejects non-mock hosts and resolves only mock.invalid:80", () => {
+test("rejects non-mock hosts and resolves only mock.invalid:80", () => {
   const harness = createHarness();
   const fd = openSocket(harness);
   const addressLength = writeText(harness.memory, ADDRESS, "other.invalid:80");

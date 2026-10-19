@@ -1,6 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeSqlite from "node:sqlite";
-import * as NodeTest from "node:test";
+import { test } from "vite-plus/test";
 import { createFacetSqliteStorage } from "../../src/kernel/FacetSqliteStorage.ts";
 import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
 import { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
@@ -52,64 +52,61 @@ function sqliteFixture() {
   return { storage, close: () => db.close() };
 }
 
-NodeTest.test(
-  "exec handshake file URIs address the same filesystem as the proof workspace",
-  async () => {
-    const fixture = sqliteFixture();
-    const storage = createFacetSqliteStorage(fixture.storage, () => 1n);
-    initializeProofRoot(storage);
-    const filesystem = new KernelFileSystem({
-      mounts: [{ path: "/", storage }],
-      posix: { credentials: proofCredentials, umask: 0o022 },
-    });
-    initializeProofDirectories(filesystem);
-    const wakes = new KernelWakeRegistry();
-    const host = new KernelProgramHost({ registry: new KernelProgramRegistry(), wakes });
-    const cleanupErrors = [];
-    const sessions = createProofExec({ filesystem, host, transcript: [], cleanupErrors });
-    const messages = [];
-    const connection = sessions.connect((message) => messages.push(message));
-    try {
-      await connection.receive(
-        JSON.stringify({ id: 1, method: "initialize", params: { clientName: "codex" } }),
-      );
-      const environment = messages.at(-1).result.environmentInfo;
-      NodeAssert.equal(environment.shell.path, "/bin/bash");
-      for (const [field, path] of [
-        ["cwd", "/workspace"],
-        ["userHomeDir", "/home/codex"],
-        ["tempDir", "/tmp"],
-      ]) {
-        const uri = new URL(environment[field]);
-        NodeAssert.equal(uri.protocol, "file:");
-        NodeAssert.equal(uri.hostname, "");
-        NodeAssert.equal(uri.pathname, path);
-      }
-      NodeAssert.equal(proofEnvironment.HOME, "/home/codex");
-      NodeAssert.equal(proofEnvironment.PWD, "/workspace");
-      await connection.receive(JSON.stringify({ method: "initialized" }));
-      const path = new URL("proof.txt", environment.cwd + "/").href;
-      await connection.receive(
-        JSON.stringify({
-          id: 2,
-          method: "fs/writeFile",
-          params: { path, dataBase64: "Y29kZXgtcGF0Y2gtcHJvb2YK" },
-        }),
-      );
-      NodeAssert.deepEqual(messages.at(-1), { id: 2, result: {} });
-      NodeAssert.equal(verifyPatchResult(filesystem), "codex-patch-proof\n");
-      await connection.receive(JSON.stringify({ id: 3, method: "fs/readFile", params: { path } }));
-      NodeAssert.deepEqual(messages.at(-1), {
-        id: 3,
-        result: { dataBase64: "Y29kZXgtcGF0Y2gtcHJvb2YK" },
-      });
-    } finally {
-      await sessions.dispose();
-      await host.processes.dispose();
-      filesystem.dispose();
-      wakes.dispose();
-      fixture.close();
+test("exec handshake file URIs address the same filesystem as the proof workspace", async () => {
+  const fixture = sqliteFixture();
+  const storage = createFacetSqliteStorage(fixture.storage, () => 1n);
+  initializeProofRoot(storage);
+  const filesystem = new KernelFileSystem({
+    mounts: [{ path: "/", storage }],
+    posix: { credentials: proofCredentials, umask: 0o022 },
+  });
+  initializeProofDirectories(filesystem);
+  const wakes = new KernelWakeRegistry();
+  const host = new KernelProgramHost({ registry: new KernelProgramRegistry(), wakes });
+  const cleanupErrors = [];
+  const sessions = createProofExec({ filesystem, host, transcript: [], cleanupErrors });
+  const messages = [];
+  const connection = sessions.connect((message) => messages.push(message));
+  try {
+    await connection.receive(
+      JSON.stringify({ id: 1, method: "initialize", params: { clientName: "codex" } }),
+    );
+    const environment = messages.at(-1).result.environmentInfo;
+    NodeAssert.equal(environment.shell.path, "/bin/bash");
+    for (const [field, path] of [
+      ["cwd", "/workspace"],
+      ["userHomeDir", "/home/codex"],
+      ["tempDir", "/tmp"],
+    ]) {
+      const uri = new URL(environment[field]);
+      NodeAssert.equal(uri.protocol, "file:");
+      NodeAssert.equal(uri.hostname, "");
+      NodeAssert.equal(uri.pathname, path);
     }
-    NodeAssert.deepEqual(cleanupErrors, []);
-  },
-);
+    NodeAssert.equal(proofEnvironment.HOME, "/home/codex");
+    NodeAssert.equal(proofEnvironment.PWD, "/workspace");
+    await connection.receive(JSON.stringify({ method: "initialized" }));
+    const path = new URL("proof.txt", environment.cwd + "/").href;
+    await connection.receive(
+      JSON.stringify({
+        id: 2,
+        method: "fs/writeFile",
+        params: { path, dataBase64: "Y29kZXgtcGF0Y2gtcHJvb2YK" },
+      }),
+    );
+    NodeAssert.deepEqual(messages.at(-1), { id: 2, result: {} });
+    NodeAssert.equal(verifyPatchResult(filesystem), "codex-patch-proof\n");
+    await connection.receive(JSON.stringify({ id: 3, method: "fs/readFile", params: { path } }));
+    NodeAssert.deepEqual(messages.at(-1), {
+      id: 3,
+      result: { dataBase64: "Y29kZXgtcGF0Y2gtcHJvb2YK" },
+    });
+  } finally {
+    await sessions.dispose();
+    await host.processes.dispose();
+    filesystem.dispose();
+    wakes.dispose();
+    fixture.close();
+  }
+  NodeAssert.deepEqual(cleanupErrors, []);
+});
