@@ -69,9 +69,18 @@
             // signalbox: release CI and its storage proof tests own native process and fixture I/O.
             "include": [
               "**/scripts/harness-releases/**/*.ts",
+              "**/apps/cloud/infra/harnessReleases/**/*.ts",
               "**/apps/cloud/src/harnessReleases/tests/**/*.ts"
             ],
             "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          },
+          {
+            // signalbox: the native release runner fetches official artifacts and probe responses.
+            "include": [
+              "**/scripts/harness-releases/**/*.ts",
+              "**/apps/cloud/infra/harnessReleases/**/*.ts"
+            ],
+            "options": { "diagnosticSeverity": { "globalFetch": "off" } }
           },
           {
             // signalbox: these fixtures drive workerd over its native HTTP entry point.
