@@ -6,7 +6,7 @@ import { KernelForwardingUnavailable } from "../../src/kernel/KernelCommandForwa
 import { KernelWebSocketHost } from "../../src/kernel/KernelWebSocketHost.ts";
 import { proofEnvironment } from "./ProofWorkspace.mjs";
 
-export function createProofExec({ filesystem, host, transcript, cleanupErrors }) {
+export function createProofExec({ filesystem, host, transcript, cleanupErrors, wrapCommands }) {
   const executor = new KernelCommandExecutor({
     host,
     filesystem,
@@ -21,6 +21,7 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors })
       },
     },
   });
+  const commands = wrapCommands?.({ exec: executor.spawn }) ?? { exec: executor.spawn };
   return new CodexExecSessions({
     environmentInfo: {
       shell: { name: "bash", path: "/bin/bash" },
@@ -34,7 +35,7 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors })
     createSession(context) {
       const handler = new CodexExecHandler({
         filesystem,
-        spawn: executor.spawn,
+        spawn: commands.exec,
         notify: (message) => {
           transcript.push({ direction: "from-exec", message });
           return context.notify(message);
@@ -62,16 +63,56 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors })
   });
 }
 
-export function createProofWebSocket({ memory, binding, sessions, context }) {
+export function createProofWebSocket({
+  memory,
+  binding,
+  sessions,
+  context,
+  modelRoute,
+  execSocket,
+}) {
   return new KernelWebSocketHost({
     memory,
     descriptors: binding.descriptors,
-    route({ request }) {
+    route(input) {
+      const { request } = input;
       if (request.url !== proofEnvironment.CODEX_EXEC_SERVER_URL) {
+        if (modelRoute) return modelRoute(input);
         throw new Error("Unexpected WebSocket route");
       }
-      const response = acceptCodexExecWebSocket(request, sessions, context);
+      execSocket?.opened();
+      const observedSessions = execSocket
+        ? new Proxy(sessions, {
+            get(target, key) {
+              if (key !== "connect") return Reflect.get(target, key, target);
+              return (...args) => {
+                const connection = target.connect(...args);
+                return {
+                  ...connection,
+                  get closed() {
+                    return connection.closed;
+                  },
+                  receive(text) {
+                    execSocket.serverReceive();
+                    return connection.receive(text);
+                  },
+                  disconnect() {
+                    execSocket.serverClose();
+                    return connection.disconnect();
+                  },
+                };
+              };
+            },
+          })
+        : sessions;
+      const response = acceptCodexExecWebSocket(request, observedSessions, context);
       response.webSocket?.accept();
+      if (response.webSocket && execSocket)
+        return {
+          status: response.status,
+          headers: [],
+          webSocket: execSocket.observe(response.webSocket),
+        };
       return { response, headers: [] };
     },
   });

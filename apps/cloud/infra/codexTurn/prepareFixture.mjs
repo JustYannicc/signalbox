@@ -22,6 +22,7 @@ export async function prepareTurnFixture({
   outputDir,
   mode = "startup",
   bashPath,
+  networkModel = false,
 }) {
   if (mode !== "startup" && mode !== "turn") throw new Error("Choose startup or turn mode");
   if (mode === "turn" && !bashPath)
@@ -33,13 +34,18 @@ export async function prepareTurnFixture({
     const source = [
       'import engine from "./engine.wasm";',
       `import { createProofFacet } from ${JSON.stringify(NodePath.join(proofRoot, "ProofFacet.mjs"))};`,
+      ...(networkModel
+        ? [
+            `import { createProofModelTransport } from ${JSON.stringify(NodePath.join(proofRoot, "ProofModelTransport.mjs"))};`,
+          ]
+        : []),
       ...(mode === "turn"
         ? [
             'import bash from "./bash.wasm";',
             `import { createProofBashHost } from ${JSON.stringify(NodePath.join(proofRoot, "BashPrograms.mjs"))};`,
           ]
         : []),
-      `export class ProbeFacet extends createProofFacet(engine${mode === "turn" ? ", (wakes) => createProofBashHost(bash, wakes)" : ""}) {}`,
+      `export class ProbeFacet extends createProofFacet(engine, ${mode === "turn" ? "(wakes) => createProofBashHost(bash, wakes)" : "undefined"}${networkModel ? ", { model: createProofModelTransport }" : ""}) {}`,
       'export default { fetch() { return new Response("Facet only"); } };',
     ].join("\n");
     const bundled = await build({

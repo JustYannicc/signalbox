@@ -7,11 +7,13 @@ import { kernelError, KernelProgramRegistry } from "../../src/kernel/KernelAbi.t
 import { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
 import { KernelPipe } from "../../src/kernel/KernelPipe.ts";
 import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
+import { readProofModelCpu } from "./ProofModelCpu.mjs";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createKernelAsyncWasi } from "../../src/kernel/KernelWasi.ts";
 import { createAppServerDriver, proofModel } from "./AppServerDriver.mjs";
 import { createMockHttpAdapter } from "./MockHttpAdapter.mjs";
 import { createMockResponses } from "./MockResponses.mjs";
+import { createLocalProofModel } from "./ProofModelTransport.mjs";
 import { createProofExec, createProofWebSocket } from "./ProofExec.mjs";
 import {
   initializeProofDirectories,
@@ -22,7 +24,7 @@ import {
   verifyPatchResult,
 } from "./ProofWorkspace.mjs";
 
-function bootstrap() {
+function bootstrap(model) {
   return {
     type: "bootstrap",
     codex_home: "/home/codex",
@@ -35,13 +37,17 @@ function bootstrap() {
       model_provider: "mock",
       "model_providers.mock": {
         name: "Mock",
-        base_url: "http://mock.invalid/v1",
+        base_url: model.baseUrl ?? "http://localhost/v1",
         wire_api: "responses",
         requires_openai_auth: false,
-        supports_websockets: false,
-        request_max_retries: 0,
-        stream_max_retries: 0,
-        stream_idle_timeout_ms: 5000,
+        supports_websockets: model.supportsWebSockets ?? true,
+        stream_idle_timeout_ms: model.streamIdleTimeoutMs ?? 5000,
+        ...(model.maxRetries === undefined
+          ? {}
+          : {
+              request_max_retries: model.maxRetries,
+              stream_max_retries: model.maxRetries,
+            }),
       },
       // The WASI connector requires an explicit proxy decision before opening a host socket.
       "features.respect_system_proxy": true,
@@ -55,6 +61,8 @@ export function createProofFacet(engine, createHost, options = {}) {
   return class extends DurableObject {
     async fetch(request) {
       const path = new URL(request.url).pathname;
+      if (path === "/model-proof-records")
+        return Response.json({ records: readProofModelCpu(this.ctx) });
       if (path !== "/startup" && path !== "/turn")
         return new Response("Not found", { status: 404 });
       const turnMode = path === "/turn";
@@ -63,7 +71,11 @@ export function createProofFacet(engine, createHost, options = {}) {
         execTranscript = [],
         importCalls = [],
         memoryMilestones = [];
-      const mock = createMockResponses();
+      const mock = createMockResponses(options.mockResponses);
+      const execution = { pending: false, enteredAt: null };
+      const model =
+        options.model?.({ mock, request, context: this.ctx, execution }) ??
+        createLocalProofModel({ mock, request });
       const stdoutDecoder = new TextDecoder(),
         stderrDecoder = new TextDecoder();
       let filesystem, binding, wakes, pipe, host, sessions, memory, driver, watchdog, composition;
@@ -76,6 +88,7 @@ export function createProofFacet(engine, createHost, options = {}) {
         turnResult,
         proofContent,
         compositionResult;
+      let modelResult;
       const sample = () => {
         if (memory) peak = Math.max(peak, memory.buffer.byteLength);
       };
@@ -152,14 +165,31 @@ export function createProofFacet(engine, createHost, options = {}) {
           host,
           wakes,
           env: this.env,
+          modelForward: async (modelRequest) =>
+            new Response(mock.respond(await modelRequest.json()), {
+              headers: { "content-type": "text/event-stream" },
+            }),
         });
+        await composition?.prepare?.();
+        // HTTP gateway proofs supply only an HTTP port.
+        if (composition?.modelHttp && !options.model) {
+          model.supportsWebSockets = false;
+          model.baseUrl = "http://mock.invalid/v1";
+          model.maxRetries = 0;
+        }
         binding = createKernelAsyncWasi({
           filesystem,
           wakes,
           agentOsPreopens: true,
           options: { version: "preview1", args: ["/bin/codex"], env: proofEnvironment },
         });
-        sessions = createProofExec({ filesystem, host, transcript: execTranscript, cleanupErrors });
+        sessions = createProofExec({
+          filesystem: composition?.commandFilesystem ?? filesystem,
+          host,
+          transcript: execTranscript,
+          cleanupErrors,
+          wrapCommands: composition?.commands,
+        });
         const fsHost = new AgentOsFileSystemHost({
           memory: () => memory,
           fileSystem: filesystem,
@@ -187,11 +217,16 @@ export function createProofFacet(engine, createHost, options = {}) {
           binding,
           sessions,
           context: this.ctx,
+          modelRoute: model.route,
+          execSocket: model.execSocket,
         });
         const http = createMockHttpAdapter({
           memory: () => memory,
           descriptors: binding.descriptors,
           mock,
+          ...((composition?.modelHttp ?? model.http) === undefined
+            ? {}
+            : { handleRequest: composition?.modelHttp ?? model.http }),
         });
         const imports = {
           ...binding.wasi.getImportObject(),
@@ -224,41 +259,72 @@ export function createProofFacet(engine, createHost, options = {}) {
               return value(...args);
             };
         }
-        const initial = bootstrap();
+        const initial = bootstrap(model);
         const configuredInitial = composition?.bootstrap?.(initial) ?? initial;
         driver.transcript.push({ direction: "to-engine", message: configuredInitial });
         const bytes = new TextEncoder().encode(JSON.stringify(configuredInitial) + "\n");
         if (pipe.tryWrite(bytes) !== bytes.length)
           throw new Error("Bootstrap exceeds pipe capacity");
         const driven = turnMode
-          ? driver.run().then(
-              (result) => {
-                turnResult = result;
-              },
-              (error) => {
-                failure = String(error);
-                closeInput();
-              },
-            )
+          ? driver
+              .run(
+                model.cpuOnly
+                  ? { prompt: "Reply with the CPU proof message. Do not call tools." }
+                  : undefined,
+              )
+              .then(
+                (result) => {
+                  turnResult = result;
+                },
+                (error) => {
+                  failure = String(error);
+                  closeInput();
+                },
+              )
           : undefined;
         watchdog = setTimeout(() => {
-          failure ??= "Engine proof exceeded 30s milestone budget";
+          failure ??= "Engine proof exceeded its milestone budget";
           driver.fail(new Error(failure));
           wakes.dispose();
-        }, 30000);
+        }, model.watchdogMs ?? 30000);
         milestone("before-instance");
         const instance = new WebAssembly.Instance(engine, imports);
         memory = instance.exports.memory;
         milestone("after-instance");
-        exit = await binding.wasi.start(instance);
+        execution.enteredAt = Date.now();
+        execution.pending = true;
+        try {
+          exit = await binding.wasi.start(instance);
+        } finally {
+          execution.pending = false;
+        }
         milestone("after-start");
         if (!ready) driver.fail(new Error("Engine exited before signalbox/ready"));
         await driven;
         if (driver.failure) throw driver.failure;
         if (turnMode && turnResult) {
-          if (mock.phase !== "complete")
+          modelResult = await model.inspect?.();
+          if ((modelResult?.phase ?? mock.phase) !== "complete")
             throw new Error("Mock Responses sequence did not complete");
-          proofContent = verifyPatchResult(filesystem);
+          if (model.metrics && model.supportsWebSockets !== false) {
+            model.metrics.httpFallbacks = mock.requests.length - model.metrics.mockCalls;
+            if (model.metrics.opens < 1 || model.metrics.httpFallbacks !== 0)
+              throw new Error("Default Responses proof did not stay on WebSockets");
+          }
+          if (model.cpuOnly) {
+            if (execTranscript.some((entry) => entry.method === "process/start"))
+              throw new Error("CPU proof executed a tool");
+            const messages = driver.transcript.filter(
+              (entry) =>
+                entry.direction === "from-engine" &&
+                entry.message.method === "item/completed" &&
+                entry.message.params?.item?.type === "agentMessage",
+            );
+            if (!messages.some((entry) => entry.message.params.item.text === "CPU proof complete."))
+              throw new Error("CPU proof did not deliver its complete native message");
+            proofContent = "CPU proof complete.";
+          } else
+            proofContent = composition?.proofContent?.(filesystem) ?? verifyPatchResult(filesystem);
         }
         compositionResult = await composition?.verify?.({ filesystem, turnResult, mock, driver });
       } catch (error) {
@@ -268,8 +334,9 @@ export function createProofFacet(engine, createHost, options = {}) {
         if (watchdog) clearTimeout(watchdog);
         sample();
         closeInput();
-        await cleanup("proof-composition", () => composition?.finish?.({ exit, failure }));
+        // Exec sessions must release the composition-owned command filesystem first.
         await cleanup("exec-sessions", () => sessions?.dispose());
+        await cleanup("proof-composition", () => composition?.finish?.({ exit, failure }));
         await cleanup("process-table", async () => {
           if (!host) return;
           const result = await host.processes.dispose();
@@ -282,7 +349,7 @@ export function createProofFacet(engine, createHost, options = {}) {
       }
       stdout += stdoutDecoder.decode();
       stderr += stderrDecoder.decode();
-      return Response.json({
+      const result = {
         ok:
           ready &&
           exit === 0 &&
@@ -306,9 +373,11 @@ export function createProofFacet(engine, createHost, options = {}) {
         importCalls,
         mockPhase: mock.phase,
         modelRequests: mock.requests,
+        modelTransport: modelResult ?? model.metrics ?? model.diagnostics?.(),
         proofContent,
         ...(compositionResult === undefined ? {} : { compositionResult }),
-      });
+      };
+      return Response.json(composition?.scrubRecord?.(result) ?? result);
     }
   };
 }

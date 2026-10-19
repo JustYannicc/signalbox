@@ -20,12 +20,27 @@ import {
 } from "../../src/hooks/HarnessHookSettings.ts";
 import type { MockToolResult } from "../claudeTurnProof/mockMessages.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
-import { STANDARD_PROOF_WRITE, STANDARD_PROOF_FILLED_WRITE } from "./standardProofAdapter.ts";
+import {
+  inspectStandardProofSessions,
+  type StandardProofSessionBaseline,
+} from "./standardProofRecords.ts";
+import {
+  inspectStandardProofNativeFileRead,
+  STANDARD_PROOF_WIRE_TEXT,
+  type StandardProofNativeFileRead,
+} from "./standardProofEvidence.ts";
+import { matchesClaudeNativeFileRead } from "./claudeNativeFileRead.ts";
+import {
+  STANDARD_PROOF_NAMED_SECRET,
+  STANDARD_PROOF_VAULT_SECRET,
+  STANDARD_PROOF_WRITE,
+} from "./standardProofAdapter.ts";
 
 export const CLAUDE_HOOK_SETTINGS_PATH = "/home/claude/.claude/settings.json";
 export const CLAUDE_HOOK_COMMAND_LOG = "/work/hook-command-events.jsonl";
 export const CLAUDE_TOOL_FILE = "/work/official-write.txt";
 export const CLAUDE_TOOL_CONTENT = STANDARD_PROOF_WRITE;
+export const CLAUDE_TOOL_READ_COMMAND = `cat ${CLAUDE_TOOL_FILE}`;
 export const CLAUDE_HOOK_SESSION_ID = "claude-hooks-proof-session";
 export { HOOK_PROGRAM_FACADE as CLAUDE_HOOK_PROGRAM_FACADE } from "./hookProgramFacade.ts";
 
@@ -172,18 +187,44 @@ function seedFile(
 }
 
 export function claudeToolScript() {
-  return {
-    name: "Write" as const,
-    input: {
-      file_path: CLAUDE_TOOL_FILE,
-      content: CLAUDE_TOOL_CONTENT,
+  return claudeToolScripts()[0];
+}
+
+export function claudeToolScripts() {
+  return [
+    {
+      name: "Write" as const,
+      input: {
+        file_path: CLAUDE_TOOL_FILE,
+        content: CLAUDE_TOOL_CONTENT,
+      },
     },
+    {
+      name: "Read" as const,
+      input: { file_path: CLAUDE_TOOL_FILE },
+    },
+    {
+      name: "Bash" as const,
+      input: { command: CLAUDE_TOOL_READ_COMMAND },
+    },
+  ] as const;
+}
+
+export type ClaudeNativeFileReadEvidence = StandardProofNativeFileRead;
+
+export function inspectClaudeNativeFileRead(read: ClaudeNativeFileReadEvidence | undefined) {
+  const result = inspectStandardProofNativeFileRead(read, CLAUDE_TOOL_READ_COMMAND);
+  return {
+    ...result,
+    commandMatched:
+      result.commandMatched || matchesClaudeNativeFileRead(read, CLAUDE_TOOL_READ_COMMAND),
   };
 }
 
 export async function verifyClaudeHookScenario(input: {
   readonly filesystem: KernelFileSystem;
   readonly fs: NodeFsModules;
+  readonly sessionBaseline: StandardProofSessionBaseline;
   readonly ports: MemoryFilePersistenceFixture;
   readonly persistence: Pick<ReturnType<typeof createFacetFilePersistence>, "commitTurn">;
   readonly dispatches: readonly ClaudeHooksDispatchRecord[];
@@ -192,45 +233,68 @@ export async function verifyClaudeHookScenario(input: {
   readonly mockComplete: boolean;
   readonly toolResults: readonly MockToolResult[];
   readonly machineCalls: number;
+  readonly nativeFileRead?: ClaudeNativeFileReadEvidence | undefined;
 }): Promise<Record<string, unknown>> {
   const errors: string[] = [];
   const hookProgramFacade = inspectHookProgramFacade(input.filesystem, input.fs, errors);
-  const expected = new Map<string, { event: HarnessHookEvent; route: ClaudeHookRoute }>();
+  const expected = new Map<
+    string,
+    { event: HarnessHookEvent; route: ClaudeHookRoute; count: number }
+  >();
   for (const { event } of CLAUDE_HOOK_EVENTS) {
-    for (const route of CLAUDE_HOOK_ROUTES) expected.set(hookId(event, route), { event, route });
+    for (const route of CLAUDE_HOOK_ROUTES) {
+      expected.set(hookId(event, route), {
+        event,
+        route,
+        count: event === "pre-tool-use" || event === "post-tool-use" ? 3 : 1,
+      });
+    }
   }
 
   for (const [id, target] of expected) {
     const calls = input.dispatches.filter((dispatch) => dispatch.id === id);
-    if (calls.length !== 1) {
-      errors.push(id + " expected one official invocation, got " + calls.length);
-      continue;
+    if (calls.length !== target.count) {
+      errors.push(id + " expected " + target.count + " official invocations, got " + calls.length);
     }
-    const call = calls[0]!;
-    if (call.event !== target.event || call.route !== target.route) {
-      errors.push(id + " was dispatched through the wrong event or route");
-    }
-    if (call.exit?.exitCode !== 0 || call.exit.signal !== 0) {
-      errors.push(id + " did not exit successfully");
-    }
-    verifyOfficialPayload(call.payload, target.event, errors);
-    if (target.route === "script") verifyGeneratedOutput(call.stdout, target.event, errors);
-    if (target.route === "signalbox" && call.stdout?.trim() !== "{}") {
-      errors.push(id + " did not return a neutral standard hook result");
-    }
-    if (
-      target.route === "command" &&
-      call.stderr !== "{{secret:API_TOKEN}}\n{{secret:VAULT_TOKEN}}\n"
-    ) {
-      errors.push(id + " did not scrub the real command environment output before the harness");
+    for (const call of calls) {
+      if (call.event !== target.event || call.route !== target.route) {
+        errors.push(id + " was dispatched through the wrong event or route");
+      }
+      if (call.exit?.exitCode !== 0 || call.exit.signal !== 0) {
+        errors.push(id + " did not exit successfully");
+      }
+      verifyOfficialPayload(call.payload, target.event, errors);
+      if (target.route === "script") verifyGeneratedOutput(call.stdout, target.event, errors);
+      if (target.route === "signalbox" && call.stdout?.trim() !== "{}") {
+        errors.push(id + " did not return a neutral standard hook result");
+      }
+      if (
+        target.route === "command" &&
+        call.stderr !== "{{secret:API_TOKEN}}\n{{secret:VAULT_TOKEN}}\n"
+      ) {
+        errors.push(id + " did not scrub the real command environment output before the harness");
+      }
     }
   }
 
   for (const { event, officialName } of CLAUDE_HOOK_EVENTS) {
     const calls = input.dispatches.filter((dispatch) => dispatch.event === event);
-    const payloads = calls.map((call) => JSON.stringify(call.payload));
-    if (calls.length === CLAUDE_HOOK_ROUTES.length && new Set(payloads).size !== 1) {
-      errors.push(officialName + " handlers received different event payloads");
+    const groups = new Map<string, ClaudeHooksDispatchRecord[]>();
+    for (const call of calls) {
+      const payload = isRecord(call.payload) ? call.payload : {};
+      const key =
+        typeof payload.tool_name === "string"
+          ? JSON.stringify([payload.tool_name, payload.tool_input])
+          : "lifecycle";
+      const group = groups.get(key) ?? [];
+      group.push(call);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const payloads = group.map((call) => JSON.stringify(call.payload));
+      if (group.length === CLAUDE_HOOK_ROUTES.length && new Set(payloads).size !== 1) {
+        errors.push(officialName + " handlers received different event payloads");
+      }
     }
   }
   verifyEventOrder(input.dispatches, errors);
@@ -238,11 +302,36 @@ export async function verifyClaudeHookScenario(input: {
   verifyRpcRouting(input.dispatches, input.rpcCalls, errors);
 
   if (!input.mockComplete) errors.push("mock Messages script did not complete");
-  if (input.toolResults.length !== 1 || input.toolResults[0]?.name !== "Write") {
-    errors.push("expected exactly one successful official Write tool result");
+  const expectedToolNames = ["Write", "Read", "Bash"];
+  if (
+    input.toolResults.length !== expectedToolNames.length ||
+    input.toolResults.some((result, index) => result.name !== expectedToolNames[index])
+  ) {
+    errors.push("expected successful official Write, Read, and Bash tool results in order");
   }
-  if (input.toolResults[0]?.is_error) errors.push("official Write tool call returned an error");
+  if (input.toolResults.some((result) => result.is_error))
+    errors.push("an official Claude tool call returned an error");
+  const expectedCanonicalRead = STANDARD_PROOF_WRITE.trimEnd();
+  const officialReadReturnedPlaceholders =
+    containsText(input.toolResults[1]?.content, expectedCanonicalRead) &&
+    !containsText(input.toolResults[1]?.content, STANDARD_PROOF_NAMED_SECRET.value) &&
+    !containsText(input.toolResults[1]?.content, STANDARD_PROOF_VAULT_SECRET.value);
+  if (!officialReadReturnedPlaceholders)
+    errors.push("official Claude Read did not return canonical placeholder file content");
+  const expectedWireRead = STANDARD_PROOF_WIRE_TEXT;
+  const modelWireStayedScrubbed =
+    containsText(input.toolResults[2]?.content, expectedWireRead.trimEnd()) &&
+    !containsText(input.toolResults[2]?.content, STANDARD_PROOF_NAMED_SECRET.value) &&
+    !containsText(input.toolResults[2]?.content, STANDARD_PROOF_VAULT_SECRET.value);
+  if (!modelWireStayedScrubbed)
+    errors.push("official Claude Bash result did not keep secrets scrubbed on the model wire");
   if (input.machineCalls !== 0) errors.push("hook command execution reached the machine port");
+
+  const nativeFileRead = inspectClaudeNativeFileRead(input.nativeFileRead);
+  if (!nativeFileRead.commandMatched)
+    errors.push("Claude did not execute the expected native cat command");
+  if (!nativeFileRead.matchesFilledBytes)
+    errors.push("Claude native cat output did not match the filled file bytes");
 
   const stdoutEvents = parseClaudeStdout(input.stdout, errors);
   const terminal = stdoutEvents.at(-1);
@@ -254,8 +343,8 @@ export async function verifyClaudeHookScenario(input: {
     [CLAUDE_TOOL_FILE]: readText(input.fs, CLAUDE_TOOL_FILE),
     [CLAUDE_HOOK_COMMAND_LOG]: readText(input.fs, CLAUDE_HOOK_COMMAND_LOG),
   };
-  if (actualFiles[CLAUDE_TOOL_FILE] !== STANDARD_PROOF_FILLED_WRITE) {
-    errors.push("official Claude Write did not produce the expected file");
+  if (actualFiles[CLAUDE_TOOL_FILE] !== STANDARD_PROOF_WRITE) {
+    errors.push("official Claude Write did not retain placeholder bytes in the canonical file");
   }
 
   let commitReceipt: FilePersistenceResult<FileCommitReceipt> | undefined;
@@ -286,31 +375,59 @@ export async function verifyClaudeHookScenario(input: {
   ) {
     errors.push("command hook file does not contain the exact official payload records");
   }
+  if (committed[CLAUDE_TOOL_FILE] !== STANDARD_PROOF_WRITE) {
+    errors.push("committed Claude tool file did not retain placeholder bytes");
+  }
   if (committed[CLAUDE_TOOL_FILE] !== actualFiles[CLAUDE_TOOL_FILE]) {
-    errors.push("committed Claude tool file differs from the SQLite result");
+    errors.push("committed Claude tool file differs from the canonical filesystem result");
   }
   if (committed[CLAUDE_HOOK_COMMAND_LOG] !== actualFiles[CLAUDE_HOOK_COMMAND_LOG]) {
     errors.push("committed command hook file differs from the SQLite result");
   }
   if (commitReceipt?.status !== "ok") errors.push("successful file commit evidence is missing");
+  const sessionMirror = inspectStandardProofSessions(
+    input.filesystem,
+    "/home/claude/.claude/projects",
+    input.sessionBaseline,
+  );
+  errors.push(...sessionMirror.errors);
 
   return {
     ok: errors.length === 0,
     errors,
+    sessionMirror,
     officialEventRecords: input.dispatches,
-    rpcRouting: { kind: "standard-hooks-with-restart-module-test-adapters", calls: input.rpcCalls },
+    rpcRouting: {
+      kind: "standard-hooks-with-restart-module-test-adapters",
+      calls: input.rpcCalls,
+    },
     timing: hookTiming(input.dispatches),
     machineCalls: input.machineCalls,
     settingsPath: CLAUDE_HOOK_SETTINGS_PATH,
     hookProgramFacade,
     terminalEvent: terminal,
+    nativeFileFill: {
+      kind: "official-write-canonical-read-and-bash-cat",
+      path: CLAUDE_TOOL_FILE,
+      command: CLAUDE_TOOL_READ_COMMAND,
+      commandMatched: nativeFileRead.commandMatched,
+      rawOutputBytes: nativeFileRead.outputBytes,
+      expectedFilledBytes: nativeFileRead.expectedBytes,
+      matchesFilledBytes: nativeFileRead.matchesFilledBytes,
+      canonicalPlaceholderBytes: new TextEncoder().encode(actualFiles[CLAUDE_TOOL_FILE] ?? "")
+        .byteLength,
+      canonicalMatchesPlaceholders: actualFiles[CLAUDE_TOOL_FILE] === STANDARD_PROOF_WRITE,
+      officialReadReturnedPlaceholders,
+      modelWireStayedScrubbed,
+    },
     files: [
       {
         path: CLAUDE_TOOL_FILE,
         input: CLAUDE_TOOL_CONTENT,
-        expected: STANDARD_PROOF_FILLED_WRITE,
-        actual: actualFiles[CLAUDE_TOOL_FILE],
-        committed: committed[CLAUDE_TOOL_FILE],
+        expected: STANDARD_PROOF_WRITE,
+        bytes: new TextEncoder().encode(actualFiles[CLAUDE_TOOL_FILE] ?? "").byteLength,
+        canonicalMatches: actualFiles[CLAUDE_TOOL_FILE] === STANDARD_PROOF_WRITE,
+        committedMatches: committed[CLAUDE_TOOL_FILE] === STANDARD_PROOF_WRITE,
       },
       {
         path: CLAUDE_HOOK_COMMAND_LOG,
@@ -371,17 +488,31 @@ function verifyOfficialPayload(payload: unknown, event: HarnessHookEvent, errors
     errors.push(event + " payload is missing the official session_id");
   }
   if (payload.cwd !== "/work") errors.push(event + " payload did not retain the session cwd");
-  if (
-    (event === "pre-tool-use" || event === "post-tool-use") &&
-    (payload.tool_name !== "Write" ||
-      !isRecord(payload.tool_input) ||
-      payload.tool_input.file_path !== CLAUDE_TOOL_FILE ||
-      payload.tool_input.content !== CLAUDE_TOOL_CONTENT)
-  ) {
-    errors.push(event + " payload did not identify the single Write tool call");
+  if (event === "pre-tool-use" || event === "post-tool-use") {
+    const expectedTool = claudeToolScripts().find((tool) => tool.name === payload.tool_name);
+    if (
+      expectedTool === undefined ||
+      JSON.stringify(payload.tool_input) !== JSON.stringify(expectedTool.input)
+    ) {
+      errors.push(event + " payload did not identify an expected native tool call");
+    }
   }
   if (event === "post-tool-use" && !Object.hasOwn(payload, "tool_response")) {
     errors.push("PostToolUse payload is missing tool_response");
+  }
+  if (event === "post-tool-use" && payload.tool_name === "Read") {
+    if (!containsText(payload.tool_response, STANDARD_PROOF_WRITE.trimEnd()))
+      errors.push("PostToolUse Read payload did not retain canonical placeholder content");
+  }
+  if (event === "post-tool-use" && payload.tool_name === "Bash") {
+    const expectedWireRead = STANDARD_PROOF_WIRE_TEXT;
+    if (
+      !containsText(payload.tool_response, expectedWireRead.trimEnd()) ||
+      containsText(payload.tool_response, STANDARD_PROOF_NAMED_SECRET.value) ||
+      containsText(payload.tool_response, STANDARD_PROOF_VAULT_SECRET.value)
+    ) {
+      errors.push("PostToolUse Bash payload did not keep secret output scrubbed");
+    }
   }
 }
 
@@ -389,14 +520,51 @@ function verifyEventOrder(
   dispatches: readonly ClaudeHooksDispatchRecord[],
   errors: string[],
 ): void {
-  const order = CLAUDE_HOOK_EVENTS.map(({ event }) =>
-    dispatches.findIndex((dispatch) => dispatch.event === event),
-  );
-  if (
-    order.some((index) => index < 0) ||
-    order.some((index, offset) => offset > 0 && index < order[offset - 1]!)
-  ) {
+  const sessionStart = dispatches.findIndex((dispatch) => dispatch.event === "session-start");
+  const firstPre = dispatches.findIndex((dispatch) => dispatch.event === "pre-tool-use");
+  const postIndices = dispatches
+    .map((dispatch, index) => (dispatch.event === "post-tool-use" ? index : -1))
+    .filter((index) => index >= 0);
+  const lastPost = postIndices.at(-1) ?? -1;
+  const stop = dispatches.findIndex((dispatch) => dispatch.event === "stop");
+  if (sessionStart < 0 || firstPre < sessionStart || lastPost < firstPre || stop < lastPost) {
     errors.push("official Claude hook events did not follow the expected lifecycle order");
+  }
+
+  let previousPost = -1;
+  for (const tool of claudeToolScripts()) {
+    const key = JSON.stringify(tool.input);
+    const preIndices: number[] = [];
+    const postToolIndices: number[] = [];
+    for (const route of CLAUDE_HOOK_ROUTES) {
+      const before = dispatches.findIndex(
+        (dispatch) =>
+          dispatch.event === "pre-tool-use" &&
+          dispatch.route === route &&
+          isRecord(dispatch.payload) &&
+          dispatch.payload.tool_name === tool.name &&
+          JSON.stringify(dispatch.payload.tool_input) === key,
+      );
+      const after = dispatches.findIndex(
+        (dispatch) =>
+          dispatch.event === "post-tool-use" &&
+          dispatch.route === route &&
+          isRecord(dispatch.payload) &&
+          dispatch.payload.tool_name === tool.name &&
+          JSON.stringify(dispatch.payload.tool_input) === key,
+      );
+      if (before < 0 || after < before) {
+        errors.push(tool.name + " did not finish its native pre/post hook sequence");
+      }
+      preIndices.push(before);
+      postToolIndices.push(after);
+    }
+    const firstPre = Math.min(...preIndices);
+    const lastToolPost = Math.max(...postToolIndices);
+    if (firstPre <= previousPost) {
+      errors.push("Claude native tools did not run in the scripted order");
+    }
+    previousPost = lastToolPost;
   }
 }
 
@@ -415,9 +583,13 @@ function verifyCommandFile(
     return;
   }
   const lines = text.split(/\r?\n/).filter(Boolean);
+  const expectedLines = CLAUDE_HOOK_EVENTS.reduce(
+    (sum, { event }) => sum + (event === "pre-tool-use" || event === "post-tool-use" ? 3 : 1),
+    0,
+  );
   if (
     lines.length !==
-    CLAUDE_HOOK_EVENTS.length * CLAUDE_HOOK_ROUTES.filter((route) => route === "command").length
+    expectedLines * CLAUDE_HOOK_ROUTES.filter((route) => route === "command").length
   ) {
     errors.push("configured command hooks did not write one line per event");
   }
@@ -437,15 +609,28 @@ function verifyRpcRouting(
 ): void {
   for (const { event } of CLAUDE_HOOK_EVENTS) {
     const eventCalls = calls.filter((call) => call.event === event);
-    if (eventCalls.length !== 1 || eventCalls[0]?.harness !== "claude-code") {
-      errors.push(event + " did not route once through the Signalbox callback fixture");
-      continue;
-    }
-    const dispatch = dispatches.find(
+    const eventDispatches = dispatches.filter(
       (record) => record.event === event && record.route === "signalbox",
     );
-    if (isRecord(dispatch?.payload) && eventCalls[0]?.sessionId !== dispatch.payload.session_id) {
-      errors.push(event + " Signalbox fixture did not retain the official session_id");
+    const expectedCount = event === "pre-tool-use" || event === "post-tool-use" ? 3 : 1;
+    if (
+      eventCalls.length !== expectedCount ||
+      eventDispatches.length !== expectedCount ||
+      eventCalls.some((call) => call.harness !== "claude-code")
+    ) {
+      errors.push(
+        event + " did not route each native event through the Signalbox callback fixture",
+      );
+      continue;
+    }
+    for (const dispatch of eventDispatches) {
+      if (!isRecord(dispatch.payload)) continue;
+      const matches = eventCalls.filter(
+        (call) => JSON.stringify(call.payload) === JSON.stringify(dispatch.payload),
+      );
+      if (matches.length !== 1 || matches[0]?.sessionId !== dispatch.payload.session_id) {
+        errors.push(event + " Signalbox fixture did not retain its official payload");
+      }
     }
   }
 }
@@ -522,6 +707,12 @@ function hookTiming(dispatches: readonly ClaudeHooksDispatchRecord[]) {
       ]),
     ),
   };
+}
+
+function containsText(value: unknown, text: string): boolean {
+  if (typeof value === "string") return value.includes(text);
+  if (Array.isArray(value)) return value.some((entry) => containsText(entry, text));
+  return isRecord(value) && Object.values(value).some((entry) => containsText(entry, text));
 }
 
 function routeTiming(dispatches: readonly ClaudeHooksDispatchRecord[]) {

@@ -62,6 +62,7 @@ jobs:
           run-install: |
             args:
               - --filter=@signalbox/cloud...
+              - --filter=t3...
               - --filter=@t3tools/monorepo
 
       - name: Fetch pinned kernel programs

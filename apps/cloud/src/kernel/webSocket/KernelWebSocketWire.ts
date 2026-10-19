@@ -96,10 +96,14 @@ export function decodeWebSocketRequest(
   } catch {
     return WS_ERRNO.EINVAL;
   }
-  if (url.protocol !== "ws:" || url.username !== "" || url.password !== "" || url.hash !== "") {
+  if (
+    (url.protocol !== "ws:" && url.protocol !== "wss:") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.hash !== ""
+  ) {
     return WS_ERRNO.ENOTSUP;
   }
-  if (!isLoopbackHostname(url.hostname)) return WS_ERRNO.ENOTSUP;
 
   const headers: KernelWebSocketHeader[] = [];
   let headerBlockBytes = 4;
@@ -184,22 +188,6 @@ export function encodeWebSocketHandshake(
   offset += 4;
   output.set(handshake.body, offset);
   return output;
-}
-
-export function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "");
-  if (normalized === "::1" || normalized === "localhost" || normalized.endsWith(".localhost")) {
-    return true;
-  }
-  const ipv4 = normalized.split(".");
-  return (
-    ipv4.length === 4 &&
-    ipv4.every((part) => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255) &&
-    Number(ipv4[0]) === 127
-  );
 }
 
 function isHeaderNameByte(byte: number): boolean {

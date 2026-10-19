@@ -184,4 +184,103 @@ describe("standard proof ModelAccess adapter", () => {
       database.close();
     }
   });
+
+  it("authorizes and scrubs native Codex HTTP through the OpenAI ModelAccess route", async () => {
+    const database = createProofTestStorage();
+    const state = createStandardProofState(database.storage, "codex-model-gateway");
+    const proofSecrets: ReadonlyArray<SecretValue> = [
+      STANDARD_PROOF_NAMED_SECRET,
+      STANDARD_PROOF_VAULT_SECRET,
+    ];
+    let forwarded:
+      | {
+          readonly url: string;
+          readonly method: string;
+          readonly authorization: string | null;
+          readonly beta: string | null;
+          readonly body: unknown;
+        }
+      | undefined;
+    try {
+      const gateway = await createStandardProofModelGateway({
+        authority: state.authority,
+        assertActive: state.assertActive,
+        registered: () => proofSecrets,
+        completeResponse: NOTE,
+        async forward(request) {
+          forwarded = {
+            url: request.url,
+            method: request.method,
+            authorization: request.headers.get("authorization"),
+            beta: request.headers.get("openai-beta"),
+            body: await request.json(),
+          };
+          return new Response(
+            `event: response.completed\n\ndata: {"type":"response.completed"}\n\n`,
+            {
+              status: 200,
+              headers: {
+                "content-type": "text/event-stream",
+                "x-proof-route": "native-codex",
+              },
+            },
+          );
+        },
+      });
+      const active = state.authority.activeAttempt();
+      if (!active) throw new Error("Missing proof attempt");
+      const raw = `${STANDARD_PROOF_NAMED_SECRET.value} ${STANDARD_PROOF_VAULT_SECRET.value}`;
+      const response = await gateway.serve(
+        new Request("http://mock.invalid/v1/responses?stream=true", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer mock-only-codex-key",
+            "content-type": "application/json",
+            "openai-beta": "responses=experimental",
+          },
+          body: JSON.stringify({
+            model: "codex-proof-model",
+            input: [{ role: "user", content: `Use this context: ${raw}` }],
+            stream: true,
+          }),
+        }),
+        new AbortController().signal,
+        "openai",
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-proof-route")).toBe("native-codex");
+      expect(await response.text()).toContain("response.completed");
+      expect(forwarded).toMatchObject({
+        url: "http://mock.invalid/v1/responses?stream=true",
+        method: "POST",
+        authorization: "Bearer mock-only-codex-key",
+        beta: "responses=experimental",
+      });
+      const forwardedBody = JSON.stringify(forwarded?.body);
+      for (const secret of proofSecrets) {
+        expect(forwardedBody).toContain(secretPlaceholder(secret.name));
+        expect(forwardedBody).not.toContain(secret.value);
+      }
+
+      const proof = gateway.inspect();
+      expect(proof).toMatchObject({ nativeForwardCount: 1, ok: true });
+      expect(proof.nativeForwards[0]).toMatchObject({
+        path: "/v1/responses?stream=true",
+        method: "POST",
+        provider: "openai",
+        model: "codex-proof-model",
+        responseStatus: 200,
+        scrubbed: true,
+      });
+      expect(proof.nativeForwards[0]?.body).not.toContain(raw);
+      expect(JSON.stringify(proof)).not.toContain(STANDARD_PROOF_NAMED_SECRET.value);
+      expect(JSON.stringify(proof)).not.toContain(STANDARD_PROOF_VAULT_SECRET.value);
+      expect(JSON.stringify({ forwarded, proof })).not.toContain(raw);
+      expect(String(active.threadId)).toBe(proof.nativeForwards[0]?.thread);
+    } finally {
+      state.close();
+      database.close();
+    }
+  });
 });

@@ -41,7 +41,7 @@ test("the configured exec endpoint reaches the kernel route through the guest so
       return { status: 418, headers: [], body: new Uint8Array() };
     },
   });
-  const rejected = requestBytes("ws://loopback.invalid/exec");
+  const rejected = requestBytes("https://loopback.invalid/exec");
   new Uint8Array(memory.buffer, 64, rejected.length).set(rejected);
   NodeAssert.equal(host.imports.ws_open(64, rejected.length, 16), 58);
   NodeAssert.equal(entries.size, 0);
