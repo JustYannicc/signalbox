@@ -90,6 +90,10 @@ export default {
         "infra/kernelProof/*.ts",
         "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
         "infra/claudeTurnProof/ClaudeTurnProof.ts", // signalbox: imported by the generated proof entry.
+        "infra/hooksProof/prepareClaude.ts", // Standalone hook proof builders.
+        "infra/hooksProof/prepareCodex.ts",
+        "infra/hooksProof/ClaudeHooksProof.ts", // Loaded by the generated proof entries.
+        "infra/hooksProof/CodexHooksProof.ts",
         "infra/kernelPrograms/*/*.{ts,mjs}",
         "src/kernel/tests/gitProgramProof.ts", // signalbox: standalone real-WASM proof runner.
         "src/kernel/tests/coreutilsProgramProof.mjs", // signalbox: standalone real-WASM proof runner.
