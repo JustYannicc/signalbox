@@ -143,7 +143,7 @@ export function createProbeHost({ mode, onLine, onPark }) {
     publish(bytes) {
       NodeAssert.equal(closeCount, 0);
       queue.push(...bytes);
-      for (const notify of [...listeners]) notify();
+      for (const notify of Array.from(listeners)) notify();
     },
     get openReadyFds() {
       return filesystem.descriptors.has(readyFd) ? 1 : 0;

@@ -5,9 +5,7 @@
     {
       "rule": "dialer-module",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "mod dialer;"
-      ],
+      "before": ["mod dialer;"],
       "after": [
         "#[cfg(not(all(target_os = \"wasi\", target_env = \"p1\")))]",
         "mod dialer;",
@@ -19,9 +17,7 @@
     {
       "rule": "native-import-Either",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "use futures::future::Either;"
-      ],
+      "before": ["use futures::future::Either;"],
       "after": [
         "#[cfg(not(all(target_os = \"wasi\", target_env = \"p1\")))]",
         "use futures::future::Either;"
@@ -30,9 +26,7 @@
     {
       "rule": "native-import-TcpStream",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "use tokio::net::TcpStream;"
-      ],
+      "before": ["use tokio::net::TcpStream;"],
       "after": [
         "#[cfg(not(all(target_os = \"wasi\", target_env = \"p1\")))]",
         "use tokio::net::TcpStream;"
@@ -41,9 +35,7 @@
     {
       "rule": "native-import-MaybeTlsStream",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "use tokio_tungstenite::MaybeTlsStream;"
-      ],
+      "before": ["use tokio_tungstenite::MaybeTlsStream;"],
       "after": [
         "#[cfg(not(all(target_os = \"wasi\", target_env = \"p1\")))]",
         "use tokio_tungstenite::MaybeTlsStream;"
@@ -52,9 +44,7 @@
     {
       "rule": "native-import-WebSocketStream-TungsteniteStream",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "use tokio_tungstenite::WebSocketStream as TungsteniteStream;"
-      ],
+      "before": ["use tokio_tungstenite::WebSocketStream as TungsteniteStream;"],
       "after": [
         "#[cfg(not(all(target_os = \"wasi\", target_env = \"p1\")))]",
         "use tokio_tungstenite::WebSocketStream as TungsteniteStream;"
@@ -82,10 +72,7 @@
     {
       "rule": "connector-tls-field",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "    tcp_nodelay: TcpNodelay,",
-        "}"
-      ],
+      "before": ["    tcp_nodelay: TcpNodelay,", "}"],
       "after": [
         "    tcp_nodelay: TcpNodelay,",
         "    #[cfg(all(target_os = \"wasi\", target_env = \"p1\"))]",
@@ -96,9 +83,7 @@
     {
       "rule": "connector-tls-capture",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "        let tls_config = match tls_mode {"
-      ],
+      "before": ["        let tls_config = match tls_mode {"],
       "after": [
         "        #[cfg(all(target_os = \"wasi\", target_env = \"p1\"))]",
         "        let wasi_custom_tls = matches!(&tls_mode, WebSocketTlsMode::Rustls(_));",
@@ -108,9 +93,7 @@
     {
       "rule": "connector-tls-initialize",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "            tcp_nodelay: TcpNodelay::Default,"
-      ],
+      "before": ["            tcp_nodelay: TcpNodelay::Default,"],
       "after": [
         "            tcp_nodelay: TcpNodelay::Default,",
         "            #[cfg(all(target_os = \"wasi\", target_env = \"p1\"))]",
@@ -120,9 +103,7 @@
     {
       "rule": "connector-tls-reject",
       "path": "codex-rs/websocket-client/src/lib.rs",
-      "before": [
-        "        let uri = request.uri().clone();"
-      ],
+      "before": ["        let uri = request.uri().clone();"],
       "after": [
         "        #[cfg(all(target_os = \"wasi\", target_env = \"p1\"))]",
         "        if self.wasi_custom_tls {",
