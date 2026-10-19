@@ -1,0 +1,953 @@
+// Scenario shard 07: connections and logins (SCN-152 to SCN-169).
+// One journey per scenario: people, their clients, black-box modules, externals.
+// Resolution is by the hierarchy only (the thread's Place), never by who sent the turn.
+views {
+
+  // Container lanes muted, like LikeC4's homepage examples.
+  style signalbox, platform, services {
+    color muted
+    opacity 10%
+  }
+
+  // ─────────────────────────────── Scenarios/Connections/OnePassword ───────────────────────────────
+
+  dynamic view scn_152_link_personal_onepassword {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/OnePassword/Link Personal Vault'
+    description 'How does A link their own 1Password? Decided: #589 (2026-10-16) one Settings sheet, wrong password links nothing, relink replaces, never an agent or MCP tool; #344 (2026-10-16) Signalbox signs in to the person\'s 1Password as a device. SCN-152 · R-SEC-01, R-SEC-02, R-GAT-03, P-ASK-05 · not v1 (v1 connections are Google and Confluence).'
+
+    include personA, mcpClient, signalbox, signalbox.web, signalbox.operations, signalbox.connections, signalbox.tree, signalbox.observability, services, services.onepassword
+
+    personA -> signalbox.web 'Open 1Password sheet' {
+      notes '''
+        - **Start:** no 1Password link anywhere in A's tree
+        - Settings › Connections › 1Password, on web, desktop or mobile
+      '''
+    }
+    personA -> signalbox.web 'Enter account details' {
+      notes '''
+        - Sign-in address (prefilled), email, Secret Key, password
+        - A 2FA code field shows only if the account has 2FA
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Link as device' {
+      notes '''
+        - Over Funnel; the decision gate allows this op from a human session only
+      '''
+      navigateTo folders_gates_confirm_in_app
+    }
+    signalbox.operations -> signalbox.connections 'Values to vault' {
+      notes '''
+        - Values go straight to the Connection actor's isolated vault worker
+        - Never through an agent, a tool, or a log
+      '''
+    }
+    signalbox.connections -> services.onepassword 'Sign in as device' {
+      notes '- **Decided #344:** Signalbox is one more device on A\'s own 1Password account'
+      navigateTo folders_secrets_onepassword_link
+    }
+    alt {
+      when 'wrong password' {
+        signalbox.web <- signalbox.connections 'Sign-in failed' {
+          notes '''
+            - `OnePasswordSignInFailed`; nothing is linked or placed
+            - A fixes the field and tries again
+          '''
+        }
+      }
+      else 'signed in' {
+        signalbox.connections -> signalbox.tree 'Place at top level' {
+          notes '''
+            - The device link becomes a placement at A's top level, reach below
+            - Linking again replaces the device; it never adds a second one
+          '''
+        }
+      }
+    }
+    signalbox.connections -> signalbox.observability 'Masked audit' {
+      notes '- Audit row carries ids only; every typed value is masked'
+    }
+    signalbox.web -> personA 'Shows linked state' {
+      notes '''
+        - **End:** "Linked as `email` on `address`" at A's top level
+        - Disconnect is the way back out
+      '''
+      navigateTo scn_153_disconnect_onepassword_mid_session
+    }
+    opt 'an agent tries to link instead' {
+      mcpClient -> signalbox.operations 'Tries to link' {
+        notes '- An agent or any MCP client calls the link operation'
+      }
+      mcpClient <- signalbox.operations 'Human-only refusal' {
+        notes '''
+          - **Decided #589:** linking is never an agent or MCP tool
+          - The refusal names the Settings sheet as the way to do it
+        '''
+        navigateTo person_asks_gated_op
+      }
+    }
+  }
+
+  dynamic view scn_153_disconnect_onepassword_mid_session {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Connections/OnePassword/Disconnect Mid Session'
+    description 'What happens to running agents when A disconnects 1Password? Decided: #344 acceptance and #589 (2026-10-16): disconnect revokes at once, including running sessions, and wipes the material; unbuilt. Assumption: sites already signed in keep their cookies in A\'s Kernel profile until A clears it, because the profile is its own placement (design §3.16, R-SEC-15). SCN-153 · R-SEC-02, R-SEC-11, R-SEC-13, R-SEC-15, W-BRW-19 · not v1.'
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.browser, signalbox.connections, signalbox.tree, services, services.onepassword, platform, platform.kernel
+
+    personA -> signalbox.web 'Hit Disconnect' {
+      notes '''
+        - **Start:** 1Password linked; agent turns are live in A's Kernel browser
+        - Settings › Connections › 1Password › Disconnect
+      '''
+    }
+    signalbox.web -> signalbox.connections 'Disconnect device' {
+      notes '- Over Funnel to the Connection actor that holds the device'
+      navigateTo folders_secrets_onepassword_link
+    }
+    parallel {
+      signalbox.connections -> services.onepassword 'Sign out device' {
+        notes '- The device session ends and its material is wiped'
+      }
+      signalbox.connections -> signalbox.tree 'Remove placement' {
+        notes '- The placement at A\'s top level is gone, so no chain resolves it'
+      }
+    }
+    signalbox.web -> personA 'Remove-device hint' {
+      notes '- The sheet says: also remove the device in 1Password › Devices'
+    }
+    signalbox.thread.threadActor -> signalbox.browser 'Next sign_in' {
+      notes '- A running turn needs a login on a new site'
+      navigateTo folders_secrets_agent_sign_in
+    }
+    signalbox.browser -> signalbox.tree 'Resolve 1Password' {
+      notes '- Walks the thread\'s chain from its Place; nothing is placed any more'
+    }
+    signalbox.thread.threadActor <- signalbox.browser 'no_saved_login' {
+      notes '''
+        - The call returns `no_saved_login` or `failed`
+        - The thread shows "couldn't sign in to X: 1Password disconnected"
+      '''
+    }
+    opt 'site flips to NEEDS_AUTH' {
+      platform.kernel -> signalbox.browser 'NEEDS_AUTH' {
+        notes '- Unattended re-login has no source now, so it stops too'
+        navigateTo folders_secrets_browser_identity
+      }
+    }
+    opt 'A also clears old sessions' {
+      personA -> signalbox.web 'Clear browser profile' {
+        notes '''
+          - **Assumption:** sites already signed in keep cookies until this step
+          - Revocation covers 1Password, not past sessions (R-SEC-15)
+        '''
+        navigateTo work_browser_profile
+      }
+      signalbox.browser -> platform.kernel 'Wipe profile' {
+        notes '- **End:** 1Password access gone at once, including running sessions; cookies gone after the clear'
+      }
+    }
+  }
+
+  // ─────────────────────────────── Scenarios/Connections/SignInGrants ───────────────────────────────
+
+  dynamic view scn_154_standing_sign_in_grant {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/SignInGrants/Everywhere Or Per Site'
+    description 'How does A let agents sign in as them, everywhere or per site? Decided: #575, PR #617 merged 2026-10-16: Everywhere or Ask per site, Once/Always, revocable on every client, grants stored in Signalbox, agents check and revoke only, payments never covered. SCN-154 · R-SEC-09, W-BRW-04, W-BRW-05, R-SEC-10, P-BLK-09 · not v1.'
+
+    include personA, signalbox, signalbox.web, signalbox.harness, signalbox.automations, signalbox.browser, signalbox.attention, signalbox.tree
+
+    personA -> signalbox.web 'Pick grant mode' {
+      notes '''
+        - **Start:** 1Password linked, no grants
+        - Right after linking: Everywhere (`*`) or Ask per site
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Store choice' {
+      notes '- Grants live in A\'s Person actor, never in Kernel'
+      navigateTo state_signingrant
+    }
+    alt {
+      when 'Ask per site' {
+        signalbox.harness -> signalbox.browser 'sign_in to X' {
+          notes '- A turn needs a site with no grant yet'
+          navigateTo work_browser_sign_in
+        }
+        signalbox.browser -> signalbox.attention 'Raise Blocker' {
+          notes '- One Blocker: "Let agents sign in to X as you@…? Once / Always"'
+          navigateTo person_pipeline_blocker_human_only
+        }
+        signalbox.attention -> personA 'Once or Always?'
+        personA -> signalbox.web 'Answer Always' {
+          notes '''
+            - Always stores a per-site grant and stops later prompts for X
+            - Once covers this login only
+          '''
+        }
+        signalbox.web -> signalbox.tree 'Store site grant'
+      }
+      else 'Everywhere' {
+        signalbox.automations -> signalbox.browser 'Night run signs in' {
+          notes '- A night automation reaches a new site and signs in with no prompt'
+        }
+      }
+    }
+    personA -> signalbox.web 'Revoke a site' {
+      notes '- From Settings on any client; the next sign-in to that site stops'
+    }
+    signalbox.web -> signalbox.tree 'Remove grant'
+    signalbox.harness -> signalbox.tree 'Check or revoke' {
+      notes '''
+        - Agents can check and revoke grants, never create them
+        - **End:** standing grants, each revocable; payments are never covered
+      '''
+      navigateTo folders_secrets_agent_sign_in
+    }
+  }
+
+  dynamic view scn_155_shared_thread_needs_person_sign_in {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/SignInGrants/Shared Thread Sign In'
+    description 'B\'s turn in a shared Company thread needs a site only A\'s 1Password can log into: does it sign in? Decided: owner override 2026-10-18 (design §0 item 6, "it does not matter who is asking because it\'s based on the hierarchy"); #245 (2026-10-16). Supersedes the requester-equals-owner check of #575/#576. SCN-155 · R-SEC-11, P-BLK-04, P-BLK-05, W-MPL-05, W-APR-13 · not v1.'
+
+    include personB, personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.browser, signalbox.tree, signalbox.attention
+
+    personB -> signalbox.web 'Send turn' {
+      notes '''
+        - **Start:** a thread in folder Company; the site has a login only in A's personal 1Password
+        - B sends the turn
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Queue turn'
+    signalbox.thread.threadActor -> signalbox.harness 'Run turn'
+    signalbox.harness -> signalbox.browser 'sign_in to X' {
+      notes '- The thread\'s agent runs B\'s turn'
+      navigateTo folders_secrets_agent_sign_in
+    }
+    signalbox.browser -> signalbox.tree 'Resolve 1Password' {
+      notes '''
+        - From the thread's Place `{folder Company, via}`
+        - **Decided:** never by sender, starter or credential owner
+      '''
+    }
+    alt {
+      when "filed through A's mount" {
+        signalbox.browser <- signalbox.tree "A's 1Password" {
+          notes '''
+            - Chain: Company › A's Work › A's top level
+            - A's 1Password and A's grants serve the turn whoever sent it
+            - Unless Company places its own 1Password: nearest wins
+          '''
+        }
+      }
+      else "filed through B's mount, or Company's agent" {
+        signalbox.browser <- signalbox.tree 'Nothing above' {
+          notes '- A\'s 1Password isn\'t on this chain'
+        }
+        signalbox.browser -> signalbox.attention 'AccessRequired Blocker' {
+          notes '- Answered with Place or Lend'
+          navigateTo person_pipeline_blocker_access
+        }
+        signalbox.attention -> personA 'Place or Lend?' {
+          notes '- A sees the ask in their Blocker lane'
+          navigateTo work_approvals_access_place_lend
+        }
+        personA -> signalbox.web 'Lend 1Password'
+        signalbox.web -> signalbox.tree 'Loan into thread' {
+          notes '- Shows as "lent by A", revocable any time'
+          navigateTo work_threads_multiplayer_lend
+        }
+        signalbox.tree -> signalbox.thread.threadActor 'Re-resolve Scope'
+      }
+    }
+    signalbox.harness <- signalbox.browser 'signed_in' {
+      notes '- **End:** signed in iff A\'s 1Password is above the thread, or lent into it'
+    }
+  }
+
+  dynamic view scn_156_folder_grant_reach {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/SignInGrants/Folder Grant Reach'
+    description 'Does a sign-in grant on folder Company\'s 1Password cover a thread in folder Team below it? Assumption: yes; a grant belongs to its source and reaches wherever that source reaches, and only Owner/Admin of the folder (Person C) may grant, pending #616. Why: placed things reach below and nearest wins (design §1, §4.2); a second reach switch could disagree with the source\'s. SCN-156 · R-SEC-03, R-SEC-09, R-SEC-11, R-SEC-10 · not v1.'
+
+    include personC, personB, signalbox, signalbox.web, signalbox.harness, signalbox.browser, signalbox.tree, signalbox.connections, services, services.onepassword
+
+    personC -> signalbox.web 'Add service account' {
+      notes '''
+        - **Start:** folder Company has no 1Password source
+        - C (admin of Company) adds the company's 1Password service account
+      '''
+    }
+    signalbox.web -> signalbox.connections 'Create source' {
+      navigateTo folders_secrets_service_account
+    }
+    signalbox.connections -> signalbox.tree 'Place at Company' {
+      notes '- One source at folder Company, reach below'
+    }
+    personC -> signalbox.web 'Grant Everywhere'
+    signalbox.web -> signalbox.tree 'Check role, store' {
+      notes '''
+        - Only Owner/Admin of the folder may grant or revoke
+        - **Assumption:** the grant is stored on the source, not on a level
+      '''
+      navigateTo state_signingrant
+    }
+    personB -> signalbox.web 'Send Team turn' {
+      notes '- B works in a thread in folder Team'
+    }
+    signalbox.harness -> signalbox.browser 'sign_in to X'
+    signalbox.browser -> signalbox.tree 'Nearest 1Password' {
+      notes '- Chain Team › Company; nearest source wins'
+      navigateTo folders_secrets_agent_sign_in
+    }
+    alt {
+      when 'Team has no source' {
+        signalbox.browser <- signalbox.tree "Company's source" {
+          notes '- The grant travels with the source, so Team\'s turn is covered'
+        }
+        signalbox.browser -> signalbox.connections 'Login from source'
+        signalbox.connections -> services.onepassword 'Read item'
+        signalbox.harness <- signalbox.browser 'signed_in' {
+          notes '- **End:** B\'s Team turn signs in under Company\'s grant'
+        }
+      }
+      else 'Team places its own source' {
+        signalbox.browser <- signalbox.tree "Team's source" {
+          notes '''
+            - Nearest wins: Team starts with none of Company's grants
+            - Interim build: grants checked on the turn's own folder only
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view scn_157_unattended_relogin {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/SignInGrants/Overnight Relogin'
+    description 'A site session expires overnight before A\'s 06:00 automation: who logs in again? Decided: #576 (unattended re-login on NEEDS_AUTH, hard failures shown on the thread) and #344 (2026-10-16). Prod still reports "can\'t read 1Password logins yet" (#576, 2026-10-18, blocked on the vault worker). SCN-157 · R-SEC-13, W-BRW-06, R-SEC-11, W-BRW-10 · not v1.'
+
+    include personA, signalbox, signalbox.automations, signalbox.thread.threadActor, signalbox.browser, signalbox.tree, signalbox.connections, services, services.onepassword, platform, platform.kernel
+
+    platform.kernel -> signalbox.browser 'NEEDS_AUTH' {
+      notes '''
+        - **Start:** A is asleep; Kernel's health check flips the site to `NEEDS_AUTH` (`no_credential`)
+        - Seen by LoginService polling from a Person alarm
+      '''
+      navigateTo work_browser_sign_in
+    }
+    try {
+      signalbox.browser -> signalbox.connections 'Login from 1Password' {
+        notes '- Under A\'s standing grant; never a handoff to A'
+      }
+      signalbox.connections -> services.onepassword 'Read item'
+      signalbox.browser -> platform.kernel 'Log in again' {
+        notes '- `save_credentials:false`: Kernel never keeps the password'
+      }
+    } catch 'unanswerable field or repeated failure' {
+      signalbox.browser -> signalbox.thread.threadActor "Couldn't sign in" {
+        notes '- The run thread shows "couldn\'t sign in to X: reason"'
+      }
+    }
+    signalbox.automations -> signalbox.thread.threadActor 'Run at 06:00' {
+      notes '- A\'s automation at folder Personal starts its run thread'
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve chain' {
+      notes '''
+        - Personal › A's top level: A's 1Password is on the chain
+        - A company automation at folder Company has no `via`, so A's items never serve it
+      '''
+      navigateTo folders_secrets_agent_sign_in
+    }
+    signalbox.thread.threadActor -> signalbox.browser 'Run signed in' {
+      navigateTo work_browser_real_web
+    }
+    signalbox.thread.threadActor -> personA 'Morning result' {
+      notes '- **End:** the run finished signed in, or the thread shows the hard failure'
+    }
+  }
+
+  dynamic view scn_158_login_code_fetch {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Connections/SignInGrants/Email Or SMS Code'
+    description 'A site asks for an email or SMS code at login: who fetches it? Decided: #577 (dogfood 2026-10-17): fetched deterministically from Gmail or the SMS gateway, never by the model; unbuilt. Assumption: the SMS gateway is a device capability placed at the phone\'s home level and resolved on the chain like any placement, pending #577; why: device capabilities are placements (P-DEV-08) and resolution is hierarchy-only. SCN-158 · R-SEC-12, W-BRW-03, P-DEV-11, P-DEV-08 · not v1.'
+
+    include personA, signalbox, signalbox.mobile, signalbox.thread.threadActor, signalbox.browser, signalbox.tree, signalbox.connections, services, services.google, platform, platform.kernel
+
+    platform.kernel -> signalbox.browser 'AWAITING_INPUT code' {
+      notes '''
+        - **Start:** Managed Auth asks for a code
+        - Method order: password > TOTP > email > SMS, never SSO
+      '''
+      navigateTo work_browser_sign_in
+    }
+    try {
+      signalbox.browser -> signalbox.tree "Resolve A's sources" {
+        notes '- Gmail connection and phone on the thread\'s chain'
+      }
+      alt {
+        when 'email code' {
+          signalbox.browser -> signalbox.connections 'Newest from sender'
+          signalbox.connections -> services.google 'Read Gmail' {
+            notes '- Newest message from the site\'s sender in a short time window'
+          }
+        }
+        else 'SMS code' {
+          signalbox.browser -> signalbox.mobile 'Read SMS' {
+            notes '''
+              - A's phone SMS gateway
+              - **Assumption:** a device capability placed at the phone's home level
+            '''
+            navigateTo person_devices_device_only_resources
+          }
+        }
+      }
+      signalbox.browser -> platform.kernel 'Submit code' {
+        notes '- With the current `interaction_id`; the model never sees the code'
+      }
+      signalbox.thread.threadActor <- signalbox.browser 'signed_in' {
+        notes '- **End:** the agent only gets `signed_in`'
+      }
+    } catch 'no code in the window' {
+      signalbox.thread.threadActor <- signalbox.browser 'failed with reason' {
+        notes '- A sees the reason on the thread'
+      }
+    }
+    signalbox.thread.threadActor -> personA 'Shows outcome'
+  }
+
+  // ─────────────────────────────── Scenarios/Connections/DeviceSignIn ───────────────────────────────
+
+  dynamic view scn_159_device_signs_in_on_focus {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/DeviceSignIn/Synced Tab New Device'
+    description 'A opens a synced tab on a new device: when does it sign in? Decided: #586 (2026-10-16): lazy sign-in on focus, Google on mobile via the system browser view, one-way sync accepted. The desktop Google fill method is unmeasured (#573 proof). SCN-159 · W-BRW-14, W-BRW-04, R-SEC-09, W-BRW-22 · not v1.'
+
+    include personA, signalbox, signalbox.desktop, signalbox.mobile, signalbox.browser, signalbox.tree, signalbox.connections, services, services.onepassword, services.google
+
+    parallel {
+      signalbox.browser -> signalbox.desktop 'Sync tab list' {
+        notes '''
+          - **Start:** A's tabs sync to the new desktop and phone, nothing signed in
+          - No logins and no Google "is this you?" prompts fire
+        '''
+        navigateTo work_browser_record_sync
+      }
+      signalbox.browser -> signalbox.mobile 'Sync tab list'
+    }
+    personA -> signalbox.desktop 'Focus tab'
+    signalbox.desktop -> signalbox.tree 'Check grant' {
+      notes '- A\'s standing grant from the Person actor'
+      navigateTo folders_secrets_agent_sign_in
+    }
+    signalbox.desktop -> signalbox.connections 'Fetch login'
+    signalbox.connections -> services.onepassword 'Read item'
+    signalbox.desktop <- signalbox.connections 'Fill + TOTP' {
+      notes '''
+        - The local login runner fills, TOTP included
+        - Values pass in memory only; nothing in logs or transcripts
+      '''
+      navigateTo work_browser_sign_in
+    }
+    personA -> signalbox.mobile 'Focus tab'
+    alt {
+      when 'non-Google site' {
+        signalbox.mobile -> signalbox.connections 'Inject login' {
+          notes '- Same injection inside the in-app web view'
+        }
+      }
+      else 'Google host' {
+        signalbox.mobile -> services.google 'System browser view' {
+          notes '''
+            - One AutoFill tap plus Face ID, once per device
+            - Sync stays one way
+          '''
+        }
+      }
+    }
+    signalbox.mobile -> personA 'Signed in here' {
+      notes '- **End:** each device signs itself in only when A focuses the tab there'
+      navigateTo work_browser_unload_tabs
+    }
+  }
+
+  dynamic view scn_160_device_sign_in_without_grant {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/DeviceSignIn/No Grant Own Device'
+    description 'A opens a site on their own device with no grant: what does it offer? Assumption: one quiet "Sign in from 1Password? Once · Always" bar in the panel, with an in-memory relay now and sealing to a device key later, pending #642. Why: one grant list for agents and devices; signing in anywhere silently would let a lost phone in (#642 rec, s4 C8; PR #645 built another option and closed unmerged). SCN-160 · W-BRW-04, R-SEC-09, W-BRW-14 · not v1.'
+
+    include personA, signalbox, signalbox.desktop, signalbox.tree, signalbox.connections, signalbox.observability, services, services.onepassword
+
+    personA -> signalbox.desktop 'Focus tab' {
+      notes '''
+        - **Start:** tab signed out; 1Password has a login for the site, A has no grant
+      '''
+      navigateTo work_browser_record_sync
+    }
+    signalbox.desktop -> signalbox.tree 'Check grant' {
+      notes '- No grant for this site in A\'s Person actor'
+    }
+    signalbox.desktop -> personA 'Quiet Once · Always bar' {
+      notes '''
+        - Shown in the panel only while the tab is in front
+        - Never a notification; Attention stays silent
+        - **Assumption:** option B, pending #642
+      '''
+    }
+    alt {
+      when 'Once' {
+        personA -> signalbox.desktop 'Once' {
+          notes '- Fills this time only'
+        }
+      }
+      when 'Always' {
+        personA -> signalbox.desktop 'Always'
+        signalbox.desktop -> signalbox.tree 'Add site grant' {
+          notes '- The same per-site grant agents use'
+          navigateTo work_browser_sign_in
+        }
+      }
+      else 'ignores it' {
+        personA -> signalbox.desktop 'Signs in by hand' {
+          notes '- Nothing else happens'
+        }
+      }
+    }
+    opt 'Once or Always' {
+      signalbox.desktop -> signalbox.connections 'Fetch login'
+      signalbox.connections -> services.onepassword 'Read item'
+      signalbox.desktop <- signalbox.connections 'Fill in memory' {
+        notes '- Connections to device in memory; never stored, logged or traced'
+        navigateTo folders_secrets_agent_sign_in
+      }
+    }
+    signalbox.connections -> signalbox.observability 'Ids only' {
+      notes '- **End:** at most one quiet bar; the tab is signed in or A did it by hand'
+    }
+  }
+
+  // ─────────────────────────────── Scenarios/Connections/Browser ───────────────────────────────
+
+  dynamic view scn_161_takeover_after_turn_end {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Browser/Takeover After Turn'
+    description 'Can A take over the agent\'s browser after the turn ended? Assumption: no; take over only while the agent works, afterwards the trail plus a copy into A\'s own tab, pending #594. Why: restarting costs a browser session and still loses state not in the URL; Kernel sessions run on live turns only (design §3.16). SCN-161 · W-BRW-08, W-BRW-09, W-BRW-13, W-BRW-14 · not v1.'
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.browser, signalbox.attention, platform, platform.kernel
+
+    personA -> signalbox.web 'Open browser panel' {
+      notes '- **Start:** the turn ended and the agent\'s Kernel session closed'
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Read trail'
+    signalbox.web <- signalbox.thread.threadActor 'Every step' {
+      notes '- The panel shows each browser step and says the browser has closed'
+    }
+    alt {
+      when 'turn still live' {
+        signalbox.web -> signalbox.browser 'Take over' {
+          notes '- Offered only while the turn runs'
+          navigateTo work_browser_watch_takeover
+        }
+      }
+      else 'turn ended' {
+        signalbox.web -> personA 'No take over' {
+          notes '- **Assumption:** no session restart after the turn, pending #594'
+        }
+      }
+    }
+    personA -> signalbox.web 'Click link or page'
+    signalbox.web -> signalbox.browser "Open A's copy" {
+      notes '- Opens as A\'s own tab in A\'s engine, signed in as A (#597 copy)'
+      navigateTo journey_sharing_browser_tab
+    }
+    signalbox.browser -> platform.kernel "A's profile" {
+      notes '- **End:** A sees the trail and has their own copy, not the agent\'s browser'
+      navigateTo work_browser_record_sync
+    }
+    opt 'mid-task need such as a payment' {
+      signalbox.thread.threadActor -> signalbox.attention 'Keep turn alive' {
+        notes '- The turn parks with its session open instead of ending'
+        navigateTo scn_162_payment_handoff
+      }
+    }
+  }
+
+  dynamic view scn_162_payment_handoff {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Browser/Payment Step'
+    description 'The agent reaches a payment step: who pays? Decided: #343 (2026-10-14); #579, PR #654 merged 2026-10-16 ("payments are the only step that comes back to the person"); #663 masked card fields. SCN-162 · W-BRW-07, P-BLK-10, P-TOP-15, W-BRW-09 · not v1.'
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.browser, signalbox.automations, signalbox.attention, platform, platform.kernel
+
+    signalbox.harness -> signalbox.browser 'Fill checkout' {
+      notes '''
+        - **Start:** A's agent fills checkout and stops before paying
+        - Grants never cover payments
+      '''
+    }
+    signalbox.browser -> signalbox.automations 'Payment step' {
+      notes '- The folder\'s built-in Payment automation takes over'
+      navigateTo work_browser_payment
+    }
+    signalbox.automations -> signalbox.attention 'Raise Blocker' {
+      notes '- Done / Failed / Open the browser'
+      navigateTo person_pipeline_blocker_payment
+    }
+    signalbox.harness -> signalbox.thread.threadActor 'Park turn' {
+      notes '- Parks in the isolate tier; the Kernel session stays alive'
+    }
+    signalbox.attention -> personA 'Payment card' {
+      navigateTo person_toplayer_ask_card
+    }
+    personA -> signalbox.web 'Open the browser'
+    signalbox.web -> signalbox.browser 'Drive via mirror' {
+      notes '- rrweb mirror of the live session; card fields masked'
+      navigateTo work_browser_watch_takeover
+    }
+    signalbox.browser -> platform.kernel 'Pay'
+    alt {
+      when 'Done' {
+        personA -> signalbox.web 'Done'
+        signalbox.web -> signalbox.thread.threadActor 'Answer ask'
+        signalbox.thread.threadActor -> signalbox.harness 'Resume' {
+          notes '- **End:** paid; the agent resumes after Done'
+        }
+      }
+      else 'Failed' {
+        signalbox.thread.threadActor -> signalbox.harness 'Failure returned' {
+          notes '- The agent gets the failure and decides what next'
+        }
+      }
+    }
+  }
+
+  dynamic view scn_163_preview_without_profile {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Browser/Preview No Profile'
+    description 'The agent opens the thread\'s preview: whose logins does it use? Decided: #1108 (2026-10-18): one preview URL per thread, no person\'s profile, a short-lived thread-scoped token; #601 closed 2026-10-17. The testing engine itself is spike #1110. SCN-163 · W-BRW-20, W-BRW-12 · not v1.'
+
+    include personB, signalbox, signalbox.thread.threadActor, signalbox.harness, signalbox.funnel.portGateway, signalbox.computer, signalbox.browser, platform, platform.kernel
+
+    personB -> signalbox.thread.threadActor 'Ask to test' {
+      notes '''
+        - **Start:** a thread in folder Team; B asks the agent to test the dev server
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'Run turn'
+    signalbox.harness -> signalbox.computer 'Start dev server'
+    signalbox.harness <- signalbox.funnel.portGateway 'Thread preview URL' {
+      notes '- The agent\'s tools hand it the thread\'s one preview URL, never `localhost`'
+    }
+    signalbox.harness -> signalbox.browser 'Open preview' {
+      notes '- The testing engine loads it without B\'s or anyone\'s Kernel profile'
+      navigateTo work_previews_agent_tests
+    }
+    signalbox.browser -> signalbox.funnel.portGateway 'Thread token' {
+      notes '''
+        - A token scoped to this thread, short-lived
+        - A preview can render folder secrets, so no person's logins go near it
+      '''
+    }
+    alt {
+      when 'token for this thread' {
+        signalbox.funnel.portGateway -> signalbox.computer 'Forward to port' {
+          notes '- Forwards to whatever backs the thread; placement never shows'
+        }
+      }
+      else 'other thread or expired' {
+        signalbox.browser <- signalbox.funnel.portGateway 'Refused'
+      }
+    }
+    opt 'agent visits the real web next' {
+      signalbox.browser -> platform.kernel 'Profile on chain' {
+        notes '- Real sites go through Kernel with the profile on the thread\'s chain'
+      }
+    }
+    signalbox.harness -> signalbox.thread.threadActor 'Report result' {
+      notes '- **End:** preview tested without any person\'s Kernel profile'
+    }
+  }
+
+  // ─────────────────────────────── Scenarios/Connections/Tabs ───────────────────────────────
+
+  dynamic view scn_164_share_tab_for_days {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Connections/Tabs/Share For Days'
+    description 'A shares a browser tab with the thread for a few days: who sees it, and how does it end? Decided: #343/#597 (2026-10-16): one owner per tab, share for now or N days, revoke, expiry, private tabs invisible. Assumption: "the team" is the people with access to the thread\'s folder, pending #640; why: everything has one home (#225), nothing new to manage. SCN-164 · W-BRW-13, W-BRW-08 · not v1.'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.mobile, signalbox.browser, signalbox.tree
+
+    personA -> signalbox.web 'Share tab 3 days' {
+      notes '- **Start:** a private tab of A\'s, in a thread A and B both see'
+      navigateTo journey_sharing_browser_tab
+    }
+    signalbox.web -> signalbox.browser 'Share until date'
+    signalbox.browser -> signalbox.tree 'Who can see it' {
+      notes '- **Assumption:** people with access to the thread\'s folder, pending #640'
+    }
+    signalbox.web -> personA 'Shows who, until when'
+    personB -> signalbox.mobile 'Open browser panel'
+    signalbox.mobile -> signalbox.browser 'Follow tab' {
+      notes '- A read-only DOM mirror of A\'s tab, live'
+      navigateTo work_browser_watch_takeover
+    }
+    alt {
+      when 'A revokes early' {
+        personA -> signalbox.web 'Revoke'
+        signalbox.web -> signalbox.browser 'End share'
+      }
+      else 'the date passes' {
+        signalbox.browser -> signalbox.browser 'Share expires'
+      }
+    }
+    signalbox.browser -> signalbox.mobile "Close B's view" {
+      notes '''
+        - **End:** access ends on the date or on revoke
+        - A's private tabs never appear to anyone, not even as a row
+      '''
+    }
+  }
+
+  dynamic view scn_165_follower_copies_tab {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Tabs/Follower Clicks Link'
+    description 'B clicks a link inside A\'s shared tab: whose tab moves? Decided: #597 "Copy" (2026-10-16): B gets a copy as B\'s own tab, signed in as B; A\'s tab never moves. SCN-165 · W-BRW-13, W-BRW-04 · not v1.'
+
+    include personB, personA, signalbox, signalbox.web, signalbox.browser, signalbox.tree, signalbox.connections
+
+    personB -> signalbox.web "Follow A's tab" {
+      notes '- **Start:** B follows A\'s shared tab through the mirror'
+      navigateTo journey_sharing_browser_tab
+    }
+    personB -> signalbox.web 'Click a link'
+    signalbox.web -> signalbox.browser "Copy to B's tab" {
+      notes '- A new tab at that URL in B\'s own engine'
+    }
+    signalbox.browser -> signalbox.tree "B's grants" {
+      notes '- B\'s own sign-in and grants from B\'s Person actor'
+    }
+    alt {
+      when 'B has a grant' {
+        signalbox.browser -> signalbox.connections "B's login" {
+          navigateTo work_browser_sign_in
+        }
+      }
+      else 'no grant' {
+        signalbox.web <- signalbox.browser 'Opens signed out' {
+          notes '- Or B\'s own quiet Once · Always bar'
+          navigateTo scn_160_device_sign_in_without_grant
+        }
+      }
+    }
+    signalbox.web -> personB "B's own tab" {
+      notes '- **End:** B has their own tab, signed in as B (or signed out)'
+    }
+    personA -> signalbox.web 'Keeps browsing' {
+      notes '- A\'s tab stays where it was; nothing B did moved it'
+    }
+  }
+
+  dynamic view scn_166_lend_tab_with_login {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Connections/Tabs/Lend Before Holiday'
+    description 'A lends a logged-in tab before a holiday: what can B do with it? Decided: #597 (2026-10-16), the same lending primitive as #230 (2026-10-14). Assumption: a borrower\'s takeover reopens the browser on demand, never kept alive for the whole loan, pending #640 q4; why: a session kept for days is expensive, and sessions run live only (design §3.16). SCN-166 · W-BRW-13, W-BRW-09, W-MPL-05, P-SET-09 · not v1.'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.mobile, signalbox.tree, signalbox.browser, platform, platform.kernel
+
+    personA -> signalbox.web 'Lend tab 10 days' {
+      notes '- **Start:** A\'s logged-in tab; A leaves on holiday tomorrow'
+      navigateTo journey_sharing_browser_tab
+    }
+    signalbox.web -> signalbox.tree 'Loan into thread' {
+      notes '- An explicit, revocable loan with an end date, into the thread or folder'
+      navigateTo work_threads_multiplayer_lend
+    }
+    signalbox.web -> signalbox.browser 'Move to cloud'
+    signalbox.browser -> platform.kernel "A's login session" {
+      notes '- The tab moves to A\'s cloud Kernel browser holding A\'s login'
+    }
+    personB -> signalbox.mobile 'Take over' {
+      notes '- B is Member or above where it is lent'
+    }
+    signalbox.mobile -> signalbox.browser 'Drive via mirror' {
+      notes '''
+        - That one session only; no other login of A's is reachable
+        - Works with all A's devices offline
+      '''
+      navigateTo work_browser_watch_takeover
+    }
+    personB -> signalbox.web 'Return days later' {
+      notes '- No turn is running and the session idled out'
+    }
+    signalbox.web -> signalbox.browser 'Reopen on tab'
+    signalbox.browser -> platform.kernel "Reopen A's browser" {
+      notes '''
+        - **Assumption:** reopened on demand, then idles out as usual, pending #640 q4
+        - State not in the URL is lost
+      '''
+    }
+    alt {
+      when 'the date passes' {
+        signalbox.tree -> signalbox.browser 'Loan ended'
+      }
+      else 'A revokes' {
+        personA -> signalbox.web 'Revoke from tab row'
+        signalbox.web -> signalbox.tree 'End loan' {
+          notes '- **End:** B loses the tab; A\'s login was never reachable otherwise'
+        }
+      }
+    }
+  }
+
+  dynamic view scn_167_shared_tab_outside_thread {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Tabs/Outside The Thread'
+    description 'Person D (outside collaborator on folder Team) can\'t see the thread but needs A\'s shared tab: can they reach it? Assumption: a tab link now, shown in the thread\'s tab list once shared threads ship; the link opens only for people in the folder the tab is shared with, pending #640. Why: #640 recommends A then C; an outside collaborator sees only their subtree (R-ACC-09). SCN-167 · W-BRW-13, R-ACC-09 · not v1.'
+
+    include personA, personD, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.browser
+
+    personA -> signalbox.web 'Share tab' {
+      notes '''
+        - **Start:** A's thread sits in folder Company; D (outside collaborator) has access to just folder Team and can't see it
+        - A shares one tab from it
+      '''
+      navigateTo journey_sharing_browser_tab
+    }
+    signalbox.web -> personA 'Copy link' {
+      notes '- Offered while the tab is shared'
+    }
+    personA -> personD 'Pastes link in call'
+    personD -> signalbox.web 'Open tab link' {
+      notes '- On web, desktop or mobile'
+    }
+    signalbox.web -> signalbox.operations 'Open as D'
+    signalbox.operations -> signalbox.tree "D's access" {
+      navigateTo folders_access_folder_invite
+    }
+    alt {
+      when 'tab shared with folder Team' {
+        signalbox.operations -> signalbox.browser 'Follow mirror' {
+          notes '''
+            - D is in Team, so the read-only mirror opens; the thread itself stays hidden
+            - A click opens D's own copy
+          '''
+        }
+        signalbox.web -> personD 'Read-only tab'
+      }
+      else 'shared with Company only' {
+        signalbox.web -> personD 'Nothing to show' {
+          notes '- D has no access to Company, so the link shows nothing'
+        }
+      }
+    }
+    opt 'once shared threads ship' {
+      signalbox.browser -> signalbox.web 'Tab in thread list' {
+        notes '- **End:** D reaches the tab only through the folder it is shared with'
+      }
+    }
+  }
+
+  dynamic view scn_168_agent_tabs_shared_thread {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Tabs/Agent Tabs Shared'
+    description 'Whose are the agent\'s tabs in a shared thread? Assumption: the thread\'s; anyone who can see the thread can follow them, pending #640. Why: principle 4 (anyone can dig in), and a thread\'s things follow its home, not the sender (design §1 Chains). SCN-168 · W-BRW-13, W-BRW-08, W-BRW-01 · not v1.'
+
+    include personB, personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.browser, signalbox.tree
+
+    personB -> signalbox.web 'Send turn' {
+      notes '- **Start:** a shared thread in folder Team; B sends a turn that browses'
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Queue turn'
+    signalbox.thread.threadActor -> signalbox.harness 'Run turn'
+    signalbox.harness -> signalbox.browser 'Open tabs' {
+      navigateTo work_browser_real_web
+    }
+    signalbox.browser -> signalbox.thread.threadActor 'Tabs filed on thread' {
+      notes '''
+        - **Assumption:** the tabs belong to the thread, not to B
+        - The agent stays their one owner and driver
+      '''
+    }
+    personA -> signalbox.web 'Open browser panel'
+    signalbox.web -> signalbox.tree 'Can A see thread?'
+    alt {
+      when 'A can see it' {
+        signalbox.web -> signalbox.browser 'Follow read-only' {
+          navigateTo work_browser_watch_takeover
+        }
+        personA -> signalbox.web 'Click inside'
+        signalbox.web -> signalbox.browser "A's own copy" {
+          notes '- **End:** A follows the agent\'s tabs and branches off into a copy'
+          navigateTo journey_sharing_browser_tab
+        }
+      }
+      else 'private thread' {
+        signalbox.web -> personA 'Tabs invisible' {
+          notes '- A private thread\'s tabs stay invisible to everyone else'
+        }
+      }
+    }
+  }
+
+  dynamic view scn_169_pin_tab_to_folder {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Tabs/Pin To Folder'
+    description 'C pins a dashboard tab to folder Company: who sees it, signed in as whom? Assumption: a pinned tab is a placement at the folder, reaching below, visible by folder access, removed everywhere on unpin. Why: specified in #606 but not owner-decided; it follows the placement rule (design §4.2). SCN-169 · W-BRW-15, W-BRW-13, T-BRW-02 · not v1.'
+
+    include personC, personA, personB, signalbox, signalbox.web, signalbox.mobile, signalbox.harness, signalbox.tree, signalbox.browser
+
+    personC -> signalbox.web 'Pin to folder' {
+      notes '- **Start:** C, admin of folder Company, has a dashboard tab open'
+      navigateTo work_browser_pin_tab
+    }
+    signalbox.web -> signalbox.tree 'Place at Company' {
+      notes '''
+        - **Assumption:** a placement (URL + title) at folder Company, reach below
+        - Visible only to people who can see the folder
+      '''
+    }
+    parallel {
+      personA -> signalbox.web 'Open pinned tab' {
+        notes '- In a thread in folder Team; A\'s own session and login'
+      }
+      personB -> signalbox.mobile 'Open pinned tab' {
+        notes '- In a thread in folder Company; B\'s own session and login'
+      }
+    }
+    signalbox.web -> signalbox.browser "A's session"
+    signalbox.mobile -> signalbox.browser "B's session" {
+      notes '- One person\'s navigation never moves another\'s'
+    }
+    personA -> signalbox.web 'Click link inside'
+    signalbox.web -> signalbox.browser 'Normal tab here' {
+      notes '- Opens in the current thread; the pin stays put'
+      navigateTo work_browser_tabs_navigate
+    }
+    signalbox.harness -> signalbox.tree 'Agents pin too' {
+      notes '- Agents can pin, rename, reorder and unpin'
+    }
+    personC -> signalbox.web 'Unpin'
+    signalbox.web -> signalbox.tree 'Remove everywhere' {
+      notes '- **End:** gone from every thread in Company and below'
+    }
+  }
+}

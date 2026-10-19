@@ -1,0 +1,1158 @@
+// Scenario shard 11: Data (Search, Forge, Accepts, Sources). SCN-220 to SCN-241.
+// One journey per scenario, drawn as a sequence. Modules stay black boxes; participants sit in
+// their container lanes (Signalbox, Thread, Connected services, Platform), muted like LikeC4's
+// homepage examples. First step note = start state, last step note = end state.
+views {
+
+  // ── Search ─────────────────────────────────────────────────────────────
+
+  dynamic view scn_220_finds_archived_thread_through_search {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Search/Finds Archived Thread'
+    description "Can A find a thread archived months ago through search? Decided: #334/#791 (2026-10-17), archived threads stay searchable through the same search and reopening one makes it hot again; prod-verified #791 (2026-10-18). SCN-220 · W-SRH-06, P-SRCH-06, P-SRCH-07, W-LIF-10, W-LIF-20. v1: no."
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.search, signalbox.thread, signalbox.drive
+    include signalbox
+
+    personA -> signalbox.web 'types a phrase' {
+      notes '''
+        - **Start:** a thread in Personal, archived months ago
+        - Its history sits in the archive tier, not hot rows
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'query op'
+    signalbox.funnel -> signalbox.search 'query(A, text)' {
+      navigateTo work_search_query
+      notes '''
+        - **Decided (#334/#791, 2026-10-17):** one query covers hot and archive tiers
+        - The old "exclude archived" rule is gone
+      '''
+    }
+    parallel 'both tiers' {
+      signalbox.search -> signalbox.search 'hot rows' {
+        notes '- Recent threads answer from hot FTS rows'
+      }
+      signalbox.search -> signalbox.drive 'archive rows' {
+        navigateTo work_search_tiers
+        notes '- Archived history answers from the archive tier in R2; it may arrive slower'
+      }
+    }
+    signalbox.funnel <- signalbox.search 'one result list'
+    signalbox.web <- signalbox.funnel 'hit marked archived' {
+      notes '- A sees one list; the archived hit carries an "archived" label'
+    }
+    personA -> signalbox.web 'opens the hit'
+    signalbox.web -> signalbox.thread 'page around item' {
+      navigateTo work_threads_lifecycle_history_tier
+      notes '- Bounded, paginated read anchored at the exact item, not the top of the thread'
+    }
+    personA -> signalbox.web 'sends a message'
+    signalbox.web -> signalbox.thread 'append turn' {
+      navigateTo work_threads_lifecycle_archive
+      notes '- Sending unarchives the thread'
+    }
+    signalbox.thread -> signalbox.drive 'history back to hot' {
+      notes '''
+        - **End:** found, opened at the exact item, hot again once continued
+        - The chat never waits on the archive move
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view scn_221_trashed_thread_leaves_search_returns_on_restore {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Search/Trash And Restore'
+    description "Does a trashed thread drop out of search, and come back on restore? Decided: #334/#791 (2026-10-17), trash and deleted threads stay out. Assumption: rows stay behind a trashed mark until the day-30 purge, so restore only clears the mark with no reindex (design §2.3 Trash/restore, nothing deleted on a clock before purge, W-SRH-11 recheck). SCN-221 · W-LIF-15, W-LIF-16, W-LIF-17, W-SRH-06. v1: no."
+
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.tree, signalbox.search, signalbox.drive
+    include signalbox
+
+    personA -> signalbox.web 'trashes thread' {
+      notes '''
+        - **Start:** a shared thread in folder Team, indexed, readable by A and B
+      '''
+    }
+    signalbox.web -> signalbox.operations 'trash(thread)'
+    signalbox.operations -> signalbox.thread 'tombstone' {
+      navigateTo work_threads_lifecycle_trash
+      notes '- The tombstone stops its effects: no turns, no automations'
+    }
+    signalbox.thread -> signalbox.tree 'catalog: trashed' {
+      notes "- Team's catalog marks the row trashed"
+    }
+    personB -> signalbox.web 'searches Team'
+    signalbox.web -> signalbox.search 'query(B, Team)'
+    signalbox.search -> signalbox.tree 'recheck per hit' {
+      navigateTo work_search_tiers
+      notes '''
+        - **Decided (#334/#791, 2026-10-17):** trash stays out of search
+        - The trashed mark drops the hit at once; rows are not touched yet
+      '''
+    }
+    signalbox.web <- signalbox.search 'no hit' {
+      notes '- B sees no title, snippet or count'
+    }
+    alt 'within 30 days?' {
+      when 'A restores' {
+        personA -> signalbox.web 'restores'
+        signalbox.web -> signalbox.operations 'restore(thread)'
+        signalbox.operations -> signalbox.thread 'clear tombstone'
+        signalbox.thread -> signalbox.tree 'catalog: live' {
+          notes '''
+            - **Assumption:** the mark clears and hits return with no reindex
+            - Rows are rebuilt only if they were already dropped
+            - **End:** searchable again for A and B
+          '''
+        }
+      }
+      else 'day 30' {
+        signalbox.operations -> signalbox.drive 'purge thread' {
+          notes '- The 30-day trash purge deletes the record'
+        }
+        signalbox.operations -> signalbox.search 'delete rows' {
+          notes '- **End:** gone for everyone, rows deleted'
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+
+  dynamic view scn_222_removed_from_company_while_paging_search {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Search/Removed While Paging'
+    description "A is paging Company search results when C removes A from folder Company. What does the next page return? Decided: #791 (2026-10-18) revocation takes effect on the next request; #334 (2026-10-17) cursors are bound to caller, scope and ACL generation; #232 (2026-10-16) corporate model. Second-person proof still owed (#926). SCN-222 · P-SRCH-11, W-SRH-11, R-ACC-08, P-OUT-03. v1: no."
+
+    include personA, personC, signalbox.web, platform.workos, signalbox.identity, signalbox.tree, signalbox.search, signalbox.thread
+    include signalbox, platform
+
+    personA -> signalbox.web 'searches' {
+      notes '''
+        - **Start:** A reaches folder Company through the Work mount
+      '''
+    }
+    signalbox.web -> signalbox.search 'query(A, text)'
+    signalbox.search -> signalbox.tree "resolve A's roots" {
+      notes "- A's top level plus Company, via A's Work mount"
+    }
+    signalbox.web <- signalbox.search 'page 1 + cursor' {
+      notes '- The cursor is bound to caller, scope and ACL epoch'
+    }
+    personC -> platform.workos 'removes A' {
+      navigateTo state_invitation
+      notes '- C is admin of folder Company'
+    }
+    platform.workos -> signalbox.identity 'membership webhook'
+    signalbox.identity -> signalbox.tree 'deactivate mount' {
+      navigateTo person_leaving_leave_org
+      notes '''
+        - The ACL epoch moves
+        - The mount id is kept, so a rejoin restores `via` (A44)
+      '''
+    }
+    signalbox.tree -> signalbox.thread 'seal private chats' {
+      notes "- A's private Company chats are sealed, not deleted; admins can't read them"
+    }
+    personA -> signalbox.web 'next page'
+    signalbox.web -> signalbox.search 'page(cursor)'
+    signalbox.search -> signalbox.tree 'check ACL epoch' {
+      navigateTo work_search_access_change
+      notes '''
+        - **Decided (#791, 2026-10-18):** revocation takes effect on the next request
+        - **Decided (#334, 2026-10-17):** the epoch moved, so the cursor is void
+      '''
+    }
+    signalbox.web <- signalbox.search 'cursor refused'
+    personA -> signalbox.web 're-searches'
+    signalbox.web -> signalbox.search 'new query'
+    signalbox.web <- signalbox.search 'Personal hits only' {
+      notes '''
+        - **End:** nothing from Company: no titles, snippets or counts
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style platform { color muted; opacity 10% }
+    style personA { color green }
+    style personC { color green }
+  }
+
+  dynamic view scn_223_outside_collaborator_searches_team_only {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Search/Outside Collaborator'
+    description "D is an outside collaborator with a role on folder Team only. What does D's search return? Decided and prod-verified: #791 (2026-10-18), an inaccessible folder returns no titles, snippets or cursor. SCN-223 · R-ACC-09, P-ONB-15, P-SRCH-03, P-SRCH-05. v1: no."
+
+    include personB, personD, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.search
+    include signalbox
+
+    personB -> signalbox.web 'works in Team' {
+      notes '''
+        - **Start:** B has threads in Team, elsewhere in Company, and a private chat in Team
+      '''
+    }
+    personD -> signalbox.web 'opens search' {
+      navigateTo folders_access_outside_collaborator
+      notes "- Team is filed in D's own tree as a reference"
+    }
+    signalbox.web -> signalbox.funnel 'query op'
+    signalbox.funnel -> signalbox.search 'query(D, text)' {
+      navigateTo work_search_query
+    }
+    signalbox.search -> signalbox.tree "D's current grants" {
+      navigateTo work_search_scope
+      notes "- Scope is Team's subtree only; Company above is not D's"
+    }
+    signalbox.search -> signalbox.tree 'recheck per hit' {
+      navigateTo work_search_visibility
+      notes "- B's private chat in Team is dropped before any title or snippet"
+    }
+    signalbox.funnel <- signalbox.search 'Team hits' {
+      notes '- Each hit is named by its folder'
+    }
+    signalbox.web <- signalbox.funnel 'results'
+    personD -> signalbox.web 'filters Company'
+    signalbox.web -> signalbox.funnel 'query(scope Company)'
+    signalbox.funnel -> signalbox.search 'query(D, Company)'
+    signalbox.funnel <- signalbox.search 'nothing' {
+      notes '''
+        - **Decided (#791, 2026-10-18, prod-verified):** no titles, snippets or cursor
+      '''
+    }
+    signalbox.web <- signalbox.funnel 'empty, no cursor' {
+      notes "- **End:** D sees Team only; nothing from Company or B's other folders"
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personB { color green }
+    style personD { color green }
+  }
+
+  dynamic view scn_224_searches_for_something_focus_hides {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Search/Focus Hides It'
+    description "A has Focus on Work, which hides Personal. Can A still find a Personal thread? Assumption: search defaults to the Focus subtree and a one-tap Search everywhere reaches past it; nothing from outside Focus shows until tapped; Focus never grants access and agents never read it (pending #334). Why: #52/#319 (2026-10-14), #334 (2026-10-18) explicit search may find hidden things, #225 no counts leak from outside Focus. SCN-224 · P-FOC-11, P-SRCH-04, P-FOC-03, W-SRH-02. v1: no."
+
+    include personA, signalbox.web, signalbox.attention, signalbox.search, signalbox.tree, signalbox.thread
+    include signalbox
+
+    personA -> signalbox.web 'searches' {
+      notes '''
+        - **Start:** Focus on Work hides Personal on this device
+      '''
+    }
+    signalbox.web -> signalbox.attention 'current Focus' {
+      navigateTo person_focus_search_scope
+    }
+    signalbox.web <- signalbox.attention 'Focus: Work' {
+      navigateTo person_focus_out_of_sight
+      notes '- Focus is per person and device, view-only'
+    }
+    signalbox.web -> signalbox.search 'query(scope Work)' {
+      navigateTo work_search_scope
+      notes '- Default scope is the focused subtree'
+    }
+    signalbox.web <- signalbox.search 'Work hits only' {
+      notes '- No counts or hints from outside Focus'
+    }
+    personA -> signalbox.web 'Search everywhere' {
+      notes '''
+        - **Assumption (pending #334):** one tap widens past Focus
+      '''
+    }
+    signalbox.web -> signalbox.search 'query(no scope)' {
+      navigateTo work_search_query
+    }
+    signalbox.search -> signalbox.tree "resolve A's reach" {
+      notes '''
+        - Everything A can reach, nothing more: Focus never grants
+        - Agents searching for A never read Focus
+      '''
+    }
+    signalbox.web <- signalbox.search 'Personal hit'
+    personA -> signalbox.web 'opens hit'
+    signalbox.web -> signalbox.thread 'page around item' {
+      notes '- **End:** A is in the Personal thread; Focus stays on Work'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view scn_225_moves_indexed_thread_across_owners {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Search/Move Across Owners'
+    description "A moves an indexed thread from Personal into folder Company. Does the stale Personal copy ever leak? Assumption: within one owner only the path column updates; across owners rows reindex into the new owner root and leave the old one; a stale copy fails the authoritative recheck. Why: design §2.3 Move thread, A42 shards by owner root, A2 owner = home owner, A21 usage never reattributed, #334 stale copies must fail the check. SCN-225 · W-LIF-02, W-SRH-07, W-LIF-01, R-TRE-06. v1: no."
+
+    include personA, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.search, signalbox.models
+    include signalbox
+
+    personA -> signalbox.web 'moves thread' {
+      notes '''
+        - **Start:** the thread is indexed under Personal, in A's top-level shards
+      '''
+    }
+    signalbox.web -> signalbox.operations 'move(thread, Company)'
+    signalbox.operations -> signalbox.tree 'Member+ at Company?' {
+      navigateTo folders_tree_move_across
+      notes '- The destination checks Member+ for A'
+    }
+    signalbox.tree -> signalbox.thread 'new Place' {
+      navigateTo work_threads_lifecycle_move_across
+      notes '- Owner changes: the thread is now owned by the organization'
+    }
+    signalbox.thread -> signalbox.search 'moved(path, owner)' {
+      navigateTo work_search_move
+    }
+    alt 'owner changed?' {
+      when 'same owner' {
+        signalbox.search -> signalbox.search 'update path column' {
+          navigateTo work_threads_lifecycle_move_within
+          notes '- **Assumption:** rows stay; only the path prefix changes'
+        }
+      }
+      else 'new owner' {
+        signalbox.search -> signalbox.search 'reindex into Company' {
+          notes '''
+            - **Assumption:** rows move to Company's owner-root shards (A42)
+            - and are removed from A's shards
+          '''
+        }
+      }
+    }
+    opt 'stale hit before cleanup' {
+      signalbox.search -> signalbox.tree 'recheck stale hit' {
+        notes '- The stale Personal copy fails the authoritative recheck (#334)'
+      }
+    }
+    signalbox.thread -> signalbox.models 'next turns bill Company' {
+      notes "- Old usage rows stay where they were written under A (A21)"
+    }
+    signalbox.web <- signalbox.operations 'shown under Company' {
+      notes '- **End:** the thread lives in Company; the Personal copy never leaks'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view scn_226_undoes_turn_after_indexing {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Search/Undo After Index'
+    description "A undoes turns that were already indexed. Can search still return the rolled-back text? Assumption: rolled-back items are tombstoned by revision, late writes cannot revive them, and undoing the restore re-emits them. Why: #398 (2026-10-17) search cannot return rolled-back text as current evidence; #334 write path; #498 every checkpoint restorable. SCN-226 · W-CKP-06, W-CKP-05, W-SRH-01. v1: no."
+
+    include personA, signalbox.web, signalbox.thread, signalbox.drive, signalbox.search
+    include signalbox
+
+    personA -> signalbox.web 'undoes a turn' {
+      notes '''
+        - **Start:** the last turns are already indexed
+      '''
+    }
+    signalbox.web -> signalbox.thread 'undo(turn n)' {
+      navigateTo work_checkpoints_undo_turn
+    }
+    signalbox.thread -> signalbox.drive 'restore checkpoint' {
+      notes "- Files go back to turn n's checkpoint"
+    }
+    signalbox.thread -> signalbox.thread 'mark revisions out' {
+      notes '- Later revisions are kept, marked out of the current view'
+    }
+    signalbox.thread -> signalbox.search 'tombstones(rev)' {
+      navigateTo work_search_indexing
+      notes '- **Assumption:** tombstones go out through the outbox'
+    }
+    opt 'late index write' {
+      signalbox.thread -> signalbox.search 'late write (old rev)' {
+        notes '- It carries its revision and cannot revive tombstoned text'
+      }
+    }
+    personA -> signalbox.web 'searches'
+    signalbox.web -> signalbox.search 'query(text)'
+    signalbox.web <- signalbox.search 'no rolled-back text' {
+      notes '- Rolled-back text never comes back as current (#398)'
+    }
+    opt 'A undoes the restore' {
+      personA -> signalbox.web 'undoes restore'
+      signalbox.web -> signalbox.thread 'restore later rev' {
+        navigateTo work_checkpoints_restore
+      }
+      signalbox.thread -> signalbox.search 're-emit rows' {
+        notes '- **End:** gone from current search, back if the restore is undone'
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view scn_227_searches_error_inside_tool_output {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Search/Deep Tool Output'
+    description "A searches an error string that only appeared inside long command output. Is it found? Decided for now: #791 (2026-10-17) the index holds conversation, summaries and tool-call excerpts, not full tool output; the full output stays readable inside the thread. Full bodies and vector search stay pending #791. SCN-227 · W-SRH-01, P-SRCH-08, W-SRH-05, W-SRH-02. v1: no."
+
+    include personA, signalbox.web, signalbox.search, signalbox.thread, signalbox.drive
+    include signalbox
+
+    personA -> signalbox.web 'searches error' {
+      notes '''
+        - **Start:** the line sits deep in an old command run's output
+      '''
+    }
+    signalbox.web -> signalbox.search 'query(text)' {
+      navigateTo work_search_query
+    }
+    signalbox.search -> signalbox.search 'match indexed rows' {
+      navigateTo work_search_indexing
+      notes '''
+        - **Decided (#791, 2026-10-17):** conversation, summaries, tool excerpts
+        - Excerpt = command, exit status, start and end of output, anything quoted
+      '''
+    }
+    alt 'where was the line?' {
+      when 'in an excerpt' {
+        signalbox.web <- signalbox.search 'hit at item'
+        signalbox.web -> signalbox.thread 'open at item'
+      }
+      else 'mid-output only' {
+        signalbox.web <- signalbox.search 'no hit' {
+          notes '- No cross-thread hit for text in the middle of output'
+        }
+        personA -> signalbox.web 'Find in thread'
+        signalbox.web -> signalbox.thread 'find(text)' {
+          navigateTo work_search_find_in_thread
+        }
+        signalbox.thread -> signalbox.drive 'scan full output' {
+          notes '- The full output is stored in R2 and scanned here'
+        }
+        signalbox.web <- signalbox.thread 'match in output' {
+          notes '- **End:** found by search via an excerpt, or by Find inside the thread'
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view scn_228_team_agent_searches_history {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Search/Agent Searches History'
+    description "B asks folder Team's agent to find an earlier decision. Does the agent search with B's access? Decided by reference: #335 (2026-10-15) agent calls carry the grant of what they represent; #334. Private threads stay invisible (A14). SCN-228 · W-SRH-04, R-TRE-16, P-SRCH-13, W-SRH-10. v1: no."
+
+    include personB, signalbox.web, signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.search, signalbox.tree
+    include signalbox
+
+    personB -> signalbox.web "asks Team's agent" {
+      notes '''
+        - **Start:** B wants an earlier decision, asked in folder Team
+      '''
+    }
+    signalbox.web -> signalbox.thread 'turn in Team' {
+      navigateTo folders_tree_level_agent
+    }
+    signalbox.thread -> signalbox.harness 'run turn'
+    signalbox.harness -> signalbox.gateway 'search tool call' {
+      navigateTo work_search_agent
+      notes '''
+        - **Decided (#335, 2026-10-15):** the call carries the grant of what the agent represents
+        - It is an agent-class actor, not B
+      '''
+    }
+    signalbox.gateway -> signalbox.search 'query(Team agent)'
+    signalbox.search -> signalbox.tree "resolve Team's grant" {
+      notes "- Scope is Team's subtree, never B's whole access"
+    }
+    signalbox.search -> signalbox.tree 'recheck per hit' {
+      navigateTo work_search_visibility
+      notes '''
+        - Before any title or snippet reaches the model
+        - B's Personal threads and others' private chats never return (A14)
+      '''
+    }
+    signalbox.gateway <- signalbox.search 'Team hits'
+    signalbox.harness <- signalbox.gateway 'results'
+    signalbox.thread <- signalbox.harness 'answer'
+    signalbox.web <- signalbox.thread 'answer with links' {
+      notes "- **End:** only what Team's grant allows"
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personB { color green }
+  }
+
+  dynamic view scn_229_search_while_index_down_or_backfilling {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Search/Index Lagging'
+    description "What happens to chat and search while the index is down or still backfilling? Decided: #791/#334 (2026-10-17) the live chat path never waits on search or the archive, and search exposes catch-up or partial coverage honestly; #788 missing child transcripts shown honestly. SCN-229 · W-SRH-08, W-SRH-01, W-SRH-02. v1: no."
+
+    include personA, signalbox.web, signalbox.thread, signalbox.harness, signalbox.search, signalbox.observability
+    include signalbox
+
+    personA -> signalbox.web 'sends a turn' {
+      notes '''
+        - **Start:** the index is down, lagging or backfilling
+      '''
+    }
+    signalbox.web -> signalbox.thread 'append turn'
+    signalbox.thread -> signalbox.harness 'run turn' {
+      notes '- **Decided (#791/#334, 2026-10-17):** commits and streams with no wait on search'
+    }
+    signalbox.web <- signalbox.thread 'streams reply'
+    try 'index write' {
+      signalbox.thread -> signalbox.search 'history rows' {
+        navigateTo work_search_indexing
+        notes '- Outbox delivery; a failure here is non-fatal'
+      }
+    }
+    catch 'down or lagging' {
+      signalbox.thread -> signalbox.observability 'index lag'
+      loop 'until caught up' {
+        signalbox.thread -> signalbox.search 'redeliver from outbox'
+      }
+    }
+    personA -> signalbox.web 'searches'
+    signalbox.web -> signalbox.search 'query(text)' {
+      navigateTo work_search_query
+    }
+    signalbox.web <- signalbox.search 'hits + coverage' {
+      notes '''
+        - Shows "indexed through" or partial coverage
+        - Never-captured subagent transcripts show as gaps, not invented text (#788)
+        - **End:** chat unaffected; search states its coverage honestly
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view scn_230_unsent_drafts_and_search {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Search/Unsent Drafts'
+    description "Are unsent drafts ever searchable? Assumption: drafts produce no catalog or search rows; indexing starts at send. Why: design §2.3 Create thread (drafts never produce catalog or search rows), A22 drafts are private per-person rows owned by Capture. SCN-230 · P-DRF-05, P-DRF-06, W-SRH-13. v1: no."
+
+    include personA, personB, signalbox.web, signalbox.capture, signalbox.thread, signalbox.tree, signalbox.search
+    include signalbox
+
+    personA -> signalbox.web 'writes a draft' {
+      notes '''
+        - **Start:** an unsent draft in folder Team
+      '''
+    }
+    signalbox.web -> signalbox.capture 'save draft' {
+      navigateTo person_drafts_save
+    }
+    signalbox.capture -> signalbox.capture 'keep privately' {
+      notes '''
+        - **Assumption:** only in A's private per-person rows (A22)
+        - No catalog row, no search row
+      '''
+    }
+    personB -> signalbox.web 'searches Team'
+    signalbox.web -> signalbox.search 'query(B, Team)'
+    signalbox.web <- signalbox.search 'no draft' {
+      notes "- Nobody sees A's draft, agents included"
+    }
+    personA -> signalbox.web 'sends'
+    signalbox.web -> signalbox.capture 'send' {
+      navigateTo person_drafts_send
+    }
+    signalbox.capture -> signalbox.thread 'create thread'
+    signalbox.thread -> signalbox.tree 'catalog: pending to live' {
+      navigateTo work_search_catalog
+      notes "- Team's catalog gets its first row only now"
+    }
+    signalbox.thread -> signalbox.search 'index first item' {
+      notes '- **End:** never searchable as a draft; indexed from its first sent item'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+
+  dynamic view scn_231_searches_home_shared_and_private {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Search/Home Search Scope'
+    description "B searches Home. Does B see shared work and nothing of A's private chats? Decided: #334 (2026-10-17/18), #860 merged; A14 no admin back door. Second-person proof still owed (#926). Focus scope follows SCN-224. SCN-231 · P-SRCH-01, P-SRCH-02, P-SRCH-10, P-SRCH-05, P-SRCH-06. v1: no."
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.search
+    include signalbox
+
+    personA -> signalbox.web 'chats privately' {
+      notes '''
+        - **Start:** A has a private chat in folder Company
+      '''
+    }
+    personB -> signalbox.web 'searches Home'
+    signalbox.web -> signalbox.funnel 'query op'
+    signalbox.funnel -> signalbox.search 'query(B, text)' {
+      navigateTo work_search_query
+    }
+    signalbox.search -> signalbox.tree "B's roots + mounts" {
+      notes "- B's top-level root plus one root per mounted Company"
+    }
+    parallel 'fan out' {
+      signalbox.search -> signalbox.search 'top-level shards'
+      signalbox.search -> signalbox.search 'Company shards' {
+        navigateTo work_search_tiers
+        notes '- Archived threads are included, trash is not'
+      }
+    }
+    signalbox.search -> signalbox.tree 'recheck per hit' {
+      navigateTo work_search_visibility
+      notes '''
+        - **Decided (#334, #860):** every hit rechecked against current access
+        - A's private chat leaks no title, snippet or count; no admin back door (A14)
+      '''
+    }
+    signalbox.funnel <- signalbox.search 'hits by folder' {
+      notes '- References show once, from their home'
+    }
+    signalbox.web <- signalbox.funnel 'one list'
+    opt "B's grants change" {
+      signalbox.funnel <- signalbox.search 'cursor restarted' {
+        notes "- **End:** B finds everything B can read, named by folder; nothing of A's private chats"
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+
+  // ── Forge ──────────────────────────────────────────────────────────────
+
+  dynamic view scn_232_force_push_under_pinned_thread {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Forge/Force Push Under Thread'
+    description "C force-pushes main under B's thread pinned to an old base. What does B still have? Decided: #507 (2026-10-16) base files fetch from GitHub on demand and the store keeps only the thread's own commits. Assumption: after GitHub GCs the old base, those files show as gone with the repo named, and continuing rebases onto the new main. Why: A4 base never copied, #489 (2026-10-16), W-DRV-12 pull main first. SCN-232 · W-DRV-03, W-GIT-05, W-DRV-12, W-GIT-23. v1: no."
+
+    include personB, personC, signalbox.web, signalbox.harness, signalbox.drive, signalbox.connections, services.github
+    include signalbox, services
+
+    personC -> services.github 'force-pushes main' {
+      notes '''
+        - **Start:** B's thread in GitHub-backed folder Team is pinned to the old base
+        - That base is no longer reachable from `main`
+      '''
+    }
+    personB -> signalbox.web 'opens Files'
+    signalbox.web -> signalbox.drive 'read base file' {
+      navigateTo work_drive_thread_fork
+      notes "- **Decided (#507, 2026-10-16):** the store holds only the thread's own commits"
+    }
+    alt 'GitHub still has it?' {
+      when 'before GC' {
+        signalbox.drive -> signalbox.connections "Team's GitHub token"
+        signalbox.drive -> services.github 'fetch blob' {
+          navigateTo work_git_forge_base
+        }
+        signalbox.web <- signalbox.drive 'file'
+      }
+      else 'after GC' {
+        signalbox.web <- signalbox.drive 'no longer on GitHub' {
+          notes '''
+            - **Assumption:** shown as gone, repo named
+            - The thread's own commits stay
+          '''
+        }
+      }
+    }
+    personB -> signalbox.web 'sends a turn'
+    signalbox.web -> signalbox.harness 'run turn'
+    signalbox.harness -> signalbox.drive 'pull new main first' {
+      navigateTo work_git_forge_ingest
+      notes '- The thread replays its own changes on the new `main`'
+    }
+    signalbox.harness <- signalbox.drive 'conflicts' {
+      notes '- **End:** the agent resolves conflicts; B continues on the new `main`'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personB { color green }
+    style personC { color green }
+  }
+
+  dynamic view scn_233_github_repo_access_lost_or_deleted {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Forge/Repo Access Lost'
+    description "The folder loses access to its GitHub repo, or the repo is deleted. What stays? Decided: #489 (2026-10-16) whoever loses access to the repo loses its files. Assumption: the thread stays readable with base files marked unavailable, and unreadable PR links back off and reset on activity (pending #442). Why: A4, only delete removes (#119), attention must earn its place. SCN-233 · W-GIT-06, W-GIT-05, W-GIT-22. v1: no."
+
+    include personB, personC, signalbox.web, signalbox.drive, signalbox.attention, signalbox.automations, signalbox.connections, services.github
+    include signalbox, services
+
+    personC -> services.github 'revokes or deletes repo' {
+      notes '''
+        - **Start:** B works in GitHub-backed folder Team
+      '''
+    }
+    personB -> signalbox.web 'opens Files'
+    signalbox.web -> signalbox.drive 'read base file'
+    signalbox.drive -> services.github 'fetch blob' {
+      navigateTo work_git_forge_base
+      notes '- 404 or 403'
+    }
+    signalbox.web <- signalbox.drive 'lost access to owner/repo' {
+      notes '''
+        - **Decided (#489, 2026-10-16):** no access, no files
+        - B's commits and kept-local files stay in the store (A4)
+      '''
+    }
+    signalbox.drive -> signalbox.attention 'Blocker: restore access' {
+      notes '- Push and PR actions fail; the agent asks at the folder, not B personally'
+    }
+    loop 'PR watch backs off' {
+      signalbox.automations -> signalbox.connections 'poll PR' {
+        navigateTo work_git_pr_watch
+      }
+      signalbox.connections -> services.github 'GET pull'
+      signalbox.automations <- signalbox.connections 'not_found' {
+        notes '''
+          - **Assumption (pending #442):** exponential backoff, reset when someone works on the thread
+          - **End:** files gone, conversation and own changes remain
+        '''
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personB { color green }
+    style personC { color green }
+  }
+
+  dynamic view scn_234_member_without_github_opens_files {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Forge/No GitHub Login'
+    description "A never connected GitHub. Can A open files in GitHub-backed folder Team? Assumption: reads resolve the folder's placed GitHub connection by hierarchy, not the reader's login; with none placed it is a Place-or-Lend ask (pending #489/#429 wording). Why: binding rule 2026-10-18 (hierarchy only, never by who owns the credential) supersedes #489's reader's-own-access wording; pushes already use the folder's connection (#810); A34. SCN-234 · W-GIT-05, T-PRJ-14, W-DRV-02, W-SRC-08. v1: no."
+
+    include personA, personB, signalbox.web, signalbox.drive, signalbox.tree, signalbox.connections, signalbox.attention, services.github
+    include signalbox, services
+
+    personA -> signalbox.web 'opens Files in Team' {
+      navigateTo journey_files_browse
+      notes '''
+        - **Start:** A is a member of Company and never connected GitHub
+      '''
+    }
+    signalbox.web -> signalbox.drive 'read file' {
+      navigateTo work_drive_filestore_files
+    }
+    signalbox.drive -> signalbox.tree 'resolve GitHub at Team' {
+      notes '''
+        - **Assumption:** nearest connection placed at Team or above
+        - Never the reader's own login
+      '''
+    }
+    alt 'placed?' {
+      when 'connection placed' {
+        signalbox.drive -> signalbox.connections "folder's token"
+        signalbox.drive -> services.github 'fetch blob' {
+          navigateTo work_git_forge_base
+        }
+        signalbox.web <- signalbox.drive 'file contents' {
+          notes '- **End:** A reads it with no personal GitHub login'
+        }
+      }
+      else 'nothing placed' {
+        signalbox.web <- signalbox.drive 'Connect GitHub here' {
+          notes '- Files says "Connect GitHub for this folder"'
+        }
+        signalbox.drive -> signalbox.attention "ask Team's admins"
+        opt 'B lends a login' {
+          personB -> signalbox.web 'lends GitHub login'
+          signalbox.web -> signalbox.tree 'revocable loan' {
+            navigateTo work_drive_placement
+            notes "- **End:** placed into Team as a loan; B can revoke it"
+          }
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+
+  // ── Accepts ────────────────────────────────────────────────────────────
+
+  dynamic view scn_235_undoes_an_accept {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Accepts/Undo Accept'
+    description "A accepted a thread's fork into folder Company's main. How does C undo it? Assumption: undoing an accept is Restore this version as a new commit on main, or Continue from it, never a history rewrite; it needs write on the folder (pending #119 wording). Why: #119 restore semantics survive the 2026-10-18 fork model since main keeps history; #498 every checkpoint restorable. SCN-235 · W-DRV-06, W-CKP-05, W-LIN-03. v1: no."
+
+    include personA, personC, signalbox.web, signalbox.operations, signalbox.drive, signalbox.thread, signalbox.harness
+    include signalbox
+
+    personA -> signalbox.web 'accepts' {
+      notes '''
+        - **Start:** a thread fork off Company's `main`
+      '''
+    }
+    signalbox.web -> signalbox.drive 'accept(fork)' {
+      navigateTo work_drive_accept
+      notes '- The fork merges into `main` and is deleted'
+    }
+    personC -> signalbox.web 'opens folder changes' {
+      notes '- C is admin of folder Company'
+    }
+    signalbox.web -> signalbox.drive 'history of main'
+    personC -> signalbox.web 'picks version before'
+    alt 'how to undo' {
+      when 'Restore this version' {
+        signalbox.web -> signalbox.operations 'restore(main, v)' {
+          notes '- **Assumption:** needs write on the folder'
+        }
+        signalbox.operations -> signalbox.drive 'new commit = v' {
+          navigateTo work_checkpoints_restore
+          notes '- A new commit with that tree; nothing is rewritten'
+        }
+      }
+      else 'Continue from this version' {
+        signalbox.web -> signalbox.thread 'new thread at v' {
+          navigateTo work_threads_fork_at_point
+        }
+        signalbox.thread -> signalbox.drive 'fork at v'
+      }
+    }
+    signalbox.harness -> signalbox.drive 'pull new main' {
+      notes '''
+        - Threads still working pick it up on their next turn
+        - **End:** `main` back to the earlier tree, history kept
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+    style personC { color green }
+  }
+
+  dynamic view scn_236_two_accepts_same_folder {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Accepts/Concurrent Accepts'
+    description "Two threads, or two people, accept into the same folder at once. Which lands? Decided: #119 (2026-10-18) a stale accept is refused. Assumption: the stale thread's own agent re-prepares on the new main and resolves conflicts, on that thread's pool. Why: #1129 acceptance reports stale and conflicts to the agent; #119 keep-both for non-text formats. SCN-236 · W-DRV-09, W-DRV-07, W-DRV-08, W-DRV-12. v1: no."
+
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.drive, signalbox.thread, signalbox.harness
+    include signalbox
+
+    personA -> signalbox.web 'accepts' {
+      notes '''
+        - **Start:** A's and B's threads each forked the same `main` of folder Company
+      '''
+    }
+    signalbox.web -> signalbox.operations 'accept(A fork)'
+    signalbox.operations -> signalbox.drive 'merge A fork' {
+      notes '- First in wins; `main` moves'
+    }
+    personB -> signalbox.web 'accepts'
+    signalbox.web -> signalbox.operations 'accept(B fork)'
+    signalbox.operations -> signalbox.drive 'merge B fork'
+    signalbox.operations <- signalbox.drive 'stale: main moved' {
+      navigateTo work_drive_accept_recovery
+      notes '- **Decided (#119, 2026-10-18):** a stale accept is refused'
+    }
+    signalbox.operations -> signalbox.thread 'stale result'
+    signalbox.thread -> signalbox.harness 'next turn' {
+      notes "- **Assumption:** B's thread agent re-prepares, on that thread's pool"
+    }
+    signalbox.harness -> signalbox.drive 'pull new main' {
+      navigateTo work_drive_thread_fork
+      notes '''
+        - Text conflicts: the agent resolves them
+        - Formats it cannot merge keep both versions with a compare view
+      '''
+    }
+    signalbox.web <- signalbox.thread 'ready again'
+    personB -> signalbox.web 'accepts again'
+    signalbox.web -> signalbox.operations 'accept(B fork)'
+    signalbox.operations -> signalbox.drive 'merge B fork' {
+      notes '- **End:** both land, in order'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+
+  // ── Sources ────────────────────────────────────────────────────────────
+
+  dynamic view scn_237_agent_writes_doc_teammate_editing {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Sources/Doc Write Conflict'
+    description "An agent writes back to a Google Doc that A is editing. Does it clobber A? Assumption: targeted edits with a source-version precondition, suggestions on others' Docs, and irreversible or undeclared writes held as a Ready ask. Why: A6, A18, #878 §9 proposal, R-CON-19 gate placement. SCN-237 · W-SRC-04, R-CON-19, P-RDY-01. v1: partial (Executor Google connection as a tool)."
+
+    include personB, personA, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.operations, signalbox.attention, services.google
+    include signalbox, services
+
+    personB -> signalbox.harness 'asks to edit Doc' {
+      notes '''
+        - **Start:** B's thread in folder Team; its agent edits a Doc A owns
+      '''
+    }
+    signalbox.harness -> signalbox.gateway 'read Doc'
+    signalbox.gateway -> signalbox.connections 'Google at Team' {
+      notes '- Resolves the Google connection placed at Team or above, nearest wins'
+    }
+    signalbox.connections -> services.google 'read @ rev r'
+    personA -> services.google 'edits the Doc' {
+      notes '- The Doc moves past r'
+    }
+    signalbox.harness -> signalbox.gateway 'write if rev r' {
+      navigateTo work_sources_write
+      notes '- **Assumption:** every write carries a precondition on r'
+    }
+    signalbox.gateway -> signalbox.connections 'update(rev r)'
+    signalbox.connections -> services.google 'batchUpdate'
+    signalbox.harness <- signalbox.gateway 'conflict' {
+      notes '- Revision mismatch; nothing of A is overwritten'
+    }
+    signalbox.harness -> signalbox.gateway 're-read, targeted edit'
+    alt 'kind of write' {
+      when "someone else's Doc" {
+        signalbox.connections -> services.google 'as suggestions' {
+          notes "- **End:** A sees suggestions, A's edits intact"
+        }
+      }
+      else 'irreversible or undeclared' {
+        signalbox.gateway -> signalbox.operations 'hold write' {
+          navigateTo folders_connections_tool_call_gates
+        }
+        signalbox.operations -> signalbox.attention 'Ready ask' {
+          navigateTo person_pipeline_ready_gate
+          notes '- **End:** held as a Ready ask until someone accepts'
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+
+  dynamic view scn_238_read_page_changes_or_disappears {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Sources/Read Page Changed'
+    description "A Confluence page the agent read later changes, disappears or loses its connection. What does the thread see? Decided: #119/#66 (2026-10-15) reads are captured. Assumption: captures are ordinary files of the thread's working ref, visible per thread visibility, with no separate private rule (pending #512). Why: A7. SCN-238 · W-SRC-03, W-SRC-02, R-CON-27, W-SRC-08. v1: partial (Executor Confluence connection as a tool)."
+
+    include personB, personA, signalbox.web, signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.drive, services.atlassian
+    include signalbox, services
+
+    personB -> signalbox.web 'asks about page' {
+      notes '''
+        - **Start:** B's thread in folder Team needs a Confluence page
+      '''
+    }
+    signalbox.web -> signalbox.thread 'turn'
+    signalbox.thread -> signalbox.harness 'run turn'
+    signalbox.harness -> signalbox.gateway 'read page' {
+      navigateTo work_sources_read
+    }
+    signalbox.gateway -> signalbox.connections 'Confluence at Team' {
+      notes '- The Confluence connection placed at Team or above, nearest wins'
+    }
+    signalbox.connections -> services.atlassian 'GET page v7'
+    signalbox.gateway -> signalbox.drive 'capture as file' {
+      navigateTo work_sources_map
+      notes '''
+        - **Decided (#119/#66, 2026-10-15):** reads are captured
+        - A file in the working ref with source id, version and fetch time
+      '''
+    }
+    services.atlassian -> services.atlassian 'edited or deleted' {
+      notes '- Or the connection is unplaced from Team'
+    }
+    personA -> signalbox.web 'resumes thread'
+    signalbox.web -> signalbox.thread 'turn'
+    signalbox.thread -> signalbox.harness 'run turn'
+    signalbox.harness -> signalbox.drive 'read capture' {
+      notes '- The thread works from the version it captured'
+    }
+    alt 're-fetch' {
+      when 'still placed' {
+        signalbox.harness -> signalbox.gateway 're-fetch page'
+        signalbox.gateway -> signalbox.connections 'call'
+        signalbox.connections -> services.atlassian 'GET page latest'
+      }
+      else 'unplaced' {
+        signalbox.harness <- signalbox.gateway 'Denied' {
+          navigateTo folders_connections_cut_off
+          notes '''
+            - The capture stays
+            - **Assumption (pending #512):** visible to whoever can see the thread
+            - **End:** the thread still sees the version it worked from
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+
+  // ── Forge: PRs ─────────────────────────────────────────────────────────
+
+  dynamic view scn_239_pr_closed_without_merging {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Forge/PR Closed Unmerged'
+    description "What happens when C closes the thread's PR without merging? Assumption: thread and fork stay, the thread is not settled, the agent is told once quietly, and polling stops until reopened. Why: only delete removes (#119); #439 settles only on merge; attention must earn its place (principle 3); #442 no endless polling. SCN-239 · W-GIT-07, W-GIT-08, W-GIT-22, W-LIF-19. v1: no."
+
+    include personB, personC, signalbox.automations, signalbox.connections, signalbox.thread, signalbox.harness, signalbox.attention, services.github
+    include signalbox, services
+
+    personC -> services.github 'closes PR' {
+      notes '''
+        - **Start:** B's thread in folder Team opened the PR
+      '''
+    }
+    signalbox.automations -> signalbox.connections 'watch PR' {
+      navigateTo work_git_pr_watch
+    }
+    signalbox.connections -> services.github 'GET pull'
+    signalbox.automations <- signalbox.connections 'closed'
+    signalbox.automations -> signalbox.thread 'wake once'
+    signalbox.thread -> signalbox.harness 'note in thread' {
+      notes '- **Assumption:** the agent notes it in the thread, once'
+    }
+    signalbox.thread -> signalbox.attention 'quiet, no push' {
+      notes '- Closed unmerged does not earn a push'
+    }
+    signalbox.automations -> signalbox.automations 'stop polling' {
+      navigateTo work_threads_lifecycle_auto_settle
+      notes '''
+        - Closed is terminal, like merged (#442)
+        - Not settled: only a merge settles (#439); the fork stays (#119)
+      '''
+    }
+    opt 'B reopens or pushes again' {
+      personB -> services.github 'reopens PR'
+      services.github -> signalbox.automations 'PR reopened' {
+        notes '- **End:** thread and fork intact; watching resumes only on reopen'
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personB { color green }
+    style personC { color green }
+  }
+
+  dynamic view scn_240_keeps_working_after_pr_merged {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Forge/Work After Merge'
+    description "B's PR merged and the thread settled. Can B keep working in it? Decided: #439 (2026-10-15) a new message reopens the thread and it can open more PRs; #495. Pull-main-first comes from the #119 audit fix. SCN-240 · W-LIF-19, W-DRV-12, W-GIT-13, W-GIT-16. v1: no."
+
+    include personB, signalbox.web, signalbox.thread, signalbox.harness, signalbox.automations, signalbox.computer, signalbox.drive, signalbox.connections, services.github
+    include signalbox, services
+
+    services.github -> signalbox.automations 'PR merged' {
+      navigateTo work_git_pr_watch
+      notes '''
+        - **Start:** B's thread in folder Team, its PR just merged
+      '''
+    }
+    signalbox.automations -> signalbox.thread 'settle' {
+      navigateTo work_threads_lifecycle_auto_settle
+    }
+    signalbox.thread -> signalbox.computer 'free machine' {
+      notes '- Cleanup frees the VM, only after a final save'
+    }
+    signalbox.computer -> signalbox.drive 'final save'
+    personB -> signalbox.web 'new message'
+    signalbox.web -> signalbox.thread 'reopen + turn' {
+      notes '- **Decided (#439, 2026-10-15):** a new message reopens the thread'
+    }
+    signalbox.thread -> signalbox.harness 'run turn'
+    signalbox.harness -> signalbox.drive 'pull new main first' {
+      navigateTo work_drive_thread_fork
+      notes '- Merged commits are not repeated (#119 audit)'
+    }
+    signalbox.harness -> signalbox.automations 'open new PR' {
+      navigateTo work_git_pr_ready
+    }
+    signalbox.automations -> signalbox.connections 'open PR'
+    signalbox.connections -> services.github 'create PR' {
+      navigateTo work_git_confirm_live
+      notes '- **End:** reopened; a new PR without the merged commits'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personB { color green }
+  }
+
+  dynamic view scn_241_push_after_merge_approved {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Forge/Push After Approval'
+    description "A approved a merge at head X, then B pushes Y. Does Y merge unseen? Decided for cloud: #461/#646 (2026-10-16) merge with a pinned sha; a 409 tells the agent to re-ask. Assumption for self-hosted: always ask a person and re-read the head until the --match-head-commit seam lands (pending #461). Why: #461 (2026-10-17) sweep notes self-hosted folders always ask today. SCN-241 · W-GIT-14, W-GIT-15, P-RDY-03, P-RDY-02. v1: no."
+
+    include personA, personB, signalbox.attention, signalbox.operations, signalbox.automations, signalbox.connections, signalbox.harness, services.github
+    include signalbox, services
+
+    signalbox.attention -> personA 'Ready: merge at X' {
+      navigateTo person_pipeline_ready_merge_gate
+      notes '''
+        - **Start:** the merge gate shows A head X
+      '''
+    }
+    personA -> signalbox.attention 'approves X'
+    signalbox.attention -> signalbox.operations 'approval(sha X)'
+    personB -> services.github 'pushes Y'
+    signalbox.operations -> signalbox.automations 'run merge gate' {
+      navigateTo work_git_merge_gate
+    }
+    signalbox.automations -> signalbox.connections 'merge sha=X'
+    signalbox.connections -> services.github 'PUT merge sha=X'
+    signalbox.connections <- services.github '409 head moved' {
+      notes '- **Decided (#461/#646, 2026-10-16):** nothing merges'
+    }
+    signalbox.automations -> signalbox.harness 'new commits landed'
+    signalbox.harness -> signalbox.attention 'Ready ask at Y' {
+      notes '- **End:** A is asked again, now at head Y'
+    }
+    opt 'self-hosted folder' {
+      signalbox.operations -> signalbox.connections 're-read head' {
+        notes '''
+          - **Assumption (pending #461):** a person sees every merge
+          - The server re-reads the head until `--match-head-commit` lands
+        '''
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style services { color muted; opacity 10% }
+    style personA { color green }
+    style personB { color green }
+  }
+}

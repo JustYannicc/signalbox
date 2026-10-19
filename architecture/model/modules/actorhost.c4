@@ -1,0 +1,56 @@
+model {
+  extend signalbox {
+    actorhost = module 'ActorHost' {
+      #deep #v1
+      icon bootstrap:boxes
+      description 'actor · facet · isolate · queue'
+      technology 'Rivet patterns, no Rivet library'
+      metadata {
+        interface '4'
+        deletion 'every actor reinvents transactions, alarms and outbox'
+      }
+
+      api = iface 'ActorHost · interface' {
+        description '4 verbs: actor · facet · isolate · queue'
+        technology 'Deletion test: without it, every actor reinvents transactions, alarms and outbox'
+      }
+
+      hosts = part 'Host seam · 2 adapters (+1 planned)' {
+        metadata { adapters '2' }
+        durableObjects = adapter 'Durable Objects' {
+          #v1
+          icon tech:cloudflare-icon
+          description 'prod · EU · 3 deploy domains'
+          technology 'DO SQLite · facets · Worker Loader / Dynamic Workers · Queues · alarms · @effect/sql-sqlite-do'
+        }
+        nodeSqlite = adapter 'Node + SQLite' {
+          icon tech:sqlite
+          description 'tests · self-host'
+          technology 'node:sqlite · single-writer lock'
+        }
+        celld = adapter 'workerd / celld' {
+          #planned
+          icon tech:cloudflare-workers-icon
+          technology 'workerd'
+        }
+      }
+
+      jobs = part 'Job table' {
+        icon bootstrap:list-task
+        description 'outbox · keep-alive · ticks'
+      }
+      outbox = part 'Outbox delivery' {
+        icon bootstrap:send
+        description 'idempotent by (sourceKey, seq)'
+        technology 'alarms · Queues fan-out'
+      }
+
+      jobs -> outbox 'deliver'
+      hosts.durableObjects -> jobs 'one alarm'
+    }
+
+    // Interface → hidden parts (the only way in)
+    actorhost.api -> actorhost.hosts 'actor · facet · isolate'
+    actorhost.api -> actorhost.jobs 'queue'
+  }
+}

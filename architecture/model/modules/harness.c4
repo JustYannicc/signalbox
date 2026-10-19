@@ -1,0 +1,142 @@
+model {
+  extend signalbox {
+    harness = module 'Harness' {
+      #deep
+      icon bootstrap:robot
+      description 'open · turn · control · export'
+      technology 'RunnerProtocol · isolate wire'
+      metadata {
+        interface '4'
+        deletion 'Thread learns CLI protocols; hosts and memory splitting leak'
+      }
+
+      api = iface 'Harness · interface' {
+        description '4 verbs: open · turn · control · export'
+        technology 'Deletion test: without it, Thread learns CLI protocols; hosts and memory splitting leak'
+      }
+
+      agents = part 'Kind seam · 2 adapters (+4 planned)' {
+        description 'which agent CLI'
+        metadata { adapters '2' }
+        claudeCode = adapter 'Claude Code' {
+          icon tech:claude-icon
+          technology 'official build · @anthropic-ai/claude-agent-sdk · stream-json · ClaudeAdapterV2'
+        }
+        codex = adapter 'Codex' {
+          icon tech:openai-icon
+          technology 'official build · effect-codex-app-server · CodexAdapterV2'
+        }
+        opencode = adapter 'OpenCode' {
+          #planned
+          icon bootstrap:terminal
+          technology '@opencode-ai/sdk'
+        }
+        cursor = adapter 'Cursor' {
+          #planned
+          icon bootstrap:cursor
+          technology '@cursor/sdk'
+        }
+        acp = adapter 'Grok · Antigravity · ACP agents' {
+          #planned
+          icon tech:x
+          technology 'effect-acp · ACP registry'
+        }
+        pi = adapter 'Pi · Muse' {
+          #planned
+          icon bootstrap:robot
+          technology 'Pi SDK · @muse-code/sdk'
+        }
+      }
+
+      host = part 'Host seam · 2 adapters' {
+        description 'where the loop runs'
+        metadata { adapters '2' }
+        isolate = adapter 'Isolate' {
+          #decided #publishable
+          icon tech:cloudflare-workers-icon
+          description 'prod: Thread DO facet + Dynamic Workers'
+          technology 'harness host + release scanner · Worker Loader · DO facets · {wasm} modules · JSPI · #1055 workerd builds'
+          metadata {
+            proven 'deployed DO, full tool turns, zero release edits: Codex 0.162.1 (#1069), Claude Code 2.1.302 (#1068)'
+            open 'heap under load: 50k and 200k-token fixtures (#1068); heap under parallel Task subagents (#1244)'
+            subagents 'the harness Task subagents stay in-process; Signalbox delegation is a child thread with its own computer'
+          }
+        }
+        process = adapter 'LocalProcess' {
+          icon tech:nodejs-icon
+          description 'tests and parity only'
+        }
+      }
+
+      realtimeVoice = adapter 'Realtime voice' {
+        #planned
+        icon bootstrap:mic
+        description 'undecided · voice turns'
+      }
+      sessionFacet = part 'Session facet' {
+        icon tech:sqlite
+        description 'harness heap + live FS · durable seed receipts'
+        technology 'Worker Loader isolate + SQLite'
+        metadata {
+          seeding 'seed receipts are durable: a facet reincarnated between seeding and boot resumes from them'
+        }
+      }
+      shims = part 'Node · Bun shims' {
+        #publishable
+        icon tech:nodejs-icon
+        description 'node:* and bun:* in the isolate'
+      }
+      codexWasm = part 'codex-wasm artifact' {
+        #publishable
+        icon tech:webassembly
+        description 'Codex built for the isolate'
+      }
+      hooks = part 'Hooks' {
+        #decided
+        icon bootstrap:link-45deg
+        description 'status · secrets · done (isolate tier)'
+        metadata {
+          standard 'status: Thread ensures the turn status note; secrets: Gateway fills at real I/O and scrubs, the wire scrubber stays authoritative; done: only a turn-settled event to Automations (#1066)'
+          commandHooks 'through Computer.exec'
+          functionHooks 'plugins (#1238) blocked on workerd runtime support: #1237 node:vm contexts + late compile, #1239 shared cells + generation interruption; no fallback, no waiver'
+        }
+      }
+      fetchShim = part 'Fetch shim' {
+        icon bootstrap:key
+        description 'only holder of the grant token'
+      }
+      mirror = part 'Session mirror' {
+        icon bootstrap:arrow-repeat
+        description 'every 5 s and at settle'
+        technology 'Agents SDK file-mirror (vendored)'
+      }
+      recovery = part 'OOM recovery' {
+        icon bootstrap:bandaid
+        description 'resume from mirror'
+      }
+
+      host.isolate -> sessionFacet 'loads'
+      agents.claudeCode -> fetchShim 'fetch'
+      agents.codex -> fetchShim 'fetch'
+      sessionFacet -> mirror 'session files'
+      recovery -> mirror 'resume'
+      sessionFacet -> shims 'node · bun APIs'
+      agents.codex -> codexWasm 'runs as'
+      sessionFacet -> hooks 'fire'
+    }
+
+    harness.fetchShim -[model]-> signalbox.gateway.modelGateway 'model wire'
+    harness.fetchShim -[tool]-> signalbox.gateway.toolGateway 'mcp wire'
+    harness.sessionFacet -> signalbox.computer.api 'built-in tools: exec · files'
+    harness.fetchShim -> signalbox.gateway.egress.inProcess 'WebFetch (egress)'
+    harness.hooks -> signalbox.computer.api 'command hooks (exec)'
+    harness.hooks -> signalbox.thread.api 'status note'
+    harness.mirror -[async]-> signalbox.thread.api 'harness events · session rows'
+
+    // Interface → hidden parts (the only way in)
+    harness.api -> harness.host 'open'
+    harness.api -> harness.sessionFacet 'turn · control'
+    harness.api -> harness.mirror 'export'
+    harness.sessionFacet -> harness.agents 'runs agent CLI'
+  }
+}

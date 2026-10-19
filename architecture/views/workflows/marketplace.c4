@@ -1,0 +1,1101 @@
+// Marketplace workflows (MKT-01 – MKT-23).
+// Install = a placement into a folder; it resolves by hierarchy only (corr. 6, 19).
+// Folders are generic: "Company" (owner: organization) with "Team" inside. A and B are members, C is the admin of Company, D sees only Team.
+// Folder apps themselves live in folder-apps.c4 (apps_*); these views only add the marketplace entry and link there.
+views {
+
+  // ───────────────────────── Story ─────────────────────────
+
+  dynamic view mkt_overview {
+    variant sequence
+    title 'Workflows/Marketplace/Marketplace end to end'
+    description """
+      MKT-01 · How does a thing made in one folder get used in another, and who ends up with it?
+      Publish (by a person or a folder) → review → find → install = a placement into a folder → every turn below resolves it by position, nearest wins (#57, #60, corr. 6, 19).
+      Every kind (skill, instruction block, harness plugin, MCP/connection, automation, folder app, folder blueprint) follows this story; "What installs where" shows each kind's install.
+    """
+    include
+      personB,
+      personA,
+      personD,
+      personC,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.judge,
+      signalbox.tree,
+      signalbox.thread
+
+    personB -> signalbox.web 'Publish from Team' {
+      navigateTo mkt_publish_to_folder
+      notes """
+        - B publishes a skill with folder Team as publisher, no git (#60)
+        - A person can also publish from their own top level
+        - A listing is code or text plus the shape of what it needs, never data
+      """
+    }
+    signalbox.web -> signalbox.marketplace 'Listing v1' {
+      notes 'Content-hash version; invalid ones are kept with a badge (#280)'
+    }
+    signalbox.marketplace -> signalbox.judge 'Review v1' {
+      navigateTo mkt_review_version
+      notes """
+        - Static checks, security scan, author's with-vs-without eval, trigger eval
+        - Numbers go on the listing, never install counts (#57, #378)
+      """
+    }
+    personA -> signalbox.web 'Browse' {
+      navigateTo mkt_browse
+      notes """
+        - A sees public + Company + Team listings; D would see public + Team only
+        - Plugins › Marketplace, or a folder's Add (#320)
+      """
+    }
+    personA -> signalbox.web 'Install at Team' {
+      navigateTo mkt_install_skill
+      notes """
+        - A picks the folder, not a machine
+        - The skill will reach Team and every thread below it
+      """
+    }
+    signalbox.web -> signalbox.marketplace 'install(Team)'
+    signalbox.marketplace -> signalbox.judge 'Eval on Team' {
+      notes """
+        - Without vs with on Team's own cases; content never leaves Team
+        - "It worked for the author" becomes "it works on our work"
+      """
+    }
+    signalbox.marketplace -> signalbox.tree 'Place at Team' {
+      navigateTo mkt_kinds
+      notes """
+        - `Place{skill}` at folder Team, reach below
+        - Every kind ends as a placement like this; open to see each kind
+      """
+    }
+    parallel {
+      personA -> signalbox.thread 'Turn in Team' {
+        notes 'A works in the shared Team thread'
+      }
+      personB -> signalbox.thread 'Turn in Team' {
+        notes 'B never installed anything'
+      }
+      personD -> signalbox.thread 'Turn in Team' {
+        notes 'D is an outside collaborator who reaches only Team'
+      }
+    }
+    signalbox.thread -> signalbox.tree 'Resolve Team chain' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Team → Company → owner: the skill is on the chain
+        - A, B and D all get it: position decides, never who sends or who installed
+      """
+    }
+    personC -> signalbox.thread 'Turn at Company' {
+      notes 'C, admin of Company, in a thread placed directly in Company'
+    }
+    signalbox.thread -> signalbox.tree 'Resolve Company chain' {
+      navigateTo scn_m_10_same_skill_two_levels
+      notes """
+        - Team is below Company, so C's Company thread does not get it
+        - To give all of Company the skill, place it at Company (placing higher is not publishing)
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_kinds {
+    title 'Workflows/Marketplace/What installs where'
+    description """
+      MKT-01 map · Which kinds can be listed, who publishes them, and where each one lands when installed.
+      Every install ends as a placement in one folder that resolves by hierarchy (corr. 6, 19). Pools, secrets, devices and drives are never listed; they move only by placement or loan (#230).
+    """
+    include
+      personA,
+      personB,
+      upstreams.skillsSh,
+      upstreams.claudePlugins,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.connections,
+      signalbox.automations,
+      signalbox.apps,
+      signalbox.harness
+
+    personB -> signalbox.marketplace 'Publish as folder Team' {
+      navigateTo mkt_publish_to_folder
+      notes """
+        - A folder publishes as itself (Team, or organization-owned Company)
+        - The listing stays when B leaves (corporate model)
+      """
+    }
+    personA -> signalbox.marketplace 'Publish as A' {
+      navigateTo mkt_publish_blueprint
+      notes """
+        - From A's own top level or folders
+        - Automations, folder apps and folder blueprints publish as blueprints: code + needs, never data
+      """
+    }
+    upstreams.skillsSh -> signalbox.marketplace 'Public skills' {
+      notes 'With Gen, Socket and Snyk audit verdicts (#60)'
+    }
+    upstreams.claudePlugins -> signalbox.marketplace 'Harness plugins' {
+      notes 'Each provider\'s own plugin marketplace (Claude Code, Codex) (#61)'
+    }
+    signalbox.marketplace -> signalbox.tree 'Skill · block · plugin: place' {
+      navigateTo mkt_install_skill
+      notes """
+        - `Place{skill}`, `Place{harnessPlugin}` or an AGENTS.md block into the folder's cascade
+        - Text items keep updated by default
+      """
+    }
+    signalbox.marketplace -> signalbox.connections 'MCP · connection: connect' {
+      navigateTo mkt_install_connection
+      notes """
+        - One click at the folder; a person does the final OAuth step
+        - The connection is placed at that folder (v1 partial)
+      """
+    }
+    signalbox.marketplace -> signalbox.automations 'Automation: define' {
+      navigateTo mkt_use_automation
+      notes """
+        - "Use" makes an independent copy at the folder
+        - Slots bind the folder chain's accounts
+      """
+    }
+    signalbox.marketplace -> signalbox.apps 'Folder app: new app' {
+      navigateTo mkt_use_folder_app
+      notes 'New app placed in the folder with its own state, bound to the folder\'s connections (#485)'
+    }
+    signalbox.marketplace -> signalbox.tree 'Blueprint: new folder' {
+      navigateTo mkt_use_folder_blueprint
+      notes 'Creates a folder with the blueprint\'s placements plus "connect your own" slots (#63)'
+    }
+    signalbox.tree -> signalbox.harness 'Plugin: per turn' {
+      navigateTo mkt_install_harness_plugin
+      notes """
+        - `Place{harnessPlugin}` at a folder, applied to each turn of that harness in the isolate tier
+        - Never a machine install (#61)
+      """
+    }
+
+    include signalbox, upstreams
+    style signalbox, upstreams { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Find ─────────────────────────
+
+  dynamic view mkt_browse {
+    variant sequence
+    title 'Workflows/Marketplace/Find/Browse and read a listing'
+    description """
+      MKT-02, MKT-03 (alias W-AUT-32) · Discover, a folder's listings, Published by you.
+      Scopes follow reach: A sees public + Company + Team; D (Team only) sees public + Team.
+    """
+    include
+      personA,
+      personD,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.marketplace
+
+    personA -> signalbox.web 'Plugins › Marketplace' {
+      navigateTo journey_admin_plugins_view
+      notes """
+        - Plugins is the view of what A can reach (#320)
+        - The marketplace is how more gets into reach
+      """
+    }
+    signalbox.web -> signalbox.operations 'list(kind)'
+    signalbox.operations -> signalbox.tree 'Folders A reaches' {
+      notes """
+        - Through A's mount of Company: Company and Team
+        - Visibility follows reach, like everything else (corr. 6)
+      """
+    }
+    signalbox.operations -> signalbox.marketplace 'Listings in reach' {
+      notes """
+        - Public catalog, skills.sh, provider plugin marketplaces
+        - Listings at every folder A reaches: Company, Team
+      """
+    }
+    signalbox.web <- signalbox.marketplace 'Listings' {
+      notes """
+        - Tabs: Discover · folder listings · Published by you
+        - Filter: skills, blocks, automations, plugins, connections, apps
+      """
+    }
+    personA -> signalbox.web 'Open a listing' {
+      notes """
+        - Efficacy: with vs without, supervisor tax, success rate
+        - Audits, needs (connections by kind), versions, publisher
+      """
+    }
+    personD -> signalbox.web 'D searches' {
+      notes """
+        - D is an outside collaborator who reaches only folder Team
+        - The same query resolves D's reach: Team only
+      """
+    }
+    signalbox.web <- signalbox.marketplace 'Public + Team only' {
+      notes 'Company\'s listings don\'t exist for D; C (admin) sees what A sees'
+    }
+    personA -> signalbox.web 'Use or Keep updated' {
+      navigateTo mkt_install_skill
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Publish ─────────────────────────
+
+  dynamic view mkt_publish_to_folder {
+    variant sequence
+    title 'Workflows/Marketplace/Publish/Publish to a folder'
+    description """
+      MKT-04, MKT-05 · B publishes a skill at folder Team without git; edits publish v(N+1).
+      Not the same as placing at Company with reach below: a listing is for folders that are NOT below you (#60).
+    """
+    include
+      personB,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.marketplace,
+      signalbox.judge,
+      signalbox.tree
+
+    personB -> signalbox.web 'Publish to Team' {
+      notes """
+        - From B's own skill, folder scope Team
+        - Open by default; admins may restrict later (#60, #322)
+      """
+    }
+    signalbox.web -> signalbox.operations 'publish(item, scope)'
+    signalbox.operations -> signalbox.tree 'Can publish here?' {
+      notes 'Member or above at Team; open by default (#60)'
+    }
+    alt 'who publishes' {
+      when 'folder Team' {
+        signalbox.operations -> signalbox.marketplace 'Listing by Team' {
+          notes """
+            - Publisher is folder Team, not B; it stays when B leaves
+            - Content-hash version with the skill and its eval set, never chats or data (#280)
+          """
+        }
+      }
+      else 'B personally' {
+        signalbox.operations -> signalbox.marketplace 'Listing by B' {
+          notes """
+            - Published from B's own top level
+            - Leaves with B; holders keep frozen copies
+          """
+        }
+      }
+    }
+    signalbox.marketplace -> signalbox.judge 'Review v1' {
+      navigateTo mkt_review_version
+    }
+    opt 'later edit' {
+      personB -> signalbox.web 'Save & publish v2' {
+        notes """
+          - Needs a "what changed" note (#60)
+          - Holders get it through the eval delta
+        """
+      }
+      signalbox.web -> signalbox.marketplace 'Listing v2' {
+        navigateTo mkt_update
+      }
+    }
+    personB <- signalbox.web 'Holders and versions' {
+      notes 'Published by you: who holds which version, who is behind'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_publish_public {
+    variant sequence
+    title 'Workflows/Marketplace/Publish/Publish wider through the publish gate'
+    description """
+      MKT-06 · Widening scope (Team → Company, or public) is a `publish` decision gate to the named deciders (#630/#632).
+      Publishing inside your own folder is not gated (assumption: widening is not reversible, #335).
+    """
+    include
+      personB,
+      personC,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.attention,
+      signalbox.marketplace,
+      upstreams.skillsSh
+
+    personB -> signalbox.web 'Publish public' {
+      notes """
+        - The skill was Team-scoped; B wants it for everyone
+        - Team → Company widening takes the same gate
+      """
+    }
+    signalbox.web -> signalbox.operations 'publish(scope: public)'
+    signalbox.operations -> signalbox.attention 'Ready: publish gate' {
+      navigateTo person_pipeline_ready_gate
+      notes """
+        - Decider: Company's responsible people (C)
+        - Shows the listing, its evals and what it needs
+      """
+    }
+    personC -> signalbox.attention 'Approve' {
+      notes 'Only a person answers a gate; an agent never publishes (#702, #335)'
+    }
+    alt 'C decides' {
+      when 'approved' {
+        signalbox.operations -> signalbox.marketplace 'Scope: public' {
+          navigateTo mkt_review_version
+        }
+        opt 'skills only' {
+          signalbox.marketplace -> upstreams.skillsSh 'List on skills.sh' {
+            notes 'The registry path stays behind "Advanced" (#60)'
+          }
+        }
+      }
+      else 'declined' {
+        personB <- signalbox.web 'Stays Team-scoped' {
+          notes 'C\'s reason shows; B can ask again'
+        }
+      }
+    }
+
+    include signalbox, upstreams
+    style signalbox, upstreams { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_publish_blueprint {
+    variant sequence
+    title 'Workflows/Marketplace/Publish/Publish an automation, app or folder as a blueprint'
+    description """
+      MKT-07 · A blueprint is code plus the shape of each connection it needs, never data, chats, history or credentials (#57 2026-10-15, #485).
+      Three kinds: an automation or block, a folder app, a whole folder's placements. Restricted threads can't publish (#486); merging automations need a person (#702).
+    """
+    include
+      personA,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.automations,
+      signalbox.apps,
+      signalbox.tree,
+      signalbox.marketplace
+
+    personA -> signalbox.web 'Publish blueprint' {
+      notes """
+        - From A's own folder, or as a folder A may publish for
+        - A picks what: an automation, a folder app, or the folder itself
+      """
+    }
+    signalbox.web -> signalbox.operations 'publish(item)'
+    alt 'what is published' {
+      when 'automation or block' {
+        signalbox.operations -> signalbox.automations 'Blueprint' {
+          navigateTo work_automations_define
+          notes """
+            - Source, `meta.input` / `meta.output` schemas; blocks keep their typed contract (#1056)
+            - Needs: "GitHub · folder-acting", "Gmail · person-acting"
+            - Account ids, run history and data stripped
+          """
+        }
+      }
+      when 'folder app' {
+        signalbox.operations -> signalbox.apps 'Template' {
+          navigateTo apps_share
+          notes """
+            - The active release's source plus the binding shapes it uses
+            - No SQLite rows, no files (#485)
+          """
+        }
+      }
+      else 'folder blueprint' {
+        signalbox.operations -> signalbox.tree 'Placements of folder' {
+          navigateTo folders_placement_kind_skill_plugin
+          notes """
+            - Skills, instruction blocks, automations, plugins by kind
+            - Pools, secrets and personal accounts become "connect your own" slots (#63)
+          """
+        }
+      }
+    }
+    alt 'checks' {
+      when 'clean' {
+        signalbox.operations -> signalbox.marketplace 'Listing v1' {
+          navigateTo mkt_review_version
+          notes 'The person who clicked Publish vouches for the code'
+        }
+      }
+      else 'from a restricted thread' {
+        personA <- signalbox.web 'Refused: restricted' {
+          notes 'Names the restricted source that latched the thread (#486)'
+        }
+      }
+      else 'agent publishing merging code' {
+        signalbox.operations -> signalbox.operations 'Refused' {
+          notes 'Only code a person published may merge (#702)'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_withdraw {
+    variant sequence
+    title 'Workflows/Marketplace/Publish/Withdraw a listing'
+    description """
+      MKT-20 · Stop sharing: holders keep their version as a frozen copy and stop getting updates (#60 prototype, adopted for every kind).
+      Reverse door: publish again.
+    """
+    include
+      personB,
+      personA,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.attention
+
+    personB -> signalbox.web 'Stop sharing' {
+      notes 'Confirm says: "N folders keep vX as a frozen copy"'
+    }
+    signalbox.web -> signalbox.marketplace 'withdraw(listing)' {
+      notes 'Gone from discovery; versions stay readable (#280)'
+    }
+    signalbox.marketplace -[async]-> signalbox.tree 'Holders pin' {
+      notes """
+        - Keep-updated placements become pinned at their version
+        - Use-copies are independent and don't change
+      """
+    }
+    signalbox.tree -[async]-> signalbox.attention 'Quiet notice' {
+      notes 'A sees "source withdrawn" on the row; no push, nothing broke'
+    }
+    personA -> signalbox.web 'Keeps working' {
+      notes 'A\'s turns resolve the pinned version as before'
+    }
+    opt 'reverse door' {
+      personB -> signalbox.web 'Publish again' {
+        navigateTo mkt_publish_to_folder
+      }
+      personA -> signalbox.web 'Follow again'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Trust ─────────────────────────
+
+  dynamic view mkt_review_version {
+    title 'Workflows/Marketplace/Trust/Review a new version'
+    description """
+      MKT-08 · Every new version gets static checks, a security scan, the author's with-vs-without eval and a trigger eval, in parallel.
+      Results attach to the version and show on the listing (#378, #280, #60).
+    """
+    include
+      signalbox.marketplace,
+      signalbox.automations,
+      signalbox.judge,
+      signalbox.models,
+      upstreams.skillsSh
+
+    signalbox.marketplace -> signalbox.automations 'Start review run' {
+      notes """
+        - An eval is an automation (#378), run with the experiment primitive
+        - Costs land on the publisher's folder pool, shown up front
+      """
+    }
+    parallel {
+      signalbox.automations -> signalbox.judge 'Static review' {
+        notes 'Spec checks, then a judge on body and description (Tessl-style)'
+      }
+      signalbox.automations -> signalbox.models 'Without vs with' {
+        notes 'Author\'s eval set, k trials each, paired difference with a CI'
+      }
+      signalbox.automations -> signalbox.judge 'Trigger eval' {
+        notes 'Fires when it should, stays quiet when it shouldn\'t'
+      }
+      signalbox.marketplace -> upstreams.skillsSh 'Audit verdicts' {
+        notes 'Gen, Socket, Snyk for skills.sh items (#60); our own scan otherwise'
+      }
+    }
+    signalbox.judge -> signalbox.automations 'Scores' {
+      notes 'TypeSafe judges, calibrated against people\'s labels (#378)'
+    }
+    signalbox.automations -> signalbox.marketplace 'Attach to version' {
+      notes """
+        - "agent success vs baseline 1.23x", review score, security score
+        - Fails? kept with an Invalid badge, not rejected (#280)
+      """
+    }
+
+    include signalbox, upstreams
+    style signalbox, upstreams { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_efficacy_feedback {
+    variant sequence
+    title 'Workflows/Marketplace/Trust/Efficacy from real use reaches the listing'
+    description """
+      MKT-22, MKT-23 · Online scorers on sampled live runs give each version a real-use number; a model change re-runs baselines.
+      Content never leaves the folder, only scores (#378, #280, #57).
+    """
+    include
+      signalbox.thread,
+      signalbox.models,
+      signalbox.automations,
+      signalbox.judge,
+      signalbox.observability,
+      signalbox.attention,
+      signalbox.marketplace
+
+    signalbox.thread -[async]-> signalbox.automations 'Sampled run' {
+      notes 'A turn that used skill@v4, in folder Team'
+    }
+    signalbox.automations -> signalbox.judge 'Online scorers' {
+      notes 'Same scorers as the eval set, inside the folder'
+    }
+    signalbox.judge -> signalbox.observability 'Scores only' {
+      notes """
+        - OTel `gen_ai.evaluation.result`: score, label, dimensions
+        - No prompt, no output, no file
+      """
+    }
+    signalbox.observability -> signalbox.marketplace 'Aggregate per version' {
+      notes 'The listing shows numbers only (#57)'
+    }
+    opt 'model changes' {
+      signalbox.models -[async]-> signalbox.automations 'New default model' {
+        notes 'A skill tuned for one model can stop helping on the next (#378)'
+      }
+      loop 'each installed version' {
+        signalbox.automations -> signalbox.judge 'Re-run baseline'
+      }
+      signalbox.automations -> signalbox.attention 'Considering if worse' {
+        navigateTo scn_m_11_model_change_regresses
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Install ─────────────────────────
+
+  dynamic view mkt_install_skill {
+    variant sequence
+    title 'Workflows/Marketplace/Install/Install a skill or instruction block'
+    description """
+      MKT-09, MKT-10 · Install runs without vs with on cases from the installer's own folder before it goes live (#57, #60, #378).
+      Then it is a placement: `Place{skill}` or an AGENTS.md block, reach below, nearest wins.
+    """
+    include
+      personA,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.automations,
+      signalbox.judge,
+      signalbox.tree,
+      upstreams.skillsSh
+
+    personA -> signalbox.web 'Install at Team' {
+      notes """
+        - Keep updated by default for text items
+        - From the Signalbox catalog or skills.sh
+      """
+    }
+    signalbox.web -> signalbox.marketplace 'install(Team)' {
+      notes """
+        - Only inside the listing's scope (a Company listing can't go to A's Personal)
+        - A needs the role that may place skills at Team
+      """
+    }
+    opt 'from skills.sh' {
+      signalbox.marketplace -> upstreams.skillsSh 'Fetch + audits' {
+        notes 'Gen, Socket and Snyk verdicts show next to our eval (#60)'
+      }
+    }
+    signalbox.marketplace -> signalbox.automations 'Eval on Team' {
+      notes """
+        - Cases from Team's own eval set; never leave Team
+        - Cost shown up front, billed to Team's pool (#378)
+      """
+    }
+    signalbox.automations -> signalbox.judge 'Without vs with'
+    alt 'result' {
+      when 'better' {
+        signalbox.marketplace -> signalbox.tree 'Place at Team' {
+          navigateTo folders_placement_kind_skill_plugin
+          notes """
+            - Result attached to the version (#280)
+            - From the next turn, A's, B's and D's turns in Team all get it; C's turns at Company don't
+          """
+        }
+      }
+      when 'not enough evidence' {
+        signalbox.marketplace -> signalbox.tree 'Place, flagged' {
+          notes 'Says so instead of declaring a winner on 12 cases (#378)'
+        }
+      }
+      else 'worse' {
+        personA <- signalbox.web 'Not placed' {
+          navigateTo scn_m_06_skill_below_baseline
+          notes 'Numbers shown; A can place it anyway (principle 8)'
+        }
+      }
+    }
+    opt 'instruction block' {
+      signalbox.marketplace -> signalbox.tree 'Add block to cascade' {
+        navigateTo folders_placement_kind_instructions
+        notes 'Nearest block per heading wins; per-harness target kept (#62)'
+      }
+    }
+
+    include signalbox, upstreams
+    style signalbox, upstreams { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_use_automation {
+    variant sequence
+    title 'Workflows/Marketplace/Install/Use an automation'
+    description """
+      MKT-11, MKT-19 · "Use" makes an independent copy bound to the folder's accounts (#57 2026-10-15). The assistant sets it up (#57 prototype).
+      Slots fill by position on the folder's chain; anything missing is a connect or a loan. Use is also the fork.
+    """
+    include
+      personA,
+      hier.asstA,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.connections,
+      signalbox.automations
+
+    personA -> hier.asstA '"Set up X at Team"' {
+      notes """
+        - "Use workflow" opens A's assistant with the request
+        - The assistant coordinates; it never runs the code
+      """
+    }
+    hier.asstA -> signalbox.marketplace 'Copy blueprint' {
+      notes 'Code plus needs; no data, no accounts'
+    }
+    hier.asstA -> signalbox.tree 'Resolve slots at Team' {
+      navigateTo folders_placement_resolve
+      notes """
+        - "GitHub · folder-acting": Company's GitHub App fills it
+        - Nearest wins; who asked doesn't matter
+      """
+    }
+    opt 'a slot is missing' {
+      hier.asstA -> personA 'Connect or ask to lend' {
+        navigateTo folders_connections_oauth_connect
+        notes 'A person does the final OAuth step (#335)'
+      }
+      personA -> signalbox.connections 'Connect at Team'
+    }
+    hier.asstA -> signalbox.automations 'Rehearse' {
+      navigateTo journey_automations_rehearse
+      notes 'Against safe copies of its apps (#317, still open)'
+    }
+    hier.asstA -> signalbox.automations 'Define at Team' {
+      navigateTo work_automations_define
+      notes """
+        - On immediately, with a push and a pause action (#54)
+        - A merging automation needs A's own confirm (#702)
+      """
+    }
+    opt 'republish your copy (fork)' {
+      personA -> signalbox.marketplace 'Publish as own' {
+        navigateTo mkt_publish_blueprint
+      }
+    }
+
+    include signalbox, hier
+    style signalbox, hier { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_install_connection {
+    #v1
+    variant sequence
+    title 'Workflows/Marketplace/Install/Add an MCP server or connection'
+    description """
+      MKT-12 · A catalog entry (managed OAuth, OpenAPI, GraphQL, remote MCP) installs by connecting at a folder.
+      Its tools reach threads below through Signalbox's MCP endpoint and tool search (#323, #288, #335).
+      v1 partial: the one-click connect (Google, Confluence) is v1; the marketplace listing around it is not.
+    """
+    include
+      personC,
+      personA,
+      personD,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.connections,
+      signalbox.tree,
+      signalbox.thread,
+      signalbox.gateway
+
+    personC -> signalbox.web 'Add Confluence' {
+      notes 'From the catalog, onto folder Company'
+    }
+    signalbox.web -> signalbox.marketplace 'Catalog entry' {
+      notes 'Provider, auth kind, scopes it asks for'
+    }
+    signalbox.web -> signalbox.connections 'Connect at Company' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - One click; C does the final OAuth step
+        - "Confluence · Company" is the label models see
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Place connection' {
+      navigateTo folders_placement_kind_pool_connection
+      notes 'At Company, reach below: Team and every thread there'
+    }
+    parallel {
+      personA -> signalbox.thread 'Turn in Team' {
+        notes 'A never connected anything'
+      }
+      personD -> signalbox.thread 'Turn in Team' {
+        notes 'D reaches only Team, yet Team\'s chain includes Company'
+      }
+    }
+    signalbox.thread -> signalbox.gateway 'Tool call'
+    signalbox.gateway -> signalbox.connections 'Tool search' {
+      navigateTo folders_connections_tool_search_call
+      notes """
+        - Only Team's chain is searched, nearest wins
+        - A and D get the same Confluence tools: position, not sender
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_install_harness_plugin {
+    variant sequence
+    title 'Workflows/Marketplace/Install/Install a harness plugin'
+    description """
+      MKT-13 · A Codex or Claude Code plugin from the provider's own marketplace is config placed at a folder, applied to each turn of that harness wherever it runs.
+      Never a machine install; providers without plugins say so (#61).
+    """
+    include
+      personC,
+      personA,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.harness,
+      upstreams.claudePlugins
+
+    personC -> signalbox.web 'Plugins for Claude Code' {
+      notes 'Grouped by harness; only harnesses with plugins show'
+    }
+    signalbox.marketplace -> upstreams.claudePlugins 'Read catalog' {
+      notes 'Version, source, hooks it adds; Codex plugins come from Codex\'s marketplace the same way'
+    }
+    personC -> signalbox.web 'Install at Company'
+    signalbox.web -> signalbox.marketplace 'install(Company)'
+    signalbox.marketplace -> signalbox.tree 'Place{harnessPlugin}' {
+      navigateTo folders_placement_kind_skill_plugin
+      notes """
+        - Config with one home at Company, reach below
+        - Admin-added: members can't move it if #322 restricts plugins
+      """
+    }
+    personA -> signalbox.harness 'Turn in Team' {
+      notes 'A never installed it; it reaches Team from Company'
+    }
+    signalbox.harness -> signalbox.tree 'Resolve plugins' {
+      notes """
+        - Applied to the turn's harness config in the isolate tier
+        - Hooks run in the isolate (#1066); function-hook plugins wait on workerd support (#1238)
+      """
+    }
+    alt 'harness of the turn' {
+      when 'Claude Code' {
+        signalbox.harness -> personA 'Plugin applied'
+      }
+      else 'Codex or another harness' {
+        signalbox.harness -> personA '"Not on this harness"' {
+          navigateTo scn_m_13_plugin_harness_switch
+          notes 'Shown on the thread; narrowing per harness is open (#324)'
+        }
+      }
+    }
+
+    include signalbox, upstreams
+    style signalbox, upstreams { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_use_folder_app {
+    variant sequence
+    title 'Workflows/Marketplace/Install/Use a folder app'
+    description """
+      MKT-14 · A folder app template is code plus needed connections, no data (#485). Using it creates an app in the folder with its own state, bound to that folder's accounts.
+      Team members use it by position (corr. 18). After dogfooding (#485 2026-10-18).
+    """
+    include
+      personB,
+      personA,
+      personD,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.apps,
+      signalbox.connections
+
+    personB -> signalbox.web 'Use "Team dashboard"' {
+      notes 'Into folder Team'
+    }
+    signalbox.web -> signalbox.marketplace 'install(Team)' {
+      notes 'Template: source and connection shapes; no rows, no files'
+    }
+    signalbox.marketplace -> signalbox.tree 'Slots on Team chain' {
+      notes 'Jira and Google fill from Company; nothing is copied into B'
+    }
+    signalbox.marketplace -> signalbox.apps 'New app at Team' {
+      navigateTo apps_place
+      notes """
+        - Server in a Dynamic Worker, its own SQLite, no outbound network
+        - Reaches only granted bindings; UI in a sandboxed frame
+      """
+    }
+    signalbox.apps -> signalbox.connections 'Granted bindings' {
+      navigateTo apps_bindings
+      notes 'The folder\'s connections, never B\'s own'
+    }
+    signalbox.marketplace -> signalbox.tree 'Place app' {
+      notes 'An app placement at Team: visible and usable by position'
+    }
+    parallel {
+      personA -> signalbox.web 'Opens it' {
+        navigateTo apps_open
+        notes 'Member of Company, reaches Team: uses and changes it (#485)'
+      }
+      personD -> signalbox.web 'Opens it' {
+        notes 'D reaches only Team, which is where the app lives'
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_use_folder_blueprint {
+    variant sequence
+    title 'Workflows/Marketplace/Install/Use a folder blueprint'
+    description """
+      MKT-15 · A folder blueprint lists placements by kind plus "connect your own" slots. Using it creates a folder with those placements.
+      Newcomers only connect personal accounts; shared setup is inherited, never copied into people (#63).
+    """
+    include
+      personC,
+      personB,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.connections
+
+    personC -> signalbox.web 'Use "Support team"' {
+      notes 'Creates folder Support under Company'
+    }
+    signalbox.web -> signalbox.marketplace 'install(Company)' {
+      notes 'Blueprint: skills, instruction blocks, automations, plugins, slots'
+    }
+    signalbox.marketplace -> signalbox.tree 'Create folder' {
+      navigateTo folders_placement_create_then_place
+      notes 'Folder Support under Company'
+    }
+    signalbox.marketplace -> signalbox.tree 'Place each item' {
+      notes """
+        - Each one is a normal placement at Support
+        - Pool and shared connections come from Company above
+      """
+    }
+    personB -> signalbox.web 'Joins Support' {
+      navigateTo folders_access_newcomer_preset
+      notes 'Asked only for B\'s own accounts'
+    }
+    personB -> signalbox.connections 'Connect own Gmail'
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view mkt_uninstall {
+    variant sequence
+    title 'Workflows/Marketplace/Install/Uninstall'
+    description """
+      MKT-18 · Uninstall is unplace. Agents lose it on their next turn unless another folder still gives it (#321).
+      Running turns finish on their frozen Scope.
+    """
+    include
+      personB,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.thread,
+      signalbox.marketplace
+
+    personB -> signalbox.web 'Remove from Team' {
+      notes 'Explains: "agents lose it on their next turn unless Company still gives it"'
+    }
+    signalbox.web -> signalbox.operations 'unplace'
+    signalbox.operations -> signalbox.tree 'Unplace' {
+      navigateTo folders_placement_unplace
+    }
+    signalbox.tree -[async]-> signalbox.marketplace 'Holder count' {
+      notes 'Publisher sees one holder fewer; nothing about B'
+    }
+    signalbox.thread -> signalbox.tree 'Next turn re-resolves' {
+      navigateTo folders_placement_change_to_turns
+      notes """
+        - Running turn keeps its frozen Scope
+        - Next turn of anyone in Team (A, B, D): Company's copy if there is one, else nothing
+      """
+    }
+    opt 'reverse door' {
+      personB -> signalbox.web 'Install again' {
+        navigateTo mkt_install_skill
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Versions ─────────────────────────
+
+  dynamic view mkt_update {
+    variant sequence
+    title 'Workflows/Marketplace/Versions/Keep updated or pin'
+    description """
+      MKT-16, MKT-17 · Each update re-runs previous vs new on the holder's folder and shows the delta before syncing (#57, #60).
+      Pin a version any time (#60); the auto-update switch is on the placement, not the person (assumption, corr. 6).
+    """
+    include
+      personA,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.automations,
+      signalbox.judge,
+      signalbox.tree,
+      signalbox.attention
+
+    signalbox.marketplace -[async]-> signalbox.automations 'v5: eval on Team' {
+      notes """
+        - For every Keep-updated placement of the listing, here the one at Team
+        - Team's own cases; Team's pool pays
+      """
+    }
+    signalbox.automations -> signalbox.judge 'v4 vs v5'
+    signalbox.automations -> signalbox.marketplace 'Delta'
+    alt 'delta' {
+      when 'better or equal' {
+        signalbox.marketplace -> signalbox.tree 'Move placement to v5' {
+          notes """
+            - One placement at Team, so A, B and D all move together
+            - Next turn uses v5; running turns stay on v4
+          """
+        }
+      }
+      when 'worse' {
+        signalbox.marketplace -> signalbox.attention 'Considering: hold v4' {
+          navigateTo scn_m_01_update_regresses_one_folder
+          notes 'To Team\'s responsible people, with the numbers'
+        }
+      }
+      else 'needs a new account' {
+        signalbox.marketplace -> signalbox.attention 'Blocker: connect' {
+          navigateTo scn_m_05_missing_connection
+          notes 'v4 keeps running meanwhile'
+        }
+      }
+    }
+    opt 'pin' {
+      personA -> signalbox.web 'Pin v4' {
+        notes """
+          - Or switch Keep updated off on this placement
+          - The switch is on the placement, so it pins Team for everyone there
+        """
+      }
+      signalbox.web -> signalbox.tree 'Placement pinned'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Agents ─────────────────────────
+
+  dynamic view mkt_agent_install {
+    variant sequence
+    title 'Workflows/Marketplace/Agents/An agent finds and installs an item'
+    description """
+      MKT-21 · Agents find listings through tool search and install what a person could (#335).
+      Gate (assumption): no new permission → the agent installs into its own folder after the eval wins; anything that binds an account, merges, pays or publishes → a Ready ask.
+    """
+    include
+      hier.company.team.agentTeam,
+      signalbox.gateway,
+      signalbox.marketplace,
+      signalbox.judge,
+      signalbox.tree,
+      signalbox.attention,
+      personB
+
+    hier.company.team.agentTeam -> signalbox.gateway 'Tool search' {
+      navigateTo folders_connections_tool_search_call
+      notes '"something that turns Jira tickets into release notes"'
+    }
+    signalbox.gateway -> signalbox.marketplace 'Matching listings' {
+      notes 'Only listings in Team\'s reach; nothing preloaded into context'
+    }
+    hier.company.team.agentTeam -> signalbox.marketplace 'install(Team)' {
+      notes """
+        - The same install verb a person uses, with the grant of folder Team (#335)
+        - The agent coordinates: it asks the marketplace to place, it never runs the item
+      """
+    }
+    signalbox.marketplace -> signalbox.judge 'Eval on Team'
+    alt 'what the item needs' {
+      when 'no new permission' {
+        signalbox.marketplace -> signalbox.tree 'Place at Team' {
+          notes """
+            - Skill, instruction block, block without connections
+            - Only after the eval wins; reversible, so no gate (#335)
+          """
+        }
+      }
+      else 'account, merge, pay or publish' {
+        signalbox.marketplace -> signalbox.attention 'Ready ask' {
+          navigateTo person_pipeline_ready_gate
+          notes """
+            - To Team's responsible people (A and B), each in their own lanes
+            - Recommendation carries the eval result and the needs
+          """
+        }
+        personB -> signalbox.attention 'Approve' {
+          navigateTo scn_m_08_agent_install_gated
+          notes """
+            - First answer wins; A's copy of the ask clears
+            - B binds the account; B's approval is the vouch (#702)
+          """
+        }
+        signalbox.attention -> signalbox.marketplace 'Approved'
+        signalbox.marketplace -> signalbox.tree 'Place at Team'
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+}

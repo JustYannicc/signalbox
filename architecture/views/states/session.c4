@@ -1,0 +1,24 @@
+// State machine for one session. The walk through it with people and modules is the dynamic view state_session.
+model {
+  smSession = state 'Session lifecycle' {
+    active = state 'Active' { description 'one device · refresh keeps it active' }
+    signedOut = state 'Signed out' { description 'this device only' }
+    revoked = state 'Revoked' { description 'membership lost · alias linked' }
+
+    active -[transition]-> signedOut 'sign out · device removed'
+    active -[transition]-> revoked 'revoke'
+  }
+}
+views {
+  view state-session of smSession {
+    #v1
+    title 'States/Session/State machine'
+    description 'How does one signed-in device session end? Start: green. End: gray. Click the frame for the walk with people and modules (state_session).'
+    include *
+    include smSession with { navigateTo state_session }
+    style smSession.active { color green }
+    style smSession.signedOut { color gray }
+    style smSession.revoked { color gray }
+    autoLayout TopBottom
+  }
+}

@@ -1,0 +1,23 @@
+// State machine for one placement. The walk through it with people and modules is the dynamic view state_placement.
+model {
+  smPlacement = state 'Placement lifecycle' {
+    placed = state 'Placed' { description 'reaches its level and below · turns resolve it' }
+    expired = state 'Expired' { description 'until passed' }
+    unplaced = state 'Unplaced' { description 'removed by someone allowed' }
+
+    placed -[transition]-> expired 'until passes'
+    placed -[transition]-> unplaced 'unplace'
+  }
+}
+views {
+  view state-placement of smPlacement {
+    title 'States/Placement/State machine'
+    description 'How does one placement on a level stop reaching the threads below it? Start: green. End: gray. Click the frame for the walk with people and modules (state_placement).'
+    include *
+    include smPlacement with { navigateTo state_placement }
+    style smPlacement.placed { color green }
+    style smPlacement.expired { color gray }
+    style smPlacement.unplaced { color gray }
+    autoLayout TopBottom
+  }
+}

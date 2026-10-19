@@ -1,0 +1,750 @@
+// Scenario shard 09: compute (SCN-192 to SCN-202). One question per view, played as a sequence.
+// Binding: Claude Code and Codex always run in the isolate tier (Durable Object + Dynamic Workers);
+// a boxd VM exists only while a real command runs. Placement never shows to a person or the model.
+// People: A (folder Personal; Work › folder Company mounted), B (folder Team inside Company),
+// C (admin of folder Company). Steps target module boxes or their named actors.
+
+views {
+
+  // ───────────────────────────── Scenarios/Compute/Machines ─────────────────────────────
+
+  dynamic view scn_192_parked_turn_hibernates {
+    #decided
+    variant sequence
+    title "Scenarios/Compute/Machines/Parked Turn Hibernates"
+    description "Does a turn waiting on a person keep its machine running? Decided: #915 (2026-10-17) hibernate explicitly when a thread waits on CI or a person; #915 (2026-10-18) compute is paid by the pool that pays the thread's tokens. Parking follows design S10/A39. SCN-192 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personB, signalbox.mobile, signalbox.attention, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.models, platform.boxd
+    include signalbox, platform
+
+    signalbox.harness -> signalbox.thread.threadActor "raise Blocker" {
+      navigateTo person_pipeline_blocker_raise
+      notes '''
+        - **Start:** B's turn in folder Team is running; a boxd VM is up for a test command
+        - The agent (Claude Code, in the isolate tier) needs B's answer to continue
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "deliver ask" {
+      notes '''
+        - The ask joins B's queue; the turn is now parked on it
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "mirror, evict facet" {
+      navigateTo work_turns_keepalive_mirror
+      notes '''
+        - Session mirrored, keep-alive cleared, session facet evicted
+        - Nothing stays in memory while a person thinks
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.computer "park machine"
+    signalbox.computer -> platform.boxd "hibernate now" {
+      navigateTo state_computer
+      notes '''
+        - Explicit hibernate; we never wait for boxd's 4 h auto-hibernate
+      '''
+    }
+    signalbox.computer -> signalbox.models "disk-time usage" {
+      navigateTo work_computer_usage_metering
+      notes '''
+        - Only hibernated disk time is recorded
+        - Billed to the pool resolved for the thread: here folder Company's, which C administers
+      '''
+    }
+    signalbox.attention -> signalbox.mobile "push the ask"
+    personB -> signalbox.mobile "answers"
+    signalbox.mobile -> signalbox.thread.threadActor "answer" {
+      notes '''
+        - Via the Funnel; the same answer works from the thread itself
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "resume from mirror" {
+      navigateTo person_assistant_park_resume
+      notes '''
+        - The answer becomes the pending tool result; the loop carries on
+      '''
+    }
+    opt "next step runs a command" {
+      signalbox.harness -> signalbox.computer "exec"
+      signalbox.computer -> platform.boxd "wake VM" {
+        notes '''
+          - **End:** the VM wakes only when a command needs it
+          - **#decided** #915 (2026-10-17, 2026-10-18)
+        '''
+      }
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_193_archive_with_machine {
+    #decided
+    variant sequence
+    title "Scenarios/Compute/Machines/Archive With Machine"
+    description "What happens to a thread's machine when the thread is archived and later unarchived? Decided: #915 (2026-10-17) archived → delete the machine; unarchived → restore the Drive, resume the harness, create a machine from the ready snapshot; the provider's disk is never the durable copy. #119 (2026-10-18) archiving never merges, R2 is the full record, resumed threads start on the current Base. SCN-193 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.bases, signalbox.drive, platform.boxd
+    include signalbox, platform
+
+    personA -> signalbox.web "archive thread" {
+      notes '''
+        - **Start:** a thread in folder Personal with a hibernated VM
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor "archive" {
+      navigateTo work_threads_lifecycle_archive
+      notes '''
+        - Via the Funnel; archiving never merges the thread's fork
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.computer "release machine"
+    signalbox.computer -> platform.boxd "destroy VM" {
+      navigateTo state_computer
+      notes '''
+        - Destroy, not hibernate; a sweep catches strays
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.drive "keep fork" {
+      notes '''
+        - Fork stays in Artifacts until idle, then lives only in R2
+        - Nothing is left on boxd
+      '''
+    }
+    personA -> signalbox.web "unarchive" {
+      notes '''
+        - Days or months later
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor "unarchive" {
+      navigateTo state_thread
+    }
+    signalbox.thread.threadActor -> signalbox.harness "resume session" {
+      notes '''
+        - Harness resumes from the session mirror, in the isolate tier
+      '''
+    }
+    signalbox.harness -> signalbox.drive "first read" {
+      notes '''
+        - Drive recreates the fork from its R2 bundle on first read
+      '''
+    }
+    opt "a command needs a machine" {
+      signalbox.harness -> signalbox.computer "exec"
+      signalbox.computer -> signalbox.bases "current ready Base" {
+        navigateTo work_bases_lease
+        notes '''
+          - Folder Personal's current Base, not the one the thread started on
+        '''
+      }
+      signalbox.computer -> platform.boxd "fork fresh VM" {
+        notes '''
+          - **End:** files and session back; a machine only when a command needs one
+          - **#decided** #915 (2026-10-17), #119 (2026-10-18)
+        '''
+      }
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_195_command_needs_vm {
+    #decided
+    variant sequence
+    title "Scenarios/Compute/Machines/Command Needs VM"
+    description "What happens when a command can't run in the isolate? Decided: #1055 (2026-10-18) single-command escalation to boxd is the last memory/compat step. Assumption for the shape: escalation is per command, never a whole-thread move; a VM exists only while a command needs it; placement never shows in output (#1071 per-call contract, design §3.6.1; pending #1071 proof). SCN-195 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personB, signalbox.web, signalbox.harness, signalbox.computer, signalbox.bases, signalbox.drive, platform.boxd
+    include signalbox, platform
+
+    signalbox.harness -> signalbox.computer "exec command" {
+      navigateTo work_computer_kernel_exec
+      notes '''
+        - **Start:** B's agent in folder Team runs an unknown binary, apt, docker or a native toolchain
+        - The agent itself stays in the isolate tier
+      '''
+    }
+    signalbox.computer -> signalbox.computer "needs a machine" {
+      navigateTo work_computer_escalate
+      notes '''
+        - Routing table: known kernel programs stay; VM programs go (#1071)
+        - Or a kernel failure that proves nothing ran (missing program, ENOSYS first); any other failure is surfaced, not retried
+        - One command, never the whole thread; no machine classes
+      '''
+    }
+    alt "workspace sync and policy" {
+      when "ready" {
+        signalbox.computer -> signalbox.bases "warm Base" {
+          navigateTo work_bases_lease
+        }
+        signalbox.computer -> platform.boxd "fork VM"
+        signalbox.computer -> signalbox.drive "sync revision" {
+          notes '''
+            - The VM sees the thread's current Drive revision
+          '''
+        }
+        signalbox.computer -> platform.boxd "forward command" {
+          navigateTo work_computer_identity
+          notes '''
+            - Executable, argv, canonical cwd, full env
+          '''
+        }
+        signalbox.computer <- platform.boxd "stdout, stderr, exit" {
+          notes '''
+            - Streamed back unchanged
+          '''
+        }
+        signalbox.computer -> signalbox.drive "write back changes" {
+          notes '''
+            - VM-side file changes land in the Drive revision
+          '''
+        }
+        signalbox.computer -> signalbox.harness "same result shape" {
+          notes '''
+            - Identical to a kernel run; nothing says where it ran
+          '''
+        }
+      }
+      else "not ready yet" {
+        signalbox.computer -> signalbox.harness "typed not-ready" {
+          notes '''
+            - `WORKSPACE_NOT_READY` / `POLICY_NOT_READY`
+            - Never runs against another workspace
+          '''
+        }
+      }
+    }
+    signalbox.harness -> signalbox.web "streams output" {
+      notes '''
+        - Via the Thread actor and the Funnel
+      '''
+    }
+    signalbox.web -> personB "sees output" {
+      notes '''
+        - **End:** B sees only the command's output, same cwd, env, stdout, stderr, exit
+        - **#decided** #1055 (2026-10-18) · **#assumption** per-command shape, pending #1071
+      '''
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Compute/Failures ─────────────────────────────
+
+  dynamic view scn_194_isolate_out_of_memory {
+    #decided
+    variant sequence
+    title "Scenarios/Compute/Failures/Isolate Out Of Memory"
+    description "What happens when a program in the isolate runs out of memory? Decided: #1055 (2026-10-18) memory is handled by splitting, then pruning, then a single-command escalation to boxd; celld is not on the path. Assumption for recovery: alarm restart, mirror resume, replay only replay-safe calls (design §3.5, W-TRN-21). SCN-194 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personB, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.attention, signalbox.observability, platform.boxd
+    include signalbox, platform
+
+    signalbox.harness -> signalbox.computer "run program" {
+      navigateTo work_computer_kernel_exec
+      notes '''
+        - **Start:** B's turn in folder Team; a program runs in a child Dynamic Worker
+        - It passes the 128 MB isolate budget
+      '''
+    }
+    alt "what ran out" {
+      when "a child program" {
+        signalbox.computer -> signalbox.harness "non-zero exit" {
+          notes '''
+            - Only that program fails, like any failed command
+            - The session DO and the agent keep going
+          '''
+        }
+      }
+      else "the harness facet" {
+        signalbox.thread.threadActor -> signalbox.harness "alarm restart" {
+          navigateTo work_turns_crash_resume
+          notes '''
+            - The session resumes from the mirror
+            - Replay-safe tool calls rerun; unknown outcomes are reported, never replayed
+          '''
+        }
+      }
+    }
+    opt "thread stays tight" {
+      signalbox.computer -> signalbox.computer "split, then prune" {
+        notes '''
+          - First separate facets or peer DOs, then prune with escalation stubs
+        '''
+      }
+      signalbox.computer -> platform.boxd "escalate one command" {
+        navigateTo work_computer_escalate
+        notes '''
+          - Last step: one command on boxd; the agent never leaves the isolate tier
+          - An OOM'd program is surfaced, never replayed blindly: it already ran (#1071)
+        '''
+      }
+    }
+    signalbox.computer -> signalbox.observability "record OOM"
+    opt "the turn fails anyway" {
+      signalbox.thread.threadActor -> signalbox.attention "turn failed"
+      signalbox.attention -> signalbox.web "tell B"
+      signalbox.web -> personB "sees failure" {
+        notes '''
+          - **End:** one program failed or the facet restarted; B hears only if the turn fails
+          - **#decided** #1055 (2026-10-18) · **#assumption** recovery mechanics
+        '''
+      }
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_196_vm_lost_mid_command {
+    #assumption
+    variant sequence
+    title "Scenarios/Compute/Failures/VM Lost Mid Command"
+    description "What happens when the VM disappears mid-command? Assumption: the agent gets a typed Lost error and decides whether to rerun; we never auto-replay and nothing durable is lost. Why: #915 'the provider's disk is never the durable copy', design §3.6 ExecError(Lost), unknown-outcome rule (W-TRN-21). SCN-196 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personB, signalbox.web, signalbox.harness, signalbox.computer, signalbox.bases, signalbox.drive, signalbox.observability, platform.boxd
+    include signalbox, platform
+
+    signalbox.computer -> platform.boxd "running command" {
+      notes '''
+        - **Start:** an escalated command from B's thread in folder Team runs on a boxd VM
+      '''
+    }
+    platform.boxd -> signalbox.computer "machine lost" {
+      navigateTo work_computer_vm_failures
+      notes '''
+        - The VM dies or the provider loses it
+      '''
+    }
+    signalbox.computer -> signalbox.harness "ExecError(Lost)" {
+      notes '''
+        - A typed error, never a fake exit 127
+      '''
+    }
+    signalbox.harness -> signalbox.harness "tell the agent" {
+      navigateTo work_turns_crash_resume
+      notes '''
+        - "The machine was lost, the command may not have finished"
+        - The call is never silently replayed
+      '''
+    }
+    signalbox.harness -> signalbox.drive "files intact" {
+      notes '''
+        - Safe up to the last Drive revision; the live FS in the session DO is untouched
+      '''
+    }
+    signalbox.harness -> signalbox.web "agent explains"
+    signalbox.web -> personB "reads reply"
+    opt "agent reruns" {
+      signalbox.harness -> signalbox.computer "rerun command"
+      signalbox.computer -> signalbox.bases "current Base"
+      signalbox.computer -> platform.boxd "fork fresh VM" {
+        navigateTo work_turns_do_vm_recovery
+      }
+    }
+    signalbox.computer -> platform.boxd "delete stray" {
+      navigateTo work_computer_vm_reconcile
+      notes '''
+        - Machine reconcile removes whatever is left of the lost VM
+      '''
+    }
+    signalbox.computer -> signalbox.observability "alert us" {
+      notes '''
+        - **End:** clear error, no replay, no saved work lost
+        - **#assumption** typed Lost + agent decides (#915, design §3.6)
+      '''
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_202_deploy_mid_first_turn {
+    #decided
+    variant sequence
+    title "Scenarios/Compute/Failures/Deploy Mid First Turn"
+    description "What happens when a deploy lands during a thread's first turn? Decided: #465 (2026-10-15, fixed in #480) an unsaved session starts fresh with the transcript; #434 runs stay pinned to their automation version. A full Worker code redeploy mid-stream is still an unrun drill (#889). SCN-202 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.automations, signalbox.observability
+    include signalbox
+
+    personA -> signalbox.web "start thread" {
+      notes '''
+        - **Start:** a new thread in folder Personal; the first turn is streaming
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor "first turn"
+    signalbox.thread.threadActor -> signalbox.harness "stream turn" {
+      notes '''
+        - Claude Code runs in the isolate tier
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.web "socket drops" {
+      notes '''
+        - A deploy rolls the Worker mid-turn
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "wake, new loader id" {
+      navigateTo work_turns_deploy_mid_turn
+      notes '''
+        - The next wake loads the engine by its versioned loader id
+      '''
+    }
+    alt "harness session saved?" {
+      when "saved" {
+        signalbox.harness -> signalbox.harness "resume session" {
+          navigateTo work_harness_open_session
+        }
+      }
+      else "never saved" {
+        signalbox.harness -> signalbox.harness "fresh, with transcript" {
+          navigateTo work_harness_switch
+          notes '''
+            - Starts a fresh session with the transcript so far as context
+            - Never resumes a missing id ("No conversation found")
+          '''
+        }
+      }
+    }
+    signalbox.web -> signalbox.thread.threadActor "reconnect"
+    signalbox.web <- signalbox.thread.threadActor "same history"
+    opt "an automation run was in flight" {
+      signalbox.automations -> signalbox.automations "finish on pinned version" {
+        notes '''
+          - Runs stay pinned to the automation version they started on (#434)
+        '''
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.observability "record recovery" {
+      navigateTo work_turns_do_vm_recovery
+      notes '''
+        - **End:** the thread carries on; never stuck on "No conversation found"
+        - **#decided** #465 / #480 (2026-10-15), #434; full redeploy drill #889 still unrun
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Compute/Limits ─────────────────────────────
+
+  dynamic view scn_197_machine_class_full {
+    #decided
+    variant sequence
+    title "Scenarios/Compute/Limits/VM Capacity Full"
+    description "What happens when no VM can be created right now? Decided: #539 (2026-10-15) capacity never fails a turn: queue quietly; the person isn't told, we are. Decided 2026-10-19 (#1071): there are no machine classes and no thread moves, so there is no other class to fall back to. SCN-197 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personB, signalbox.web, signalbox.harness, signalbox.computer, signalbox.observability, platform.boxd
+    include signalbox, platform
+
+    personB -> signalbox.web "send turn" {
+      notes '''
+        - **Start:** B sends a turn in folder Team; VM capacity is at its cap
+      '''
+    }
+    signalbox.web -> signalbox.harness "run turn" {
+      notes '''
+        - Via the Funnel and the Thread actor; the agent runs in the isolate tier as usual
+      '''
+    }
+    signalbox.harness -> signalbox.computer "exec command" {
+      navigateTo work_computer_kernel_exec
+    }
+    signalbox.computer -> platform.boxd "request VM"
+    signalbox.computer <- platform.boxd "at cap"
+    loop "until a slot frees" {
+      signalbox.computer -> platform.boxd "queue quietly" {
+        notes '''
+          - No 2-minute connect-timeout failure
+          - No machine classes to fall back to, and the thread never moves
+        '''
+      }
+    }
+    signalbox.computer -> signalbox.observability "80% cap alert" {
+      notes '''
+        - We are told, so the cap gets raised
+      '''
+    }
+    signalbox.computer -> signalbox.harness "normal result"
+    signalbox.harness -> signalbox.web "normal progress" {
+      navigateTo work_turns_failed
+      notes '''
+        - **End:** the command ran after a quiet wait; no capacity message
+        - **#decided** #539 (2026-10-15), no machine classes (#1071, 2026-10-19)
+      '''
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_198_big_push {
+    #assumption
+    variant sequence
+    title "Scenarios/Compute/Limits/Big Push"
+    description "What happens when a push to GitHub is bigger than 100 MB? Assumption: refuse at 95 MB with the Cloudflare plan named; upgrade the plan when it bites; no batching workaround and no credentials on machines. Why: vendor-tier rule (use the plan we have, surface limits plainly), #684 recommendation; pending #684. SCN-198 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personB, signalbox.web, signalbox.harness, signalbox.drive, signalbox.gateway, signalbox.observability, services.github
+    include signalbox, services
+
+    signalbox.harness -> signalbox.drive "push branch" {
+      navigateTo work_git_push_limits
+      notes '''
+        - **Start:** B's agent pushes from folder Team (linked to GitHub); the branch adds 540 MB
+      '''
+    }
+    signalbox.drive -> signalbox.drive "size pre-check" {
+      notes '''
+        - Streams from storage with flat memory
+        - Stops before sending at 95 MB
+      '''
+    }
+    alt "pack size" {
+      when "under 95 MB" {
+        signalbox.drive -> signalbox.gateway "forge grant" {
+          notes '''
+            - The credential stays in the Gateway, never on a machine
+          '''
+        }
+        signalbox.drive -> services.github "push" {
+          navigateTo work_drive_large_files
+          notes '''
+            - Single files over 100 MB go as Git LFS objects
+          '''
+        }
+      }
+      else "over 95 MB" {
+        signalbox.drive -> signalbox.harness "refused, plan named" {
+          notes '''
+            - The refusal names the Cloudflare plan limit; no batching workaround
+          '''
+        }
+        signalbox.harness -> signalbox.web "agent explains"
+        signalbox.web -> personB "sees the limit"
+        signalbox.drive -> signalbox.observability "alert us" {
+          notes '''
+            - **End:** refused before sending; we upgrade the plan when someone hits it
+            - **#assumption** refuse at 95 MB, pending #684
+          '''
+        }
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_199_drive_past_one_gb {
+    #assumption
+    variant sequence
+    title "Scenarios/Compute/Limits/Drive Past One GB"
+    description "What happens when a drive grows past Artifacts' 1 GB per repo? Assumption: Git LFS keeps big blobs out of Artifacts; a drive whose git content still passes 1 GB lives R2-only with cold reads; no sharding, no visible cap. Why: #119 (2026-10-15) no user-visible limits on saves; #119 (2026-10-18) R2 is the full record and cold reads never wait; pending #1128. SCN-199 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personA, signalbox.web, signalbox.drive, signalbox.observability
+    include signalbox
+
+    personA -> signalbox.web "adds media" {
+      notes '''
+        - **Start:** A's media-heavy drive in folder Personal nears 1 GB in Artifacts
+      '''
+    }
+    signalbox.web -> signalbox.drive "save files" {
+      navigateTo work_drive_large_files
+    }
+    signalbox.drive -> signalbox.drive "LFS to R2" {
+      notes '''
+        - Files over 32 MB become Git LFS objects in R2
+        - Only pointers enter the Artifacts repo
+      '''
+    }
+    alt "git content alone near 1 GB?" {
+      when "no" {
+        signalbox.drive -> signalbox.drive "stay hot" {
+          notes '''
+            - Normal Artifacts repo
+          '''
+        }
+      }
+      else "yes" {
+        signalbox.drive -> signalbox.drive "serve from R2" {
+          navigateTo work_drive_r2_record
+          notes '''
+            - No hot repo: served from its R2 bundle
+            - Reads are cold-path, saves still land
+          '''
+        }
+      }
+    }
+    signalbox.drive -> signalbox.observability "alert us" {
+      navigateTo work_drive_eviction
+    }
+    signalbox.web <- signalbox.drive "saved"
+    signalbox.web -> personA "no cap shown" {
+      notes '''
+        - **End:** the drive still saves and opens; A never sees a limit
+        - **#assumption** LFS + R2-only past 1 GB, pending #1128
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_200_very_large_file {
+    #decided
+    variant sequence
+    title "Scenarios/Compute/Limits/Very Large File"
+    description "Does a very large file save, and does it block later saves? Decided: #491 (2026-10-15) no save fails because of a file's size, and a refused auto-save never blocks later saves; #119 (2026-10-15) failing over 64 MB is a bug; #119 (2026-10-18) files over 32 MB are Git LFS objects in R2. SCN-200 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personA, personB, signalbox.web, signalbox.computer, signalbox.drive, signalbox.attention
+    include signalbox
+
+    alt "where the file comes from" {
+      when "A drops a video" {
+        personA -> signalbox.web "drops video" {
+          notes '''
+            - **Start:** a file over 32 MB (up to 10 GiB) in folder Personal
+          '''
+        }
+        signalbox.web -> signalbox.drive "upload" {
+          navigateTo work_drive_drop_files
+          notes '''
+            - Resumable, with progress
+          '''
+        }
+      }
+      else "B's agent writes a dataset" {
+        personB -> signalbox.web "asks for dataset"
+        signalbox.computer -> signalbox.drive "save 10 GiB file" {
+          notes '''
+            - B's agent in folder Team writes it through the Computer
+          '''
+        }
+      }
+    }
+    signalbox.drive -> signalbox.drive "LFS object in R2" {
+      navigateTo work_drive_large_files
+      notes '''
+        - Content-addressed, deduplicated chunks in R2; git keeps a pointer
+      '''
+    }
+    loop "connection drops" {
+      signalbox.web -> signalbox.drive "resume upload"
+    }
+    opt "one save is ever refused" {
+      signalbox.drive -> signalbox.drive "others still advance"
+      signalbox.drive -> signalbox.attention "true turn-end notice" {
+        notes '''
+          - The notice tells the truth; no later save waits on the refused one
+        '''
+      }
+    }
+    personA -> signalbox.web "opens file"
+    signalbox.web -> signalbox.drive "fetch on read"
+    signalbox.web <- signalbox.drive "byte-identical" {
+      navigateTo scn_198_big_push
+      notes '''
+        - **End:** saved with no visible cap, restored byte-identical; pushes follow SCN-198 and SCN-199
+        - **#decided** #491, #119 (2026-10-15), #119 (2026-10-18)
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_201_dependency_cache_budget {
+    #assumption
+    variant sequence
+    title "Scenarios/Compute/Limits/Dependency Cache Budget"
+    description "What happens when a folder's dependency cache fills its budget? Assumption: soft 10 GiB cap per folder; evict unreferenced generations, then those unused for 14 days; never refuse a new generation; a miss falls back to an install; C can change the numbers on the folder page. Why: #848 recommendation, principle 8 editable defaults, invisible limits (#119); pending #848 (may shrink now that VMs only run escalated commands, #1055). SCN-201 · not v1 (Computer, Drive and threads come after v1)."
+
+    include personC, personB, signalbox.web, signalbox.tree, signalbox.bases, signalbox.computer, signalbox.models, signalbox.observability
+    include signalbox
+
+    signalbox.bases -> signalbox.bases "build generation" {
+      notes '''
+        - **Start:** one dependency generation per lockfile and toolchain, placed on folder Company
+      '''
+    }
+    signalbox.bases -> signalbox.observability "past 10 GiB" {
+      notes '''
+        - Soft budget, never a refusal
+      '''
+    }
+    signalbox.bases -> signalbox.bases "evict oldest" {
+      navigateTo work_bases_cache_budget
+      notes '''
+        - Unreferenced generations first, then ones unused for 14 days
+        - Recipes and thread records stay
+      '''
+    }
+    signalbox.bases -> signalbox.models "bill storage" {
+      notes '''
+        - Cache storage is paid by the pool placed at folder Company
+      '''
+    }
+    personB -> signalbox.web "new thread in Team"
+    signalbox.web -> signalbox.tree "resolve Base" {
+      notes '''
+        - Via the Funnel; nearest Base up the chain: Team, then Company
+      '''
+    }
+    signalbox.tree -> signalbox.bases "nearest Base" {
+      navigateTo work_bases_lease
+    }
+    alt "generation still cached?" {
+      when "hit" {
+        signalbox.bases -> signalbox.computer "warm start" {
+          notes '''
+            - Used only when a command escalates to a VM
+          '''
+        }
+      }
+      else "evicted" {
+        signalbox.computer -> signalbox.computer "incremental install" {
+          navigateTo work_computer_escalate
+          notes '''
+            - Reproducible install on the VM; nothing is refused
+          '''
+        }
+      }
+    }
+    opt "C tunes the budget" {
+      personC -> signalbox.web "edit budget" {
+        navigateTo journey_daily_folder_page
+        notes '''
+          - **End:** oldest unreferenced generations evicted; B's thread started warm or with a fresh install
+          - **#assumption** 10 GiB soft cap, editable on folder Company's page, pending #848
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+}

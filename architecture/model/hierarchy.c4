@@ -1,0 +1,289 @@
+// The tree as instances, looking like real use. Two level kinds only: a person's top level and
+// folders (nesting freely). An organization appears only as the owner of a folder. Each person has
+// several top-level folders with their own threads; threads can also sit on the top level itself.
+// Shared folders are mounted into other people's trees: A's "Friends" (owner: A, mounted by B) and
+// "Company" (owner: organization, mounted under each member's "Work"). Resolution is by position
+// only: placed at the thread's folder or above (reach below), nearest wins; anything else is a loan.
+model {
+  hier = system 'Tree (example)' {
+    // Owner of folder Company (a WorkOS organization); never a level
+    organization = external 'Organization' {
+      icon bootstrap:buildings
+      description 'owner only · WorkOS'
+    }
+
+    // Top layer, per person, above the whole tree
+    asstA = thread 'Assistant (A)' {
+      icon bootstrap:stars
+      description 'agent thread of A top level · coordinator'
+    }
+    lanesA = store 'Pipeline (A)' {
+      icon bootstrap:inboxes
+      blocker = store 'Blocker' {
+        icon bootstrap:sign-stop
+      }
+      ready = store 'Ready' {
+        icon bootstrap:check2-circle
+      }
+      considering = store 'Considering' {
+        icon bootstrap:lightbulb
+      }
+    }
+    asstB = thread 'Assistant (B)' {
+      icon bootstrap:stars
+      description 'agent thread of B top level · coordinator'
+    }
+    lanesB = store 'Pipeline (B)' {
+      icon bootstrap:inboxes
+      blocker = store 'Blocker' {
+        icon bootstrap:sign-stop
+      }
+      ready = store 'Ready' {
+        icon bootstrap:check2-circle
+      }
+      considering = store 'Considering' {
+        icon bootstrap:lightbulb
+      }
+    }
+    asstC = thread 'Assistant (C)' {
+      icon bootstrap:stars
+      description 'agent thread of C top level · coordinator'
+    }
+    lanesC = store 'Pipeline (C)' {
+      icon bootstrap:inboxes
+      blocker = store 'Blocker' {
+        icon bootstrap:sign-stop
+      }
+      ready = store 'Ready' {
+        icon bootstrap:check2-circle
+      }
+      considering = store 'Considering' {
+        icon bootstrap:lightbulb
+      }
+    }
+
+    asstD = thread 'Assistant (D)' {
+      icon bootstrap:stars
+      description 'agent thread of D top level · coordinator'
+    }
+    lanesD = store 'Pipeline (D)' {
+      icon bootstrap:inboxes
+      blocker = store 'Blocker' {
+        icon bootstrap:sign-stop
+      }
+      ready = store 'Ready' {
+        icon bootstrap:check2-circle
+      }
+      considering = store 'Considering' {
+        icon bootstrap:lightbulb
+      }
+    }
+
+    // Person A
+    topA = toplevel 'Top level (A)' {
+      description 'owner: person A'
+      metadata { owner 'person' }
+      poolA = store 'Pool P1' {
+        icon bootstrap:cpu
+        description 'A subscriptions · preferred'
+      }
+      googleA = store 'Google · A' {
+        icon tech:google-icon
+        description 'A account'
+      }
+      quickA = thread 'Quick chat (A)' {
+        description 'private · on the top level'
+      }
+      personalA = folder 'Personal' {
+        privateA = thread 'Private thread (A)' {
+          description 'private'
+        }
+        runA = thread 'Run · weekly digest' {
+          icon bootstrap:play-circle
+          description 'Thread{kind: run} · started by A automation · private'
+        }
+      }
+      friendsA = folder 'Friends' {
+        description 'owner: person A · shared'
+        metadata { owner 'person' }
+        tripThread = thread 'Trip plan' {
+          description 'shared · A and B'
+        }
+      }
+      workA = folder 'Work'
+    }
+
+    // Person B
+    topB = toplevel 'Top level (B)' {
+      description 'owner: person B'
+      metadata { owner 'person' }
+      poolB = store 'Pool P3' {
+        icon bootstrap:cpu
+        description 'B subscriptions · preferred'
+      }
+      personalB = folder 'Personal' {
+        privateB = thread 'Private thread (B)' {
+          description 'private'
+        }
+        workerB = thread 'Worker thread (B)' {
+          description 'delegated by B assistant · private'
+        }
+      }
+      friendsB = folder 'Friends (mounted)' {
+        description 'A folder Friends, via mount'
+      }
+      workB = folder 'Work'
+    }
+
+    // Person C
+    topC = toplevel 'Top level (C)' {
+      description 'owner: person C'
+      metadata { owner 'person' }
+      poolC = store 'Pool P4' {
+        description 'C subscriptions · preferred'
+      }
+      quickC = thread 'Quick chat (C)' {
+        description 'private · on the top level'
+      }
+      personalC = folder 'Personal' {
+        privateC = thread 'Private thread (C)' {
+          description 'private'
+        }
+      }
+      workC = folder 'Work'
+    }
+
+    // Person D: outside collaborator, sees only folder Team (mounted)
+    topD = toplevel 'Top level (D)' {
+      description 'owner: person D'
+      metadata { owner 'person' }
+      poolD = store 'Pool P5' {
+        icon bootstrap:cpu
+        description 'D subscriptions · preferred'
+      }
+      sharedD = folder 'Shared with me'
+    }
+
+    // One shared folder (one Level actor), owned by the organization, mounted under each Work
+    company = folder 'Company' {
+      description 'owner: organization'
+      metadata { owner 'organization' }
+      poolCo = store 'Pool P2' {
+        description 'owner: organization'
+      }
+      confluence = store 'Confluence' {
+        description 'organization connection'
+      }
+      googleCo = store 'Google · Company' {
+        description 'organization accounts'
+      }
+      costsCo = store 'Costs (Company)' {
+        description 'rolled up from below'
+      }
+      agentCo = thread 'Company agent' {
+        description 'agent thread · folder chain only (no via)'
+      }
+      runCo = thread 'Company run thread' {
+        icon bootstrap:play-circle
+        description 'Thread{kind: run} · started by an automation'
+      }
+      team = folder 'Team' {
+        description 'one Level actor'
+        sharedThread = thread 'Shared work thread' {
+          description 'shared · A, B and D · one Thread actor'
+        }
+        teamPrivateB = thread 'Draft spec (B)' {
+          description 'private · invisible to A and C'
+        }
+        agentTeam = thread 'Team agent' {
+          description 'agent thread of folder Team'
+        }
+        runThread = thread 'Run thread' {
+          icon bootstrap:play-circle
+          description 'Thread{kind: run} · CI, merge, automation step'
+        }
+        teamApp = app 'Team dashboard' {
+          description 'folder app placed in Team'
+        }
+        roomAB = thread 'Room (A ↔ B)' {
+          icon bootstrap:people
+          description 'room: participants are assistants'
+        }
+        costsTeam = store 'Costs (Team)'
+      }
+    }
+
+    organization -[owns]-> company 'owns'
+
+    // Mounts: the only edges across owners
+    topA.workA -[mount]-> company 'mount (A)'
+    topB.workB -[mount]-> company 'mount (B)'
+    topC.workC -[mount]-> company 'mount (C)'
+    topB.friendsB -[mount]-> topA.friendsA 'mount (B)'
+    topD.sharedD -[mount]-> company.team 'mount (D)'
+
+    // Placements reach down; nearest wins
+    company.poolCo -[reach]-> company.team.sharedThread 'nearest pool'
+    company.confluence -[reach]-> company.team.sharedThread 'connection'
+    company.googleCo -[reach]-> company.team.sharedThread 'connection'
+    company.poolCo -[reach]-> company.agentCo 'pool'
+    company.poolCo -[reach]-> company.runCo 'pool'
+    company.poolCo -[reach]-> company.team.agentTeam 'pool'
+    company.poolCo -[reach]-> company.team.runThread 'pool'
+    topA.poolA -[reach]-> topA.personalA.privateA 'nearest pool'
+    topA.googleA -[reach]-> topA.personalA.privateA 'connection'
+    topA.poolA -[reach]-> topA.friendsA.tripThread 'nearest pool (A tree)'
+    topA.poolA -[reach]-> topA.quickA 'pool'
+    topA.poolA -[reach]-> topA.personalA.runA 'pool'
+    topB.poolB -[reach]-> topB.personalB.privateB 'nearest pool'
+    topB.poolB -[reach]-> topB.personalB.workerB 'pool'
+    topC.poolC -[reach]-> topC.personalC.privateC 'nearest pool'
+    topC.poolC -[reach]-> topC.quickC 'pool'
+
+    // Each assistant coordinates below its top level, on the pool marked preferred there
+    asstA -> topA.poolA 'preferred pool'
+    asstB -> topB.poolB 'preferred pool'
+    asstC -> topC.poolC 'preferred pool'
+    asstD -> topD.poolD 'preferred pool'
+    asstA -> topA 'coordinates'
+    asstB -> topB 'coordinates'
+    asstC -> topC 'coordinates'
+    asstD -> topD 'coordinates'
+
+    // Anything not above you comes in by a loan
+    topA.googleA -[lend]-> company.team 'lent by A'
+
+    // Asks raised in the shared thread land in each decider's own lanes; answers go back into the thread
+    lanesA.ready -> company.team.sharedThread 'answer: merge gate (A)'
+    lanesB.considering -> company.team.sharedThread 'answer: option (B)'
+    lanesC.blocker -> company.team.sharedThread 'answer: place or lend (admin C)'
+
+    // Costs roll up Team → Company, never to A or B
+    company.team.sharedThread -[async]-> company.team.costsTeam 'usage rows'
+    company.team.costsTeam -[async]-> company.costsCo 'rolls up'
+  }
+
+  // People: ownership, roles, live multiplayer
+  personA -> hier.topA 'owns'
+  personB -> hier.topB 'owns'
+  personC -> hier.topC 'owns'
+  personD -> hier.topD 'owns'
+  personD -> hier.company.team 'Member (outside)'
+  personC -> hier.company 'Admin'
+  personA -> hier.company 'Member'
+  personB -> hier.company 'Member'
+  personB -> hier.topA.friendsA 'Member'
+  personA -> hier.company.team.sharedThread 'send turn · watch live'
+  personB -> hier.company.team.sharedThread 'send turn · watch live'
+  personD -> hier.company.team.sharedThread 'send turn · watch live'
+  personA -> hier.topA.friendsA.tripThread 'send turn'
+  personB -> hier.topA.friendsA.tripThread 'send turn'
+  personA -> hier.lanesA 'answers'
+  personB -> hier.lanesB 'answers'
+  personC -> hier.lanesC 'answers'
+  personA -> hier.asstA 'talks to'
+  personB -> hier.asstB 'talks to'
+  personC -> hier.asstC 'talks to'
+  personD -> hier.asstD 'talks to'
+  personD -> hier.lanesD 'answers'
+}

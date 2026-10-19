@@ -1,0 +1,1313 @@
+// Scenario shard 05: pools (SCN-094 to SCN-123). One journey per scenario, drawn as a sequence.
+// Generic tree: folder Company (owner: organization) with folder Team inside, mounted under each
+// person's Work. A and B are members of Company, C is its admin. Own pools: P1 on A's top level,
+// P3 on B's, P2 is Company's pool (owned by the organization) C may place at Company. Resolution is by the hierarchy only:
+// placed at the thread's folder or above, nearest wins; anything else is a loan.
+// Modules are black boxes here; the workflow views they link to carry the detail.
+views {
+
+  style signalbox, modelProviders, hier {
+    color muted
+    opacity 10%
+  }
+
+  // ───────────────────────────── Resolution ─────────────────────────────
+
+  dynamic view scn_094_no_pool_on_chain {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Resolution/No Pool On Chain'
+    description "What happens when a thread runs and no pool is placed on its chain? Decided: #225 §8 (2026-10-14) 'needs a pool', never a silent fallback; #152 (2026-10-14) the thread's level resolves the pool, no switcher. · SCN-094 · not v1 as drawn (thread turns); the same placement and nearest-wins resolution is live in v1 for local pool keys (SCN-117)"
+
+    include personD, personC, personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.attention
+
+    personD -> signalbox.web 'Send turn' {
+      notes """
+        - **Start:** D, the outside collaborator with access to folder Team only, sends in a Team thread filed through D's mount
+        - Nothing is placed at Team, Company or D's top level; D has no pool of their own
+      """
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Start turn'
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve pool' {
+      navigateTo work_threads_start_pick_model
+      notes """
+        - Walks Team → Company, then via D's mount to D's top level
+        - Nothing placed, nothing lent
+      """
+    }
+    signalbox.thread.threadActor <- signalbox.tree 'NeedsPool' {
+      navigateTo folders_pools_needs_pool
+      notes """
+        - The thread shows **needs a pool**; no silent fallback to anyone's pool
+        - **#decided** #225 §8 (2026-10-14), #152 (2026-10-14)
+      """
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'Raise NeedsPool' {
+      navigateTo person_pipeline_blocker_needs_pool
+      notes """
+        - Goes only to role holders on the chain: C (admin of Company) gets **Add pool here**
+        - Members such as A get an offer to lend; D sees **needs a pool** in the thread
+      """
+    }
+    alt 'who unblocks' {
+      when 'C places Company\'s pool' {
+        personC -> signalbox.web 'Add pool here' {
+          navigateTo folders_pools_first_pool
+          notes "- C connects Company's pool P2 and places it at folder Company"
+        }
+        signalbox.web -> signalbox.models 'Place P2 at Company'
+      }
+      else 'A lends into Team' {
+        personA -> signalbox.web 'Lend P1 into Team' {
+          navigateTo folders_lending_lend
+          notes "- A's explicit, revocable loan; Team accepts pools"
+        }
+        signalbox.web -> signalbox.tree 'Loan at Team'
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve again' {
+      notes "- D sends again; the nearest pool now exists"
+    }
+    signalbox.thread.threadActor -> signalbox.models 'Run turn' {
+      notes "- **End:** the turn runs on the pool C placed or A lent"
+    }
+  }
+
+  dynamic view scn_095_company_places_pool {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Resolution/Company Places Pool'
+    description "Does the company's pool take over from members' own pools? Decided: owner 2026-10-18 (R5) a top-level pool covers Work/Company unless Company's admin places one; #248 (2026-10-15) a member's Personal thread never resolves to Company's pool. · SCN-095 · not v1 as drawn (thread turns); the same placement and nearest-wins resolution is live in v1 for local pool keys (SCN-117)"
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.gateway
+
+    parallel {
+      personA -> signalbox.web 'Thread in Company' {
+        notes """
+          - **Start:** Company has no pool
+          - A files through A's mount: Place `{Company, via: A's mount}`
+        """
+      }
+      personB -> signalbox.web 'Thread in Team' {
+        notes "- B files in folder Team through B's mount"
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve each chain' {
+      navigateTo folders_placement_resolve_shared
+      notes """
+        - A: Company → Work → A's top → **P1**
+        - B: Team → Company → Work → B's top → **P3**
+      """
+    }
+    personC -> signalbox.web 'Place Company\'s pool' {
+      navigateTo folders_pools_add_account
+      notes "- C is admin of Company; the new pool P2 is owned by the organization"
+    }
+    signalbox.web -> signalbox.models 'Create P2'
+    signalbox.models -> signalbox.tree 'Place at Company' {
+      navigateTo folders_placement_kind_pool_connection
+      notes "- One placement row on folder Company; reach below"
+    }
+    signalbox.thread.threadActor -> signalbox.gateway 'Running turn keeps grant' {
+      notes "- A turn already running finishes on its frozen scope"
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Next turn resolves' {
+      notes "- P2 is now nearer than P1 or P3 for both A and B"
+    }
+    signalbox.thread.threadActor -> signalbox.models 'Turns on P2' {
+      navigateTo folders_usage_payer
+      notes """
+        - **End:** P2 pays for every thread below Company from the next turn
+        - A's and B's Personal threads stay on P1 and P3 (**#decided** #248)
+      """
+    }
+  }
+
+  dynamic view scn_096_company_unplaces_pool {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Resolution/Company Removes Pool'
+    description "What happens when the company removes its pool again? Assumption: each thread re-resolves on its next turn: A and B to their own top-level pools (P1, P3), D (outside collaborator, no pool of their own) to 'needs a pool', Company threads without a via to NeedsPool for admins. Why: nearest placed wins (R5) in reverse; #256; design A2. · SCN-096 · not v1 as drawn (thread turns); the same placement and nearest-wins resolution is live in v1 for local pool keys (SCN-117)"
+
+    include personC, personB, personD, signalbox, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.tree, signalbox.attention
+
+    personC -> signalbox.web 'Unplace P2' {
+      notes "- **Start:** everything under Company runs on Company's pool P2"
+    }
+    signalbox.web -> signalbox.operations 'Unplace at Company' {
+      navigateTo folders_gates_destructive
+      notes "- If an in-app agent asked, Operations gates it as destructive and C confirms"
+    }
+    signalbox.operations -> signalbox.tree 'Remove placement'
+    signalbox.thread.threadActor -> signalbox.tree 'Next turn re-resolves' {
+      navigateTo folders_placement_resolve_shared
+      notes """
+        - Running turns finish on their frozen grant
+        - No loan is involved
+      """
+    }
+    alt 'per chain' {
+      when 'member thread (via own mount)' {
+        personB -> signalbox.web 'Send in Team'
+        signalbox.thread.threadActor <- signalbox.tree 'P3 (B top level)' {
+          notes "- B's threads fall to P3, A's to P1: each member's own top-level pool covers Company again"
+        }
+      }
+      when 'D thread (no pool on path)' {
+        signalbox.thread.threadActor <- signalbox.tree 'NeedsPool'
+        signalbox.attention -> personD 'Add a pool' {
+          navigateTo person_pipeline_blocker_needs_pool
+          notes "- D can place a pool on D's own top level, or wait for a lend into Team"
+        }
+      }
+      else 'Company agent (no via)' {
+        signalbox.thread.threadActor <- signalbox.tree 'NeedsPool' {
+          navigateTo folders_placement_resolve_org_chain
+          notes "- Company's agents and automations have no mount, so their chain stops at Company"
+        }
+        signalbox.attention -> personC 'Add pool here' {
+          notes """
+            - **End:** every thread is on its own nearest pool or asks for one
+            - **#assumption** nearest-wins run in reverse (R5, #256, A2)
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view scn_097_sender_does_not_pick_pool {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Resolution/Sender Does Not Pay'
+    description "Whose pool pays when a teammate sends into a thread someone else filed? Assumption: A's top pool pays for B's turns too, because the chain comes from the thread's Place (via A's mount), never from who sends; B is never billed for company work. Why: owner rule 2026-10-18, design A2/A36; 'via A' label for others pending (MASTER §2). · SCN-097 · not v1 as drawn (thread turns); the same placement and nearest-wins resolution is live in v1 for local pool keys (SCN-117)"
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.observability
+
+    personA -> signalbox.web 'Start thread' {
+      notes """
+        - **Start:** shared thread in folder Company, no pool at Company
+        - Its Place is `{Company, via: A's mount}`
+      """
+    }
+    personB -> signalbox.web 'Send next turn'
+    signalbox.web -> signalbox.thread.threadActor 'Turn from B'
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve on Place' {
+      navigateTo folders_placement_resolve_shared
+      notes """
+        - Company → Work (A) → A's top → **P1**; the sender never enters it
+        - **#assumption** chain from the Place only (owner 2026-10-18, A2, A36)
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.models 'Turn on P1'
+    signalbox.models -[async]-> signalbox.observability 'Usage row' {
+      navigateTo folders_usage_record
+      notes "- One row per upstream request: subject B, pool P1"
+    }
+    signalbox.web <- signalbox.models 'Member-safe view' {
+      navigateTo folders_pools_open_view
+      notes "- B sees remaining usage and reset only, never A's accounts"
+    }
+    alt 'later' {
+      when 'C places P2 at Company' {
+        personC -> signalbox.web 'Place P2'
+        signalbox.thread.threadActor -> signalbox.tree 'Next turn: P2' {
+          notes "- **End:** one pool per turn, now P2 for A and B alike"
+        }
+      }
+      else 'A leaves the company' {
+        signalbox.thread.threadActor -> signalbox.tree 'Place loses via' {
+          navigateTo organization_identity_leave
+          notes "- **End:** the chain stops at Company → NeedsPool to its admins"
+        }
+      }
+    }
+  }
+
+  dynamic view scn_098_personal_never_sees_company_pool {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Resolution/Personal Stays Personal'
+    description "Does the company pool ever reach a member's Personal folder? Decided: #248 (2026-10-15) a member's thread in their own Personal never resolves to Company's pool; consistent with R5 because Company is not above Personal. · SCN-098 · not v1 as drawn (thread turns); the same placement and nearest-wins resolution is live in v1 for local pool keys (SCN-117)"
+
+    include personC, personB, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.models
+
+    personC -> signalbox.web 'Place P2 at Company' {
+      notes "- **Start:** Company's pool P2 sits on folder Company"
+    }
+    signalbox.web -> signalbox.tree 'Placement row' {
+      navigateTo folders_placement_kind_pool_connection
+    }
+    personB -> signalbox.web 'Thread in Personal'
+    signalbox.web -> signalbox.thread.threadActor 'Start turn'
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve chain' {
+      navigateTo folders_placement_resolve_shared
+      notes """
+        - Personal → B's top level
+        - Company hangs under Work, a sibling branch, never an ancestor of Personal
+      """
+    }
+    signalbox.thread.threadActor <- signalbox.tree 'P3 (B top level)'
+    signalbox.thread.threadActor -> signalbox.models 'Turn on P3' {
+      navigateTo folders_usage_payer
+      notes """
+        - **End:** B's Personal threads keep running on B's own pool
+        - **#decided** #248 (2026-10-15)
+      """
+    }
+  }
+
+  dynamic view scn_100_several_pools_one_level {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Resolution/Several Pools One Level'
+    description "Which pool runs when several sit at one level? Decided: #230 d10 (2026-10-14) balanced like CLIProxyAPI, round-robin and sticky per thread; design nearestSet, A8. · SCN-100 · not v1 as drawn (loans); v1 resolves the nearest set for local keys"
+
+    include personA, personB, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.attention
+
+    parallel {
+      personA -> signalbox.web 'Lend pool X' {
+        notes "- **Start:** two usable pools land at folder Team"
+      }
+      personB -> signalbox.web 'Lend pool Y'
+    }
+    signalbox.web -> signalbox.tree 'Two loans at Team' {
+      navigateTo folders_placement_kind_pool_connection
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve nearest set' {
+      notes "- Returns the set at the nearest level: {X, Y}"
+    }
+    signalbox.thread.threadActor -> signalbox.models 'Pick round-robin' {
+      navigateTo folders_lending_round_robin
+      notes "- Thread 1 gets X, thread 2 gets Y"
+    }
+    signalbox.models -> signalbox.models 'Sticky pin' {
+      navigateTo folders_pools_pins
+      notes "- Each thread keeps its pick across turns and sleeps"
+    }
+    opt 'X revoked, deleted or exhausted' {
+      signalbox.thread.threadActor -> signalbox.models 'Re-pick from set' {
+        notes "- On the thread's next turn, never mid-turn"
+      }
+      signalbox.thread.threadActor -[async]-> signalbox.attention 'Thread notice'
+    }
+    opt 'set empties' {
+      signalbox.thread.threadActor <- signalbox.tree 'NeedsPool' {
+        navigateTo work_threads_start_pick_model
+        notes """
+          - **End:** new threads alternate between the pools, each sticks to its pick
+          - **#decided** #230 d10 (2026-10-14)
+        """
+      }
+    }
+  }
+
+  // ───────────────────────────── Loans ─────────────────────────────
+
+  dynamic view scn_099_company_pool_perk {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Loans/Company Pool Perk'
+    description "Can the company offer its pool for members' Personal folders as a perk? Decided: #225 §8 (2026-10-14) off by default on every tier; an Admin switches it on; one click to connect; usage obscured. Unbuilt (#264). Drawn as a loan because Company's pool never reaches Personal by hierarchy. · SCN-099 · not v1"
+
+    include personC, personA, signalbox, signalbox.web, signalbox.tree, signalbox.thread.threadActor, signalbox.models, signalbox.observability
+
+    personC -> signalbox.web 'Switch perk on' {
+      notes "- **Start:** perk off, the default on every tier"
+    }
+    signalbox.web -> signalbox.tree 'Perk flag at Company' {
+      notes "- Needs Admin at folder Company"
+    }
+    personA -> signalbox.web 'Use company pool here' {
+      notes "- One click in A's folder Personal"
+    }
+    signalbox.web -> signalbox.tree 'Loan P2 into Personal' {
+      navigateTo folders_lending_lend
+      notes "- A consents at the destination; the loan is revocable"
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve Personal' {
+      notes "- The lent P2 at Personal is nearer than P1 on A's top level"
+    }
+    signalbox.thread.threadActor -> signalbox.models 'Turn on P2'
+    signalbox.models -[async]-> signalbox.observability 'Obscured usage' {
+      navigateTo folders_usage_rollup
+      notes "- The company sees totals only, no titles or content"
+    }
+    alt 'way out' {
+      when 'C switches it off' {
+        personC -> signalbox.web 'Switch perk off'
+      }
+      else 'A ends the loan' {
+        personA -> signalbox.web 'End loan' {
+          navigateTo folders_lending_end_loan
+        }
+      }
+    }
+    signalbox.web -> signalbox.tree 'Loan removed' {
+      notes """
+        - **End:** running turns finish; Personal falls back to P1
+        - **#decided** #225 §8 (2026-10-14)
+      """
+    }
+  }
+
+  dynamic view scn_102_lend_personal_pool_company {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Loans/Lend Into Company'
+    description "What happens when a person lends a personal pool into the company folder? Decided: #225 §8 (2026-10-14) personal pools accepted by default except Enterprise, the lender is warned once; #230 d10. · SCN-102 · not v1"
+
+    include personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread.threadActor, signalbox.models
+
+    personA -> signalbox.web 'Lend P1 into Company' {
+      notes """
+        - **Start:** Company has no pool and is not Enterprise
+        - A's own Company threads already ran on P1 via A's mount; the loan is for everyone else
+      """
+    }
+    personA <- signalbox.web 'Warn once' {
+      notes "- Company data will go through A's subscriptions"
+    }
+    signalbox.web -> signalbox.operations 'Lend (Member+)' {
+      notes "- Company accepts pools by default"
+    }
+    signalbox.operations -> signalbox.tree 'Loan at Company' {
+      navigateTo folders_lending_lend
+    }
+    personB -> signalbox.web 'Send in Team'
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve' {
+      notes "- Team → Company: lent P1 is nearer than P3 on B's top level"
+    }
+    signalbox.thread.threadActor -> signalbox.models 'Turn on P1'
+    signalbox.web <- signalbox.models 'Shown lent by A' {
+      navigateTo folders_pools_open_view
+      notes "- Members see remaining usage, reset and **lent by A**"
+    }
+    personA -> signalbox.web 'End loan any time' {
+      navigateTo folders_lending_end_loan
+      notes """
+        - **End:** A's pool serves Company, shown lent by A, until A ends it from the pool's own row
+        - **#decided** #225 §8 (2026-10-14)
+      """
+    }
+  }
+
+  dynamic view scn_103_enterprise_refuses_personal_pools {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Loans/Enterprise Refuses Pools'
+    description "Can an Enterprise company refuse personal pools? Decided: #230 d9 (2026-10-14) Enterprise flag set through billing; #264, #265 personal-pool lends refused, assistants forced. Assumption for the gap: with no Company pool, A's top pool still covers Company via the mount; Enterprise refuses loans, not hierarchy reach (owner R5 2026-10-18; pending #264). · SCN-103 · not v1"
+
+    include personA, personC, hier.asstA, signalbox, hier, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.tree, signalbox.models
+
+    signalbox.tree -> signalbox.tree 'Enterprise flag set' {
+      navigateTo folders_access_enterprise_flag
+      notes """
+        - **Start:** Signalbox sets the flag on Company through billing
+        - Admins can't toggle it
+      """
+    }
+    personA -> signalbox.web 'Lend P1 into Company'
+    signalbox.web -> signalbox.operations 'Lend request'
+    signalbox.web <- signalbox.operations 'Refused' {
+      navigateTo folders_lending_lend
+      notes "- Enterprise doesn't accept personal pools"
+    }
+    alt 'Company pool placed?' {
+      when 'not yet' {
+        signalbox.thread.threadActor -> signalbox.tree 'Resolve via A mount' {
+          notes "- **#assumption** P1 still covers A's Company threads by hierarchy (R5); Enterprise refuses loans, not reach"
+        }
+        signalbox.thread.threadActor -> signalbox.models 'Turn on P1'
+      }
+      else 'C places P2' {
+        personC -> signalbox.web 'Place P2 at Company'
+        signalbox.thread.threadActor -> signalbox.tree 'Resolve: P2 nearest' {
+          navigateTo folders_placement_resolve_shared
+        }
+        signalbox.thread.threadActor -> signalbox.models 'Turn on P2' {
+          notes "- Company work runs on the company pool for everyone below Company"
+        }
+      }
+    }
+    hier.asstA -> signalbox.tree 'Assistant pool' {
+      navigateTo folders_lending_company_pool
+      notes """
+        - **End:** A's assistant is forced onto the company pool lent into A's top level; A's lend stays refused
+        - **#decided** #230 d9, #264, #265
+      """
+    }
+  }
+
+  dynamic view scn_104_revoke_lent_pool {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Loans/Revoke Mid Turn'
+    description "What happens when a lender revokes a pool mid-turn? Decided: #256 (2026-10-15) new turns stop at once, running turns finish, the folder falls to its next pool or 'needs a pool'; #230 d10; #232 a leaver's lends are withdrawn. Lender caps deferred (#260). · SCN-104 · not v1"
+
+    include personA, personB, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.thread.threadActor, signalbox.gateway, signalbox.models, signalbox.attention
+
+    personA -> signalbox.web 'Lend P1 into Team' {
+      navigateTo folders_lending_round_robin
+      notes """
+        - **Start:** Team runs on A's lent P1 (round-robin, sticky, if several are lent)
+      """
+    }
+    personB -> signalbox.web 'Send in Team'
+    signalbox.thread.threadActor -> signalbox.models 'Turn running on P1'
+    personA -> signalbox.web 'End loan' {
+      navigateTo folders_lending_end_loan
+      notes "- From the pool's own row"
+    }
+    signalbox.web -> signalbox.tree 'Remove loan'
+    signalbox.tree -[async]-> signalbox.gateway 'Deny new scope' {
+      navigateTo folders_gateway_grant
+      notes """
+        - B's running turn keeps its frozen scope and finishes
+        - New turns stop using P1 at once
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Next turn re-resolves' {
+      navigateTo work_threads_start_pick_model
+    }
+    alt 'what is left' {
+      when 'another pool in the set' {
+        signalbox.thread.threadActor <- signalbox.tree 'Next pool'
+      }
+      else 'nothing left' {
+        signalbox.thread.threadActor -[async]-> signalbox.attention 'NeedsPool ask' {
+          notes """
+            - **End:** Team is on its next pool or asks for one
+            - **#decided** #256 (2026-10-15)
+          """
+        }
+      }
+    }
+    opt 'A leaves the company' {
+      signalbox.identity -> signalbox.tree 'Withdraw A lends' {
+        navigateTo folders_lending_leaver_loans
+        notes "- Membership webhook; all of A's lends end at once"
+      }
+    }
+  }
+
+  dynamic view scn_105_loan_expires_mid_turn {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Loans/Loan Expires'
+    description "What happens when a loan expires on its own mid-turn? Assumption: expiry behaves exactly like a revoke: the running turn finishes, the next re-resolves, nothing is cut mid-turn. Why: #256 revoke semantics and R-LND-06; M11's refresh denial applies to new grants only. · SCN-105 · not v1"
+
+    include personA, personB, signalbox, signalbox.web, signalbox.tree, signalbox.thread.threadActor, signalbox.gateway, signalbox.attention
+
+    personA -> signalbox.web 'Lend until a date' {
+      notes "- **Start:** P1 lent into Team with `until`"
+    }
+    signalbox.web -> signalbox.tree 'Loan with until' {
+      navigateTo state_loan
+    }
+    personB -> signalbox.web 'Send in Team'
+    signalbox.web -> signalbox.thread.threadActor 'Turn running'
+    signalbox.thread.threadActor -> signalbox.gateway 'Grant refresh' {
+      navigateTo folders_gateway_grant
+      notes """
+        - Expiry passed: the refresh refuses new scope
+        - The running turn keeps its frozen scope and finishes
+        - **#assumption** expiry = revoke (#256, R-LND-06)
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Next turn re-resolves' {
+      navigateTo work_threads_start_pick_model
+    }
+    alt 'what is left' {
+      when 'next pool in the set' {
+        signalbox.thread.threadActor <- signalbox.tree 'Next pool' {
+          navigateTo folders_lending_round_robin
+        }
+      }
+      else 'nothing left' {
+        signalbox.thread.threadActor -[async]-> signalbox.attention 'NeedsPool ask'
+      }
+    }
+    personA <- signalbox.web 'Ended on expiry' {
+      notes "- **End:** A's outbound loans list shows it ended on its date"
+    }
+  }
+
+  dynamic view scn_106_withhold_inherited_pool {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Loans/Withhold Inherited Pool'
+    description "Can a folder owner withhold the inherited pool and ask members to lend? Decided: #225 §3 (2026-10-14) a shared folder's owner can withhold their own resources and ask members to lend; #257 withhold and turn back on. · SCN-106 · not v1"
+
+    include personA, personB, signalbox, signalbox.web, signalbox.tree, signalbox.thread.threadActor, signalbox.models, signalbox.attention
+
+    personA -> signalbox.web 'Withhold P1 on Friends' {
+      navigateTo folders_lending_accept_kinds
+      notes """
+        - **Start:** folder Friends (owner: A, shared with B) inherits P1 from A's top level
+        - Done on the folder's page
+      """
+    }
+    signalbox.web -> signalbox.tree 'Withhold inherited'
+    personB -> signalbox.web 'Send in Trip plan'
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve' {
+      notes "- Skips P1; nothing lent yet"
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'NeedsPool + lend prompt'
+    signalbox.attention -> personB 'Lend a pool?' {
+      notes "- Members of Friends are asked to lend; A, the owner, withheld on purpose"
+    }
+    personB -> signalbox.web 'Lend P3 into Friends' {
+      navigateTo folders_lending_lend
+      notes "- B consents; Friends accepts pools"
+    }
+    signalbox.web -> signalbox.tree 'Loan at Friends'
+    signalbox.thread.threadActor -> signalbox.models 'Turn on P3' {
+      navigateTo work_threads_start_pick_model
+    }
+    personA -> signalbox.web 'Turn P1 back on' {
+      notes """
+        - **End:** P1 serves again wherever no nearer lend sits; inside Friends the lent P3 stays nearer
+        - **#decided** #225 §3 (2026-10-14), #257
+      """
+    }
+  }
+
+  dynamic view scn_107_stop_accepting_pools {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Loans/Stop Accepting Pools'
+    description "What happens when an admin stops accepting pools while loans exist? Decided: #225 §4 (2026-10-14) admins choose accepted kinds; #257 existing lends of a kind stop when it is no longer accepted. Assumption: accepted kinds govern loans only, never reach from a member's own top level (resolution is hierarchy only). · SCN-107 · not v1"
+
+    include personC, personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.gateway, signalbox.thread.threadActor
+
+    personC -> signalbox.web 'Stop accepting pools' {
+      navigateTo folders_lending_accept_kinds
+      notes "- **Start:** A's P1 is lent into Company"
+    }
+    signalbox.web -> signalbox.tree 'Accepted kinds −pool'
+    signalbox.tree -[async]-> signalbox.gateway 'Pool lends end' {
+      notes "- Running turns finish; new turns stop using the lends"
+    }
+    personB -> signalbox.web 'Send in Team'
+    signalbox.thread.threadActor -> signalbox.tree 'Re-resolve' {
+      navigateTo work_threads_start_pick_model
+      notes "- B: P2 if Company placed one, else P3 on B's top level, else NeedsPool"
+    }
+    personA -> signalbox.web 'Lend P1 again'
+    signalbox.web -> signalbox.operations 'Lend request'
+    signalbox.web <- signalbox.operations 'Refused: not accepted' {
+      navigateTo folders_lending_lend
+      notes """
+        - **End:** A's lend stopped, new lends refused with the reason
+        - A's own Company threads still run on P1 by hierarchy (**#assumption**)
+      """
+    }
+  }
+
+  dynamic view scn_108_lender_cap_reached {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Loans/Lender Cap Reached'
+    description "What happens when a lender's cap is reached partway through a usage window? Assumption: no lender caps in v1, everything is recorded instead; when caps return they behave as drawn and never cut a running turn. Why: #259 (2026-10-14) no caps at first, record everything; pending #260. · SCN-108 · not v1"
+
+    include personA, personB, signalbox, signalbox.web, signalbox.tree, signalbox.thread.threadActor, signalbox.models, signalbox.observability, signalbox.attention
+
+    personA -> signalbox.web 'Lend with 30% cap' {
+      notes """
+        - **Start:** Team uses A's lent P1
+        - **#assumption** caps come later (#260); v1 only records
+      """
+    }
+    signalbox.web -> signalbox.tree 'Loan with cap'
+    personB -> signalbox.web 'Work in Team'
+    signalbox.thread.threadActor -> signalbox.models 'Turns on P1'
+    signalbox.models -[async]-> signalbox.observability 'Team share of window' {
+      navigateTo folders_usage_rollup
+    }
+    signalbox.models -> signalbox.models 'Cap reached' {
+      navigateTo folders_pools_account_health
+      notes "- Running turns finish"
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Skip P1 for Team' {
+      navigateTo folders_lending_round_robin
+    }
+    alt 'what is left' {
+      when 'next pool in the set' {
+        signalbox.thread.threadActor <- signalbox.tree 'Next pool'
+      }
+      else 'nothing left' {
+        signalbox.thread.threadActor -[async]-> signalbox.attention 'NeedsPool' {
+          navigateTo work_threads_start_pick_model
+        }
+      }
+    }
+    signalbox.models -> signalbox.models 'Window resets' {
+      notes """
+        - **End:** Team uses P1 again
+        - Other folders on P1 were never affected
+      """
+    }
+  }
+
+  dynamic view scn_109_assistant_company_pool {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Loans/Assistant Company Pool'
+    description "Does a person's assistant run on the company's pool? Decided: #225 §6 (2026-10-14), #265 the company lends its pool to employees' assistants, usage obscured, Enterprise can force it. Storing the pick as preferred is design A8 (assumption). · SCN-109 · not v1"
+
+    include personB, personA, hier.asstB, signalbox, hier, signalbox.web, signalbox.identity, signalbox.tree, signalbox.models, signalbox.observability
+
+    signalbox.tree -> signalbox.tree 'P2 lent to tops' {
+      navigateTo folders_lending_company_pool
+      notes """
+        - **Start:** B's assistant runs on P3
+        - The company lends P2 into members' top levels for assistants, on by default
+      """
+    }
+    personB -> signalbox.web 'Assistant pool picker' {
+      navigateTo person_assistant_pool
+      notes "- Lists pools placed or lent at B's top level: P3 and the lent P2"
+    }
+    signalbox.web -> signalbox.tree 'Mark P2 preferred' {
+      notes "- **#assumption** the pick is the `preferred` flag (A8)"
+    }
+    hier.asstB -> signalbox.tree 'Resolve top level'
+    hier.asstB -> signalbox.models 'Turn on P2' {
+      navigateTo person_assistant_org_pool_loan
+    }
+    signalbox.models -[async]-> signalbox.observability 'Obscured usage' {
+      notes "- The company sees totals only"
+    }
+    opt 'Enterprise company' {
+      personA <- signalbox.web 'Picker locked' {
+        notes "- A's assistant is forced onto the company pool"
+      }
+    }
+    opt 'B leaves the company' {
+      signalbox.identity -> signalbox.tree 'Loan ends'
+      hier.asstB -> signalbox.tree 'Falls back' {
+        notes """
+          - **End:** back to P3, or NeedsPool with **Add pool here**
+          - **#decided** #225 §6, #265
+        """
+      }
+    }
+  }
+
+  dynamic view scn_114_delete_lent_pool {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Loans/Delete Lent Pool'
+    description "What happens when a pool that is lent into other folders is deleted? Assumption: deleting is a revoke of every placement and loan at once, then credential deletion. Why: #256 revoke semantics, #335 gate for agent deletes, design §2.3 Delete pool saga, A21 no reattribution. · SCN-114 · not v1"
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.operations, signalbox.models, signalbox.tree, signalbox.attention
+
+    personA -> signalbox.web 'Delete pool P1' {
+      notes "- **Start:** P1 is placed at A's top level and lent into Company and Team"
+    }
+    signalbox.web -> signalbox.operations 'Delete (confirm)' {
+      navigateTo folders_gates_destructive
+      notes "- If A's agent asked, A must confirm"
+    }
+    signalbox.operations -> signalbox.models 'Retire P1' {
+      navigateTo folders_pools_delete_pool
+      notes """
+        - `retiring`: new grants refused, in-flight turns finish
+        - **#assumption** delete = revoke everywhere (#256, §2.3)
+      """
+    }
+    signalbox.models -> signalbox.tree 'Unplace everywhere' {
+      notes "- Walks its outbound index: A's top level, the Company loan, the Team loan"
+    }
+    parallel {
+      signalbox.attention -> personB 'Team: next pool or ask' {
+        navigateTo work_threads_start_pick_model
+      }
+      signalbox.attention -> personC 'Company: next pool or ask'
+    }
+    signalbox.models -> signalbox.models 'Delete sealed credentials' {
+      notes "- Resolve never returns a dead ref"
+    }
+    opt 'delete stalls' {
+      signalbox.operations -> signalbox.models 'Sweeper resumes' {
+        navigateTo operations_ops_custody_sweeper
+      }
+    }
+    personA <- signalbox.web 'Pool gone' {
+      notes "- **End:** every placement and loan removed; past usage rows stay"
+    }
+  }
+
+  // ───────────────────────────── Accounts ─────────────────────────────
+
+  dynamic view scn_110_account_hits_limit {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Account Hits Limit'
+    description "What happens when a pool account hits its 5-hour or weekly limit? Decided: #281 adopted on #225 (2026-10-14) people are told only when no pool is left; #968 (2026-10-18) the picker lists models with reset times; #877 rebind-on quota. · SCN-110 · v1 partial"
+
+    include personB, personC, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.models, signalbox.harness, signalbox.attention, signalbox.automations
+
+    personB -> signalbox.web 'Send in Company' {
+      notes "- **Start:** one account in Company's pool P2 is about to run out"
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Start turn'
+    signalbox.thread.threadActor -> signalbox.models 'Turn on P2'
+    signalbox.models -> signalbox.models 'Quota error'
+    signalbox.models -> signalbox.models 'Rebind account' {
+      navigateTo folders_pools_failover
+      notes "- Another account in the same pool picks up (`rebind-on: quota`)"
+    }
+    opt 'the whole pool is out' {
+      signalbox.thread.threadActor -> signalbox.harness 'Hand off' {
+        navigateTo work_harness_failover
+        notes "- To another pool in the set or another provider, with a handoff prompt"
+      }
+    }
+    signalbox.web <- signalbox.thread.threadActor 'Switch event' {
+      notes "- Shown in the thread as a system event"
+    }
+    signalbox.web -> signalbox.models 'Picker: reset times' {
+      navigateTo folders_pools_model_catalog
+    }
+    opt 'nothing left anywhere' {
+      signalbox.thread.threadActor -[async]-> signalbox.attention 'Needs you' {
+        navigateTo work_turns_pool_exhausted
+      }
+      parallel {
+        signalbox.attention -> personC 'Pool exhausted' {
+          notes "- C, admin of Company, can add an account or another pool"
+        }
+        signalbox.attention -> personB 'Waiting on a pool' {
+          notes "- B hears about it only now, when nothing is left"
+        }
+      }
+      signalbox.automations -> signalbox.thread.threadActor 'Resume on recovery' {
+        navigateTo work_automations_resume_limited
+        notes """
+          - **End:** the turn carried on elsewhere; B was told only when nothing was left
+          - **#decided** #281, #968, #877
+        """
+      }
+    }
+  }
+
+  dynamic view scn_111_account_revoked_at_provider {
+    #decided #v1
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Account Revoked'
+    description "What happens when a pool account is revoked or signed out at the provider? Decided: #69 (2026-10-06) broken-account alerts with one-click sign-in again; members never see accounts (#69, #450). · SCN-111 · v1 (moving pinned threads comes with threads)"
+
+    include personC, personB, signalbox, signalbox.web, signalbox.models, signalbox.attention, modelProviders, modelProviders.anthropic
+
+    signalbox.models -> modelProviders.anthropic 'Refresh token' {
+      navigateTo folders_pools_token_refresh
+      notes """
+        - **Start:** an account in P2 is healthy
+        - Pool custody is the single writer of refresh tokens
+      """
+    }
+    signalbox.models <- modelProviders.anthropic 'Rejected'
+    signalbox.models -> signalbox.models 'Mark broken' {
+      navigateTo folders_pools_account_health
+      notes "- Stops routing to it"
+    }
+    signalbox.models -> signalbox.models 'Move pinned threads' {
+      navigateTo folders_pools_pins
+      notes "- To other accounts in the pool, with a thread notice"
+    }
+    personB -> signalbox.web 'Open pool view'
+    signalbox.web <- signalbox.models 'Capacity lower' {
+      navigateTo folders_pools_open_view
+      notes "- Member-safe: B never sees the account itself"
+    }
+    signalbox.models -[async]-> signalbox.attention 'Broken-account alert'
+    signalbox.attention -> personC 'Sign in again'
+    personC -> signalbox.web 'One-click re-sign'
+    signalbox.web -> signalbox.models 'Device or pasted code' {
+      notes """
+        - **End:** the account rejoins the pool
+        - **#decided** #69 (2026-10-06)
+      """
+    }
+  }
+
+  dynamic view scn_112_pool_signin_redirect {
+    #decided #v1
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Sign In Redirect'
+    description "How does pool sign-in from the web get past the localhost redirect? Decided: #205 (2026-10-17), #868 merged (2026-10-18). The owner's real-account test is still pending (#874). · SCN-112 · v1 (web paste and device code; the desktop catch comes with the desktop client)"
+
+    include personC, signalbox, signalbox.web, signalbox.desktop, signalbox.operations, signalbox.models, modelProviders, modelProviders.openai, modelProviders.anthropic
+
+    personC -> signalbox.web 'Add ChatGPT' {
+      notes "- **Start:** Company's pool has no subscription"
+    }
+    signalbox.web -> signalbox.models 'Device code' {
+      navigateTo folders_pools_signin_subscription
+      notes "- Works on any client, nothing to paste"
+    }
+    signalbox.models -> modelProviders.openai 'Device flow'
+    alt 'Claude: which client' {
+      when 'Desktop' {
+        personC -> signalbox.desktop 'Add Claude'
+        signalbox.desktop -> signalbox.models 'Catch localhost redirect' {
+          notes "- One click; the desktop shell catches the redirect"
+        }
+      }
+      else 'Web or mobile' {
+        personC -> signalbox.web 'Paste code once' {
+          notes "- Anthropic shows the code; C pastes it once"
+        }
+        signalbox.web -> signalbox.models 'Exchange code'
+      }
+    }
+    signalbox.models -> modelProviders.anthropic 'Token exchange'
+    opt 'an agent tries it' {
+      signalbox.operations -> signalbox.operations 'Refuse: HumanOnly' {
+        navigateTo folders_pools_human_only_signin
+        notes "- The final OAuth step is human-only"
+      }
+    }
+    signalbox.web <- signalbox.models 'Progress streams' {
+      notes """
+        - **End:** both subscriptions signed in to the pool
+        - No embedded cloud browser
+        - **#decided** #205, #868
+      """
+    }
+  }
+
+  dynamic view scn_113_move_account_between_pools {
+    #decided #v1
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Move Account'
+    description "How does an account move from one pool to another? Decided: #69 (2026-10-06) moving an account is a move, never a copy, since two refreshers sign each other out; #154. Saga shape is design S7. · SCN-113 · v1 (MoveAccount saga is live in v1 Models)"
+
+    include personA, signalbox, signalbox.web, signalbox.operations, signalbox.models, signalbox.observability
+
+    personA -> signalbox.web 'Move account to Y' {
+      notes "- **Start:** the account lives in pool X; A owns both pools"
+    }
+    signalbox.web -> signalbox.models 'Start move' {
+      navigateTo folders_pools_move_account
+    }
+    signalbox.models -> signalbox.models 'X: moving, drain' {
+      notes "- No new pins; live leases drain"
+    }
+    signalbox.models -> signalbox.models 'Y: import, ack' {
+      notes "- Idempotent import"
+    }
+    alt 'how it ends' {
+      when 'ack arrives' {
+        signalbox.models -> signalbox.models 'X: delete copy'
+      }
+      when 'cancel before ack' {
+        personA -> signalbox.web 'Cancel'
+        signalbox.web -> signalbox.models 'Back to X'
+      }
+      else 'move stalls' {
+        signalbox.operations -> signalbox.models 'Sweeper resumes' {
+          navigateTo operations_ops_custody_sweeper
+        }
+      }
+    }
+    signalbox.models -[async]-> signalbox.observability 'Move recorded'
+    signalbox.web <- signalbox.models 'In Y only' {
+      notes """
+        - **End:** the account is in Y, never in both
+        - **#decided** #69 (2026-10-06)
+      """
+    }
+  }
+
+  dynamic view scn_116_pool_advice {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Pool Advice'
+    description "What does pool advice say about running out versus paying for too much? Assumption: runs-out advice ships as built (#819); underuse advice is per account, shown after at least one full weekly window, only to pool admins. Why: #819 with durable history (#1002), missing data shows unavailable (#753); thresholds pending #326. · SCN-116 · v1 partial"
+
+    include personC, personB, signalbox, signalbox.web, signalbox.models, signalbox.observability
+
+    signalbox.models -[async]-> signalbox.observability 'Usage history' {
+      notes "- **Start:** durable usage history per account"
+    }
+    personC -> signalbox.web 'Open pool'
+    signalbox.web -> signalbox.models 'Compute advice' {
+      navigateTo folders_pools_advice
+    }
+    alt 'what the history says' {
+      when 'too little history' {
+        signalbox.web <- signalbox.models 'Not enough data yet' {
+          notes "- Never a zero"
+        }
+      }
+      when 'running out' {
+        signalbox.web <- signalbox.models 'Runs out in 2d' {
+          navigateTo folders_pools_account_health
+          notes "- Offers **add 1 Pro account**"
+        }
+      }
+      else 'paying for too much' {
+        signalbox.web <- signalbox.models 'Max is 12% used' {
+          notes """
+            - Names the account: drop it to Pro
+            - **#assumption** only after one full weekly window (#326 pending)
+          """
+        }
+      }
+    }
+    personB -> signalbox.web 'Open pool'
+    signalbox.web <- signalbox.models 'No advice' {
+      navigateTo folders_pools_open_view
+      notes "- **End:** C sees the advice line; members never do"
+    }
+  }
+
+  dynamic view scn_117_local_cli_pool_key {
+    #decided #v1
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Local Pool Key'
+    description "How do local Claude Code or Codex run on a pool key? Decided: #403 (2026-10-15) top-level resolution and revocation; #448 (2026-10-16) plug-and-play for now. Assumption: keys are bound to a Place, defaulting to the top level (design A23; pending #403/#448). · SCN-117 · v1"
+
+    // no Signalbox group here: the laptop sits between the CLI and Gateway columns and would split it in two
+    include personB, personC, signalbox.cli, laptopCli, signalbox.gateway, signalbox.identity, signalbox.tree, signalbox.models
+
+    personB -> signalbox.cli 'Copy one command' {
+      navigateTo folders_pools_local_key
+      notes """
+        - **Start:** no local setup
+        - Writes an `sbk_` key bound to a Place; `--undo` reverts
+        - **#assumption** default Place is the top level (A23)
+      """
+    }
+    personB -> laptopCli 'Run Claude Code'
+    laptopCli -> signalbox.gateway 'Request with key' {
+      navigateTo folders_modelgateway_laptop_pool
+    }
+    signalbox.gateway -> signalbox.identity 'Still a member?'
+    signalbox.gateway -> signalbox.tree 'Resolve key Place' {
+      navigateTo folders_pools_local_key_place_change
+      notes """
+        - B's key bound to Team via B's mount → P2
+        - A's key on A's top level → P1
+      """
+    }
+    signalbox.gateway -> signalbox.models 'Serve on P2' {
+      navigateTo folders_usage_record
+      notes "- Usage rows record subject and level"
+    }
+    alt 'way out' {
+      when 'C removes B' {
+        personC -> signalbox.identity 'Remove B'
+        laptopCli <- signalbox.gateway 'Fails or new chain' {
+          notes "- The next request re-checks membership and re-resolves"
+        }
+      }
+      else 'B revokes the key' {
+        personB -> signalbox.cli 'Revoke key'
+        laptopCli <- signalbox.gateway 'Stops at once' {
+          notes """
+            - **End:** local CLIs ran on a pool until removal or revocation
+            - **#decided** #403, #448
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view scn_118_stable_account_egress {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Stable Egress'
+    description "Does pooled account traffic keep one stable address? Decided: #32 (2026-10-06) pin each account to one server and IP; #155; #74 stable egress. Unbuilt. · SCN-118 · v1 partial"
+
+    include personC, signalbox, signalbox.web, signalbox.models, signalbox.gateway, modelProviders, modelProviders.anthropic
+
+    personC -> signalbox.web 'Add account' {
+      notes "- **Start:** the pool's CPA container is running"
+    }
+    signalbox.web -> signalbox.models 'Pin egress' {
+      navigateTo folders_pools_account_egress
+      notes "- Each account gets one EU egress via CPA's per-account proxy"
+    }
+    signalbox.models -> signalbox.gateway 'Via pinned egress'
+    signalbox.gateway -> modelProviders.anthropic 'From address 1'
+    signalbox.models -> signalbox.models 'Sleep or redeploy' {
+      navigateTo folders_pools_cpa_host_lifecycle
+      notes "- Idle sleep or a deploy restart; only in-flight streams drop"
+    }
+    signalbox.models -> signalbox.gateway 'Wake: same pin' {
+      navigateTo operations_ops_pool_deploy
+    }
+    signalbox.gateway -> modelProviders.anthropic 'Still address 1' {
+      notes """
+        - **End:** the provider never sees the account jump between machines
+        - **#decided** #32 (2026-10-06), #155, #74
+      """
+    }
+  }
+
+  dynamic view scn_123_owner_change_keeps_signin {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Accounts/Owner Change Keeps Sign In'
+    description "Do ownership changes sign out pool subscriptions? Assumption: no; pools carry opaque ids with ownership as a field, so an owner change never re-signs anything. Why: #69 (2026-10-06) two refreshers sign each other out (move, never copy); #229 d6 (2026-10-14) auto-lend when a folder's owner becomes the organization; pending #248. · SCN-123 · v1 partial"
+
+    include personA, personC, signalbox, signalbox.web, signalbox.tree, signalbox.models
+
+    alt 'what changes' {
+      when 'transfer or succession' {
+        personA -> signalbox.web 'Transfer P1 to C' {
+          notes """
+            - **Start:** P1 has an opaque id; its owner is a field
+          """
+        }
+        signalbox.web -> signalbox.tree 'Owner + placements' {
+          notes "- One step; the CPA container and refresh tokens are untouched"
+        }
+      }
+      else 'Make this an organization' {
+        personA -> signalbox.web 'Make this an organization' {
+          navigateTo folders_tree_make_org
+        }
+        signalbox.web -> signalbox.tree 'Lend P1 (lent by A)' {
+          navigateTo folders_lending_make_org
+          notes "- The pool stays with A and is auto-lent; A can revoke it"
+        }
+      }
+    }
+    signalbox.models -> signalbox.models 'Tokens untouched' {
+      navigateTo folders_pools_token_refresh
+      notes "- **#assumption** opaque id, ownership a field (#69, #229 d6)"
+    }
+    opt 'accounts must change pool' {
+      signalbox.web -> signalbox.models 'Move saga' {
+        navigateTo folders_pools_move_account
+        notes "- A move, never a copy"
+      }
+    }
+    personC -> signalbox.web 'Pool still signed in' {
+      notes "- **End:** subscriptions stay signed in; drive ids and usage rows don't change"
+    }
+  }
+
+  // ───────────────────────────── Payment ─────────────────────────────
+
+  dynamic view scn_101_move_changes_payer {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Payment/Move Changes Payer'
+    description "Does moving a thread change who paid, or only who pays? Decided: #116 (2026-10-18) no reattribution of old usage after a folder move; overrides the prototype and #328; design A21 agrees. · SCN-101 · not v1 (thread moves)"
+
+    include personA, personC, signalbox, signalbox.web, signalbox.tree, signalbox.thread.threadActor, signalbox.models, signalbox.observability
+
+    personA -> signalbox.web 'Move chat to Personal' {
+      notes "- **Start:** A's private chat in Company spent $X on P2"
+    }
+    signalbox.web -> signalbox.tree 'Move thread' {
+      navigateTo folders_placement_move_thread
+      notes "- Moving out of Company may need a Company admin; Enterprise can lock it"
+    }
+    signalbox.tree -> signalbox.thread.threadActor 'New Place' {
+      notes "- Pins and loans tied to the old Place clear"
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve new chain' {
+      notes "- Personal → A's top level → P1"
+    }
+    signalbox.thread.threadActor -> signalbox.models 'Turn on P1'
+    signalbox.models -[async]-> signalbox.observability 'Rows name P1, Personal' {
+      navigateTo folders_usage_rollup
+    }
+    personC -> signalbox.web 'Open Company costs' {
+      navigateTo folders_usage_cost_view
+      notes """
+        - **End:** $X stays in Company's totals; A's Personal shows only turns after the move
+        - **#decided** #116 (2026-10-18): nothing is reattributed
+      """
+    }
+  }
+
+  dynamic view scn_115_cost_views_per_role {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Payment/Cost Views Per Role'
+    description "Who sees what about pool usage: how much is left, or what it cost? Decided: #259 (2026-10-14) one ledger row per upstream request; #263; #328 (2026-10-17) Paid by roll-up. Assumption: others' private chats count only inside folder totals, no row of their own. Why: #846 (2026-10-17), #334 (2026-10-18) made them invisible; design A14; pending #328. · SCN-115 · v1 partial"
+
+    include personB, personA, personC, signalbox, signalbox.web, signalbox.models, signalbox.observability, signalbox.tree
+
+    signalbox.models -[async]-> signalbox.observability 'One row per request' {
+      notes "- **Start:** usage happens across Company and Team"
+    }
+    personB -> signalbox.web 'How much is left?'
+    signalbox.web -> signalbox.models 'Member-safe view' {
+      navigateTo folders_pools_open_view
+      notes "- B sees remaining usage, next reset and who lends"
+    }
+    personA -> signalbox.web 'What did my loan cost?'
+    signalbox.web -> signalbox.observability 'Lender costs' {
+      navigateTo journey_admin_lender_costs
+      notes "- Cost per folder and person, no titles or content"
+    }
+    personC -> signalbox.web 'Company costs'
+    signalbox.web -> signalbox.observability 'Per shared thread' {
+      navigateTo folders_usage_cost_view
+      notes """
+        - Shared threads with title
+        - **#assumption** A's private chats add to folder totals with no row of their own
+      """
+    }
+    signalbox.observability -> signalbox.tree 'Roll up the tree' {
+      navigateTo folders_usage_rollup
+      notes """
+        - **End:** each person sees only their view
+        - A **Paid by** column, including **No pool on its path**
+      """
+    }
+  }
+
+  dynamic view scn_119_compute_follows_tokens {
+    #decided
+    variant sequence
+    title 'Scenarios/Pools/Payment/Compute Follows Tokens'
+    description "Who pays for the machine a thread uses? Decided: #915 (2026-10-18) whichever pool pays for a thread's tokens also pays for its machines; #225 (2026-10-18); supersedes #255 and #225 §8 'counts against the folder's owner'. · SCN-119 · not v1 (Computer)"
+
+    include personA, personC, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.harness, signalbox.computer, signalbox.models
+
+    personA -> signalbox.web 'Send in Company' {
+      notes "- **Start:** Company has no pool"
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve pool' {
+      notes "- Via A's mount → P1 on A's top level"
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'Run turn' {
+      notes "- Harness loop in the isolate tier"
+    }
+    signalbox.harness -> signalbox.computer 'Run commands' {
+      navigateTo work_computer_usage_metering
+      notes "- A boxd VM, forked from a warm Base, only while real commands run"
+    }
+    signalbox.computer -[async]-> signalbox.thread.threadActor 'Measured time'
+    signalbox.thread.threadActor -[async]-> signalbox.models 'Compute row to P1' {
+      navigateTo folders_usage_record
+      notes "- The paying pool's custody writes it; there is no separate compute payer"
+    }
+    personC -> signalbox.web 'Place P2 at Company'
+    signalbox.thread.threadActor -> signalbox.tree 'Next turn: P2' {
+      navigateTo folders_usage_payer
+      notes """
+        - **End:** tokens and compute both move to P2; placement stays invisible to A
+        - **#decided** #915 (2026-10-18)
+      """
+    }
+  }
+
+  dynamic view scn_120_storage_payer {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Payment/Storage Payer'
+    description "Who pays for a folder's storage? Assumption: storage follows the pool that pays the writing thread's tokens, like compute; counted as logical bytes, never reattributed. Why: owner rule 2026-10-18 and #915; design R-USG-08, A21; counting unit pending #255. · SCN-120 · not v1"
+
+    include personA, personC, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.drive, signalbox.tree, signalbox.models
+
+    personA -> signalbox.web 'Agent saves files' {
+      notes "- **Start:** A's thread in Company writes files; Company has no pool"
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'Write to Company drive' {
+      navigateTo work_drive_placement
+    }
+    signalbox.drive -> signalbox.drive 'Record in R2' {
+      navigateTo work_drive_r2_record
+    }
+    signalbox.drive -[async]-> signalbox.thread.threadActor 'Logical bytes'
+    signalbox.thread.threadActor -> signalbox.tree 'Paying pool' {
+      notes "- Via A's mount → P1"
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.models 'Storage row to P1' {
+      navigateTo folders_usage_record
+      notes "- **#assumption** storage follows tokens, like compute (#915)"
+    }
+    personC -> signalbox.web 'Place P2 at Company'
+    signalbox.thread.threadActor -[async]-> signalbox.models 'New bytes to P2' {
+      navigateTo folders_usage_payer
+      notes "- Old rows stay on P1"
+    }
+    opt 'a person uploads without a thread' {
+      signalbox.web -> signalbox.drive 'Upload'
+      signalbox.drive -> signalbox.tree 'Resolve folder Place' {
+        notes "- **End:** bytes are attributed to the pool that pays at that Place"
+      }
+    }
+  }
+
+  dynamic view scn_121_device_minutes_payer {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Payment/Device Minutes'
+    description "Who pays for cloud simulator or emulator minutes? Assumption: device minutes are compute and are paid by the pool that pays the thread's tokens, never by a separate account. Why: #915 (2026-10-18) compute follows tokens; pending #338. · SCN-121 · not v1"
+
+    include personB, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.computer, signalbox.tree, signalbox.models, signalbox.observability
+
+    personB -> signalbox.web 'Run mobile tests' {
+      notes "- **Start:** B's thread in folder Team"
+    }
+    signalbox.thread.threadActor -> signalbox.computer 'device_open' {
+      navigateTo work_computer_mobile_devices
+      notes "- A cloud device is leased for the session"
+    }
+    signalbox.web <- signalbox.computer 'Device panel' {
+      navigateTo work_computer_device_panel
+    }
+    signalbox.computer -> signalbox.computer 'Release' {
+      notes "- On close, idle or crash"
+    }
+    signalbox.computer -[async]-> signalbox.thread.threadActor 'Device minutes' {
+      navigateTo work_computer_usage_metering
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Paying pool'
+    signalbox.thread.threadActor -[async]-> signalbox.models 'Row to paying pool' {
+      navigateTo folders_usage_record
+      notes "- **#assumption** minutes are compute (#915)"
+    }
+    personB -> signalbox.web 'Open Team costs'
+    signalbox.web -> signalbox.observability 'Paid by column' {
+      notes "- **End:** minutes show under Team with the pool that paid"
+    }
+  }
+
+  dynamic view scn_122_costs_and_focus {
+    #assumption
+    variant sequence
+    title 'Scenarios/Pools/Payment/Costs And Focus'
+    description "Do Costs respect Focus? Assumption: yes; Costs follow Focus server-side and label what is hidden, and an explicit peek shows a hidden folder's costs without switching Focus. Why: P-FOC-03, P-FOC-05, R-USG-04; pending #328. · SCN-122 · not v1"
+
+    include personA, signalbox, signalbox.web, signalbox.observability, signalbox.attention, signalbox.tree
+
+    personA -> signalbox.web 'Open Costs' {
+      notes "- **Start:** A's Focus is on Work"
+    }
+    signalbox.web -> signalbox.observability 'Costs query' {
+      navigateTo folders_usage_cost_view
+    }
+    signalbox.observability -> signalbox.attention 'Focused subtree' {
+      navigateTo person_focus_out_of_sight
+    }
+    signalbox.observability -> signalbox.tree 'Roll up Work only'
+    signalbox.web <- signalbox.observability 'Personal hidden by Focus' {
+      notes """
+        - Said plainly, never silently lower totals
+        - **#assumption** Costs follow Focus server-side
+      """
+    }
+    personA -> signalbox.web 'Peek hidden work' {
+      navigateTo journey_daily_focus_peek
+    }
+    signalbox.web -> signalbox.observability 'Personal costs' {
+      notes "- Focus stays on Work"
+    }
+    personA -> signalbox.web 'Tuck it away' {
+      navigateTo person_settings_usage
+      notes "- **End:** back to the focused view; nothing is pushed"
+    }
+  }
+}

@@ -1,0 +1,2121 @@
+// Folders, tree and access. Journeys/Sharing, States/Level, States/Mount, Workflows/Folders/{Access,Tree}, Workflows/Person/People.
+// Generic folders only: folder "Company" (owner: organization), folder "Team" inside it.
+// A and B are members, C is admin of Company, D is the outside collaborator on Team only.
+// Modules are black boxes here: Level, Person and Thread actors live in Tree and Thread, so steps
+// target `signalbox.tree` / `signalbox.thread` / `signalbox.models` and the label says which record changes.
+// v1 = sign in, a pool, connections; nothing in this file is one of those except the authority check.
+views {
+
+  // ───────────────────────────── Journeys/Sharing ─────────────────────────────
+
+  dynamic view journey_sharing_browser_tab {
+    variant sequence
+    title 'Journeys/Sharing/Follow, copy, share or lend a tab'
+    description '''
+      W-BRW-13. A shares or lends a browser tab from the shared thread in folder Team; B follows it through the mirror.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.tree, signalbox.browser
+
+    personA -> signalbox.web 'opens tab menu' {
+      notes '''
+        - A is browsing inside the shared thread in folder Team
+        - The menu offers Follow, Copy link, Share and Lend
+      '''
+    }
+    alt 'what A picks' {
+      when 'copy link' {
+        signalbox.web -> signalbox.browser 'copy tab URL' {
+          notes '''
+            - Only the URL travels; no login, no session
+          '''
+        }
+      }
+      when 'share (B follows)' {
+        signalbox.web -> signalbox.thread 'post tab to thread' {
+          notes '''
+            - The tab shows in the thread as a followable item
+            - The browsing record stays with the thread, not with A
+          '''
+        }
+        personB -> signalbox.mobile 'taps Follow' {
+          notes '''
+            - B sees what A sees, live; B does not drive
+          '''
+        }
+        signalbox.mobile -> signalbox.browser 'subscribe mirror' {
+          navigateTo work_browser_record_sync
+          notes '''
+            - rrweb mirror of the recorded tab
+            - Observing never publishes anything back
+          '''
+        }
+        signalbox.mobile <- signalbox.browser 'mirror frames'
+      }
+      else 'lend (tab + login for N days)' {
+        personA -> signalbox.web 'Lend to B for 3 days' {
+          notes '''
+            - Consent is human-only; an agent can't lend for A
+          '''
+        }
+        signalbox.web -> signalbox.tree 'Lend{tab, into thread}' {
+          navigateTo folders_lending_lend
+          notes '''
+            - A loan: an explicit, revocable placement into the thread, with `until`
+            - The thread shows it as "lent by A"; B and the thread's agent can drive it
+          '''
+        }
+        personB -> signalbox.mobile 'drives the tab' {
+          notes '''
+            - B acts with A's login, only inside this thread, only until expiry
+          '''
+        }
+      }
+    }
+    opt 'A ends the loan early' {
+      personA -> signalbox.web 'End loan' {
+        notes '''
+          - The reverse door; also on the tab's own row in A's tree
+        '''
+      }
+      signalbox.web -> signalbox.tree 'EndLoan' {
+        navigateTo folders_lending_end_loan
+        notes '''
+          - Running turns finish on their frozen Scope; the next turn can't use the tab
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view journey_sharing_friend_group {
+    variant sequence
+    title 'Journeys/Sharing/Invite a friend as a guest'
+    description '''
+      R-IDN-20. A friend (Person D, outside every folder of A's) becomes a guest of the invisible owner of A's top level. Joining grants nothing; a role on a folder (Friends) does.
+    '''
+    include signalbox, platform, personA, personD, signalbox.web, signalbox.identity, platform.workos
+
+    personA -> signalbox.web 'Invite a friend' {
+      notes '''
+        - A's top level is owned by A's invisible personal organization
+        - The friend group is that organization; joining grants nothing yet
+      '''
+    }
+    signalbox.web -> signalbox.identity 'invite as guest' {
+      navigateTo organization_identity_org_invite
+      notes '''
+        - Role `guest`: zero permissions on every folder
+      '''
+    }
+    signalbox.identity -> platform.workos 'create invitation' {
+      notes '''
+        - WorkOS owns the invitation state and email
+      '''
+    }
+    platform.workos -> personD 'invitation email'
+    personD -> signalbox.web 'accepts' {
+      notes '''
+        - New to Signalbox: sign-up creates D's own top level with Personal and Work
+        - Existing account: D stays one person; identities are never merged
+      '''
+    }
+    signalbox.web -> signalbox.identity 'complete'
+    signalbox.identity -> platform.workos 'membership: guest'
+    signalbox.web <- signalbox.identity 'guest, no access yet'
+    signalbox.web -> personA 'D is in your group' {
+      navigateTo folders_access_roles
+      notes '''
+        - A gives D a role on a folder (e.g. Member on Friends) to share anything
+        - Then Friends shows in D's tree, mounted, like B's
+      '''
+    }
+
+    style platform, signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view journey_sharing_message_person {
+    variant sequence
+    title 'Journeys/Sharing/Message a person from their profile'
+    description '''
+      P-PPL-06. A opens B's profile card and starts a chat in this folder shared with B.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.mobile, signalbox.thread
+
+    personA -> signalbox.web "opens B's profile card" {
+      notes '''
+        - From a member list, a sender name or an @mention in folder Team
+      '''
+    }
+    personA -> signalbox.web 'Message B'
+    signalbox.web -> signalbox.thread 'NewThread + Participants' {
+      navigateTo work_threads_multiplayer_share
+      notes '''
+        - A new chat at the folder A is in (Team), not at A's top level
+        - Visibility: specific people (A, B); it resolves on Team's chain like any thread
+      '''
+    }
+    signalbox.web <- signalbox.thread 'thread open'
+    signalbox.thread -> signalbox.mobile 'B sees new shared chat' {
+      notes '''
+        - It shows in B's tree under B's own mount of Company › Team
+      '''
+    }
+    personB -> signalbox.mobile 'replies'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view journey_sharing_share_dialog {
+    variant sequence
+    title "Journeys/Sharing/Open a folder's Share dialog"
+    description '''
+      R-ACC-05, R-ACC-06. The people lens on folder Team: roles, pending invites and "Member via X", for A, B, C and D at once.
+    '''
+    include signalbox, personC, personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.identity
+
+    personC -> signalbox.web 'Share on folder Team' {
+      notes '''
+        - Same dialog from the folder menu, folder screen, palette and mobile
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'open Share dialog'
+    signalbox.funnel -> signalbox.operations 'query people lens'
+    signalbox.operations -> signalbox.tree 'view(people, access)' {
+      notes '''
+        - Roles at Team plus everything inherited from Company
+      '''
+    }
+    signalbox.operations <- signalbox.tree 'rows with source' {
+      notes '''
+        - C: Admin via Company · A: Member at Team · B: Member via Company
+        - D: Member at Team only (outside collaborator)
+        - Others' private threads never appear here
+      '''
+    }
+    signalbox.operations -> signalbox.identity 'pending invites'
+    signalbox.funnel <- signalbox.operations 'people view'
+    signalbox.web -> personC 'roles, pending, inherited'
+    alt 'what C does' {
+      when 'change a role' {
+        personC -> signalbox.web 'B → Viewer at Team' {
+          navigateTo folders_access_roles
+          notes '''
+            - Roles only add downward: B stays Member via Company
+          '''
+        }
+      }
+      when 'invite someone' {
+        personC -> signalbox.web 'invite by email' {
+          navigateTo folders_access_folder_invite
+        }
+      }
+      else 'revoke a pending invite' {
+        personC -> signalbox.web 'revoke invite' {
+          navigateTo state_invitation
+          notes '''
+            - The invitation ends in WorkOS; the link stops working
+          '''
+        }
+      }
+    }
+    opt 'A opens the same dialog' {
+      personA -> signalbox.web 'Share on folder Team' {
+        notes '''
+          - A is a Member: sees the same people, can't change roles
+          - Invite shows only if Team's policy lets Members invite
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view journey_sharing_share_thread {
+    variant sequence
+    title 'Journeys/Sharing/Share a thread from the header'
+    description '''
+      P-PPL-01. Private → people or folder members from the header "+"; the confirm shows what becomes visible.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.mobile, signalbox.thread
+
+    personA -> signalbox.web 'header "+"' {
+      notes '''
+        - A's private chat in folder Team
+      '''
+    }
+    signalbox.web -> personA 'people or folder members'
+    alt 'who gets it' {
+      when 'specific people' {
+        personA -> signalbox.web 'adds B'
+        signalbox.web -> signalbox.thread 'Participants +B' {
+          navigateTo work_threads_multiplayer_share
+          notes '''
+            - Only B gains access; C and the rest of Company still see nothing
+          '''
+        }
+      }
+      else 'all folder members' {
+        personA -> signalbox.web 'folder members'
+        signalbox.web -> personA 'confirm: what becomes visible' {
+          notes '''
+            - Whole history, earlier turns and files included
+            - Nothing about resources changes: same pool, same connections
+          '''
+        }
+        personA -> signalbox.web 'confirms'
+        signalbox.web -> signalbox.thread 'Visibility: folder members' {
+          notes '''
+            - B, C and every Team member can now open it
+          '''
+        }
+      }
+    }
+    signalbox.thread -> signalbox.thread 'visibility changed' {
+      navigateTo state_thread
+      notes '''
+        - Access epoch bumps; the catalog row becomes visible to the new audience
+      '''
+    }
+    signalbox.thread -> signalbox.mobile 'B sees the thread'
+    personB -> signalbox.mobile 'opens it'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view journey_sharing_viewer {
+    variant sequence
+    title 'Journeys/Sharing/Open a shared thread as a Viewer'
+    description '''
+      P-PPL-09. Person D, the outside collaborator, is a Viewer on folder Team: the composer is disabled with the reason.
+    '''
+    include signalbox, personD, signalbox.web, signalbox.thread, signalbox.tree
+
+    personD -> signalbox.web 'opens shared thread' {
+      notes '''
+        - D is an outside collaborator with Viewer on Team only
+        - A and B (Members) get the composer in the same thread
+      '''
+    }
+    signalbox.web -> signalbox.thread 'watch'
+    signalbox.thread -> signalbox.tree 'can(D, send)' {
+      navigateTo work_threads_multiplayer_viewer
+    }
+    signalbox.thread <- signalbox.tree 'view yes, send no'
+    signalbox.thread -> signalbox.web 'history, composer off' {
+      notes '''
+        - The composer says why: "You're a Viewer in Team"
+        - Never a silent grey box
+      '''
+    }
+    opt 'D asks for more' {
+      personD -> signalbox.web 'Request access'
+      signalbox.web -> signalbox.thread 'access request ask' {
+        notes '''
+          - An ordinary Blocker ask in the lanes of Team's admins (C); the answer is a Role change
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  // ───────────────────────────── States/Level ─────────────────────────────
+
+  dynamic view state_level {
+    variant sequence
+    title 'States/Level/Walk through'
+    description '''
+      R-TRE-07, R-TRE-09. A folder's lifecycle: active ↔ archived, active → trashed → active (restore) or purged.
+    '''
+    include signalbox, personA, personC, signalbox.operations, signalbox.tree
+
+    alt 'transition' {
+      when 'active → archived' {
+        personA -> signalbox.operations 'Archive{folder}' {
+          notes '''
+            - A archives a folder under Personal (A is Owner)
+            - In Company only an Admin like C can; B gets Denied
+          '''
+        }
+        signalbox.operations -> signalbox.tree 'Level: archived' {
+          notes '''
+            - Hidden from Home by default; threads, placements and roles stay
+          '''
+        }
+      }
+      when 'archived → active' {
+        personA -> signalbox.operations 'Unarchive'
+        signalbox.operations -> signalbox.tree 'Level: active'
+      }
+      when 'active → trashed' {
+        personC -> signalbox.operations 'Trash{Team}' {
+          navigateTo folders_tree_trash
+        }
+        signalbox.operations -> signalbox.tree 'Level: trashed' {
+          notes '''
+            - A tombstone: effects stop, A and B no longer see Team; the 30-day clock starts
+          '''
+        }
+      }
+      when 'trashed → active (≤ 30 days)' {
+        personC -> signalbox.operations 'Restore{Team}' {
+          notes '''
+            - From the Trash view; within 30 days
+          '''
+        }
+        signalbox.operations -> signalbox.tree 'Level: active again' {
+          notes '''
+            - Catalog and search rows come back; A and B see Team again
+          '''
+        }
+      }
+      else 'trashed → purged' {
+        signalbox.tree -> signalbox.tree '30 days: purged' {
+          navigateTo folders_tree_purge
+          notes '''
+            - The Level's alarm fires; the one irreversible step, nothing restores after it
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  // ───────────────────────────── States/Mount ─────────────────────────────
+
+  dynamic view state_mount {
+    variant sequence
+    title 'States/Mount/Walk through'
+    description '''
+      R-TRE-11, R-TRE-12. A mount puts folder Company into one member's tree. States: active, inactive.
+      The MountRef is stable per (person, Company): a remount gets the same id back.
+    '''
+    include signalbox, personA, personB, signalbox.operations, signalbox.tree, signalbox.thread
+
+    alt 'transition' {
+      when 'none → active (join)' {
+        signalbox.operations -> signalbox.tree 'Person: Mount{Company}' {
+          navigateTo organization_identity_member_join
+          notes '''
+            - Automatic on joining the organization; default under Work
+            - One mount per person: A's and B's are separate rows
+          '''
+        }
+        personB -> signalbox.operations 're-files Company' {
+          notes '''
+            - B moves it under another folder of B's own; same MountRef
+          '''
+        }
+      }
+      when 'active → inactive (unmount)' {
+        personA -> signalbox.operations 'Unmount' {
+          navigateTo organization_identity_leave
+          notes '''
+            - A removes Company from A's tree, or A's membership ends
+          '''
+        }
+        signalbox.operations -> signalbox.tree 'Person: mount inactive' {
+          notes '''
+            - Kept, not deleted, so a remount reuses it
+            - B's mount is untouched
+          '''
+        }
+        signalbox.thread -> signalbox.tree 'next resolve: via?' {
+          navigateTo folders_placement_resolve
+          notes '''
+            - Places filed through A's mount lose `via`
+            - Those threads resolve on Company's chain only; nothing there → NeedsPool ask to admins
+          '''
+        }
+      }
+      else 'inactive → active (remount)' {
+        personA -> signalbox.operations 'Mount again'
+        signalbox.operations -> signalbox.tree 'Person: same MountRef' {
+          notes '''
+            - Places get their `via` back at the next resolve
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+}
+
+views {
+
+  // ───────────────────────────── Workflows/Folders/Access ─────────────────────────────
+
+  dynamic view folders_access_admin_visible_chats {
+    variant sequence
+    title 'Workflows/Folders/Access/Turn on admin-visible chats'
+    description '''
+      P-OUT-14. C opts folder Company into admin-visible chats; A and B get an up-front notice before it applies.
+    '''
+    include signalbox, personC, personA, personB, signalbox.web, signalbox.tree, signalbox.attention
+
+    personC -> signalbox.web 'Policy: admin-visible chats' {
+      notes '''
+        - C is Admin of folder Company
+      '''
+    }
+    signalbox.web -> signalbox.tree 'read Enterprise flag' {
+      navigateTo folders_access_enterprise_flag
+      notes '''
+        - The option exists only when Company carries the Enterprise flag
+      '''
+    }
+    alt 'Company is Enterprise?' {
+      when 'no' {
+        signalbox.web <- signalbox.tree 'not available' {
+          notes '''
+            - The toggle is disabled and says why; nothing changes
+          '''
+        }
+      }
+      else 'yes' {
+        signalbox.web -> signalbox.tree 'policy, effective at T' {
+          navigateTo folders_access_admin_visible
+          notes '''
+            - Pending until T; never retroactive
+          '''
+        }
+        signalbox.tree -[async]-> signalbox.attention 'notice to members'
+        parallel {
+          signalbox.attention -> personA 'notice (A)' {
+            notes '''
+              - Before it applies: "From T, admins can read chats in Company"
+            '''
+          }
+          signalbox.attention -> personB 'notice (B)'
+        }
+        signalbox.tree -> signalbox.tree 'applies at T' {
+          notes '''
+            - New private chats under Company are admin-visible; older ones stay private
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_invite_by_email {
+    variant sequence
+    title 'Workflows/Folders/Access/Invite someone by email'
+    description '''
+      P-ONB-13, P-ONB-16. A invites D (no account yet) by email: into folder Team with a role, or as a guest of A's own top level.
+    '''
+    include signalbox, platform, personA, personD, signalbox.web, signalbox.identity, signalbox.tree, platform.workos
+
+    personA -> signalbox.web 'Invite d@ by email' {
+      notes '''
+        - A is Admin of folder Team (or A's own Friends folder)
+      '''
+    }
+    alt 'invite into' {
+      when 'a folder, with a role' {
+        signalbox.web -> signalbox.identity 'invite: Member at Team' {
+          navigateTo folders_access_folder_invite
+        }
+      }
+      else 'a guest of A' {
+        signalbox.web -> signalbox.identity 'invite as guest' {
+          navigateTo journey_sharing_friend_group
+          notes '''
+            - D joins the invisible owner of A's top level with zero permissions
+          '''
+        }
+      }
+    }
+    signalbox.identity -> platform.workos 'WorkOS invitation' {
+      navigateTo state_invitation
+    }
+    platform.workos -> personD 'email'
+    personD -> signalbox.web 'accepts' {
+      notes '''
+        - No account yet: sign-up creates D's top level with Personal and Work
+      '''
+    }
+    signalbox.web -> personD 'where to file it?' {
+      notes '''
+        - Default: D's top level; D may pick Work
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Level: Role at Team' {
+      notes '''
+        - Guest case: no role at all until someone grants one
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Person: Reference' {
+      notes '''
+        - A reference shows Team in D's tree; it grants nothing by itself
+      '''
+    }
+
+    style platform, signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_newcomer_preset {
+    variant sequence
+    title 'Workflows/Folders/Access/Give newcomers a preset'
+    description '''
+      P-ONB-20, R-ACC-22. What a newcomer to folder Company gets: a shared organization account, or a slot each member fills.
+    '''
+    include signalbox, personC, personB, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree, signalbox.models
+
+    personC -> signalbox.web 'Newcomers section' {
+      navigateTo pgap_newcomer_preview
+      notes '''
+        - On folder Company's page; Admin only
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Tree.change(Preset)'
+    signalbox.operations -> signalbox.tree 'Level: preset' {
+      notes '''
+        - Inherited down like every Level setting
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'B joined Company' {
+      navigateTo organization_identity_member_join
+      notes '''
+        - WorkOS membership arrives; B's mount appears under B's Work
+      '''
+    }
+    alt 'preset' {
+      when 'shared organization account' {
+        signalbox.tree -> signalbox.web 'B: ready, nothing to add' {
+          navigateTo identity_identity_company_joins
+          notes '''
+            - Pool P2 and Google · Company are placed on Company, so they already reach B's threads there
+            - Resolution by position: the same answer for A, B and C
+          '''
+        }
+      }
+      else 'a slot each member fills' {
+        signalbox.tree -> signalbox.web 'slot ask to B' {
+          notes '''
+            - A Blocker for B: "Add your own subscription / Google"
+          '''
+        }
+        personB -> signalbox.web 'fills slot'
+        signalbox.web -> signalbox.operations 'add to Company pool'
+        signalbox.operations -> signalbox.models 'B subscription in P2' {
+          notes '''
+            - B's account joins pool P2, placed on Company; B can remove it later
+            - It serves every thread under Company, A's included: pools resolve by position, not by who added the account
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_outside_collaborator {
+    variant sequence
+    title 'Workflows/Folders/Access/Give an outside collaborator one folder'
+    description '''
+      P-ONB-15. Person D, outside the organization, gets a role on folder Team only, filed as a reference in D's own tree.
+    '''
+    include signalbox, personA, personD, signalbox.web, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.web 'add D to Team' {
+      navigateTo folders_access_invite_by_email
+      notes '''
+        - A is Admin of Team; D has no account → email invite first
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Role{D, Member, Team}'
+    signalbox.operations -> signalbox.tree 'Level: role at Team' {
+      notes '''
+        - No role at Company; "everyone in Company can view" doesn't cover D
+      '''
+    }
+    signalbox.operations -> signalbox.tree 'Person: Reference' {
+      navigateTo folders_access_folder_invite
+      notes '''
+        - D files Team where D likes, e.g. under Work
+      '''
+    }
+    personD -> signalbox.web 'opens Home'
+    signalbox.web -> signalbox.tree 'view(children)'
+    signalbox.web -> personD 'only Team subtree' {
+      notes '''
+        - D's threads in Team have no `via`: they resolve on Team → Company only
+        - Company's pool and connections reach them; nothing from D's own tree does
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_owner_handover {
+    variant sequence
+    title 'Workflows/Folders/Access/Hand over the Owner role'
+    description '''
+      P-OUT-10, P-OUT-11. An Owner can't leave until someone else holds Owner (or the folder becomes an organization).
+    '''
+    include signalbox, personC, personA, signalbox.web, signalbox.operations, signalbox.tree, signalbox.identity
+
+    personC -> signalbox.web 'Leave Company' {
+      navigateTo person_leaving_leave_org
+      notes '''
+        - C (Admin, and here also the only Owner of Company) wants to leave
+      '''
+    }
+    signalbox.web -> signalbox.operations 'leave'
+    signalbox.operations -> signalbox.tree 'other Owners?'
+    alt 'Owners left after C' {
+      when 'none' {
+        signalbox.web <- signalbox.operations 'refused: hand over' {
+          notes '''
+            - Company would be ownerless; leaving stays blocked
+          '''
+        }
+        personC -> signalbox.web 'Owner → A' {
+          navigateTo folders_access_owner_transfer
+        }
+        signalbox.operations -> signalbox.tree 'Role{A, Owner}'
+        signalbox.operations -> signalbox.identity 'mirror to WorkOS'
+        personC -> signalbox.web 'Leave again'
+      }
+      else 'another Owner exists' {
+        signalbox.web <- signalbox.operations 'left' {
+          notes '''
+            - C's mount turns inactive; A and B are unaffected
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_enterprise_flag {
+    variant sequence
+    title 'Workflows/Folders/Access/Policy/Set the Enterprise flag'
+    description '''
+      R-ACC-26. Enterprise is set on folder Company through billing, never by admins; several features read it.
+    '''
+    include signalbox, personC, signalbox.web, signalbox.ingress, signalbox.tree, signalbox.identity, signalbox.operations, signalbox.models
+
+    signalbox.ingress -> signalbox.tree 'Enterprise purchased' {
+      notes '''
+        - Billing (operator) sets it after purchase
+      '''
+    }
+    signalbox.tree -> signalbox.tree 'Level: Enterprise on' {
+      notes '''
+        - On folder Company only; Team and below read it through the chain
+      '''
+    }
+    opt 'C tries to toggle it' {
+      personC -> signalbox.web 'Enterprise toggle' {
+        notes '''
+          - Read-only for admins: "Managed by billing"
+        '''
+      }
+    }
+    parallel 'readers' {
+      signalbox.identity -> signalbox.tree 'require SSO' {
+        navigateTo organization_identity_company_sso
+      }
+      signalbox.operations -> signalbox.tree 'lock moves out' {
+        navigateTo folders_lending_lend
+        notes '''
+          - Moving folders out of Company and lending personal pools in are refused
+        '''
+      }
+      signalbox.models -> signalbox.tree 'assistants on Company pool' {
+        notes '''
+          - Work under Company never runs on a member's personal pool
+        '''
+      }
+    }
+    signalbox.tree -> signalbox.web 'admin-visible chats unlock' {
+      navigateTo folders_access_admin_visible
+      notes '''
+        - C now sees the opt-in under Company › Policy
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_folder_policy {
+    variant sequence
+    title 'Workflows/Folders/Access/Policy/Set folder defaults and admin-only areas'
+    description '''
+      R-ACC-13, R-ACC-21. Default visibility for new chats, and areas only admins manage, set on folder Company and inherited down.
+    '''
+    include signalbox, personC, personA, signalbox.web, signalbox.operations, signalbox.tree
+
+    personC -> signalbox.web 'Company › Policy'
+    alt 'what C sets' {
+      when 'default visibility' {
+        signalbox.web -> signalbox.operations 'Place defaultVisibility' {
+          navigateTo folders_placement_place
+          notes '''
+            - A placement like any other: reach below, nearest wins
+          '''
+        }
+        signalbox.operations -> signalbox.tree 'Level: default set' {
+          notes '''
+            - New chats in Company and Team start shared with folder members
+          '''
+        }
+      }
+      else 'admin-only area' {
+        signalbox.web -> signalbox.operations 'Policy{connections, adminOnly}'
+        signalbox.operations -> signalbox.tree 'Level: policy row' {
+          notes '''
+            - Below Company only Admins place connections (also models, skills, instructions…)
+          '''
+        }
+      }
+    }
+    opt 'A works in Team afterwards' {
+      personA -> signalbox.web 'new chat in Team'
+      signalbox.web -> signalbox.operations 'NewThread at Team'
+      signalbox.operations -> signalbox.tree 'nearest defaultVisibility' {
+        navigateTo work_threads_start_default_visibility
+        notes '''
+          - A sees "Shared with Team members"; A can still pick private
+          - "Add connection" shows "Admins manage connections here"
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_authorize {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Access/Roles/Authorize every operation'
+    description '''
+      v1 partial (the same check gates placing a pool or a connection) · R-ACC-03 (aliases T-HND-18, T-MCP-06, T-REM-16). One Tree.can for every command and query, from people and agents alike; fails closed.
+    '''
+    include hier, signalbox, hier.company, personA, signalbox.web, hier.company.agentCo, signalbox.funnel, signalbox.gateway, signalbox.identity, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.web 'Rename Team'
+    signalbox.web -> signalbox.funnel 'rpc'
+    signalbox.funnel -> signalbox.identity 'authenticate' {
+      navigateTo identity_identity_authenticate
+      notes '''
+        - Cookie, bearer or DPoP → PersonActor A
+      '''
+    }
+    signalbox.funnel -> signalbox.operations 'invoke(actor, cmd)'
+    signalbox.operations -> signalbox.tree 'Tree.can' {
+      navigateTo folders_access_roles
+      notes '''
+        - Local check on mirrored roles; same answer on every client
+        - A Member at Team → yes · B Viewer → no · C Admin via Company → yes
+      '''
+    }
+    alt 'answer' {
+      when 'allowed' {
+        signalbox.operations -> signalbox.tree 'change(Rename)'
+        signalbox.funnel <- signalbox.operations 'receipt'
+      }
+      else 'denied, unknown or error' {
+        signalbox.funnel <- signalbox.operations 'Denied' {
+          notes '''
+            - Fails closed: a stale role or a failed check never lets it through
+          '''
+        }
+      }
+    }
+    opt 'an agent calls the same op' {
+      hier.company.agentCo -> signalbox.gateway 'tool call' {
+        notes '''
+          - Company's agent thread; it carries no person
+        '''
+      }
+      signalbox.gateway -> signalbox.operations 'invoke(AgentActor)'
+      signalbox.operations -> signalbox.tree 'Tree.can (level)' {
+        notes '''
+          - Its rights are its level's; destructive ops return NeedsDecision
+        '''
+      }
+    }
+
+    style hier, signalbox, hier.company {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_folder_invite {
+    variant sequence
+    title 'Workflows/Folders/Access/Roles/Invite someone to a folder'
+    description '''
+      R-ACC-07, R-ACC-09. A invites to folder Team: B (already in Company) or D (outside, role on Team only).
+    '''
+    include signalbox, personA, personB, personD, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree
+
+    personA -> signalbox.web 'Share → invite' {
+      notes '''
+        - A is Admin of Team (granted by C)
+      '''
+    }
+    signalbox.web -> signalbox.operations 'invite(email, role)'
+    alt 'who is invited' {
+      when 'B, a Company member' {
+        signalbox.operations -> signalbox.tree 'Level: Role{B, Member}' {
+          navigateTo organization_identity_org_invite
+          notes '''
+            - B already mounts Company, so Team is already in B's tree
+            - Not a member yet? It becomes an organization invite
+          '''
+        }
+        signalbox.tree -> personB 'Team role added'
+      }
+      else 'D, outside collaborator' {
+        signalbox.operations -> signalbox.identity 'WorkOS invitation' {
+          navigateTo state_invitation
+          notes '''
+            - A person invitation, not an organization membership
+          '''
+        }
+        personD -> signalbox.web 'accepts, files it'
+        signalbox.operations -> signalbox.tree 'Level: Role at Team only' {
+          navigateTo folders_access_outside_collaborator
+          notes '''
+            - No Company role; D sees only Team's subtree
+          '''
+        }
+        signalbox.operations -> signalbox.tree 'Person: Reference (D)' {
+          navigateTo folders_tree_reference
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_owner_transfer {
+    variant sequence
+    title "Workflows/Folders/Access/Roles/Hand over the organization's Owner role"
+    description '''
+      R-ACC-19. C hands folder Company's Owner role to B; WorkOS mirrors it.
+    '''
+    include platform, signalbox, personC, personB, signalbox.web, signalbox.operations, signalbox.tree, signalbox.identity, platform.workos
+
+    personC -> signalbox.web 'Transfer Owner → B'
+    signalbox.web -> signalbox.operations 'Role{B, Owner}'
+    signalbox.operations -> signalbox.tree 'can: C is Owner'
+    alt 'folder owner' {
+      when 'person-owned folder' {
+        signalbox.web <- signalbox.operations 'make it an organization' {
+          navigateTo folders_tree_make_org
+          notes '''
+            - A person's folder has one owner; co-owners need an organization
+          '''
+        }
+      }
+      else 'organization-owned (Company)' {
+        signalbox.operations -> signalbox.tree 'B Owner, C Admin' {
+          notes '''
+            - C keeps Admin unless C removes it
+          '''
+        }
+        signalbox.operations -> signalbox.identity 'mirror role'
+        signalbox.identity -> platform.workos 'set Owner: B'
+        signalbox.tree -> personB 'you own Company'
+      }
+    }
+    opt 'C leaves afterwards' {
+      personC -> signalbox.web 'Leave Company' {
+        navigateTo organization_identity_leave
+      }
+    }
+
+    style platform, signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_roles {
+    variant sequence
+    title 'Workflows/Folders/Access/Roles/Change roles and general access on a folder'
+    description '''
+      R-ACC-01 (aliases T-REM-11, T-REM-18), R-ACC-04. Roles on a folder inherit down and only add; general access can be narrowed per folder.
+    '''
+    include signalbox, personC, personA, personB, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree
+
+    personC -> signalbox.web 'Team › Members' {
+      navigateTo journey_sharing_share_dialog
+    }
+    alt 'what C changes' {
+      when 'a role' {
+        signalbox.web -> signalbox.operations 'Role{A, Admin, Team}'
+        signalbox.operations -> signalbox.tree 'can(C)' {
+          navigateTo folders_access_authorize
+          notes '''
+            - C is Admin via Company, so C may grant at Team
+          '''
+        }
+        signalbox.operations -> signalbox.tree 'Level: role, version++' {
+          notes '''
+            - Inherited down, only adds: Viewer at Team can't shrink B's Member via Company
+          '''
+        }
+      }
+      else 'general access' {
+        signalbox.web -> signalbox.operations 'GeneralAccess off'
+        signalbox.operations -> signalbox.tree 'Level: off below Team' {
+          notes '''
+            - "Everyone in Company can view" is on by default
+            - Off: B (no Team role) loses Team; A (Member at Team), C (Admin via Company) and D (Member at Team) keep it
+            - Turning it on again restores it
+          '''
+        }
+      }
+    }
+    signalbox.tree -[async]-> signalbox.funnel 'access changed' {
+      navigateTo folders_access_ui_availability
+      notes '''
+        - Clients re-read what they can do; sockets that fail the check drop
+      '''
+    }
+    opt 'A on own Friends folder' {
+      personA -> signalbox.web 'B Member on Friends' {
+        notes '''
+          - A is Owner of Friends, so A grants roles there without anyone else
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_ui_availability {
+    variant sequence
+    title 'Workflows/Folders/Access/Roles/Show what I can do, and update when roles change'
+    description '''
+      T-REM-17, T-REM-39. Clients render actions from Tree.can and re-read when a role changes.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.web 'opens folder Team'
+    signalbox.web -> signalbox.funnel 'subscribe(view)'
+    signalbox.funnel -> signalbox.operations 'actions for A'
+    signalbox.operations -> signalbox.tree 'Tree.can each' {
+      navigateTo folders_access_authorize
+    }
+    signalbox.funnel <- signalbox.operations 'availability' {
+      navigateTo work_agenttools_app_ops
+      notes '''
+        - Buttons render from `can`; human-only ops are flagged so agents never offer them
+      '''
+    }
+    signalbox.web -> personA 'enabled actions'
+    opt 'B changes A role' {
+      personB -> signalbox.mobile 'A → Viewer' {
+        navigateTo folders_access_roles
+        notes '''
+          - B is Admin of Team here
+        '''
+      }
+      signalbox.mobile -> signalbox.funnel 'Role{A, Viewer}'
+      signalbox.funnel -> signalbox.operations 'invoke'
+      signalbox.operations -> signalbox.tree 'role, epoch++' {
+        notes '''
+          - The access epoch bump invalidates every cached `can` for Team
+        '''
+      }
+      signalbox.funnel -> signalbox.web 'permission changed'
+      signalbox.web -> personA 'now read-only' {
+        notes '''
+          - A notice, then the composer and edit actions turn off with the reason
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_admin_visible {
+    variant sequence
+    title 'Workflows/Folders/Access/Threads/Opt in to Admin-visible chats'
+    description '''
+      R-ACC-18. Enterprise folder Company opts in; members are told first; afterwards C can open new private chats under Company.
+    '''
+    include signalbox, personC, personA, personB, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.attention
+
+    personC -> signalbox.web 'Opt in'
+    signalbox.web -> signalbox.operations 'Policy{adminVisible}'
+    signalbox.operations -> signalbox.tree 'Enterprise?' {
+      navigateTo folders_access_enterprise_flag
+    }
+    alt 'Enterprise flag' {
+      when 'off' {
+        signalbox.web <- signalbox.operations 'Invalid' {
+          notes '''
+            - Enterprise only; ordinary folders never expose private chats
+          '''
+        }
+      }
+      else 'on' {
+        signalbox.operations -> signalbox.tree 'Level: pending until T'
+        signalbox.tree -[async]-> signalbox.attention 'notice'
+        parallel {
+          signalbox.attention -> personA 'notice (A)'
+          signalbox.attention -> personB 'notice (B)'
+        }
+        personC -> signalbox.web "opens A's chat" {
+          notes '''
+            - A's private chat in Team, created after T
+          '''
+        }
+        signalbox.web -> signalbox.operations 'watch as Admin'
+        signalbox.operations -> signalbox.thread 'view as Admin' {
+          navigateTo work_threads_multiplayer_admin_visible
+          notes '''
+            - Allowed only for chats created after T; the header says "Admins can see"
+            - Chats from before T stay invisible to C
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_ask_folder {
+    variant sequence
+    title 'Workflows/Folders/Access/Threads/Ask a folder for work'
+    description '''
+      R-ACC-25. Any Company member asks a folder for work; a thread starts there for the asker, on the folder's resources.
+    '''
+    include signalbox, personB, personA, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.attention
+
+    personB -> signalbox.web 'Ask Team' {
+      navigateTo person_people_door
+      notes '''
+        - B is in Company but not on Team
+      '''
+    }
+    signalbox.web -> signalbox.operations 'NewThread at Team'
+    signalbox.operations -> signalbox.tree 'can(B, ask)' {
+      navigateTo folders_access_authorize
+      notes '''
+        - Any member of the owning organization may ask
+      '''
+    }
+    signalbox.operations -> signalbox.thread 'created for B' {
+      notes '''
+        - Place: Team via B's mount; owner: the organization
+        - Runs on Team's pool and connections, never on B's
+      '''
+    }
+    signalbox.thread -[async]-> signalbox.tree 'catalog row'
+    signalbox.thread -[async]-> signalbox.attention 'notify Team'
+    signalbox.attention -> personA 'new ask in Team' {
+      notes '''
+        - A, a Team member, can pick it up or leave it to B
+      '''
+    }
+    personB -> signalbox.web 'drives it'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_move_chat_out {
+    variant sequence
+    title 'Workflows/Folders/Access/Threads/Move a private chat out of a Company folder'
+    description '''
+      R-ACC-20. A moves a private chat from folder Team to A's Personal; the confirm lists Company sources it used.
+    '''
+    include signalbox, personA, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.search
+
+    personA -> signalbox.web 'Move to Personal'
+    signalbox.web -> signalbox.operations 'Move{thread, Personal}'
+    signalbox.operations -> signalbox.tree 'can: author, linked' {
+      navigateTo identity_identity_link
+      notes '''
+        - Only A's own private chat; A's work identity must be linked first
+      '''
+    }
+    signalbox.operations -> signalbox.thread 'sources used'
+    signalbox.web <- signalbox.operations 'confirm list' {
+      notes '''
+        - "Used Confluence and Google · Company" – those stay behind
+      '''
+    }
+    personA -> signalbox.web 'confirms'
+    signalbox.operations -> signalbox.thread 'moved{Team → Personal}' {
+      navigateTo work_threads_lifecycle_move_across
+      notes '''
+        - Cross-owner: access epoch bumps; next turn resolves on Personal → A's top level
+      '''
+    }
+    parallel {
+      signalbox.thread -[async]-> signalbox.tree 'both catalogs'
+      signalbox.thread -[async]-> signalbox.search 'reindex to A root'
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_thread_share {
+    variant sequence
+    title 'Workflows/Folders/Access/Threads/Share a thread with people or the folder'
+    description '''
+      R-ACC-10, R-ACC-12. Widen visibility (with a confirm of what becomes visible) or add/remove participants.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.tree, signalbox.search
+
+    personA -> signalbox.web 'header "+"'
+    alt 'what A changes' {
+      when 'widen visibility' {
+        signalbox.web -> signalbox.operations 'preview visibility'
+        signalbox.web <- signalbox.operations 'what becomes visible' {
+          notes '''
+            - Whole history moves with it; resources never change
+          '''
+        }
+        personA -> signalbox.web 'confirms'
+        signalbox.operations -> signalbox.thread 'Visibility: members' {
+          navigateTo work_threads_multiplayer_share
+        }
+        parallel {
+          signalbox.thread -[async]-> signalbox.tree 'row visible'
+          signalbox.thread -[async]-> signalbox.search 'visibility re-check'
+        }
+      }
+      else 'add or remove people' {
+        signalbox.web -> signalbox.operations 'Participants ±B'
+        signalbox.operations -> signalbox.thread 'participants' {
+          notes '''
+            - Removing B drops B's socket at the next access check
+          '''
+        }
+        signalbox.thread -> personB 'B added'
+      }
+    }
+    opt 'A reverses it' {
+      personA -> signalbox.web 'Make private' {
+        navigateTo folders_access_thread_unshare
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_access_thread_unshare {
+    variant sequence
+    title 'Workflows/Folders/Access/Threads/Unshare or fork a shared thread'
+    description '''
+      R-ACC-11. Admins can always unshare; the author only while nobody else wrote; anyone else forks privately as "(copy)".
+    '''
+    include signalbox, personA, personB, personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread
+
+    alt 'who' {
+      when 'A, sole author' {
+        personA -> signalbox.web 'Unshare'
+        signalbox.web -> signalbox.operations 'Unshare (A)'
+        signalbox.operations -> signalbox.tree 'can: nobody else wrote'
+        signalbox.operations -> signalbox.thread 'Visibility: private' {
+          navigateTo work_threads_multiplayer_make_private
+        }
+      }
+      when 'C, Admin' {
+        personC -> signalbox.web 'Unshare'
+        signalbox.web -> signalbox.operations 'Unshare (C)'
+        signalbox.operations -> signalbox.tree 'can: Admin'
+        signalbox.operations -> signalbox.thread 'Visibility: private' {
+          notes '''
+            - Admins always can; the people it was shared with lose it
+          '''
+        }
+      }
+      else 'B, or A after B wrote' {
+        personB -> signalbox.web 'Make private'
+        signalbox.web -> signalbox.operations 'Unshare (B)'
+        signalbox.operations -> signalbox.tree 'can unshare? no'
+        signalbox.operations -> signalbox.thread 'Fork "(copy)"' {
+          navigateTo folders_access_thread_share
+          notes '''
+            - A private copy with lineage; the original stays shared
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+}
+
+views {
+
+  // ───────────────────────────── Workflows/Folders/Tree/Folders ─────────────────────────────
+
+  dynamic view folders_tree_create_rename {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Create or rename a folder'
+    description '''
+      R-TRE-03 (alias T-PRJ-03), R-TRE-04. One operation from Home, the folder menu, the palette or an agent.
+    '''
+    include signalbox, personA, personC, personB, signalbox.web, signalbox.mobile, signalbox.operations, signalbox.tree
+
+    alt 'create or rename' {
+      when 'create' {
+        personA -> signalbox.web 'New folder' {
+          notes '''
+            - A in Personal; same op from Home, folder menu, palette or an agent
+          '''
+        }
+        signalbox.web -> signalbox.operations 'create folder'
+        signalbox.operations -> signalbox.tree 'Create{name, parent}' {
+          notes '''
+            - Needs Member+ at the parent; owner = the parent's owner
+            - B or C creating inside Company makes an organization-owned folder
+          '''
+        }
+        signalbox.tree -> signalbox.tree 'new Level: active' {
+          navigateTo state_level
+          notes '''
+            - One Level actor per folder, with its own agent thread
+          '''
+        }
+      }
+      else 'rename' {
+        personC -> signalbox.web 'Rename Team'
+        signalbox.web -> signalbox.operations 'rename'
+        signalbox.operations -> signalbox.tree 'Rename, version++'
+        signalbox.tree -> signalbox.mobile 'B sees new name' {
+          navigateTo folders_tree_home
+          notes '''
+            - Live in every tree that shows Team: A's and B's under their own mount, D's reference
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_folder_icon {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Set or reset a folder icon'
+    description '''
+      T-PRJ-08. Automatic favicon from the folder's drive, a picked icon, or reset (reset is unconfirmed).
+    '''
+    include signalbox, personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.drive
+
+    personA -> signalbox.web 'folder icon menu' {
+      navigateTo folders_tree_create_rename
+    }
+    alt 'icon' {
+      when 'automatic favicon' {
+        signalbox.tree -> signalbox.drive 'favicon from drive' {
+          navigateTo work_drive_placement
+          notes '''
+            - When the folder places a drive that ships a favicon
+          '''
+        }
+      }
+      else 'A picks or resets' {
+        signalbox.web -> signalbox.funnel 'set or reset icon'
+        signalbox.funnel -> signalbox.operations 'invoke'
+        signalbox.operations -> signalbox.tree 'Level: icon' {
+          notes '''
+            - Picked: stored on the folder, every member sees it
+            - Reset: cleared, back to automatic; no confirm (cheap to redo)
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_level_agent {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Give each level its agent thread'
+    description '''
+      R-TRE-16. Every level has exactly one persistent agent thread; it represents the level and settles when done.
+    '''
+    include signalbox, personC, personA, signalbox.tree, signalbox.thread
+
+    signalbox.tree -> signalbox.tree 'Level created' {
+      navigateTo folders_tree_create_rename
+    }
+    signalbox.tree -> signalbox.thread 'create agent thread' {
+      navigateTo work_levelagents_agent_thread
+      notes '''
+        - Once per level; the id is stored as `agentThreadId`
+        - "Who does this agent represent" = the level
+      '''
+    }
+    alt 'who talks to it' {
+      when 'C on Company' {
+        personC -> signalbox.thread 'asks Company agent' {
+          notes '''
+            - It runs on Company's chain only (no `via`): Company's pool and connections
+          '''
+        }
+      }
+      else 'A on Personal' {
+        personA -> signalbox.thread 'asks Personal agent' {
+          notes '''
+            - Personal → A's top level; A's pool P1
+          '''
+        }
+      }
+    }
+    signalbox.thread -> signalbox.thread 'settles when done' {
+      navigateTo state_thread
+      notes '''
+        - The same thread wakes for the next coordination
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_make_org {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Make a folder an organization'
+    description '''
+      R-TRE-14. A's Friends folder becomes an organization-owned folder; A becomes Admin, B keeps the role, the inherited pool is lent in.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree, signalbox.models
+
+    personA -> signalbox.web 'Make an organization' {
+      notes '''
+        - On A's Friends folder; also on mobile, palette and as an agent op
+      '''
+    }
+    signalbox.web -> signalbox.operations 'MakeOrganization'
+    signalbox.operations -> signalbox.identity 'create WorkOS org' {
+      navigateTo organization_identity_company_join
+      notes '''
+        - A becomes its Admin
+      '''
+    }
+    signalbox.operations -> signalbox.tree 'Level: owner organization' {
+      notes '''
+        - The subtree moves with it; B keeps Member
+        - Friends now sits in A's and B's trees by mount, like Company
+      '''
+    }
+    signalbox.operations -> signalbox.tree 'Lend{P1, into Friends}' {
+      navigateTo folders_lending_lend
+      notes '''
+        - P1 reached Friends from A's top level; across owners it can't, so it is lent
+        - Shows as "lent by A"; A can end it
+      '''
+    }
+    signalbox.tree -[async]-> signalbox.models 'outbound index' {
+      notes '''
+        - P1's row on A's top level lists "lent to Friends" with End loan
+      '''
+    }
+    signalbox.tree -> personB 'Friends mounted'
+    opt 'A hands over later' {
+      personA -> signalbox.web 'Transfer Owner' {
+        navigateTo folders_access_owner_transfer
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_move {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Move a folder within one owner'
+    description '''
+      R-TRE-05. Drag or "Move to…" inside one owner; threads run on the new chain from the next turn; access never widens silently.
+    '''
+    include signalbox, personC, personA, signalbox.web, signalbox.operations, signalbox.tree, signalbox.search
+
+    personC -> signalbox.web 'drag Team' {
+      notes '''
+        - Under another folder in Company; A does the same inside Personal
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Move{Team, to}'
+    signalbox.operations -> signalbox.tree 'can at both ends'
+    alt 'destination owner' {
+      when 'same owner' {
+        opt 'access would widen' {
+          signalbox.web <- signalbox.operations 'confirm who gains' {
+            notes '''
+              - Never silent: the confirm names who can newly see it
+            '''
+          }
+        }
+        signalbox.operations -> signalbox.tree 'Move: new parent' {
+          navigateTo state_level
+          notes '''
+            - Old parent loses Team, new parent gains it, in one change
+            - Running turns finish on their frozen Scope; the next turn uses the new chain
+          '''
+        }
+        signalbox.tree -[async]-> signalbox.search 'path update'
+      }
+      else 'another owner' {
+        signalbox.web <- signalbox.operations 'cross-owner move' {
+          navigateTo folders_tree_move_across
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_move_across {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Move a folder into or out of folder Company'
+    description '''
+      R-TRE-06. Owner/Admin at the source, Member+ at the destination; leaving Company needs its Admin; Enterprise can lock it.
+    '''
+    include signalbox, personA, personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.search, signalbox.drive
+
+    personA -> signalbox.web 'move into Company' {
+      notes '''
+        - A folder under A's Personal moves into Company
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Move{folder, Company}'
+    signalbox.operations -> signalbox.tree 'can both ends' {
+      navigateTo folders_tree_move
+      notes '''
+        - A: Owner at source, Member at Company → allowed
+        - Out of Company: only an Admin like C
+      '''
+    }
+    alt 'result' {
+      when 'Enterprise lock' {
+        signalbox.web <- signalbox.operations 'Denied: locked' {
+          notes '''
+            - Company's Enterprise flag locks folders in
+          '''
+        }
+      }
+      else 'allowed' {
+        signalbox.operations -> signalbox.tree 'Level: owner organization' {
+          navigateTo state_level
+          notes '''
+            - From now on it resolves on Company's chain: P2 and Company's connections, for A, B and C alike
+          '''
+        }
+        parallel {
+          signalbox.tree -[async]-> signalbox.thread 'threads: new via' {
+            navigateTo work_threads_lifecycle_move_across
+            notes '''
+              - `via` comes from A's own mount; past usage stays where it happened
+            '''
+          }
+          signalbox.tree -[async]-> signalbox.search 'reindex to Company'
+          signalbox.tree -[async]-> signalbox.drive 'rebase saga'
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_purge {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Purge a folder after 30 days'
+    description '''
+      R-TRE-10. Nobody restored Team for 30 days: the Level's alarm fans out to one idempotent purge worker per store, then the folder is gone for A, B, C and D.
+    '''
+    include signalbox, signalbox.tree, signalbox.search, signalbox.drive, signalbox.bases, signalbox.computer
+
+    signalbox.tree -> signalbox.tree '30-day alarm' {
+      navigateTo folders_tree_trash
+      notes '''
+        - Team's Level was trashed 30 days ago and nobody restored it
+      '''
+    }
+    parallel 'purge workers' {
+      signalbox.tree -[async]-> signalbox.search 'delete rows' {
+        notes '''
+          - Each worker is idempotent; a retry deletes nothing twice
+        '''
+      }
+      signalbox.tree -[async]-> signalbox.drive 'delete forks'
+      signalbox.tree -[async]-> signalbox.bases 'release leases'
+      signalbox.tree -[async]-> signalbox.computer 'delete machines'
+    }
+    signalbox.tree -> signalbox.tree 'Level: purged' {
+      navigateTo state_level
+      notes '''
+        - Irreversible; the record and its R2 copy go now
+        - Every member's tree (A, B, C) and D's reference drop it
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_trash {
+    variant sequence
+    title 'Workflows/Folders/Tree/Folders/Trash a folder'
+    description '''
+      R-TRE-08 (alias T-PRJ-06). Tombstone, 30-day trash, per-store workers; agents go through the decision gate.
+    '''
+    include hier, signalbox, hier.company, personC, hier.company.agentCo, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.search
+
+    alt 'who deletes' {
+      when 'C, with the role' {
+        personC -> signalbox.web 'Delete Team' {
+          notes '''
+            - A does the same for a folder under Personal
+          '''
+        }
+        signalbox.web -> signalbox.operations 'Trash{Team}'
+      }
+      else 'an agent' {
+        hier.company.agentCo -> signalbox.operations 'Trash{Team}'
+        signalbox.operations -> hier.company.agentCo 'NeedsDecision' {
+          navigateTo folders_gates_destructive
+          notes '''
+            - A Ready ask to Team's responsible people (C); runs only on approval
+          '''
+        }
+      }
+    }
+    signalbox.operations -> signalbox.tree 'Level: trashed' {
+      navigateTo state_level
+      notes '''
+        - A tombstone; Team disappears from A's, B's and D's trees
+      '''
+    }
+    parallel {
+      signalbox.tree -[async]-> signalbox.thread 'stop threads'
+      signalbox.tree -[async]-> signalbox.search 'hide rows'
+    }
+    signalbox.tree -> signalbox.tree '30 days later' {
+      navigateTo folders_tree_purge
+      notes '''
+        - Restore is possible until then
+      '''
+    }
+
+    style hier, signalbox, hier.company {
+      color muted
+      opacity 10%
+    }
+}
+
+  // ───────────────────────────── Workflows/Folders/Tree/Home ─────────────────────────────
+
+  dynamic view folders_tree_breadcrumb {
+    variant sequence
+    title 'Workflows/Folders/Tree/Home/Breadcrumb for any item'
+    description '''
+      R-TRE-18. One shared thread in Team, three breadcrumbs: its home chain (the same for everyone) plus where each viewer filed it.
+    '''
+    include signalbox, personA, personB, personD, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.operations 'open shared thread' {
+      navigateTo folders_tree_home
+      notes '''
+        - A, B and D each open the same thread in folder Team
+      '''
+    }
+    signalbox.operations -> signalbox.tree 'view(home chain)' {
+      notes '''
+        - Team → Company: the same for everyone
+      '''
+    }
+    signalbox.operations -> signalbox.tree "view(viewer's mount)" {
+      navigateTo state_mount
+      notes '''
+        - Where this viewer filed Company (a mount) or Team (a reference)
+      '''
+    }
+    parallel 'per viewer' {
+      signalbox.operations -> personA 'Work › Company › Team' {
+        notes '''
+          - A mounted Company under Work
+        '''
+      }
+      signalbox.operations -> personB 'Company › Team' {
+        notes '''
+          - B filed Company at B's top level
+        '''
+      }
+      signalbox.operations -> personD 'Shared with me › Team' {
+        notes '''
+          - Outside collaborator: Team only, no Company crumb
+        '''
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_catalog {
+    variant sequence
+    title 'Workflows/Folders/Tree/Home/Catalog rows and who sees them'
+    description '''
+      R-TRE-17 (alias T-SYS-11), R-ACC-14. A thread posts its status row to its folder; the folder filters it per viewer before it leaves; others' private threads stay invisible, even to the admin.
+    '''
+    include signalbox, personA, personB, personC, signalbox.funnel, signalbox.thread, signalbox.tree, signalbox.search
+
+    signalbox.thread -[async]-> signalbox.tree 'status row' {
+      notes '''
+        - Every thread in Team, shared or private (B's draft spec too)
+        - Latest state only, coalesced per Level tick (~1 s)
+      '''
+    }
+    signalbox.tree -> signalbox.funnel 'rows per viewer' {
+      navigateTo folders_tree_home
+      notes '''
+        - Live per level (`shardBy(levelId)`); filtered before it leaves Tree
+      '''
+    }
+    parallel 'what each sees' {
+      signalbox.funnel -> personA 'shared rows' {
+        notes '''
+          - A sees the shared thread; B's private draft has no title, no count, no row
+        '''
+      }
+      signalbox.funnel -> personB 'shared + own private' {
+        navigateTo work_threads_multiplayer_private_invisible
+      }
+      signalbox.funnel -> personC 'shared + cost totals' {
+        navigateTo folders_usage_rollup
+        notes '''
+          - Admin C sees others' private work only inside cost totals
+        '''
+      }
+    }
+    personA -> signalbox.search "search B's draft" {
+      notes '''
+        - Snippets are re-checked against visibility at query time
+      '''
+    }
+    signalbox.search -> personA 'not found' {
+      notes '''
+        - "Not found" never confirms that it exists
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_home {
+    variant sequence
+    title 'Workflows/Folders/Tree/Home/Open Home and see the tree live'
+    description '''
+      R-TRE-01 (alias T-PRJ-18), R-TRE-02. Three trees, one shared Company folder; changes reach every member live.
+    '''
+    include signalbox, personA, personC, personB, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.tree
+
+    personA -> signalbox.web 'opens Home'
+    signalbox.web -> signalbox.funnel 'subscribe Home'
+    signalbox.funnel -> signalbox.tree 'Person: mounts, references'
+    signalbox.funnel -> signalbox.tree 'Level: children, catalog' {
+      navigateTo folders_tree_catalog
+      notes '''
+        - Top level, Personal, Work › Company › Team
+        - Drafts show as their own group (from Capture), private to A
+      '''
+    }
+    signalbox.funnel -> signalbox.web 'A tree' {
+      navigateTo folders_tree_breadcrumb
+    }
+    opt 'C changes Company' {
+      personC -> signalbox.web 'adds a folder' {
+        notes '''
+          - Inside Company, on C's own Web client
+        '''
+      }
+      signalbox.tree -> signalbox.funnel 'delta to members' {
+        notes '''
+          - One Level, many trees; private rows never reach non-viewers
+        '''
+      }
+      signalbox.funnel -> signalbox.mobile 'B tree updates'
+    }
+    personA -> signalbox.web 'opens Team' {
+      navigateTo journey_daily_folder_page
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view folders_tree_reference {
+    variant sequence
+    title 'Workflows/Folders/Tree/Home/Add or remove a reference'
+    description '''
+      R-TRE-13. Show a level, thread or source somewhere in my tree; a reference grants nothing.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.operations, signalbox.tree
+
+    alt 'add or remove' {
+      when 'add' {
+        personA -> signalbox.web 'Add to my tree' {
+          notes '''
+            - B's shared thread, filed under A's Personal
+          '''
+        }
+        signalbox.web -> signalbox.operations 'Reference{item, under}'
+        signalbox.operations -> signalbox.tree 'Person: reference' {
+          navigateTo folders_access_folder_invite
+          notes '''
+            - Also what accepting an invite creates
+            - Grants nothing: without access it shows "no access"
+          '''
+        }
+      }
+      else 'remove' {
+        personA -> signalbox.web 'Remove from tree'
+        signalbox.web -> signalbox.operations 'Unreference'
+        signalbox.operations -> signalbox.tree 'Person: drop reference'
+      }
+    }
+    signalbox.tree -> personB 'nothing changes' {
+      notes '''
+        - B's tree, access and resources are untouched
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  // ───────────────────────────── Workflows/Person/People ─────────────────────────────
+
+  dynamic view person_people_door {
+    variant sequence
+    title 'Workflows/Person/People/Ask a folder for work'
+    description '''
+      P-PPL-10. Door model: B asks folder Team; a thread is created for B on Team's resources, which B drives.
+    '''
+    include signalbox, personB, personC, signalbox.mobile, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread
+
+    personB -> signalbox.mobile 'Ask Team'
+    signalbox.mobile -> signalbox.operations 'NewThread at Team' {
+      navigateTo work_threads_start_door
+    }
+    signalbox.operations -> signalbox.tree 'can(B)' {
+      navigateTo folders_access_ask_folder
+      notes '''
+        - Any member of Company may ask
+      '''
+    }
+    signalbox.operations -> signalbox.thread 'created for B' {
+      navigateTo state_thread
+      notes '''
+        - On Team's pool and connections; B drives it
+      '''
+    }
+    signalbox.thread -[async]-> signalbox.tree 'catalog row'
+    personC -> signalbox.web 'sees it in Team' {
+      notes '''
+        - C, Admin, can follow along or help
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view person_people_live {
+    variant sequence
+    title 'Workflows/Person/People/Work live in one thread together'
+    description '''
+      P-PPL-03, P-PPL-04. A and B watch the same Thread; turns queue with their sender; presence never leaks from observing.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.thread
+
+    personA -> signalbox.web 'opens thread'
+    personB -> signalbox.mobile 'opens thread'
+    signalbox.funnel -> signalbox.thread 'two watchers' {
+      navigateTo work_threads_multiplayer_live
+      notes '''
+        - One Thread actor in Team; both sockets subscribe to it
+      '''
+    }
+    parallel 'presence' {
+      signalbox.funnel -> signalbox.web 'B is here'
+      signalbox.funnel -> signalbox.mobile 'A is here'
+    }
+    personA -> signalbox.web 'sends turn'
+    signalbox.web -> signalbox.thread 'send (A)'
+    personB -> signalbox.mobile 'sends too'
+    signalbox.mobile -> signalbox.thread 'queued (B)' {
+      notes '''
+        - One run at a time; B's message waits in the run queue
+        - Each message records its sender
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view person_people_make_private {
+    variant sequence
+    title 'Workflows/Person/People/Take a shared thread private'
+    description '''
+      P-PPL-02. Anyone forks privately as "<title> (copy)"; an Admin or the sole author can unshare.
+    '''
+    include signalbox, personB, personC, signalbox.mobile, signalbox.web, signalbox.thread, signalbox.tree
+
+    alt 'how' {
+      when 'B forks privately' {
+        personB -> signalbox.mobile 'Fork privately'
+        signalbox.mobile -> signalbox.thread 'Fork "(copy)"' {
+          navigateTo state_thread
+          notes '''
+            - A new private thread with lineage; the shared one stays as it was
+          '''
+        }
+      }
+      else 'C unshares (Admin)' {
+        personC -> signalbox.web 'Make private'
+        signalbox.web -> signalbox.thread 'Visibility: private'
+        signalbox.thread -> signalbox.tree 'can(C)' {
+          navigateTo work_threads_multiplayer_make_private
+          notes '''
+            - Admins always; the author only while nobody else wrote
+            - Allowed: A and B lose the thread; nothing about pools or connections changes
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view person_people_mention {
+    variant sequence
+    title 'Workflows/Person/People/@-mention a person'
+    description '''
+      P-PPL-05. A @-mentions B; an unanswered mention becomes B's needs-you.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.attention
+
+    personA -> signalbox.web '@B in thread' {
+      notes '''
+        - People and chain agents are mentionable; other people's assistants aren't
+      '''
+    }
+    signalbox.web -> signalbox.thread 'message + mention' {
+      navigateTo work_threads_multiplayer_mention
+    }
+    signalbox.thread -[async]-> signalbox.attention 'mention B'
+    signalbox.attention -> signalbox.mobile 'notify B' {
+      notes '''
+        - Only on B's devices homed on this chain, Focus permitting
+      '''
+    }
+    opt 'B does not answer' {
+      signalbox.attention -> signalbox.mobile "needs-you in B's lanes" {
+        navigateTo person_pipeline_project_ask
+        notes '''
+          - In B's own pipeline only; A's lanes are unaffected
+        '''
+      }
+    }
+    personB -> signalbox.mobile 'replies'
+    signalbox.mobile -> signalbox.thread 'answer clears it'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view person_people_shared_costs {
+    // flow
+    title 'Workflows/Person/People/Shared thread costs roll up folder Company'
+    description '''
+      P-PPL-11. Turns by A and B in the shared thread are paid by Company's pool and roll up Team → Company, never to A or B.
+    '''
+    include signalbox, personA, personB, personC, signalbox.thread, signalbox.models, signalbox.tree
+
+    personA -> signalbox.thread 'turn (A)'
+    personB -> signalbox.thread 'turn (B)'
+    signalbox.thread -[model]-> signalbox.models 'paid by P2' {
+      notes '''
+        - Scope resolves pool P2 at Company for both; who sent doesn't matter
+      '''
+    }
+    signalbox.models -[async]-> signalbox.tree 'Team usage rows' {
+      notes '''
+        - One ledger; rows carry the level at time of use (Team)
+      '''
+    }
+    signalbox.tree -[async]-> signalbox.tree 'roll up Company' {
+      navigateTo folders_usage_rollup
+    }
+    signalbox.tree -> personC 'Team + Company totals' {
+      notes '''
+        - A's and B's own top levels show nothing for this thread
+      '''
+    }
+    autoLayout TopBottom
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+
+  dynamic view person_people_snooze {
+    variant sequence
+    title 'Workflows/Person/People/Snooze, unread and pin on a shared thread'
+    description '''
+      P-PPL-07, P-PPL-08. Snooze, unread and order are per person; pin is global; snooze wakes early on ask, fail or complete.
+    '''
+    include signalbox, personA, personB, signalbox.web, signalbox.mobile, signalbox.operations, signalbox.tree, signalbox.thread
+
+    personA -> signalbox.web 'Snooze until 15:00'
+    signalbox.web -> signalbox.operations 'defer(thread, 15:00)'
+    signalbox.operations -> signalbox.tree "Person: A's snooze" {
+      navigateTo work_threads_multiplayer_per_person_state
+      notes '''
+        - Only A's attention changes; B still sees it active
+      '''
+    }
+    opt 'Undo within 5 s' {
+      personA -> signalbox.web 'Undo'
+      signalbox.operations -> signalbox.tree 'unsnooze'
+    }
+    personB -> signalbox.mobile 'pins thread'
+    signalbox.mobile -> signalbox.thread 'pin (global)' {
+      notes '''
+        - Pin is thread state: A sees it pinned too
+      '''
+    }
+    alt 'wake' {
+      when 'at 15:00' {
+        signalbox.tree -> signalbox.web 'back in list'
+      }
+      else 'asks, fails or completes' {
+        signalbox.thread -[async]-> signalbox.tree 'wake early' {
+          navigateTo state_thread
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+}
+}

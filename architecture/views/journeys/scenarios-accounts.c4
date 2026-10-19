@@ -1,0 +1,1605 @@
+// Scenario shard 01: accounts (SCN-001 to SCN-031). One journey per scenario, each a sequence.
+// People: A and B are members of folder Company (owner: organization), C is its admin.
+// Folder Company is one Level actor mounted under each member's Work folder.
+// Modules are black boxes. Each view's description starts with the plain question, then the answer.
+// Person D is the outside collaborator on folder Team; the Operator runs the Signalbox server
+// (billing, migrations). Tags: #decided / #assumption say what the answer rests on.
+views {
+
+  style signalbox, platform, services, hier {
+    color muted
+    opacity 10%
+  }
+
+  // ───────────────────────── Scenarios/Accounts/SignUp ─────────────────────────
+
+  dynamic view scn_001_personal_first_then_job {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SignUp/Personal First Then Job'
+    description '''
+      Does someone who signed up personally keep one sign-in when they get a job?
+      Decided: #225 §7, #231, #267 (2026-10-14). Always sign in personally; linked work accounts come along. No merges, no account switcher.
+      SCN-001 · R-IDN-01, P-ONB-17, R-IDN-14, P-ONB-12, R-IDN-10 · v1 partial: link returns Unsupported, so only sign-up and a personal-email invite mount are live.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Signs up' {
+      notes '''
+        - **Start:** no account yet.
+        - Google, GitHub, Apple or an email code.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Complete sign-in' {
+      navigateTo identity_identity_signin
+      notes '''
+        - AuthKit completes into A's own invisible WorkOS organization.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Create top level' {
+      notes '''
+        - Person actor, top level, folders Personal and Work.
+        - A works in Personal for a while.
+      '''
+    }
+    personC -> signalbox.web 'Invites a@company' {
+      notes '''
+        - C is admin of folder Company and invites A's work email.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Invite to Company' {
+      navigateTo organization_identity_org_invite
+      notes '''
+        - A WorkOS invitation into the company's organization.
+      '''
+    }
+    personA -> signalbox.web 'Links a@company' {
+      navigateTo identity_identity_link_work_account
+      notes '''
+        - From the personal session, never a second sign-in.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Link alias' {
+      navigateTo identity_identity_link
+      notes '''
+        - Proven by email code or OAuth; a@company becomes a permanent alias.
+      '''
+    }
+    signalbox.identity -> platform.workos 'Prove a@company' {
+      notes '''
+        - Email code or OAuth against the work identity.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Mount Company' {
+      navigateTo identity_identity_company_joins
+      notes '''
+        - Folder Company mounts under A's Work with a stable mount id.
+      '''
+    }
+    signalbox.funnel -> signalbox.web 'Company under Work' {
+      notes '''
+        - Every device shows it on its next request.
+        - **End:** Company under Work, still one sign-in.
+      '''
+    }
+  }
+
+  dynamic view scn_002_work_first_then_personal {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SignUp/Work First Then Personal'
+    description '''
+      What happens when someone starts with a work account and later adds a personal sign-in?
+      Decided: #225 §7 (2026-10-14), #269; #270 (2026-10-16) removed the 30-day hold, so the move has no deadline.
+      SCN-002 · R-IDN-10, R-IDN-17, P-ONB-18, R-IDN-14 · v1 partial.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.identity, signalbox.tree
+
+    personC -> signalbox.web 'Invites a@company' {
+      notes '''
+        - **Start:** A only has the a@company identity.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'WorkOS invitation' {
+      navigateTo organization_identity_org_invite
+      notes '''
+        - Invitation into the company's organization.
+      '''
+    }
+    personA -> signalbox.web 'Signs up a@company' {
+      notes '''
+        - A works in folder Company.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Creates own folder' {
+      notes '''
+        - A's first folder outside Company.
+      '''
+    }
+    signalbox.web -> personA 'Nudge: stays yours' {
+      notes '''
+        - "This is yours, add a personal sign-in so it stays yours."
+      '''
+    }
+    personA -> signalbox.web 'Adds personal sign-in' {
+      navigateTo identity_identity_add_personal
+    }
+    signalbox.web -> signalbox.identity 'Link a@company' {
+      navigateTo identity_identity_link_work_account
+      notes '''
+        - The personal account becomes the person; a@company becomes its alias.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Move own folders' {
+      notes '''
+        - Folders A made outside Company move to A's personal tree.
+        - Idempotent; nothing is deleted on a clock (#270).
+      '''
+    }
+    signalbox.tree -> signalbox.web 'Company under Work' {
+      notes '''
+        - Next sign-in on any device is personal.
+        - **End:** personal account, a@company linked, A's folders kept.
+      '''
+    }
+  }
+
+  dynamic view scn_003_company_only_account {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SignUp/Company Only Account'
+    description '''
+      Can someone work with only a company account and never add a personal sign-in?
+      Decided: #225 §6/§7, #230 d9 (2026-10-14). Company-only accounts are the Enterprise line; the company pool is mandatory for their assistant.
+      SCN-003 · R-ACC-26, P-AST-34, R-LND-11, R-IDN-08 · v1 partial: no assistant in v1.
+    '''
+
+    include personA, personC, hier, hier.asstA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.models
+
+    alt 'how A gets an account' {
+      when 'company creates it' {
+        personC -> signalbox.web 'Creates A account' {
+          navigateTo folders_access_enterprise_flag
+          notes '''
+            - **Start:** an Enterprise company makes the account.
+          '''
+        }
+      }
+      else 'verified domain' {
+        personA -> signalbox.web 'Signs in at domain' {
+          navigateTo organization_identity_company_join
+          notes '''
+            - a@company on the company's verified domain.
+          '''
+        }
+      }
+    }
+    signalbox.web -> signalbox.identity 'Company-only account' {
+      notes '''
+        - No personal sign-in behind it.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Create top level' {
+      notes '''
+        - Folder Company is reachable from A's top level.
+      '''
+    }
+    signalbox.tree -> hier.asstA 'Assistant at top' {
+      notes '''
+        - A's assistant lives at this account's top level.
+      '''
+    }
+    signalbox.tree -> signalbox.models 'Lend company pool' {
+      navigateTo folders_lending_company_pool
+      notes '''
+        - The company lends its pool into A's top level.
+        - Mandatory on company-only accounts.
+      '''
+    }
+    hier.asstA -> signalbox.models 'Runs on lent pool' {
+      navigateTo person_assistant_org_pool_loan
+    }
+    opt 'later' {
+      personA -> signalbox.web 'Adds personal sign-in' {
+        navigateTo scn_002_work_first_then_personal
+        notes '''
+          - Runs SCN-002.
+          - **End:** A works with no personal sign-in until then.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_004_google_workspace_domain_join {
+    #v1
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/SignUp/Google Workspace Join'
+    description '''
+      How does a colleague join by signing in with Google Workspace?
+      Decided: #452 (2026-10-15), Workspace through AuthKit, the verified domain adds them by JIT.
+      Assumption: the Workspace sign-in is B's personal account, so nothing is linked; #547 option A always lands in the personal organization.
+      SCN-004 · R-IDN-09, P-ONB-12, R-IDN-01, R-IDN-08, R-IDN-13 · v1 yes.
+    '''
+
+    include personB, personC, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos, services, services.google
+
+    personC -> signalbox.web 'Verifies domain' {
+      navigateTo organization_identity_company_join
+      notes '''
+        - **Start:** B has no account; C's company has a verified domain with JIT.
+      '''
+    }
+    personB -> signalbox.web 'Google sign-in' {
+      notes '''
+        - b@company, one click.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'AuthKit sign-in' {
+      navigateTo identity_identity_signin
+    }
+    signalbox.identity -> platform.workos 'Google via AuthKit'
+    platform.workos -> services.google 'Workspace OAuth'
+    signalbox.identity -> signalbox.tree 'Create top level' {
+      notes '''
+        - Identity ensures B's personal WorkOS organization.
+        - Top level with Personal and Work. **Assumption:** this is B's personal account.
+      '''
+    }
+    platform.workos -> signalbox.identity 'JIT membership' {
+      navigateTo organization_identity_membership_webhook
+      notes '''
+        - Domain JIT adds B to the company's organization; the webhook arrives.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Mirror role, mount' {
+      navigateTo identity_identity_company_joins
+      notes '''
+        - Role mirrored onto folder Company.
+        - **End:** Company mounted under B's Work, stable mount id.
+      '''
+    }
+  }
+
+  // ───────────────────────── Scenarios/Accounts/SignIn ─────────────────────────
+
+  dynamic view scn_006_several_orgs_no_picker {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SignIn/Several Organizations No Picker'
+    description '''
+      Does someone in several WorkOS organizations ever see an organization picker?
+      Decided: #547 option A (2026-10-17). Always sign into the personal organization, invisibly; a picker is a bug.
+      SCN-006 · R-IDN-02, P-ONB-01, P-ONB-02, R-IDN-20 · v1 yes.
+    '''
+
+    include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Signs in' {
+      notes '''
+        - **Start:** A is in a personal organization, the company's, and a guest in folder Game Night (owner: Person D).
+      '''
+    }
+    signalbox.web -> signalbox.identity 'AuthKit sign-in' {
+      navigateTo identity_identity_signin
+    }
+    signalbox.identity -> platform.workos 'Authenticate'
+    signalbox.identity <- platform.workos 'Selection required' {
+      notes '''
+        - `organization_selection_required`, or WorkOS would show its picker.
+      '''
+    }
+    signalbox.identity -> platform.workos 'Pick personal' {
+      navigateTo identity_identity_sign_up
+      notes '''
+        - Identity completes into A's personal organization without showing anything.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Load A tree'
+    signalbox.tree -> signalbox.web 'Own top level' {
+      navigateTo journey_sharing_friend_group
+      notes '''
+        - Company under Work; Game Night where A filed it.
+        - **End:** no picker, A lands on A's own top level.
+      '''
+    }
+  }
+
+  dynamic view scn_009_github_email_code {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SignIn/GitHub Email Code'
+    description '''
+      Why is someone who signs in with GitHub asked for an email code?
+      Decided: #35, #13 (2026-10-02). WorkOS does not trust GitHub emails and asks once per account; the code step needs the WorkOS API key.
+      SCN-009 · R-IDN-01, P-ONB-01 · v1 yes.
+    '''
+
+    include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos, services, services.github
+
+    personA -> signalbox.web 'Picks GitHub' {
+      notes '''
+        - **Start:** A picks GitHub at sign-up.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'AuthKit sign-in' {
+      navigateTo identity_identity_signin
+    }
+    signalbox.identity -> platform.workos 'GitHub OAuth'
+    platform.workos -> services.github 'Authorize'
+    platform.workos -> personA 'Email code' {
+      notes '''
+        - GitHub emails are not trusted, so WorkOS sends a one-time code.
+        - Once per account.
+      '''
+    }
+    personA -> signalbox.web 'Enters code'
+    signalbox.web -> signalbox.identity 'Verify code'
+    signalbox.identity -> signalbox.tree 'Create top level' {
+      navigateTo identity_identity_sign_up
+      notes '''
+        - First sign-in only.
+        - **End:** A is signed in.
+      '''
+    }
+  }
+
+  dynamic view scn_010_new_device_qr {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SignIn/New Device QR'
+    description '''
+      How does someone sign in on a new device with a QR code?
+      Decided: #357 (ready-for-agent): short-lived, single-use codes bound to the waiting device, confirmed on the signed-in one; #302 (2026-10-17): the cloud has no pairing.
+      SCN-010 · R-IDN-21, P-DEV-06, P-DEV-07, P-DEV-01, P-DEV-02 · not v1.
+    '''
+
+    include personA, signalbox, signalbox.desktop, signalbox.mobile, signalbox.identity, signalbox.tree
+
+    signalbox.desktop -> personA 'Shows QR code' {
+      navigateTo journey_devices_qr_sign_in
+      notes '''
+        - **Start:** a signed-in phone and a new computer (or the reverse).
+        - Settings › Devices on a signed-in device shows one too.
+      '''
+    }
+    personA -> signalbox.mobile 'Scans with camera' {
+      notes '''
+        - The system camera opens the app, or the store if it is missing.
+      '''
+    }
+    signalbox.mobile -> personA 'Sign in there?' {
+      notes '''
+        - "Sign in on <device>?"
+      '''
+    }
+    personA -> signalbox.mobile 'Confirms'
+    signalbox.mobile -> signalbox.identity 'Approve device code' {
+      navigateTo identity_identity_device_code
+      notes '''
+        - Short-lived, single-use, bound to the waiting device.
+      '''
+    }
+    signalbox.identity -> signalbox.desktop 'Session minted' {
+      notes '''
+        - Linked work identities come along.
+      '''
+    }
+    signalbox.desktop -> signalbox.tree 'Register device' {
+      navigateTo person_devices_register
+    }
+    signalbox.desktop -> personA 'Pick home folder' {
+      navigateTo journey_devices_manage
+      notes '''
+        - **End:** both devices signed in; the new one picked its home folder.
+      '''
+    }
+  }
+
+  dynamic view scn_011_sign_out_everywhere {
+    #v1
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/SignIn/Sign Out Everywhere'
+    description '''
+      How does someone sign out, or end every session?
+      Decided for revocation: #268, #270 (2026-10-16): sessions stop on their next request on every device.
+      Assumption: "sign out everywhere" is a bulk remove-device over the Person actor's devices (sessions are per device, A22; every way in needs a way out).
+      SCN-011 · P-OUT-01, R-IDN-04, P-DEV-05, R-IDN-05 · v1 partial.
+    '''
+
+    include personA, signalbox, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.identity, signalbox.tree, signalbox.attention
+
+    personA -> signalbox.web 'Account › Sign out' {
+      notes '''
+        - **Start:** A is signed in on several devices.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'End this session' {
+      navigateTo person_devices_sign_out_remove
+    }
+    parallel {
+      signalbox.identity -> signalbox.tree 'Remove this device'
+      signalbox.tree -> signalbox.attention 'Drop push token' {
+        notes '''
+          - Other devices stay signed in.
+        '''
+      }
+    }
+    alt 'other sessions' {
+      when 'one device' {
+        personA -> signalbox.web 'Removes a device' {
+          navigateTo journey_devices_manage
+          notes '''
+            - Settings › Devices.
+          '''
+        }
+      }
+      else 'all others' {
+        personA -> signalbox.web 'Sign out others' {
+          notes '''
+            - **Assumption:** removes every device except this one in one step.
+          '''
+        }
+      }
+    }
+    signalbox.web -> signalbox.tree 'Remove devices'
+    signalbox.mobile -> signalbox.funnel 'Next request'
+    signalbox.funnel -> signalbox.identity 'Authenticate' {
+      navigateTo identity_identity_authenticate
+      notes '''
+        - Revocation and refused linked identities end sessions the same way.
+      '''
+    }
+    signalbox.funnel -> signalbox.mobile 'Signed out' {
+      navigateTo state_session
+      notes '''
+        - **End:** the sessions A chose are gone.
+      '''
+    }
+  }
+
+  dynamic view scn_012_linked_identity_refused {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SignIn/Linked Identity Refused'
+    description '''
+      What happens when someone signs in directly with a work identity that is already linked?
+      Decided: #225 §11 (2026-10-14), #268. Signing in with a linked work identity is refused.
+      SCN-012 · R-IDN-15, P-OUT-13, R-IDN-02 · not v1.
+    '''
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.identity, platform, platform.workos
+
+    personA -> signalbox.web 'Signs in a@company' {
+      notes '''
+        - **Start:** a@company was linked to A's personal account earlier.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Sign in' {
+      navigateTo identity_identity_signin
+    }
+    signalbox.identity -> platform.workos 'AuthKit'
+    signalbox.identity <- platform.workos 'a@company user'
+    signalbox.identity -> signalbox.identity 'Alias map first' {
+      notes '''
+        - The identity map resolves before the user object and finds an alias.
+      '''
+    }
+    signalbox.identity -> signalbox.web 'LinkedIdentitySignIn' {
+      navigateTo identity_identity_link_work_account
+      notes '''
+        - The refusal names the personal account to use.
+      '''
+    }
+    signalbox.web -> personA 'Use personal account' {
+      notes '''
+        - **End:** refused, pointed at the personal account.
+      '''
+    }
+    signalbox.funnel -> signalbox.identity 'Old sessions die' {
+      navigateTo identity_identity_authenticate
+      notes '''
+        - Any old sessions of a@company die on their next request.
+      '''
+    }
+  }
+
+  dynamic view scn_019_repeat_signups {
+    #v1
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/SignIn/Repeat Signups'
+    description '''
+      What stops one email from signing up, deleting and signing up again over and over?
+      Assumption: WorkOS Radar runs in Log mode first, then Challenge, never Block (dead simple, observe-first is reversible; staging runs Log already, #926). Pending #312.
+      SCN-019 · R-IDN-24, R-IDN-01 · v1 yes.
+    '''
+
+    include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.observability, platform, platform.workos
+
+    personA -> signalbox.web 'Signs up' {
+      navigateTo identity_identity_signin
+      notes '''
+        - **Start:** one email, repeated sign-ups.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Create account'
+    personA -> signalbox.web 'Deletes account'
+    signalbox.web -> signalbox.tree 'Tree to trash' {
+      notes '''
+        - 30-day trash, nothing deleted on the spot.
+      '''
+    }
+    loop 'same email again' {
+      personA -> signalbox.web 'Signs up again'
+      signalbox.web -> signalbox.identity 'Sign up'
+      signalbox.identity -> platform.workos 'Radar check' {
+        notes '''
+          - Radar counts repeat sign-ups.
+        '''
+      }
+      signalbox.identity -> signalbox.observability 'Log repeat'
+    }
+    alt 'Radar verdict' {
+      when 'under threshold' {
+        platform.workos -> signalbox.identity 'Allow'
+      }
+      else 'past threshold' {
+        platform.workos -> personA 'Challenge' {
+          notes '''
+            - An email can be used at most 3 times; past that, a challenge, never a block.
+            - **End:** abuse limited, real people not blocked.
+          '''
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Accounts/Linking ─────────────────────────
+
+  dynamic view scn_007_company_sso_at_link {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Linking/SSO At Link'
+    description '''
+      How is a company's SSO enforced when sign-in always picks the personal organization?
+      Decided: #225 §7, #231 d12 (2026-10-14), #273: SSO once at link time, then control by revocation; #547 (2026-10-17) keeps sign-in personal.
+      SCN-007 · R-IDN-14, P-ONB-17, R-IDN-05, R-IDN-16 · not v1.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Links a@company' {
+      notes '''
+        - **Start:** sign-in picks A's personal organization, so the company's WorkOS policies never run there.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Start link' {
+      navigateTo identity_identity_link_work_account
+    }
+    signalbox.identity -> platform.workos 'Company SSO once' {
+      notes '''
+        - The company's organization has SSO, so linking runs it once to prove employment.
+      '''
+    }
+    try {
+      platform.workos -> signalbox.identity 'SSO passed'
+      signalbox.identity -> signalbox.tree 'Store alias, mount' {
+        navigateTo identity_identity_link
+        notes '''
+          - Alias stored; folder Company mounted under A's Work.
+        '''
+      }
+    } catch 'SSO fails' {
+      signalbox.identity -> signalbox.web 'Nothing linked'
+    }
+    personC -> signalbox.web 'Removes A' {
+      navigateTo identity_identity_unlink
+      notes '''
+        - After the link, control is by revocation.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Revoke membership'
+    signalbox.funnel -> signalbox.identity 'Next request' {
+      navigateTo identity_identity_authenticate
+      notes '''
+        - **End:** policy enforced; A loses Company on every device.
+      '''
+    }
+  }
+
+  dynamic view scn_008_recurring_sso_checks {
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Linking/Recurring SSO'
+    description '''
+      Can a company demand recurring SSO checks after linking?
+      Assumption: yes, off by default and behind the Enterprise flag; a due check holds the whole personal session, and a failed one acts like revocation (#225 §7, #231 d12, #230 d9). Building it is pending #273.
+      SCN-008 · R-IDN-14, R-IDN-19, R-IDN-05, R-IDN-16 · not v1.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Asks periodic re-proof' {
+      notes '''
+        - **Start:** an Enterprise company wants re-checks after linking.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Set re-check policy' {
+      navigateTo organization_identity_company_sso
+      notes '''
+        - Through the Admin Portal; off unless the Enterprise flag is on.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Refresh session' {
+      notes '''
+        - A's next sign-in or session refresh.
+      '''
+    }
+    signalbox.funnel -> signalbox.identity 'Authenticate' {
+      navigateTo identity_identity_authenticate
+    }
+    signalbox.funnel -> signalbox.web 'Session held' {
+      notes '''
+        - **Assumption:** the whole personal session waits, not just folder Company.
+        - Re-checks never gate only part of the app.
+      '''
+    }
+    personA -> signalbox.web 'Proves company SSO'
+    signalbox.identity -> platform.workos 'Company SSO'
+    alt 'result' {
+      when 'passes' {
+        platform.workos -> signalbox.identity 'Re-proven' {
+          notes '''
+            - **End:** session continues everywhere.
+          '''
+        }
+      }
+      else 'fails or refuses' {
+        signalbox.identity -> signalbox.tree 'Drop Company' {
+          navigateTo identity_identity_unlink
+          notes '''
+            - Same as revocation: Company drops on the next request.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view scn_013_link_already_taken {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Linking/Already Linked Elsewhere'
+    description '''
+      What happens when someone tries to link a work identity another person already linked?
+      Decided: #267 under #225 §7 (2026-10-14). Linking an identity linked to someone else is refused.
+      SCN-013 · R-IDN-14, P-ONB-17 · not v1.
+    '''
+
+    include personB, personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personB -> signalbox.web 'Links a@company' {
+      notes '''
+        - **Start:** a@company is already A's alias.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Start link' {
+      navigateTo identity_identity_link_work_account
+    }
+    signalbox.identity -> platform.workos 'Prove identity' {
+      notes '''
+        - B proves it with an email code or OAuth.
+      '''
+    }
+    signalbox.identity <- platform.workos 'Proven'
+    signalbox.identity -> signalbox.identity 'Alias map lookup' {
+      navigateTo identity_identity_link
+      notes '''
+        - The map says a@company belongs to A.
+      '''
+    }
+    signalbox.identity -> signalbox.web 'Refused' {
+      notes '''
+        - Nothing is written.
+      '''
+    }
+    signalbox.web -> personB 'Already linked'
+    personA -> signalbox.web 'Works as before' {
+      notes '''
+        - **End:** A's alias and mounts are unchanged.
+      '''
+    }
+  }
+
+  dynamic view scn_014_unlink_work_identity {
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Linking/Unlink'
+    description '''
+      Can someone unlink a work identity again?
+      Assumption: unlinking ends company access exactly like leaving; the alias stays recorded as A's, and relinking restores the same mount and unseals chats (#231 permanent alias, #270 seal not delete, A44 stable mount ids).
+      SCN-014 · R-IDN-16, P-OUT-08, R-IDN-18, R-ACC-15, P-AST-43 · not v1.
+    '''
+
+    include personA, personC, hier, hier.asstA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.thread, signalbox.learner
+
+    personA -> signalbox.web 'Unlinks a@company' {
+      navigateTo journey_settings_linked_identities
+      notes '''
+        - **Start:** a@company linked, folder Company mounted.
+        - Settings › Linked accounts.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Unlink' {
+      navigateTo identity_identity_unlink_work_account
+    }
+    signalbox.identity -> signalbox.tree 'Leave Company' {
+      navigateTo organization_identity_leave
+      notes '''
+        - Same path as leaving: membership ends, mount deactivated, id kept.
+      '''
+    }
+    signalbox.tree -> signalbox.thread 'Seal private chats' {
+      notes '''
+        - Admins cannot read them; A can delete them to the 30-day trash.
+      '''
+    }
+    hier.asstA -> signalbox.learner 'Forget Company memory' {
+      navigateTo person_assistant_memory_sources
+    }
+    signalbox.web -> personC 'A left Company'
+    signalbox.identity -> signalbox.identity 'Keep alias as A' {
+      notes '''
+        - **Assumption:** a@company still cannot sign in alone or be linked by anyone else.
+        - **End:** company access ended; identity still tied to A.
+      '''
+    }
+    opt 'relinks later' {
+      personA -> signalbox.web 'Relinks a@company'
+      signalbox.identity -> signalbox.tree 'Same mount, unseal'
+    }
+  }
+
+  dynamic view scn_027_assistant_survives_linking {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Linking/Assistant Survives Linking'
+    description '''
+      Does the assistant keep its identity when a work-first person links a personal account?
+      Decided: #225 §6 (2026-10-14), #274. Blocked on the assistant entity (#47, #49) and memory design (#282).
+      SCN-027 · P-AST-42, P-AST-43, R-IDN-17, P-AST-41 · not v1.
+    '''
+
+    include personA, personC, hier, hier.asstA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.learner
+
+    personA -> signalbox.web 'Adds personal sign-in' {
+      navigateTo identity_identity_add_personal
+      notes '''
+        - **Start:** the assistant lives at the work account's top level.
+        - Runs SCN-002.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Link work identity'
+    signalbox.identity -> signalbox.tree 'Personal top level'
+    signalbox.tree -> hier.asstA 'Move assistant' {
+      notes '''
+        - Same name, avatar and memory, now at A's personal top level.
+      '''
+    }
+    hier.asstA -> signalbox.learner 'Keep Company memory' {
+      navigateTo person_assistant_memory_sources
+      notes '''
+        - Memory sourced from folder Company stays while A is linked and a member.
+        - **End:** one assistant, same identity.
+      '''
+    }
+    opt 'C revokes A' {
+      personC -> signalbox.web 'Removes A'
+      signalbox.web -> signalbox.tree 'Revoke membership'
+      signalbox.tree -> hier.asstA 'A left Company'
+      hier.asstA -> signalbox.learner 'Delete Company memory' {
+        notes '''
+          - Every memory sourced from folder Company goes.
+        '''
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Accounts/Invites ─────────────────────────
+
+  dynamic view scn_015_invite_personal_email {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Invites/Personal Email Invite'
+    description '''
+      What if a company invites someone's personal email instead of a work email?
+      Decided: #225 §7 (2026-10-14), any account joins any folder by email invite; #229 d5, personal non-Enterprise accounts can join. Enterprise company-only is the exception.
+      SCN-015 · R-IDN-10, R-ACC-07, P-ONB-13, R-TRE-11 · v1 partial.
+    '''
+
+    include personC, personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Invites a@personal' {
+      navigateTo folders_access_folder_invite
+      notes '''
+        - **Start:** C invites A's personal address to folder Company, with a role.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Invite by email' {
+      navigateTo organization_identity_org_invite
+    }
+    signalbox.identity -> platform.workos 'Send invitation'
+    platform.workos -> personA 'Invitation email'
+    personA -> signalbox.web 'Accepts' {
+      notes '''
+        - Already signed into the personal account.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Accept invite' {
+      navigateTo folders_access_invite_by_email
+    }
+    signalbox.identity -> signalbox.tree 'Mirror role, mount' {
+      navigateTo state_mount
+      notes '''
+        - Company mounts under A's Work with a stable mount id.
+        - No alias. Leaving later is the normal leave path.
+        - **End:** A is a member with no linked identity.
+      '''
+    }
+  }
+
+  dynamic view scn_016_invite_before_account {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Invites/Invite Before Account'
+    description '''
+      What happens when someone is invited by email before they have any account?
+      Decided: #238, #225 §3/§7 (2026-10-14). The ledger (2026-10-18) notes invites for brand-new email users are not built yet.
+      SCN-016 · P-ONB-13, R-ACC-07, R-IDN-10, R-IDN-01, P-ONB-14 · v1 partial: sign-up only.
+    '''
+
+    include personC, personD, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Invites d@example' {
+      navigateTo folders_access_folder_invite
+      notes '''
+        - **Start:** D, an outside collaborator, has no account.
+        - C (admin of folder Company, so of Team) invites D to folder Team only.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Invite to Team' {
+      navigateTo folders_access_invite_by_email
+    }
+    signalbox.identity -> platform.workos 'Owner invitation' {
+      notes '''
+        - To the owner's organization, with no organization role.
+      '''
+    }
+    platform.workos -> personD 'Invitation email'
+    personD -> signalbox.web 'Signs up' {
+      navigateTo identity_identity_signin
+    }
+    signalbox.web -> signalbox.identity 'Complete sign-up'
+    signalbox.identity -> signalbox.tree 'Top level, invite' {
+      navigateTo state_invitation
+      notes '''
+        - D's top level is created; the invite resolves on first sign-in.
+      '''
+    }
+    personD -> signalbox.web 'Accepts, files Team' {
+      notes '''
+        - D picks where to file it; the default is the top level.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Add reference' {
+      navigateTo organization_identity_org_invite
+      notes '''
+        - **End:** a reference to folder Team sits where D chose; D sees Team, never the rest of Company.
+      '''
+    }
+  }
+
+  dynamic view scn_017_invite_to_alias {
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Invites/Invite To Alias'
+    description '''
+      What happens when an invite goes to an email that is someone's linked alias?
+      Assumption: it always resolves to the aliased person; no new account. #266: the webhook and sign-in resolve through the identity map before the user object.
+      SCN-017 · R-IDN-10, R-IDN-14, R-ACC-07, R-IDN-13 · not v1.
+    '''
+
+    include personC, personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.attention, platform, platform.workos
+
+    personC -> signalbox.web 'Invites a@company' {
+      navigateTo folders_access_folder_invite
+      notes '''
+        - **Start:** a@company is already A's alias.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Invite' {
+      navigateTo organization_identity_org_invite
+    }
+    signalbox.identity -> platform.workos 'Send invitation'
+    platform.workos -> signalbox.identity 'Invitation webhook' {
+      navigateTo organization_identity_membership_webhook
+    }
+    signalbox.identity -> signalbox.identity 'Alias map first' {
+      navigateTo identity_identity_link
+      notes '''
+        - **Assumption:** the map resolves a@company to A before any user object.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Invite to A' {
+      notes '''
+        - Lands on A's Person actor; no new account.
+      '''
+    }
+    signalbox.tree -> signalbox.attention 'Tell A'
+    personA -> signalbox.web 'Accepts'
+    signalbox.web -> signalbox.tree 'Mount Company' {
+      notes '''
+        - **End:** Company under A's Work, or filed where A chose.
+      '''
+    }
+  }
+
+  dynamic view scn_018_pool_without_account {
+    #v1
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Invites/Pool Without Account'
+    description '''
+      Can a colleague use the company pool without a Signalbox account?
+      Assumption: no account-less keys. An account is the anchor and Workspace JIT keeps it to one click (#454 2026-10-15 "probably never"; A23 Place-bound keys). Pending #454.
+      SCN-018 · P-ONB-09, R-POL-27, R-IDN-09, R-IDN-10 · v1 yes.
+    '''
+
+    include personC, personB, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.gateway, signalbox.models
+
+    personC -> signalbox.web 'Wants key for B' {
+      notes '''
+        - **Start:** colleague B has no account and wants a pool key without signing up.
+        - **Assumption:** refused; keys belong to a person and a folder.
+      '''
+    }
+    alt 'how B gets an account' {
+      when 'C invites' {
+        personC -> signalbox.web 'Invites b@company' {
+          navigateTo organization_identity_org_invite
+        }
+      }
+      else 'Workspace domain' {
+        personB -> signalbox.web 'Google sign-in' {
+          navigateTo organization_identity_member_join
+        }
+      }
+    }
+    signalbox.web -> signalbox.identity 'Sign in once'
+    signalbox.identity -> signalbox.tree 'Mount Company'
+    personB -> signalbox.web 'Use pool from laptop' {
+      navigateTo folders_modelgateway_laptop_pool
+      notes '''
+        - Local Claude Code or Codex, against the pool placed on folder Company.
+      '''
+    }
+    signalbox.web -> signalbox.gateway 'Grant Place key' {
+      navigateTo folders_pools_local_key
+    }
+    signalbox.gateway -> signalbox.models 'Company pool'
+    signalbox.web <- signalbox.gateway 'sbk_ key' {
+      notes '''
+        - **End:** B's own key, bound to folder Company; revoking it or B leaving ends it.
+      '''
+    }
+  }
+
+  // ───────────────────────── Scenarios/Accounts/Organizations ─────────────────────────
+
+  dynamic view scn_005_google_to_okta_sso {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Organizations/Google To Okta'
+    description '''
+      What happens when a company moves from Google sign-in to Okta SSO?
+      Decided: #452 (2026-10-15), same organization via the Admin Portal link.
+      Assumption: SSO beyond Google needs the Enterprise flag on folder Company (#230 d9 gates SSO). Pending #454.
+      SCN-005 · R-IDN-19, R-ACC-26, R-ACC-02 · not v1.
+    '''
+
+    include personC, personB, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Opens SSO setup' {
+      navigateTo folders_access_enterprise_flag
+      notes '''
+        - **Start:** the company signs in with Google Workspace.
+        - **Assumption:** needs the Enterprise flag.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'Admin Portal link' {
+      navigateTo organization_identity_company_sso
+    }
+    signalbox.identity -> platform.workos 'Portal link'
+    platform.workos -> platform.workos 'IT adds Okta' {
+      notes '''
+        - C sends IT the link; IT sets up SAML or OIDC.
+        - Same organization; no new one.
+      '''
+    }
+    platform.workos -> signalbox.identity 'Connection active'
+    signalbox.identity -> signalbox.tree 'Roles, mounts kept' {
+      navigateTo organization_identity_membership_webhook
+      notes '''
+        - Membership, roles and the mount id for folder Company stay.
+      '''
+    }
+    personB -> signalbox.web 'Keeps working' {
+      navigateTo scn_007_company_sso_at_link
+      notes '''
+        - SSO now runs once at link time (SCN-007).
+        - **End:** same organization, Okta SSO.
+      '''
+    }
+  }
+
+  dynamic view scn_022_first_admin_setup {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Organizations/First Admin Setup'
+    description '''
+      How does a company's first admin set it up?
+      Decided: design §4 walkthrough 10; #230 d9 (2026-10-14); #454 (2026-10-15): Enterprise set by hand for now.
+      SCN-022 · R-IDN-08, P-ONB-11, P-ONB-12, R-ACC-26, R-POL-01 · v1 partial: sign-in, pool and connections; the Enterprise flag is later.
+    '''
+
+    include personC, personA, personB, operator, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.models, signalbox.connections, platform, platform.workos
+
+    personC -> signalbox.web 'Google sign-in' {
+      navigateTo identity_identity_signin
+      notes '''
+        - **Start:** no organization.
+      '''
+    }
+    signalbox.web -> signalbox.identity 'C top level'
+    personC -> signalbox.web 'Sets up company' {
+      navigateTo organization_identity_company_join
+    }
+    signalbox.identity -> platform.workos 'Domain + JIT'
+    signalbox.identity -> signalbox.tree 'Company, C Admin' {
+      notes '''
+        - Folder Company (owner: organization), C as Admin.
+      '''
+    }
+    opt 'Enterprise, later' {
+      operator -> signalbox.tree 'Enterprise flag' {
+        navigateTo scn_023_enterprise_flag
+        notes '''
+          - The operator sets it through billing, by hand for now. Not v1.
+        '''
+      }
+    }
+    personC -> signalbox.web 'Places pool' {
+      navigateTo folders_pools_add_account
+      notes '''
+        - A subscription and an API key, in a pool placed on folder Company.
+      '''
+    }
+    signalbox.web -> signalbox.models 'Company pool'
+    personC -> signalbox.web 'Connects Google' {
+      navigateTo folders_connections_oauth_connect
+      notes '''
+        - One-click Google and Confluence, placed on folder Company.
+      '''
+    }
+    signalbox.web -> signalbox.connections 'Place connections'
+    parallel {
+      personA -> signalbox.web 'Signs in'
+      personB -> signalbox.web 'Signs in'
+    }
+    signalbox.identity -> signalbox.tree 'Mount under Work' {
+      navigateTo identity_identity_company_joins
+      notes '''
+        - **End:** folder Company mounted for A and B; its pool and connections reach them by position.
+      '''
+    }
+  }
+
+  dynamic view scn_023_enterprise_flag {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Organizations/Enterprise Flag'
+    description '''
+      Who marks a company as Enterprise?
+      Decided: #230 d9 (2026-10-14). Signalbox sets it through billing; a company Admin cannot; self-hosters can.
+      SCN-023 · R-ACC-26, R-IDN-19, R-LND-04, P-OUT-14 · not v1.
+    '''
+
+    include personC, operator, signalbox, signalbox.web, signalbox.tree, signalbox.identity, signalbox.models, signalbox.thread
+
+    personC -> signalbox.web 'Buys Enterprise' {
+      notes '''
+        - **Start:** an ordinary company folder.
+      '''
+    }
+    operator -> signalbox.tree 'Set Enterprise flag' {
+      navigateTo folders_access_enterprise_flag
+      notes '''
+        - The Signalbox operator, through billing.
+      '''
+    }
+    personC -> signalbox.web 'Tries the toggle'
+    signalbox.web -> signalbox.tree 'can set flag?'
+    signalbox.tree -> signalbox.web 'Admin cannot' {
+      notes '''
+        - Admin role cannot switch it on; self-hosters can.
+      '''
+    }
+    parallel {
+      signalbox.tree -> signalbox.identity 'SSO, company-only' {
+        navigateTo organization_identity_company_sso
+      }
+      signalbox.tree -> signalbox.models 'Refuse personal pools' {
+        navigateTo folders_lending_lend
+      }
+      signalbox.tree -> signalbox.thread 'Admin-visible chats' {
+        navigateTo folders_access_admin_visible_chats
+        notes '''
+          - Locks read the flag too.
+          - **End:** folder Company is Enterprise.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_024_make_organization {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Organizations/Make Organization'
+    description '''
+      What happens when someone makes a shared personal folder into an organization?
+      Decided: #252, #253, #229 d6 (2026-10-14): auto-lend, revocable, idempotent.
+      Assumption on the payer: the loan sits at Game Night, so A's pool pays for every friend's thread until A ends it (nearest wins, A21, opaque poolId #248).
+      SCN-024 · R-TRE-14, R-LND-10, R-LND-05, R-PLC-12 · not v1.
+    '''
+
+    include personA, personB, signalbox, signalbox.web, signalbox.tree, signalbox.identity, signalbox.models, signalbox.drive
+
+    personA -> signalbox.web 'Make organization' {
+      navigateTo folders_tree_make_org
+      notes '''
+        - **Start:** folder Game Night (owner: A) on A's pool; B and D are Members.
+        - Only the Owner sees it (web, mobile, palette).
+      '''
+    }
+    signalbox.web -> signalbox.tree 'MakeOrganization'
+    signalbox.tree -> signalbox.identity 'Create organization' {
+      notes '''
+        - Named after the folder.
+      '''
+    }
+    signalbox.tree -> signalbox.drive 'Keep drive ids' {
+      notes '''
+        - Subtree, placements and thread homes move to the new owner.
+        - A becomes Admin; members keep roles.
+      '''
+    }
+    signalbox.tree -> signalbox.models 'Auto-lend A pool' {
+      navigateTo folders_lending_make_org
+      notes '''
+        - Shows "lent by A". **Assumption:** A pays until A ends it.
+      '''
+    }
+    personB -> signalbox.web 'Filing unchanged' {
+      notes '''
+        - B's and D's references stay where they filed them.
+      '''
+    }
+    opt 'A ends the loan' {
+      personA -> signalbox.web 'Ends loan' {
+        navigateTo folders_lending_end_loan
+      }
+      signalbox.tree -> signalbox.models 'Own pools resolve' {
+        navigateTo folders_placement_kind_pool_connection
+        notes '''
+          - A friend's thread resolves to that friend's top-level pool through the mount, or gets `NeedsPool`.
+          - **End:** Game Night (owner: organization), work unchanged.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_025_undo_make_organization {
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Organizations/Undo Make Organization'
+    description '''
+      Can someone undo "make this an organization"?
+      Assumption: no undo button; the reverse door is the ordinary cross-owner move back to A (R-TRE-06 move rules, A21 no reattribution, #229 d4 never silently widen). Pending #232.
+      SCN-025 · R-TRE-06, R-TRE-14, R-LND-05 · not v1.
+    '''
+
+    include personA, personB, signalbox, signalbox.web, signalbox.tree, signalbox.models, signalbox.identity
+
+    personA -> signalbox.web 'Moves Game Night back' {
+      navigateTo folders_tree_move_across
+      notes '''
+        - **Start:** Game Night (owner: organization), A is Admin.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Cross-owner move'
+    alt 'can move?' {
+      when 'Admin at source, Member+ at A tree' {
+        signalbox.tree -> signalbox.tree 'Rehome subtree' {
+          navigateTo folders_tree_make_org
+          notes '''
+            - Runs on its new chain from the next turn.
+          '''
+        }
+        signalbox.tree -> signalbox.models 'Loans end or stay' {
+          navigateTo folders_lending_end_loan
+          notes '''
+            - As each lender chooses. Old usage rows stay where recorded.
+          '''
+        }
+      }
+      else 'missing a role' {
+        signalbox.tree -> signalbox.web 'Refused'
+      }
+    }
+    personB -> signalbox.web 'Opens Game Night' {
+      notes '''
+        - B's access never widens silently.
+      '''
+    }
+    opt 'tidy up' {
+      personA -> signalbox.web 'Deletes old organization'
+      signalbox.web -> signalbox.identity 'Delete organization' {
+        notes '''
+          - The empty WorkOS organization stays until an Admin deletes it.
+          - **End:** Game Night back in A's tree, owned by A.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_026_owner_transfer {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Organizations/Owner Transfer'
+    description '''
+      How does an organization hand over its Owner role?
+      Decided: #229 d8 (2026-10-14): Owner transfer hands over the organization's Owner role only.
+      SCN-026 · R-ACC-19, P-OUT-11, P-OUT-10 · not v1.
+    '''
+
+    include personC, personB, signalbox, signalbox.web, signalbox.tree, signalbox.identity, platform, platform.workos
+
+    personC -> signalbox.web 'Opens people' {
+      navigateTo folders_access_owner_transfer
+      notes '''
+        - **Start:** C owns the organization.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Owner to B'
+    signalbox.tree -> signalbox.identity 'Sync role'
+    signalbox.identity -> platform.workos 'Owner role to B'
+    signalbox.tree -> signalbox.tree 'Nothing else moves' {
+      notes '''
+        - Folders, placements, pools and threads stay put.
+      '''
+    }
+    signalbox.web -> personB 'You are Owner'
+    opt 'C leaves' {
+      personC -> signalbox.web 'Leaves Company' {
+        navigateTo folders_access_owner_handover
+        notes '''
+          - An Owner cannot leave without handing over; now C can.
+          - **End:** B owns it, nothing else moved.
+        '''
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Accounts/SeveralOwners ─────────────────────────
+
+  dynamic view scn_021_two_companies {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/SeveralOwners/Two Companies'
+    description '''
+      Can someone work for two companies at once without anything leaking between them?
+      Decided: #225 (2026-10-14) one tree; ledger R5 (2026-10-18); #364 nothing leaks. The chain comes only from the Place {level, via}.
+      SCN-021 · R-TRE-11, R-PLC-04, P-AST-15, W-MPL-20, R-IDN-09 · v1 partial: per-folder pool and connection resolution; threads come later.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.thread, signalbox.tree, signalbox.models, signalbox.gateway
+
+    personA -> signalbox.web 'Opens Work' {
+      navigateTo state_mount
+      notes '''
+        - **Start:** A is a member of folder Company and folder Other Company.
+        - Each mounts under Work with its own stable mount id.
+      '''
+    }
+    personA -> signalbox.web 'Thread in each' {
+      navigateTo work_threads_start_send_draft
+    }
+    signalbox.web -> signalbox.thread 'Place with via' {
+      navigateTo person_assistant_start_steer
+      notes '''
+        - Each Place carries that company's mount as `via`.
+      '''
+    }
+    signalbox.thread -> signalbox.tree 'Resolve chain' {
+      navigateTo folders_placement_resolve
+      notes '''
+        - Only that chain; nearest wins.
+      '''
+    }
+    alt 'pool on the chain' {
+      when 'company places one' {
+        signalbox.tree -> signalbox.models 'Company pool'
+      }
+      else 'none placed' {
+        signalbox.tree -> signalbox.models 'A top-level pool'
+      }
+    }
+    personC -> signalbox.web 'Places Confluence' {
+      notes '''
+        - At folder Company only.
+      '''
+    }
+    signalbox.thread -> signalbox.gateway 'Tools, Other Co' {
+      notes '''
+        - Confluence never reaches Other Company; that would take an explicit loan.
+        - **End:** both in one tree, nothing leaks.
+      '''
+    }
+  }
+
+  dynamic view scn_028_per_person_company_copies {
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/SeveralOwners/Per Person Copies'
+    description '''
+      What happens when several members each kept their own copy of the same company folder?
+      Assumption: keep the copies, create the shared folder, and let each owner move or reference what they choose; never merge by name (#858), never silently widen (#229 d4). Pending #871.
+      SCN-028 · R-TRE-13, R-TRE-06, R-TRE-11 · not v1.
+    '''
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.tree, signalbox.identity
+
+    signalbox.tree -> signalbox.tree 'Keep private copies' {
+      notes '''
+        - **Start:** per-person copies with their own names, order, instructions and pools.
+        - Each stays a private, source-qualified folder in its owner's tree.
+      '''
+    }
+    personC -> signalbox.web 'Creates Company'
+    signalbox.web -> signalbox.identity 'Company organization'
+    signalbox.web -> signalbox.tree 'Shared folder Company' {
+      navigateTo state_mount
+    }
+    personA -> signalbox.web 'Moves some in' {
+      navigateTo folders_tree_move_across
+      notes '''
+        - With a preview of access and resources first.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Move chosen'
+    personB -> signalbox.web 'References instead' {
+      navigateTo folders_tree_reference
+    }
+    signalbox.web -> signalbox.tree 'Add reference' {
+      notes '''
+        - Copies are never merged by name; nobody's tree is picked for everyone.
+        - **End:** one shared folder Company (owner: organization).
+      '''
+    }
+  }
+
+  // ───────────────────────── Scenarios/Accounts/Migrations ─────────────────────────
+
+  dynamic view scn_020_workos_env_conversion {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Migrations/WorkOS Env Conversion'
+    description '''
+      Does everyone keep their identity when the WorkOS environment becomes production?
+      Decided: #35, #221 (2026-10-15): no staging/prod split, no user migration; confirm user ids survive first. Moot for data under the 2026-10-18 restart (zero users).
+      SCN-020 · R-IDN-01, R-IDN-02 · v1 yes.
+    '''
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    signalbox.identity -> platform.workos 'Own OAuth keys' {
+      notes '''
+        - **Start:** the one WorkOS environment, named Staging.
+      '''
+    }
+    signalbox.identity -> platform.workos 'Request conversion' {
+      notes '''
+        - A WorkOS support request by the operator.
+      '''
+    }
+    platform.workos -> signalbox.identity 'User ids survive' {
+      notes '''
+        - Confirmed before converting.
+      '''
+    }
+    platform.workos -> platform.workos 'Now production'
+    parallel {
+      personA -> signalbox.web 'Signs in'
+      personB -> signalbox.web 'Signs in'
+      personC -> signalbox.web 'Signs in'
+    }
+    signalbox.web -> signalbox.identity 'Same user ids' {
+      navigateTo identity_identity_signin
+      notes '''
+        - Person ids default to the first WorkOS user id and stay opaque.
+      '''
+    }
+    signalbox.identity -> signalbox.tree 'Same tree' {
+      notes '''
+        - **End:** everyone keeps identity and tree; identity map unchanged.
+      '''
+    }
+  }
+
+  dynamic view scn_029_shared_drives_to_folders {
+    #decided
+    variant sequence
+    title 'Scenarios/Accounts/Migrations/Shared Drives To Folders'
+    description '''
+      What happens to old company shared drives?
+      Decided: #249, #229 d4 (2026-10-14): a migration never silently widens access. Moot under the restart.
+      SCN-029 · R-ACC-04, R-ACC-01, R-TRE-03 · not v1.
+    '''
+
+    include personC, personA, personB, operator, signalbox, signalbox.web, signalbox.tree, signalbox.drive
+
+    operator -> signalbox.tree 'Folder per drive' {
+      navigateTo folders_tree_create_rename
+      notes '''
+        - **Start:** a legacy shared drive visible to named members; the operator runs the migration.
+        - One folder per drive under folder Company.
+      '''
+    }
+    signalbox.tree -> signalbox.drive 'Bind as files'
+    signalbox.tree -> signalbox.tree 'Map drive roles' {
+      navigateTo folders_access_roles
+      notes '''
+        - Owner, Admin, Member or Viewer on that folder.
+      '''
+    }
+    signalbox.tree -> signalbox.tree 'General access off'
+    personA -> signalbox.web 'Sees the folder' {
+      notes '''
+        - A was on the old drive.
+      '''
+    }
+    personB -> signalbox.web 'Does not see it' {
+      notes '''
+        - B was not on the drive, so gains nothing.
+      '''
+    }
+    opt 'later, on purpose' {
+      personC -> signalbox.web 'Widens access'
+      signalbox.web -> signalbox.tree 'General access on' {
+        notes '''
+          - **End:** a folder under Company, mapped roles, widened only by C.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_030_old_sections_my_drive {
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Migrations/Old Sections My Drive'
+    description '''
+      Where do old per-person company sections and "My Drive" go?
+      Assumption: no per-person work level; "My files" becomes folder Company's drive; private unfiled chats become private threads at folder Company (A15, #270, A14; #229 d5 superseded by R5, 2026-10-18). Moot under the restart.
+      SCN-030 · W-DRV-24, R-TRE-13, R-ACC-14 · not v1.
+    '''
+
+    include personA, personB, operator, signalbox, signalbox.web, signalbox.tree, signalbox.drive, signalbox.thread
+
+    operator -> signalbox.tree 'Sections to references' {
+      navigateTo folders_tree_reference
+      notes '''
+        - **Start:** per-person sections and `my/<org>/<user>` drives; the operator runs the migration.
+        - Sections become references in each person's own tree.
+      '''
+    }
+    operator -> signalbox.drive 'My files to Company' {
+      navigateTo work_drive_leaver_files
+      notes '''
+        - **Assumption:** no "you at <org>" level; R5 removed it.
+      '''
+    }
+    operator -> signalbox.thread 'Private chats at Company' {
+      notes '''
+        - Unfiled company chats become private threads at folder Company.
+      '''
+    }
+    personA -> signalbox.web 'Opens Company' {
+      navigateTo folders_tree_catalog
+      notes '''
+        - A sees their references and their private threads.
+      '''
+    }
+    personB -> signalbox.web 'Opens Company' {
+      notes '''
+        - B never sees A's private threads.
+        - **End:** references per person, files in Company's drive.
+      '''
+    }
+  }
+
+  dynamic view scn_031_split_top_config {
+    #v1
+    #assumption
+    variant sequence
+    title 'Scenarios/Accounts/Migrations/Split Top Config'
+    description '''
+      What happens to one top-level config that served both personal and work?
+      Assumption: keep A's config at A's top level and add company config at folder Company; nearest wins, so nothing changes until Company places its own (R5, design §3.3 cascade, A3). Pending #871.
+      SCN-031 · R-PLC-16, R-PLC-04, R-PLC-12, W-HAR-06 · v1 partial.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.tree, signalbox.models, signalbox.harness
+
+    signalbox.tree -> signalbox.tree 'Keep A top config' {
+      navigateTo folders_placement_kind_instructions
+      notes '''
+        - **Start:** one config (instructions, secret ref, default pool) served Personal and every company.
+        - It stays placed at A's top level.
+      '''
+    }
+    personC -> signalbox.web 'Places company config' {
+      notes '''
+        - Company-specific parts move to folder Company, managed by C.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Place at Company' {
+      navigateTo folders_placement_kind_pool_connection
+    }
+    personA -> signalbox.web 'Thread in Company'
+    signalbox.web -> signalbox.tree 'Resolve chain' {
+      navigateTo folders_placement_resolve
+    }
+    alt 'pool on the chain' {
+      when 'Company placed one' {
+        signalbox.tree -> signalbox.models 'Company pool'
+      }
+      else 'not yet' {
+        signalbox.tree -> signalbox.models 'A top pool'
+      }
+    }
+    signalbox.tree -> signalbox.harness 'Cascade AGENTS.md' {
+      navigateTo work_harness_turn_inputs
+      notes '''
+        - Top first, nearest block per heading: A's instructions keep applying beneath Company's.
+        - **End:** split by owner, no surprise change.
+      '''
+    }
+  }
+}

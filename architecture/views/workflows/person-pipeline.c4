@@ -1,0 +1,1623 @@
+// Person pipeline. Asks (the one needs-you record), the pipeline lanes Blocker, Ready and
+// Considering at the top layer, and variants. Start at `person_pipeline_lanes`: which lane an ask
+// lands in and why. One view per question.
+// People: A and B are members of folder Company (owner: organization) and work in the shared
+// thread in folder Team; C is admin of folder Company.
+// Modules stay black boxes: steps target the Thread, Tree and Attention modules, never their
+// actors. A person's lanes are drawn as the example tree's top-layer stores (hier.lanesA/B/C).
+views {
+  style signalbox, hier, services, platform {
+    color muted
+    opacity 8%
+  }
+
+  // ───────────────────────────── States / Ask ─────────────────────────────
+
+  dynamic view state_ask {
+    title 'States/Ask/Walk through'
+    description """
+      P-BLK-19 · walks the Ask lifecycle, unsnooze included.
+      The state machine itself is the element view `state-ask` (States / Ask).
+    """
+
+    smAsk.raised -> smAsk.routed 'route' {
+      notes """
+        - The thread commits `ask.raised{route}` with the turn state it blocks
+        - The route is a list: agents first, then people
+      """
+      navigateTo person_pipeline_route
+    }
+    alt 'who answers first' {
+      when 'kind delegated to an assistant' {
+        smAsk.routed -> smAsk.resolved 'assistant answers' {
+          notes """
+            - Only for kinds the decider delegated (never human-only kinds)
+            - Logged with the rule used, never pushed
+          """
+        }
+      }
+      else 'everything else' {
+        smAsk.routed -> smAsk.inLanes 'project' {
+          notes """
+            - Each person on the route upserts a projection in their own lanes
+            - The record stays in the thread; people hold projections only
+          """
+          navigateTo person_pipeline_project_ask
+        }
+      }
+    }
+    smAsk.inLanes -> smAsk.deferred 'snooze' {
+      notes """
+        - `Attention.defer(person, ask, until)`: per person, the agent keeps working
+        - B's projection of the same ask is untouched
+      """
+      navigateTo person_pipeline_blocker_snooze
+    }
+    smAsk.deferred -> smAsk.inLanes 'unsnooze' {
+      notes """
+        - Person A taps Unsnooze: `Attention.defer(A, ask, null)`, the Person actor drops the snooze row
+        - Also on time, when the condition fires, or early when the waiting cost jumps
+      """
+      navigateTo person_pipeline_blocker_snooze
+    }
+    alt 'how it ends' {
+      when 'someone answers' {
+        smAsk.inLanes -> smAsk.resolved 'first answer' {
+          notes """
+            - `Thread.send(answer)`; the first receipt wins
+            - Every other projection drops; a late answer gets `AlreadyAnswered`
+          """
+          navigateTo person_pipeline_shared_asks
+        }
+      }
+      else 'turn or thread ends' {
+        smAsk.inLanes -> smAsk.dropped 'withdrawn' {
+          notes """
+            - Interrupt, cancel, archive or trash withdraws the ask
+            - Projections drop; a stale answer gets `NotFound` or `AlreadyAnswered`
+          """
+          navigateTo person_pipeline_blocker_withdrawn
+        }
+      }
+    }
+    autoLayout TopBottom
+  }
+
+  // ───────────────────────────── Workflows / Person / Asks ─────────────────────────────
+
+  dynamic view person_asks_gated_op {
+    variant sequence
+    title 'Workflows/Person/Asks/Gated op from an agent or outside session'
+    description """
+      P-ASK-04, P-ASK-05 · who may run a human-only or gated operation?
+      Agent-class actors never perform human-only operations; outside sessions get a confirm URL instead of an ask.
+    """
+    include personA, mcpClient, hier, hier.asstA, signalbox, signalbox.web, signalbox.gateway, signalbox.operations
+
+    alt 'who calls the gated operation' {
+      when 'in-app agent (assistant, worker, run)' {
+        hier.asstA -> signalbox.operations 'human-only op' {
+          notes """
+            - e.g. link 1Password or approve a permission, as `AgentActor`
+            - Operations checks the actor class before any handler runs
+          """
+        }
+        hier.asstA <- signalbox.operations 'HumanOnly' {
+          notes """
+            - Refused: permissions, secrets, gate answers unless delegated, final OAuth, sign-in grants, linking 1Password, loan consent
+            - A destructive op from an in-app agent becomes a Ready ask instead
+          """
+          navigateTo person_pipeline_ready_gate
+        }
+      }
+      else 'outside session (MCP client, local key)' {
+        mcpClient -> signalbox.gateway 'calls gated op' {
+          notes """
+            - Signed in as Person A, but `McpSessionActor` / `LocalKeyActor` is agent-class
+            - ToolGateway is the only MCP endpoint
+          """
+        }
+        signalbox.gateway -> signalbox.operations 'invoke' {
+          navigateTo folders_gates_destructive
+          notes """
+            - Authority check (`Tree.can`) passes, then the decision gate trips
+            - No thread exists to raise an ask in
+          """
+        }
+        signalbox.gateway <- signalbox.operations 'NeedsDecision{confirmUrl}' {
+          notes """
+            - `HumanOnly{confirmUrl}` for a human-only op
+            - No ask record is created
+          """
+        }
+        mcpClient <- signalbox.gateway 'confirm URL'
+        mcpClient -> personA 'shows link' {
+          notes '- The outside client hands the link to the person; it cannot follow it itself'
+        }
+        personA -> signalbox.web 'opens confirm' {
+          notes '- In-app confirm screen naming the operation and its target'
+        }
+        signalbox.web -> signalbox.operations 'invoke as PersonActor' {
+          notes """
+            - The person acts directly, holding the role
+            - Same path as answering a harness approval in-app
+          """
+          navigateTo work_approvals_harness_approval
+        }
+        signalbox.web <- signalbox.operations 'Receipt'
+      }
+    }
+  }
+
+  dynamic view person_asks_record {
+    variant sequence
+    title 'Workflows/Person/Asks/Raise an ask and answer it as a message'
+    description """
+      P-ASK-01, P-ASK-02 · one durable ask record per question, owned by the thread that raised it.
+      People hold projections; the answer reaches the agent as a normal message.
+    """
+    include personA, personB, personC, signalbox.thread, signalbox.attention, signalbox.harness, signalbox
+
+    signalbox.harness -> signalbox.thread 'raise ask' {
+      notes """
+        - The worker agent in the shared Team thread can't continue
+        - Fields: question, why, unblocks, recommendation, options, free text, blocking, surface, decider, gate, deadline, waiting cost
+      """
+    }
+    signalbox.thread -> signalbox.thread 'commit ask.raised' {
+      notes """
+        - Exactly one thread owns the record, durable beyond turn and session
+        - Commits with the turn state it blocks
+      """
+      navigateTo state_ask
+    }
+    signalbox.thread -> signalbox.attention 'ask.raised{route}' {
+      notes '- Outbox delivery; the route lists A, B and C as responsible people'
+      navigateTo person_pipeline_project_ask
+    }
+    parallel 'one projection per person' {
+      signalbox.attention -> personA 'Blocker (A)' {
+        notes '- In A lanes, area = work via A mount of Company'
+      }
+      signalbox.attention -> personB 'Blocker (B)' {
+        notes '- In B lanes, via B own mount'
+      }
+      signalbox.attention -> personC 'Blocker (C)' {
+        notes '- In C lanes as Company admin'
+      }
+    }
+    personB -> signalbox.thread 'Thread.send(Answer)' {
+      notes """
+        - From any surface; nothing is answered through Attention
+        - B takes the recommendation or writes free text
+      """
+    }
+    signalbox.thread -> signalbox.thread 'commit ask.resolved' {
+      notes """
+        - First receipt wins
+        - Records answerer = B and whether the recommendation was taken
+      """
+    }
+    signalbox.thread -> signalbox.harness 'answer as message' {
+      notes '- The agent reads it like any message (or as the pending tool result if the turn parked)'
+    }
+    signalbox.thread -> signalbox.attention 'ask.resolved' {
+      notes '- A and C projections drop; nobody else is pinged'
+    }
+  }
+
+  dynamic view person_asks_status_line {
+    title 'Workflows/Person/Asks/Status line per thread rolls up to folders'
+    description """
+      P-ASK-06 · code sets state and waiting-on; the agent writes the next step at every turn end;
+      folders roll it up quietly (no counts, no badges).
+    """
+    include signalbox
+
+    signalbox.thread -> signalbox.thread 'set state' {
+      notes """
+        - Code owns state and waiting-on (running, waiting on Person C, parked)
+        - Deterministic, on every transition
+      """
+    }
+    signalbox.harness -> signalbox.thread 'next step' {
+      notes """
+        - At every turn end the agent writes where it got to and what comes next
+        - One line, overwritten each turn
+      """
+      navigateTo work_turns_status_line
+    }
+    signalbox.thread -> signalbox.tree 'catalog row' {
+      notes """
+        - Outbox to the home Level (folder Team), coalesced per ~1 s alarm tick
+        - Latest-state rows only
+      """
+    }
+    signalbox.tree -> signalbox.tree 'roll up' {
+      notes """
+        - Team rolls into Company quietly
+        - Read-time composition across owners
+      """
+      navigateTo work_levelagents_status_rollup
+    }
+    parallel 'same rows, each person' {
+      signalbox.tree -> signalbox.web 'Team view (A)' {
+        notes '- Replicated Level view via Funnel'
+      }
+      signalbox.tree -> signalbox.mobile 'Team view (B)' {
+        notes '- Same rows on B phone; private threads never show'
+      }
+    }
+    signalbox.web -> personA 'reads status' {
+      notes '- "Waiting on you" or the next step, never a count'
+    }
+    signalbox.mobile -> personB 'reads status'
+
+    autoLayout TopBottom
+  }
+
+  // ───────────────────────────── Workflows / Person / Pipeline ─────────────────────────────
+
+  dynamic view person_pipeline_lanes {
+    title 'Workflows/Person/Pipeline/The three lanes: which ask lands where'
+    description """
+      P-PIP-01, P-ASK-01, P-CON-03, P-RDY-05 · start here. Every ask is one record with one kind, and the kind is its lane.
+      Blocker = work can't continue without you. Ready = the work is done, only your go is left. Considering = a big call
+      that needs time, held back until its exit condition fires. The pipeline sits at A's top layer beside the assistant,
+      above the whole tree; B and C each get the same three lanes over their own chain.
+    """
+    include signalbox.thread, signalbox.attention, signalbox.automations, signalbox
+    include hier.lanesA.blocker, hier.lanesA.ready, hier.lanesA.considering, hier.lanesA
+    include personA
+
+    signalbox.thread -> signalbox.attention 'ask.raised{kind}' {
+      navigateTo person_asks_record
+      notes """
+        - An agent (or an automation step) in a thread A can reach needs a person
+        - It picks the kind by asking: can the work go on without you, and is anything left but your go?
+      """
+    }
+    alt 'which kind' {
+      when 'Blocker: work cannot continue' {
+        signalbox.attention -> hier.lanesA.blocker 'Blocker lane' {
+          navigateTo person_pipeline_blocker_raise
+          notes """
+            - An unclear requirement, a missing connection, a secret, an approval
+            - Asked upward first; only what no agent or delegated assistant can answer lands here
+            - The turn parks until someone answers
+          """
+        }
+      }
+      when 'Ready: done except your go' {
+        signalbox.attention -> hier.lanesA.ready 'Ready lane' {
+          navigateTo person_pipeline_ready_placement
+          notes """
+            - Prepared work at a gate: merge, release, publish, pay
+            - With a waiting cost it sits in the lane; with none it is a want on the lane's shelf, never pushed
+          """
+        }
+      }
+      else 'Considering: a big call that needs time' {
+        signalbox.attention -> signalbox.automations 'hold until exit condition' {
+          navigateTo person_pipeline_considering_park
+          notes """
+            - Needs an exit condition: a date, an awaited event, or new evidence
+            - Out of sight meanwhile; the agent keeps preparing
+          """
+        }
+        signalbox.automations -> signalbox.attention 'condition fired' {
+          notes '- Or the weekly review counts as the condition firing'
+        }
+        signalbox.attention -> hier.lanesA.considering 'Considering lane' {
+          navigateTo person_pipeline_considering_surface
+          notes """
+            - Lands with "here is what changed" and the agent's preparation
+            - Never counts against "pipeline empty" before it fires
+          """
+        }
+      }
+    }
+    personA -> signalbox.thread 'answers (any lane)' {
+      navigateTo person_pipeline_shared_asks
+      notes """
+        - A works the lanes in rounds, one folder at a time, shown as minutes, never a count
+        - Every answer is `Thread.send` into the thread that asked; the first receipt wins
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view person_pipeline_overload {
+    title 'Workflows/Person/Pipeline/Queue grows faster than it drains'
+    description 'P-PIP-14 · open (#180): when inflow outruns answers, the assistant pushes back instead of the queue growing silently.'
+    include signalbox
+
+    signalbox.attention -> signalbox.attention 'measure trend' {
+      notes """
+        - Minutes added vs minutes answered per day, for Person A
+        - Estimation method still open (#180)
+      """
+    }
+    alt 'queue trend' {
+      when 'drains' {
+        signalbox.attention -> personA 'normal rounds' {
+          notes '- Nothing extra; rounds stay as estimated'
+          navigateTo person_pipeline_queue_order
+        }
+      }
+      else 'grows faster than it drains' {
+        signalbox.attention -> hier.asstA 'overload signal' {
+          notes '- The assistant gets the trend, not the asks themselves'
+        }
+        hier.asstA -> hier.asstA 'push back' {
+          notes """
+            - Answers delegated kinds on A behalf, defers wants, asks level agents to batch
+            - Never answers a kind A did not delegate
+          """
+          navigateTo person_assistant_answer_on_behalf
+        }
+        hier.asstA -> personA 'one-line signal' {
+          notes '- e.g. "Your queue grew 40 min this week"; time, never a count'
+        }
+      }
+    }
+
+    autoLayout TopBottom
+  }
+
+  dynamic view person_pipeline_project_ask {
+    title "Workflows/Person/Pipeline/Project an ask into each person's lanes"
+    description """
+      P-PIP-01, P-ASK-08 · the thread outbox fans an ask out to every person on the route as idempotent upserts;
+      a missed delivery is retried.
+    """
+    include signalbox, hier.lanesA, hier.lanesB, hier.lanesC
+
+    signalbox.thread -> signalbox.actorhost 'outbox ask.raised' {
+      notes """
+        - Committed with the turn in the shared Team thread
+        - Carries the route: C (admin), A and B (members)
+      """
+      navigateTo person_pipeline_route
+    }
+    signalbox.actorhost -> signalbox.attention 'deliver' {
+      notes """
+        - Alarm-driven delivery, Queues for fan-out
+        - Handler keyed `(sourceKey, seq)`
+      """
+    }
+    signalbox.attention -> signalbox.attention 'filter + area' {
+      notes """
+        - Wants, notes, progress, trace and on-behalf answers never enter
+        - `area` per recipient, on their own mount of Company
+      """
+      navigateTo state_ask
+    }
+    parallel 'upsert per recipient' {
+      signalbox.attention -> hier.lanesA.blocker 'upsert (A)' {
+        navigateTo person_pipeline_lanes
+        notes """
+          - Keyed (askId, person); the lane is the ask's kind (a Blocker here)
+          - The record stays in the thread; A holds a projection only
+        """
+      }
+      signalbox.attention -> hier.lanesB.blocker 'upsert (B)'
+      signalbox.attention -> hier.lanesC.blocker 'upsert (C)'
+    }
+    opt 'a delivery was missed' {
+      signalbox.actorhost -> signalbox.attention 'retry' {
+        notes """
+          - Outbox redelivers until acked
+          - Upserts are idempotent: a retry never duplicates a card
+        """
+      }
+    }
+    signalbox.attention -> personA 'deliver to devices' {
+      notes """
+        - Devices whose home is on the recipient's chain, after Focus and delivery rules
+        - Same for B and C on their own devices
+      """
+      navigateTo person_notifications_route_ping
+    }
+
+    autoLayout TopBottom
+  }
+
+  dynamic view person_pipeline_queue_order {
+    title 'Workflows/Person/Pipeline/Order the queue and estimate round time'
+    description 'P-PIP-02, P-PIP-10 · in what order does A see the three lanes? Deterministic order (deadline, unblocked, waiting cost, age), no model; rounds by folder, shown as minutes, never a count.'
+    include signalbox, hier.lanesA
+
+    personA -> signalbox.web 'opens pipeline' {
+      notes '- From the top layer beside the assistant; there is no rail or sidebar button'
+    }
+    signalbox.web -> signalbox.attention 'queue(A)' {
+      notes '- Subscribed through Funnel and Operations'
+    }
+    signalbox.attention -> hier.lanesA 'read A lanes' {
+      navigateTo person_pipeline_lanes
+      notes """
+        - Blocker, Ready (not the shelf) and fired Considering items, minus A's snoozes
+        - Lanes are the ask kinds; a round mixes them, one folder at a time
+      """
+    }
+    signalbox.attention -> signalbox.attention 'order' {
+      notes """
+        - deadline → unblocked → waiting cost → age
+        - Pure code, tested; no model call
+      """
+      navigateTo person_pipeline_ready_placement
+    }
+    signalbox.attention -> signalbox.attention 'estimate minutes' {
+      notes """
+        - Round time from the asks in the round
+        - Estimation method still open (#180)
+      """
+    }
+    signalbox.attention -> signalbox.web 'QueueRound stream' {
+      notes '- One folder at a time, its asks together'
+      navigateTo journey_daily_pipeline_rounds
+    }
+    signalbox.web -> personA 'Team round · 6 min' {
+      notes '- Time, never a needs-you count, badge or bell'
+    }
+
+    autoLayout TopBottom
+  }
+
+  dynamic view person_pipeline_route {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Route an ask up to the right person'
+    description """
+      P-BLK-12, P-RDY-09 · who sees an ask, and who answers it first?
+      worker → folder agent → each responsible person's assistant (only for kinds they delegated) → the people's Blocker lanes.
+      Human-only kinds skip every agent hop. Shown for an ask from the shared thread in folder Team: A, B (members), C (admin).
+    """
+    include signalbox.thread, signalbox.attention, signalbox
+    include hier.company.agentCo, hier.company, hier.asstA
+    include hier.lanesA.blocker, hier.lanesB.blocker, hier.lanesC.blocker, hier.lanesA, hier.lanesB, hier.lanesC
+
+    signalbox.thread -> hier.company.agentCo 'ask.raised' {
+      notes """
+        - The worker in the shared Team thread is stuck
+        - First hop: the folder's agent, then up the chain while it is still that level's interest
+      """
+    }
+    alt 'can an agent answer?' {
+      when 'the folder agent can' {
+        hier.company.agentCo -> signalbox.thread 'answer' {
+          notes """
+            - From its Learner lenses of past decisions at Company
+            - Recorded as an agent answer; no person is pinged
+          """
+        }
+      }
+      when 'no authority at this level' {
+        hier.company.agentCo -> signalbox.attention 'route to people' {
+          notes '- Recorded as `no-authority-at-this-level`; goes to the responsible people of Team: A, B and C'
+        }
+      }
+      else 'human-only kind' {
+        signalbox.thread -> signalbox.attention 'skip agent hops' {
+          notes '- Secrets, gates, OAuth, permissions, loan consent: straight to people'
+        }
+      }
+    }
+    signalbox.attention -> hier.asstA 'as A would?' {
+      navigateTo person_pipeline_ready_delegate_kind
+      notes """
+        - Each responsible person's assistant gets a turn first (B's and C's likewise)
+        - Only for kinds that person delegated; gate asks never otherwise
+      """
+    }
+    alt 'delegated?' {
+      when 'A delegated this kind' {
+        hier.asstA -> signalbox.thread 'answer on behalf' {
+          navigateTo person_assistant_answer_on_behalf
+          notes """
+            - Logged with the rule used, never pushed
+            - A can overturn it; overturns teach the Learner
+          """
+        }
+      }
+      else 'nobody delegated it' {
+        parallel 'each person, own lanes' {
+          signalbox.attention -> hier.lanesA.blocker 'Blocker (A)' {
+            navigateTo person_pipeline_project_ask
+            notes "- Projected into each person's own Blocker lane, on their own chain"
+          }
+          signalbox.attention -> hier.lanesB.blocker 'Blocker (B)'
+          signalbox.attention -> hier.lanesC.blocker 'Blocker (C)'
+        }
+      }
+    }
+  }
+
+  dynamic view person_pipeline_shared_asks {
+    variant sequence
+    title "Workflows/Person/Pipeline/Asks in a shared thread: everyone's lanes, first answer wins"
+    description """
+      P-BLK-13, P-BLK-14, P-CON-07, P-PIP-11 · an ask in the shared Team thread lands in A, B and C's own lanes
+      (Considering too); two people may answer one round; the first receipt wins.
+    """
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.attention, signalbox
+    include hier.lanesA, hier.lanesB, hier.lanesC
+
+    signalbox.thread -> signalbox.attention 'ask.raised{A, B, C}' {
+      notes """
+        - Blocker or Considering, raised in the shared thread in folder Team
+        - Route = responsible people: C (admin), A and B (members)
+      """
+      navigateTo person_pipeline_project_ask
+    }
+    parallel 'each on their own chain' {
+      signalbox.attention -> hier.lanesA 'into A lanes' {
+        notes """
+          - Same lane for everyone: a Blocker in each Blocker lane, a fired Considering ask in each Considering lane
+          - `area` via A's own mount of Company
+        """
+      }
+      signalbox.attention -> hier.lanesB 'into B lanes' {
+        notes '- `area` via B own mount'
+      }
+      signalbox.attention -> hier.lanesC 'into C lanes' {
+        notes '- C (admin) uses C own mount, even if the thread was filed via A'
+      }
+    }
+    signalbox.attention -> signalbox.web 'round (A, C)' {
+      notes '- Team round on web for A and C'
+    }
+    signalbox.attention -> signalbox.mobile 'round (B)' {
+      notes '- Same round on B phone: two people answering one folder round'
+    }
+    personA -> signalbox.web 'answers'
+    signalbox.web -> signalbox.thread 'Thread.send(Answer)'
+    personB -> signalbox.mobile 'answers too'
+    signalbox.mobile -> signalbox.thread 'Thread.send(Answer)'
+    alt 'which receipt' {
+      when 'first receipt (A)' {
+        signalbox.thread -> signalbox.thread 'commit ask.resolved' {
+          notes '- Receipt dedupe in the one Thread actor'
+          navigateTo work_approvals_shared_answer
+        }
+        signalbox.thread -> signalbox.attention 'ask.resolved' {
+          notes '- All three projections drop, Considering ones included'
+          navigateTo state_ask
+        }
+      }
+      else 'later receipt (B)' {
+        signalbox.mobile <- signalbox.thread 'AlreadyAnswered' {
+          notes '- B sees who answered and what; the item leaves B round'
+        }
+      }
+    }
+  }
+
+  dynamic view person_pipeline_undo_answer {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Undo an answer'
+    description 'P-PIP-12 · undelivered (#309): a compensating answer goes to the agent; the log keeps both.'
+    include personA, signalbox.web, signalbox.thread, signalbox.attention, signalbox
+
+    personA -> signalbox.web 'Undo' {
+      notes '- Right after sending a round, or from the thread'
+    }
+    signalbox.web -> signalbox.thread 'Answer: retract' {
+      notes """
+        - A compensating answer, not an edit
+        - The original answer stays in the append-only log
+      """
+      navigateTo person_asks_record
+    }
+    alt 'what the agent already did' {
+      when 'not acted yet' {
+        signalbox.thread -> signalbox.thread 'compensating message' {
+          notes '- The agent gets "ignore my previous answer, use X" as a normal message'
+        }
+      }
+      else 'already acted' {
+        signalbox.thread -> signalbox.attention 'follow-up ask' {
+          notes """
+            - Irreversible effects are not rolled back
+            - The agent raises a new ask if A must decide again
+          """
+          navigateTo state_ask
+        }
+      }
+    }
+    signalbox.web <- signalbox.thread 'round updated'
+  }
+
+  dynamic view person_pipeline_weekly_review {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Weekly review of wants and Considering items'
+    description """
+      P-CON-05, P-RDY-14 · how does nothing rot on the shelf or in Considering?
+      A default automation (editable, can be turned off) on A top level: aging wants come back as one Ready ask (keep / do / drop);
+      each stale Considering item comes back in the Considering lane as if its exit condition fired.
+    """
+    include personA, hier.asstA, hier.lanesA.ready, hier.lanesA.considering, hier.lanesA
+    include signalbox.automations, signalbox.attention, signalbox
+
+    signalbox.automations -> signalbox.automations 'weekly tick' {
+      navigateTo work_automations_defaults
+      notes """
+        - Default automation at A top level, a tick row on its Level alarm
+        - Readable and editable like any automation
+      """
+    }
+    alt 'what is stale' {
+      when 'wants on the Ready shelf' {
+        signalbox.automations -> hier.asstA 'review wants' {
+          notes '- `w.agent` with the assistant, which coordinates and never executes'
+        }
+        hier.asstA -> signalbox.attention 'keep / do / drop' {
+          navigateTo journey_daily_wants_shelf
+          notes '- One Ready ask listing the aging wants'
+        }
+        signalbox.attention -> hier.lanesA.ready 'Ready lane'
+        personA -> hier.asstA 'answers' {
+          notes """
+            - do → the assistant hands the want back to its agent; drop → the want's thread archives (restorable)
+            - keep → it stays on the shelf
+          """
+        }
+      }
+      else 'stale Considering items' {
+        signalbox.automations -> signalbox.attention 'exit condition fires' {
+          navigateTo person_pipeline_considering_surface
+          notes """
+            - The review counts as each stale item's exit condition firing
+            - No separate digest or notification
+          """
+        }
+        signalbox.attention -> hier.lanesA.considering 'Considering lane' {
+          notes '- Each item with what changed: keep, decide or drop, answered into its own thread'
+        }
+      }
+    }
+  }
+
+  dynamic view person_pipeline_blocker_access {
+    #v1
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/Blocked tool call becomes a Place or Lend request'
+    description """
+      P-BLK-04, P-BLK-05, P-BLK-06 · v1 partial: v1 stops at `AccessRequired` (MCP returns it, no ask).
+      Resolution is by position only: B's turn can't use what isn't placed above Team, whoever sends it.
+    """
+    include personB, personC, personA, signalbox.thread, signalbox.attention, signalbox.harness, signalbox.tree, signalbox.connections, signalbox
+
+    personB -> signalbox.thread 'sends turn' {
+      notes '- B drives a turn in the shared Team thread: "summarize the Q3 doc"'
+    }
+    signalbox.thread -> signalbox.harness 'turn'
+    signalbox.harness -> signalbox.connections 'tool call (Google)' {
+      notes """
+        - Through Gateway; no Google is placed at Team or Company
+        - B's own Google is in B's tree, not above Team
+      """
+    }
+    signalbox.harness <- signalbox.connections 'AccessRequired' {
+      notes '- v1 ends here: the MCP caller gets `AccessRequired`'
+    }
+    signalbox.harness -> signalbox.thread 'AccessRequired' {
+      navigateTo work_approvals_access_place_lend
+    }
+    signalbox.thread -> signalbox.tree 'view(access)' {
+      notes """
+        - `canPlace`: role holders on the chain only (C, admin of Company)
+        - `canLend`: owners of a matching connection (A)
+      """
+    }
+    signalbox.thread <- signalbox.tree 'who can place, lend'
+    signalbox.thread -> signalbox.attention 'Blocker: Place or Lend' {
+      navigateTo folders_lending_access_request
+      notes """
+        - An ordinary Blocker ask; the turn parks
+        - Routed to C and A, not to B
+      """
+    }
+    alt 'answer' {
+      when 'C places it at Company' {
+        personC -> signalbox.tree 'Place at Company' {
+          navigateTo folders_placement_place
+          notes '- Company Google now reaches every thread below, for A and B alike'
+        }
+        personC -> signalbox.thread 'Answer: placed'
+      }
+      when 'A lends A Google' {
+        personA -> signalbox.tree 'Lend A Google' {
+          navigateTo folders_lending_lend
+          notes """
+            - Human-only consent; a revocable placement into Team
+            - The only way to use what is not above you
+          """
+        }
+        personA -> signalbox.thread 'Answer: lent'
+      }
+      else 'declined' {
+        personC -> signalbox.thread 'Answer: declined' {
+          notes '- The agent gets it as a message and continues without, or stops'
+        }
+      }
+    }
+    opt 'placed or lent' {
+      signalbox.thread -> signalbox.tree 'resolve' {
+        notes '- Scope re-resolved and frozen again'
+      }
+      signalbox.thread -> signalbox.harness 'resume' {
+        notes '- The tool call retries on the new Scope'
+      }
+    }
+  }
+
+  dynamic view person_pipeline_blocker_approval {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/Harness approval as a human-only Blocker'
+    description """
+      P-BLK-03, P-BLK-16 · plan / approval-required modes raise an approval Blocker that only a person can answer.
+      In a shared thread, who owns it (turn starter vs any member) and takeover are open (#306).
+    """
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.attention, signalbox.harness, signalbox
+
+    signalbox.harness -> signalbox.thread 'permission request' {
+      notes '- Claude Code or Codex asks to run a command, in approval-required mode'
+      navigateTo work_approvals_harness_approval
+    }
+    signalbox.thread -> signalbox.thread 'park' {
+      notes '- `parked{ask}`: session mirrored, keep-alive cleared'
+      navigateTo person_pipeline_blocker_raise
+    }
+    signalbox.thread -> signalbox.attention 'Blocker (approval)' {
+      notes """
+        - Human-only: agent hops are skipped
+        - Top layer shows it as an approval card
+      """
+    }
+    signalbox.attention -> signalbox.web 'approval card (A)' {
+      notes '- A started the turn in the shared Team thread'
+    }
+    alt 'who answers' {
+      when 'A, the turn starter' {
+        personA -> signalbox.web 'Approve'
+        signalbox.web -> signalbox.thread 'Answer (A)'
+      }
+      else 'A is away (shared thread)' {
+        signalbox.attention -> signalbox.mobile 'offer takeover (B)' {
+          notes """
+            - Any member may own it vs turn starter only: open (#306)
+            - The answerer is recorded either way
+          """
+          navigateTo work_approvals_shared_answer
+        }
+        personB -> signalbox.mobile 'Take over'
+        signalbox.mobile -> signalbox.thread 'Answer (B)'
+      }
+    }
+    signalbox.thread -> signalbox.harness 'resume' {
+      notes '- From the mirror, with the decision as the pending tool result'
+    }
+  }
+
+  dynamic view person_pipeline_blocker_automation_ask {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/An automation run asks a person'
+    description """
+      P-ASK-07, P-BLK-11 · `w.ask` with no gate raises a Blocker from the run thread.
+      A personal run asks A; a Company run (no via) asks Company's responsible people, each on their own mount.
+    """
+    include personA, personC, signalbox.automations, signalbox.thread, signalbox.attention, signalbox
+    include hier.lanesA.blocker, hier.lanesB.blocker, hier.lanesC.blocker, hier.lanesA, hier.lanesB, hier.lanesC
+
+    alt 'whose run' {
+      when 'personal run (A top level)' {
+        signalbox.automations -> signalbox.thread 'w.ask (no gate)' {
+          notes """
+            - The run is a thread at the automation home, on A top level
+            - No gate → Blocker
+          """
+          navigateTo work_automations_step_ask
+        }
+        signalbox.thread -> signalbox.attention 'ask.raised{A}'
+        signalbox.attention -> hier.lanesA.blocker 'Blocker (A)' {
+          notes '- No gate, so Blocker, not Ready: the run cannot continue without A'
+        }
+        personA -> signalbox.thread 'answers'
+      }
+      else 'Company run (no via)' {
+        signalbox.automations -> signalbox.thread 'w.ask (no gate)' {
+          notes """
+            - Run thread at folder Company with no via mount
+            - Resolves only on Company's chain, never a member's things
+          """
+          navigateTo work_automations_run
+        }
+        signalbox.thread -> signalbox.attention 'route: Company people' {
+          notes '- Responsible people of Company: C (admin), A, B'
+          navigateTo person_pipeline_shared_asks
+        }
+        parallel 'each on their own mount' {
+          signalbox.attention -> hier.lanesC.blocker 'Blocker (C)' {
+            notes '- area = work via C own mount'
+          }
+          signalbox.attention -> hier.lanesA.blocker 'Blocker (A)'
+          signalbox.attention -> hier.lanesB.blocker 'Blocker (B)'
+        }
+        personC -> signalbox.thread 'answers first' {
+          notes '- First receipt wins; A and B projections drop'
+        }
+      }
+    }
+    signalbox.thread -> signalbox.automations 'step resumes' {
+      notes '- The answer completes the `w.ask` step; the run continues'
+    }
+  }
+
+  dynamic view person_pipeline_blocker_human_only {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/Enter a secret or finish a sign-in'
+    description 'P-BLK-08, P-BLK-09 · human-only Blockers: a secret value goes to 1Password, never the transcript; a final OAuth step needs the person.'
+    include personA, signalbox.web, signalbox.thread, signalbox.attention, signalbox.operations, signalbox.connections, services.onepassword, services.google, signalbox, services
+
+    alt 'what the agent needs' {
+      when 'a secret' {
+        signalbox.thread -> signalbox.attention 'Blocker: secret' {
+          notes '- Human-only kind: no agent hops'
+          navigateTo work_approvals_secret_request
+        }
+        signalbox.attention -> signalbox.web 'secret card'
+        personA -> signalbox.web 'enters value'
+        signalbox.web -> signalbox.operations 'human-only op' {
+          notes '- Only a `PersonActor` passes; agent-class actors are refused'
+          navigateTo person_asks_gated_op
+        }
+        signalbox.operations -> signalbox.connections 'store secret'
+        signalbox.connections -> services.onepassword 'write value' {
+          notes '- Via the isolated vault worker'
+        }
+        signalbox.connections -> signalbox.thread 'Answer: secret ref' {
+          navigateTo folders_placement_kind_secret
+          notes """
+            - A Secret reference is placed at the level; the value never enters the transcript
+            - The agent only ever sees the reference
+          """
+        }
+      }
+      else 'final OAuth or sign-in grant' {
+        signalbox.connections -> signalbox.attention 'Blocker: finish sign-in' {
+          notes '- Agents prepare everything up to the consent screen'
+        }
+        signalbox.attention -> signalbox.web 'connect card'
+        personA -> signalbox.web 'Continue'
+        signalbox.web -> services.google 'consent' {
+          notes '- The person grants it; no agent can'
+        }
+        services.google -> signalbox.connections 'OAuth callback' {
+          notes '- Through Ingress'
+        }
+        signalbox.connections -> signalbox.thread 'Answer: connected'
+      }
+    }
+  }
+
+  dynamic view person_pipeline_blocker_needs_pool {
+    variant sequence
+    title "Workflows/Person/Pipeline/Blocker/Company thread without a pool asks the organization's admins"
+    description """
+      P-BLK-07 · a thread under folder Company resolves no pool (e.g. after a mount loss).
+      The Blocker routes by level role to C; A and B only see the status.
+    """
+    include personA, personB, personC, signalbox.thread, signalbox.attention, signalbox.tree, signalbox
+
+    personA -> signalbox.thread 'sends turn' {
+      notes """
+        - Shared Team thread, filed through B mount; B left the organization
+        - The Place lost its via, so only Company's chain counts
+      """
+    }
+    signalbox.thread -> signalbox.tree 'resolve(place)' {
+      navigateTo folders_placement_resolve_shared
+    }
+    signalbox.thread <- signalbox.tree 'NeedsPool' {
+      notes '- Nothing placed on Team or Company; A own pool is not above Team'
+    }
+    signalbox.thread -> signalbox.attention 'Blocker to admins' {
+      notes '- Route = level role (Admin of Company), never who sent the turn'
+    }
+    signalbox.attention -> personC 'Blocker (admin)'
+    parallel 'members see status only' {
+      signalbox.attention -> personA 'status only'
+      signalbox.attention -> personB 'status only' {
+        notes '- Only if B can still see the thread'
+      }
+    }
+    alt 'C answers' {
+      when 'places a pool' {
+        personC -> signalbox.tree 'Place a pool' {
+          navigateTo folders_placement_kind_pool_connection
+          notes '- Through Operations; reaches Team for A and B alike'
+        }
+        personC -> signalbox.thread 'Answer: placed'
+        signalbox.thread -> signalbox.tree 'resolve' {
+          notes '- Scope frozen again; the turn starts'
+        }
+      }
+      else 'declines' {
+        personC -> signalbox.thread 'Answer: declined' {
+          notes '- The turn fails with `NeedsPool`; A sees why'
+        }
+      }
+    }
+  }
+
+  dynamic view person_pipeline_blocker_payment {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/Hand a checkout to the person'
+    description 'P-BLK-10 · who presses Pay? The agent fills checkout and stops; the Payment default automation raises a Blocker (not Ready: A must act, not just say go): Done / Failed / Open the browser.'
+    include personA, signalbox.web, signalbox.thread, signalbox.automations, signalbox.browser, signalbox.attention, platform.kernel, signalbox, platform
+
+    signalbox.thread -> signalbox.browser 'fill checkout' {
+      notes '- The agent never presses Pay'
+      navigateTo work_browser_payment
+    }
+    signalbox.browser -> platform.kernel 'real-web session'
+    signalbox.thread -> signalbox.automations 'checkout reached' {
+      notes '- App event on the thread chain'
+    }
+    signalbox.automations -> signalbox.attention 'Blocker: Payment' {
+      notes """
+        - Payment default automation, editable
+        - gate pay → shown as a spend card
+      """
+    }
+    signalbox.attention -> signalbox.web 'spend card' {
+      navigateTo journey_daily_ready_decide
+    }
+    alt 'A answers' {
+      when 'Open the browser' {
+        personA -> signalbox.web 'Open the browser'
+        signalbox.web -> signalbox.browser 'live session' {
+          notes '- A pays in the same session the agent filled'
+        }
+        personA -> signalbox.web 'Done'
+        signalbox.web -> signalbox.thread 'Answer: done'
+      }
+      when 'Done' {
+        personA -> signalbox.web 'Done'
+        signalbox.web -> signalbox.thread 'Answer: done' {
+          notes '- Paid elsewhere; the agent continues'
+        }
+      }
+      else 'Failed' {
+        personA -> signalbox.web 'Failed'
+        signalbox.web -> signalbox.thread 'Answer: failed' {
+          notes '- The agent reports or tries another route'
+        }
+      }
+    }
+  }
+
+  dynamic view person_pipeline_blocker_raise {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/Agent raises a Blocker and the turn parks'
+    description """
+      P-BLK-01, P-BLK-02, P-BLK-15 · what happens when an agent can't continue without a person?
+      Via the ask tool or a mirrored native question; the turn parks, and the answer resumes it from the mirror as the pending tool result.
+    """
+    include personA, signalbox.web, signalbox.thread, signalbox.attention, signalbox.harness, signalbox.gateway, signalbox.computer, signalbox
+    include hier.lanesA.blocker, hier.lanesA
+
+    alt 'how the agent asks' {
+      when 'ask tool' {
+        signalbox.harness -> signalbox.gateway 'ask tool call' {
+          notes '- A native operation through ToolGateway'
+        }
+        signalbox.gateway -> signalbox.thread 'raise ask'
+      }
+      else 'native AskUserQuestion' {
+        signalbox.harness -> signalbox.thread 'question (mirrored)' {
+          notes """
+            - Stays blocking from the harness's view
+            - Mirrored as a linked Blocker
+          """
+          navigateTo work_approvals_native_question
+        }
+      }
+    }
+    signalbox.thread -> signalbox.thread 'park' {
+      notes """
+        - `parked{ask}`: mirror session, clear keep-alive, let the facet evict
+        - Waiting on a human is not active work
+      """
+      navigateTo work_approvals_turn_parks
+    }
+    opt 'a VM is running' {
+      signalbox.thread -> signalbox.computer 'hibernate'
+    }
+    signalbox.thread -> signalbox.attention 'ask.raised' {
+      navigateTo person_pipeline_project_ask
+    }
+    signalbox.attention -> hier.lanesA.blocker 'Blocker lane' {
+      navigateTo person_pipeline_lanes
+      notes '- A Blocker, not Ready: the work cannot go on without A (B and C likewise if they are on the route)'
+    }
+    personA -> signalbox.web 'answers'
+    signalbox.web -> signalbox.thread 'Thread.send(Answer)'
+    signalbox.thread -> signalbox.harness 'resume from mirror' {
+      notes '- The answer is the pending tool result'
+    }
+    opt 'next command needs a machine' {
+      signalbox.harness -> signalbox.computer 'wake VM' {
+        notes '- Only if needed; most answers resume in the isolate'
+      }
+    }
+  }
+
+  dynamic view person_pipeline_blocker_snooze {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/Snooze a Blocker for yourself'
+    description 'P-BLK-18, P-BLK-20 · per-person snooze until a time or a condition; it returns early if the waiting cost jumps; B is unaffected.'
+    include personA, signalbox.web, signalbox.thread, signalbox.attention, signalbox.automations, signalbox
+    include hier.lanesA.blocker, hier.lanesB.blocker, hier.lanesA, hier.lanesB
+
+    personA -> signalbox.web 'Snooze' {
+      notes '- On a Blocker from the shared Team thread'
+    }
+    alt 'until' {
+      when 'a time' {
+        signalbox.web -> signalbox.attention 'defer until time'
+      }
+      else 'a condition' {
+        signalbox.web -> signalbox.attention 'defer until condition' {
+          notes '- "until CI is green", "until the customer replies"'
+        }
+        signalbox.attention -> signalbox.automations 'waitForEvent' {
+          notes '- No special alarm; an automation wait'
+        }
+      }
+    }
+    signalbox.attention -> hier.lanesA.blocker 'leaves A lane' {
+      notes """
+        - Per person; the ask record in the thread is untouched
+        - Status line: "waiting on you, snoozed until …"
+      """
+      navigateTo state_ask
+    }
+    signalbox.attention -> hier.lanesB.blocker 'stays in B lane' {
+      notes '- B is unaffected and may answer'
+    }
+    alt 'it comes back' {
+      when 'time or condition' {
+        signalbox.automations -> signalbox.attention 'condition met'
+        signalbox.attention -> hier.lanesA.blocker 'back (on time)'
+      }
+      else 'waiting cost jumps' {
+        signalbox.thread -> signalbox.attention 'ask updated' {
+          notes '- e.g. a deadline moved closer'
+        }
+        signalbox.attention -> hier.lanesA.blocker 'back early'
+      }
+    }
+    opt 'A unsnoozes by hand' {
+      personA -> signalbox.web 'Unsnooze' {
+        notes '- Any time from the snoozed list'
+      }
+      signalbox.web -> signalbox.attention 'defer(A, ask, null)'
+      signalbox.attention -> hier.lanesA.blocker 'back now'
+    }
+  }
+
+  dynamic view person_pipeline_blocker_withdrawn {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Blocker/Blocker withdrawn when its turn or thread ends'
+    description 'P-BLK-17, P-ASK-09 · interrupt, cancel, archive or trash withdraws the ask; a late answer is refused.'
+    include personA, personB, signalbox.web, signalbox.thread, signalbox.attention, signalbox
+
+    alt 'what ends' {
+      when 'turn interrupted or cancelled' {
+        personB -> signalbox.thread 'Interrupt' {
+          notes '- B stops the turn in the shared Team thread'
+        }
+        signalbox.thread -> signalbox.thread 'expire requests' {
+          notes '- Pending runtime requests and asks of that turn expire'
+          navigateTo work_approvals_harness_approval
+        }
+      }
+      else 'thread archived or trashed' {
+        personB -> signalbox.thread 'Trash' {
+          navigateTo work_threads_lifecycle_trash
+        }
+        signalbox.thread -> signalbox.thread 'tombstone' {
+          notes '- Stops all effects; purge workers follow'
+        }
+      }
+    }
+    signalbox.thread -> signalbox.attention 'ask withdrawn' {
+      notes '- A and B projections drop'
+      navigateTo state_ask
+    }
+    personA -> signalbox.web 'answers stale card' {
+      notes '- From an old push or an open tab'
+    }
+    signalbox.web -> signalbox.thread 'Thread.send(Answer)'
+    alt 'refusal' {
+      when 'thread trashed' {
+        signalbox.web <- signalbox.thread 'NotFound'
+      }
+      else 'turn ended' {
+        signalbox.web <- signalbox.thread 'AlreadyAnswered' {
+          notes '- The card explains the ask was withdrawn'
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────── Workflows / Person / Pipeline / Considering ─────────────────────────────
+
+  dynamic view person_pipeline_considering_park {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Considering/Park a big call in Considering'
+    description 'P-CON-01, P-CON-02 · when does an ask go to Considering instead of Blocker or Ready? A call too big to answer now; it needs an exit condition, and the turn goes on.'
+    include signalbox.thread, signalbox.attention, signalbox.harness, signalbox
+
+    signalbox.harness -> signalbox.thread 'ask{Considering}' {
+      notes """
+        - The agent judges a call too big to answer now
+        - e.g. "switch vendors?" with exit condition "when the contract renewal notice arrives"
+      """
+    }
+    alt 'exit condition' {
+      when 'present' {
+        signalbox.thread -> signalbox.thread 'commit ask.raised' {
+          notes '- Not blocking: the turn goes on'
+          navigateTo state_ask
+        }
+        signalbox.thread -> signalbox.attention 'Considering' {
+          notes '- Held out of every lane until the condition fires; never counts against "pipeline empty"'
+          navigateTo person_pipeline_considering_surface
+        }
+      }
+      else 'missing' {
+        signalbox.harness <- signalbox.thread 'Invalid' {
+          notes '- A Considering ask without an exit condition is rejected'
+        }
+      }
+    }
+  }
+
+  dynamic view person_pipeline_considering_surface {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Considering/Exit condition fires and the item surfaces'
+    description """
+      P-CON-03, P-CON-04, P-CON-06 · when does a parked big call come back to A?
+      Considering stays out of A's lanes until its exit condition fires (a date, an event, new related information or the
+      weekly review); then it lands in the Considering lane with what changed.
+    """
+    include personA, signalbox.thread, signalbox.automations, signalbox.attention, signalbox
+    include hier.lanesA.considering, hier.lanesA
+
+    signalbox.thread -> signalbox.automations 'register condition' {
+      navigateTo work_automations_step_wait
+      notes """
+        - `waitForEvent`, or a tick check for conditions with no event
+        - Nothing in A's lanes, nothing pushed, no count
+      """
+    }
+    signalbox.thread -> signalbox.thread 'keeps preparing' {
+      notes '- Pros and cons, research, variants; attached to the item when it comes back'
+    }
+    alt 'what fires it' {
+      when 'date or awaited event' {
+        signalbox.automations -> signalbox.thread 'condition met'
+      }
+      when 'new related information' {
+        signalbox.automations -> signalbox.thread 'related item' {
+          navigateTo scn_250_considering_resurfaces
+          notes '- A new thread, note or event in its folder; relatedness is a Jev judgment with explicit criteria'
+        }
+      }
+      else 'weekly review' {
+        signalbox.automations -> signalbox.thread 'review fires it' {
+          navigateTo person_pipeline_weekly_review
+        }
+      }
+    }
+    signalbox.thread -> signalbox.attention 'surface + what changed'
+    signalbox.attention -> hier.lanesA.considering 'Considering lane' {
+      navigateTo journey_daily_ready_decide
+      notes '- Now it is due: it joins A rounds like any ask'
+    }
+    personA -> signalbox.thread 'decides' {
+      notes '- `Thread.send(answer)`; deciding moves the task back to working'
+    }
+  }
+
+  dynamic view person_pipeline_ready_delegate_kind {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Ready/Delegate a decision kind to my assistant'
+    description 'P-RDY-10 · A delegates a kind of decision to the assistant and can take it back. Where the delegation is stored is unstated (open).'
+    include personA, signalbox.web, hier.asstA, signalbox.learner, signalbox, hier
+
+    personA -> signalbox.web 'delegate a kind' {
+      notes '- e.g. "approve merges of docs-only changes"'
+    }
+    signalbox.web -> hier.asstA 'owner statement' {
+      notes '- Storage of the delegation is unstated (open)'
+    }
+    hier.asstA -> signalbox.learner 'record lens' {
+      notes '- Lens at A top level: when, what, why'
+    }
+    hier.asstA -> hier.asstA 'answers that kind' {
+      notes """
+        - From now on, asks of this kind stop at the assistant
+        - Gate asks only because A delegated them
+      """
+      navigateTo person_pipeline_route
+    }
+    opt 'take it back' {
+      personA -> signalbox.web 'take back'
+      signalbox.web -> hier.asstA 'revoke'
+      hier.asstA -> signalbox.learner 'retire lens' {
+        notes '- The kind routes to A again'
+        navigateTo person_assistant_answer_on_behalf
+      }
+    }
+  }
+
+  dynamic view person_pipeline_ready_from_capture {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Ready/Capture or note overlay becomes a task that ends Ready'
+    description 'P-RDY-16, P-RDY-17 · a capture classified as intent, or an accepted note overlay, becomes a task that prepares the work and ends Ready.'
+    include personA, signalbox.web, signalbox.thread, signalbox.capture, signalbox.automations, signalbox.attention, signalbox
+    include hier.lanesA.ready, hier.lanesA
+
+    alt 'where it starts' {
+      when 'quick capture' {
+        personA -> signalbox.web 'captures' {
+          notes '- "renew passport before June"'
+        }
+        signalbox.web -> signalbox.capture 'capture'
+        signalbox.capture -> signalbox.automations 'capture event' {
+          notes '- Capture routing default automation'
+          navigateTo person_capture_routing
+        }
+        signalbox.automations -> signalbox.automations 'judge: intent' {
+          notes '- Judge; insufficient evidence → note'
+        }
+        signalbox.automations -> signalbox.thread 'new task'
+      }
+      else 'accept a note overlay' {
+        personA -> signalbox.web 'accepts overlay'
+        signalbox.web -> signalbox.capture 'change(Link)' {
+          navigateTo person_notes_overlay
+        }
+        signalbox.capture -> signalbox.thread 'new task' {
+          notes '- The note stays linked to the task'
+        }
+      }
+    }
+    signalbox.thread -> signalbox.thread 'prepares' {
+      notes '- The agent does everything up to the decision'
+    }
+    signalbox.thread -> signalbox.attention 'ask: Ready' {
+      notes '- Ends Ready, not Blocker: the work is done'
+      navigateTo person_pipeline_ready_placement
+    }
+    signalbox.attention -> hier.lanesA.ready 'Ready lane' {
+      notes '- Or the Ready shelf when waiting costs nothing'
+      navigateTo person_pipeline_lanes
+    }
+  }
+
+  dynamic view person_pipeline_ready_gate {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Ready/Gate turns prepared work into a Ready ask'
+    description """
+      P-RDY-01, P-ASK-03 · when does finished work wait in the Ready lane? A gate step (merge, release, publish, pay) or a
+      destructive op from an in-app agent becomes a Ready ask to the target level's responsible people: the work is done, only the go is left.
+    """
+    include personA, personC, signalbox.thread, signalbox.operations, signalbox.automations, signalbox.attention, signalbox
+
+    alt 'source' {
+      when 'automation gate step' {
+        signalbox.automations -> signalbox.thread 'gate step' {
+          notes '- merge, release, publish or pay; the work is fully prepared'
+          navigateTo work_automations_step_ask
+        }
+      }
+      else 'destructive op from in-app agent' {
+        signalbox.thread -> signalbox.operations 'delete folder' {
+          notes '- e.g. the agent in the Team thread wants to delete a folder'
+        }
+        signalbox.thread <- signalbox.operations 'NeedsDecision' {
+          navigateTo folders_gates_destructive
+        }
+      }
+    }
+    signalbox.thread -> signalbox.attention 'Ready ask (gate)' {
+      notes """
+        - Deciders = the target level's responsible people
+        - Never auto-answered unless a decider delegated the kind
+      """
+      navigateTo person_pipeline_ready_placement
+    }
+    parallel 'deciders' {
+      signalbox.attention -> personC 'Ready (admin)'
+      signalbox.attention -> personA 'Ready (member)' {
+        notes '- Only if A holds a role that can decide at the target'
+      }
+    }
+    personC -> signalbox.thread 'Approve' {
+      notes '- First receipt wins'
+    }
+    opt 'destructive op approved' {
+      signalbox.thread -> signalbox.operations 'invoke with decision'
+    }
+  }
+
+  dynamic view person_pipeline_ready_merge_gate {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Ready/Merge gate: merge, ask, or wake the agent'
+    description """
+      P-RDY-02, P-RDY-03, P-RDY-04 · the Merge gate default automation merges reversible, evidence-backed changes itself,
+      otherwise asks whoever holds authority (sha pinned), and never shows a person an unready change.
+    """
+    include personC, signalbox.thread, signalbox.automations, signalbox.attention, signalbox.drive, services.github, signalbox, services
+
+    signalbox.thread -> signalbox.automations 'accept candidate' {
+      notes '- Turn end or PR ready in the Team thread'
+      navigateTo work_git_merge_gate
+    }
+    signalbox.automations -> services.github 'checks · reviews'
+    alt 'verdict' {
+      when 'reversible, evidence green' {
+        signalbox.automations -> signalbox.drive 'accept' {
+          notes '- No person involved'
+          navigateTo work_drive_accept
+        }
+      }
+      when 'needs authority' {
+        signalbox.automations -> signalbox.thread 'Ready ask (sha)' {
+          notes '- Approval pinned to the head sha'
+        }
+        signalbox.thread -> signalbox.attention 'Ready (merge)'
+        signalbox.attention -> personC 'merge?'
+        personC -> signalbox.thread 'Approve (sha)'
+        opt 'new push before merge' {
+          services.github -> signalbox.automations 'head changed'
+          signalbox.automations -> signalbox.thread 'raise again' {
+            notes '- The old approval is void; a new ask for the new sha'
+          }
+        }
+        signalbox.automations -> signalbox.drive 'accept approved sha'
+      }
+      else 'not ready' {
+        signalbox.automations -> signalbox.thread 'wake agent' {
+          notes '- Failing readiness goes back to the agent, never to a person'
+        }
+      }
+    }
+  }
+
+  dynamic view person_pipeline_ready_placement {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Ready/Waiting cost places an ask: Ready lane or wants shelf'
+    description """
+      P-RDY-05, P-RDY-13 · where in the Ready lane does prepared work go?
+      Waiting cost above none → the Ready lane itself; none → a want on the Ready lane's shelf (never counted or pushed) until its deadline nears.
+    """
+    include personA, signalbox.thread, signalbox.attention, signalbox, hier.lanesA.ready, hier.lanesA
+
+    signalbox.thread -> signalbox.attention 'Ready ask + cost' {
+      navigateTo person_pipeline_ready_gate
+      notes """
+        - Everything is done except A's go
+        - Waiting cost and its reason come from code facts, then A's own say, then a Jev classification
+      """
+    }
+    alt 'waiting cost' {
+      when 'above none' {
+        signalbox.attention -> hier.lanesA.ready 'into the lane' {
+          navigateTo person_notifications_turn_pushes
+          notes """
+            - Counts toward round minutes
+            - May push, by A's delivery rules
+          """
+        }
+      }
+      else 'none: a want' {
+        signalbox.attention -> hier.lanesA.ready 'onto the shelf' {
+          navigateTo journey_daily_wants_shelf
+          notes """
+            - The shelf sits inside the Ready lane, below the line
+            - Never counted, never pushed; agents keep it fresh
+          """
+        }
+      }
+    }
+    opt 'a want deadline nears' {
+      signalbox.attention -> hier.lanesA.ready 'shelf → lane' {
+        notes '- The want now costs something to wait on, so it joins the lane'
+      }
+      signalbox.attention -> personA 'push (maybe)' {
+        notes '- Only if delivery rules allow'
+      }
+    }
+  }
+
+  dynamic view person_pipeline_ready_settle {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Ready/Task settles: done-condition or one click'
+    description 'P-RDY-18, P-RDY-19 · a task archives itself when its done-condition holds, or A settles it early and the assistant records why; one click reopens.'
+    include personA, signalbox.web, signalbox.thread, hier.asstA, signalbox.automations, signalbox.learner, signalbox, hier
+
+    alt 'how it settles' {
+      when 'done-condition holds' {
+        signalbox.automations -> signalbox.thread 'Archive + outcome' {
+          notes """
+            - Done-condition automation on the task
+            - Lands in "recently settled" with a one-line outcome
+          """
+          navigateTo work_threads_lifecycle_auto_settle
+        }
+      }
+      else 'A settles early' {
+        personA -> signalbox.web 'Settle'
+        signalbox.web -> signalbox.thread 'Settle'
+        signalbox.thread -> hier.asstA 'record why' {
+          notes '- One quick reason, or inferred'
+          navigateTo person_assistant_settle_reason
+        }
+        hier.asstA -> signalbox.learner 'reason'
+      }
+    }
+    opt 'reopen' {
+      personA -> signalbox.web 'Reopen'
+      signalbox.web -> signalbox.thread 'Reopen' {
+        navigateTo state_thread
+      }
+    }
+  }
+
+  dynamic view person_pipeline_ready_wants_upkeep {
+    title "Workflows/Person/Pipeline/Ready/Keep wants fresh and find what's in the way"
+    description "P-RDY-12, P-RDY-15 · agents keep wants fresh (a stale want shows a warning, never as fresh); repeated declines trigger a find-what's-in-the-way pass."
+    include signalbox
+
+    signalbox.automations -> signalbox.thread 'refresh tick' {
+      notes '- The want agent re-checks price, availability, dates'
+    }
+    alt 'refresh' {
+      when 'fresh' {
+        signalbox.thread -> signalbox.attention 'want updated'
+      }
+      else 'failed' {
+        signalbox.thread -> signalbox.attention 'mark stale' {
+          notes '- Shown with a warning, never as fresh'
+        }
+      }
+    }
+    signalbox.attention -> personA 'shelf, one at a time' {
+      navigateTo journey_daily_wants_shelf
+    }
+    personA -> signalbox.attention 'Not now'
+    opt 'declined N times' {
+      signalbox.attention -> hier.asstA 'declines'
+      hier.asstA -> signalbox.thread 'find the obstacle' {
+        notes """
+          - The agent changes the offer or proposes dropping it
+          - N is a default the person can edit
+        """
+      }
+    }
+
+    autoLayout TopBottom
+  }
+
+  // ───────────────────────────── Workflows / Person / Pipeline / Variants ─────────────────────────────
+
+  dynamic view person_pipeline_variants_build {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Variants/Build every option as variants'
+    description """
+      P-VAR-01, P-VAR-05 · at a reversible choice the agent builds every option in parallel child threads at the same Place.
+      Compute and tokens are paid by the thread's resolved pool (Company), rolling up Team → Company, never to A or B.
+    """
+    include personA, personB, hier.company.team.sharedThread, signalbox.thread, signalbox.tree, signalbox.computer, signalbox.bases, signalbox.models, signalbox, hier
+
+    personA -> hier.company.team.sharedThread 'turn' {
+      notes '- A asks for a landing page; B watches live'
+    }
+    hier.company.team.sharedThread -> hier.company.team.sharedThread 'reversible choice' {
+      notes '- Three layouts; build all instead of assuming'
+      navigateTo work_threads_variants
+    }
+    parallel 'Delegate ×3, same Place' {
+      hier.company.team.sharedThread -> signalbox.thread 'variant 1' {
+        notes '- Child threads share the root Place and cannot move alone'
+        navigateTo work_threads_delegate_subagent
+      }
+      hier.company.team.sharedThread -> signalbox.thread 'variant 2'
+      hier.company.team.sharedThread -> signalbox.thread 'variant 3'
+    }
+    signalbox.thread -> signalbox.computer 'open computer'
+    signalbox.computer -> signalbox.bases 'fork active Base' {
+      notes '- A VM only while commands run'
+    }
+    signalbox.thread -> signalbox.models 'model calls' {
+      notes """
+        - Pool resolved at the Place: Pool P2 on Company
+        - Not A's pool, not B's, whoever sent the turn
+      """
+    }
+    signalbox.models -> signalbox.tree 'usage rows' {
+      navigateTo person_people_shared_costs
+      notes '- Team costs roll up into Company'
+    }
+    signalbox.thread -> hier.company.team.sharedThread 'variants ready' {
+      navigateTo person_pipeline_variants_pick
+    }
+    hier.company.team.sharedThread -> personB 'live progress'
+  }
+
+  dynamic view person_pipeline_variants_multi_model {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Variants/Send one prompt to several models'
+    description 'P-VAR-06 · T3 Code: Shift-click several models to send one prompt as one thread per model.'
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox
+
+    personA -> signalbox.web 'Shift-click models'
+    loop 'one per model' {
+      signalbox.web -> signalbox.funnel 'send new thread' {
+        notes '- Own requestId each; same text'
+        navigateTo work_threads_start_send_draft
+      }
+      signalbox.funnel -> signalbox.thread 'create + first turn'
+    }
+    signalbox.web <- signalbox.funnel 'three threads'
+    signalbox.web -> personA 'compare side by side'
+  }
+
+  dynamic view person_pipeline_variants_pick {
+    variant sequence
+    title 'Workflows/Person/Pipeline/Variants/Compare and pick a variant'
+    description """
+      P-VAR-02, P-VAR-03, P-VAR-04 · an ask with `variants[]` shows a compare surface to A and B;
+      the first pick wins and is accepted into the parent's working ref; the rest are discarded.
+    """
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.attention, signalbox.drive, signalbox
+
+    signalbox.thread -> signalbox.attention 'ask{variants[]}' {
+      notes '- Compare surface from the ask kit'
+      navigateTo person_pipeline_variants_build
+    }
+    parallel 'same compare' {
+      signalbox.attention -> signalbox.web 'compare (A)'
+      signalbox.attention -> signalbox.mobile 'compare (B)'
+    }
+    personA -> signalbox.web 'picks 2'
+    signalbox.web -> signalbox.thread 'Answer: variant 2'
+    personB -> signalbox.mobile 'picks 3'
+    signalbox.mobile -> signalbox.thread 'Answer: variant 3'
+    alt 'which receipt' {
+      when 'first (A)' {
+        signalbox.thread -> signalbox.drive 'accept(2, into parent)' {
+          notes '- The parent Thread is the single writer of its working ref'
+          navigateTo work_threads_accept_or_discard_child
+        }
+        signalbox.thread -> signalbox.thread 'discard 1 and 3' {
+          notes '- Discarded or archived; costs stay where they happened'
+        }
+      }
+      else 'later (B)' {
+        signalbox.mobile <- signalbox.thread 'AlreadyAnswered'
+      }
+    }
+  }
+}

@@ -1,0 +1,731 @@
+// Shard 16: work-search. Search is one index for people and agents, sharded by owner root,
+// with visibility re-checked per hit at query time. Search, Tree, Operations stay black boxes.
+// Participants sit in their container lanes (Signalbox, module, Tree example), muted like the
+// LikeC4 homepage examples.
+views {
+
+  // ── Query ──────────────────────────────────────────────────────────────
+
+  dynamic view work_search_query {
+    variant sequence
+    title 'Workflows/Work/Search/Query/Search everything I can reach'
+    description 'P-SRCH-01 (T-THR-38), P-SRCH-02, P-SRCH-07, W-SRH-02, W-SRH-15. One query fans out to A\'s top-level root plus each mounted Company root.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.search, signalbox.tree, signalbox.thread.threadActor
+    include signalbox, signalbox.thread
+
+    personA -> signalbox.web 'types a query' {
+      notes '''
+        - Palette or Home search: "launch plan"
+        - Web, desktop and mobile send the same op and render the same stream (W-SRH-15)
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'query op'
+    signalbox.funnel -> signalbox.operations 'query(A, text)' {
+      notes '''
+        - Funnel only decodes, calls one op, maps errors
+        - Operations checks authority for actor A
+      '''
+    }
+    signalbox.operations -> signalbox.search 'query(A, text)' {
+      navigateTo work_search_scope
+      notes '- No scope: everything A reaches. A scope is a path-prefix filter.'
+    }
+    signalbox.search -> signalbox.tree "A's owner roots" {
+      notes '''
+        - A's top level (Personal, Friends, Quick chat, Work)
+        - plus one root per mounted Company folder, never one per level (S13)
+      '''
+    }
+    parallel 'fan out to owner-root shards' {
+      signalbox.search -> signalbox.search 'top-level shards' {
+        notes '- `ownerRootId#n` of A\'s top level: private and Friends threads'
+      }
+      signalbox.search -> signalbox.search 'Company shards' {
+        notes '- `ownerRootId#n` of Company: Company and Team rows'
+      }
+    }
+    signalbox.search -> signalbox.tree 'can(A) per hit' {
+      navigateTo work_search_visibility
+      notes '''
+        - Tree.can plus thread or note visibility, before any title or snippet
+        - Hits A may not read never leave Search
+      '''
+    }
+    signalbox.search -> signalbox.search 'one hit per home' {
+      notes '''
+        - Each hit names where it lives: "Work › Company › Team"
+        - References show once, from their home (P-SRCH-02)
+      '''
+    }
+    signalbox.operations <- signalbox.search 'hits stream' {
+      navigateTo work_search_broader
+      notes '- Files, sources and automations join here later (planned, #812)'
+    }
+    signalbox.web <- signalbox.operations 'hits with breadcrumbs'
+    opt 'A opens a hit' {
+      personA -> signalbox.web 'opens hit'
+      signalbox.web -> signalbox.operations 'read(item)'
+      signalbox.operations -> signalbox.thread.threadActor 'page around item' {
+        notes '''
+          - Bounded, paginated read anchored at the hit (P-SRCH-07)
+          - Same access check as the hit itself
+        '''
+      }
+      signalbox.web -> personA 'lands on item' {
+        notes '- A sees the matching message, not the top of the thread'
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.thread { color muted; opacity 20% }
+    style personA { color green }
+  }
+
+  dynamic view work_search_scope {
+    variant sequence
+    title 'Workflows/Work/Search/Query/Scope a search to a folder'
+    description 'P-SRCH-03, P-SRCH-04, W-SRH-03. Scope is a path prefix; Focus sets the default and never grants.'
+
+    include personA, signalbox.web, signalbox.attention, signalbox.tree.personActor, signalbox.operations, signalbox.search
+    include signalbox, signalbox.tree
+
+    personA -> signalbox.web 'opens search' {
+      notes '- A has Focus on Work › Company on this device'
+    }
+    signalbox.web -> signalbox.attention 'current Focus' {
+      navigateTo person_focus_search_scope
+      notes '''
+        - Focus is per person and device, view-only
+        - Agents never read it
+      '''
+    }
+    signalbox.attention -> signalbox.tree.personActor 'Focus row'
+    signalbox.web <- signalbox.attention 'Focus: Company'
+    alt 'scope' {
+      when 'Focus default' {
+        signalbox.web -> signalbox.operations 'query(scope Company)' {
+          notes '- The scope chip shows Company; A can clear it'
+        }
+      }
+      when 'A picks a folder' {
+        personA -> signalbox.web 'picks Team'
+        signalbox.web -> signalbox.operations 'query(scope Team)'
+      }
+      else 'search everywhere' {
+        personA -> signalbox.web 'search everywhere' {
+          notes '- The widen control is UX open'
+        }
+        signalbox.web -> signalbox.operations 'query(no scope)' {
+          navigateTo work_search_query
+        }
+      }
+    }
+    signalbox.operations -> signalbox.search 'query(A, scope)'
+    signalbox.search -> signalbox.search 'path-prefix filter' {
+      notes '''
+        - Rows carry the home level path; scope is a prefix on it
+        - Same shards, same per-hit re-check: a scope narrows, never adds a hit
+      '''
+    }
+    signalbox.operations <- signalbox.search 'scoped hits'
+    signalbox.web <- signalbox.operations 'hits + scope chip'
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.tree { color muted; opacity 20% }
+    style personA { color green }
+  }
+
+  dynamic view work_search_palette {
+    variant sequence
+    title 'Workflows/Work/Search/Query/Jump with the command palette'
+    description 'P-SRCH-14 (T-SET-11). mod+K jumps to threads, folders and actions from the Operations catalog.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations
+    include signalbox
+
+    personA -> signalbox.web 'mod+K' {
+      notes '- Opens the palette anywhere, on every client with a keyboard'
+    }
+    signalbox.web -> signalbox.funnel 'catalog(A)'
+    signalbox.funnel -> signalbox.operations 'catalog(A)' {
+      notes '''
+        - The operations A may invoke here, after Tree.can
+        - The same catalog agents see through ToolGateway
+      '''
+    }
+    signalbox.web <- signalbox.funnel 'actions'
+    personA -> signalbox.web 'types "team"'
+    signalbox.web -> signalbox.web 'match everything' {
+      notes '- Threads and folders come from catalog views the client already holds'
+    }
+    alt 'pick' {
+      when 'thread or folder' {
+        signalbox.web -> personA 'opens it' {
+          notes '- Navigates in place'
+        }
+      }
+      when 'action' {
+        signalbox.web -> signalbox.funnel 'invoke(op)'
+        signalbox.funnel -> signalbox.operations 'invoke(op)' {
+          notes '- Same op and gate as the button it mirrors'
+        }
+      }
+      else 'no match' {
+        signalbox.web -> signalbox.funnel 'search everything' {
+          navigateTo work_search_query
+          notes '- Falls through to full search with the typed text'
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view work_search_find_in_thread {
+    variant sequence
+    title 'Workflows/Work/Search/Query/Find in the current thread'
+    description 'P-SRCH-08, W-SRH-05 (T-THR-37). Literal Find inside one thread; native reveals the exact occurrence.'
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.thread.threadActor
+    include signalbox, signalbox.thread
+
+    alt 'client' {
+      when 'web or desktop' {
+        personA -> signalbox.web 'opens Find' {
+          notes '- Literal match in this thread only, not Search'
+        }
+        signalbox.web -> signalbox.thread.threadActor 'read pages' {
+          notes '''
+            - Bounded pages of the thread\'s items, through the Funnel
+            - No Search index involved: Find never leaves this thread
+          '''
+        }
+        signalbox.web -> signalbox.web 'literal match'
+        signalbox.web -> personA 'highlights matches'
+      }
+      else 'mobile' {
+        personA -> signalbox.mobile 'opens Find'
+        signalbox.mobile -> signalbox.thread.threadActor 'read pages' {
+          notes '- Same bounded pages through the Funnel; the phone holds no work'
+        }
+        signalbox.mobile -> signalbox.mobile 'literal match'
+        signalbox.mobile -> personA 'reveals occurrence' {
+          notes '- Scrolls to and marks the match itself, not just its message (PR #1114)'
+        }
+      }
+    }
+    opt 'not in this thread' {
+      personA -> signalbox.web 'search everywhere' {
+        navigateTo work_search_query
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.thread { color muted; opacity 20% }
+    style personA { color green }
+  }
+
+  dynamic view work_search_broader {
+    variant sequence
+    title 'Workflows/Work/Search/Query/Search files, sources, automations and agents'
+    description 'P-SRCH-12, W-SRH-12 (T-CKP-11), W-SRH-14. Planned scope (#812 open); file contents come from Drive data, never a machine.'
+
+    include personA, signalbox.web, signalbox.operations, signalbox.search, signalbox.drive
+    include signalbox
+
+    personA -> signalbox.web 'searches "Q3 budget"' {
+      notes '- Planned: one Home box over every kind A reaches (#812 open)'
+    }
+    signalbox.web -> signalbox.operations 'query(all kinds)'
+    signalbox.operations -> signalbox.search 'query(A, kinds)'
+    parallel 'kinds' {
+      signalbox.search -> signalbox.search 'threads + notes' {
+        navigateTo work_search_query
+      }
+      signalbox.search -> signalbox.search 'automations, accounts, agents' {
+        notes '- Planned kinds; same owner-root shards, same per-hit re-check'
+      }
+      signalbox.search -> signalbox.drive 'content search' {
+        notes '''
+          - Drives and sources placed at levels A reaches (resolved by the hierarchy)
+          - Drive reads its own data: Artifacts hot tier, R2 full record; no computer, no VM
+          - Planned: Drive\'s 7-verb interface has no search verb yet; this needs one
+        '''
+      }
+    }
+    signalbox.search <- signalbox.drive 'file hits' {
+      notes '- Path, line, source label (`/sources/<label>/`)'
+    }
+    signalbox.search -> signalbox.search 'merge + re-check' {
+      notes '- Every kind gets the same per-hit Tree.can before any snippet'
+    }
+    signalbox.operations <- signalbox.search 'hits by kind'
+    signalbox.web <- signalbox.operations 'grouped results'
+    signalbox.web -> personA 'results by kind' {
+      notes '- Threads, notes, files, automations and agents in one list, each with its home breadcrumb'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personA { color green }
+  }
+
+  dynamic view work_search_agent {
+    variant sequence
+    title 'Workflows/Work/Search/Query/Agents search as whoever they represent'
+    description 'P-SRCH-13, W-SRH-04 (T-THR-39). An agent searches with the access of whoever it represents (a person or a folder), through the same op people use; nothing found says so.'
+
+    include personA, hier.asstA, hier.company.agentCo, mcpClient, signalbox.harness, signalbox.gateway, signalbox.operations, signalbox.search
+    include hier, hier.company, signalbox
+
+    alt 'who searches' {
+      when "A's assistant" {
+        personA -> hier.asstA 'what did we decide?' {
+          navigateTo person_assistant_lookup
+          notes '- The assistant represents A: A\'s access, nothing more'
+        }
+        hier.asstA -> signalbox.harness 'turn'
+        signalbox.harness -> signalbox.gateway 'signalbox_search' {
+          navigateTo work_agenttools_tools_in_turn
+          notes '- Gateway.serve: its ToolGateway is the only MCP endpoint'
+        }
+      }
+      when 'Company agent' {
+        hier.company.agentCo -> signalbox.harness 'turn' {
+          notes '''
+            - Represents folder Company, not a person
+            - Company chain only (no via): never A's or B's private threads
+          '''
+        }
+        signalbox.harness -> signalbox.gateway 'signalbox_search'
+      }
+      else 'outside MCP client' {
+        mcpClient -> signalbox.gateway 'signalbox_search' {
+          navigateTo work_agenttools_outside_agent_connect
+          notes '''
+            - A's MCP URL, signed in through AuthKit; works only for A
+            - Subject: agent class acting for A
+          '''
+        }
+      }
+    }
+    signalbox.gateway -> signalbox.operations 'query op' {
+      notes '''
+        - The verified grant names the represented subject
+        - Same operation the UI calls: parity, no side door
+      '''
+    }
+    signalbox.operations -> signalbox.search 'query(subject)' {
+      notes '- Per-hit Tree.can as for people; agent class can be narrower, never wider'
+    }
+    alt 'result' {
+      when 'hits' {
+        signalbox.operations <- signalbox.search 'hits'
+        signalbox.gateway <- signalbox.operations 'hits with homes'
+      }
+      else 'nothing found' {
+        signalbox.gateway <- signalbox.operations 'insufficient evidence' {
+          notes '- The agent says it found nothing instead of guessing'
+        }
+      }
+    }
+    signalbox.harness <- signalbox.gateway 'tool result' {
+      notes '- Outside clients get the same result over MCP'
+    }
+    opt "A's assistant answers" {
+      hier.asstA -> personA 'answer + links' {
+        notes '''
+          - Each claim links to the hit it came from
+          - The assistant looked something up; it never executes work itself
+        '''
+      }
+    }
+
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+    style personA { color green }
+  }
+
+  // ── Access ─────────────────────────────────────────────────────────────
+
+  dynamic view work_search_visibility {
+    variant sequence
+    title 'Workflows/Work/Search/Access/Who sees which hits'
+    description 'P-SRCH-05, P-SRCH-10, W-SRH-10. A, B, admin C and outside collaborator D run the same search; each gets only what they may read. Nobody else gets a title, snippet, count or existence of A\'s private thread.'
+
+    include personA, personB, personC, personD, signalbox.web, signalbox.operations, signalbox.search, signalbox.tree, signalbox.thread.threadActor
+    include signalbox, signalbox.thread
+
+    personB -> signalbox.web 'searches "launch plan"' {
+      navigateTo work_search_query
+      notes '''
+        - Matching rows: Company\'s run thread, the shared Team thread, and A\'s private thread homed in Team
+        - A, C and D type the same query; the steps are the same, only the answer differs (last block)
+      '''
+    }
+    signalbox.web -> signalbox.operations 'query(B)'
+    signalbox.operations -> signalbox.search 'query(B, text)' {
+      notes '''
+        - Only the searcher\'s owner roots: B\'s top level plus the mounted Company root
+        - A\'s top-level root is never queried for anyone but A: A\'s Personal threads are not even candidates
+      '''
+    }
+    signalbox.search -> signalbox.tree 'can(B) per hit' {
+      notes '''
+        - Hierarchy only: B is a member of Company, so Company and Team below it are readable
+        - Rows hold no access; this check runs on every query
+      '''
+    }
+    signalbox.search -> signalbox.thread.threadActor 'thread visibility' {
+      notes '- A private thread is readable by its author only, at any role'
+    }
+    signalbox.search -> signalbox.search 'drop before snippet' {
+      notes '''
+        - Unreadable hits are dropped before any title or snippet is built
+        - Counts are computed after the drop, so they leak nothing
+      '''
+    }
+    signalbox.operations <- signalbox.search 'readable hits'
+    signalbox.web <- signalbox.operations 'hits with breadcrumbs'
+    alt 'what each person gets' {
+      when 'B, member of Company' {
+        signalbox.web -> personB 'Company + Team threads' {
+          notes '- Not A\'s private thread'
+        }
+      }
+      when 'C, admin of Company' {
+        signalbox.web -> personC 'same as B' {
+          notes '''
+            - Admin manages the folder; it does not open others\' private threads
+            - A\'s private thread is dropped exactly as for B
+          '''
+        }
+      }
+      when 'D, outside collaborator on Team' {
+        signalbox.web -> personD 'Team threads only' {
+          notes '''
+            - D reaches Team through a mount; Company above it is not readable
+            - Company\'s run thread and A\'s private thread are dropped
+          '''
+        }
+      }
+      else 'A, the author' {
+        signalbox.web -> personA 'everything incl. own private' {
+          navigateTo work_search_access_change
+          notes '''
+            - A also gets matches from A\'s own top level (Personal, Friends)
+            - When roles change, the next query re-checks: no reindex
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.thread { color muted; opacity 20% }
+    style personA, personB, personC, personD { color green }
+  }
+
+  dynamic view work_search_access_change {
+    variant sequence
+    title 'Workflows/Work/Search/Access/Results vanish after access changes'
+    description 'P-SRCH-11, W-SRH-11. Admin C removes outside collaborator D from folder Team while D pages through results: access is checked at query time and cursors are bound to the authorization epoch, so no reindex is needed.'
+
+    include personD, personC, signalbox.web, signalbox.operations, signalbox.search, signalbox.tree
+    include signalbox
+
+    personD -> signalbox.web 'searches, page 1' {
+      notes '- D is an outside collaborator with access to folder Team only'
+    }
+    signalbox.web -> signalbox.operations 'query(D)'
+    signalbox.operations -> signalbox.search 'query(D)'
+    signalbox.search -> signalbox.tree 'can(D) + epoch' {
+      navigateTo work_search_visibility
+      notes '- The page cursor is bound to D\'s authorization epoch e1'
+    }
+    signalbox.operations <- signalbox.search 'page 1'
+    signalbox.web <- signalbox.operations 'page 1, cursor@e1' {
+      notes '- Includes hits from Team'
+    }
+
+    personC -> signalbox.web 'removes D from Team' {
+      notes '- C is admin of folder Company, which holds Team'
+    }
+    signalbox.web -> signalbox.operations 'change role'
+    signalbox.operations -> signalbox.tree 'Tree.change(role)' {
+      notes '''
+        - Team bumps its version; D\'s authorization epoch moves to e2
+        - Search rows are untouched: no reindex, nothing to purge
+        - A member like A loses Team only by leaving Company: then the Company mount goes and its root drops out of A\'s owner roots
+      '''
+    }
+
+    personD -> signalbox.web 'next page'
+    signalbox.web -> signalbox.operations 'query(cursor@e1)'
+    signalbox.operations -> signalbox.search 'query(cursor@e1)'
+    signalbox.search -> signalbox.tree 'epoch now?'
+    alt 'cursor epoch' {
+      when 'moved to e2' {
+        signalbox.search -> signalbox.search 're-run at e2' {
+          notes '- The stale cursor is dropped; every hit is re-checked under the new access'
+        }
+        signalbox.web <- signalbox.operations 'Team hits gone' {
+          notes '- D sees results vanish, never a stale snippet'
+        }
+      }
+      else 'unchanged' {
+        signalbox.web <- signalbox.operations 'page 2'
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style personD, personC { color green }
+  }
+
+  // ── Index ──────────────────────────────────────────────────────────────
+
+  dynamic view work_search_indexing {
+    variant sequence
+    title 'Workflows/Work/Search/Index/Index history rows'
+    description 'W-SRH-01, W-SRH-08, W-SRH-09. Each history item reaches its owner-root shard through the outbox of its own transaction; index failures never touch the turn; shards split as they grow.'
+
+    include signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.search, signalbox.observability
+    include signalbox, signalbox.thread, signalbox.tree
+
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'commit item + outbox' {
+      notes '''
+        - Each meaningful item commits with its outbox row in one transaction
+        - One row per item, never a batched blob
+      '''
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.search 'history row' {
+      notes '''
+        - Routed to `ownerRootId#n` by `hash(id) mod n`
+        - Carries the home level path as an indexed column
+      '''
+    }
+    try 'index write' {
+      signalbox.search -> signalbox.search 'write shard row'
+    } catch 'shard write fails' {
+      signalbox.search -> signalbox.observability 'write failed' {
+        notes '- Ids only, never content'
+      }
+      signalbox.search -> signalbox.thread.threadActor 'backfill read' {
+        notes '''
+          - The turn is unaffected: indexing is never on its path
+          - Outbox retries, or a rebuild re-reads the thread
+        '''
+      }
+    }
+    opt 'shard over size' {
+      signalbox.search -> signalbox.search 'split n → 2n' {
+        notes '- Rows rehash into new shards; queries still see one owner root'
+      }
+    }
+    opt 'thread moved' {
+      signalbox.thread.threadActor -[async]-> signalbox.search 'moved{from, to}' {
+        navigateTo work_search_move
+      }
+    }
+    signalbox.tree.levelActor -[async]-> signalbox.search 'shared note rows' {
+      navigateTo work_search_notes
+      notes '- Notes take the same path from the Level (shared) or Person (private) actor, into the same shards'
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.thread, signalbox.tree { color muted; opacity 20% }
+  }
+
+  dynamic view work_search_move {
+    variant sequence
+    title 'Workflows/Work/Search/Index/Keep the index right when a thread moves'
+    description 'W-SRH-07. Same owner: path update in place. Across owners: reindex into the new owner root.'
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.search
+    include signalbox, signalbox.thread, signalbox.tree
+
+    personA -> signalbox.web 'moves a thread' {
+      notes '- e.g. a Team thread A started moves to Work › Company, or out to A\'s Personal'
+    }
+    signalbox.web -> signalbox.thread.threadActor 'move(to)' {
+      notes '- Through the Funnel and Operations; Tree.can checks A may place it there'
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'commit moved' {
+      navigateTo work_threads_lifecycle_move_within
+      notes '''
+        - `moved{from, to}` bumps the thread's access epoch
+        - Sockets that fail the re-check drop
+      '''
+    }
+    parallel 'outbox' {
+      signalbox.thread.threadActor -[async]-> signalbox.tree.levelActor 'old and new catalog'
+      signalbox.thread.threadActor -[async]-> signalbox.search 'moved{from, to}'
+    }
+    alt 'owner' {
+      when 'same owner' {
+        signalbox.search -> signalbox.search 'path update in place' {
+          notes '''
+            - e.g. Company → Team, or A's Personal → Friends
+            - Same owner-root shards; only the path column changes
+          '''
+        }
+      }
+      else 'across owners' {
+        signalbox.search -> signalbox.search 'reindex into new root' {
+          navigateTo work_threads_lifecycle_move_across
+          notes '''
+            - e.g. Team → A's Personal: rows move from the Company root to A's top-level root
+            - Old-root rows are deleted after the new ones land
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.thread, signalbox.tree { color muted; opacity 20% }
+    style personA { color green }
+  }
+
+  dynamic view work_search_notes {
+    variant sequence
+    title 'Workflows/Work/Search/Index/Index and search notes'
+    description 'P-NOTE-16, P-SRCH-09. Private note rows come from A\'s Person actor, shared ones from the Level; B gets shared only.'
+
+    include personA, personB, signalbox.capture, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.search
+    include signalbox, signalbox.tree
+
+    personA -> signalbox.capture 'private note' {
+      navigateTo person_notes_write
+      notes '''
+        - Written at Team from any client
+        - Private content stays out of the shared Level
+      '''
+    }
+    signalbox.capture -> signalbox.tree.personActor 'note row (A)'
+    signalbox.tree.personActor -[async]-> signalbox.search 'private note row'
+
+    personB -> signalbox.capture 'shared note'
+    signalbox.capture -> signalbox.tree.levelActor 'note row (Team)'
+    signalbox.tree.levelActor -[async]-> signalbox.search 'shared note row'
+
+    personA -> signalbox.search 'search notes' {
+      notes '- kinds: note, from the same search box'
+    }
+    signalbox.search -> signalbox.search 're-check for A' {
+      notes '- Tree.can plus note visibility, before any snippet'
+    }
+    personA <- signalbox.search 'private + shared'
+
+    personB -> signalbox.search 'search notes'
+    signalbox.search -> signalbox.search 're-check for B'
+    personB <- signalbox.search 'shared only' {
+      notes '- A\'s private note: no title, snippet, count or existence'
+    }
+
+    opt 'A shares it later' {
+      signalbox.capture -> signalbox.tree.levelActor 'upsert shared' {
+        navigateTo state_note
+        notes '''
+          - Note-share saga keyed by noteId: upsert destination, then delete source
+          - Note states: see the Note state view
+        '''
+      }
+      signalbox.capture -> signalbox.tree.personActor 'delete private'
+      signalbox.tree.levelActor -[async]-> signalbox.search 'row now shared' {
+        notes '- B finds it from the next query'
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.tree { color muted; opacity 20% }
+    style personA, personB { color green }
+  }
+
+  dynamic view work_search_tiers {
+    variant sequence
+    title 'Workflows/Work/Search/Index/Search archived threads, never trash'
+    description 'P-SRCH-06, W-SRH-06. One tiered index: active is hot, archived is searchable, trash is excluded.'
+
+    include personA, signalbox.web, signalbox.operations, signalbox.search, signalbox.thread.threadActor
+    include signalbox, signalbox.thread
+
+    personA -> signalbox.web 'searches' {
+      notes '- A looks for an old decision in a thread archived months ago'
+    }
+    signalbox.web -> signalbox.operations 'query(A)'
+    signalbox.operations -> signalbox.search 'query(A)'
+    parallel 'both tiers' {
+      signalbox.search -> signalbox.search 'hot: active' {
+        notes '- Active threads answer first; a live chat never waits on the archive tier'
+      }
+      signalbox.search -> signalbox.search 'archived tier' {
+        navigateTo work_threads_lifecycle_history_tier
+        notes '- Archived history stays searchable through the same index, same re-check'
+      }
+    }
+    signalbox.search -> signalbox.search 'skip trash' {
+      navigateTo work_threads_lifecycle_trash
+      notes '''
+        - A trash tombstone stops effects; the purge worker deletes its rows
+        - The 30-day trash keeps the record in R2, never in results
+      '''
+    }
+    signalbox.operations <- signalbox.search 'hits incl. archived'
+    signalbox.web <- signalbox.operations 'results'
+    opt 'A opens an archived hit' {
+      personA -> signalbox.web 'opens hit'
+      signalbox.web -> signalbox.thread.threadActor 'read item' {
+        navigateTo state_thread
+        notes '''
+          - Archived threads stay readable at the exact item
+          - Thread states: see the Thread state view
+        '''
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.thread { color muted; opacity 20% }
+    style personA { color green }
+  }
+
+  dynamic view work_search_catalog {
+    title 'Workflows/Work/Search/Index/Thread catalog per level'
+    description 'W-SRH-13. Each level keeps a catalog of its threads; the Funnel serves it as a live view per level, and each person sees only rows they may read.'
+
+    include signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.funnel, signalbox.web, signalbox.mobile, personA, personB
+    include signalbox, signalbox.thread, signalbox.tree
+
+    signalbox.thread.threadActor -[async]-> signalbox.tree.levelActor 'catalog row' {
+      notes '''
+        - Latest state only, coalesced per Level alarm tick (≈ 1 s)
+        - One opaque row per sent thread homed in Team; drafts never
+      '''
+    }
+    signalbox.tree.levelActor -> signalbox.tree.levelActor 'catalog projection'
+    signalbox.tree.levelActor -> signalbox.funnel 'live catalog view' {
+      navigateTo folders_tree_catalog
+      notes '''
+        - One view per level, sharded by levelId (Funnel\'s Lunora adapter)
+        - Rows a subscriber may not read are filtered per subscriber
+      '''
+    }
+    parallel 'per subscriber' {
+      signalbox.funnel -> signalbox.web "A's Team rows" {
+        notes '- The shared thread; B\'s private thread "Draft spec" never reaches A'
+      }
+      signalbox.funnel -> signalbox.mobile "B's Team rows" {
+        notes '- The shared thread and B\'s own private thread "Draft spec"'
+      }
+    }
+    signalbox.web -> personA 'sidebar: all I see' {
+      navigateTo folders_tree_home
+      notes '- Union of the catalogs of every level A reaches, mounts included'
+    }
+    signalbox.mobile -> personB 'sidebar'
+
+    style signalbox { color muted; opacity 10% }
+    style signalbox.thread, signalbox.tree { color muted; opacity 20% }
+    style personA, personB { color green }
+    autoLayout TopBottom
+  }
+}

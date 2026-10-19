@@ -1,0 +1,1753 @@
+// Shard 13: work-drive. Drive (accept, access, storage), Just Files sources, file journeys and
+// cross-cutting recovery. Lanes: Artifacts (`platform.artifacts`, hot git repos) and R2 (`platform.r2`, full
+// record) appear only in the Drive's own storage and mount flows; a code merge runs on folder Team's run thread
+// `hier.company.team.runThread`; Company's agent asks Team's agent thread `hier.company.team.agentTeam`.
+// A module and its own actor never exchange a step (LikeC4 forbids parent-child steps): verbs go to the
+// module, queue and state work goes to its actor.
+views {
+
+  // ───────────────────────────── Journeys / Files ─────────────────────────────
+
+  dynamic view journey_files_browse {
+    variant sequence
+    title 'Journeys/Files/Open files, see history and where edits land'
+    description 'W-DRV-17, W-DRV-19, W-SRC-08 (alias T-CKP-09). Person A browses the files of folder Team: the same FileStore the agent gets.'
+
+    include personA, signalbox.web, signalbox.drive, signalbox.computer
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    personA -> signalbox.web 'open Files' {
+      navigateTo pgap_spaces_place_page
+      notes '''
+        - A opens the Files view of folder Team (Work › Company › Team).
+        - B opening the same folder sees the same files: what shows is decided by the folder's position, not by who looks.
+      '''
+    }
+    signalbox.web -> signalbox.drive 'open(drive, scope)' {
+      navigateTo work_drive_live_fs_read
+      notes '''
+        - `Drive.open` returns one FileStore: `/work` plus every mapped source under `/sources/<label>/`.
+        - Docs show as Markdown, records as JSON (Just Files).
+      '''
+    }
+    signalbox.computer -> signalbox.drive 'same FileStore' {
+      notes '''
+        - The agent's Computer mounts this exact FileStore, so A sees what the agent gets.
+      '''
+    }
+    signalbox.web <- signalbox.drive 'files' {
+      notes '''
+        - A sees the tree, previews any file, downloads it.
+      '''
+    }
+    alt 'where an edit lands' {
+      when 'drive file' {
+        personA -> signalbox.web 'badge: drive' {
+          navigateTo work_drive_drop_files
+          notes '''
+            - The file shows "edits land in this drive".
+            - An edit is a commit; `main` moves only by accept.
+          '''
+        }
+      }
+      else 'source file' {
+        personA -> signalbox.web 'badge: source' {
+          navigateTo work_sources_read
+          notes '''
+            - Under `/sources/<label>/` the file shows "edits land in Confluence" (or Google).
+            - Writes apply on accept through the Merge gate.
+          '''
+        }
+      }
+    }
+    personA -> signalbox.web 'open history' {
+      notes '''
+        - A opens the history of the drive or of one file.
+      '''
+    }
+    signalbox.web -> signalbox.drive 'history(ref)' {
+      notes '''
+        - `Drive.history` streams commits page by page.
+        - Restore makes a new commit; nothing is removed.
+      '''
+    }
+    signalbox.web <- signalbox.drive 'commits' {
+      notes '''
+        - A sees who changed what (person or thread), newest first.
+      '''
+    }
+  }
+
+  dynamic view journey_files_mobile_media {
+    variant sequence
+    title 'Journeys/Files/View, share or save media on the phone'
+    description 'T-MOB-23. Person A taps an attachment in a thread on the phone.'
+
+    include personA, signalbox.mobile, signalbox.thread.threadActor
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    personA -> signalbox.mobile 'tap attachment' {
+      notes '''
+        - A taps an image or file in a thread message.
+      '''
+    }
+    signalbox.mobile -> signalbox.thread.threadActor 'read attachment' {
+      navigateTo work_attachments_agent_images
+      notes '''
+        - The phone holds no work: it asks the thread (through the Funnel) for the bytes.
+      '''
+    }
+    signalbox.mobile <- signalbox.thread.threadActor 'bytes' {
+      notes '''
+        - Streamed to the phone, cached only for display.
+      '''
+    }
+    alt 'what A does' {
+      when 'view' {
+        signalbox.mobile -> personA 'native viewer' {
+          notes '''
+            - Images and video open full screen; PDFs and documents open in Quick Look.
+          '''
+        }
+      }
+      when 'share' {
+        personA -> signalbox.mobile 'share sheet' {
+          notes '''
+            - The system share sheet sends the file to any app.
+          '''
+        }
+      }
+      else 'save' {
+        personA -> signalbox.mobile 'save to Photos' {
+          notes '''
+            - Saves to the camera roll; asks for the Photos permission once.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view journey_files_saved_links {
+    variant sequence
+    title 'Journeys/Files/Save links to a folder'
+    description 'W-SRC-09. Person A saves open tabs, or imports bookmarks, as a source on a folder.'
+
+    include personA, signalbox.web, signalbox.tree
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    personA -> signalbox.web 'save tabs here' {
+      notes '''
+        - A picks "Save tabs to this folder" on folder Personal.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'can(A, place)' {
+      notes '''
+        - A owns Personal, so A may place there.
+        - In a folder where A has no placing role, this becomes a loan instead.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Place{source}' {
+      navigateTo work_sources_map
+      notes '''
+        - The links become one `source` placement with reach below.
+        - Threads in Personal and below read them under `/sources/<label>/`.
+      '''
+    }
+    opt 'import bookmarks' {
+      personA -> signalbox.web 'import bookmarks' {
+        notes '''
+          - A imports a bookmarks file; each bookmark folder becomes its own labelled source.
+        '''
+      }
+      signalbox.web -> signalbox.tree 'Place each' {
+        notes '''
+          - One placement per bookmark folder, same reach rule.
+        '''
+      }
+    }
+    signalbox.web <- signalbox.tree 'placed' {
+      notes '''
+        - A sees the links in Files; agents below see them at their next turn.
+      '''
+    }
+  }
+
+  // ───────────────────────────── Drive / Accept ─────────────────────────────
+
+  dynamic view work_drive_accept {
+    variant sequence
+    title 'Workflows/Work/Drive/Accept/Accept a fork into main'
+    description 'W-DRV-06, W-DRV-10 (alias T-MOB-20). A fork of the shared thread in folder Team is accepted into main by the drive\'s single writer, the Repo actor.'
+
+    include personA, hier.company.team.sharedThread, hier.company.team.runThread, signalbox.web, signalbox.drive.repoActor, signalbox.automations, signalbox.computer
+    include hier.company.team, signalbox
+    style hier.company.team, signalbox { color muted; opacity 10% }
+
+    alt 'who accepts' {
+      when 'A holds the role' {
+        personA -> signalbox.web 'Accept' {
+          notes '''
+            - A (Member of Company, role allows accept on Team) clicks Accept in the shared thread.
+            - People call accept directly when they hold the role.
+          '''
+        }
+        signalbox.web -> signalbox.drive.repoActor 'Drive.accept' {
+          notes '''
+            - `Drive.accept(fork, requestId)` lands in the drive's Repo actor.
+            - A retry with the same requestId dedupes.
+          '''
+        }
+      }
+      else 'an agent wants to merge' {
+        hier.company.team.sharedThread -> signalbox.automations 'request merge' {
+          navigateTo work_git_merge_gate
+          notes '''
+            - Agents never call accept themselves.
+            - The Merge gate automation is the only agent caller.
+          '''
+        }
+        signalbox.automations -> signalbox.drive.repoActor 'Drive.accept' {
+          notes '''
+            - The gate checks its rules (CI green, reviews), then accepts.
+          '''
+        }
+      }
+    }
+    signalbox.drive.repoActor -> signalbox.drive.repoActor 'enqueue' {
+      notes '''
+        - The merge queue is the single writer of `main`.
+        - Accepts run one at a time per drive.
+      '''
+    }
+    alt 'merge executor' {
+      when 'docs drive' {
+        signalbox.drive.repoActor -> signalbox.drive.repoActor 'merge in Worker' {
+          notes '''
+            - isomorphic-git in a Worker (about 420 ms CPU).
+          '''
+        }
+      }
+      else 'code drive' {
+        signalbox.drive.repoActor -> hier.company.team.runThread 'start run thread' {
+          notes '''
+            - A merge run thread at the drive's home folder, no `via`.
+            - It pays from the run's own resolved pool, not A's.
+          '''
+        }
+        hier.company.team.runThread -> signalbox.computer 'native git' {
+          notes '''
+            - The run's computer escalates to a VM forked from the Base.
+          '''
+        }
+        signalbox.drive.repoActor <- hier.company.team.runThread 'merged tree' {
+          notes '''
+            - The run thread hands back the merged tree; the VM is cache.
+          '''
+        }
+      }
+    }
+    alt 'sync mode' {
+      when 'lead' {
+        signalbox.drive.repoActor -> signalbox.drive.repoActor 'CAS main' {
+          navigateTo work_drive_accept_recovery
+          notes '''
+            - CAS `main` and the outbox commit together.
+            - If `main` moved, the result is `Stale`; if it can't merge, `Conflict`.
+          '''
+        }
+        parallel {
+          signalbox.drive.repoActor -> signalbox.automations 'main advanced' {
+            notes '''
+              - `drive.main.advanced` starts Git-host sync, CI and Base refresh (default automations).
+            '''
+          }
+          signalbox.drive.repoActor -> hier.company.team.sharedThread 'Accepted{rev}' {
+            notes '''
+              - The fork is deleted; the thread records the new revision.
+            '''
+          }
+        }
+      }
+      else 'follow (protected branch)' {
+        signalbox.drive.repoActor -> signalbox.automations 'Pending{review}' {
+          navigateTo work_git_sync_follow
+          notes '''
+            - The forge owns `main`; the automation opens or updates a PR/MR.
+            - `main` advances only when the forge merges and Ingress ingests it.
+          '''
+        }
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.web 'result' {
+      notes '''
+        - A and B both watch the shared thread live, so both see the outcome.
+      '''
+    }
+  }
+
+  dynamic view work_drive_accept_recovery {
+    variant sequence
+    title 'Workflows/Work/Drive/Accept/Accept goes stale or conflicts'
+    description 'W-DRV-07, W-DRV-08, W-DRV-09 (alias T-GIT-38). A and B accept forks of two threads in folder Team at once; the Repo queue serializes them.'
+
+    include personA, personB, hier.company.team.sharedThread, hier.company.team.teamPrivateB, hier.company.team.runThread, signalbox.web, signalbox.drive.repoActor
+    include hier.company.team, signalbox
+    style hier.company.team, signalbox { color muted; opacity 10% }
+
+    parallel 'A and B accept at once' {
+      personA -> signalbox.web 'Accept (A)' {
+        notes '''
+          - A accepts the fork of the shared thread.
+        '''
+      }
+      personB -> signalbox.web 'Accept (B)' {
+        notes '''
+          - B accepts the fork of B's own draft thread, also in Team, same repo drive.
+        '''
+      }
+    }
+    signalbox.web -> signalbox.drive.repoActor 'accept A, accept B' {
+      notes '''
+        - Both land in the one merge queue of the drive.
+        - The queue serializes them instead of racing a CAS.
+      '''
+    }
+    signalbox.drive.repoActor -> hier.company.team.sharedThread 'Accepted' {
+      navigateTo work_drive_accept
+      notes '''
+        - A's accept runs first and moves `main`.
+      '''
+    }
+    loop 'until B is Accepted' {
+      alt 'B\'s accept' {
+        when 'Stale: main moved' {
+          signalbox.drive.repoActor -> hier.company.team.teamPrivateB 'Stale' {
+            notes '''
+              - `main` moved since B's fork (A just merged).
+            '''
+          }
+          hier.company.team.teamPrivateB -> hier.company.team.teamPrivateB 'sync main into fork' {
+            notes '''
+              - The thread pulls the new `main` into its fork.
+            '''
+          }
+          hier.company.team.teamPrivateB -> signalbox.drive.repoActor 'retry accept' {
+            notes '''
+              - Same requestId; the queue takes it again.
+            '''
+          }
+        }
+        when 'Conflict' {
+          signalbox.drive.repoActor -> hier.company.team.teamPrivateB 'Conflict' {
+            notes '''
+              - The merge can't apply cleanly.
+            '''
+          }
+          hier.company.team.teamPrivateB -> hier.company.team.teamPrivateB 'agent resolves' {
+            notes '''
+              - B's agent resolves on its own fork; `main` is never touched by a conflict.
+              - B sees the resolution as a normal turn.
+            '''
+          }
+          hier.company.team.teamPrivateB -> signalbox.drive.repoActor 'retry accept' {
+            notes '''
+              - Same requestId after the fix; the queue takes it again.
+            '''
+          }
+        }
+        else 'applies' {
+          signalbox.drive.repoActor -> hier.company.team.runThread 'run thread (code)' {
+            notes '''
+              - Code drives merge on a run thread's VM; docs merge in a Worker.
+            '''
+          }
+          signalbox.drive.repoActor -> hier.company.team.teamPrivateB 'Accepted' {
+            notes '''
+              - B's work is in `main`.
+            '''
+          }
+        }
+      }
+    }
+    hier.company.team.teamPrivateB -> personB 'result' {
+      notes '''
+        - Only B sees it: the draft thread is private to B.
+      '''
+    }
+  }
+
+  dynamic view work_drive_drop_files {
+    variant sequence
+    title 'Workflows/Work/Drive/Accept/Drop files into a folder'
+    description 'W-DRV-18. Person A drags files onto folder Team; with the role, they go straight into the folder\'s drive.'
+
+    include personA, signalbox.web, signalbox.tree, signalbox.drive
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    personA -> signalbox.web 'drop files' {
+      notes '''
+        - A drags files from the desktop onto folder Team.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'can(A, write)' {
+      notes '''
+        - Checks A's role on Team (inherited from Company).
+      '''
+    }
+    alt 'A\'s role' {
+      when 'may write' {
+        signalbox.web -> signalbox.drive 'commit' {
+          navigateTo work_drive_placement
+          notes '''
+            - Commits to the nearest drive on Team's chain.
+            - No drive yet: one is created and placed `here` on first write.
+          '''
+        }
+        signalbox.web -> signalbox.drive 'accept (by role)' {
+          navigateTo work_drive_accept
+          notes '''
+            - A direct accept: `main` still moves only through the Repo actor's merge queue.
+          '''
+        }
+        signalbox.web <- signalbox.drive 'Accepted' {
+          navigateTo journey_files_browse
+          notes '''
+            - A sees the files in Files; threads below get them at their next sync.
+          '''
+        }
+      }
+      else 'no write role' {
+        signalbox.web <- signalbox.tree 'Denied' {
+          notes '''
+            - A is told plainly who can add files here (Team's admins).
+          '''
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────── Drive / Access ─────────────────────────────
+
+  dynamic view work_drive_filestore_files {
+    variant sequence
+    title "Workflows/Work/Drive/Access/Browse, open and edit files in the thread's FileStore"
+    description 'T-CKP-10, T-PRJ-14, T-TRN-54. Person A uses the file panel of a thread: the same FileStore the agent sees.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.computer, signalbox.drive
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    personA -> signalbox.web 'open file panel' {
+      notes '''
+        - A opens the files of the shared thread in Team.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'files rpc' {
+      notes '''
+        - One typed door; the client holds nothing.
+      '''
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'open FileStore' {
+      notes '''
+        - The thread owns its one computer; access is checked against the thread.
+      '''
+    }
+    alt 'what A does' {
+      when 'list or search' {
+        signalbox.thread.threadActor -> signalbox.computer 'files.list' {
+          navigateTo work_drive_live_fs_read
+          notes '''
+            - `/work`, `/sources/*` and scratch, exactly the agent's view.
+            - Search runs over the same paths.
+          '''
+        }
+      }
+      when 'follow an agent link' {
+        signalbox.thread.threadActor -> signalbox.computer 'files.read(path)' {
+          notes '''
+            - A file link in an agent message resolves inside this thread's FileStore (unconfirmed).
+          '''
+        }
+      }
+      else 'edit and save' {
+        signalbox.thread.threadActor -> signalbox.computer 'write + save' {
+          notes '''
+            - Saving writes the file and calls `save`.
+          '''
+        }
+        signalbox.computer -> signalbox.drive 'commit(working ref)' {
+          navigateTo work_checkpoints_commit
+          notes '''
+            - Save is a commit to the thread's working ref.
+            - Source files apply only on accept.
+          '''
+        }
+      }
+    }
+    signalbox.web <- signalbox.funnel 'result' {
+      navigateTo work_drive_accept
+      notes '''
+        - B, watching the same thread, sees the saved change too.
+      '''
+    }
+  }
+
+  dynamic view work_drive_leaver_files {
+    variant sequence
+    title 'Workflows/Work/Drive/Access/A leaver\'s My files stay with folder Company'
+    description 'W-DRV-24. Person B leaves the organization that owns folder Company; B\'s files stay in Company\'s drive.'
+
+    include personB, personC, signalbox.tree.levelActor, signalbox.tree.personActor, signalbox.identity, signalbox.drive, platform.workos
+    include signalbox, platform
+    style signalbox, platform { color muted; opacity 10% }
+
+    alt 'how B leaves' {
+      when 'B leaves' {
+        personB -> platform.workos 'leave organization' {
+          notes '''
+            - B leaves the organization that owns folder Company.
+          '''
+        }
+      }
+      else 'C removes B' {
+        personC -> platform.workos 'remove member' {
+          notes '''
+            - C, admin of Company, removes B.
+          '''
+        }
+      }
+    }
+    platform.workos -> signalbox.identity 'membership webhook' {
+      navigateTo organization_identity_leave
+      notes '''
+        - At least once, ordered by WorkOS event time.
+      '''
+    }
+    signalbox.identity -> signalbox.tree.levelActor 'drop B role' {
+      notes '''
+        - Company's Level actor removes B's role; it no longer reaches Team.
+      '''
+    }
+    signalbox.identity -> signalbox.tree.personActor 'unmount (B)' {
+      navigateTo work_threads_multiplayer_leaver
+      notes '''
+        - B's Person actor drops the mount: Company leaves B's Work folder; the mount id is kept inactive for a rejoin.
+      '''
+    }
+    signalbox.tree.levelActor -> signalbox.drive 'nothing moves' {
+      notes '''
+        - B's "My files" live in Company's drive, owned by the organization.
+        - B loses access; the files and their history stay.
+      '''
+    }
+    personC -> signalbox.drive 'open B\'s files' {
+      notes '''
+        - C (admin) can open them; who receives them is still open (recorded assumption).
+      '''
+    }
+  }
+
+  dynamic view work_drive_mount {
+    variant sequence
+    title 'Workflows/Work/Drive/Access/Mount a drive on a laptop or tool'
+    description 'W-DRV-16 (aliases T-DSK-31, T-PRJ-17). Person A mounts folder Team\'s drive with ArtifactFS or git clone.'
+
+    include personA, signalbox.desktop, signalbox.drive.repoActor, signalbox.identity, platform.artifacts
+    include signalbox, platform
+    style signalbox, platform { color muted; opacity 10% }
+
+    personA -> signalbox.desktop 'mount Team drive' {
+      notes '''
+        - A picks "Open on this laptop" (ArtifactFS) or copies a `git clone` URL.
+      '''
+    }
+    signalbox.desktop -> signalbox.identity 'member check' {
+      notes '''
+        - Identity checks A still holds a role on the drive's home folder.
+      '''
+    }
+    signalbox.identity -> signalbox.drive.repoActor 'repo for drive' {
+      notes '''
+        - The drive's Repo actor names its Artifacts repo.
+      '''
+    }
+    signalbox.desktop <- signalbox.identity 'repo-scoped token' {
+      notes '''
+        - Short-lived and scoped to this one repo; no grant or connection rides along.
+      '''
+    }
+    signalbox.desktop -> platform.artifacts 'mount or clone' {
+      navigateTo work_drive_live_fs_read
+      notes '''
+        - ArtifactFS reads lazily, like the agent's live FS.
+        - `main` still moves only through accept.
+      '''
+    }
+    loop 'while mounted' {
+      signalbox.desktop -> signalbox.identity 'refresh token' {
+        notes '''
+          - Each refresh re-checks membership: if A left Company, the mount stops.
+        '''
+      }
+    }
+  }
+
+  dynamic view work_drive_parent_asks_child {
+    variant sequence
+    title 'Workflows/Work/Drive/Access/Parent level asks a child for its files'
+    description 'W-DRV-21. The agent of folder Company needs something in folder Team\'s drive: it gets answers, never access.'
+
+    include hier.company.agentCo, hier.company.team.agentTeam, signalbox.tree.levelActor, signalbox.drive
+    include hier.company, signalbox
+    style hier.company, signalbox { color muted; opacity 10% }
+
+    alt 'how the parent tries' {
+      when 'reads the child drive' {
+        hier.company.agentCo -> signalbox.drive 'open(Team drive)' {
+          notes '''
+            - Company's agent tries to open Team's drive directly.
+          '''
+        }
+        hier.company.agentCo <- signalbox.drive 'not on chain' {
+          notes '''
+            - There are no implicit child mounts; a drive reaches a thread only from its own chain or a mapped source.
+          '''
+        }
+      }
+      else 'asks the child' {
+        hier.company.agentCo -> signalbox.tree.levelActor 'Team agent?' {
+          notes '''
+            - Team's Level actor holds its `agentThreadId`.
+          '''
+        }
+        hier.company.agentCo -> hier.company.team.agentTeam 'delegate question' {
+          navigateTo work_threads_delegate_subagent
+          notes '''
+            - Team's agent thread gets the question.
+          '''
+        }
+        hier.company.team.agentTeam -> signalbox.drive 'open own drive' {
+          navigateTo work_levelagents_chat
+          notes '''
+            - Team's agent reads its own drive, which is on its chain.
+          '''
+        }
+        hier.company.agentCo <- hier.company.team.agentTeam 'answer' {
+          notes '''
+            - Company gets an answer, not a path or a mount.
+          '''
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────── Drive / Storage ─────────────────────────────
+
+  dynamic view work_drive_placement {
+    variant sequence
+    title "Workflows/Work/Drive/Storage/Where a level's drive comes from"
+    description 'W-DRV-01, W-DRV-02, W-DRV-23 (aliases T-GIT-05, T-PRJ-15, T-PRJ-04, T-THR-49). Three ways a drive arrives on a folder, and why it survives Make this an organization.'
+
+    include personC, signalbox.web, signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.drive.repoActor, platform.workos
+    include signalbox, platform
+    style signalbox, platform { color muted; opacity 10% }
+
+    alt 'how the drive arrives' {
+      when 'first file at a level' {
+        signalbox.thread.threadActor -> signalbox.tree.levelActor 'nearest drive?' {
+          notes '''
+            - A thread in folder Team writes its first file; nothing on the chain.
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.drive.repoActor 'create drive' {
+          notes '''
+            - A Repo actor and an Artifacts repo, created lazily on first write.
+          '''
+        }
+        signalbox.drive.repoActor -> signalbox.tree.levelActor 'Place{drive, here}' {
+          navigateTo folders_placement_place
+          notes '''
+            - Placed `here` on Team, the level that wrote first.
+          '''
+        }
+      }
+      when 'repo folder set up' {
+        personC -> signalbox.web 'set up repo' {
+          notes '''
+            - C (admin) connects a forge repo to folder Team.
+          '''
+        }
+        signalbox.web -> signalbox.tree.levelActor 'Place{drive, below}' {
+          notes '''
+            - The repo drive reaches Team and every folder below it.
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.drive.repoActor 'fork(repo, main)' {
+          navigateTo work_drive_thread_fork
+          notes '''
+            - A's and B's threads in Team's subfolders all fork the same repo.
+          '''
+        }
+      }
+      else 'Make this an organization' {
+        personC -> signalbox.web 'Make organization' {
+          notes '''
+            - C created folder Company as a person-owned folder; now C turns it into one owned by a new organization (C becomes its admin).
+          '''
+        }
+        signalbox.web -> platform.workos 'create organization' {
+          notes '''
+            - WorkOS gets the new organization; the folder's owner changes.
+          '''
+        }
+        signalbox.web -> signalbox.tree.levelActor 'MakeOrganization' {
+          navigateTo folders_tree_make_org
+          notes '''
+            - The drive id and its placement stay as they were; only the owner changes.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_drive_thread_fork {
+    variant sequence
+    title "Workflows/Work/Drive/Storage/Give a thread its own fork of the drive"
+    description 'W-DRV-03, W-DRV-12, W-DRV-22 (aliases T-GIT-06, T-GIT-09, T-GIT-03, T-GIT-04). The shared thread in Team forks the repo once; A\'s and B\'s turns share that fork.'
+
+    include personA, personB, signalbox.thread.threadActor, signalbox.harness, signalbox.drive
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    personA -> signalbox.thread.threadActor 'first turn' {
+      notes '''
+        - A sends the first turn of the shared thread in Team.
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'fork(drive, main)' {
+      navigateTo work_drive_placement
+      notes '''
+        - The nearest drive on Team's chain.
+        - Fork + CAS to the exact `main` commit, so the base is pinned.
+      '''
+    }
+    signalbox.thread.threadActor <- signalbox.drive 'WorkRef' {
+      notes '''
+        - The thread's own working ref; there are no worktrees.
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'turn on fork' {
+      navigateTo work_turns_end_to_end
+      notes '''
+        - The agent works on the fork through its computer.
+      '''
+    }
+    personB -> signalbox.thread.threadActor 'next turn' {
+      notes '''
+        - B's turn queues in the same Thread actor and uses the same fork.
+      '''
+    }
+    alt 'before a later turn' {
+      when 'main advanced' {
+        signalbox.drive -> signalbox.thread.threadActor 'main advanced' {
+          navigateTo work_drive_accept
+          notes '''
+            - Someone accepted into `main` since the fork.
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.drive 'sync main into fork' {
+          notes '''
+            - The thread pulls new `main` first, so B's turn starts current.
+          '''
+        }
+      }
+      else 'main unchanged' {
+        signalbox.thread.threadActor -> signalbox.harness 'turn continues' {
+          notes '''
+            - Nothing to pull.
+          '''
+        }
+      }
+    }
+    opt 'worktree or branch tools' {
+      signalbox.harness -> signalbox.thread.threadActor 'create worktree' {
+        notes '''
+          - The agent calls a worktree or branch tool (T3 habit).
+        '''
+      }
+      signalbox.harness <- signalbox.thread.threadActor 'the thread\'s fork' {
+        notes '''
+          - Answered with the thread's own fork; parallel work is a child thread with its own fork.
+        '''
+      }
+    }
+  }
+
+  dynamic view work_drive_live_fs_read {
+    variant sequence
+    title 'Workflows/Work/Drive/Storage/Read a file lazily from the fork'
+    description 'W-DRV-04. The first read of a path in a thread fetches it from the fork on demand.'
+
+    include signalbox.thread.threadActor, signalbox.computer, signalbox.drive
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.thread.threadActor -> signalbox.computer 'read path' {
+      navigateTo work_drive_thread_fork
+      notes '''
+        - The harness reads a file it has not touched yet.
+      '''
+    }
+    signalbox.computer -> signalbox.computer 'manifest hit' {
+      notes '''
+        - The live FS knows every path and its real size; content is not local yet.
+      '''
+    }
+    alt 'path class' {
+      when 'source or kept-local' {
+        signalbox.computer -> signalbox.drive 'fetch from fork' {
+          navigateTo work_drive_eviction
+          notes '''
+            - Served from the hot tier (Artifacts); a cold drive reads from R2.
+          '''
+        }
+        signalbox.computer <- signalbox.drive 'bytes' {
+          notes '''
+            - The read returns with real contents; no fake sizes.
+          '''
+        }
+      }
+      else 'regenerable' {
+        signalbox.computer -> signalbox.computer 'hydrate from Base' {
+          navigateTo work_computer_paths_regenerable
+          notes '''
+            - From the attached VM, or else the Base's chunks in R2. A read never forks a VM.
+          '''
+        }
+      }
+    }
+    loop 'in priority order' {
+      signalbox.computer -> signalbox.drive 'prefetch next' {
+        notes '''
+          - Recently touched and small files first, within a byte budget.
+        '''
+      }
+    }
+    signalbox.thread.threadActor <- signalbox.computer 'contents' {
+      notes '''
+        - Same paths and errors as any other placement: one computer.
+      '''
+    }
+  }
+
+  dynamic view work_drive_eviction {
+    variant sequence
+    title 'Workflows/Work/Drive/Storage/Evict an idle drive and promote it back'
+    description 'W-DRV-13 (alias T-GIT-37). Drive storage internals: Artifacts is the hot tier, R2 the full record.'
+
+    include personA, signalbox.web, signalbox.drive.repoActor, signalbox.automations, platform.artifacts, platform.r2
+    include signalbox, platform
+    style signalbox, platform { color muted; opacity 10% }
+
+    signalbox.automations -> signalbox.drive.repoActor 'idle tick' {
+      navigateTo work_automations_triggers
+      notes '''
+        - The Idle-drive eviction default automation: idle for N days?
+      '''
+    }
+    signalbox.drive.repoActor -> platform.r2 'R2 confirmed?' {
+      navigateTo work_drive_r2_record
+      notes '''
+        - Every ref must already be in R2 before the hot copy may go.
+      '''
+    }
+    alt 'R2 state' {
+      when 'R2 has everything' {
+        signalbox.drive.repoActor -> platform.artifacts 'delete hot repo' {
+          notes '''
+            - The Artifacts repo is deleted; R2 keeps the record.
+          '''
+        }
+      }
+      else 'R2 behind' {
+        signalbox.drive.repoActor -> signalbox.automations 'skip' {
+          notes '''
+            - Nothing is deleted; try again next tick.
+          '''
+        }
+      }
+    }
+    personA -> signalbox.web 'come back' {
+      notes '''
+        - Weeks later A opens folder Team's files, messages a thread there, or mounts the drive.
+      '''
+    }
+    alt 'what A does' {
+      when 'open, message or mount' {
+        signalbox.web -> signalbox.drive.repoActor 'promote' {
+          notes '''
+            - The drive is rebuilt into Artifacts from the R2 bundle.
+          '''
+        }
+        signalbox.drive.repoActor -> platform.artifacts 'rehydrate' {
+          notes '''
+            - Back in the hot tier; forks work as before.
+          '''
+        }
+      }
+      else 'read only' {
+        signalbox.web -> signalbox.drive.repoActor 'read' {
+          notes '''
+            - A only browses; nothing needs a fork.
+          '''
+        }
+        signalbox.drive.repoActor -> platform.r2 'cold read' {
+          notes '''
+            - The drive serves the read straight from R2 without promoting. The client never touches storage.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_drive_large_files {
+    variant sequence
+    title 'Workflows/Work/Drive/Storage/Large files and vendor limits'
+    description 'W-DRV-14, W-DRV-15. Big files go to LFS; hard limits come back as plain errors.'
+
+    include personA, signalbox.thread.threadActor, signalbox.drive
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.thread.threadActor -> signalbox.drive 'commit(change)' {
+      notes '''
+        - A thread in Team commits a change that includes a big file.
+      '''
+    }
+    alt 'size' {
+      when 'file over 32 MB' {
+        signalbox.drive -> signalbox.drive 'store as LFS' {
+          notes '''
+            - The blob becomes a Git LFS object in R2; git keeps a pointer.
+          '''
+        }
+        signalbox.thread.threadActor <- signalbox.drive 'Revision' {
+          notes '''
+            - The commit succeeds; reads hydrate the blob lazily.
+          '''
+        }
+      }
+      when 'over a vendor limit' {
+        signalbox.thread.threadActor <- signalbox.drive 'TooLarge' {
+          navigateTo work_git_push_limits
+          notes '''
+            - A push over the limit or the 1 GB repo cap fails with a plain error.
+          '''
+        }
+        signalbox.thread.threadActor -> personA 'says which limit' {
+          notes '''
+            - A sees which limit, which file, and what to do; nothing is silently dropped.
+          '''
+        }
+      }
+      else 'normal' {
+        signalbox.thread.threadActor <- signalbox.drive 'Revision' {
+          notes '''
+            - Ordinary commit.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_drive_r2_record {
+    variant sequence
+    title 'Workflows/Work/Drive/Storage/Keep the full record in R2'
+    description 'W-DRV-05. Drive storage internals: every Artifacts push ends up in an R2 bundle.'
+
+    include signalbox.ingress, signalbox.drive.repoActor, platform.artifacts, platform.r2
+    include signalbox, platform
+    style signalbox, platform { color muted; opacity 10% }
+
+    platform.artifacts -> signalbox.ingress 'pushed event' {
+      notes '''
+        - Artifacts emits a `pushed` event for every push.
+      '''
+    }
+    signalbox.ingress -> signalbox.drive.repoActor 'enqueue' {
+      notes '''
+        - Through a Queue to the drive's Repo actor, which owns the event cursor.
+      '''
+    }
+    alt 'event quality' {
+      when 'complete and in order' {
+        signalbox.drive.repoActor -> platform.r2 'write bundle' {
+          navigateTo work_drive_live_fs_read
+          notes '''
+            - A thin bundle of the new objects lands in R2 (EU).
+          '''
+        }
+      }
+      else 'truncated or out of order' {
+        signalbox.drive.repoActor -> platform.artifacts 'read refs' {
+          notes '''
+            - Events are hints: read the refs before and after.
+          '''
+        }
+        signalbox.drive.repoActor -> platform.r2 'bundle the diff' {
+          notes '''
+            - Bundle whatever the refs say changed.
+          '''
+        }
+      }
+    }
+    signalbox.drive.repoActor -> signalbox.drive.repoActor 'R2 confirmed' {
+      navigateTo work_drive_eviction
+      notes '''
+        - R2 alone can rebuild the drive; repo drives keep only Signalbox's own objects there.
+      '''
+    }
+  }
+
+  dynamic view work_drive_repo_enrichment {
+    variant sequence
+    title 'Workflows/Work/Drive/Storage/Enrich a repo folder (identity, favicon, caches)'
+    description 'T-PRJ-13. A folder that places a repo drive shows the repo\'s name and icon.'
+
+    include signalbox.web, signalbox.drive.repoActor, signalbox.tree, signalbox.connections
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.web -> signalbox.tree 'view(folder)' {
+      navigateTo work_drive_placement
+      notes '''
+        - The shell reads folder Team; it places a repo drive.
+      '''
+    }
+    signalbox.tree -> signalbox.drive.repoActor 'repo identity' {
+      notes '''
+        - Only folders that place a repo drive are enriched.
+      '''
+    }
+    opt 'not cached' {
+      signalbox.drive.repoActor -> signalbox.connections 'forge lookup' {
+        navigateTo work_git_forge_base
+        notes '''
+          - Name, default branch and favicon through the forge connection on the folder's chain.
+        '''
+      }
+      signalbox.drive.repoActor -> signalbox.drive.repoActor 'cache' {
+        notes '''
+          - Cached with the drive (unconfirmed how long).
+        '''
+      }
+    }
+    signalbox.tree <- signalbox.drive.repoActor 'identity · favicon' {
+      notes '''
+        - Returned with the folder view.
+      '''
+    }
+    signalbox.web <- signalbox.tree 'folder' {
+      notes '''
+        - A, B, C (admin of Company) and D (collaborator on Team) see the same name and icon on Team.
+      '''
+    }
+  }
+
+  // ───────────────────────────── Recovery ─────────────────────────────
+
+  dynamic view work_recovery_command_commit {
+    variant sequence
+    title 'Workflows/Work/Recovery/Commit each command once, one transaction per actor'
+    description 'T-SYS-01, T-SYS-02. A command commits once in its Thread actor; retries return the stored receipt.'
+
+    include signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.actorhost
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    loop 'until a receipt (retries reuse commandId)' {
+      signalbox.web -> signalbox.funnel 'command' {
+        notes '''
+          - Every command carries a `commandId` (requestId).
+        '''
+      }
+      signalbox.funnel -> signalbox.thread.threadActor 'dispatch' {
+        notes '''
+          - One Thread actor per thread; one command at a time.
+        '''
+      }
+      alt 'seen before?' {
+        when 'receipt exists' {
+          signalbox.funnel <- signalbox.thread.threadActor 'stored receipt' {
+            notes '''
+              - A retry after a timeout dedupes; nothing runs twice.
+            '''
+          }
+        }
+        else 'new command' {
+          signalbox.thread.threadActor -> signalbox.thread.threadActor 'decide events' {
+            notes '''
+              - The decider is pure: no I/O.
+            '''
+          }
+          signalbox.thread.threadActor -> signalbox.actorhost 'one transaction' {
+            navigateTo operations_ops_outbox
+            notes '''
+              - Events, projections, receipt and outbox in one DO SQLite transaction.
+              - Nothing spans two actors.
+            '''
+          }
+          signalbox.funnel <- signalbox.thread.threadActor 'receipt' {
+            navigateTo work_recovery_outbox_retries
+            notes '''
+              - Side effects run after the commit, from the outbox.
+            '''
+          }
+        }
+      }
+    }
+    signalbox.web <- signalbox.funnel 'receipt' {
+      notes '''
+        - A and B both see the result through their thread subscription.
+      '''
+    }
+  }
+
+  dynamic view work_recovery_effect_cancel {
+    variant sequence
+    title 'Workflows/Work/Recovery/Cancel effects when stop or delete wins the race'
+    description 'T-SYS-06. A tombstone commits first, so a queued effect skips instead of running.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.harness
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'effect queued' {
+      notes '''
+        - A turn start (or another effect) waits in the outbox.
+      '''
+    }
+    personA -> signalbox.web 'Stop or Delete' {
+      notes '''
+        - A stops the turn, or deletes the thread.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'stop / delete' {
+      navigateTo work_turns_interrupt_stop
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'command' {
+      notes '''
+        - Commits a tombstone first: it stops all effects.
+      '''
+    }
+    alt 'who won' {
+      when 'tombstone first' {
+        signalbox.thread.threadActor -> signalbox.thread.threadActor 'skip effect' {
+          notes '''
+            - The effect worker sees the tombstone and drops the effect.
+          '''
+        }
+      }
+      else 'effect already running' {
+        signalbox.thread.threadActor -> signalbox.harness 'interrupt' {
+          notes '''
+            - The running turn is interrupted.
+          '''
+        }
+        signalbox.thread.threadActor <- signalbox.harness 'stopped' {
+          notes '''
+            - The harness settles and mirrors its session.
+          '''
+        }
+      }
+    }
+    opt 'delete' {
+      signalbox.thread.threadActor -> signalbox.thread.threadActor 'purge stores' {
+        navigateTo work_threads_lifecycle_trash
+        notes '''
+          - Per-store purge workers; the 30-day trash keeps the record.
+        '''
+      }
+    }
+    signalbox.web <- signalbox.funnel 'stopped' {
+      navigateTo work_recovery_outbox_retries
+      notes '''
+        - A and B see the thread stopped.
+      '''
+    }
+  }
+
+  dynamic view work_recovery_new_rpc_after_deploy {
+    variant sequence
+    title 'Workflows/Work/Recovery/New RPC method after deploy'
+    description 'W-REC-04. A client calls a method an old actor instance does not have yet.'
+
+    include signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.actorhost
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.web -> signalbox.funnel 'new method' {
+      notes '''
+        - A client already on the new release calls a new method.
+      '''
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'call' {
+      notes '''
+        - The Thread actor is still running the old code.
+      '''
+    }
+    signalbox.funnel <- signalbox.thread.threadActor 'unknown method' {
+      notes '''
+        - Never shown to the person as a crash.
+      '''
+    }
+    alt 'recovery' {
+      when 'restart instance' {
+        signalbox.funnel -> signalbox.actorhost 'restart actor' {
+          navigateTo work_turns_deploy_mid_turn
+          notes '''
+            - The instance restarts on new code between commands; a live turn resumes from its mirror.
+          '''
+        }
+      }
+      else 'versioned dispatch' {
+        signalbox.funnel -> signalbox.actorhost 'load by version' {
+          notes '''
+            - Engine code loads by versioned Worker Loader id, so the stable shell picks the new version.
+          '''
+        }
+      }
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'retry' {
+      notes '''
+        - Same commandId, so the retry is safe.
+      '''
+    }
+    signalbox.web <- signalbox.funnel 'result' {
+      notes '''
+        - The person never sees the mismatch.
+      '''
+    }
+  }
+
+  dynamic view work_recovery_one_trace {
+    variant sequence
+    title 'Workflows/Work/Recovery/One trace per unit of work'
+    description 'W-REC-03. One correlation id from the client down to the model bytes; ids only, never content.'
+
+    include signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.gateway, signalbox.models, signalbox.observability, telemetry.sentry
+    include signalbox, telemetry
+    style signalbox, telemetry { color muted; opacity 10% }
+
+    signalbox.web -> signalbox.funnel 'request + id' {
+      notes '''
+        - The client mints the correlation id.
+      '''
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'command' {
+      notes '''
+        - Worker → DO, same id.
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'turn' {
+      notes '''
+        - DO → session facet.
+      '''
+    }
+    signalbox.harness -> signalbox.computer 'exec' {
+      notes '''
+        - Facet → child isolate, or a VM after escalation.
+      '''
+    }
+    signalbox.harness -> signalbox.gateway 'tools · model' {
+      notes '''
+        - Tool calls and the model wire carry the id.
+      '''
+    }
+    signalbox.gateway -> signalbox.models 'model bytes' {
+      notes '''
+        - The id is stamped into CPA's usage record header.
+      '''
+    }
+    parallel 'each unit emits one wide event' {
+      signalbox.funnel -> signalbox.observability 'wide event' {
+        navigateTo operations_ops_obs_wide_event
+      }
+      signalbox.thread.threadActor -> signalbox.observability 'wide event'
+      signalbox.harness -> signalbox.observability 'wide event'
+      signalbox.computer -> signalbox.observability 'wide event'
+      signalbox.gateway -> signalbox.observability 'wide event' {
+        notes '''
+          - One evlog event per unit of work, ids only.
+        '''
+      }
+    }
+    signalbox.observability -> telemetry.sentry 'errors · traces' {
+      notes '''
+        - Errors, alerts and sampled traces, joined by the same id; Axiom keeps every event unsampled.
+      '''
+    }
+  }
+
+  dynamic view work_recovery_outbox_retries {
+    variant sequence
+    title 'Workflows/Work/Recovery/Outbox delivery retries'
+    description 'W-REC-01 (alias T-PRV-38). A failed delivery is retried by the alarm until the idempotent handler accepts it.'
+
+    include signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.actorhost
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.thread.threadActor -> signalbox.actorhost 'outbox row' {
+      navigateTo operations_ops_outbox
+      notes '''
+        - Committed with the state change, keyed `(sourceKey, seq)`.
+      '''
+    }
+    loop 'until delivered' {
+      signalbox.actorhost -> signalbox.tree.levelActor 'deliver' {
+        notes '''
+          - The one alarm drains the job table (here: a catalog row for folder Team).
+        '''
+      }
+      alt 'handler' {
+        when 'fails' {
+          signalbox.actorhost <- signalbox.tree.levelActor 'error' {
+            notes '''
+              - Actor busy, deploy, or a bug.
+            '''
+          }
+          signalbox.actorhost -> signalbox.actorhost 'back off' {
+            notes '''
+              - Re-arm the alarm with backoff; alert after too many tries.
+            '''
+          }
+        }
+        else 'succeeds' {
+          signalbox.tree.levelActor -> signalbox.tree.levelActor 'apply once' {
+            notes '''
+              - Idempotent on `(sourceKey, seq)`: a duplicate is a no-op.
+            '''
+          }
+          signalbox.actorhost <- signalbox.tree.levelActor 'ack' {
+            notes '''
+              - The row is marked delivered.
+            '''
+          }
+        }
+      }
+    }
+  }
+
+  dynamic view work_recovery_records {
+    variant sequence
+    title 'Workflows/Work/Recovery/Record deliveries, new threads and asks'
+    description 'T-SYS-14. The thread records what it delivered, created and asked, so each fan-out can be replayed.'
+
+    include signalbox.thread.threadActor, signalbox.tree.personActor, signalbox.attention
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'commit records' {
+      notes '''
+        - thread-created, ask raised, delivery accepted: rows in the thread's own log.
+      '''
+    }
+    parallel {
+      signalbox.thread.threadActor -> signalbox.attention 'ask raised' {
+        navigateTo person_asks_record
+        notes '''
+          - A secret request becomes an ask too.
+        '''
+      }
+      signalbox.thread.threadActor -> signalbox.tree.personActor 'thread created' {
+        notes '''
+          - The sender's Person actor drops the draft.
+        '''
+      }
+    }
+    signalbox.attention -> signalbox.tree.personActor 'project into lanes' {
+      navigateTo person_notifications_deliver
+      notes '''
+        - In the shared thread, the ask lands in A's and B's own lanes (each Person actor).
+      '''
+    }
+    signalbox.attention -> signalbox.thread.threadActor 'delivery accepted' {
+      notes '''
+        - Recorded in the thread, so a crash replays only what was not accepted.
+      '''
+    }
+  }
+
+  dynamic view work_recovery_stalled_sagas {
+    variant sequence
+    title 'Workflows/Work/Recovery/Stalled sagas resume'
+    description 'W-REC-02 (aliases T-ENV-04, T-HND-12). A sweeper keyed by saga key re-drives fork, move, delete and accept sagas.'
+
+    include signalbox.thread.threadActor, signalbox.actorhost, signalbox.tree, signalbox.drive
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.actorhost -> signalbox.actorhost 'sweeper tick' {
+      navigateTo operations_ops_custody_sweeper
+      notes '''
+        - A job in the table: find sagas past their deadline.
+      '''
+    }
+    signalbox.actorhost -> signalbox.thread.threadActor 'resume saga' {
+      notes '''
+        - Keyed by saga key (requestId); every step is retry-safe.
+      '''
+    }
+    alt 'saga' {
+      when 'fork' {
+        signalbox.thread.threadActor -> signalbox.drive 'fork + CAS' {
+          notes '''
+            - Repeat the fork; the CAS makes it land once.
+          '''
+        }
+      }
+      when 'move' {
+        signalbox.thread.threadActor -> signalbox.tree 'catalog both sides' {
+          navigateTo work_threads_lifecycle_move_across
+          notes '''
+            - Both folders' catalogs converge.
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.drive 'rebase fork' {
+          notes '''
+            - Can end in `Conflict`; the old fork stays read-only.
+          '''
+        }
+      }
+      when 'delete' {
+        signalbox.thread.threadActor -> signalbox.drive 'purge fork' {
+          notes '''
+            - Trash keeps R2 and the record for 30 days.
+          '''
+        }
+      }
+      else 'accept' {
+        signalbox.thread.threadActor -> signalbox.drive 'accept again' {
+          notes '''
+            - Same requestId; the Repo queue dedupes.
+          '''
+        }
+      }
+    }
+    signalbox.actorhost <- signalbox.thread.threadActor 'done or alert' {
+      notes '''
+        - Still stuck after the limit: alert, never a silent drop.
+      '''
+    }
+  }
+
+  // ───────────────────────────── Sources ─────────────────────────────
+
+  dynamic view work_sources_home {
+    variant sequence
+    title 'Workflows/Work/Sources/Where unmapped and referenced content lives'
+    description 'W-SRC-06, W-SRC-07. Loose items sit at the owner\'s top level; a reference elsewhere only displays and grants nothing.'
+
+    include personA, personB, signalbox.web, signalbox.tree, signalbox.connections
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+
+    signalbox.connections -> signalbox.tree 'loose items' {
+      navigateTo folders_placement_resolve
+      notes '''
+        - A's Google account is connected; its unmapped items sit at A's top level, the owner's root.
+        - Nothing below A's top level sees them.
+      '''
+    }
+    personA -> signalbox.web 'add reference' {
+      notes '''
+        - A pins one of those docs as a reference in folder Team.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Reference{doc, Team}' {
+      navigateTo folders_tree_reference
+      notes '''
+        - A reference is display only, kept with A (A's Person actor).
+        - Only A sees the pin; it is not a placement.
+      '''
+    }
+    personB -> signalbox.web 'turn in shared thread' {
+      notes '''
+        - B sends a turn in the shared thread in Team.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'resolve(Team)' {
+      notes '''
+        - Resolution reads placements on the chain Team › Company › B's Work only.
+      '''
+    }
+    signalbox.web <- signalbox.tree 'scope without the doc' {
+      notes '''
+        - A's reference grants nothing, so the doc is not in `/sources/`.
+        - The result is the same whether A or B sends.
+      '''
+    }
+    opt 'A wants it usable in Team' {
+      personA -> signalbox.web 'map or lend' {
+        notes '''
+          - Map it into Team (with the role) or lend it: an explicit placement.
+        '''
+      }
+      signalbox.web -> signalbox.connections 'change(Map or Lend)' {
+        navigateTo work_sources_map
+        notes '''
+          - From now on every thread in Team sees it, for A and B alike.
+        '''
+      }
+    }
+  }
+
+  dynamic view work_sources_map {
+    variant sequence
+    title 'Workflows/Work/Sources/Map or unmap a source into a folder'
+    description 'W-DRV-20, W-SRC-01, W-SRC-02. C maps a Confluence space onto folder Company, or A maps a Google Drive folder onto folder Personal.'
+
+    include personC, personA, signalbox.web, signalbox.connections, signalbox.tree, signalbox.drive, services.atlassian, services.google
+    include signalbox, services
+    style signalbox, services { color muted; opacity 10% }
+
+    alt 'who maps where' {
+      when 'C at folder Company' {
+        personC -> signalbox.web 'Map space here' {
+          notes '''
+            - C (admin of Company) maps a Confluence space.
+          '''
+        }
+      }
+      else 'A at folder Personal' {
+        personA -> signalbox.web 'Map folder here' {
+          notes '''
+            - A maps a Google Drive folder, or another Signalbox drive.
+          '''
+        }
+      }
+    }
+    signalbox.web -> signalbox.connections 'change(Map)' {
+      navigateTo folders_connections_map_source
+      notes '''
+        - `Map{from, resource, at}`.
+      '''
+    }
+    signalbox.connections -> signalbox.tree 'can(place)' {
+      notes '''
+        - The actor needs the placing role at that folder; otherwise it is a loan.
+      '''
+    }
+    alt 'from' {
+      when 'Confluence' {
+        signalbox.connections -> services.atlassian 'check space' {
+          notes '''
+            - Through Company's Confluence connection.
+          '''
+        }
+      }
+      when 'Google Drive' {
+        signalbox.connections -> services.google 'check folder' {
+          notes '''
+            - Through A's Google connection.
+          '''
+        }
+      }
+      else 'another drive' {
+        signalbox.connections -> signalbox.drive 'validate drive' {
+          notes '''
+            - Drive validates the DriveRef; it mounts read-only.
+          '''
+        }
+      }
+    }
+    signalbox.connections -> signalbox.tree 'Place{source}' {
+      navigateTo folders_placement_kind_source
+      notes '''
+        - Reach below, version bump.
+        - On Company: A's and B's threads in Team both see `/sources/confluence/` (it's above them).
+      '''
+    }
+    signalbox.web <- signalbox.connections 'mapped' {
+      navigateTo work_sources_read
+      notes '''
+        - Threads pick it up at their next turn's resolve.
+      '''
+    }
+    opt 'later: unmap' {
+      personC -> signalbox.web 'Unmap' {
+        notes '''
+          - C unmaps the space.
+        '''
+      }
+      signalbox.web -> signalbox.connections 'change(Unmap)'
+      signalbox.connections -> signalbox.tree 'unplace' {
+        notes '''
+          - Running turns finish on their frozen Scope; the next turn loses the path.
+        '''
+      }
+    }
+  }
+
+  dynamic view work_sources_read {
+    variant sequence
+    title 'Workflows/Work/Sources/Agent reads a source as files'
+    description 'W-SRC-03, W-SRC-05. An agent in the shared thread reads /sources/<label>/; a source not on the chain becomes a Blocker ask.'
+
+    include personA, personC, signalbox.thread.threadActor, signalbox.computer, signalbox.drive, signalbox.gateway, signalbox.connections, signalbox.attention, services.atlassian
+    include signalbox, services
+    style signalbox, services { color muted; opacity 10% }
+
+    signalbox.thread.threadActor -> signalbox.computer 'read /sources/…' {
+      navigateTo work_sources_map
+      notes '''
+        - The agent in the shared thread in Team opens a source path.
+      '''
+    }
+    alt 'on the chain?' {
+      when 'mapped above' {
+        signalbox.computer -> signalbox.drive 'source read' {
+          notes '''
+            - Just Files serves the path.
+          '''
+        }
+        signalbox.drive -> signalbox.gateway 'serve(read)' {
+          notes '''
+            - Gateway injects the token at serve; the thread never holds it.
+          '''
+        }
+        signalbox.gateway -> services.atlassian 'fetch page' {
+          notes '''
+            - Company's Confluence here; a Google Doc goes the same way to Google.
+          '''
+        }
+        signalbox.drive <- signalbox.gateway 'content' {
+          notes '''
+            - Rendered as Markdown (docs) or JSON (records).
+          '''
+        }
+        signalbox.drive -> signalbox.drive 'capture version' {
+          notes '''
+            - `{sourceId, version}` goes into the working ref, so the turn is reproducible.
+          '''
+        }
+        signalbox.computer <- signalbox.drive 'file' {
+          notes '''
+            - Same answer whether A or B sent the turn.
+          '''
+        }
+      }
+      else 'not on the chain' {
+        signalbox.computer -> signalbox.connections 'resolve source' {
+          notes '''
+            - The source is mapped elsewhere, not above Team.
+          '''
+        }
+        signalbox.connections -> signalbox.thread.threadActor 'AccessRequired' {
+          navigateTo work_approvals_access_place_lend
+          notes '''
+            - `{kind, canPlace, orAskToLend}`; the turn parks instead of failing.
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.attention 'Blocker ask' {
+          navigateTo state_ask
+          notes '''
+            - The only answers are Place or Lend.
+          '''
+        }
+        parallel {
+          signalbox.attention -> personA 'Blocker: Lend?' {
+            notes '''
+              - A can lend a source A owns.
+            '''
+          }
+          signalbox.attention -> personC 'Blocker: Place?' {
+            notes '''
+              - C (admin) can map it onto Company or Team.
+            '''
+          }
+        }
+      }
+    }
+  }
+
+  dynamic view work_sources_write {
+    variant sequence
+    title 'Workflows/Work/Sources/Agent edits a source file'
+    description 'W-SRC-04. Writes to /sources/ are commits; on accept the Merge gate applies reversible ones and asks A about the rest.'
+
+    include personA, signalbox.thread.threadActor, signalbox.computer, signalbox.drive, signalbox.automations, signalbox.gateway, signalbox.attention, services.google
+    include signalbox, services
+    style signalbox, services { color muted; opacity 10% }
+
+    signalbox.thread.threadActor -> signalbox.computer 'write /sources/…' {
+      notes '''
+        - The agent edits a Google Doc under `/sources/docs/`.
+      '''
+    }
+    signalbox.computer -> signalbox.drive 'commit' {
+      notes '''
+        - An ordinary commit to the working ref; nothing reaches Google yet.
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.automations 'accept' {
+      navigateTo work_git_merge_gate
+      notes '''
+        - Agents accept only through the Merge gate.
+      '''
+    }
+    signalbox.automations -> signalbox.drive 'Drive.accept' {
+      navigateTo work_drive_accept
+      notes '''
+        - The drive part merges as usual; source writes wait for the gate.
+      '''
+    }
+    alt 'write kind' {
+      when 'reversible' {
+        signalbox.automations -> signalbox.gateway 'apply' {
+          notes '''
+            - Versioned documents apply automatically.
+          '''
+        }
+      }
+      else 'irreversible or undeclared' {
+        signalbox.automations -> signalbox.attention 'Ready ask' {
+          navigateTo person_pipeline_ready_gate
+          notes '''
+            - Undeclared counts as irreversible (send, post, transition).
+          '''
+        }
+        signalbox.attention -> personA 'approve?' {
+          notes '''
+            - A sees the exact change in the Ready lane and decides.
+          '''
+        }
+        personA -> signalbox.attention 'approve' {
+          notes '''
+            - A answers from the Ready lane on any client.
+          '''
+        }
+        signalbox.attention -> signalbox.automations 'answer' {
+          notes '''
+            - The answer goes into the thread; the gate continues.
+          '''
+        }
+        signalbox.automations -> signalbox.gateway 'apply' {
+          notes '''
+            - Applied once, after the human answer.
+          '''
+        }
+      }
+    }
+    signalbox.gateway -> services.google 'source API' {
+      notes '''
+        - Token filled at serve, as for reads.
+      '''
+    }
+  }
+}

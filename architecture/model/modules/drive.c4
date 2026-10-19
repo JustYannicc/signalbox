@@ -1,0 +1,114 @@
+model {
+  extend signalbox {
+    drive = module 'Drive' {
+      #deep #publishable
+      icon bootstrap:hdd-stack
+      description 'fork · commit · accept · discard · open · history · restore · search'
+      technology 'Just Files · single writer of main'
+      metadata {
+        interface '8'
+        deletion 'main gets many writers; forge sync and storage tiers smear out'
+      }
+
+      api = iface 'Drive · interface' {
+        description '8 verbs: fork · commit · accept · discard · open · history · restore · search'
+        technology 'Deletion test: without it, main gets many writers; forge sync and storage tiers smear out'
+      }
+
+      store = part 'Store seam · 2 adapters' {
+        metadata { adapters '2' }
+        artifactsR2 = adapter 'Artifacts + R2' {
+          icon tech:cloudflare-icon
+          description 'hot tier + full record'
+          technology 'Cloudflare Artifacts · Artifacts events · ArtifactFS · R2 EU (aws4fetch)'
+        }
+        plainGit = adapter 'Plain git + S3' {
+          icon tech:git
+          technology 'walgit · git-remote-s3 · git smart-HTTP'
+        }
+      }
+      forges = part 'Forge seam · 3 adapters' {
+        description 'git only; PR and issue APIs go through Connections'
+        metadata { adapters '3' }
+        githubForge = adapter 'GitHub App' {
+          icon tech:github-icon
+          technology 'packages/source-control-github'
+        }
+        gitlabForge = adapter 'GitLab' {
+          icon tech:gitlab-icon
+          technology 'packages/source-control-gitlab'
+        }
+        otherForges = adapter 'Other forges' {
+          icon tech:bitbucket
+          technology 'Bitbucket · Azure DevOps · Forgejo'
+        }
+      }
+      sources = part 'Source seam · 3 adapters (+1 planned)' {
+        description '/sources/<label>/'
+        metadata { adapters '3' }
+        googleDocs = adapter 'Google Drive · Docs · Sheets' {
+          icon tech:google-drive
+        }
+        confluenceSource = adapter 'Confluence' {
+          icon tech:confluence
+        }
+        driveSource = adapter 'Signalbox drive' {
+          icon bootstrap:hdd-stack
+        }
+        notionSlack = adapter 'Notion · Slack' {
+          #planned
+          icon tech:notion-icon
+        }
+      }
+
+      attachments = store 'Attachment store' {
+        icon bootstrap:paperclip
+        description 'pending · draft-owned · claimed'
+        technology 'R2 by upload id'
+      }
+      library = part 'Library view' {
+        icon bootstrap:collection
+        description 'synced items per place'
+      }
+      mergeExec = part 'Merge executor' {
+        icon tech:git
+        description 'docs in Worker, code on a VM run'
+        technology 'isomorphic-git · git.wasm · native git'
+      }
+      syncMode = part 'Sync mode' {
+        description 'lead · follow'
+      }
+      promisor = part 'Promisor base' {
+        description 'forge objects on demand'
+        technology 'git partial clone · Git LFS'
+      }
+      justFiles = part 'Just Files' {
+        icon tech:markdown
+        description 'docs as Markdown, records as JSON'
+        technology 'unified/remark · re2js · diff'
+      }
+
+      mergeExec -> store.artifactsR2 'CAS main'
+      syncMode -> forges.githubForge 'push'
+      syncMode -> forges.gitlabForge 'push'
+      promisor -> forges.githubForge 'fetch base objects'
+      justFiles -> sources.googleDocs 'read · apply'
+      justFiles -> sources.confluenceSource 'read · apply'
+      justFiles -> sources.driveSource 'read'
+    }
+
+    drive.forges.githubForge -> services.github 'git push · fetch · ingest'
+    drive.forges.gitlabForge -> services.gitlab 'git push · fetch'
+    drive.justFiles -> signalbox.gateway.api 'source reads (serve)'
+    drive.attachments -> platform.r2 'bytes'
+    drive.store.artifactsR2 -> platform.artifacts 'repos'
+    drive.store.artifactsR2 -> platform.r2 'record'
+    drive.mergeExec -> signalbox.thread.api 'merge run thread'
+
+    // Interface → hidden parts (the only way in)
+    drive.api -> drive.repoActor 'commit · accept · discard'
+    drive.api -> drive.store 'fork · open · history · restore'
+    drive.api -> drive.attachments 'attach'
+    drive.api -> drive.justFiles 'search (file contents)'
+  }
+}

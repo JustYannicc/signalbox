@@ -1,0 +1,76 @@
+// The product boundary and its stateless front doors.
+model {
+  signalbox = system 'Signalbox' {
+    icon bootstrap:broadcast
+    description 'one app for working with AI'
+
+    funnel = door 'Funnel' {
+      #passthrough #v1
+      icon bootstrap:funnel
+      description 'decode · call · map errors'
+      technology 'Cloudflare Workers · WS + HTTP'
+      metadata {
+        interface '3'
+        deletion 'clients reach handlers directly'
+      }
+
+      api = iface 'Funnel · interface' {
+        description '3 verbs: decode · call · map errors'
+        technology 'Deletion test: without it, clients reach handlers directly'
+      }
+
+      transport = part 'Transport seam · 2 adapters' {
+        icon bootstrap:arrow-left-right
+        metadata { adapters '2' }
+        cfWorkers = adapter 'Workers' {
+          #v1
+          icon tech:cloudflare-workers-icon
+          technology 'Cloudflare Workers · hibernatable sockets · static assets · Rate Limiting · routes'
+        }
+        nodeWs = adapter 'Node ws / HTTP' {
+          icon tech:nodejs-icon
+        }
+      }
+      replication = part 'View replication seam · 2 adapters' {
+        icon bootstrap:layers
+        metadata { adapters '2' }
+        lunora = adapter 'Lunora' {
+          technology 'lunorash (pinned alpha) · .shardBy(levelId)'
+        }
+        deltas = adapter 'Seq / snapshot deltas'
+      }
+      portGateway = part 'Port gateway' {
+        icon bootstrap:door-open
+        description 'one authenticated URL per port'
+      }
+    }
+
+    ingress = door 'Ingress' {
+      #passthrough #v1
+      icon bootstrap:box-arrow-in-down
+      description 'webhooks · OAuth callbacks · events'
+      technology 'Cloudflare Workers'
+      metadata {
+        interface '1'
+        deletion 'each module grows its own webhook route'
+      }
+
+      api = iface 'Ingress · interface' {
+        description '1 verb: receive (webhooks · OAuth callbacks · events)'
+        technology 'Deletion test: without it, each module grows its own webhook route'
+      }
+    }
+
+    signalbox.funnel.transport -> signalbox.operations.api 'commands · queries · subscribe'
+    signalbox.funnel.transport -> signalbox.identity.api 'credentials'
+    signalbox.funnel.portGateway -> signalbox.computer.api 'port'
+    signalbox.ingress -> signalbox.identity.api 'membership · auth callback'
+    signalbox.ingress -> signalbox.connections.api 'OAuth callback'
+    signalbox.ingress -> signalbox.models.api 'pool sign-in callback'
+    signalbox.ingress -> signalbox.drive.api 'forge · Artifacts events'
+    signalbox.ingress -> signalbox.automations.api 'webhooks'
+    signalbox.funnel.api -> signalbox.funnel.transport 'decode · call'
+    signalbox.funnel.api -> signalbox.funnel.replication 'views'
+    signalbox.funnel.api -> signalbox.funnel.portGateway 'port URL'
+  }
+}
