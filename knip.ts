@@ -111,6 +111,13 @@ export default {
         "src/kernel/KernelWasi.ts", // Public integration entry for executable personalities.
         "src/kernel/Wasi.ts", // Public preview1 carry API.
         "src/computer/*.ts", // Public Computer entry points consumed by Harness and generated worker compositions.
+        // signalbox: public Harness constructors are consumed by generated session workers.
+        "src/harness/AdapterHarness.ts",
+        "src/harness/Harness.ts",
+        "src/harness/HarnessReleaseLoader.ts",
+        "src/harness/HarnessReleasePlan.ts",
+        "src/harness/HarnessSessionFacet.ts",
+        "src/harness/HarnessSessionHost.ts",
         "infra/codexExecProof/prepare.ts",
         "infra/codexExecProof/prepareExecution.ts",
         "infra/codexExecProof/prepareFileSystem.ts",
