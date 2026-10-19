@@ -75,6 +75,42 @@ async function createFixture(): Promise<{
   return { appManifest, configFile, dependencyRoot, root };
 }
 
+async function createWorkspaceFixture() {
+  const fixture = await createFixture();
+  const scopedRoot = NodePath.join(fixture.root, "packages/scoped");
+  const unscopedRoot = NodePath.join(fixture.root, "packages/unscoped");
+  await writeJson(fixture.appManifest, {
+    name: "fixture-app",
+    dependencies: { "@signalbox/owned": "workspace:*" },
+  });
+  await writeJson(NodePath.join(scopedRoot, "package.json"), {
+    name: "@signalbox/owned",
+    main: "index.js",
+    optionalDependencies: { "owned-runtime": "workspace:*" },
+  });
+  await writeJson(NodePath.join(unscopedRoot, "package.json"), {
+    name: "owned-runtime",
+    version: "1.0.0",
+    main: "index.js",
+    dependencies: { "@signalbox/owned": "workspace:*", "demo-dependency": "1.2.3" },
+  });
+  const scopedLink = NodePath.join(fixture.root, "node_modules/@signalbox/owned");
+  const unscopedLink = NodePath.join(fixture.root, "node_modules/owned-runtime");
+  await NodeFSP.mkdir(NodePath.dirname(scopedLink), { recursive: true });
+  await NodeFSP.symlink(scopedRoot, scopedLink, "junction");
+  await NodeFSP.symlink(unscopedRoot, unscopedLink, "junction");
+  await NodeFSP.writeFile(NodePath.join(scopedRoot, "index.js"), "export {};\n");
+  await NodeFSP.writeFile(NodePath.join(unscopedRoot, "index.js"), "export {};\n");
+  return {
+    ...fixture,
+    bundledModuleIds: [
+      NodePath.join(scopedLink, "index.js"),
+      NodePath.join(unscopedLink, "index.js"),
+      NodePath.join(fixture.dependencyRoot, "index.js"),
+    ],
+  };
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirectories
@@ -84,6 +120,111 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
+  it("excludes resolved scoped and unscoped workspaces while collecting their external dependencies", async () => {
+    const fixture = await createWorkspaceFixture();
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      bundledModuleIds: fixture.bundledModuleIds,
+      bundleName: "desktop",
+    });
+
+    expect(manifest.entries.filter((entry) => entry.kind === "package")).toEqual([
+      expect.objectContaining({
+        name: "demo-dependency",
+        bundles: ["desktop", "web"],
+        license: "MIT",
+        noticeText: "Demo MIT license text",
+      }),
+    ]);
+  });
+
+  it.each(["license", "notice"])(
+    "requires the external transitive dependency's %s through owned workspaces",
+    async (missing) => {
+      const fixture = await createWorkspaceFixture();
+      if (missing === "license") {
+        await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {
+          name: "demo-dependency",
+          version: "1.2.3",
+          main: "index.js",
+        });
+      } else {
+        await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
+      }
+
+      await expect(
+        generateThirdPartyLicenseManifest({
+          configFile: fixture.configFile,
+          packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+          bundledModuleIds: fixture.bundledModuleIds,
+          bundleName: "web",
+        }),
+      ).rejects.toThrow(
+        missing === "license"
+          ? "demo-dependency@1.2.3 does not declare a distributable license"
+          : "demo-dependency@1.2.3 does not include a license or notice file",
+      );
+    },
+  );
+
+  it.each(["production", "bundled", "workspace specifier"])(
+    "does not exempt a registry package by its scope in %s collection",
+    async (source) => {
+      const fixture = await createFixture();
+      const vendorRoot = NodePath.join(fixture.root, "node_modules/@t3tools/vendor");
+      await writeJson(NodePath.join(vendorRoot, "package.json"), {
+        name: "@t3tools/vendor",
+        version: "1.0.0",
+        main: "index.js",
+      });
+      await NodeFSP.writeFile(NodePath.join(vendorRoot, "index.js"), "export {};\n");
+      if (source !== "bundled") {
+        await writeJson(fixture.appManifest, {
+          name: "fixture-app",
+          dependencies: { "@t3tools/vendor": source === "production" ? "1.0.0" : "workspace:*" },
+        });
+      }
+
+      await expect(
+        generateThirdPartyLicenseManifest({
+          configFile: fixture.configFile,
+          packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+          bundledModuleIds: [NodePath.join(vendorRoot, "index.js")],
+          bundleName: "web",
+        }),
+      ).rejects.toThrow("@t3tools/vendor@1.0.0 does not declare a distributable license");
+    },
+  );
+
+  it("attributes bundled entry-point manifests to their enclosing external package", async () => {
+    const fixture = await createFixture();
+    const entryPointRoot = NodePath.join(fixture.dependencyRoot, "jsx-runtime");
+    await writeJson(fixture.appManifest, { name: "fixture-app" });
+    await writeJson(NodePath.join(entryPointRoot, "package.json"), {
+      name: "jsx-runtime",
+      license: "MIT",
+      main: "index.js",
+    });
+    await NodeFSP.writeFile(NodePath.join(entryPointRoot, "index.js"), "export {};\n");
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      bundledModuleIds: [NodePath.join(entryPointRoot, "index.js")],
+      bundleName: "web",
+    });
+
+    expect(manifest.entries.filter((entry) => entry.kind === "package")).toEqual([
+      expect.objectContaining({
+        name: "demo-dependency",
+        version: "1.2.3",
+        license: "MIT",
+        noticeText: "Demo MIT license text",
+      }),
+    ]);
+  });
+
   it("generates mobile notices without scripts workspace dependency links", async () => {
     const fixture = await createFixture();
     const generatorPath = NodePath.join(fixture.root, "scripts/lib/third-party-licenses.ts");

@@ -94,6 +94,7 @@ interface CollectedPackage {
 
 interface PackageCollection {
   readonly byIdentity: Map<string, CollectedPackage>;
+  readonly workspacePackageRoots: ReadonlySet<string>;
 }
 
 const EMPTY_CONFIG: ThirdPartyLicensesConfig = {
@@ -120,7 +121,6 @@ const NOTICE_TEXT_EXTENSIONS = new Set([
   ".txt",
   ".unlicense",
 ]);
-const FIRST_PARTY_PACKAGE_PREFIX = "@t3tools/";
 
 function isNoticeTextFile(fileName: string): boolean {
   return (
@@ -441,6 +441,7 @@ function packageIdentity(packageJson: PackageJson, packageRoot: string): string 
 async function findPackageRoot(
   resolvedPath: string,
   expectedName?: string,
+  workspacePackageRoots?: ReadonlySet<string>,
 ): Promise<{ readonly packageJson: PackageJson; readonly packageRoot: string } | null> {
   let current = NodePath.dirname(resolvedPath);
   const root = NodePath.parse(current).root;
@@ -449,12 +450,14 @@ async function findPackageRoot(
     const packageJsonPath = NodePath.join(current, "package.json");
     try {
       const packageJson = await readPackageJson(packageJsonPath);
+      const packageRoot = await NodeFSP.realpath(current);
       const matchesExpectedPackage =
         expectedName !== undefined
           ? packageJson.name === expectedName
-          : typeof packageJson.name === "string" && typeof packageJson.version === "string";
+          : typeof packageJson.name === "string" &&
+            (typeof packageJson.version === "string" || workspacePackageRoots?.has(packageRoot)); // signalbox: versionless workspace roots still own their bundled modules.
       if (matchesExpectedPackage) {
-        return { packageJson, packageRoot: await NodeFSP.realpath(current) };
+        return { packageJson, packageRoot };
       }
     } catch (error) {
       const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
@@ -515,6 +518,7 @@ async function collectProductionDependencyPackages(
 ): Promise<PackageCollection> {
   const collection: PackageCollection = {
     byIdentity: new Map(),
+    workspacePackageRoots: await collectWorkspacePackageRoots(packageManifests),
   };
   const visited = new Set<string>();
 
@@ -528,9 +532,8 @@ async function collectProductionDependencyPackages(
       visited.add(visitKey);
 
       const dependencyPackageJsonPath = NodePath.join(resolved.packageRoot, "package.json");
-      const name =
-        typeof resolved.packageJson.name === "string" ? resolved.packageJson.name : dependencyName;
-      if (!name.startsWith(FIRST_PARTY_PACKAGE_PREFIX)) {
+      if (!collection.workspacePackageRoots.has(resolved.packageRoot)) {
+        // signalbox: exclude by workspace ownership, never a package-name prefix.
         const identity = packageIdentity(resolved.packageJson, resolved.packageRoot);
         const existing = collection.byIdentity.get(identity);
         if (existing) {
@@ -552,6 +555,32 @@ async function collectProductionDependencyPackages(
     await visitManifest(asPath(manifest.path), manifest.bundle);
   }
   return collection;
+}
+
+// signalbox: workspace ownership follows resolved dependency edges, independent of package names.
+async function collectWorkspacePackageRoots(
+  packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>,
+): Promise<ReadonlySet<string>> {
+  const roots = new Set<string>();
+  const visitManifest = async (packageJsonPath: string): Promise<void> => {
+    const packageRoot = await NodeFSP.realpath(NodePath.dirname(packageJsonPath));
+    if (roots.has(packageRoot)) return;
+    roots.add(packageRoot);
+    const packageJson = await readPackageJson(packageJsonPath);
+    for (const dependencyName of dependencyNames(packageJson)) {
+      const specifier =
+        packageJson.optionalDependencies?.[dependencyName] ??
+        packageJson.dependencies?.[dependencyName];
+      if (!specifier?.startsWith("workspace:")) continue;
+      const resolved = await resolveDependencyPackage(dependencyName, packageJsonPath);
+      if (!resolved || resolved.packageRoot.split(NodePath.sep).includes("node_modules")) continue;
+      await visitManifest(NodePath.join(resolved.packageRoot, "package.json"));
+    }
+  };
+  for (const manifest of packageManifests) {
+    await visitManifest(asPath(manifest.path));
+  }
+  return roots;
 }
 
 function moduleFilePath(moduleId: string): string | null {
@@ -579,14 +608,18 @@ async function addBundledModulePackages(
     if (!filePath) continue;
     let found: Awaited<ReturnType<typeof findPackageRoot>>;
     try {
-      found = await findPackageRoot(await NodeFSP.realpath(filePath));
+      found = await findPackageRoot(
+        await NodeFSP.realpath(filePath),
+        undefined,
+        collection.workspacePackageRoots,
+      );
     } catch (error) {
       const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
       if (code === "ENOENT" || code === "ENOTDIR") continue;
       throw error;
     }
     if (!found || typeof found.packageJson.name !== "string") continue;
-    if (found.packageJson.name.startsWith(FIRST_PARTY_PACKAGE_PREFIX)) continue;
+    if (collection.workspacePackageRoots.has(found.packageRoot)) continue; // signalbox: bundled modules use the same workspace ownership rule.
     const identity = packageIdentity(found.packageJson, found.packageRoot);
     const existing = collection.byIdentity.get(identity);
     if (existing) {
