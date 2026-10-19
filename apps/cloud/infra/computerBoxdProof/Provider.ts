@@ -9,6 +9,7 @@ import { boxdMachineClient } from "../../src/computer/BoxdMachines.ts";
 import type { MachineRunnerOwner } from "../../src/computer/RunnerMachineRuntime.ts";
 import type { BoxdProofVmPort } from "./Workspace.ts";
 import { BOXD_PROOF_LAUNCH_FENCE } from "./LaunchFence.ts";
+import { BOXD_PROOF_SOURCE_INSTALL, BOXD_PROOF_BOOTSTRAP_INSTALL } from "./NativeInstall.ts";
 import {
   runSourceStep,
   sourcePreparationCommandFailure,
@@ -139,10 +140,7 @@ export function proofProvider(client: ProofProviderSdkPort, owner: string) {
       await runSourceStep(reporter, "installExec", () =>
         python(
           id,
-          [
-            "-c",
-            `import os\nos.replace(${JSON.stringify(staging)}, ${JSON.stringify(ARTIFACT)})\nos.chmod(${JSON.stringify(ARTIFACT)}, 0o644)\nwith open("/opt/signalbox-command/base-marker", "w") as marker:\n    marker.write(${JSON.stringify(owner)})`,
-          ],
+          ["-c", BOXD_PROOF_SOURCE_INSTALL, staging, ARTIFACT, owner],
           signal,
           undefined,
           reporter !== undefined,
@@ -189,7 +187,11 @@ export function proofProvider(client: ProofProviderSdkPort, owner: string) {
         config.machineId,
         [
           "-c",
-          `import os\nos.makedirs(${JSON.stringify(RUN_ROOT)}, mode=0o755, exist_ok=True)\nos.chmod(${JSON.stringify(stagedConfig)}, 0o600)\nos.replace(${JSON.stringify(stagedConfig)}, ${JSON.stringify(CONFIG)})\nos.replace(${JSON.stringify(stagedReceipt)}, ${JSON.stringify(WORKSPACE_RECEIPT)})`,
+          BOXD_PROOF_BOOTSTRAP_INSTALL,
+          stagedConfig,
+          CONFIG,
+          stagedReceipt,
+          WORKSPACE_RECEIPT,
         ],
         signal,
       );
