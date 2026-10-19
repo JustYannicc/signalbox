@@ -70,6 +70,7 @@ interface Env {
   PROBE: DurableObjectNamespace<ProbeSession>;
   LOADER: WorkerLoader;
   PROBE_SECRET: string;
+  DYNAMIC_WORKER_CPU_MS?: string;
 }
 
 async function rejectedUpload(request: Request, error: unknown) {
@@ -216,6 +217,9 @@ export class ProbeSession extends DurableObject<Env> {
             compatibilityFlags: ["nodejs_compat"],
             mainModule: input.mainModule ?? "main.js",
             modules: decodedModules,
+            ...(Number(this.env.DYNAMIC_WORKER_CPU_MS) > 0
+              ? { limits: { cpuMs: Number(this.env.DYNAMIC_WORKER_CPU_MS) } }
+              : {}),
             ...(generatedCode || childWorkers
               ? {
                   env: {
