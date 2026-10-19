@@ -10,7 +10,10 @@ import type {
   MachineWorkspace,
   MachineWorkspaceMount,
 } from "../../src/computer/MachineWorkspace.ts";
-import { prepareBoxdProofNativeWorkspace } from "./WorkspaceNative.ts";
+import {
+  prepareBoxdProofNativeWorkspace,
+  resumeBoxdProofNativeWorkspace,
+} from "./WorkspaceNative.ts";
 import {
   BOXD_PROOF_MAX_FILE_BYTES,
   BOXD_PROOF_TRACKED_PATH,
@@ -18,6 +21,7 @@ import {
   BoxdProofWorkspaceError,
   type BoxdProofTrackedFile,
   type BoxdProofWorkspaceOptions,
+  type BoxdProofWorkspaceResumeOptions,
 } from "./WorkspaceTypes.ts";
 
 export { BoxdProofWorkspaceError, BOXD_PROOF_WORKSPACE_LABEL };
@@ -25,6 +29,7 @@ export type {
   BoxdProofTrackedFile,
   BoxdProofVmPort,
   BoxdProofWorkspaceOptions,
+  BoxdProofWorkspaceResumeOptions,
 } from "./WorkspaceTypes.ts";
 
 const COMMIT_CHUNK_BYTES = 64 * 1024;
@@ -51,60 +56,137 @@ export function createBoxdProofWorkspace(
       signal,
     );
 
-    const canonicalCwd = async (
-      command: KernelCommand,
-      generation: number,
-      cwdSignal: AbortSignal,
-    ): Promise<string> => {
-      if (generation !== machine.generation) {
-        throw new BoxdProofWorkspaceError("Runner generation does not match the prepared machine");
-      }
-      await nativeWorkspace.validateCwd(command.cwd, cwdSignal);
-      return command.cwd;
-    };
-
-    const changes: MachineWorkspaceMount["changes"] = async (changesSignal) => {
-      const nativeChange = await nativeWorkspace.readChanges(changesSignal);
-      if (nativeChange === undefined) return Object.freeze([]);
-
-      const { metadata: current, bytes: detachedBytes } = nativeChange;
-      const stat: Readonly<Stat> = Object.freeze({
-        type: "file",
-        size: BigInt(current.size),
-        nlink: BigInt(current.nlink),
-        atimeNs: BigInt(current.atimeNs),
-        mtimeNs: BigInt(current.mtimeNs),
-        ctimeNs: BigInt(current.ctimeNs),
-      });
-      const posix: Readonly<PosixMetadata> = Object.freeze({
-        mode: current.mode,
-        uid: current.uid,
-        gid: current.gid,
-      });
-      const paths = Object.freeze([tracked.path]);
-      const removedPaths = Object.freeze([] as string[]);
-      const readChunks: CommitInode["readChunks"] = async function* () {
-        for (let offset = 0; offset < detachedBytes.byteLength; offset += COMMIT_CHUNK_BYTES) {
-          yield detachedBytes.slice(
-            offset,
-            Math.min(offset + COMMIT_CHUNK_BYTES, detachedBytes.length),
-          );
-        }
-      };
-      const change: CommitInode = Object.freeze({
-        inode: tracked.inode,
-        paths,
-        removedPaths,
-        stat,
-        symlinkTarget: null,
-        posix,
-        readChunks,
-      });
-      return Object.freeze([change]);
-    };
-
-    return Object.freeze({ canonicalCwd, changes });
+    return createMachineWorkspaceMount(machine.id, machine.generation, tracked, nativeWorkspace);
   };
+}
+
+/** Reopens the same proof file after owner replacement without writing into the VM. */
+export function createBoxdProofWorkspaceResume(
+  options: BoxdProofWorkspaceResumeOptions,
+): NonNullable<MachineWorkspace["resume"]> {
+  const tracked = snapshotTrackedFile(options.trackedFiles);
+  const beforeMetadata = Object.freeze({
+    size: tracked.stat.size.toString(),
+    nlink: tracked.stat.nlink.toString(),
+    mtimeNs: tracked.stat.mtimeNs.toString(),
+    mode: tracked.posix?.mode ?? 0o644,
+    uid: tracked.posix?.uid ?? null,
+    gid: tracked.posix?.gid ?? null,
+  });
+
+  return async ({ operationId, machine, before, signal }) => {
+    signal.throwIfAborted();
+    const ownership = snapshotWorkspaceOwnership(
+      operationId,
+      machine.id,
+      machine.generation,
+      before,
+    );
+    const beforeBytes = await hydrateTrackedFile(
+      options.hydration,
+      ownership.before,
+      tracked,
+      signal,
+    );
+    const nativeWorkspace = await resumeBoxdProofNativeWorkspace(
+      options.vm,
+      ownership.machineId,
+      beforeBytes,
+      beforeMetadata,
+      signal,
+    );
+
+    return Object.freeze({
+      mount: createMachineWorkspaceMount(
+        ownership.machineId,
+        ownership.generation,
+        tracked,
+        nativeWorkspace,
+      ),
+      ownership,
+    });
+  };
+}
+
+function createMachineWorkspaceMount(
+  machineId: string,
+  machineGeneration: number,
+  tracked: BoxdProofTrackedFile,
+  nativeWorkspace: Awaited<ReturnType<typeof prepareBoxdProofNativeWorkspace>>,
+): MachineWorkspaceMount {
+  const canonicalCwd = async (
+    command: KernelCommand,
+    generation: number,
+    cwdSignal: AbortSignal,
+  ): Promise<string> => {
+    if (generation !== machineGeneration) {
+      throw new BoxdProofWorkspaceError("Runner generation does not match the prepared machine");
+    }
+    await nativeWorkspace.validateCwd(command.cwd, cwdSignal);
+    return command.cwd;
+  };
+
+  const changes: MachineWorkspaceMount["changes"] = async (changesSignal) => {
+    const nativeChange = await nativeWorkspace.readChanges(changesSignal);
+    if (nativeChange === undefined) return Object.freeze([]);
+
+    const { metadata: current, bytes: detachedBytes } = nativeChange;
+    const stat: Readonly<Stat> = Object.freeze({
+      type: "file",
+      size: BigInt(current.size),
+      nlink: BigInt(current.nlink),
+      atimeNs: BigInt(current.atimeNs),
+      mtimeNs: BigInt(current.mtimeNs),
+      ctimeNs: BigInt(current.ctimeNs),
+    });
+    const posix: Readonly<PosixMetadata> = Object.freeze({
+      mode: current.mode,
+      uid: current.uid,
+      gid: current.gid,
+    });
+    const paths = Object.freeze([tracked.path]);
+    const removedPaths = Object.freeze([] as string[]);
+    const readChunks: CommitInode["readChunks"] = async function* () {
+      for (let offset = 0; offset < detachedBytes.byteLength; offset += COMMIT_CHUNK_BYTES) {
+        yield detachedBytes.slice(
+          offset,
+          Math.min(offset + COMMIT_CHUNK_BYTES, detachedBytes.length),
+        );
+      }
+    };
+    const change: CommitInode = Object.freeze({
+      inode: tracked.inode,
+      paths,
+      removedPaths,
+      stat,
+      symlinkTarget: null,
+      posix,
+      readChunks,
+    });
+    return Object.freeze([change]);
+  };
+
+  return Object.freeze({ canonicalCwd, changes });
+}
+
+function snapshotWorkspaceOwnership(
+  operationId: string,
+  machineId: string,
+  generation: number,
+  before: ForkCommit,
+) {
+  if (!operationId || !machineId || !Number.isSafeInteger(generation) || generation < 1) {
+    throw new BoxdProofWorkspaceError("Invalid machine workspace ownership");
+  }
+  if (!before.repository || !before.fork || !before.commit) {
+    throw new BoxdProofWorkspaceError("Invalid before revision for workspace resume");
+  }
+  const beforeSnapshot = Object.freeze({
+    repository: before.repository,
+    fork: before.fork,
+    commit: before.commit,
+  });
+  return Object.freeze({ operationId, machineId, generation, before: beforeSnapshot });
 }
 
 function snapshotTrackedFile(files: readonly BoxdProofTrackedFile[]): BoxdProofTrackedFile {

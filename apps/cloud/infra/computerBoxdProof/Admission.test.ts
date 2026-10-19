@@ -22,6 +22,7 @@ vi.mock("cloudflare:workers", () => ({
 vi.mock("./SeedProtocol.ts", () => ({ decodeProofSeed: ports.decodeSeed }));
 vi.mock("./Provider.ts", () => ({ openProofProvider: ports.openProvider }));
 vi.mock("./Session.ts", () => ({ runComputerBoxdProof: ports.runProof }));
+vi.mock("./Recovery.ts", () => ({ recoverComputerBoxdProof: vi.fn() }));
 vi.mock("./Ownership.ts", () => ({
   decodeProofState: (value: unknown) => value,
   ProofOwnership: class {

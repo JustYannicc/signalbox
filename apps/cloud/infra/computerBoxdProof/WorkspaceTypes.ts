@@ -1,4 +1,5 @@
 import type { PosixMetadata } from "../../src/kernel/PosixStorage.ts";
+import type { FileHydrationPort } from "../../src/kernel/FilePersistencePorts.ts";
 import type { Inode, Stat } from "../../src/kernel/storage.ts";
 
 /** PROOF ONLY: one /workspace/out.bin file; this makes no production Drive or Artifacts claim. */
@@ -42,6 +43,11 @@ export interface BoxdProofWorkspaceOptions {
   readonly trackedFiles: readonly BoxdProofTrackedFile[];
 }
 
+/** The resume factory needs durable before-revision reads, but never writes them into the VM. */
+export interface BoxdProofWorkspaceResumeOptions extends BoxdProofWorkspaceOptions {
+  readonly hydration: FileHydrationPort;
+}
+
 export class BoxdProofWorkspaceError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -69,6 +75,16 @@ export interface BoxdProofNativeScan {
 export interface BoxdProofNativeWorkspaceChange {
   readonly metadata: BoxdProofNativeFileMetadata;
   readonly bytes: Uint8Array;
+}
+
+/** Metadata that survives rebuilding the owner; ctime and unspecified ownership cannot. */
+export interface BoxdProofNativeResumeBaseline {
+  readonly size: string;
+  readonly nlink: string;
+  readonly mtimeNs: string;
+  readonly mode: number;
+  readonly uid: number | null;
+  readonly gid: number | null;
 }
 
 export interface BoxdProofNativeWorkspace {
