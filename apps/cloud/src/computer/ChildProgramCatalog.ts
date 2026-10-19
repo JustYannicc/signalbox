@@ -110,6 +110,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
   register(options.registry, bashManifest);
   register(options.registry, shManifest);
 
+  // Bash and sh share one immutable child program so the Bash bytes stay resident once.
   const bindings = new Map<string, KernelProgramBinding>([
     ["/bin/bash", { manifest: bashManifest, implementation: bash }],
     ["/bin/sh", { manifest: shManifest, implementation: bash }],
@@ -151,6 +152,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
       capacity,
       lifetimes,
       dispatch: ripgrepDispatch,
+      childEnv: (context) => ({ ...context.env, PWD: context.filesystem.cwd }),
       createHost(context) {
         return createWorkerSyscalls({
           filesystem: context.filesystem,

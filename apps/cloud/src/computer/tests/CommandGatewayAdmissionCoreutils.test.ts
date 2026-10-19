@@ -3,6 +3,7 @@ import type { KernelCoreutilsPort } from "../../kernel/KernelCoreutilsPort.ts";
 import type { KernelCommandChild } from "../../kernel/KernelCommandForwarder.ts";
 import type { KernelSyscallPort, KernelSyscallResponse } from "../../kernel/KernelSyscallPort.ts";
 import { createChildCoreutils } from "../ChildCoreutils.ts";
+import { createChildWasi } from "../ChildWasi.ts";
 import { commandGatewayFixture, readAll } from "./CommandGatewayAdmissionFixture.ts";
 import { wasmEnvironmentGetCommand } from "./CoreutilsWasmImportFixture.ts";
 
@@ -13,8 +14,8 @@ const cases = [
   ["stale PWD", { PATH: "/bin", PWD: "/x" }],
 ] as const;
 
-describe.each(cases)("uniform gateway Coreutils with %s", (_label, env) => {
-  it("claims the original context, then gives the parent and child the admitted PWD", async () => {
+describe.each(cases)("uniform gateway with %s", (_label, env) => {
+  it("claims the original Coreutils context, then gives the parent and child the admitted PWD", async () => {
     let parentEnvironment = "";
     let childEnvironment = "";
     let childExitCode = -1;
@@ -74,6 +75,77 @@ describe.each(cases)("uniform gateway Coreutils with %s", (_label, env) => {
       expect(stderr).toHaveLength(0);
       expect(status.exitCode).toBe(0);
       expect(childExitCode).toBe(0);
+      expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace");
+      expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace");
+      expect(fixture.capacity.active).toBe(0);
+      expect(reserve).toHaveBeenCalledOnce();
+      expect(reacquire).not.toHaveBeenCalled();
+      expect(fixture.machineSpawn).not.toHaveBeenCalled();
+    } finally {
+      await child?.dispose();
+      await fixture.close();
+    }
+  });
+
+  it("claims the original ripgrep context, then gives the parent and child the admitted PWD", async () => {
+    let parentEnvironment = "";
+    let childEnvironment = "";
+    const fixture = commandGatewayFixture({
+      run: async (input, invocation) => {
+        try {
+          expect(input.command).toEqual({
+            executable: "/bin/rg",
+            argv: ["rg-argv0", "needle", "."],
+            cwd: "/workspace",
+            env: { ...env, PWD: "/workspace" },
+          });
+          const host = await invocation.host<KernelSyscallPort>();
+          parentEnvironment = await readEnvironment(host);
+          const syscalls: KernelSyscallPort = {
+            async call(request) {
+              const response = await host.call(request);
+              if (request.name === "environ_get" && response.kind === "return") {
+                childEnvironment = regionText(response, 64);
+              }
+              return response;
+            },
+          };
+          const module = wasmEnvironmentGetCommand();
+          const wasi = createChildWasi({
+            module,
+            args: input.command.argv,
+            env: input.command.env,
+            syscalls,
+          });
+          const instance = new WebAssembly.Instance(module, wasi.imports);
+          wasi.bind(instance);
+          return { exitCode: await wasi.start(instance), signal: 0, coreDumped: false };
+        } finally {
+          invocation.acknowledge();
+        }
+      },
+    });
+    const reserve = vi.spyOn(fixture.capacity, "tryReserve");
+    const reacquire = vi.spyOn(fixture.capacity, "run");
+    let child: KernelCommandChild | undefined;
+    try {
+      child = await fixture.gateway.exec(
+        {
+          executable: "/bin/rg",
+          argv: ["rg-argv0", "needle", "."],
+          cwd: "/workspace",
+          env,
+        },
+        fixture.controller.signal,
+      );
+      const [stdout, stderr, status] = await Promise.all([
+        readAll(child.stdout),
+        readAll(child.stderr),
+        child.exited,
+      ]);
+      expect(stdout).toHaveLength(0);
+      expect(stderr).toHaveLength(0);
+      expect(status.exitCode).toBe(0);
       expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace");
       expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace");
       expect(fixture.capacity.active).toBe(0);
