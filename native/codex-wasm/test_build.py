@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -116,7 +117,11 @@ class ArtifactTests(unittest.TestCase):
                 "verify_checkout": lambda *_: "pristine-source-hash",
                 "export_tree": lambda *_: None,
                 "apply_overlay": lambda *_: [],
+                "apply_websocket_overlay": lambda *_: [],
                 "prepare_dependencies": lambda *_: {},
+                "prepare_wasi_reactor": lambda cache, references, patches: patches,
+                "prepare_url_dependency": lambda *_: {},
+                "prepare_sqlite_dependencies": lambda cache, references, patches: patches,
                 "prepare_workspace": prepare_workspace,
                 "prepare_wasi_toolchain": lambda *_: {"CARGO": "cargo", "RUSTUP_TOOLCHAIN": pin["rust"]},
                 "prepare_binaryen": lambda *_: "wasm-opt",
@@ -146,6 +151,68 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(report["sourceSha256Before"], report["sourceSha256After"])
             self.assertEqual(set(report["referenceSha256"]), set(pin["references"]))
             self.assertEqual(report["packages"], ["codex-app-server-client", "signalbox-codex-engine"])
+
+
+class PreparationTests(unittest.TestCase):
+    def test_wasi_stages_reach_generated_workspace_without_building(self):
+        pin = build.read_pin(build.ROOT / "upstream.json")
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as mocks:
+            root = Path(temporary).resolve()
+            args = argparse.Namespace(target=TARGET, pin=build.ROOT / "upstream.json",
+                                      cache=root / "cache", output=root / "output",
+                                      prepare_only=True, check=False)
+            output = args.output / f"{pin['version']}-{pin['commit'][:12]}" / TARGET
+            paths = {}
+            for name in ("libc", "tokio", "mio", "url", "sqlx-sqlite"):
+                crate = root / "stages" / name
+                crate.mkdir(parents=True)
+                (crate / "Cargo.toml").write_text(f'[package]\nname="{name}"\nversion="1.0.0"\n')
+                paths[name] = crate
+            old_tokio = root / "old-tokio"
+            base = {"libc": paths["libc"], "tokio": old_tokio}
+            changes = [{"path": "core.rs", "rule": "core"}]
+            websocket_changes = [{"path": "websocket.rs", "rule": "websocket"}]
+
+            def export_tree(source, copied, commit):
+                workspace = copied / "codex-rs"
+                workspace.mkdir(parents=True)
+                (workspace / "Cargo.toml").write_text(
+                    '[workspace]\nmembers=[]\n[workspace.package]\nversion="0.0.0"\n[profile.release]\n')
+
+            def reactor(cache, references, patches):
+                self.assertEqual(cache, args.cache / "reactor")
+                self.assertEqual(patches, base)
+                return {**patches, "tokio": paths["tokio"], "mio": paths["mio"]}
+
+            def sqlite(cache, references, patches):
+                self.assertEqual(cache, args.cache / "sqlite")
+                self.assertEqual(patches, {name: paths[name] for name in ("libc", "tokio", "mio", "url")})
+                return {**patches, "sqlx-sqlite": paths["sqlx-sqlite"]}
+
+            replacements = {
+                "checkout": lambda cache, name, spec: root / "inputs" / name,
+                "verify_checkout": lambda *_: "pristine-source-hash",
+                "export_tree": export_tree,
+                "apply_overlay": lambda *_: list(changes),
+                "apply_websocket_overlay": lambda *_: websocket_changes,
+                "prepare_dependencies": lambda *_: base,
+                "prepare_wasi_reactor": reactor,
+                "prepare_url_dependency": lambda *_: {"url": paths["url"]},
+                "prepare_sqlite_dependencies": sqlite,
+                "prepare_wasi_toolchain": AssertionError("prepare-only must not prepare a toolchain"),
+                "command": AssertionError("prepare-only must not run Cargo or an engine"),
+            }
+            for name, replacement in replacements.items():
+                mocks.enter_context(patch.object(build, name, side_effect=replacement))
+            build.build(args)
+            manifest = tomllib.loads((output / "source/codex-rs/Cargo.toml").read_text())
+            self.assertEqual(manifest["patch"]["crates-io"],
+                             {name: {"path": str(path)} for name, path in paths.items()})
+            self.assertEqual(base["tokio"], old_tokio)
+            report = json.loads((output / "build-report.json").read_text())
+            self.assertEqual(report["status"], "prepared")
+            self.assertEqual(report["overlay"], changes + websocket_changes)
+            self.assertEqual(report["sourceSha256Before"], report["sourceSha256After"])
 
 
 if __name__ == "__main__":

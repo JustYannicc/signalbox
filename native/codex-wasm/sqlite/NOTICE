@@ -1,0 +1,11 @@
+SQLx SQLite worker source
+
+`worker_wasi.rs` is a WASI preview1 adaptation derived from
+`sqlx-sqlite/src/connection/worker.rs` in SQLx 0.9.0, published under
+`MIT OR Apache-2.0` by launchbadge/sqlx. The pinned crates.io archive is
+`sqlx-sqlite-0.9.0.crate`, SHA-256
+`488e99c397a62007e4229aec669a179816339afc6d2620ca6fa420dbee2e982c`.
+
+The staged crate retains the upstream `LICENSE-MIT` and `LICENSE-APACHE`
+entries. Only this wrapper-owned copy changes worker scheduling and channel
+operations for a current-thread WASI runtime.

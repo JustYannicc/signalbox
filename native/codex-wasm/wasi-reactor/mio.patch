@@ -1,0 +1,494 @@
+--- a/mio/src/io_source.rs
++++ b/mio/src/io_source.rs
+@@ -192,9 +192,7 @@
+     ) -> io::Result<()> {
+         #[cfg(debug_assertions)]
+         self.selector_id.associate(registry)?;
+-        registry
+-            .selector()
+-            .register(self.inner.as_raw_fd() as _, token, interests)
++        self.state.register(registry, token, interests, self.inner.as_raw_fd() as _)
+     }
+ 
+     fn reregister(
+@@ -205,15 +203,13 @@
+     ) -> io::Result<()> {
+         #[cfg(debug_assertions)]
+         self.selector_id.check_association(registry)?;
+-        registry
+-            .selector()
+-            .reregister(self.inner.as_raw_fd() as _, token, interests)
++        self.state.reregister(registry, token, interests)
+     }
+ 
+     fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
+         #[cfg(debug_assertions)]
+         self.selector_id.remove_association(registry)?;
+-        registry.selector().deregister(self.inner.as_raw_fd() as _)
++        self.state.deregister()
+     }
+ }
+ 
+--- a/mio/src/lib.rs
++++ b/mio/src/lib.rs
+@@ -96,7 +96,7 @@
+     pub use crate::sys::SourceFd;
+ }
+ 
+-#[cfg(all(target_os = "wasi", not(target_env = "p1"), feature = "os-ext"))]
++#[cfg(all(target_os = "wasi", feature = "os-ext", any(not(target_env = "p1"), feature = "os-poll")))]
+ #[cfg_attr(docsrs, doc(cfg(all(target_os = "wasi", feature = "os-ext"))))]
+ pub mod wasi {
+     //! WASI-only extensions.
+--- a/mio/src/poll.rs
++++ b/mio/src/poll.rs
+@@ -731,7 +731,7 @@
+     }
+ 
+     /// Get access to the `sys::Selector`.
+-    #[cfg(any(not(target_os = "wasi"), feature = "net"))]
++    #[cfg(any(not(target_os = "wasi"), feature = "net", all(target_env = "p1", feature = "os-ext")))]
+     pub(crate) fn selector(&self) -> &sys::Selector {
+         &self.selector
+     }
+--- a/mio/src/sys/mod.rs
++++ b/mio/src/sys/mod.rs
+@@ -71,6 +71,8 @@
+ cfg_os_poll! {
+     mod wasip1;
+     pub(crate) use self::wasip1::*;
++    #[cfg(feature = "os-ext")]
++    pub use self::wasip1::SourceFd;
+ }
+ 
+ cfg_not_os_poll! {
+--- /dev/null
++++ b/mio/src/sys/wasip1/io_source.rs
+@@ -0,0 +1,51 @@
++use crate::{Interest, Registry, Token};
++use std::io;
++use std::sync::Mutex;
++
++struct Registration {
++    registry: Registry,
++    fd: wasi::Fd,
++    token: Token,
++    interests: Interest,
++}
++
++pub(crate) struct IoSourceState(Mutex<Option<Registration>>);
++
++impl IoSourceState {
++    pub(crate) fn new() -> Self { Self(Mutex::new(None)) }
++
++    pub(crate) fn register(&mut self, registry: &Registry, token: Token,
++                           interests: Interest, fd: wasi::Fd) -> io::Result<()> {
++        let registry = registry.try_clone()?;
++        let state = self.0.get_mut().unwrap();
++        if state.is_some() { return Err(io::ErrorKind::AlreadyExists.into()); }
++        registry.selector().register(fd, token, interests)?;
++        *state = Some(Registration { registry, fd, token, interests });
++        Ok(())
++    }
++
++    pub(crate) fn reregister(&mut self, registry: &Registry, token: Token,
++                             interests: Interest) -> io::Result<()> {
++        let state = self.0.get_mut().unwrap().as_mut().ok_or(io::ErrorKind::NotFound)?;
++        registry.selector().reregister(state.fd, token, interests)?;
++        state.token = token;
++        state.interests = interests;
++        Ok(())
++    }
++
++    pub(crate) fn deregister(&mut self) -> io::Result<()> {
++        let state = self.0.get_mut().unwrap().take().ok_or(io::ErrorKind::NotFound)?;
++        state.registry.selector().deregister(state.fd)
++    }
++
++    pub(crate) fn do_io<T, F, R>(&self, f: F, io: &T) -> io::Result<R>
++    where F: FnOnce(&T) -> io::Result<R> {
++        let result = f(io);
++        if matches!(&result, Err(error) if error.kind() == io::ErrorKind::WouldBlock) {
++            if let Some(state) = self.0.lock().unwrap().as_ref() {
++                state.registry.selector().reregister(state.fd, state.token, state.interests)?;
++            }
++        }
++        result
++    }
++}
+--- a/mio/src/sys/wasip1/mod.rs
++++ b/mio/src/sys/wasip1/mod.rs
+@@ -17,11 +17,13 @@
+ use std::io;
+ #[cfg(all(feature = "net", debug_assertions))]
+ use std::sync::atomic::{AtomicUsize, Ordering};
+-use std::sync::{Arc, Mutex};
+ use std::time::Duration;
+ 
+-#[cfg(feature = "net")]
+-use crate::{Interest, Token};
++
++cfg_os_ext! {
++    mod sourcefd;
++    pub use self::sourcefd::SourceFd;
++}
+ 
+ cfg_net! {
+     pub(crate) mod tcp {
+@@ -40,170 +42,8 @@
+ #[cfg(all(debug_assertions, feature = "net"))]
+ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+ 
+-pub(crate) struct Selector {
+-    #[cfg(all(debug_assertions, feature = "net"))]
+-    id: usize,
+-    /// Subscriptions (reads events) we're interested in.
+-    subscriptions: Arc<Mutex<Vec<wasi::Subscription>>>,
+-}
+-
+-impl Selector {
+-    pub(crate) fn new() -> io::Result<Selector> {
+-        Ok(Selector {
+-            #[cfg(all(debug_assertions, feature = "net"))]
+-            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+-            subscriptions: Arc::new(Mutex::new(Vec::new())),
+-        })
+-    }
+-
+-    #[cfg(all(debug_assertions, feature = "net"))]
+-    pub(crate) fn id(&self) -> usize {
+-        self.id
+-    }
+-
+-    pub(crate) fn select(&self, events: &mut Events, timeout: Option<Duration>) -> io::Result<()> {
+-        events.clear();
+-
+-        let mut subscriptions = self.subscriptions.lock().unwrap();
+-
+-        // If we want to a use a timeout in the `wasi_poll_oneoff()` function
+-        // we need another subscription to the list.
+-        if let Some(timeout) = timeout {
+-            subscriptions.push(timeout_subscription(timeout));
+-        }
+-
+-        // `poll_oneoff` needs the same number of events as subscriptions.
+-        let length = subscriptions.len();
+-        events.reserve(length);
+-
+-        debug_assert!(events.capacity() >= length);
+-        #[cfg(debug_assertions)]
+-        if length == 0 {
+-            warn!(
+-                "calling mio::Poll::poll with empty subscriptions, this likely not what you want"
+-            );
+-        }
+-
+-        let res = unsafe { wasi::poll_oneoff(subscriptions.as_ptr(), events.as_mut_ptr(), length) };
+-
+-        // Remove the timeout subscription we possibly added above.
+-        if timeout.is_some() {
+-            let timeout_sub = subscriptions.pop();
+-            debug_assert_eq!(
+-                timeout_sub.unwrap().u.tag,
+-                wasi::EVENTTYPE_CLOCK.raw(),
+-                "failed to remove timeout subscription"
+-            );
+-        }
+-
+-        drop(subscriptions); // Unlock.
+-
+-        match res {
+-            Ok(n_events) => {
+-                // Safety: `poll_oneoff` initialises the `events` for us.
+-                unsafe { events.set_len(n_events) };
+-
+-                // Remove the timeout event.
+-                if timeout.is_some() {
+-                    if let Some(index) = events.iter().position(is_timeout_event) {
+-                        events.swap_remove(index);
+-                    }
+-                }
+-
+-                check_errors(&events)
+-            }
+-            Err(err) => Err(io_err(err)),
+-        }
+-    }
+-
+-    pub(crate) fn try_clone(&self) -> io::Result<Selector> {
+-        Ok(Selector {
+-            #[cfg(all(debug_assertions, feature = "net"))]
+-            id: self.id,
+-            subscriptions: self.subscriptions.clone(),
+-        })
+-    }
+-
+-    cfg_io_source! {
+-    pub(crate) fn register(
+-        &self,
+-        fd: wasi::Fd,
+-        token: Token,
+-        interests: Interest,
+-    ) -> io::Result<()> {
+-        let mut subscriptions = self.subscriptions.lock().unwrap();
+-
+-        if interests.is_writable() {
+-            let subscription = wasi::Subscription {
+-                userdata: token.0 as wasi::Userdata,
+-                u: wasi::SubscriptionU {
+-                    tag: wasi::EVENTTYPE_FD_WRITE.raw(),
+-                    u: wasi::SubscriptionUU {
+-                        fd_write: wasi::SubscriptionFdReadwrite {
+-                            file_descriptor: fd,
+-                        },
+-                    },
+-                },
+-            };
+-            subscriptions.push(subscription);
+-        }
+-
+-        if interests.is_readable() {
+-            let subscription = wasi::Subscription {
+-                userdata: token.0 as wasi::Userdata,
+-                u: wasi::SubscriptionU {
+-                    tag: wasi::EVENTTYPE_FD_READ.raw(),
+-                    u: wasi::SubscriptionUU {
+-                        fd_read: wasi::SubscriptionFdReadwrite {
+-                            file_descriptor: fd,
+-                        },
+-                    },
+-                },
+-            };
+-            subscriptions.push(subscription);
+-        }
+-
+-        Ok(())
+-    }
+-
+-    pub(crate) fn reregister(
+-        &self,
+-        fd: wasi::Fd,
+-        token: Token,
+-        interests: Interest,
+-    ) -> io::Result<()> {
+-        self.deregister(fd)
+-            .and_then(|()| self.register(fd, token, interests))
+-    }
+-
+-    pub(crate) fn deregister(&self, fd: wasi::Fd) -> io::Result<()> {
+-        let mut subscriptions = self.subscriptions.lock().unwrap();
+-
+-        let predicate = |subscription: &wasi::Subscription| {
+-            // Safety: `subscription.u.tag` defines the type of the union in
+-            // `subscription.u.u`.
+-            match subscription.u.tag {
+-                t if t == wasi::EVENTTYPE_FD_WRITE.raw() => unsafe {
+-                    subscription.u.u.fd_write.file_descriptor == fd
+-                },
+-                t if t == wasi::EVENTTYPE_FD_READ.raw() => unsafe {
+-                    subscription.u.u.fd_read.file_descriptor == fd
+-                },
+-                _ => false,
+-            }
+-        };
+-
+-        let mut ret = Err(io::ErrorKind::NotFound.into());
+-
+-        while let Some(index) = subscriptions.iter().position(predicate) {
+-            subscriptions.swap_remove(index);
+-            ret = Ok(())
+-        }
+-
+-        ret
+-    }
+-    }
+-}
++mod selector;
++pub(crate) use selector::Selector;
+ 
+ /// Token used to a add a timeout subscription, also used in removing it again.
+ const TIMEOUT_TOKEN: wasi::Userdata = wasi::Userdata::MAX;
+@@ -349,21 +189,7 @@
+ 
+ cfg_os_poll! {
+     cfg_io_source! {
+-        pub(crate) struct IoSourceState;
+-
+-        impl IoSourceState {
+-            pub(crate) fn new() -> IoSourceState {
+-                IoSourceState
+-            }
+-
+-            pub(crate) fn do_io<T, F, R>(&self, f: F, io: &T) -> io::Result<R>
+-            where
+-                F: FnOnce(&T) -> io::Result<R>,
+-            {
+-                // We don't hold state, so we can just call the function and
+-                // return.
+-                f(io)
+-            }
+-        }
++        mod io_source;
++        pub(crate) use io_source::IoSourceState;
+     }
+ }
+--- /dev/null
++++ b/mio/src/sys/wasip1/selector.rs
+@@ -0,0 +1,125 @@
++use super::{check_errors, io_err, is_timeout_event, timeout_subscription, Events};
++use std::io;
++use std::sync::{Arc, Mutex};
++use std::time::Duration;
++#[cfg(any(feature = "net", feature = "os-ext"))]
++use crate::{Interest, Token};
++
++struct Subscription {
++    wire: wasi::Subscription,
++    armed: bool,
++}
++
++pub(crate) struct Selector {
++    #[cfg(all(debug_assertions, feature = "net"))]
++    id: usize,
++    subscriptions: Arc<Mutex<Vec<Subscription>>>,
++}
++
++impl Selector {
++    pub(crate) fn new() -> io::Result<Self> {
++        Ok(Self {
++            #[cfg(all(debug_assertions, feature = "net"))]
++            id: super::NEXT_ID.fetch_add(1, super::Ordering::Relaxed),
++            subscriptions: Arc::new(Mutex::new(Vec::new())),
++        })
++    }
++
++    #[cfg(all(debug_assertions, feature = "net"))]
++    pub(crate) fn id(&self) -> usize { self.id }
++
++    pub(crate) fn select(&self, events: &mut Events, timeout: Option<Duration>) -> io::Result<()> {
++        events.clear();
++        let mut registered = self.subscriptions.lock().unwrap();
++        // Poll-local indices identify the exact fd and direction even if tokens repeat.
++        let mut active = Vec::new();
++        for (index, subscription) in registered.iter().enumerate() {
++            if subscription.armed {
++                let mut wire = subscription.wire;
++                wire.userdata = index as wasi::Userdata;
++                active.push(wire);
++            }
++        }
++        if let Some(timeout) = timeout { active.push(timeout_subscription(timeout)); }
++        if active.is_empty() {
++            return Err(io::Error::new(io::ErrorKind::Unsupported,
++                "WASI cannot park without an armed descriptor or clock"));
++        }
++        events.reserve(active.len());
++        let count = unsafe { wasi::poll_oneoff(active.as_ptr(), events.as_mut_ptr(), active.len()) }
++            .map_err(io_err)?;
++        unsafe { events.set_len(count); }
++        events.retain(|event| !is_timeout_event(event));
++        check_errors(events)?;
++        for event in events.iter_mut() {
++            let subscription = registered.get_mut(event.userdata as usize)
++                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid WASI event index"))?;
++            if event.type_.raw() != subscription.wire.u.tag {
++                return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid WASI event direction"));
++            }
++            subscription.armed = false;
++            event.userdata = subscription.wire.userdata;
++        }
++        Ok(())
++    }
++
++    pub(crate) fn try_clone(&self) -> io::Result<Self> {
++        Ok(Self {
++            #[cfg(all(debug_assertions, feature = "net"))]
++            id: self.id,
++            subscriptions: self.subscriptions.clone(),
++        })
++    }
++
++    cfg_any_os_ext! {
++    pub(crate) fn register(&self, fd: wasi::Fd, token: Token, interests: Interest) -> io::Result<()> {
++        let mut subscriptions = self.subscriptions.lock().unwrap();
++        if subscriptions.iter().any(|entry| descriptor(&entry.wire) == fd) {
++            return Err(io::ErrorKind::AlreadyExists.into());
++        }
++        append(&mut subscriptions, fd, token, interests);
++        Ok(())
++    }
++
++    pub(crate) fn reregister(&self, fd: wasi::Fd, token: Token, interests: Interest) -> io::Result<()> {
++        let mut subscriptions = self.subscriptions.lock().unwrap();
++        if !subscriptions.iter().any(|entry| descriptor(&entry.wire) == fd) {
++            return Err(io::ErrorKind::NotFound.into());
++        }
++        subscriptions.retain(|entry| descriptor(&entry.wire) != fd);
++        append(&mut subscriptions, fd, token, interests);
++        Ok(())
++    }
++
++    pub(crate) fn deregister(&self, fd: wasi::Fd) -> io::Result<()> {
++        let mut subscriptions = self.subscriptions.lock().unwrap();
++        let before = subscriptions.len();
++        subscriptions.retain(|entry| descriptor(&entry.wire) != fd);
++        if before == subscriptions.len() { Err(io::ErrorKind::NotFound.into()) } else { Ok(()) }
++    }
++    }
++}
++
++#[cfg(any(feature = "net", feature = "os-ext"))]
++fn descriptor(subscription: &wasi::Subscription) -> wasi::Fd {
++    // Only fd subscriptions are stored; clocks exist solely in the poll-local vector.
++    unsafe { subscription.u.u.fd_read.file_descriptor }
++}
++
++#[cfg(any(feature = "net", feature = "os-ext"))]
++fn append(entries: &mut Vec<Subscription>, fd: wasi::Fd, token: Token, interests: Interest) {
++    for (enabled, kind) in [(interests.is_readable(), wasi::EVENTTYPE_FD_READ),
++                             (interests.is_writable(), wasi::EVENTTYPE_FD_WRITE)] {
++        if enabled {
++            entries.push(Subscription {
++                wire: wasi::Subscription {
++                    userdata: token.0 as wasi::Userdata,
++                    u: wasi::SubscriptionU { tag: kind.raw(), u: wasi::SubscriptionUU {
++                        fd_read: wasi::SubscriptionFdReadwrite { file_descriptor: fd },
++                    }},
++                },
++                armed: true,
++            });
++        }
++    }
++}
+--- /dev/null
++++ b/mio/src/sys/wasip1/sourcefd.rs
+@@ -0,0 +1,29 @@
++use std::io;
++use std::os::wasi::io::RawFd;
++
++use crate::{event, Interest, Registry, Token};
++
++/// Borrows a WASI descriptor for registration without owning or closing it.
++///
++/// The caller keeps the descriptor open and stable until it is deregistered.
++/// Rust RawFd is signed; the WASI wire descriptor is unsigned. Negative
++/// descriptors are rejected instead of being wrapped into the host namespace.
++#[derive(Debug)]
++pub struct SourceFd<'a>(pub &'a RawFd);
++
++impl event::Source for SourceFd<'_> {
++    fn register(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
++        registry.selector().register(wasi::Fd::try_from(*self.0)
++            .map_err(|_| io::ErrorKind::InvalidInput)?, token, interests)
++    }
++
++    fn reregister(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
++        registry.selector().reregister(wasi::Fd::try_from(*self.0)
++            .map_err(|_| io::ErrorKind::InvalidInput)?, token, interests)
++    }
++
++    fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
++        registry.selector().deregister(wasi::Fd::try_from(*self.0)
++            .map_err(|_| io::ErrorKind::InvalidInput)?)
++    }
++}

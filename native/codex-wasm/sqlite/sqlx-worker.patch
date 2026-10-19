@@ -1,0 +1,18 @@
+--- a/sqlx-sqlite/Cargo.toml
++++ b/sqlx-sqlite/Cargo.toml
+@@ -196,3 +196,6 @@
+ cast_possible_wrap = "deny"
+ cast_sign_loss = "deny"
+ disallowed_methods = "deny"
++
++[target.'cfg(all(target_os = "wasi", target_env = "p1", not(target_feature = "atomics")))'.dependencies]
++tokio = { version = "=1.52.3", default-features = false, features = ["rt"] }
+--- a/sqlx-sqlite/src/connection/mod.rs
++++ b/sqlx-sqlite/src/connection/mod.rs
+@@ -47,1 +47,5 @@
+-mod worker;
++#[cfg(all(target_os = "wasi", target_env = "p1", not(target_feature = "atomics")))]
++#[path = "worker_wasi.rs"]
++mod worker;
++#[cfg(not(all(target_os = "wasi", target_env = "p1", not(target_feature = "atomics"))))]
++mod worker;
