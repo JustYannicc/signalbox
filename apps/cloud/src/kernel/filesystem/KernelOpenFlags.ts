@@ -73,9 +73,6 @@ export function parseOpenFlags(flags: number): ParsedOpenFlags {
   if (accessMode === 3) throw kernelError("EINVAL");
 
   const pathOnly = (flags & KernelOpenFlags.O_PATH) !== 0;
-  if (!pathOnly && (flags & KernelOpenFlags.O_NONBLOCK) !== 0) {
-    throw kernelError("ENOTSUP", "Nonblocking filesystem descriptors are unsupported");
-  }
   if (!pathOnly && (flags & KernelOpenFlags.O_ASYNC) !== 0) {
     throw kernelError("ENOTSUP", "Asynchronous filesystem descriptors are unsupported");
   }
@@ -100,6 +97,8 @@ export function parseOpenFlags(flags: number): ParsedOpenFlags {
       rightsBase |= RIGHTS.FD_WRITE | RIGHTS.FD_ALLOCATE | RIGHTS.FD_FILESTAT_SET_SIZE;
     }
     if ((flags & KernelOpenFlags.O_APPEND) !== 0) statusFlags |= FDFLAGS.APPEND;
+    // Storage files and directories retain NONBLOCK without changing their I/O behavior.
+    if ((flags & KernelOpenFlags.O_NONBLOCK) !== 0) statusFlags |= FDFLAGS.NONBLOCK;
     if ((flags & KernelOpenFlags.O_DSYNC) !== 0) statusFlags |= FDFLAGS.DSYNC;
     if ((flags & KernelOpenFlags.O_SYNC) === KernelOpenFlags.O_SYNC) {
       statusFlags |= FDFLAGS.SYNC;
