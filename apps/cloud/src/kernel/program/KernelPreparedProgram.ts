@@ -4,9 +4,9 @@ import { KernelFileSystem } from "../KernelFileSystem.ts";
 import { withKernelErrors } from "../filesystem/KernelFileSystemErrors.ts";
 import type { AgentOsSpawnFileAction } from "../process/AgentOsProcessActions.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
+import { assertKernelFileByteSelectionCompatible } from "./KernelProgramFileBytes.ts";
 import {
   RIGHTS,
-  type WasiDescriptor,
   type WasiDescriptorSpec,
   type WasiStdio,
 } from "../wasi/internal_wasi_descriptors.ts";
@@ -35,11 +35,7 @@ export interface KernelProgramPrepareOptions {
   readonly stdio?: readonly [WasiStdio | undefined, WasiStdio | undefined, WasiStdio | undefined];
 }
 
-export type KernelProgramFileByteSelector = (input: {
-  readonly executable: string;
-  readonly filesystem: KernelFileSystem;
-  readonly parent?: KernelHandle<"process">;
-}) => KernelFileByteSelection;
+export type { KernelProgramFileByteSelector } from "./KernelProgramFileBytes.ts";
 
 export interface KernelOwnedStdio {
   readonly descriptors: readonly [
@@ -244,25 +240,6 @@ export function prepareKernelProgram(
       throw new AggregateError(errors, "Program preparation and cleanup failed", { cause: error });
     }
     throw error;
-  }
-}
-
-export function assertKernelFileByteSelectionCompatible(
-  descriptors: Iterable<[number, WasiDescriptor]>,
-  selection: KernelFileByteSelection,
-  options: { readonly survivingOnly?: boolean } = {},
-): void {
-  for (const [, descriptor] of descriptors) {
-    if (descriptor.kind !== "file" || (options.survivingOnly && descriptor.closeOnExec)) continue;
-    const compatible =
-      selection.kind === "canonical"
-        ? descriptor.byteView === undefined
-        : descriptor.byteView === selection.view;
-    if (!compatible) {
-      throw Object.assign(new Error("A surviving regular descriptor uses a different file view"), {
-        code: "ENOTSUP",
-      });
-    }
   }
 }
 

@@ -24,12 +24,14 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { KernelCpuExecution, type KernelCpuProcessExecution } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
+import { prepareKernelProgram, type KernelPreparedProgram } from "./KernelPreparedProgram.ts";
 import {
   assertKernelFileByteSelectionCompatible,
-  prepareKernelProgram,
-  type KernelPreparedProgram,
+  commitKernelProgramFileBytes,
+  resolveKernelProgramFileBytes,
+  type KernelPreparedFileByteSelection,
   type KernelProgramFileByteSelector,
-} from "./KernelPreparedProgram.ts";
+} from "./KernelProgramFileBytes.ts";
 import { runKernelAsyncProgram } from "./KernelProgramExec.ts";
 import {
   createKernelWasiRuntime,
@@ -77,7 +79,7 @@ export class KernelProgramSpawner {
 
   backend(
     prepared: KernelPreparedProgram,
-    preselected?: { readonly executable: string; readonly selection: KernelFileByteSelection },
+    preselected?: KernelPreparedFileByteSelection,
   ): KernelBackend {
     return {
       "process.spawn": ({ program, args, env }) => {
@@ -119,31 +121,33 @@ export class KernelProgramSpawner {
     binding: KernelProgramBinding,
     args: readonly string[],
     env: Readonly<Record<string, string>>,
-    preselected?: { readonly executable: string; readonly selection: KernelFileByteSelection },
+    preselected?: KernelPreparedFileByteSelection,
   ): KernelResult<KernelHandle<"process">> {
+    let fileBytes: KernelFileByteSelection;
     try {
-      if (preselected !== undefined && preselected.executable !== executable) {
+      if (preselected?.executable !== undefined && preselected.executable !== executable) {
         return kernelError(
           "INVALID_ARGUMENT",
           "Prepared program target does not match spawn target",
         );
       }
-      const fileBytes =
-        preselected?.selection ??
-        this.#selectFileBytes?.({
-          executable,
-          filesystem: prepared.filesystem,
-          ...(prepared.parent === undefined ? {} : { parent: prepared.parent }),
-        }) ??
-        prepared.filesystem.fileBytes;
+      fileBytes = resolveKernelProgramFileBytes({
+        executable,
+        ...(preselected === undefined ? {} : { explicitSelection: preselected.selection }),
+        ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
+        filesystem: prepared.filesystem,
+        ...(prepared.parent === undefined ? {} : { parent: prepared.parent }),
+      });
       assertKernelFileByteSelectionCompatible(prepared.filesystem.descriptors.entries(), fileBytes);
-      prepared.filesystem.setFileBytes(fileBytes);
     } catch (error) {
       return fileByteSelectionError(error);
     }
     return this.#spawnWithFactory(
       prepared.parent,
-      () => prepared,
+      () => {
+        commitKernelProgramFileBytes(prepared.filesystem, fileBytes);
+        return prepared;
+      },
       binding,
       args,
       withHome(prepared.home, env),
@@ -175,12 +179,12 @@ export class KernelProgramSpawner {
       );
     let fileBytes: KernelFileByteSelection;
     try {
-      fileBytes =
-        this.#selectFileBytes?.({
-          executable: request.execPath,
-          filesystem: parentFilesystem,
-          parent,
-        }) ?? parentFilesystem.fileBytes;
+      fileBytes = resolveKernelProgramFileBytes({
+        executable: request.execPath,
+        ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
+        filesystem: parentFilesystem,
+        parent,
+      });
     } catch (error) {
       return Promise.resolve(fileByteSelectionError(error));
     }
@@ -332,7 +336,7 @@ export class KernelProgramSpawner {
     if (spawned.status !== "ok") {
       return preparationFailure === undefined
         ? spawned
-        : fileByteSelectionError(preparationFailure);
+        : processPreparationError(preparationFailure);
     }
     const prepared = launch.prepared;
     if (!prepared)
@@ -527,8 +531,21 @@ function fileByteSelectionError(error: unknown): KernelResult<KernelHandle<"proc
     typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
       ? error.code
       : undefined;
-  const message = error instanceof Error ? error.message : "Process preparation failed";
+  const message = error instanceof Error ? error.message : "File byte selection failed";
   return kernelError(code === "ENOTSUP" ? "UNSUPPORTED" : "IO_ERROR", message);
+}
+
+function processPreparationError(error: unknown): KernelResult<KernelHandle<"process">> {
+  const code =
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  return code === "ENOTSUP"
+    ? kernelError(
+        "UNSUPPORTED",
+        error instanceof Error ? error.message : "Process preparation is unsupported",
+      )
+    : kernelError("IO_ERROR", "Process launch failed");
 }
 
 function throwCleanupErrors(errors: readonly unknown[]): void {

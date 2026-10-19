@@ -457,4 +457,93 @@ describe("KernelProgramHost file byte selection", () => {
       await context.close();
     }
   });
+
+  it("keeps an explicit selection through open actions when execution chooses another default", async () => {
+    let selectorCalls = 0;
+    let ranWithCanonical = false;
+    let openedDescriptionWasCanonical = false;
+    const tool: KernelProgramBinding = {
+      manifest: manifest("tool"),
+      implementation: {
+        kind: "javascript",
+        runInline: ({ filesystem }) => {
+          ranWithCanonical = filesystem.fileBytes.kind === "canonical";
+          openedDescriptionWasCanonical = filesystem.descriptors.get(4).byteView === undefined;
+          return 0;
+        },
+      },
+    };
+    const context = setup(new Map([["/bin/tool", tool]]), ({ filesystem }) => {
+      selectorCalls++;
+      return filesystem.fileBytes;
+    });
+    writeFile(context.storage, "data", "original");
+    try {
+      const prepared = context.host.prepare(
+        { filesystem: context.filesystem },
+        {
+          fileBytes: canonicalFileByteSelection,
+          actions: [
+            {
+              kind: "open",
+              fd: 4,
+              sourceFd: 0,
+              flags: KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC,
+              mode: 0,
+              path: "/data",
+            },
+          ],
+        },
+      );
+      const resolved = context.host.resolve("/bin/tool");
+      if (resolved.status !== "ok") throw new Error("Tool resolution failed");
+      expect(context.host.runInline(prepared, resolved.value, [], {})).toBe(0);
+      expect(ranWithCanonical).toBe(true);
+      expect(openedDescriptionWasCanonical).toBe(true);
+      expect(selectorCalls).toBe(0);
+      expect(context.filesystem.fileBytes.kind).toBe("view");
+      expect(context.filesystem.stat("/data").size).toBe(0n);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("does not change a prepared default when spawn admission rejects its parent", async () => {
+    const tool: KernelProgramBinding = {
+      manifest: manifest("tool"),
+      implementation: { kind: "javascript", runInline: () => 0 },
+    };
+    const context = setup(new Map([["/bin/tool", tool]]), () => canonicalFileByteSelection);
+    let parentHandle: KernelHandle<"process"> | undefined;
+    let prepared: ReturnType<KernelProgramHost["prepare"]> | undefined;
+    try {
+      const parent = context.host.processes.spawn(
+        undefined,
+        () => ({
+          completion: Promise.resolve({ exitCode: 0, signal: 0, coreDumped: false }),
+          signal: () => ({ status: "ok", value: undefined }),
+        }),
+        () => undefined,
+      );
+      if (parent.status !== "ok") throw new Error("Could not create stale parent handle");
+      parentHandle = parent.value.handle;
+      await expect(context.host.exitStatus(parentHandle)).resolves.toMatchObject({ status: "ok" });
+      expect(context.host.processes.reap(parentHandle).status).toBe("ok");
+
+      prepared = context.host.prepare({ filesystem: context.filesystem, parent: parentHandle });
+      const resolved = context.host.resolve("/bin/tool");
+      if (resolved.status !== "ok") throw new Error("Tool resolution failed");
+      const result = callKernel(context.host.backend(prepared), "process.spawn", {
+        program: resolved.value,
+        args: [],
+        env: {},
+      });
+      expect(result).toMatchObject({ status: "error", error: { code: "INVALID_HANDLE" } });
+      expect(prepared.filesystem.fileBytes.kind).toBe("view");
+      expect(context.filesystem.fileBytes.kind).toBe("view");
+    } finally {
+      if (prepared) await prepared.release();
+      await context.close();
+    }
+  });
 });

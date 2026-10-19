@@ -12,16 +12,20 @@ import {
 import { KernelProcessTable, type KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import type { AgentOsSpawnRequest } from "./AgentOsProcessWire.ts";
-import type { KernelFileByteSelection } from "./KernelFileBytes.ts";
 import { runKernelInlineExecution } from "./process/KernelExecution.ts";
 import {
   prepareKernelProgram,
   type KernelPreparedProgram,
   type KernelProgramPrepareInput,
   type KernelProgramPrepareOptions,
-  type KernelProgramFileByteSelector,
-  assertKernelFileByteSelectionCompatible,
 } from "./program/KernelPreparedProgram.ts";
+import {
+  commitKernelProgramFileBytes,
+  prepareKernelProgramFileBytes,
+  resolveKernelProgramFileBytes,
+  type KernelPreparedFileByteSelection,
+  type KernelProgramFileByteSelector,
+} from "./program/KernelProgramFileBytes.ts";
 import {
   preparePipedKernelProgram,
   type KernelPipedProgram,
@@ -85,7 +89,7 @@ export class KernelProgramHost {
   readonly #selectFileBytes: KernelProgramFileByteSelector | undefined;
   readonly #preparedSelections = new WeakMap<
     KernelPreparedProgram,
-    { readonly executable: string; readonly selection: KernelFileByteSelection }
+    KernelPreparedFileByteSelection
   >();
   readonly #spawner: KernelProgramSpawner;
   readonly #resolutionBackend: KernelBackend;
@@ -226,7 +230,7 @@ export class KernelProgramHost {
     const execute = () => {
       try {
         const selected = this.#preparedSelections.get(prepared);
-        if (selected !== undefined && selected.executable !== record.executable) {
+        if (selected?.executable !== undefined && selected.executable !== record.executable) {
           throw Object.assign(
             new Error("Prepared program target does not match execution target"),
             {
@@ -234,19 +238,14 @@ export class KernelProgramHost {
             },
           );
         }
-        const fileBytes =
-          selected?.selection ??
-          this.#selectFileBytes?.({
-            executable: record.executable,
-            filesystem: prepared.filesystem,
-            ...(prepared.parent === undefined ? {} : { parent: prepared.parent }),
-          }) ??
-          prepared.filesystem.fileBytes;
-        assertKernelFileByteSelectionCompatible(
-          prepared.filesystem.descriptors.entries(),
-          fileBytes,
-        );
-        prepared.filesystem.setFileBytes(fileBytes);
+        const fileBytes = resolveKernelProgramFileBytes({
+          executable: record.executable,
+          ...(selected === undefined ? {} : { explicitSelection: selected.selection }),
+          ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
+          filesystem: prepared.filesystem,
+          ...(prepared.parent === undefined ? {} : { parent: prepared.parent }),
+        });
+        commitKernelProgramFileBytes(prepared.filesystem, fileBytes);
         if (implementation.kind === "javascript") {
           return runKernelInlineExecution(prepared.signal, () =>
             runInlineJavaScript(implementation.runInline, prepared, args, withHome(prepared, env)),
@@ -288,9 +287,7 @@ export class KernelProgramHost {
     options: KernelProgramPrepareOptions,
   ): {
     readonly options: KernelProgramPrepareOptions;
-    readonly target:
-      | { readonly executable: string; readonly selection: KernelFileByteSelection }
-      | undefined;
+    readonly target: KernelPreparedFileByteSelection | undefined;
   } {
     const { executable, ...remainingOptions } = options;
     if (executable === undefined) {
@@ -304,19 +301,30 @@ export class KernelProgramHost {
           { code: "ENOTSUP" },
         );
       }
-      return { options: remainingOptions, target: undefined };
-    }
-    const selection =
-      this.#selectFileBytes?.({
-        executable,
+      const target = prepareKernelProgramFileBytes({
+        ...(options.fileBytes === undefined ? {} : { explicitSelection: options.fileBytes }),
         filesystem: input.filesystem,
         ...(input.parent === undefined ? {} : { parent: input.parent }),
-      }) ??
-      options.fileBytes ??
-      input.filesystem.fileBytes;
+      });
+      return {
+        options:
+          target === undefined
+            ? remainingOptions
+            : { ...remainingOptions, fileBytes: target.selection },
+        target,
+      };
+    }
+    const target = prepareKernelProgramFileBytes({
+      executable,
+      ...(options.fileBytes === undefined ? {} : { explicitSelection: options.fileBytes }),
+      ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
+      filesystem: input.filesystem,
+      ...(input.parent === undefined ? {} : { parent: input.parent }),
+    });
+    if (target === undefined) throw new Error("Executable selection was not prepared");
     return {
-      options: { ...remainingOptions, fileBytes: selection },
-      target: { executable, selection },
+      options: { ...remainingOptions, fileBytes: target.selection },
+      target,
     };
   }
 }
