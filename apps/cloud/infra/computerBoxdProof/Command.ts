@@ -31,7 +31,22 @@ export const EXPECTED_STDOUT = new Uint8Array([
   ...new TextEncoder().encode("custom argv0|/workspace|雪|input 雪"),
 ]);
 
-export async function runProofCommand(child: KernelCommandChild) {
+export interface ProofCommandResultDiagnostics {
+  readonly stdoutBytesMatch: boolean;
+  readonly stderrBytesMatch: boolean;
+  readonly exitCode17: boolean;
+  readonly signalZero: boolean;
+  readonly coreDumpedFalse: boolean;
+}
+
+export type ProofCommandResultReporter = (
+  diagnostics: ProofCommandResultDiagnostics,
+) => Promise<void>;
+
+export async function runProofCommand(
+  child: KernelCommandChild,
+  reportResult?: ProofCommandResultReporter,
+) {
   const read = async (stream: ReadableStream<Uint8Array>) => {
     const chunks: Uint8Array[] = [];
     for await (const bytes of stream) chunks.push(bytes.slice());
@@ -53,17 +68,28 @@ export async function runProofCommand(child: KernelCommandChild) {
     await input.close();
     input.releaseLock();
     const [out, err, exit] = await Promise.all([stdout, stderr, child.exited]);
-    if (
-      !sameBytes(out, EXPECTED_STDOUT) ||
-      !sameBytes(err, new Uint8Array([128, 0])) ||
-      exit.exitCode !== 17 ||
-      exit.signal !== 0 ||
-      exit.coreDumped
-    ) {
-      throw new Error(
-        "Proof command changed argv0, cwd, env, binary streams, stdin or exit status",
-      );
+    const diagnostics: ProofCommandResultDiagnostics = {
+      stdoutBytesMatch: sameBytes(out, EXPECTED_STDOUT),
+      stderrBytesMatch: sameBytes(err, new Uint8Array([128, 0])),
+      exitCode17: exit.exitCode === 17,
+      signalZero: exit.signal === 0,
+      coreDumpedFalse: exit.coreDumped === false,
+    };
+    const commandMatches =
+      diagnostics.stdoutBytesMatch &&
+      diagnostics.stderrBytesMatch &&
+      diagnostics.exitCode17 &&
+      diagnostics.signalZero &&
+      diagnostics.coreDumpedFalse;
+    const commandFailure = commandMatches
+      ? undefined
+      : new Error("Proof command changed argv0, cwd, env, binary streams, stdin or exit status");
+    try {
+      await reportResult?.(diagnostics);
+    } catch (reportError) {
+      if (commandFailure === undefined) throw reportError;
     }
+    if (commandFailure !== undefined) throw commandFailure;
     return { stdout: out, stderr: err, exit };
   } finally {
     await child.dispose();

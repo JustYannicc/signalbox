@@ -18,6 +18,7 @@ import type {
   SourcePreparationStep,
 } from "./SourcePreparation.ts";
 import { PROOF_COMMAND, runProofCommand } from "./Command.ts";
+import type { ProofCommandResultDiagnostics } from "./Command.ts";
 import type { decodeProofSeed } from "./SeedProtocol.ts";
 
 const SOURCE_PHASE_CHECKS = {
@@ -39,6 +40,13 @@ const COMMAND_PHASE_CHECKS = {
   workspaceNativeCwd: "workspaceNativeCwd",
   workspaceNativeFileUpload: "workspaceNativeFileUpload",
 } satisfies Record<ProofCommandStage, string>;
+const COMMAND_RESULT_CHECKS = [
+  ["stdoutBytesMatch", "commandStdoutBytesMatch"],
+  ["stderrBytesMatch", "commandStderrBytesMatch"],
+  ["exitCode17", "commandExitCode17"],
+  ["signalZero", "commandSignalZero"],
+  ["coreDumpedFalse", "commandCoreDumpedFalse"],
+] as const satisfies readonly (readonly [keyof ProofCommandResultDiagnostics, string])[];
 const SAFE_CHECK_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 
 function sourceDiagnosticCheckName(
@@ -182,28 +190,74 @@ export async function runComputerBoxdProof(input: {
       machine,
     });
     await ownership.check("nativeCommandBytesAndExit", "pending");
-    await runProofCommand(await commands.exec(PROOF_COMMAND, signal));
-    await machine.recoverPending();
-    kernel.assertApplied();
-    const counts = leases.inspect();
-    const record = ownership.journal.read(ownership.commandOperation);
-    if (
-      counts.acquired !== 1 ||
-      counts.released !== 1 ||
-      counts.held !== 0 ||
-      record?.phase !== "complete" ||
-      !record.before ||
-      !record.after ||
-      record.before.commit === record.after.commit ||
-      record.createInput?.base?.sourceRef !== source.id
-    ) {
-      throw new Error("Warm Base lease or command revision settlement is incomplete");
+    await ownership.check("commandResult", "pending");
+    try {
+      await runProofCommand(await commands.exec(PROOF_COMMAND, signal), async (diagnostics) => {
+        for (const [field, name] of COMMAND_RESULT_CHECKS) {
+          await ownership.check(name, diagnostics[field] ? "passed" : "failed");
+        }
+      });
+    } catch (error) {
+      try {
+        await ownership.check("commandResult", "failed");
+      } catch {
+        // Keep the command result rejection as the failure reported to the worker.
+      }
+      throw error;
+    }
+    await ownership.check("commandResult", "passed");
+    await ownership.check("leaseJournalSettlement", "pending");
+    try {
+      await machine.recoverPending();
+    } catch (error) {
+      try {
+        await ownership.check("leaseJournalSettlement", "failed");
+      } catch {
+        // Keep the journal recovery rejection as the failure reported to the worker.
+      }
+      throw error;
+    }
+    await ownership.check("heldInodeRevisionAssertion", "pending");
+    try {
+      kernel.assertApplied();
+    } catch (error) {
+      try {
+        await ownership.check("heldInodeRevisionAssertion", "failed");
+      } catch {
+        // Keep the revision assertion rejection as the failure reported to the worker.
+      }
+      throw error;
+    }
+    await ownership.check("heldInodeRevisionAssertion", "passed");
+    try {
+      const counts = leases.inspect();
+      const record = ownership.journal.read(ownership.commandOperation);
+      if (
+        counts.acquired !== 1 ||
+        counts.released !== 1 ||
+        counts.held !== 0 ||
+        record?.phase !== "complete" ||
+        !record.before ||
+        !record.after ||
+        record.before.commit === record.after.commit ||
+        record.createInput?.base?.sourceRef !== source.id
+      ) {
+        throw new Error("Warm Base lease or command revision settlement is incomplete");
+      }
+    } catch (error) {
+      try {
+        await ownership.check("leaseJournalSettlement", "failed");
+      } catch {
+        // Keep the settlement assertion rejection as the failure reported to the worker.
+      }
+      throw error;
     }
     await ownership.check("warmForkInheritedSource", "passed");
-    await ownership.check("nativeCommandBytesAndExit", "passed");
     await ownership.check("sameOpenInodeApplied", "passed");
     await ownership.check("immutableRevisionBracket", "passed");
     await ownership.check("baseLeaseReleased", "passed");
+    await ownership.check("leaseJournalSettlement", "passed");
+    await ownership.check("nativeCommandBytesAndExit", "passed");
   } finally {
     await kernel.close();
   }
