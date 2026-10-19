@@ -26,7 +26,7 @@ model {
       }
       runner = part 'App runner' {
         icon bootstrap:play-btn
-        description 'Dynamic Worker per release · no outbound network'
+        description 'Isolate per release · no outbound network'
         technology 'Worker Loader · globalOutbound null'
       }
       frameBridge = part 'Frame bridge' {

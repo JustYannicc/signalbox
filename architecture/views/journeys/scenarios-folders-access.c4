@@ -13,7 +13,7 @@ views {
     description '''
       Can someone outside the organization get folder Team without seeing the rest of folder Company?
 
-      Decided: #238, #225 §3, #237, #226 (2026-10-14). Invite by email with a role; no account means a WorkOS invitation as `guest`; a Member on a subfolder doesn't see the parent's other contents.
+      Decided: #238, #225 §3, #237, #226 (2026-10-14). Invite by email with a role; no account means a identity invitation as `guest`; a Member on a subfolder doesn't see the parent's other contents.
       Assumption (pool): no mount means no `via`, so the chain stops at Company's root and nothing above Company ever pays (design §1, A2, A36).
 
       SCN-055 · v1: no · Person D is the outside collaborator; B is Admin on Team; C is Company's admin.
@@ -30,14 +30,14 @@ views {
     }
     signalbox.web -> signalbox.identity 'invite as guest' {
       notes '''
-        - No account yet: a WorkOS invitation into the owning organization
+        - No account yet: a identity invitation into the owning organization
         - Role `guest` has zero permissions anywhere (#226)
       '''
     }
     signalbox.identity -> personD 'invitation email' {
       navigateTo state_invitation
       notes '''
-        - Sent by WorkOS; resolved on D's first sign-in
+        - Sent by the identity provider; resolved on D's first sign-in
       '''
     }
     personD -> signalbox.web 'accepts, picks spot' {
@@ -122,7 +122,7 @@ views {
         signalbox.web -> signalbox.identity 'revoke invitation' {
           navigateTo state_invitation
           notes '''
-            - The WorkOS invitation is revoked; a later accept link fails
+            - The identity invitation is revoked; a later accept link fails
           '''
         }
       }
@@ -492,8 +492,8 @@ views {
     description '''
       What happens when someone is made Admin, demoted, or loses an extra folder grant?
 
-      Decided: #246 (2026-10-14): Admin in WorkOS means Admin on the next request; #237 (2026-10-14): roles inherit down and only add; removing a grant falls back to the inherited role, never lower.
-      Assumption: WorkOS RBAC holds organization-level roles only (Admin, Member, `guest`); pending #312.
+      Decided: #246 (2026-10-14): Admin in the identity provider means Admin on the next request; #237 (2026-10-14): roles inherit down and only add; removing a grant falls back to the inherited role, never lower.
+      Assumption: the identity provider's roles hold organization-level roles only (Admin, Member, `guest`); pending #312.
 
       SCN-067 · v1: partial
     '''
@@ -501,7 +501,7 @@ views {
     include personC, personB, platform.workos, signalbox.identity, signalbox.web, signalbox.funnel, signalbox.tree.levelActor
 
     alt 'what changes' {
-      when 'B promoted in WorkOS' {
+      when 'B promoted in the identity provider' {
         personC -> platform.workos 'make B Admin' {
           notes '''
             - **Start:** B is Member of folder Company
@@ -525,7 +525,7 @@ views {
           '''
         }
       }
-      else 'B demoted in WorkOS' {
+      else 'B demoted in the identity provider' {
         personC -> platform.workos 'demote B'
         platform.workos -> signalbox.identity 'membership webhook'
         signalbox.identity -> signalbox.tree.levelActor 'Member at Company' {
@@ -699,7 +699,7 @@ views {
         - Invite by email, role Member on Friends
       '''
     }
-    signalbox.web -> signalbox.identity 'guests in A\'s WorkOS org' {
+    signalbox.web -> signalbox.identity 'guests in A\'s identity org' {
       navigateTo journey_sharing_friend_group
       notes '''
         - Zero-permission `guest` in A's personal organization

@@ -64,7 +64,7 @@ views {
     description '''
       What stands behind a pool and a connection? An owner owns both. A pool has accounts and writes usage rows stamped
       with the level they were used at (costs roll up the tree). A connection is one credential with a tool manifest;
-      a source narrows a connection to a path. (Secrets are placed separately as references to 1Password: What can be placed.)
+      a source narrows a connection to a path. (Secrets are placed separately as references to the vault: What can be placed.)
     '''
     include domain.owner, domain.pool, domain.account, domain.usageRow, domain.level
     include domain.connection, domain.tool, domain.source

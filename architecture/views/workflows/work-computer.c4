@@ -2,7 +2,7 @@
 // egress, terminals, devices) and previews. None of this is v1 (corr. 4).
 //
 // Binding (corr. 2, 7): Claude Code and Codex always run in the isolate tier (Thread DO + Dynamic
-// Workers). A boxd VM, forked from a warm Base, only executes commands; it is never the agent's home.
+// Workers). A machine, forked from a warm Base, only executes commands; it is never the agent's home.
 // Views that open Computer's internals say so in their description ("Computer's own internal flow")
 // and enter through `signalbox.computer.api`; other modules stay black boxes.
 views {
@@ -15,7 +15,7 @@ views {
       W-CMP-09 (aliases T-THR-19, T-TRM-09). VM hibernate, wake, delete.
       The computer itself (kernel live FS) always exists while the thread does; this walks only the
       VM that escalation attaches. The VM runs commands only: Claude Code and Codex stay in the
-      isolate tier (Thread DO + Dynamic Workers) through every state here. Click the frame for the
+      isolate tier (Thread DO + isolates) through every state here. Click the frame for the
       full machine (state-vm).
     '''
 
@@ -27,7 +27,7 @@ views {
       navigateTo work_computer_escalate
       notes '''
         - A VM program (unknown binary, apt, docker, native toolchain), a replay after nothing ran, or the recipe predicts escalation
-        - `createKey` is committed in the Thread before boxd is called
+        - `createKey` is committed in the Thread before the machine provider is called
       '''
     }
     smVm.creating -> smVm.configuring 'forked from Base' {
@@ -48,7 +48,7 @@ views {
       notes '''
         - Activity: a command, an edit streaming to the agent's own process, its output, or a port request
         - A final pull first, so nothing but regenerable state is on the disk
-        - Computer hibernates explicitly: boxd's own idle clock only sees network
+        - Computer hibernates explicitly: the machine provider's own idle clock only sees network
         - A running dev server is frozen, not killed; `deleteAfter` is set to the horizon H
       '''
     }
@@ -82,7 +82,7 @@ views {
       when 'H hours hibernated' {
         smVm.hibernated -> smVm.deleted 'deleteAfter fires' {
           notes '''
-            - boxd's `deleteAfter` fires even if our Durable Object is gone (backstop)
+            - The machine provider's `deleteAfter` fires even if our Durable Object is gone (backstop)
           '''
         }
       }
@@ -165,7 +165,7 @@ views {
     title 'Workflows/Work/Computer/Run a program in the kernel'
     description '''
       W-CMP-02, W-CMP-03 (alias T-TRM-12), W-CMP-07, W-CMP-29. Computer's own internal flow:
-      exec enters through the interface → kernel → child Dynamic Worker → files over RPC. No VM.
+      exec enters through the interface → kernel → child isolate → files over RPC. No VM.
     '''
 
     include
@@ -202,7 +202,7 @@ views {
       }
     }
     signalbox.computer.backend.kernelFs -> signalbox.computer.childIsolates 'run program'
-    signalbox.computer.childIsolates -> signalbox.actorhost 'load Dynamic Worker' {
+    signalbox.computer.childIsolates -> signalbox.actorhost 'load isolate' {
       notes '- One child isolate per program; the host DO and session facet stay separate'
     }
     signalbox.computer.childIsolates -> signalbox.computer.backend.kernelFs 'files over RPC' {
@@ -456,7 +456,7 @@ views {
     }
     signalbox.harness -> signalbox.computer.api 'exec(argv)' {
       notes '''
-        - Claude Code or Codex calls exec from the isolate tier (Thread DO + Dynamic Workers)
+        - Claude Code or Codex calls exec from the isolate tier (Thread DO + isolates)
         - Only this command moves to a VM; the agent loop and the model wait never leave the isolate
       '''
     }
@@ -734,16 +734,16 @@ views {
     variant sequence
     title 'Workflows/Work/Computer/Egress/VM egress with tenant secrets'
     description '''
-      W-CMP-16, W-CMP-18, W-CMP-19. A command on the VM calls out. boxd's allowlist is the floor. For a bound
-      host, the EgressProxy on boxd is only a bridge: it terminates TLS and forwards over HTTPS to the gateway
-      on Cloudflare, which fills the credential, makes the call and scrubs the response (#1191). A tool that
+      W-CMP-16, W-CMP-18, W-CMP-19. A command on the VM calls out. The machine provider's allowlist is the floor. For a bound
+      host, the EgressProxy on a machine is only a bridge: it terminates TLS and forwards over HTTPS to the gateway
+      on the edge platform, which fills the credential, makes the call and scrubs the response (#1191). A tool that
       skips the proxy fails closed.
     '''
 
     include
       signalbox.computer.execDaemon,
-      signalbox.gateway.egress.egressProxy with { title 'EgressProxy bridge (boxd)' },
-      signalbox.gateway.egress.fill with { title 'Gateway fill (Cloudflare)' },
+      signalbox.gateway.egress.egressProxy with { title 'EgressProxy bridge (machine)' },
+      signalbox.gateway.egress.fill with { title 'Gateway fill (edge platform)' },
       signalbox.connections,
       platform.boxd,
       services.onepassword,
@@ -785,13 +785,13 @@ views {
               when 'its own machine' {
                 signalbox.gateway.egress.fill -> signalbox.connections 'fill(placeholder, host)' {
                   navigateTo folders_secrets_placeholder_fill
-                  notes '- Per request; nothing on boxd ever holds the value'
+                  notes '- Per request; nothing on a machine ever holds the value'
                 }
                 signalbox.connections -> services.onepassword 'resolve reference'
                 signalbox.gateway.egress.fill <- signalbox.connections 'value'
                 signalbox.gateway.egress.fill -> services.boundHost 'call' {
                   notes '''
-                    - From Cloudflare: re-resolves the host, refuses private IPs
+                    - From the edge platform: re-resolves the host, refuses private IPs
                     - Same endpoint, credentials and outbound identity as from the isolate
                   '''
                 }
@@ -835,8 +835,8 @@ views {
     title 'Workflows/Work/Computer/Egress/Built-in tools reach the network'
     description '''
       Working plan (#assumption, 2026-10-19). Built-in tools (Bash, Read, Write, Edit, Grep, Glob) run Harness → Computer,
-      never through Executor. Their outbound traffic, from the isolate or a VM, leaves through Gateway's egress filter:
-      scrub, allowlist, and credentials from the same vault Executor uses, keyed by destination.
+      never through the tools gateway. Their outbound traffic, from the isolate or a VM, leaves through Gateway's egress filter:
+      scrub, allowlist, and credentials from the same vault the tools gateway uses, keyed by destination.
     '''
 
     include signalbox.harness, signalbox.computer, signalbox.gateway, signalbox.connections, signalbox.models, services.boundHost, services.github
@@ -844,7 +844,7 @@ views {
     signalbox.harness -> signalbox.computer 'Bash · Read · Edit' {
       navigateTo work_computer_kernel_exec
       notes '''
-        - A's turn in folder Team; built-ins never touch Executor
+        - A's turn in folder Team; built-ins never touch the tools gateway
         - Runs in the kernel, or on the VM if it escalates
       '''
     }
@@ -852,11 +852,11 @@ views {
       when 'curl · npm in Bash' {
         signalbox.computer -> signalbox.gateway 'Egress' {
           navigateTo work_computer_egress_vm
-          notes '- In-process filter from the isolate, the EgressProxy bridge from a VM; the fill and the call happen on Cloudflare either way'
+          notes '- In-process filter from the isolate, the EgressProxy bridge from a VM; the fill and the call happen on the edge platform either way'
         }
         signalbox.gateway -> signalbox.connections 'fill(destination)' {
           navigateTo folders_secrets_placeholder_fill
-          notes '- Same vault as Executor, keyed by destination; scrub and allowlist first'
+          notes '- Same vault as the tools gateway, keyed by destination; scrub and allowlist first'
         }
         signalbox.gateway -> services.boundHost 'Forward'
       }
@@ -886,7 +886,7 @@ views {
     signalbox.harness <- signalbox.gateway 'Scrubbed result' {
       notes '''
         - Echoed secrets removed before the agent sees them (Bash output returns via Computer)
-        - GitHub as tools (issues, PRs) is a connector: the GitHub MCP server goes through Executor
+        - GitHub as tools (issues, PRs) is a connector: the GitHub MCP server goes through the tools gateway
       '''
     }
 
@@ -1132,7 +1132,7 @@ views {
     signalbox.computer -> signalbox.thread 'commit createKey' {
       navigateTo work_turns_crash_resume
       notes '''
-          - `t-{threadId}-g{gen}` recorded before boxd is called
+          - `t-{threadId}-g{gen}` recorded before the machine provider is called
           - Survives a Thread crash, so a resumed turn adopts instead of creating
         '''
     }
@@ -1181,7 +1181,7 @@ views {
     signalbox.harness -> signalbox.computer 'exec any argv' {
       notes '''
         - Deployment config `computer.escalate = always` (operator only, for the parity suite)
-        - The harness still runs in the Thread DO + Dynamic Workers; only commands move
+        - The harness still runs in the Thread DO + isolates; only commands move
       '''
     }
     signalbox.computer -> signalbox.bases 'acquire lease'
@@ -1205,7 +1205,7 @@ views {
 
   dynamic view work_computer_vm_reconcile {
     title 'Workflows/Work/Computer/VM/Machine reconcile'
-    description 'W-CMP-10. Hourly default automation sweeps boxd and releases stale Base leases.'
+    description 'W-CMP-10. Hourly default automation sweeps machines and releases stale Base leases.'
 
     include signalbox.automations, signalbox.computer, signalbox.bases, platform.boxd
 
@@ -1264,7 +1264,7 @@ views {
       }
     }
     signalbox.web -> signalbox.funnel 'subscribeDeviceState' {
-      notes '- T-DEV-08: state changes push through the Funnel; B\'s mobile subscribes the same way'
+      notes '- T-DEV-08: state changes push through the client gateway; B\'s mobile subscribes the same way'
     }
     signalbox.funnel -> signalbox.computer 'device lease' {
       navigateTo state_computer
@@ -1359,7 +1359,7 @@ views {
   dynamic view work_computer_laptop_gateway {
     variant sequence
     title "Workflows/Work/Computer/Devices/Use the laptop's apps through its gateway"
-    description 'W-CMP-28. Reach, not execution; a device connector goes through Executor (Gateway) like every connector and reaches only threads under the level its device is placed at. Offline returns "device offline" as a needs-you state.'
+    description 'W-CMP-28. Reach, not execution; a device connector goes through the tools gateway like every connector and reaches only threads under the level its device is placed at. Offline returns "device offline" as a needs-you state.'
 
     include
       personA,
@@ -1377,7 +1377,7 @@ views {
     }
     signalbox.harness -> signalbox.gateway 'tool: use a laptop app' {
       navigateTo folders_connections_tool_exposure
-      notes '- A device tool, served by Executor like any connector (search or direct)'
+      notes '- A device tool, served by the tools gateway like any connector (search or direct)'
     }
     signalbox.gateway -> signalbox.tree 'resolve on the thread chain'
     alt 'which thread asks' {
@@ -1431,8 +1431,8 @@ views {
 
     signalbox.computer -> platform.boxd 'dead-port public proxy' {
       notes '''
-        - On every VM create (W-PRV-06): boxd URLs are public and land in CT logs
-        - So boxd public URL serves nothing
+        - On every VM create (W-PRV-06): machine URLs are public and land in CT logs
+        - So the machine's public URL serves nothing
       '''
     }
     signalbox.harness -> signalbox.computer 'port(5173)'
@@ -1564,7 +1564,7 @@ views {
       notes '- Testing engine; #1110 picks the backend'
     }
     signalbox.browser -> signalbox.browser 'route by whose content' {
-      notes '- Own content never loads a person Kernel profile (W-BRW-20)'
+      notes '- Own content never loads a person browser profile (W-BRW-20)'
     }
     signalbox.browser -> signalbox.funnel.portGateway 'load preview URL' {
       notes '- Never localhost: the same URL a person opens'
@@ -1575,7 +1575,7 @@ views {
     }
     signalbox.harness -> signalbox.browser 'render(port URL)' {
       navigateTo work_browser_render
-      notes '- Browser Run renders the same URL (W-PRV-04)'
+      notes '- Hosted render renders the same URL (W-PRV-04)'
     }
     signalbox.browser -> signalbox.funnel.portGateway 'same URL'
 
@@ -1590,7 +1590,7 @@ views {
     variant sequence
     title 'Workflows/Work/Previews/Run a worker-shaped app without a machine'
     description '''
-      W-PRV-07, W-PRV-08. When an agent builds something worker-shaped, it runs as a Dynamic Worker,
+      W-PRV-07, W-PRV-08. When an agent builds something worker-shaped, it runs as an isolate,
       never on a VM: a throwaway preview from a thread commit, or a folder app with releases.
     '''
 
@@ -1609,7 +1609,7 @@ views {
           navigateTo work_drive_thread_fork
           notes '- On the thread working ref; nothing leaves the thread'
         }
-        signalbox.harness -> signalbox.actorhost 'load as Dynamic Worker' {
+        signalbox.harness -> signalbox.actorhost 'load as isolate' {
           notes '''
             - worker-bundler output, no machine and no Base
             - Assumption: Computer owns this verb (`port` on a worker build); recorded, not asked
@@ -1627,7 +1627,7 @@ views {
           navigateTo apps_build
           notes '''
             - The app is placed in the folder (e.g. Team), not the thread
-            - Immutable release; server in its own Dynamic Worker with SQLite
+            - Immutable release; server in its own isolate with SQLite
           '''
         }
         personA -> signalbox.web 'opens the app' {

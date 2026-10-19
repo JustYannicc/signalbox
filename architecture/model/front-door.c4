@@ -4,7 +4,7 @@ model {
     icon bootstrap:broadcast
     description 'one app for working with AI'
 
-    funnel = door 'Funnel' {
+    funnel = door 'Client gateway' {
       #passthrough #v1 #funnel
       icon bootstrap:funnel
       description 'decode · call · map errors'
@@ -14,7 +14,7 @@ model {
         deletion 'clients reach handlers directly'
       }
 
-      api = iface 'Funnel · interface' {
+      api = iface 'Client gateway · interface' {
         description '3 verbs: decode · call · map errors'
         technology 'Deletion test: without it, clients reach handlers directly'
       }
@@ -69,7 +69,7 @@ model {
     signalbox.ingress -> signalbox.identity.api 'membership · auth callback'
     signalbox.ingress -> signalbox.connections.api 'OAuth callback'
     signalbox.ingress -> signalbox.models.api 'pool sign-in callback'
-    signalbox.ingress -> signalbox.drive.api 'forge · Artifacts events'
+    signalbox.ingress -> signalbox.drive.api 'forge · hot repo events'
     signalbox.ingress -> signalbox.automations.api 'webhooks'
     signalbox.funnel.api -> signalbox.funnel.transport 'decode · call'
     signalbox.funnel.api -> signalbox.funnel.replication 'views'

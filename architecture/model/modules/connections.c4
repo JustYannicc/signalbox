@@ -16,7 +16,7 @@ model {
       }
 
       providers = part 'ToolProvider seam · 6 adapters' {
-        description 'servers sorted by kind; every connector goes through Executor'
+        description 'servers sorted by kind; every connector goes through the tools gateway'
         metadata { adapters '6' }
         catalogRest = adapter 'Catalog OAuth / REST' {
           #v1

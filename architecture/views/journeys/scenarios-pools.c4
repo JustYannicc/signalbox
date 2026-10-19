@@ -260,7 +260,7 @@ views {
     #decided
     variant sequence
     title 'Scenarios/Pools/Resolution/Several Pools One Level'
-    description "Which pool runs when several sit at one level? Decided: #230 d10 (2026-10-14) balanced like CLIProxyAPI, round-robin and sticky per thread; design nearestSet, A8. · SCN-100 · not v1 as drawn (loans); v1 resolves the nearest set for local keys"
+    description "Which pool runs when several sit at one level? Decided: #230 d10 (2026-10-14) balanced like the pool backend, round-robin and sticky per thread; design nearestSet, A8. · SCN-100 · not v1 as drawn (loans); v1 resolves the nearest set for local keys"
 
     include personA, personB, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.attention
 
@@ -1025,11 +1025,11 @@ views {
     include personC, signalbox, signalbox.web, signalbox.models, signalbox.gateway, modelProviders, modelProviders.anthropic
 
     personC -> signalbox.web 'Add account' {
-      notes "- **Start:** the pool's CPA container is running"
+      notes "- **Start:** the pool's pool backend is running"
     }
     signalbox.web -> signalbox.models 'Pin egress' {
       navigateTo folders_pools_account_egress
-      notes "- Each account gets one EU egress via CPA's per-account proxy"
+      notes "- Each account gets one EU egress via the pool backend's per-account proxy"
     }
     signalbox.models -> signalbox.gateway 'Via pinned egress'
     signalbox.gateway -> modelProviders.anthropic 'From address 1'
@@ -1064,7 +1064,7 @@ views {
           """
         }
         signalbox.web -> signalbox.tree 'Owner + placements' {
-          notes "- One step; the CPA container and refresh tokens are untouched"
+          notes "- One step; the pool backend and refresh tokens are untouched"
         }
       }
       else 'Make this an organization' {
@@ -1185,7 +1185,7 @@ views {
     }
     signalbox.harness -> signalbox.computer 'Run commands' {
       navigateTo work_computer_usage_metering
-      notes "- A boxd VM, forked from a warm Base, only while real commands run"
+      notes "- A machine, forked from a warm Base, only while real commands run"
     }
     signalbox.computer -[async]-> signalbox.thread.threadActor 'Measured time'
     signalbox.thread.threadActor -[async]-> signalbox.models 'Compute row to P1' {

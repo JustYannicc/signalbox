@@ -44,7 +44,7 @@ views {
         signalbox.thread -> signalbox.harness 'open harness' {
           notes '''
             - **starting → active**: Claude Code or Codex runs in its isolate; the model wait sits in a Durable Object
-            - a boxd VM is forked only when a command needs a real machine
+            - a machine is forked only when a command needs a real machine
           '''
         }
       }

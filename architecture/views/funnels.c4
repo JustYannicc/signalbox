@@ -1,15 +1,15 @@
-// Every boundary is one funnel (#1191 addendum, owner, 2026-10-19). Each capability that crosses a boundary
+// Every boundary is one gateway (#1191 addendum, owner, 2026-10-19). Each capability that crosses a boundary
 // has exactly one gateway; adapters fan out behind it. Callers never know which adapter served them, and
-// moving work between Cloudflare and boxd never moves a funnel. A second path to a capability is a bug.
+// moving work between the isolate tier and a machine never moves a gateway. A second path to a capability is a bug.
 views {
 
   view funnels {
-    title 'Overview/Decisions/Funnels'
+    title 'Overview/Decisions/Gateways'
     description '''
-      Which one gateway does each capability cross? Six funnels: Funnel (clients), Command gateway
-      (`Computer.exec` / `attach`), Files (`Computer.files` / Drive), Model gateway, Connections gateway
-      (Executor plus egress) and Port gateway (`Computer.port`). Callers sit above, adapters below, and the
-      kernel on Cloudflare and a boxd VM sit behind the same three Computer funnels. Click a funnel for its
+      Which one gateway does each capability cross? Six gateways: client gateway (clients), command gateway
+      (`Computer.exec` / `attach`), files gateway (`Computer.files` / Drive), model gateway, tools gateway
+      (MCP plus egress) and port gateway (`Computer.port`). Callers sit above, adapters below, and the
+      kernel in the isolate tier and a machine sit behind the same three Computer gateways. Click a gateway for its
       callers and adapters. Decided 2026-10-19 (#1191).
     '''
 
@@ -22,9 +22,9 @@ views {
       signalbox.computer.filesGateway with { navigateTo funnel_files },
       signalbox.computer.portGateway with { navigateTo funnel_port },
       signalbox.gateway.modelGateway with { title 'Model gateway'; navigateTo funnel_model },
-      signalbox.gateway.toolGateway with { title 'Connections gateway'; description 'Executor + egress'; navigateTo funnel_connections },
-      signalbox.computer.childIsolates with { title 'Kernel program'; description 'Cloudflare · child Dynamic Worker' },
-      signalbox.computer.execDaemon with { title 'boxd VM'; description 'exec daemon · node-pty' }
+      signalbox.gateway.toolGateway with { title 'Tools gateway'; description 'MCP + egress'; navigateTo funnel_connections },
+      signalbox.computer.childIsolates with { title 'Kernel program'; description 'isolate tier · child isolate' },
+      signalbox.computer.execDaemon with { title 'Machine'; description 'exec daemon · node-pty' }
 
     style signalbox.funnel, signalbox.computer.commandGateway, signalbox.computer.filesGateway, signalbox.computer.portGateway, signalbox.gateway.modelGateway, signalbox.gateway.toolGateway {
       color green
@@ -34,14 +34,14 @@ views {
     autoLayout TopBottom
   }
 
-  // ───────────────────────────── One drill-down per funnel ─────────────────────────────
+  // ───────────────────────────── One drill-down per gateway ─────────────────────────────
 
   view funnel_clients {
-    title 'Overview/Decisions/Funnels/Funnel'
+    title 'Overview/Decisions/Gateways/Client gateway'
     description '''
-      Who reaches Signalbox through Funnel, and what is behind it? Every client (web, desktop, mobile, CLI,
-      extension) speaks one typed RPC to Funnel; Funnel decodes, calls one module and maps errors. The terminal,
-      files and port URLs go on into Computer's own funnels.
+      Who reaches Signalbox through the client gateway, and what is behind it? Every client (web, desktop, mobile, CLI,
+      extension) speaks one typed RPC to the client gateway; it decodes, calls one module and maps errors. The terminal,
+      files and port URLs go on into Computer's own gateways.
     '''
     include
       signalbox.web,
@@ -60,12 +60,12 @@ views {
   }
 
   view funnel_command {
-    title 'Overview/Decisions/Funnels/Command gateway'
+    title 'Overview/Decisions/Gateways/Command gateway'
     description '''
       Who runs commands, and where do they run? Every caller goes through `Computer.exec` / `attach`: the
-      model's tool calls and hooks, the person's terminal and API agents (through Funnel), automations and stdio
+      model's tool calls and hooks, the person's terminal and API agents (through the client gateway), automations and stdio
       MCP servers. One routing table decides from argv and evidence, never from the caller, and every command
-      runs under a budget in a child Dynamic Worker or on a boxd VM. Decided 2026-10-19 (#1071, #1255).
+      runs under a budget in a child isolate or on a machine. Decided 2026-10-19 (#1071, #1255).
     '''
     include
       signalbox.funnel with { description 'terminal · API agents' },
@@ -76,17 +76,17 @@ views {
       signalbox.computer.escalation,
       signalbox.computer.budgets,
       signalbox.computer.childIsolates with { title 'Kernel program' },
-      signalbox.computer.execDaemon with { title 'boxd VM' }
+      signalbox.computer.execDaemon with { title 'Machine' }
     exclude signalbox.automations -> signalbox.connections
     style signalbox.computer.commandGateway { color green }
     autoLayout TopBottom
   }
 
   view funnel_files {
-    title 'Overview/Decisions/Funnels/Files'
+    title 'Overview/Decisions/Gateways/Files gateway'
     description '''
       Who reads and writes files, and where do the bytes live? The harness, the terminal, the renderer and
-      laptops all use `Computer.files`. Behind it: the live FS in the kernel, the thread's Artifacts fork and
+      laptops all use `Computer.files`. Behind it: the live FS in the kernel, the thread's fork and
       R2 through Drive, and a VM disk that is only ever a cache.
     '''
     include
@@ -94,14 +94,14 @@ views {
       signalbox.funnel with { description 'terminal · renderer · laptops' },
       signalbox.computer.filesGateway,
       signalbox.computer.backend.kernelFs with { title 'Live FS'; description 'kernel · inode store' },
-      signalbox.drive with { description 'Artifacts fork · R2' },
+      signalbox.drive with { description 'Fork · R2' },
       signalbox.computer.execDaemon with { title 'VM disk'; description 'cache only' }
     style signalbox.computer.filesGateway { color green }
     autoLayout TopBottom
   }
 
   view funnel_model {
-    title 'Overview/Decisions/Funnels/Model gateway'
+    title 'Overview/Decisions/Gateways/Model gateway'
     description '''
       Who calls a model, and who answers? The harness in the isolate and a person's local Claude Code or Codex
       both use the one model gateway. Behind it the folder's pool picks an account, then the provider answers.
@@ -119,10 +119,10 @@ views {
   }
 
   view funnel_connections {
-    title 'Overview/Decisions/Funnels/Connections gateway'
+    title 'Overview/Decisions/Gateways/Tools gateway'
     description '''
-      Who calls an outside service, and from where? MCP calls enter at ToolGateway (Executor); every outbound
-      request from the isolate or a VM enters at egress. Both end on Cloudflare: the gateway fills the
+      Who calls an outside service, and from where? MCP calls enter at the tools gateway; every outbound
+      request from the isolate or a VM enters at egress. Both end on the edge platform: the gateway fills the
       credential, makes the call and scrubs the response, wherever the command ran. A VM's EgressProxy is only
       a bridge: it terminates TLS for bound hosts and forwards over HTTPS; unbound allowlisted hosts splice.
     '''
@@ -130,8 +130,8 @@ views {
       signalbox.harness,
       mcpClient,
       signalbox.computer.childIsolates with { title 'Kernel program' },
-      signalbox.computer.execDaemon with { title 'boxd VM' },
-      signalbox.gateway.toolGateway with { title 'ToolGateway · Executor' },
+      signalbox.computer.execDaemon with { title 'Machine' },
+      signalbox.gateway.toolGateway with { title 'Tools gateway · MCP' },
       signalbox.gateway.egress,
       signalbox.gateway.egress.inProcess,
       signalbox.gateway.egress.egressProxy with { title 'EgressProxy bridge' },
@@ -145,16 +145,16 @@ views {
   }
 
   view funnel_port {
-    title 'Overview/Decisions/Funnels/Port gateway'
+    title 'Overview/Decisions/Gateways/Port gateway'
     description '''
-      Who opens a port on the thread's computer, and what serves it? The person through Funnel's authenticated
+      Who opens a port on the thread's computer, and what serves it? The person through the client gateway's authenticated
       URL, and the renderer, use `Computer.port`. Behind it a kernel program or a VM's tunnel answers, and the
       URL never changes when the server moves.
     '''
     include
       personA,
       signalbox.web,
-      signalbox.funnel with { title 'Funnel · port URLs'; description 'one authenticated URL per port' },
+      signalbox.funnel with { title 'Client gateway · port URLs'; description 'one authenticated URL per port' },
       signalbox.browser with { description 'renderer' },
       signalbox.computer.portGateway,
       signalbox.computer.childIsolates with { title 'Kernel program' },

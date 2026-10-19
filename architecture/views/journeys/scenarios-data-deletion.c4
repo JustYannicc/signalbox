@@ -19,7 +19,7 @@ views {
       '''
     }
     signalbox.web -> signalbox.operations 'thread.delete' {
-      notes 'Funnel decodes; Operations checks A’s right at execution'
+      notes 'Client gateway decodes; Operations checks A’s right at execution'
     }
     signalbox.operations -> signalbox.thread 'Tombstone' {
       navigateTo work_threads_lifecycle_trash
@@ -45,7 +45,7 @@ views {
     signalbox.web -> signalbox.thread 'Restore exactly' {
       notes '''
         - Conversation and session come back; Harness resumes the session on the next turn
-        - Files come back from the Artifacts fork (rebuilt from R2 if evicted)
+        - Files come back from the fork (rebuilt from R2 if evicted)
       '''
     }
     signalbox.thread -> signalbox.tree 'Re-apply Place' {
@@ -90,7 +90,7 @@ views {
       notes 'B’s fork reads the shared objects as before; nothing changed for B'
     }
     signalbox.drive -> signalbox.drive 'GC after grace' {
-      notes 'Only unreferenced objects, in Artifacts and R2, after a grace period'
+      notes 'Only unreferenced objects, in the hot tier and R2, after a grace period'
     }
     signalbox.thread -> signalbox.observability 'Log what went' {
       notes '''
@@ -488,7 +488,7 @@ views {
     }
     signalbox.thread -> signalbox.drive 'Promote from R2' {
       navigateTo work_drive_eviction
-      notes 'Back into Artifacts from the R2 bundle; reads served from R2 meanwhile'
+      notes 'Back into the hot tier from the R2 bundle; reads served from R2 meanwhile'
     }
     signalbox.thread -> signalbox.tree 'Resolve chain' {
       notes 'The turn runs on the thread’s current chain'
@@ -532,7 +532,7 @@ views {
     signalbox.automations -> signalbox.drive 'Evict after N days' {
       navigateTo work_drive_eviction
       notes '''
-        - Default eviction automation; drops the Artifacts fork only once the R2 copy is confirmed
+        - Default eviction automation; drops the fork only once the R2 copy is confirmed
         - **Assumption:** N from spike #1128; storage billed to the thread’s pool
       '''
     }
@@ -601,7 +601,7 @@ views {
     #decided #assumption
     variant sequence
     title 'Scenarios/Data/Records/Gitignored State'
-    description 'Do gitignored notes and .env survive a merge, cleanup or a lost machine? Decided: #119 (2026-10-15) the notes stay reachable years later and .env is encrypted at rest; #489, #490 (2026-10-16) keep only what changed and cannot be redownloaded. Assumption: machine/<thread> is a private ref in the thread’s Artifacts fork, mirrored to its R2 bundle, never merged or pushed to a forge (pending re-homing under #1129). Why: Artifacts is the hot tier and R2 alone rebuilds any drive. SCN-213 · W-DRV-05, W-CMP-09, W-LIF-10, W-DRV-13 · v1: no.'
+    description 'Do gitignored notes and .env survive a merge, cleanup or a lost machine? Decided: #119 (2026-10-15) the notes stay reachable years later and .env is encrypted at rest; #489, #490 (2026-10-16) keep only what changed and cannot be redownloaded. Assumption: machine/<thread> is a private ref in the thread’s fork, mirrored to its R2 bundle, never merged or pushed to a forge (pending re-homing under #1129). Why: hot repos are only the hot tier and R2 alone rebuilds any drive. SCN-213 · W-DRV-05, W-CMP-09, W-LIF-10, W-DRV-13 · v1: no.'
 
     include personA, signalbox.web, signalbox.harness, signalbox.thread, signalbox.computer, signalbox.bases, signalbox.drive
 
@@ -612,7 +612,7 @@ views {
       navigateTo work_drive_r2_record
       notes '''
         - Untracked and ignored changes go to the private `machine/<thread>` ref
-        - `.env` encrypted at rest; **Assumption:** ref lives in the Artifacts fork + R2
+        - `.env` encrypted at rest; **Assumption:** ref lives in the fork + R2
       '''
     }
     signalbox.thread -> signalbox.computer 'PR merged: free VM' {
@@ -813,7 +813,7 @@ views {
 
     include personA, personB, personC, platform.workos, signalbox.web, signalbox.identity, signalbox.tree
 
-    platform.workos -> signalbox.identity 'WorkOS org deleted' {
+    platform.workos -> signalbox.identity 'Identity org deleted' {
       navigateTo organization_identity_leave
       notes '**Start:** organization deletion or membership-loss webhooks arrive'
     }
@@ -851,7 +851,7 @@ views {
       }
     }
     opt 'organization comes back' {
-      platform.workos -> signalbox.identity 'WorkOS org restored'
+      platform.workos -> signalbox.identity 'Identity org restored'
       signalbox.identity -> signalbox.tree 'Reactivate mounts' {
         notes 'Mount ids are stable, so `via` returns (A44)'
       }

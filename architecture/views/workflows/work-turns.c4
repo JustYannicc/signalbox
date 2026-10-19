@@ -320,7 +320,7 @@ views {
 
     hier.company.agentCo -> signalbox.gateway "delete pool P2" {
       notes '''
-        - Company's agent thread calls a native operation through ToolGateway
+        - Company's agent thread calls a native operation through the tools gateway
         - Same for deleting a thread, folder, connection or Base, unplacing a pool, force-push
       '''
     }
@@ -573,7 +573,7 @@ views {
   dynamic view work_approvals_secret_request {
     variant sequence
     title "Workflows/Work/Approvals/Secrets/Agent requests a secret"
-    description "W-APR-17 (T-APR-08, T-MCP-14, T-SCH-13). A private, human-only secret card; the value goes to 1Password, only a secretRef placement reaches the thread."
+    description "W-APR-17 (T-APR-08, T-MCP-14, T-SCH-13). A private, human-only secret card; the value goes to the vault, only a secretRef placement reaches the thread."
 
     include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway, services, services.onepassword
 
@@ -800,7 +800,7 @@ views {
     signalbox.harness -> signalbox.harness "model and tools" {
       navigateTo work_turns_model_call
       notes '''
-        - Model wire through ModelGateway, MCP wire through ToolGateway, exec on the computer
+        - Model wire through the model gateway, MCP wire through the tools gateway, exec on the computer
       '''
     }
     signalbox.harness -> signalbox.thread.threadActor "harness events" {
@@ -868,7 +868,7 @@ views {
     signalbox.thread.threadActor -> signalbox.computer "open computer" {
       notes '''
         - Mounts the thread's files for the isolate; no VM yet
-        - A boxd VM is forked from the Base only when a real command needs one
+        - A machine is forked from the Base only when a real command needs one
       '''
     }
     signalbox.thread.threadActor -> signalbox.harness "turn input" {
@@ -1091,7 +1091,7 @@ views {
   dynamic view work_turns_model_call {
     variant sequence
     title "Workflows/Work/Turns/Models/Model call through the gateway"
-    description "W-TRN-02. Fetch shim → Gateway (grant JWT, cached pin) → Models (pool custody pins, CPA host pipes) → provider; bytes stream back untransformed."
+    description "W-TRN-02. Fetch shim → Gateway (grant JWT, cached pin) → Models (pool custody pins, pool host pipes) → provider; bytes stream back untransformed."
 
     include signalbox, signalbox.harness, signalbox.gateway, signalbox.models, modelProviders
 
@@ -1119,11 +1119,11 @@ views {
         - A signed usage stamp rides in a header
       '''
     }
-    signalbox.models -> modelProviders "CLIProxyAPI request"
+    signalbox.models -> modelProviders "Pool backend request"
     signalbox.models <- modelProviders "bytes"
     signalbox.gateway <- signalbox.models "bytes" {
       notes '''
-        - Inside Models the CPA host pipes them; pool custody never touches the bytes
+        - Inside Models the pool host pipes them; pool custody never touches the bytes
       '''
     }
     signalbox.harness <- signalbox.gateway "streamed bytes" {
@@ -1188,14 +1188,14 @@ views {
   dynamic view work_turns_usage_metering {
     variant sequence
     title "Workflows/Work/Turns/Models/Meter token usage"
-    description "W-TRN-03. Signed stamp + batched started events; the CPA drain is the only ledger writer; shared-thread costs land on folder Team and roll up to Company, never on A or B; missing drain rows alert."
+    description "W-TRN-03. Signed stamp + batched started events; the usage drain is the only ledger writer; shared-thread costs land on folder Team and roll up to Company, never on A or B; missing drain rows alert."
 
     include signalbox, signalbox.gateway, signalbox.models, signalbox.tree, signalbox.observability, hier, hier.company.team.costsTeam, hier.company.costsCo
 
     signalbox.gateway -> signalbox.models "stamped request" {
       navigateTo folders_gateway_usage_metering
       notes '''
-        - `{requestId, subject, level, poolId}`, carried by CPA into its usage record
+        - `{requestId, subject, level, poolId}`, carried by the pool backend into its usage record
       '''
     }
     signalbox.gateway -> signalbox.models "started (Queue)" {
@@ -1203,7 +1203,7 @@ views {
         - Batched; lets Models spot calls that never drain
       '''
     }
-    signalbox.models -> signalbox.models "CPA drain → ledger" {
+    signalbox.models -> signalbox.models "Usage drain → ledger" {
       notes '''
         - Pool custody is the one writer; rows commit with the drain cursor
       '''
@@ -1252,7 +1252,7 @@ views {
     signalbox.thread.threadActor -> signalbox.harness "load facet" {
       navigateTo work_harness_open_session
       notes '''
-        - By versioned code id, kept warm in Worker Loader
+        - By versioned code id, kept warm by the isolate loader
       '''
     }
     signalbox.harness -> signalbox.harness "resume from mirror" {
@@ -1331,7 +1331,7 @@ views {
         signalbox.thread.threadActor -> signalbox.harness "one resume" {
           navigateTo work_recovery_new_rpc_after_deploy
           notes '''
-            - Whether facet storage survives a code id switch is not yet verified on Cloudflare
+            - Whether facet storage survives a code id switch is not yet verified on the edge platform
             - If not: one resume per live turn, from the mirror; stated as the cost of an engine deploy
           '''
         }
@@ -1682,7 +1682,7 @@ views {
   dynamic view work_turns_open_live {
     variant sequence
     title "Workflows/Work/Turns/Viewing/Watch a thread live on every device"
-    description "W-TRN-25 (T-TRN-40), W-TRN-27 (T-ENV-09, T-MOB-15, T-THR-43). watch(after seq) → snapshot + deltas; seq gap → resnapshot; scrolling back pages history; agents read the same items through ToolGateway."
+    description "W-TRN-25 (T-TRN-40), W-TRN-27 (T-ENV-09, T-MOB-15, T-THR-43). watch(after seq) → snapshot + deltas; seq gap → resnapshot; scrolling back pages history; agents read the same items through the tools gateway."
 
     include personA, mcpClient, signalbox, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.gateway, signalbox.thread.threadActor
 
@@ -1711,7 +1711,7 @@ views {
     }
     mcpClient -> signalbox.gateway "read thread items" {
       notes '''
-        - An agent over MCP; Funnel serves no MCP
+        - An agent over MCP; client gateway serves no MCP
       '''
     }
     signalbox.gateway -> signalbox.thread.threadActor "Thread.read" {
@@ -1724,7 +1724,7 @@ views {
   dynamic view work_turns_stream_budget {
     variant sequence
     title "Workflows/Work/Turns/Viewing/Budget and coalesce live streams"
-    description "T-SYS-10. Funnel budgets seq/snapshot streams per socket; Tree coalesces catalog events so a busy folder sends one update per tick."
+    description "T-SYS-10. Client gateway budgets seq/snapshot streams per socket; Tree coalesces catalog events so a busy folder sends one update per tick."
 
     include signalbox, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.tree
 

@@ -294,9 +294,9 @@ views {
         - Identity owns invites; the folder only learns a role on accept.
       """
     }
-    signalbox.identity -> platform.workos 'WorkOS invitation' {
+    signalbox.identity -> platform.workos 'Identity invitation' {
       notes """
-        - WorkOS sends the email and tracks the invitation.
+        - The identity provider sends the email and tracks the invitation.
       """
     }
     alt 'pending resolves' {
@@ -327,7 +327,7 @@ views {
         }
         signalbox.operations -> signalbox.identity 'Revoke invitation' {
           notes """
-            - The WorkOS invitation is revoked; the link stops working.
+            - The identity invitation is revoked; the link stops working.
           """
         }
       }
@@ -426,13 +426,13 @@ views {
     }
     signalbox.web -> signalbox.identity 'Sign in' {
       notes """
-        - `Identity.signIn`; AuthKit runs the Google Workspace sign-in.
+        - `Identity.signIn`; hosted sign-in runs the Google Workspace sign-in.
       """
     }
     signalbox.identity -> platform.workos 'Organization with JIT' {
       navigateTo organization_identity_company_join
       notes """
-        - A WorkOS organization with the verified company domain and JIT membership.
+        - A identity organization with the verified company domain and JIT membership.
         - C still lands in C's personal organization.
       """
     }
@@ -514,7 +514,7 @@ views {
     }
     signalbox.identity -> platform.workos 'Store alias' {
       notes """
-        - Permanent alias in WorkOS user metadata; never merged.
+        - Permanent alias in identity user metadata; never merged.
       """
     }
     opt 'signed up with work first' {
@@ -563,10 +563,10 @@ views {
     signalbox.web -> signalbox.identity 'Sign in' {
       navigateTo identity_identity_signin
       notes """
-        - `Identity.signIn(returnTo)` redirects to AuthKit.
+        - `Identity.signIn(returnTo)` redirects to hosted sign-in.
       """
     }
-    signalbox.identity -> platform.workos 'Ensure personal WorkOS org' {
+    signalbox.identity -> platform.workos 'Ensure personal identity org' {
       notes """
         - Idempotent: `external_id = personal:<userId>`.
         - Invisible to A; it only owns A's things.
@@ -730,7 +730,7 @@ views {
     }
     signalbox.identity -> platform.workos 'Store alias' {
       notes """
-        - Alias in WorkOS user metadata.
+        - Alias in identity user metadata.
       """
     }
     signalbox.identity -> signalbox.tree 'Keep mounts' {
@@ -749,7 +749,7 @@ views {
   dynamic view identity_identity_link {
     variant sequence
     title 'Workflows/Identity/Linking/Link a work account'
-    description 'R-IDN-14 (v1 no) · email code, OAuth, or SSO once; alias stored in WorkOS user metadata'
+    description 'R-IDN-14 (v1 no) · email code, OAuth, or SSO once; alias stored in identity user metadata'
 
     include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
 
@@ -789,7 +789,7 @@ views {
     try {
       signalbox.identity -> platform.workos 'Write alias' {
         notes """
-          - The alias map lives in WorkOS user metadata.
+          - The alias map lives in identity user metadata.
         """
       }
       signalbox.identity -> signalbox.tree 'Record linked identity' {
@@ -862,7 +862,7 @@ views {
     }
     signalbox.identity -> platform.workos 'Delete alias' {
       notes """
-        - Removed from WorkOS user metadata.
+        - Removed from identity user metadata.
       """
     }
     signalbox.identity -> signalbox.tree 'Drop linked identity' {
@@ -930,7 +930,7 @@ views {
         mcpClient -> signalbox.gateway 'MCP call' {
           navigateTo identity_identity_mcp_signin
           notes """
-            - AuthKit bearer for one Place, one person.
+            - Sign-in bearer for one Place, one person.
           """
         }
       }
@@ -1032,14 +1032,14 @@ views {
         - The same sign-in on web, desktop or mobile.
       """
     }
-    signalbox.web -> signalbox.identity 'AuthKit callback' {
+    signalbox.web -> signalbox.identity 'Sign-in callback' {
       notes """
-        - The client returns from AuthKit to the cloud origin with a code.
+        - The client returns from hosted sign-in to the cloud origin with a code.
       """
     }
     signalbox.identity -> platform.workos 'Exchange code' {
       notes """
-        - AuthKit callback code for the user.
+        - Sign-in callback code for the user.
       """
     }
     alt 'client' {
@@ -1105,7 +1105,7 @@ views {
     try {
       signalbox.identity -> platform.workos 'Refresh token' {
         notes """
-          - WorkOS issues new tokens.
+          - The identity provider issues new tokens.
         """
       }
       signalbox.web <- signalbox.identity 'Renewed session' {
@@ -1147,7 +1147,7 @@ views {
         }
         signalbox.cli -> signalbox.identity 'Start device code' {
           notes """
-            - Identity asks WorkOS for a device authorization.
+            - Identity asks the identity provider for a device authorization.
           """
         }
         signalbox.cli <- signalbox.identity 'Code and URL' {
@@ -1225,7 +1225,7 @@ views {
     }
     mcpClient -> platform.workos 'OAuth (CIMD/DCR)' {
       notes """
-        - AuthKit is the authorization server; the resource indicator names this Place.
+        - The identity provider is the authorization server; the resource indicator names this Place.
       """
     }
     personA -> platform.workos 'Consents' {
@@ -1283,7 +1283,7 @@ views {
     }
     signalbox.web -> signalbox.funnel 'Sign-in request' {
       notes """
-        - Funnel decodes and calls Identity.
+        - Client gateway decodes and calls Identity.
       """
     }
     signalbox.funnel -> signalbox.identity 'Sign in' {
@@ -1291,15 +1291,15 @@ views {
         - `signIn(returnTo)`.
       """
     }
-    signalbox.identity -> platform.workos 'AuthKit' {
+    signalbox.identity -> platform.workos 'Hosted sign-in' {
       notes """
         - Hosted sign-in, then the callback.
       """
     }
-    opt 'Radar (not v1)' {
+    opt 'Bot detection (not v1)' {
       signalbox.identity -> platform.workos 'Fraud signal' {
         notes """
-          - Radar in log mode; never blocks.
+          - Bot detection in log mode; never blocks.
         """
       }
     }
@@ -1371,7 +1371,7 @@ views {
       when 'preview or dev' {
         signalbox.identity -> platform.workos 'E2E sandbox' {
           notes """
-            - A WorkOS sandbox user, never a real one.
+            - An identity provider sandbox user, never a real one.
           """
         }
         signalbox.web <- signalbox.identity 'Session' {
@@ -1411,7 +1411,7 @@ views {
         - C lands in C's personal organization, as always.
       """
     }
-    signalbox.identity -> platform.workos 'AuthKit' {
+    signalbox.identity -> platform.workos 'Hosted sign-in' {
       notes """
         - Hosted sign-in with Google as the provider.
       """
@@ -1468,7 +1468,7 @@ views {
   dynamic view organization_identity_company_sso {
     variant sequence
     title 'Workflows/Organization/Members/Set up organization SSO beyond Google'
-    description 'R-IDN-19 (v1 no) · Okta and others through the WorkOS Admin Portal, gated by Enterprise'
+    description 'R-IDN-19 (v1 no) · Okta and others through the identity provider admin portal, gated by Enterprise'
 
     include personC, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
 
@@ -1490,9 +1490,9 @@ views {
     }
     alt 'Enterprise flag' {
       when 'set' {
-        signalbox.identity -> platform.workos 'Admin Portal link' {
+        signalbox.identity -> platform.workos 'Admin portal link' {
           notes """
-            - A one-time Admin Portal link with SSO intent.
+            - A one-time admin portal link with SSO intent.
           """
         }
         personC -> platform.workos 'Configures Okta' {
@@ -1538,17 +1538,17 @@ views {
     }
     signalbox.web -> signalbox.identity 'End membership' {
       notes """
-        - Identity does not change roles itself; it asks WorkOS.
+        - Identity does not change roles itself; it asks the identity provider.
       """
     }
     signalbox.identity -> platform.workos 'Delete membership' {
       notes """
-        - The WorkOS membership is deleted.
+        - The identity membership is deleted.
       """
     }
     platform.workos -> signalbox.ingress 'Membership deleted' {
       notes """
-        - The webhook is the one source of truth, also for changes made in WorkOS directly.
+        - The webhook is the one source of truth, also for changes made in the identity provider directly.
       """
     }
     signalbox.ingress -> signalbox.identity 'Membership loss' {
@@ -1612,7 +1612,7 @@ views {
     platform.workos -> signalbox.ingress 'Membership created' {
       navigateTo organization_identity_membership_webhook
       notes """
-        - WorkOS added B by domain JIT.
+        - The identity provider added B by domain JIT.
       """
     }
     signalbox.ingress -> signalbox.identity 'Membership' {
@@ -1643,7 +1643,7 @@ views {
     #v1
     variant sequence
     title 'Workflows/Organization/Members/Mirror membership and role webhooks'
-    description 'R-ACC-02 · R-IDN-13 (v1 yes) · at least once, ordered by WorkOS event time, idempotent'
+    description 'R-ACC-02 · R-IDN-13 (v1 yes) · at least once, ordered by the identity provider event time, idempotent'
 
     include signalbox, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos
 
@@ -1693,7 +1693,7 @@ views {
       }
       platform.workos <- signalbox.ingress 'Ack' {
         notes """
-          - Only after the change committed; otherwise WorkOS redelivers.
+          - Only after the change committed; otherwise the identity provider redelivers.
         """
       }
     }
@@ -1703,7 +1703,7 @@ views {
     #v1
     variant sequence
     title 'Workflows/Organization/Members/Invite someone into folder Company by email'
-    description 'R-IDN-10 (v1 yes) · a WorkOS invitation for people outside the verified domain'
+    description 'R-IDN-10 (v1 yes) · a identity invitation for people outside the verified domain'
 
     include personC, personB, personD, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos
 
@@ -1718,14 +1718,14 @@ views {
         - Invitation is pending until B answers.
       """
     }
-    signalbox.identity -> platform.workos 'WorkOS invitation' {
+    signalbox.identity -> platform.workos 'Identity invitation' {
       notes """
-        - WorkOS tracks the invitation and sends the email.
+        - The identity provider tracks the invitation and sends the email.
       """
     }
     platform.workos -> personB 'Invitation email' {
       notes """
-        - WorkOS sends it.
+        - The identity provider sends it.
       """
     }
     personB -> signalbox.web 'Accepts' {
@@ -1754,7 +1754,7 @@ views {
         navigateTo folders_access_folder_invite
         notes """
           - D is outside the organization and gets folder Team only, not all of Company.
-          - No WorkOS membership: a role on Team, through the Share dialog.
+          - No identity membership: a role on Team, through the Share dialog.
         """
       }
       signalbox.web -> personD 'Team in Shared with me' {
@@ -1895,7 +1895,7 @@ views {
       when 'C re-invites' {
         personC -> signalbox.identity 'Invites A' {
           notes """
-            - A WorkOS invitation to A's address.
+            - A identity invitation to A's address.
           """
         }
       }

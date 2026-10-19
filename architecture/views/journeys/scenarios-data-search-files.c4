@@ -904,7 +904,7 @@ views {
     #assumption
     variant sequence
     title 'Scenarios/Data/Sources/Doc Write Conflict'
-    description "An agent writes back to a Google Doc that A is editing. Does it clobber A? Assumption: targeted edits with a source-version precondition, suggestions on others' Docs, and irreversible or undeclared writes held as a Ready ask. Why: A6, A18, #878 §9 proposal, R-CON-19 gate placement. SCN-237 · W-SRC-04, R-CON-19, P-RDY-01. v1: partial (Executor Google connection as a tool)."
+    description "An agent writes back to a Google Doc that A is editing. Does it clobber A? Assumption: targeted edits with a source-version precondition, suggestions on others' Docs, and irreversible or undeclared writes held as a Ready ask. Why: A6, A18, #878 §9 proposal, R-CON-19 gate placement. SCN-237 · W-SRC-04, R-CON-19, P-RDY-01. v1: partial (Google connection as a tool through the tools gateway)."
 
     include personB, personA, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.operations, signalbox.attention, services.google
     include signalbox, services
@@ -959,7 +959,7 @@ views {
     #decided #assumption
     variant sequence
     title 'Scenarios/Data/Sources/Read Page Changed'
-    description "A Confluence page the agent read later changes, disappears or loses its connection. What does the thread see? Decided: #119/#66 (2026-10-15) reads are captured. Assumption: captures are ordinary files of the thread's working ref, visible per thread visibility, with no separate private rule (pending #512). Why: A7. SCN-238 · W-SRC-03, W-SRC-02, R-CON-27, W-SRC-08. v1: partial (Executor Confluence connection as a tool)."
+    description "A Confluence page the agent read later changes, disappears or loses its connection. What does the thread see? Decided: #119/#66 (2026-10-15) reads are captured. Assumption: captures are ordinary files of the thread's working ref, visible per thread visibility, with no separate private rule (pending #512). Why: A7. SCN-238 · W-SRC-03, W-SRC-02, R-CON-27, W-SRC-08. v1: partial (Confluence connection as a tool through the tools gateway)."
 
     include personB, personA, signalbox.web, signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.drive, services.atlassian
     include signalbox, services

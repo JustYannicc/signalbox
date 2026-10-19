@@ -23,7 +23,7 @@ views {
       signalbox.harness,
       signalbox.computer.commandGateway,
       signalbox.computer.escalation with { title 'Routing table' },
-      signalbox.computer.execDaemon with { title 'boxd VM' },
+      signalbox.computer.execDaemon with { title 'Machine' },
       signalbox.observability
 
     personA -> signalbox.web 'types npm test' {
@@ -130,7 +130,7 @@ views {
       notes '- Programs inside the shell route per program at kernel exec, as for the model'
     }
     signalbox.computer.escalation -> signalbox.computer.childIsolates 'ls' {
-      notes '- Small isolate set: runs in a child Dynamic Worker'
+      notes '- Small isolate set: runs in a child isolate'
     }
     signalbox.computer.backend.kernelFs <- signalbox.computer.childIsolates 'listing'
     signalbox.web -> signalbox.funnel 'vim notes.md'
@@ -205,9 +205,9 @@ views {
       signalbox.computer.commandGateway,
       signalbox.computer.budgets,
       signalbox.computer.escalation with { title 'Routing table' },
-      signalbox.computer.childIsolates with { title 'Kernel program (child DW)' },
+      signalbox.computer.childIsolates with { title 'Kernel program (child isolate)' },
       signalbox.computer.backend.kernelFs with { title 'Live FS' },
-      signalbox.computer.execDaemon with { title 'boxd VM' }
+      signalbox.computer.execDaemon with { title 'Machine' }
 
     alt 'case' {
       when '1 · cat a 2 GB file' {
@@ -254,7 +254,7 @@ views {
           notes '- No evidence it is heavy: it starts in the kernel'
         }
         signalbox.computer.escalation -> signalbox.computer.childIsolates 'run (memory, cpuMs)' {
-          notes '- Its own child Dynamic Worker; the session facet never runs program code'
+          notes '- Its own child isolate; the session facet never runs program code'
         }
         signalbox.computer.budgets -> signalbox.computer.childIsolates 'memory budget hit' {
           notes '- The child dies; only this command goes with it'

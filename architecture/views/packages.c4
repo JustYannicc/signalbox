@@ -5,7 +5,7 @@ views {
     description '''
       Which modules become their own public repos on npm, and which stay in Signalbox? Decided 2026-10-19 (#1245):
       a deep module useful outside Signalbox gets its own repo, is published on npm and comes back as a dependency,
-      cloudflare/computer style. The isolate runtime goes first. Tree stays; only its hierarchy resolver is published.
+      like an outside computer library. The isolate runtime goes first. Tree stays; only its hierarchy resolver is published.
       Everything in the two Publishable groups is tagged `#publishable`.
     '''
     group 'Publishable · first: isolate runtime' {
@@ -20,7 +20,7 @@ views {
       color sky
       opacity 8%
       include signalbox.gateway.egress with { title 'Secret fill · scrub' }
-      include signalbox.connections with { title 'Connections + tool gateway' }
+      include signalbox.connections with { title 'Connections + tools gateway' }
       include signalbox.models with { title 'Model pools' }
       include signalbox.drive
       // One box: a second Computer part here makes LikeC4 wrap both in a Computer box and break the groups.

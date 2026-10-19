@@ -1,5 +1,5 @@
 // Quick capture, drafts, notes and their journeys. Not v1.
-// Clients talk to Capture over Funnel → Operations (one Tree.can per call); both are left out
+// Clients talk to Capture over the client gateway → Operations (one Tree.can per call); both are left out
 // of the lanes to keep 4-8 participants. Tree, Thread and Capture are black boxes here: drafts and
 // private notes are rows in A's Person record, shared notes and catalog rows in the Level record,
 // both behind the Tree interface. Level agent = the folder's agent thread (Team agent for folder Team);
