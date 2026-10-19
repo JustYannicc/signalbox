@@ -164,7 +164,7 @@ export function extractWorkerUrl(output: string, stage: string): URL {
 export async function requestProofWorker(input: {
   readonly url: URL;
   readonly token: string;
-  readonly route: "/status" | "/seed" | "/run" | "/recover";
+  readonly route: "/status" | "/seed" | "/run" | "/resume" | "/recover";
   readonly method: "GET" | "POST";
   readonly signal: AbortSignal;
   readonly body?: unknown;

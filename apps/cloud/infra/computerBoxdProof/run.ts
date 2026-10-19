@@ -2,6 +2,7 @@
 import { proofInputEvidence } from "./InputEvidence.ts";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import type { ProofMode } from "./ProofProtocol.ts";
 
 import { runProcess } from "../isolateProbe/process.ts";
 import {
@@ -48,6 +49,7 @@ interface RunOptions {
   programDir: string;
   stageFile: string;
   output: string;
+  mode: ProofMode;
 }
 interface RecoverOptions {
   recoverStageFile: string;
@@ -195,13 +197,17 @@ async function waitReady(context: Context) {
   throw new ProofLauncherFailure(last?.safeMessage ?? "Worker /status failed (readiness timeout).");
 }
 
-async function runAndWait(context: Context, seed: Awaited<ReturnType<typeof seedFor>>) {
+async function runAndWait(
+  context: Context,
+  seed: Awaited<ReturnType<typeof seedFor>>,
+  mode: ProofMode,
+) {
   const response = await requestProofWorker({
     url: context.workerUrl!,
     token: context.token,
     route: "/run",
     method: "POST",
-    body: { seed },
+    body: { seed, mode },
     signal: context.signal,
   });
   let evidence = workerEvidence(response.body, context.stageFile.record.stage);
@@ -210,6 +216,7 @@ async function runAndWait(context: Context, seed: Awaited<ReturnType<typeof seed
   }
   await save(context, mergeWorkerEvidence(context.receipt, response.body));
   await check(context, "proofRun", "pending", "pending");
+  let resumed = false;
   while (
     !context.signal.aborted &&
     (evidence.status === "pending" || evidence.status === "running")
@@ -217,6 +224,21 @@ async function runAndWait(context: Context, seed: Awaited<ReturnType<typeof seed
     await delay(STATUS_POLL_MS, context.signal);
     const current = await status(context);
     evidence = await mergeStatus(context, current.body);
+    if (
+      !resumed &&
+      evidence.status === "running" &&
+      evidence.checks.worker_ownerConstructorReplaced === "passed"
+    ) {
+      const response = await requestProofWorker({
+        url: context.workerUrl!,
+        token: context.token,
+        route: "/resume",
+        method: "POST",
+        signal: context.signal,
+      });
+      evidence = await mergeStatus(context, response.body);
+      resumed = true;
+    }
   }
   if (context.signal.aborted) throw new ProofLauncherFailure("Proof run was interrupted.");
   const passed = evidence.status === "passed" && !Object.values(evidence.checks).includes("failed");
@@ -352,7 +374,7 @@ async function runProof(options: RunOptions, signal: AbortSignal) {
     activeCheck = "proofRun";
     await stageFile.update("running");
     await save(context, { ...context.receipt, cleanup: "pending" });
-    await runAndWait(context, seed);
+    await runAndWait(context, seed, options.mode);
   } catch (error) {
     failure =
       error instanceof ProofLauncherFailure
@@ -454,13 +476,14 @@ function parseOptions(argv: string[]): RunOptions | RecoverOptions {
       "stage-file": { type: "string" },
       "recover-stage-file": { type: "string" },
       output: { type: "string" },
+      mode: { type: "string" },
     },
     allowPositionals: false,
   });
   const output = values.output;
   if (!output) throw new ProofLauncherFailure("Pass --output FILE.");
   if (values["recover-stage-file"]) {
-    if (values["program-dir"] || values["stage-file"]) {
+    if (values["program-dir"] || values["stage-file"] || values.mode) {
       throw new ProofLauncherFailure("Recovery accepts only --recover-stage-file and --output.");
     }
     return { recoverStageFile: values["recover-stage-file"], output } satisfies RecoverOptions;
@@ -468,10 +491,14 @@ function parseOptions(argv: string[]): RunOptions | RecoverOptions {
   if (!values["program-dir"] || !values["stage-file"]) {
     throw new ProofLauncherFailure("Pass --program-dir DIR, --stage-file FILE, and --output FILE.");
   }
+  const mode = values.mode ?? "direct";
+  if (mode !== "direct" && mode !== "nested" && mode !== "nested-recovery")
+    throw new ProofLauncherFailure("Mode must be direct, nested, or nested-recovery.");
   return {
     programDir: values["program-dir"],
     stageFile: values["stage-file"],
     output,
+    mode,
   } satisfies RunOptions;
 }
 

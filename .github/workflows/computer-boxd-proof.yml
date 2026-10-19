@@ -7,6 +7,14 @@ on:
         description: Reviewed full commit containing the Computer boxd proof
         required: true
         type: string
+      mode:
+        description: Command path and optional owner replacement cut
+        type: choice
+        default: nested
+        options:
+          - direct
+          - nested
+          - nested-recovery
 
 permissions:
   contents: read
@@ -29,6 +37,7 @@ jobs:
       cancel-in-progress: false
     env:
       SOURCE_COMMIT: ${{ inputs.sourceCommit }}
+      PROOF_MODE: ${{ inputs.mode }}
     steps:
       - name: Checkout trusted workflow source
         timeout-minutes: 3
@@ -82,6 +91,7 @@ jobs:
           --program-dir "$RUNNER_TEMP/computer-boxd-programs"
           --stage-file "$RUNNER_TEMP/computer-boxd-stage"
           --output "$RUNNER_TEMP/computer-boxd-deployed.json"
+          --mode "$PROOF_MODE"
 
       - name: Recover interrupted proof
         if: always()

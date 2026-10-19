@@ -1,9 +1,6 @@
-// @effect-diagnostics globalDate:off - the real facet SQLite fixture timestamps native writes.
-import { KernelProgramRegistry, KernelWakeRegistry } from "../../src/kernel/KernelAbi.ts";
+import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
 import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
-import { KernelFileSystem, KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
-import { createFacetFilePersistence } from "../../src/kernel/FacetFilePersistence.ts";
-import { createMemoryFilePersistencePorts } from "../../src/kernel/MemoryFilePersistencePorts.ts";
+import { KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
 import type { FacetStorage } from "../../src/kernel/FacetSqliteStorage.ts";
 import { createSeededChildProgramCatalog } from "../childPrograms/runtime.ts";
 import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
@@ -13,43 +10,23 @@ import { createFacetWorkspace } from "../../src/computer/FacetWorkspace.ts";
 import { createBoxdProofWorkspace, type BoxdProofVmPort } from "./Workspace.ts";
 import type { decodeProofSeed } from "./SeedProtocol.ts";
 import { INITIAL_FILE, RESULT_FILE, PROOF_COMMAND, runProofCommand, sameBytes } from "./Command.ts";
+import { openProofFilesystem, PROOF_INITIAL_REVISION } from "./Filesystem.ts";
+import { createComputerProgramAdmission } from "../../src/computer/ComputerProgramAdmission.ts";
+import type { KernelCommandForwarder } from "../../src/kernel/KernelCommandForwarder.ts";
+import type { ForkCommit } from "../../src/kernel/FilePersistencePorts.ts";
+import { nestedProofEscalation } from "./NestedCommand.ts";
 
-/** One real facet SQLite filesystem. The revision repository behind its ports is proof-only. */
+/** One facet SQLite filesystem and durable one-file proof revision repository. */
 export function proofKernel(
   database: FacetStorage,
   loader: WorkerLoader,
   seed: Awaited<ReturnType<typeof decodeProofSeed>>,
 ) {
-  const wakes = new KernelWakeRegistry();
-  const ports = createMemoryFilePersistencePorts();
-  const initial = { repository: "proof-only", fork: "owned-proof", commit: "initial" };
+  const state = openProofFilesystem(database);
+  const { wakes, ports, persistence, filesystem, write, read } = state;
+  const initial = PROOF_INITIAL_REVISION;
   ports.seedFile(initial, "/out.bin", INITIAL_FILE);
-  const persistence = createFacetFilePersistence(database, () => BigInt(Date.now()) * 1_000_000n, {
-    wakes,
-    ports,
-  });
   persistence.storage.posix.initialize(persistence.storage.root, { mode: 0o755, uid: 0, gid: 0 });
-  const filesystem = new KernelFileSystem({
-    mounts: [{ path: "/", storage: persistence.storage }],
-    posix: { credentials: { uid: 0, gid: 0, euid: 0, egid: 0 }, umask: 0o022 },
-  });
-  const write = (path: string, bytes: Uint8Array, mode = 0o644) => {
-    const descriptor = filesystem.open(
-      path,
-      KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC,
-      mode,
-    );
-    try {
-      filesystem.write(descriptor, bytes, null);
-    } finally {
-      filesystem.close(descriptor);
-    }
-  };
-  const read = (descriptor: number) => {
-    const bytes = new Uint8Array(Number(filesystem.fstat(descriptor).size));
-    const count = filesystem.read(descriptor, bytes, 0n);
-    return bytes.subarray(0, count);
-  };
   filesystem.mkdir("/bin");
   filesystem.mkdir("/workspace");
   filesystem.chdir("/workspace");
@@ -65,13 +42,32 @@ export function proofKernel(
     programs: seed.programs,
     hostname: "proof-host",
   });
-  const host = new KernelProgramHost({ registry, wakes, programs: catalog.bindings });
-  const held = filesystem.open("/workspace/out.bin", KernelOpenFlags.O_RDONLY);
+  let admission: ReturnType<typeof createComputerProgramAdmission> | undefined;
+  const escalation = nestedProofEscalation();
+  const host = new KernelProgramHost({
+    registry,
+    wakes,
+    programs: catalog.bindings,
+    admit: (request) => {
+      if (!admission) throw new Error("Nested proof admission is not bound");
+      return admission.admit(request);
+    },
+  });
+  const held = filesystem.open(
+    "/workspace/out.bin",
+    KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_CLOEXEC,
+  );
   const inode = filesystem.fstat(held).ino;
   return {
     filesystem,
     ports,
     host,
+    inode,
+    escalation,
+    bindNestedMachine(machine: KernelCommandForwarder) {
+      if (admission) throw new Error("Nested proof admission was already bound");
+      admission = createComputerProgramAdmission({ escalation, capacity, machine });
+    },
     async localControl(signal: AbortSignal) {
       const commands = createComputerCommands({
         kernel: { host, filesystem },
@@ -95,20 +91,22 @@ export function proofKernel(
         filesystem,
         mountPath: "/workspace",
         initial,
-        mount: createBoxdProofWorkspace({
-          vm,
-          trackedFiles: [
-            {
-              path: "/out.bin",
-              inode,
-              stat: persistence.storage.stat(inode),
-              posix: persistence.storage.posix.get(inode),
-            },
-          ],
-        }),
+        // The isolate may write before its nested command checkpoints the file.
+        mount: (...args) =>
+          createBoxdProofWorkspace({
+            vm,
+            trackedFiles: [
+              {
+                path: "/out.bin",
+                inode,
+                stat: persistence.storage.stat(inode),
+                posix: persistence.storage.posix.get(inode),
+              },
+            ],
+          })(...args),
       });
     },
-    assertApplied() {
+    assertApplied(before?: ForkCommit, beforeBytes = INITIAL_FILE) {
       if (
         filesystem.fstat(held).ino !== inode ||
         filesystem.stat("/workspace/out.bin").ino !== inode ||
@@ -120,24 +118,31 @@ export function proofKernel(
       const last = turns.at(-1);
       if (
         !last ||
-        last.at.commit === initial.commit ||
+        last.receipt.commit === initial.commit ||
         !sameBytes(last.tree["/out.bin"]?.data ?? new Uint8Array(), RESULT_FILE)
       ) {
         throw new Error("Proof revision backing did not retain the command result");
       }
       if (
-        !sameBytes(ports.inspectTree(initial)?.["/out.bin"]?.data ?? new Uint8Array(), INITIAL_FILE)
+        !sameBytes(
+          ports.inspectTree(initial)?.["/out.bin"]?.data ?? new Uint8Array(),
+          INITIAL_FILE,
+        ) ||
+        (before !== undefined &&
+          !sameBytes(
+            ports.inspectTree(before)?.["/out.bin"]?.data ?? new Uint8Array(),
+            beforeBytes,
+          ))
       ) {
         throw new Error("Proof before-revision was mutated");
       }
     },
     async close() {
+      admission?.close();
       await catalog.drain();
       await host.processes.dispose();
       filesystem.close(held);
-      filesystem.dispose();
-      persistence.dispose();
-      wakes.dispose();
+      state.close();
     },
   };
 }

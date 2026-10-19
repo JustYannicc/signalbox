@@ -26,8 +26,12 @@ const options = NodeUtil.parseArgs({
     "stage-file": { type: "string" },
     "recover-stage-file": { type: "string" },
     output: { type: "string" },
+    mode: { type: "string" },
   },
 }).values;
+const mode = options.mode ?? "direct";
+if (mode !== "direct" && mode !== "nested" && mode !== "nested-recovery")
+  throw new Error("Mode must be direct, nested, or nested-recovery");
 const stagePath = options["recover-stage-file"] ?? options["stage-file"];
 if (!stagePath || !options.output || (!options["recover-stage-file"] && !options["program-dir"])) {
   throw new Error(
@@ -100,7 +104,10 @@ const worker = await unstable_dev(NodePath.resolve(import.meta.dirname, "worker.
   experimental: { watch: false, disableDevRegistry: true, disableExperimentalWarning: true },
 });
 const origin = new URL(`http://127.0.0.1:${worker.port}`);
-const request = async (route: "/status" | "/seed" | "/run" | "/recover", body?: unknown) => {
+const request = async (
+  route: "/status" | "/seed" | "/run" | "/resume" | "/recover",
+  body?: unknown,
+) => {
   const result = await requestProofWorker({
     url: origin,
     token,
@@ -130,12 +137,21 @@ try {
     const callback = new URL("/api/computer/runner", tunnel.url);
     callback.protocol = "wss:";
     await stage.update("running");
-    let state = await request("/run", { runnerEndpoint: callback.href, seed });
+    let state = await request("/run", { runnerEndpoint: callback.href, seed, mode });
+    let resumed = false;
     const deadline = Date.now() + 600_000;
     while (state.status === "pending" || state.status === "running") {
       if (Date.now() > deadline) throw new Error("Local VM proof timed out");
       await new Promise((done) => setTimeout(done, 2_000));
       state = await request("/status");
+      if (
+        !resumed &&
+        state.status === "running" &&
+        state.checks.worker_ownerConstructorReplaced === "passed"
+      ) {
+        state = await request("/resume");
+        resumed = true;
+      }
     }
     failed = state.status !== "passed" || Object.values(state.checks).includes("failed");
     receipt = { ...receipt, checks: { ...receipt.checks, proofRun: failed ? "failed" : "passed" } };

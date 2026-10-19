@@ -37,7 +37,7 @@ export function deferred<T = void>() {
   return Promise.withResolvers<T>();
 }
 
-export function createWorker(storage: FakeStorage) {
+export function createWorker(storage: FakeStorage, abort?: (reason?: string) => void) {
   const background: Promise<unknown>[] = [];
   const initialization = { ready: Promise.resolve() };
   const ctx = {
@@ -49,6 +49,7 @@ export function createWorker(storage: FakeStorage) {
     waitUntil(promise: Promise<unknown>) {
       background.push(promise);
     },
+    abort,
   };
   const env = {
     BOXD_PROOF_OWNER: proofOwner,
