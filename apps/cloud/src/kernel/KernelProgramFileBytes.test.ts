@@ -95,6 +95,52 @@ function wasmWithUnknownImport(): WebAssembly.Module {
   );
 }
 
+function wasmWithFunctionAsMemoryImport(): WebAssembly.Module {
+  const section = (id: number, payload: number[]) => [id, payload.length, ...payload];
+  const name = (value: string) => [value.length, ...encoder.encode(value)];
+  return new WebAssembly.Module(
+    Uint8Array.from([
+      0,
+      0x61,
+      0x73,
+      0x6d,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [1, 0x60, 0, 0]),
+      ...section(2, [1, ...name("host_process"), ...name("fd_setfd"), 2, 0, 1]),
+      ...section(3, [1, 0]),
+      ...section(7, [1, ...name("_start"), 0, 0]),
+      ...section(10, [1, 2, 0, 0x0b]),
+    ]),
+  );
+}
+
+function wasmWithStartCheckingCloseOnExecWasSwept(fd: number): WebAssembly.Module {
+  const section = (id: number, payload: number[]) => [id, payload.length, ...payload];
+  const name = (value: string) => [value.length, ...encoder.encode(value)];
+  return new WebAssembly.Module(
+    Uint8Array.from([
+      0,
+      0x61,
+      0x73,
+      0x6d,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [2, 0x60, 2, 0x7f, 0x7f, 1, 0x7f, 0x60, 0, 0]),
+      ...section(2, [1, ...name("host_process"), ...name("fd_setfd"), 0, 0]),
+      ...section(3, [1, 1]),
+      ...section(5, [1, 0, 1]),
+      ...section(7, [2, ...name("_start"), 0, 1, ...name("memory"), 2, 0]),
+      ...section(8, [1]),
+      ...section(10, [1, 13, 0, 0x41, fd, 0x41, 0, 0x10, 0, 0x45, 0x04, 0x40, 0, 0x0b, 0x0b]),
+    ]),
+  );
+}
+
 function setup(
   programs: ReadonlyMap<string, KernelProgramBinding>,
   selectFileBytes: NonNullable<
@@ -308,7 +354,7 @@ describe("KernelProgramHost file byte selection", () => {
     }
   });
 
-  it("rejects exec before runtime creation or the CLOEXEC sweep", async () => {
+  it("rejects missing imports before module instantiation or the CLOEXEC sweep", async () => {
     let precommitStatePreserved = false;
     let admissionError = false;
     const outer: KernelProgramBinding = {
@@ -367,6 +413,136 @@ describe("KernelProgramHost file byte selection", () => {
     const fd = context.filesystem.open("/data", KernelOpenFlags.O_RDONLY);
     const prepared = context.host.prepare({ filesystem: context.filesystem });
     const outerHandle = admitted(context.host, prepared, [String(fd)]);
+    try {
+      await expect(context.host.exitStatus(outerHandle)).resolves.toMatchObject({ status: "ok" });
+      expect(admissionError).toBe(true);
+      expect(precommitStatePreserved).toBe(true);
+      expect(context.host.processes.reap(outerHandle).status).toBe("ok");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("runs a replacement module start only after exec commits its descriptor sweep", async () => {
+    let execError: unknown;
+    let descriptorsAfterExec: readonly [boolean, boolean] | undefined;
+    let bytesAfterExec: string | undefined;
+    const outer: KernelProgramBinding = {
+      manifest: manifest("outer"),
+      implementation: {
+        kind: "async",
+        run: async (program) => {
+          const firstFd = program.filesystem.open("/data", KernelOpenFlags.O_RDONLY);
+          const secondFd = program.filesystem.open("/data", KernelOpenFlags.O_RDONLY);
+          program.filesystem.descriptors.get(firstFd).closeOnExec = true;
+          program.filesystem.descriptors.get(secondFd).closeOnExec = true;
+          try {
+            await program.exec({
+              filesystem: program.filesystem,
+              identity: program.identity,
+              args: [],
+              env: program.env,
+              signal: program.signal,
+              path: "/bin/replacement",
+            });
+          } catch (error) {
+            execError = error;
+          }
+          descriptorsAfterExec = [
+            program.filesystem.descriptors.has(firstFd),
+            program.filesystem.descriptors.has(secondFd),
+          ];
+          bytesAfterExec = program.filesystem.fileBytes.kind;
+          return { exitCode: 0, signal: 0, coreDumped: false };
+        },
+      },
+    };
+    const replacement: KernelProgramBinding = {
+      manifest: manifest("replacement"),
+      implementation: {
+        kind: "wasm",
+        module: wasmWithStartCheckingCloseOnExecWasSwept(4),
+      },
+    };
+    const context = setup(
+      new Map([
+        ["/bin/outer", outer],
+        ["/bin/replacement", replacement],
+      ]),
+      ({ executable, filesystem }) =>
+        executable === "/bin/replacement" ? canonicalFileByteSelection : filesystem.fileBytes,
+    );
+    writeFile(context.storage, "data", "shared bytes");
+    const outerHandle = admitted(
+      context.host,
+      context.host.prepare({ filesystem: context.filesystem }),
+    );
+    try {
+      await expect(context.host.exitStatus(outerHandle)).resolves.toMatchObject({ status: "ok" });
+      expect(execError).toBeUndefined();
+      expect(descriptorsAfterExec).toEqual([false, false]);
+      expect(bytesAfterExec).toBe("canonical");
+      expect(context.host.processes.reap(outerHandle).status).toBe("ok");
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("rejects mismatched import kinds before mutating exec descriptors", async () => {
+    let admissionError = false;
+    let precommitStatePreserved = false;
+    const outer: KernelProgramBinding = {
+      manifest: manifest("outer"),
+      implementation: {
+        kind: "async",
+        run: async (program) => {
+          const firstFd = program.filesystem.open("/data", KernelOpenFlags.O_RDONLY);
+          const secondFd = program.filesystem.open("/data", KernelOpenFlags.O_RDONLY);
+          program.filesystem.descriptors.get(firstFd).closeOnExec = true;
+          program.filesystem.descriptors.get(secondFd).closeOnExec = true;
+          try {
+            await program.exec({
+              filesystem: program.filesystem,
+              identity: program.identity,
+              args: [],
+              env: program.env,
+              signal: program.signal,
+              path: "/bin/bad-import-kind",
+            });
+          } catch (error) {
+            admissionError =
+              error instanceof KernelProgramExecAdmissionError && error.code === "EIO";
+          }
+          precommitStatePreserved =
+            program.filesystem.descriptors.has(firstFd) &&
+            program.filesystem.descriptors.has(secondFd) &&
+            program.filesystem.descriptors.get(firstFd).closeOnExec &&
+            program.filesystem.descriptors.get(secondFd).closeOnExec &&
+            program.filesystem.fileBytes.kind === "view";
+          return { exitCode: 0, signal: 0, coreDumped: false };
+        },
+      },
+    };
+    const badImport: KernelProgramBinding = {
+      manifest: manifest("bad-import-kind"),
+      implementation: {
+        kind: "wasm",
+        module: wasmWithFunctionAsMemoryImport(),
+      },
+    };
+    const context = setup(
+      new Map([
+        ["/bin/outer", outer],
+        ["/bin/bad-import-kind", badImport],
+      ]),
+      ({ executable, filesystem }) =>
+        executable === "/bin/bad-import-kind" ? canonicalFileByteSelection : filesystem.fileBytes,
+    );
+    writeFile(context.storage, "data", "shared bytes");
+    const outerHandle = admitted(
+      context.host,
+      context.host.prepare({ filesystem: context.filesystem }),
+    );
     try {
       await expect(context.host.exitStatus(outerHandle)).resolves.toMatchObject({ status: "ok" });
       expect(admissionError).toBe(true);

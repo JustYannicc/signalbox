@@ -53,9 +53,9 @@ export type {
 export type {
   KernelProgramPrepareInput,
   KernelProgramPrepareOptions,
-  KernelProgramFileByteSelector,
   KernelPreparedProgram,
 } from "./program/KernelPreparedProgram.ts";
+export type { KernelProgramFileByteSelector } from "./program/KernelProgramFileBytes.ts";
 export { prepareNodeChildStdioKernelProgram } from "./program/KernelProgramPipes.ts";
 export type {
   KernelNodeChildStdio,
@@ -289,41 +289,20 @@ export class KernelProgramHost {
     readonly options: KernelProgramPrepareOptions;
     readonly target: KernelPreparedFileByteSelection | undefined;
   } {
-    const { executable, ...remainingOptions } = options;
-    if (executable === undefined) {
-      if (
-        this.#selectFileBytes !== undefined &&
-        options.fileBytes === undefined &&
-        options.actions?.some((action) => action.kind === "open")
-      ) {
-        throw Object.assign(
-          new Error("An executable is required before applying open actions with a file selector"),
-          { code: "ENOTSUP" },
-        );
-      }
-      const target = prepareKernelProgramFileBytes({
-        ...(options.fileBytes === undefined ? {} : { explicitSelection: options.fileBytes }),
-        filesystem: input.filesystem,
-        ...(input.parent === undefined ? {} : { parent: input.parent }),
-      });
-      return {
-        options:
-          target === undefined
-            ? remainingOptions
-            : { ...remainingOptions, fileBytes: target.selection },
-        target,
-      };
-    }
+    const { executable, fileBytes, ...remainingOptions } = options;
     const target = prepareKernelProgramFileBytes({
-      executable,
-      ...(options.fileBytes === undefined ? {} : { explicitSelection: options.fileBytes }),
+      ...(executable === undefined ? {} : { executable }),
+      ...(fileBytes === undefined ? {} : { explicitSelection: fileBytes }),
       ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
       filesystem: input.filesystem,
       ...(input.parent === undefined ? {} : { parent: input.parent }),
+      hasOpenActions: options.actions?.some((action) => action.kind === "open") ?? false,
     });
-    if (target === undefined) throw new Error("Executable selection was not prepared");
     return {
-      options: { ...remainingOptions, fileBytes: target.selection },
+      options:
+        target === undefined
+          ? remainingOptions
+          : { ...remainingOptions, fileBytes: target.selection },
       target,
     };
   }

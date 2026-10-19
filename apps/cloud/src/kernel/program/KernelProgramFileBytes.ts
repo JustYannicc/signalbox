@@ -20,6 +20,7 @@ interface ResolveKernelProgramFileBytesInput {
   readonly selector?: KernelProgramFileByteSelector;
   readonly filesystem: KernelFileSystem;
   readonly parent?: KernelHandle<"process">;
+  readonly hasOpenActions?: boolean;
 }
 
 export function resolveKernelProgramFileBytes({
@@ -37,6 +38,17 @@ export function resolveKernelProgramFileBytes({
 export function prepareKernelProgramFileBytes(
   input: ResolveKernelProgramFileBytesInput,
 ): KernelPreparedFileByteSelection | undefined {
+  if (
+    input.executable === undefined &&
+    input.hasOpenActions &&
+    input.explicitSelection === undefined &&
+    input.selector !== undefined
+  ) {
+    throw Object.assign(
+      new Error("An executable is required before applying open actions with a file selector"),
+      { code: "ENOTSUP" },
+    );
+  }
   if (input.executable === undefined && input.explicitSelection === undefined) return undefined;
   return {
     ...(input.executable === undefined ? {} : { executable: input.executable }),

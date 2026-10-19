@@ -20,7 +20,7 @@ import {
   resolveKernelProgramFileBytes,
 } from "./KernelProgramFileBytes.ts";
 import {
-  createKernelWasiRuntime,
+  prepareKernelWasiRuntime,
   runInlineJavaScript,
   type KernelProgramBinding,
 } from "./KernelProgramRuntime.ts";
@@ -107,7 +107,7 @@ export function execKernelProgram(
     if (implementation.kind === "wasm") {
       // Validate every import before CLOEXEC descriptors are removed.
       const runtime = beforeExecCommit(() =>
-        createKernelWasiRuntime(implementation.module, {
+        prepareKernelWasiRuntime(implementation.module, {
           ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
           ...(implementation.cwdEnvironment === undefined
             ? {}
@@ -128,7 +128,7 @@ export function execKernelProgram(
         return await afterExecCommit(async () => {
           sweepCloseOnExec(request);
           commitKernelProgramFileBytes(request.filesystem, fileBytes);
-          const exitCode = await runtime.lifecycle.startAsync(runtime.instance);
+          const exitCode = await runtime.lifecycle.startAsync(runtime.instantiate());
           return status(exitCode);
         });
       } finally {

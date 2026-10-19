@@ -35,8 +35,6 @@ export interface KernelProgramPrepareOptions {
   readonly stdio?: readonly [WasiStdio | undefined, WasiStdio | undefined, WasiStdio | undefined];
 }
 
-export type { KernelProgramFileByteSelector } from "./KernelProgramFileBytes.ts";
-
 export interface KernelOwnedStdio {
   readonly descriptors: readonly [
     WasiDescriptorSpec | undefined,
