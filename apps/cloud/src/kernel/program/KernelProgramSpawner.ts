@@ -111,8 +111,9 @@ export class KernelProgramSpawner {
     signal: AbortSignal,
     home: string | undefined,
     request: AgentOsSpawnRequest,
+    admission?: object,
   ): Promise<KernelResult<KernelHandle<"process">>> {
-    return this.#spawnNested(filesystem, parent, signal, home, request);
+    return this.#spawnNested(filesystem, parent, signal, home, request, admission);
   }
 
   #spawnPrepared(
@@ -162,6 +163,7 @@ export class KernelProgramSpawner {
     signal: AbortSignal,
     home: string | undefined,
     request: AgentOsSpawnRequest,
+    admission?: object,
   ): Promise<KernelResult<KernelHandle<"process">>> {
     // AgentOS passes the authoritative mask even without SETSIGMASK. Default
     // disposition and identity changes still have no host implementation.
@@ -206,6 +208,7 @@ export class KernelProgramSpawner {
                 parent,
                 signal,
                 ...(home === undefined ? {} : { home }),
+                ...(admission === undefined ? {} : { admission }),
               },
               {
                 ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
@@ -419,6 +422,7 @@ export class KernelProgramSpawner {
         signal: controller.signal,
         processes: this.#processes,
         wakes: this.#wakes,
+        ...(prepared.admission === undefined ? {} : { admission: prepared.admission }),
         ...(cpuProcess === undefined || this.#cpuExecution === undefined
           ? {}
           : { cpu: createAsyncProgramCpu(this.#cpuExecution, cpuProcess) }),

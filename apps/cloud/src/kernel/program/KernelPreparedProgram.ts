@@ -22,6 +22,7 @@ export interface KernelProgramPrepareInput {
   readonly signal?: AbortSignal;
   /** Canonical guest home path supplied by the owner; never derived from a host path. */
   readonly home?: string;
+  readonly admission?: object;
 }
 
 export interface KernelProgramPrepareOptions {
@@ -52,6 +53,7 @@ export class KernelPreparedProgram {
   readonly parent: KernelHandle<"process"> | undefined;
   readonly signal: AbortSignal | undefined;
   readonly home: string | undefined;
+  readonly admission?: object;
   #state: "owned" | "transferred" | "released" = "owned";
   #releasePromise: Promise<void> | undefined;
   readonly #releaseBeforeTransfer: (() => void) | undefined;
@@ -61,12 +63,14 @@ export class KernelPreparedProgram {
     parent: KernelHandle<"process"> | undefined,
     signal: AbortSignal | undefined,
     home: string | undefined,
+    admission?: object,
     releaseBeforeTransfer?: () => void,
   ) {
     this.filesystem = filesystem;
     this.parent = parent;
     this.signal = signal;
     this.home = home;
+    if (admission !== undefined) this.admission = admission;
     this.#releaseBeforeTransfer = releaseBeforeTransfer;
   }
 
@@ -214,6 +218,7 @@ export function prepareKernelProgram(
         input.parent,
         input.signal,
         input.home,
+        input.admission,
         untransferredCleanup,
       );
     });

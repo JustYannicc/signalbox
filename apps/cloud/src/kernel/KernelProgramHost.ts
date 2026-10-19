@@ -190,7 +190,14 @@ export class KernelProgramHost {
     },
     request: AgentOsSpawnRequest,
   ): Promise<KernelResult<KernelHandle<"process">>> {
-    return this.#spawner.spawn(input.filesystem, input.parent, input.signal, input.home, request);
+    return this.#spawner.spawn(
+      input.filesystem,
+      input.parent,
+      input.signal,
+      input.home,
+      request,
+      input.admission,
+    );
   }
 
   async exitStatus(

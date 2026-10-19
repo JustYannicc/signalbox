@@ -16,6 +16,7 @@ export interface KernelAsyncProgramExecRequest {
   readonly signal: AbortSignal;
   readonly path: string;
   readonly home?: string;
+  readonly admission?: object;
 }
 
 export interface KernelAsyncProgramCpu {
@@ -30,6 +31,7 @@ export interface KernelAsyncProgramCpu {
 export interface KernelAsyncProgramContext {
   readonly filesystem: KernelFileSystem;
   readonly home: string | undefined;
+  readonly admission?: object;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly identity: KernelProcessIdentity;
