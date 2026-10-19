@@ -24,7 +24,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
+import { resolveCodexRollbackTurnCount } from "@signalbox/provider-codex/thread";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";

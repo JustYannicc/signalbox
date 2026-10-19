@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import type {
   ClaudeAgentSdkQueryOpenInput,
   ClaudeAgentSdkQueryRunnerShape,
-} from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import type { CodexAppServerClientFactoryShape } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+} from "@signalbox/provider-claude/ClaudeQueryRunner";
+import type { CodexAppServerClientFactoryShape } from "@signalbox/provider-codex/clientFactory";
 import { claudeWithSessionEnvironment, codexWithSessionEnvironment } from "./RunnerAdapters.ts";
 
 /** What keeps Claude Code on the gateway, as `claudeGatewaySettings` makes it. */

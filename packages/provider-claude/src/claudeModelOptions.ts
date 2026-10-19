@@ -7,14 +7,13 @@ import {
 } from "@t3tools/shared/model";
 
 import {
-  BUNDLED_CLAUDE_MODEL_CATALOG,
   getClaudeCatalogModelCapabilities,
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
   type ClaudeModelCatalog,
-} from "./provider/ClaudeModelCatalog.ts";
+} from "./ClaudeModelCatalog.ts";
 
 export interface CompiledClaudeModelSelection {
   readonly apiModelId: string;
@@ -26,7 +25,7 @@ export interface CompiledClaudeModelSelection {
 
 export function compileClaudeModelSelection(
   selection: ModelSelection,
-  catalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
+  catalog: ClaudeModelCatalog,
 ): CompiledClaudeModelSelection {
   const capabilities = getClaudeCatalogModelCapabilities(catalog, selection.model);
   const descriptors = getProviderOptionDescriptors({ caps: capabilities });

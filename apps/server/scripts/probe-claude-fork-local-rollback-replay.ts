@@ -1,3 +1,5 @@
+import type { ClaudeAgentSdkQueryOptions } from "@signalbox/provider-claude/ClaudeQueryRunner";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../src/provider/ClaudeModelCatalog.ts";
 import {
   forkSession,
   query,
@@ -13,8 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import {
   makeClaudeQueryOptions,
   makeClaudeUserMessage,
-  type ClaudeAgentSdkQueryOptions,
-} from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+} from "@signalbox/provider-claude/ClaudeAdapter";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
@@ -141,6 +142,7 @@ function queryOptions(input: {
 }): ClaudeAgentSdkQueryOptions {
   return {
     ...makeClaudeQueryOptions({
+      modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
       modelSelection: MODEL_SELECTION,
       cwd: input.cwd,
       nativeThreadId: input.nativeThreadId,

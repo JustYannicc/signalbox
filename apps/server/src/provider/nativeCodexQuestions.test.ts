@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { nativeCodexQuestions } from "./nativeCodexQuestions.ts";
+import { nativeCodexQuestions } from "@signalbox/provider-codex/questions";
 
 describe("native Codex questions", () => {
   it("keeps the recommendation separate from a custom editor's initial answer", () => {

@@ -1,0 +1,86 @@
+{
+  "name": "@signalbox/provider-codex",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./defaults": {
+      "types": "./src/defaults.ts",
+      "import": "./src/defaults.ts"
+    },
+    "./normalization": {
+      "types": "./src/normalization.ts",
+      "import": "./src/normalization.ts"
+    },
+    "./thread": {
+      "types": "./src/thread.ts",
+      "import": "./src/thread.ts"
+    },
+    "./clientFactory": {
+      "types": "./src/clientFactory.ts",
+      "import": "./src/clientFactory.ts"
+    },
+    "./threadConfig": {
+      "types": "./src/threadConfig.ts",
+      "import": "./src/threadConfig.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "import": "./src/runtime.ts"
+    },
+    "./threadRevert": {
+      "types": "./src/threadRevert.ts",
+      "import": "./src/threadRevert.ts"
+    },
+    "./toolPresentation": {
+      "types": "./src/toolPresentation.ts",
+      "import": "./src/toolPresentation.ts"
+    },
+    "./turnTokenUsage": {
+      "types": "./src/turnTokenUsage.ts",
+      "import": "./src/turnTokenUsage.ts"
+    },
+    "./usageLimits": {
+      "types": "./src/usageLimits.ts",
+      "import": "./src/usageLimits.ts"
+    },
+    "./developerInstructions": {
+      "types": "./src/developerInstructions.ts",
+      "import": "./src/developerInstructions.ts"
+    },
+    "./signalboxElicitation": {
+      "types": "./src/signalboxElicitation.ts",
+      "import": "./src/signalboxElicitation.ts"
+    },
+    "./mcpElicitation": {
+      "types": "./src/mcpElicitation.ts",
+      "import": "./src/mcpElicitation.ts"
+    },
+    "./questions": {
+      "types": "./src/questions.ts",
+      "import": "./src/questions.ts"
+    },
+    "./modelOptions": {
+      "types": "./src/modelOptions.ts",
+      "import": "./src/modelOptions.ts"
+    },
+    "./attachments": {
+      "types": "./src/attachments.ts",
+      "import": "./src/attachments.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:",
+    "effect-codex-app-server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

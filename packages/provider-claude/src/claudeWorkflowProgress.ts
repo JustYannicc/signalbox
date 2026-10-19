@@ -5,7 +5,7 @@ import type {
   OrchestrationV2WorkflowRunHandles,
 } from "@t3tools/contracts";
 
-import { field, text } from "../unknownField.ts";
+import { field, text } from "@t3tools/provider-core/server/unknownField";
 
 export const CLAUDE_WORKFLOW_TASK_TYPE = "local_workflow";
 

@@ -5,7 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
-} from "./CodexDeveloperInstructions.ts";
+} from "@signalbox/provider-codex/developerInstructions";
 
 describe("buildCodexDeveloperInstructions", () => {
   it("appends runtime info after the mode instructions", () => {

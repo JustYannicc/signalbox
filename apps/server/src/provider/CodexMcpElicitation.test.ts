@@ -3,7 +3,10 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { describeMcpElicitation, toMcpElicitationResponse } from "./CodexMcpElicitation.ts";
+import {
+  describeMcpElicitation,
+  toMcpElicitationResponse,
+} from "@signalbox/provider-codex/mcpElicitation";
 
 describe("Codex MCP elicitation approvals", () => {
   const request = {

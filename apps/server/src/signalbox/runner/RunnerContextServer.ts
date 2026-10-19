@@ -19,7 +19,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import packageJson from "../../../package.json" with { type: "json" };
-import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import type { ClaudeAgentSdkQueryRunnerShape } from "@signalbox/provider-claude/ClaudeQueryRunner";
 import { automationCaller, layerAutomationTools } from "./RunnerAutomationTools.ts";
 import { layerRunnerPullRequestTools } from "./RunnerPullRequestTools.ts";
 import { layerLearnerTools } from "./RunnerLearnerTools.ts";

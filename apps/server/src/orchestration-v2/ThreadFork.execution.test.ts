@@ -17,8 +17,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
+import { CodexProviderCapabilitiesV2 } from "@signalbox/provider-codex/defaults";
+import { ClaudeProviderCapabilitiesV2 } from "@signalbox/provider-claude/ClaudeAdapter";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";

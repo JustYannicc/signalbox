@@ -42,6 +42,8 @@
     "@napi-rs/keyring": "^1.3.0",
     "@opencode-ai/sdk": "^1.3.15",
     "@rrweb/record": "2.1.7",
+    "@signalbox/provider-claude": "workspace:*",
+    "@signalbox/provider-codex": "workspace:*",
     "@t3tools/provider-acp": "workspace:*",
     "@t3tools/provider-acp-registry": "workspace:*",
     "@t3tools/provider-core": "workspace:*",

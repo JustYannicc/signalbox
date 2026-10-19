@@ -48,7 +48,7 @@ import {
   codexRateLimitsToLimits,
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
-} from "./codexUsageLimits.ts";
+} from "@signalbox/provider-codex/usageLimits";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
