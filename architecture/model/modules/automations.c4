@@ -58,6 +58,7 @@ model {
     automations.steps -[tool]-> signalbox.connections.api 'tool calls'
     automations.steps -> signalbox.judge.api 'judge'
     automations.steps -> signalbox.bases.api 'build · status · promote'
+    automations.steps -> signalbox.computer.commandGateway 'commands (exec)'
     automations.steps -> services.github 'w.run (Actions)'
     automations.defaults -> platform.t3upstream 'release follower'
     automations.defaults -> platform.cpaUpstream 'release follower'

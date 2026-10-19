@@ -5,7 +5,7 @@ model {
     description 'one app for working with AI'
 
     funnel = door 'Funnel' {
-      #passthrough #v1
+      #passthrough #v1 #funnel
       icon bootstrap:funnel
       description 'decode · call · map errors'
       technology 'Cloudflare Workers · WS + HTTP'
@@ -39,9 +39,9 @@ model {
         }
         deltas = adapter 'Seq / snapshot deltas'
       }
-      portGateway = part 'Port gateway' {
+      portGateway = part 'Port URLs' {
         icon bootstrap:door-open
-        description 'one authenticated URL per port'
+        description 'one authenticated URL per port, into Computer.port'
       }
     }
 
@@ -63,7 +63,9 @@ model {
 
     signalbox.funnel.transport -> signalbox.operations.api 'commands · queries · subscribe'
     signalbox.funnel.transport -> signalbox.identity.api 'credentials'
-    signalbox.funnel.portGateway -> signalbox.computer.api 'port'
+    signalbox.funnel.portGateway -> signalbox.computer.portGateway 'forward'
+    signalbox.funnel.transport -> signalbox.computer.commandGateway 'terminal · API agents: exec · attach'
+    signalbox.funnel.transport -> signalbox.computer.filesGateway 'files (renderer · laptops)'
     signalbox.ingress -> signalbox.identity.api 'membership · auth callback'
     signalbox.ingress -> signalbox.connections.api 'OAuth callback'
     signalbox.ingress -> signalbox.models.api 'pool sign-in callback'

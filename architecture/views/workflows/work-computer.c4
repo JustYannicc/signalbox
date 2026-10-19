@@ -734,14 +734,16 @@ views {
     variant sequence
     title 'Workflows/Work/Computer/Egress/VM egress with tenant secrets'
     description '''
-      W-CMP-16, W-CMP-18, W-CMP-19. A command on the VM calls out: boxd's allowlist is the floor,
-      Gateway (its EgressProxy) fills tenant secrets against a machine-bound egress token, and a
-      tool that skips the proxy fails closed.
+      W-CMP-16, W-CMP-18, W-CMP-19. A command on the VM calls out. boxd's allowlist is the floor. For a bound
+      host, the EgressProxy on boxd is only a bridge: it terminates TLS and forwards over HTTPS to the gateway
+      on Cloudflare, which fills the credential, makes the call and scrubs the response (#1191). A tool that
+      skips the proxy fails closed.
     '''
 
     include
       signalbox.computer.execDaemon,
-      signalbox.gateway,
+      signalbox.gateway.egress.egressProxy with { title 'EgressProxy bridge (boxd)' },
+      signalbox.gateway.egress.fill with { title 'Gateway fill (Cloudflare)' },
       signalbox.connections,
       platform.boxd,
       services.onepassword,
@@ -750,49 +752,61 @@ views {
 
     alt 'does the tool honor HTTPS_PROXY' {
       when 'yes' {
-        signalbox.computer.execDaemon -> platform.boxd 'CONNECT via proxy' {
+        signalbox.computer.execDaemon -> signalbox.gateway.egress.egressProxy 'CONNECT host:443' {
           navigateTo folders_placement_kind_setting
           notes '''
-            - Allowlist: recipe destinations, the folder `egress` placements, relay, EgressProxy
+            - Allowlist: recipe destinations, the folder `egress` placements, relay, the bridge
             - Set from outside, root cannot change it, fails closed
           '''
         }
-        platform.boxd -> signalbox.gateway 'CONNECT host:443'
         alt 'is the host bound to a tenant placeholder' {
           when 'unbound host' {
-            signalbox.gateway -> services.github 'splice' {
-              notes '- TLS untouched; the proxy never sees the bytes'
+            signalbox.gateway.egress.egressProxy -> services.github 'splice' {
+              notes '- Allowlisted only; TLS untouched, the bridge never sees the bytes'
             }
           }
           else 'bound host' {
-            signalbox.gateway -> signalbox.gateway 'terminate TLS' {
+            signalbox.gateway.egress.egressProxy -> signalbox.gateway.egress.egressProxy 'terminate TLS' {
               notes '''
-                - Gateway's EgressProxy adapter; Signalbox CA is baked into the Base
-                - Re-resolve the host, refuse private IPs
+                - Bound hosts only; Signalbox CA is baked into the Base
+                - No fill of its own: it holds no secret
               '''
             }
-            signalbox.gateway -> signalbox.gateway 'verify egress token' {
+            signalbox.gateway.egress.egressProxy -> signalbox.gateway.egress.fill 'forward over HTTPS' {
+              notes '''
+                - Workers take no CONNECT tunnels, so the request travels as plain HTTPS
+                - Carries the machine-bound egress token
+              '''
+            }
+            signalbox.gateway.egress.fill -> signalbox.gateway.egress.fill 'verify egress token' {
               notes '- `{aud: egress, machine, gen, thread}`, valid for `fill` only, rotated with `deleteAfter`'
             }
             alt 'where the token comes from' {
               when 'its own machine' {
-                signalbox.gateway -> signalbox.connections 'fill(placeholder, host)' {
+                signalbox.gateway.egress.fill -> signalbox.connections 'fill(placeholder, host)' {
                   navigateTo folders_secrets_placeholder_fill
-                  notes '- Per request; the proxy holds no long-lived secret'
+                  notes '- Per request; nothing on boxd ever holds the value'
                 }
                 signalbox.connections -> services.onepassword 'resolve reference'
-                signalbox.gateway <- signalbox.connections 'value'
-                signalbox.gateway -> services.boundHost 'forward'
-                signalbox.gateway <- services.boundHost 'response'
-                signalbox.computer.execDaemon <- signalbox.gateway 'scrubbed response' {
+                signalbox.gateway.egress.fill <- signalbox.connections 'value'
+                signalbox.gateway.egress.fill -> services.boundHost 'call' {
+                  notes '''
+                    - From Cloudflare: re-resolves the host, refuses private IPs
+                    - Same endpoint, credentials and outbound identity as from the isolate
+                  '''
+                }
+                signalbox.gateway.egress.fill <- services.boundHost 'response'
+                signalbox.gateway.egress.egressProxy <- signalbox.gateway.egress.fill 'scrubbed response' {
                   navigateTo work_approvals_secret_destination
                   notes '- A new destination asks once, as in the kernel path'
                 }
+                signalbox.computer.execDaemon <- signalbox.gateway.egress.egressProxy 'response'
               }
               else 'replayed from another machine (W-CMP-19)' {
-                signalbox.computer.execDaemon <- signalbox.gateway 'Denied' {
+                signalbox.gateway.egress.egressProxy <- signalbox.gateway.egress.fill 'Denied' {
                   notes '- Token is bound to the machine address on the shared network'
                 }
+                signalbox.computer.execDaemon <- signalbox.gateway.egress.egressProxy 'Denied'
               }
             }
           }
@@ -838,7 +852,7 @@ views {
       when 'curl · npm in Bash' {
         signalbox.computer -> signalbox.gateway 'Egress' {
           navigateTo work_computer_egress_vm
-          notes '- In-process filter from the isolate, EgressProxy from a VM'
+          notes '- In-process filter from the isolate, the EgressProxy bridge from a VM; the fill and the call happen on Cloudflare either way'
         }
         signalbox.gateway -> signalbox.connections 'fill(destination)' {
           navigateTo folders_secrets_placeholder_fill
@@ -910,16 +924,16 @@ views {
         signalbox.mobile -> signalbox.funnel 'open terminal'
       }
     }
-    signalbox.funnel -> signalbox.computer 'exec shell with PTY'
-    alt 'where the PTY lives' {
-      when 'kernel' {
-        signalbox.computer -> signalbox.computer 'kernel PTY handle'
-      }
-      else 'escalated' {
-        signalbox.computer -> signalbox.computer 'node-pty in exec daemon' {
-          navigateTo state_computer
-          notes '- Same session from the client side; placement is hidden'
-        }
+    signalbox.funnel -> signalbox.computer 'exec login shell with PTY' {
+      notes '''
+        - Through the one command gateway, like every other caller
+        - GNU Bash in the kernel; kernel PTY handles do the line discipline; no banner
+      '''
+    }
+    opt 'an escalated interactive program (vim, dev server, docker)' {
+      signalbox.computer -> signalbox.computer 'node-pty on the VM, PTY bridged' {
+        navigateTo computer_terminal_session
+        notes '- Bytes, resize and signals cross the bridge; job control works; placement is hidden'
       }
     }
     opt 'events and metadata (T-TRM-06)' {

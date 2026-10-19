@@ -117,7 +117,7 @@ deployment {
       vm baseSnapshot 'Base snapshot' {
         instanceOf signalbox.bases.snapshots.boxdSnapshots
       }
-      vm proxyVm 'EgressProxy machines' {
+      vm proxyVm 'EgressProxy bridge' {
         instanceOf signalbox.gateway.egress.egressProxy
       }
     }
