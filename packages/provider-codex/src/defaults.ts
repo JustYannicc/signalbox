@@ -43,7 +43,10 @@ export const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEf
 export const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
-  extensions: { [MCP_APP_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME_TYPE] } },
+  extensions: {
+    "openai/standard-form-input": {},
+    [MCP_APP_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+  },
 } as const;
 
 export const CodexProviderCapabilitiesV2 = {

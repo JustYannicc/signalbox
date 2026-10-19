@@ -5091,14 +5091,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(mcpSessions.read(threadInput.threadId)),
                 Effect.flatMap((mcpSession) =>
-                  client.request(
-                    "thread/start",
-                    codexThreadRuntimeParams({
+                  client.request("thread/start", {
+                    ...codexThreadRuntimeParams({
                       mcpSession,
                       modelSelection: threadInput.modelSelection,
                       runtimePolicy: threadInput.runtimePolicy,
                     }),
-                  ),
+                    // Codex only surfaces full-access MCP input forms on user threads.
+                    threadSource: "user",
+                  }),
                 ),
               );
               const created = providerThreadFromCodexThread({
