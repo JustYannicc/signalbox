@@ -1,0 +1,63 @@
+views {
+  deployment view deployment {
+    title 'Deployment/Production'
+    description '''
+      Where does each part run in production? Everything is Cloudflare (EU) except command VMs on boxd. Each box is one
+      deploy unit; click into the thread host for where the harness lives. Containers run CLIProxyAPI only; boxd VMs only
+      run commands; Claude Code and Codex never run in a container or a VM.
+    '''
+    include prod.devices
+    include prod.cloudflare
+    include prod.cloudflare.app with { navigateTo deployment-app }
+    include prod.cloudflare.threadHost with { navigateTo deployment-thread-host }
+    include prod.cloudflare.poolHost with { navigateTo deployment-thread-host }
+    include prod.cloudflare.modelGw, prod.cloudflare.toolGw, prod.cloudflare.workflows, prod.cloudflare.queues,
+      prod.cloudflare.driveStore, prod.cloudflare.browserRun
+    include prod.boxdZone, prod.boxdZone.*
+    include prod.saas with { navigateTo deployment-edges }
+    autoLayout TopBottom
+  }
+
+  deployment view deployment-thread-host {
+    title 'Deployment/Where a turn runs'
+    description '''
+      Where do the harness loop and its commands run? In the Thread DO: Claude Code and Codex run as isolates in the
+      session facet next to the kernel filesystem, programs in child Dynamic Workers. Model bytes go out through the one
+      ModelGateway to the pool host (CLIProxyAPI is the only container). Only a command that needs a real machine
+      escalates to a boxd VM forked from a warm Base; its egress goes through EgressProxy.
+    '''
+    include prod.cloudflare
+    include prod.cloudflare.threadHost, prod.cloudflare.threadHost.threadDO, prod.cloudflare.threadHost.threadDO.*
+    include prod.cloudflare.threadHost.threadDO.sessionFacet.*, prod.cloudflare.threadHost.threadDO.children.*
+    include prod.cloudflare.modelGw, prod.cloudflare.modelGw.*, prod.cloudflare.toolGw, prod.cloudflare.toolGw.*
+    include prod.cloudflare.poolHost, prod.cloudflare.poolHost.cpaDO, prod.cloudflare.poolHost.cpaDO.*, prod.cloudflare.poolHost.cpaDO.cpa.*
+    include prod.boxdZone, prod.boxdZone.*, prod.boxdZone.threadVm.*, prod.boxdZone.baseSnapshot.*, prod.boxdZone.proxyVm.*
+    style prod.boxdZone.* { color blue }
+    autoLayout TopBottom
+  }
+
+  deployment view deployment-app {
+    title 'Deployment/App script'
+    description '''
+      What runs in the app script? The stateless front doors (Funnel, Ingress, Operations, Identity) and the Durable
+      Objects that own state: Level and Person (Tree), Repo (Drive), Pool custody (Models), Connection, Search shard.
+      Outbox fan-out goes over Queues; automation runs over Workflows.
+    '''
+    include prod.cloudflare
+    include prod.cloudflare.app, prod.cloudflare.app.*, prod.cloudflare.app.appActors.*
+    include prod.cloudflare.workflows, prod.cloudflare.queues, prod.cloudflare.threadHost, prod.cloudflare.poolHost
+    autoLayout LeftRight
+  }
+
+  deployment view deployment-edges {
+    title 'Deployment/Devices and SaaS'
+    description '''
+      What sits outside Cloudflare and boxd? People's devices (gateways that hold no work) on top; the SaaS that
+      production calls directly at the bottom: sign-in, model providers, forges. The other services are in Overview/Outside Signalbox.
+    '''
+    include prod.cloudflare, prod.boxdZone
+    include prod.saas, prod.saas.workos, prod.saas.anthropic, prod.saas.openai, prod.saas.github, prod.saas.google, prod.saas.atlassian
+    include prod.devices, prod.devices.*, prod.devices.browserDevice.*, prod.devices.laptop.*, prod.devices.phone.*
+    autoLayout TopBottom
+  }
+}

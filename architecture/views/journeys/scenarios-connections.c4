@@ -1,0 +1,1791 @@
+// Scenario shard 06: connections (SCN-124 to SCN-151). One question per view, played as a sequence.
+// Binding: everything placed resolves by the hierarchy only (thread's folder or an ancestor, reach below, nearest wins),
+// never by who sends, who started the thread or whose credential it is. Anything else arrives by an explicit, revocable loan.
+// People: A (own top level › Personal; Work › folder Company mounted), B (Work › folder Company › folder Team),
+// C (admin of folder Company). Modules are black boxes; steps target the module, its named actor or its public part.
+
+views {
+
+  // ───────────────────────────── Scenarios/Connections/Connect ─────────────────────────────
+
+  dynamic view scn_124_one_click_google_restricted_scopes {
+    #v1 #assumption
+    variant sequence
+    title 'Scenarios/Connections/Connect/One Click Google'
+    description '''
+      How does someone connect Google in one click when Gmail and Drive need restricted scopes?
+      Assumption: Google ships on the service's hosted OAuth client with `drive.file` for Drive (no assessment), Calendar under
+      verification and Gmail's restricted scopes under the 100-user cap while CASA Tier 2 runs; self-hosted brings its own client.
+      Why: MASTER 0.1 #1 (2026-10-18) requires one-click Google in iteration 1; principle 11, A30; #877 scope facts.
+      SCN-124 · v1 yes · P-ONB-07, R-CON-01, R-CON-24, R-PLC-28
+    '''
+
+    include personA, personC, mcpClient, signalbox.web, signalbox.connections, signalbox.tree, signalbox.gateway.toolGateway, services.google
+    include signalbox, services
+
+    personA -> signalbox.web 'Connect Google' {
+      navigateTo folders_connections_first_connection
+      notes """
+        - **Start:** no Google connection anywhere in A's tree
+        - A presses Connect Google on folder Company's page; nothing to set up first
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect(google, into)' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - Through the Funnel; `into` is the folder A is looking at
+      """
+    }
+    signalbox.connections -> services.google 'Hosted OAuth' {
+      navigateTo folders_connections_catalog_clients
+      notes """
+        - The service's own OAuth client: same tab on web, system browser on desktop and mobile
+        - Self-hosted: the operator's own client; same flow
+      """
+    }
+    personA -> services.google 'Consent' {
+      notes """
+        - Calendar (sensitive), `drive.file` and the restricted Gmail scopes on one screen
+      """
+    }
+    alt 'Google user cap (CASA Tier 2 pending)' {
+      when 'under the cap' {
+        signalbox.connections <- services.google 'Callback' {
+          notes """
+            - Completes by webhook; the Connection actor is created in EU custody
+          """
+        }
+        signalbox.connections -> signalbox.tree 'Place at Company' {
+          navigateTo folders_placement_create_then_place
+          notes """
+            - Create-then-place: unplaced custody is swept, so nothing half-made survives
+            - Reach below: every thread and agent at Company or under it, whoever sends
+          """
+        }
+      }
+      else 'cap hit' {
+        signalbox.web <- signalbox.connections 'Refused, nothing made' {
+          notes """
+            - The 101st person reads "Google limits new sign-ups until verification"
+          """
+        }
+      }
+    }
+    mcpClient -> signalbox.gateway.toolGateway "Company's MCP endpoint" {
+      notes """
+        - An agent with a key bound to folder Company (the v1 path)
+      """
+    }
+    signalbox.gateway.toolGateway -> signalbox.connections 'Toolbox at Place' {
+      navigateTo folders_connections_tool_search_call
+      notes """
+        - Tool search at Company now lists Gmail, Drive and Calendar tools
+      """
+    }
+    personC -> signalbox.web 'Sees it at Company' {
+      notes """
+        - C (admin) sees the row on Company's page, labelled with A's account
+        - B's agents in Company or Team get the same tools; A's personal folders don't
+        - **End:** Google tools usable at the chosen folder after one click, tokens in EU custody
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_125_second_google_account {
+    #v1 #decided
+    variant sequence
+    title 'Scenarios/Connections/Connect/Second Google Account'
+    description '''
+      How does someone add a second Google account to the same folder?
+      Decided: #288 (2026-10-14) same Connect button, labelled accounts; #364 (2026-10-14) unlimited accounts per service;
+      #287 (2026-10-14) the account is chosen per call.
+      SCN-125 · v1 yes · R-CON-06, R-CON-17, R-CON-07, R-CON-10
+    '''
+
+    include personA, signalbox.web, signalbox.connections, signalbox.tree, signalbox.gateway.toolGateway
+    include signalbox
+
+    personA -> signalbox.web 'Connect Google again' {
+      notes """
+        - **Start:** one Gmail already connected
+        - The same button, at the level where the second account should live
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect(google, into)' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - OAuth completes; a second Connection actor, one per credential
+        - No limit on accounts per service
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Place second account' {
+      notes """
+        - Its own placement, independent of the first
+      """
+    }
+    personA -> signalbox.web 'Relabel' {
+      navigateTo folders_connections_relabel
+      notes """
+        - Rows read "Gmail · personal" and "Gmail · newsletters"
+      """
+    }
+    signalbox.gateway.toolGateway -> signalbox.connections 'call with $account' {
+      navigateTo folders_connections_tool_search_call
+      notes """
+        - The agent picks the account per call
+        - Several accounts and no default: the tool lists them instead of guessing
+      """
+    }
+    personA -> signalbox.web 'Disconnect one' {
+      navigateTo folders_connections_disconnect
+    }
+    signalbox.connections -> signalbox.tree 'Unplace that one' {
+      notes """
+        - The delete saga removes only that connection's placements
+        - **End:** two labelled Gmail connections, each usable per call and removable alone
+        - **#decided** #288, #364, #287 (2026-10-14)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_126_connect_abandoned_or_failed {
+    #v1 #decided
+    variant sequence
+    title 'Scenarios/Connections/Connect/Abandoned Connect'
+    description '''
+      What happens when someone abandons a connect halfway or the provider fails?
+      Decided: #288 (2026-10-14) acceptance: "A failed or abandoned connect leaves no half-made connection, and the UI says what happened".
+      SCN-126 · v1 yes · R-CON-01, R-PLC-28, R-POL-09
+    '''
+
+    include personA, signalbox.web, signalbox.connections, signalbox.tree, signalbox.observability, services.google
+    include signalbox, services
+
+    personA -> signalbox.web 'Connect Google' {
+      notes """
+        - **Start:** a connect is started from a folder page
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect → ticket' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - Connections returns a ticket and opens the provider
+      """
+    }
+    signalbox.connections -> services.google 'Open consent'
+    alt 'how it ends' {
+      when 'A closes the page' {
+        signalbox.connections -> signalbox.connections 'Ticket expires' {
+          notes """
+            - The ticket is never redeemed and runs out
+          """
+        }
+      }
+      else 'denied or provider error' {
+        signalbox.connections <- services.google 'ConnectFailed' {
+          notes """
+            - The webhook reports the denial or the provider's error
+          """
+        }
+      }
+    }
+    signalbox.connections -> signalbox.tree 'Nothing placed' {
+      navigateTo folders_placement_create_then_place
+      notes """
+        - No Connection actor is placed
+        - Any custody actor left unplaced is deleted by the sweeper past its TTL
+      """
+    }
+    signalbox.connections -> signalbox.observability 'Record outcome' {
+      notes """
+        - The failed connect is a wide event, so it can be traced later
+      """
+    }
+    signalbox.web <- signalbox.connections 'Say what happened' {
+      notes """
+        - "Google connect was cancelled", or the provider's own reason
+      """
+    }
+    personA -> signalbox.web 'Retry' {
+      notes """
+        - **End:** no half-made connection anywhere; the same button works again
+        - **#decided** #288 (2026-10-14)
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Connections/Reach ─────────────────────────────
+
+  dynamic view scn_127_top_level_gmail_reaches_company {
+    #v1 #assumption
+    variant sequence
+    title 'Scenarios/Connections/Reach/Top Level Gmail'
+    description '''
+      Does Gmail placed at Person A's top level reach Company threads?
+      Assumption: yes, but only for threads whose Place runs through A's mount; everyone else's Company work never sees it,
+      and A narrows it with the per-placement `here` toggle. Why: MASTER 0.1 #3 (reach below, nearest wins),
+      A2 (chain = Place including `via`), A3 (default `below`, `here` toggle).
+      SCN-127 · v1 partial · R-PLC-13, R-PLC-03, R-TRE-15, P-SET-09, R-TRE-12
+    '''
+
+    include personA, personB, personC, signalbox.web, signalbox.connections, signalbox.thread.threadActor, signalbox.tree
+    include signalbox
+
+    personA -> signalbox.web 'Connect at top level' {
+      notes """
+        - **Start:** A connects personal Gmail at their own top level
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect(gmail, into)'
+    signalbox.connections -> signalbox.tree 'Place, reach below' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - Default reach is `below`: everything under A's top level
+      """
+    }
+    alt 'whose thread resolves' {
+      when "A's thread in Company" {
+        signalbox.thread.threadActor -> signalbox.tree 'resolve {Company, via: A}' {
+          navigateTo folders_placement_place
+          notes """
+            - The Place carries A's mount, so the chain runs Company › Work › A's top level
+          """
+        }
+        signalbox.thread.threadActor <- signalbox.tree "A's Gmail in Scope"
+      }
+      else "B's thread in Team" {
+        personB -> signalbox.thread.threadActor 'Send in Team' {
+          notes """
+            - B's thread sits at `{Team, via: B}`: the chain runs through B's mount, not A's
+            - Company's own agent and automations have no `via`, so they never see it either
+          """
+        }
+        signalbox.thread.threadActor -> signalbox.tree 'resolve {Team, via: B}'
+        signalbox.thread.threadActor <- signalbox.tree 'No Gmail of A' {
+          notes """
+            - B sending in a thread never changes what resolves
+          """
+        }
+      }
+    }
+    personC -> signalbox.web "Company's connections" {
+      notes """
+        - A's Gmail isn't listed on Company's page: it isn't placed there
+      """
+    }
+    personA -> signalbox.web 'Read the row' {
+      navigateTo journey_daily_folder_page
+      notes """
+        - "Reaches everything below, including Work › Company through your mount"
+      """
+    }
+    personA -> signalbox.web 'Flip to here' {
+      notes """
+        - `here` keeps it at A's top level only (A's assistant); or A moves it to folder Personal
+      """
+    }
+    signalbox.web -> signalbox.tree 'SetReach here' {
+      navigateTo folders_placement_place
+    }
+    opt 'A leaves folder Company' {
+      signalbox.tree -> signalbox.thread.threadActor 'Mount inactive' {
+        navigateTo state_mount
+        notes """
+          - Those threads lose A's Gmail on the next resolve (A44)
+          - **End:** it's clear which Company threads use it, and A can narrow it
+          - **#assumption** only threads placed through A's mount
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_128_connection_not_on_chain {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Reach/Connection Not On Chain'
+    description '''
+      What happens when a teammate's turn needs a connection that isn't above the thread?
+      Decided: owner (2026-10-18) "It does not matter who is asking because it's based on the hierarchy"; #245 (2026-10-16)
+      ask the person's assistant, lent items serve every turn (supersedes #225 §5); #279 (2026-10-14) a blocked call becomes an access request.
+      SCN-128 · not v1 (needs threads and the assistant) · P-BLK-04, P-BLK-05, P-BLK-06, P-AST-07, R-LND-03
+    '''
+
+    include personB, personC, personA, hier.asstA, signalbox.thread.threadActor, signalbox.gateway.toolGateway, signalbox.attention, signalbox.tree
+    include signalbox, hier
+
+    personB -> signalbox.thread.threadActor "Needs A's mail" {
+      notes """
+        - **Start:** B's turn in folder Team calls a Gmail tool that doesn't resolve at Team
+        - The agent acts the same whoever is talking
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.gateway.toolGateway 'Gmail call'
+    signalbox.thread.threadActor <- signalbox.gateway.toolGateway 'AccessRequired' {
+      notes """
+        - `{kind, canPlace, orAskToLend}`: A's Gmail sits at A's top level, not above Team
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'Turn parks' {
+      notes """
+        - Parked on the ask (A39); B's thread shows "waiting on A"
+      """
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'Raise asks' {
+      navigateTo person_pipeline_blocker_access
+    }
+    parallel {
+      signalbox.attention -> personC 'Blocker: place one?' {
+        notes """
+          - Role holders on the chain: C could place a Company Gmail
+        """
+      }
+      signalbox.attention -> hier.asstA 'Lend request' {
+        navigateTo person_assistant_lend_request
+        notes """
+          - The person-owned resource request goes to A's assistant
+        """
+      }
+    }
+    alt 'how it resolves' {
+      when 'A lends into Team' {
+        hier.asstA -> personA 'Consent to lend?' {
+          notes """
+            - The assistant prepares the loan; consent is human-only
+          """
+        }
+        personA -> signalbox.tree 'Lend into Team' {
+          navigateTo folders_lending_lend
+        }
+      }
+      when 'C places Company Gmail' {
+        personC -> signalbox.tree 'Place at Company'
+      }
+      else 'declined' {
+        signalbox.attention -> signalbox.thread.threadActor 'Decline as message' {
+          notes """
+            - The agent gets the answer and stops or works around it
+          """
+        }
+      }
+    }
+    signalbox.tree -[async]-> signalbox.thread.threadActor 'Resume, re-resolve' {
+      notes """
+        - **End:** the turn continues on a re-resolved Scope
+        - Lent into Team, it serves every turn there, whoever sends
+        - **#decided** owner 2026-10-18, #245, #279
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_129_only_me_or_everyone_here {
+    #v1 #assumption
+    variant sequence
+    title 'Scenarios/Connections/Reach/Only Me Or Everyone'
+    description '''
+      When someone connects inside folder Company, how do they pick "only me" or "everyone here"?
+      Assumption: there is no person-acting or folder-acting kind; #288's "only me / everyone in this folder" becomes the placement
+      target in the connect dialog (own tree, lend, or place with the role). Why: owner override 2026-10-18 (hierarchy only),
+      design §3.10 invariant, A34; dialog copy pending #288.
+      SCN-129 · v1 partial · R-CON-01, R-PLC-13, R-LND-01, R-LND-03
+    '''
+
+    include personB, personC, signalbox.web, signalbox.operations, signalbox.connections, signalbox.tree
+    include signalbox
+
+    personB -> signalbox.web 'Connect in Team' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - **Start:** B, a Member, presses Connect while in folder Team
+      """
+    }
+    signalbox.web -> signalbox.operations 'Targets for B?' {
+      notes """
+        - Authority check per target through Tree's `can`
+      """
+    }
+    signalbox.web <- signalbox.operations 'Top level or lend' {
+      notes """
+        - "Into: my top level" or "Lend into Team" (Member+, human consent)
+        - Never a sender rule like "only when I send"
+      """
+    }
+    alt 'where it goes' {
+      when 'B: own top level' {
+        signalbox.web -> signalbox.connections 'connect(into: B top level)'
+        signalbox.connections -> signalbox.tree 'Place at B top level' {
+          navigateTo folders_placement_kind_pool_connection
+          notes """
+            - Resolves for B's levels and threads filed through B's mount, nobody else's
+          """
+        }
+      }
+      when 'B: lend into Team' {
+        signalbox.web -> signalbox.connections 'connect(into: B top level)'
+        signalbox.web -> signalbox.tree 'Loan into Team' {
+          navigateTo folders_lending_lend
+          notes """
+            - Every Team thread resolves it, whoever sends; B can end the loan
+          """
+        }
+      }
+      else 'C: place at Company' {
+        personC -> signalbox.web 'Place at Company' {
+          notes """
+            - C is admin, so "Place at Company" (reach below) is offered too
+          """
+        }
+        signalbox.web -> signalbox.connections 'connect(into: Company)'
+        signalbox.connections -> signalbox.tree 'Place at Company' {
+          notes """
+            - Every thread at Company and below resolves it; whose account it is shows only as the label
+            - **End:** the connection has one home, and that home alone decides who uses it
+            - **#assumption** "only me / everyone" is the placement target
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Connections/Lifecycle ─────────────────────────────
+
+  dynamic view scn_130_connection_revoked_mid_turn {
+    #v1 #assumption
+    variant sequence
+    title 'Scenarios/Connections/Lifecycle/Revoked Mid Turn'
+    description '''
+      What happens when a connection is revoked or expires while a turn uses it?
+      Assumption: revocation and expiry take effect mid-session via the epoch bump; a person is pushed only when a turn is actually
+      blocked on it, otherwise "needs attention" stays on the folder page (pending #320). Why: #344 acceptance "Disconnecting revokes
+      access at once, including in running sessions"; design §3.11 M11 refresh denies on removals; principle 3.
+      SCN-130 · v1 partial · R-CON-11, R-CON-27, R-CON-08, R-MGW-03, R-CON-09
+    '''
+
+    include personB, personC, signalbox.web, signalbox.thread.threadActor, signalbox.gateway, signalbox.connections, signalbox.attention, services.google
+    include signalbox, services
+
+    personB -> signalbox.thread.threadActor 'Turn running' {
+      notes """
+        - **Start:** B's turn in folder Team uses Company's Google, placed at Company by C
+      """
+    }
+    alt 'what breaks' {
+      when 'C revokes' {
+        personC -> signalbox.connections 'Revoke'
+      }
+      else 'refresh fails' {
+        signalbox.connections -> services.google 'Refresh token' {
+          navigateTo folders_connections_token_refresh
+        }
+        signalbox.connections <- services.google 'invalid_grant'
+      }
+    }
+    signalbox.connections -> signalbox.gateway 'Epoch bump' {
+      navigateTo folders_connections_cut_off
+      notes """
+        - Serve refuses within 15 s; grant refresh denies
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.gateway 'Next tool call'
+    signalbox.thread.threadActor <- signalbox.gateway 'Denied / reauth' {
+      navigateTo folders_gateway_grant
+      notes """
+        - A typed error; the agent continues with that result
+      """
+    }
+    alt 'can the turn go on?' {
+      when 'blocked on it' {
+        signalbox.thread.threadActor -[async]-> signalbox.attention 'One Blocker'
+        signalbox.attention -> personC 'Sign in again' {
+          notes """
+            - Only to the people who placed it
+          """
+        }
+      }
+      else 'not blocked' {
+        signalbox.connections -> signalbox.web 'Needs attention' {
+          notes """
+            - Shown on the folder page row; nobody is pushed
+          """
+        }
+      }
+    }
+    personC -> signalbox.web 'Reauth'
+    signalbox.web -> signalbox.connections 'Complete OAuth' {
+      navigateTo state_connection
+      notes """
+        - The final OAuth step is human-only
+        - **End:** the same Connection actor keeps its placements
+        - **#assumption** epoch bump mid-session; push only when blocked (pending #320)
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_131_disconnect_lent_connection {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Lifecycle/Disconnect Lent Connection'
+    description '''
+      What happens when someone disconnects a connection that is lent into other folders?
+      Assumption: disconnect always works from the owner's side and cascades through every loan via the delete saga; loans never
+      outlive their connection. Why: #288 (2026-10-14) "Disconnect and reconnect are always available"; design S6 delete saga and
+      the outbound-placements index (§2.3, §3.10).
+      SCN-131 · not v1 (loans and turns; plain disconnect is v1, see SCN-125) · R-CON-10, R-LND-05, R-CON-27, R-GAT-01, P-BLK-04
+    '''
+
+    include personA, personC, signalbox.web, signalbox.connections, signalbox.tree, signalbox.gateway, signalbox.thread.threadActor, signalbox.attention
+    include signalbox
+
+    personA -> signalbox.web 'Open the row' {
+      notes """
+        - **Start:** A's connection is lent into folder Company
+        - The row lists "placed at / lent to", with End loan even for folders A can't open
+      """
+    }
+    personA -> signalbox.web 'Disconnect' {
+      navigateTo folders_gates_destructive
+      notes """
+        - Always available; an agent asking for it passes the decision gate
+      """
+    }
+    signalbox.web -> signalbox.connections 'disconnect' {
+      navigateTo folders_connections_disconnect
+      notes """
+        - Sets `retiring`: serve refuses at once
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Unplace all, end loans' {
+      navigateTo folders_lending_end_loan
+      notes """
+        - Every placement and loan from the outbound index, then the sealed credential is deleted
+        - A sweeper resumes a stalled saga
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.gateway 'Grant refresh'
+    signalbox.thread.threadActor <- signalbox.gateway 'Denied' {
+      navigateTo folders_connections_cut_off
+      notes """
+        - Running Company turns lose it at their next refresh
+      """
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'AccessRequired'
+    signalbox.attention -> personC 'Blocker: place your own' {
+      navigateTo person_pipeline_blocker_access
+      notes """
+        - **End:** every placement and loan gone; Company threads ask for a replacement
+        - **#assumption** disconnect cascades through every loan
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_132_source_narrows_to_drive_folder {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Reach/Source Narrows Drive'
+    description '''
+      How does an admin narrow a Google account to one Drive folder for folder Team?
+      Assumption: a source is a narrowing placement of an existing connection (or drive) at one folder; everything outside it
+      resolves as not placed and follows the normal Place-or-Lend path. Why: A43 (one `Map` command in Connections),
+      #225 §1 source definition, hierarchy-only resolution; pending #484.
+      SCN-132 · v1 no · R-CON-22, R-PLC-20, W-SRC-01, W-SRC-03, W-SRC-05
+    '''
+
+    include personC, personB, signalbox.web, signalbox.connections, signalbox.tree, signalbox.computer, signalbox.drive, signalbox.attention
+    include signalbox
+
+    personC -> signalbox.web 'Paste Drive folder link' {
+      navigateTo folders_connections_map_source
+      notes """
+        - **Start:** Company's whole Google account is placed at folder Company
+        - C pastes the Payments folder link on Team's folder page
+      """
+    }
+    signalbox.web -> signalbox.connections 'Map{from, resource, at: Team}'
+    signalbox.connections -> signalbox.tree 'Source at Team' {
+      navigateTo folders_placement_kind_source
+      notes """
+        - A source placement at Team, reach below
+      """
+    }
+    personB -> signalbox.computer "B's agent reads /sources/" {
+      navigateTo work_sources_map
+      notes """
+        - B's agent in a Team thread sees `/sources/payments/` as files
+      """
+    }
+    signalbox.computer -> signalbox.drive 'List, read, write' {
+      navigateTo work_sources_read
+      notes """
+        - Just Files: ordinary file operations on the mapped folder
+      """
+    }
+    signalbox.drive -> signalbox.connections 'Inside Payments'
+    opt 'a call outside the folder' {
+      signalbox.drive <- signalbox.connections 'Typed refusal' {
+        notes """
+          - Outside the mapped folder counts as not placed
+        """
+      }
+      signalbox.connections -[async]-> signalbox.attention 'Access request'
+      signalbox.attention -> personC 'Place wider or lend' {
+        notes """
+          - **End:** Team's agents see only Payments unless C places or lends more
+          - **#assumption** a source narrows a placement (pending #484)
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_133_task_scoped_loan {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Reach/Task Scoped Loan'
+    description '''
+      Can someone lend Gmail for one task so the loan ends when the task is done?
+      Decided: #279 (2026-10-14) prototype capture "the task is done, so the loan ended"; grants are time-limited and revocable at once.
+      SCN-133 · v1 no · R-LND-02, R-LND-03, R-LND-06, P-AST-07, R-LND-05
+    '''
+
+    include personB, personA, hier.asstA, signalbox.thread.threadActor, signalbox.gateway.toolGateway, signalbox.tree, signalbox.connections
+    include signalbox, hier
+
+    personB -> signalbox.thread.threadActor "Task needs A's mail" {
+      notes """
+        - **Start:** B's agent in folder Team is blocked on A's Gmail
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.gateway.toolGateway 'Gmail call'
+    signalbox.thread.threadActor <- signalbox.gateway.toolGateway 'AccessRequired'
+    signalbox.thread.threadActor -[async]-> hier.asstA 'Lend request' {
+      navigateTo person_assistant_lend_request
+      notes """
+        - Routed through Attention to A's assistant
+      """
+    }
+    hier.asstA -> personA 'Lend until done?' {
+      notes """
+        - Loan consent is human-only; the assistant only prepares it
+      """
+    }
+    personA -> signalbox.tree 'Lend until task done' {
+      navigateTo folders_lending_lend
+      notes """
+        - A loan into B's thread with `until: task done`
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Re-resolve'
+    signalbox.thread.threadActor <- signalbox.tree "A's Gmail in Scope" {
+      notes """
+        - B's turns get a grant that includes it
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Thread settles' {
+      navigateTo state_loan
+      notes """
+        - The loan expires; running turns finish, new turns re-resolve without it
+      """
+    }
+    signalbox.tree -> signalbox.connections 'Trail kept' {
+      navigateTo folders_lending_end_loan
+      notes """
+        - The row shows asked, lent, ended
+        - **End:** loan ended automatically, trail kept
+        - **#decided** #279 (2026-10-14)
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_136_ci_github_interim_loan {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Reach/CI GitHub Loan'
+    description '''
+      How does CI get GitHub before the folder's GitHub App exists?
+      Decided: #641 (2026-10-16) interim = the person's GitHub lent explicitly into the folder, visible and revocable, behind one
+      `GitHubActions` service; the folder GitHub App is still unbuilt.
+      SCN-136 · v1 no · W-BAS-12, R-LND-01, R-CON-03, R-CON-04, R-LND-05
+    '''
+
+    include personA, personC, signalbox.automations, signalbox.gateway, signalbox.tree, signalbox.connections, signalbox.attention, services.github
+    include signalbox, services
+
+    signalbox.automations -> signalbox.gateway 'Dispatch CI' {
+      navigateTo work_bases_ci_actions
+      notes """
+        - **Start:** a Company automation step runs `w.run(…, {on: "github-actions"})`
+      """
+    }
+    signalbox.automations <- signalbox.gateway 'AccessRequired' {
+      notes """
+        - No GitHub is placed at Company or above
+      """
+    }
+    personA -> signalbox.tree 'Lend GitHub to Company' {
+      navigateTo folders_lending_lend
+      notes """
+        - Human-only consent; the row reads "CI steps run as @login"
+      """
+    }
+    signalbox.automations -> signalbox.gateway 'Dispatch CI'
+    signalbox.gateway -> signalbox.connections 'Per-call token'
+    signalbox.connections -> services.github 'workflow_dispatch' {
+      notes """
+        - Machines never hold a GitHub credential
+      """
+    }
+    personA -> signalbox.tree 'End loan' {
+      navigateTo folders_lending_end_loan
+    }
+    signalbox.automations <- signalbox.gateway 'AccessRequired'
+    signalbox.gateway -[async]-> signalbox.attention 'Blocker'
+    signalbox.attention -> personC 'Install GitHub App?'
+    personC -> signalbox.connections 'Install App at Company' {
+      navigateTo folders_connections_github
+      notes """
+        - The `GitHubActions` service swaps to the App
+        - **End:** CI runs as the folder, not as A
+        - **#decided** #641 (2026-10-16)
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Connections/Tools ─────────────────────────────
+
+  dynamic view scn_134_limit_connection_to_harness {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Tools/Limit To Harness'
+    description '''
+      Can an admin limit a connection to Codex turns only?
+      Assumption: no per-harness narrowing for now; resolution stays hierarchy-only and harness-agnostic, and folders or level
+      policies cover the need. Why: owner rule (hierarchy only), principle 7 and YAGNI; pending #324.
+      SCN-134 · v1 no · R-CON-25, R-CON-20, W-MCP-01, R-PLC-31
+    '''
+
+    include personC, signalbox.web, signalbox.harness, signalbox.gateway.toolGateway, signalbox.tree, signalbox.connections
+    include signalbox
+
+    personC -> signalbox.web "Find 'Available to'" {
+      notes """
+        - **Start:** the connection reaches every harness at Company
+        - There is no "Available to" control on the row
+      """
+    }
+    signalbox.harness -> signalbox.gateway.toolGateway 'Per-turn MCP URL' {
+      navigateTo folders_connections_turn_and_run_reach
+      notes """
+        - Every placed connection reaches any harness's turn as MCP
+      """
+    }
+    alt 'how C narrows it' {
+      when 'by folder' {
+        personC -> signalbox.tree 'Place at Codex folder' {
+          navigateTo folders_placement_resolve
+        }
+      }
+      else 'by policy' {
+        personC -> signalbox.tree 'Bind tool.beforeCall' {
+          navigateTo folders_connections_tool_call_gates
+          notes """
+            - A level policy that refuses the call outside Codex turns
+          """
+        }
+      }
+    }
+    signalbox.gateway.toolGateway -> signalbox.tree 'resolve(Place)'
+    alt 'which turn' {
+      when 'Codex turn in that folder' {
+        signalbox.gateway.toolGateway <- signalbox.tree 'In Scope'
+        signalbox.gateway.toolGateway -> signalbox.connections 'Tools listed' {
+          navigateTo work_agenttools_tools_in_turn
+        }
+      }
+      else 'Claude Code turn outside' {
+        signalbox.gateway.toolGateway <- signalbox.tree 'Not placed above' {
+          notes """
+            - **End:** kept off other work without a per-harness toggle
+            - **#assumption** no harness narrowing (pending #324)
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_135_direct_mcp_server {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Tools/Direct MCP Server'
+    description '''
+      How does someone add their own MCP server next to managed connections?
+      Decided 2026-10-19: every server goes through Executor (ToolGateway + Connections), placed on a level and applied per turn,
+      never a machine install. Behind Executor, servers are sorted by kind; credentials are keyed by server URL from the vault.
+      Its tools default to `search` exposure; `direct` gives them a native-named entry, still pointing at Executor.
+      SCN-135 · v1 no · R-PLC-21, R-CON-12, W-HAR-07, W-MCP-01
+    '''
+
+    include personB, signalbox.web, signalbox.tree, signalbox.harness, signalbox.connections, signalbox.computer, signalbox.desktop.deviceGateway, services.toolService
+    include signalbox, services
+
+    personB -> signalbox.web 'Add server at Team' {
+      navigateTo folders_placement_kind_skill_plugin
+      notes """
+        - **Start:** B wants an MCP server for folder Team's threads
+        - A URL, or command, args and env as `{{secret:NAME}}` placeholders
+      """
+    }
+    signalbox.web -> signalbox.connections 'Register server' {
+      navigateTo folders_connections_tool_service
+      notes """
+        - Executor owns it: auth, credentials (keyed by server URL) and routing
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Place on Team' {
+      notes """
+        - One home and reach; never a machine or laptop install
+      """
+    }
+    signalbox.harness -> signalbox.connections 'Tool call' {
+      navigateTo folders_connections_tool_exposure
+      notes """
+        - Through the `executor` entry, or a native-named entry if a tool is `direct`
+        - Both point at Executor; never `managed-mcp.json`
+      """
+    }
+    alt 'server kind' {
+      when 'remote HTTP' {
+        signalbox.connections -> services.toolService 'Proxy'
+      }
+      when 'network-only stdio' {
+        signalbox.connections -> signalbox.computer 'Kernel program' {
+          navigateTo work_computer_kernel_exec
+        }
+      }
+      when 'native or Python' {
+        signalbox.connections -> signalbox.computer "Thread's VM" {
+          navigateTo work_computer_escalate
+        }
+      }
+      else "only on B's machine" {
+        signalbox.connections -> signalbox.desktop.deviceGateway 'Device gateway' {
+          navigateTo work_computer_laptop_gateway
+          notes """
+            - Only for threads under the level B's device is placed at
+            - Offline: "device offline", a needs-you state
+          """
+        }
+      }
+    }
+    signalbox.harness <- signalbox.connections 'Result' {
+      notes """
+        - **End:** one placement, one gateway, wherever the server runs
+        - **#decided** 2026-10-19
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Connections/Secrets ─────────────────────────────
+
+  dynamic view scn_137_readable_secret_flag {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Readable Secret'
+    description '''
+      How does an admin mark a secret readable by programs on purpose?
+      Assumption: new secrets are swap-in only, a per-secret readable flag opts in, and existing secrets migrate only by a visible
+      owner choice (option c). Why: #395/#592 (2026-10-16) decided swap-in default and #696 the flag; the migration rule is
+      pending #855 (MASTER 4.M M2).
+      SCN-137 · v1 no · R-SEC-07, R-SEC-04, R-PLC-14
+    '''
+
+    include personC, personB, signalbox.web, signalbox.tree, signalbox.harness, signalbox.computer, signalbox.gateway.egress
+    include signalbox
+
+    personC -> signalbox.web 'Add secret at Company' {
+      navigateTo folders_placement_kind_secret
+      notes """
+        - **Start:** a new secret is swap-in only and never appears in `env`
+      """
+    }
+    signalbox.web -> signalbox.tree 'Place secret ref'
+    personB -> signalbox.harness 'Turn in Team'
+    signalbox.harness -> signalbox.computer 'Uses {{secret:NAME}}'
+    signalbox.computer -> signalbox.gateway.egress 'Fill on the way out' {
+      navigateTo folders_secrets_placeholder_fill
+      notes """
+        - The program only ever sees the placeholder
+      """
+    }
+    personC -> signalbox.web 'Mark readable' {
+      navigateTo folders_secrets_readable
+      notes """
+        - Warns: a program can now print, persist or commit it
+        - Existing secrets keep their env behaviour until their owner makes a visible migration choice
+      """
+    }
+    signalbox.web -> signalbox.tree 'readable: true'
+    signalbox.harness -> signalbox.computer 'Next turn: env var' {
+      notes """
+        - From the next turn it's a real env var in exec
+      """
+    }
+    opt 'C unmarks it' {
+      personC -> signalbox.web 'Unmark' {
+        notes """
+          - **End:** gone from `env` from the next turn; marking stays deliberate and reversible
+          - **#assumption** swap-in default, per-secret flag (migration pending #855)
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_138_secret_new_destination {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Secrets/New Destination'
+    description '''
+      What happens the first time a secret is sent to a host it hasn't gone to before?
+      Decided: #592 (2026-10-16) first use against a new host raises one needs-you, Always stops later prompts, revoking stops the next
+      use; #697 (2026-10-18) Always is keyed by folder.
+      SCN-138 · v1 no · R-SEC-05, W-APR-16, R-SEC-04, W-CMP-17
+    '''
+
+    include personB, personC, signalbox.harness, signalbox.computer, signalbox.gateway.egress, signalbox.tree, signalbox.attention
+    include signalbox
+
+    personB -> signalbox.harness 'Turn in Team' {
+      notes """
+        - **Start:** B's agent uses a Company secret against a host it never went to
+      """
+    }
+    signalbox.harness -> signalbox.computer 'Request to new host'
+    signalbox.computer -> signalbox.gateway.egress 'Fill {{secret:NAME}}' {
+      navigateTo folders_secrets_placeholder_fill
+      notes """
+        - The fill parks with `NeedsDecision`
+      """
+    }
+    signalbox.gateway.egress -> signalbox.tree "Secret's home" {
+      notes """
+        - Asks go to the people responsible where the secret is placed (Company), not the turn's sender
+      """
+    }
+    signalbox.gateway.egress -[async]-> signalbox.attention 'One ask' {
+      navigateTo work_approvals_secret_destination
+    }
+    signalbox.attention -> personC 'Send X to host?' {
+      notes """
+        - Don't send · Send this turn · Always
+      """
+    }
+    alt "C's answer" {
+      when 'Always' {
+        personC -> signalbox.tree 'Remember' {
+          notes """
+            - Keyed by folder + secret + destination; revoking it stops the next use
+            - Binding the same 1Password Environment elsewhere never carries it
+          """
+        }
+        signalbox.computer <- signalbox.gateway.egress 'Filled, sent'
+      }
+      when 'Send this turn' {
+        signalbox.computer <- signalbox.gateway.egress 'Filled once'
+      }
+      else "Don't send" {
+        signalbox.computer <- signalbox.gateway.egress 'Refused' {
+          navigateTo work_computer_egress_kernel
+          notes """
+            - **End:** one ask; "Always" remembered per folder, secret and destination
+            - **#decided** #592 (2026-10-16), #697 (2026-10-18)
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_139_secret_wrong_host_or_body {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Wrong Host Or Body'
+    description '''
+      What happens when an agent sends a key to a refused host or inside a request body?
+      Decided: #592 (2026-10-16) acceptance: refusals are trail steps; body placeholders are refused unless the secret allows bodies.
+      SCN-139 · v1 no · R-SEC-04, W-CMP-17, W-CMP-16, W-TRN-30
+    '''
+
+    include personB, signalbox.harness, signalbox.computer, signalbox.gateway.egress, signalbox.thread.threadActor, signalbox.observability
+    include signalbox
+
+    personB -> signalbox.harness 'Turn in Team' {
+      notes """
+        - **Start:** B's agent misuses a `{{secret:NAME}}` placeholder
+      """
+    }
+    alt 'where the placeholder goes' {
+      when 'to a refused host' {
+        signalbox.harness -> signalbox.computer 'Request to other.example' {
+          notes """
+            - Answered "Don't send", or not a destination for that secret
+          """
+        }
+        signalbox.computer -> signalbox.gateway.egress 'Fill?' {
+          navigateTo work_computer_egress_kernel
+          notes """
+            - In-process filter in the isolate tier; EgressProxy on a VM
+          """
+        }
+      }
+      else 'in a body to an allowed host' {
+        signalbox.harness -> signalbox.computer 'Placeholder in body'
+        signalbox.computer -> signalbox.gateway.egress 'Fill?' {
+          navigateTo work_computer_egress_vm
+          notes """
+            - Refused unless that secret allows bodies
+          """
+        }
+      }
+    }
+    signalbox.computer <- signalbox.gateway.egress 'Refused, nothing filled' {
+      navigateTo folders_secrets_placeholder_fill
+    }
+    signalbox.gateway.egress -[async]-> signalbox.thread.threadActor 'Trail step' {
+      navigateTo work_turns_activity_log
+      notes """
+        - The thread shows "Refused X → other.example"
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.observability 'Span'
+    signalbox.harness <- signalbox.computer 'Refusal as result' {
+      notes """
+        - **End:** nothing filled, refusal visible in the thread's trail
+        - **#decided** #592 (2026-10-16)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_140_agent_prints_secret {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Agent Prints Secret'
+    description '''
+      What happens when an agent prints a secret to its output?
+      Decided: #591 fixed by #602 (2026-10-16): one deterministic scrubber at the gateway, all encodings, streaming holdback, fails closed.
+      SCN-140 · v1 no · R-MGW-06, R-SEC-04, W-TRN-30
+    '''
+
+    include personB, signalbox.harness, signalbox.computer, signalbox.gateway.modelGateway, signalbox.gateway.egress, signalbox.thread.threadActor, signalbox.observability
+    include signalbox
+
+    personB -> signalbox.harness 'Turn in Team' {
+      notes """
+        - **Start:** a secret value is about to appear in program output
+      """
+    }
+    signalbox.harness -> signalbox.computer 'echo $KEY' {
+      navigateTo folders_secrets_placeholder_fill
+      notes """
+        - Or `cat .env`, or a stack trace that prints config
+      """
+    }
+    signalbox.harness <- signalbox.computer 'Output with value'
+    signalbox.harness -> signalbox.gateway.modelGateway 'Next model call'
+    signalbox.gateway.modelGateway -> signalbox.gateway.egress 'Scrub' {
+      navigateTo folders_gateway_egress_filter
+      notes """
+        - Replaces the value and its encodings (base64, URL, JSON, hex), even split across chunks
+        - Fails closed until the thread's values are registered
+      """
+    }
+    parallel {
+      signalbox.gateway.egress -> signalbox.thread.threadActor 'Scrubbed rows' {
+        navigateTo work_turns_activity_log
+        notes """
+          - Frames, session rows and the transcript
+        """
+      }
+      signalbox.gateway.egress -> signalbox.observability 'Scrubbed logs, spans'
+    }
+    signalbox.harness <- signalbox.gateway.modelGateway 'Model sees placeholder' {
+      notes """
+        - **End:** model, transcript, logs and spans see only `{{secret:NAME}}`
+        - **#decided** #591 / #602 (2026-10-16)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_141_secret_reach_subfolders {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Secret Reach'
+    description '''
+      Does a folder Company secret reach threads in folder Team?
+      Assumption: secret references reach below like every kind; "own folder only" is the per-placement `here` toggle, not a different
+      default. Why: MASTER 0.1 #3 (owner 2026-10-18, latest) supersedes #395/#592's own-folder default (2026-10-16); design A3;
+      exception status pending MASTER 4.M.
+      SCN-141 · v1 no · R-PLC-14, R-PLC-03, R-SEC-04
+    '''
+
+    include personC, personB, signalbox.web, signalbox.tree, signalbox.harness, signalbox.gateway.egress, signalbox.attention
+    include signalbox
+
+    personC -> signalbox.web 'Place secret at Company' {
+      navigateTo folders_placement_kind_secret
+      notes """
+        - **Start:** a secret reference placed at folder Company
+      """
+    }
+    signalbox.web -> signalbox.tree 'Place, reach below' {
+      navigateTo folders_placement_place
+      notes """
+        - Default reach `below`, like every placed kind
+      """
+    }
+    personB -> signalbox.harness 'Turn in Team'
+    signalbox.harness -> signalbox.gateway.egress '{{secret:NAME}}' {
+      navigateTo folders_secrets_placeholder_fill
+    }
+    signalbox.gateway.egress -> signalbox.tree 'Resolve Team chain'
+    signalbox.gateway.egress <- signalbox.tree "Company's ref" {
+      notes """
+        - Team › Company: found at Company. A secret placed at Team itself would win (nearest wins)
+      """
+    }
+    personC -> signalbox.web 'Flip to here'
+    signalbox.web -> signalbox.tree 'SetReach here'
+    signalbox.harness -> signalbox.gateway.egress 'Next turn'
+    signalbox.gateway.egress -[async]-> signalbox.attention 'Access request' {
+      notes """
+        - Team gets a typed "not available here" and an access request
+        - **End:** usable in Team by default; C can keep it to Company alone
+        - **#assumption** secrets reach below (pending MASTER 4.M)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_142_company_secrets_folder_binding {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Company 1Password'
+    description '''
+      Whose 1Password does a teammate's turn use for Company secrets?
+      Decided: #592 (2026-10-16) "The folder's owner resolves, never the turn's sender"; #697 (2026-10-18) a vault or Environment per folder.
+      SCN-142 · v1 no · R-SEC-03, R-SEC-04, R-PLC-14, R-SEC-01
+    '''
+
+    include personC, personB, signalbox.connections, signalbox.tree, signalbox.harness, signalbox.gateway.egress, services.onepassword
+    include signalbox, services
+
+    personC -> signalbox.connections 'Connect service account' {
+      navigateTo folders_secrets_service_account
+      notes """
+        - **Start:** C connects the company 1Password service account at folder Company
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Bind per folder' {
+      navigateTo folders_placement_kind_secret
+      notes """
+        - Each folder gets a vault or Environment `Signalbox · <folder path>`
+        - Shown as one "1Password" source
+      """
+    }
+    personB -> signalbox.harness 'Turn in Team'
+    signalbox.harness -> signalbox.gateway.egress '{{secret:NAME}}'
+    signalbox.gateway.egress -> signalbox.tree 'Scope from Place' {
+      notes """
+        - The reference comes from the thread's Place only, never the sender
+      """
+    }
+    signalbox.gateway.egress -> signalbox.connections "Fill via folder's binding" {
+      navigateTo folders_secrets_placeholder_fill
+    }
+    signalbox.connections -> services.onepassword 'Read Company vault' {
+      navigateTo folders_secrets_onepassword_link
+      notes """
+        - C's personal 1Password device link is never consulted
+        - **End:** resolved through the folder's binding, not C's personal 1Password
+        - **#decided** #592 (2026-10-16), #697 (2026-10-18)
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_143_secret_named_like_routing_env {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Routing Env Name'
+    description '''
+      What happens when a folder secret is named like a proxy or telemetry switch?
+      Decided: #600 fixed by #626 (2026-10-16): routing-capable env vars are refused as folder secrets; of `OPENAI_*` only
+      `OPENAI_BASE_URL` is reserved (the wider block is not adopted, pending #600).
+      SCN-143 · v1 no · R-MGW-05, W-HAR-12, R-PLC-14
+    '''
+
+    include personC, signalbox.web, signalbox.tree, signalbox.harness, signalbox.gateway.egress, signalbox.gateway.modelGateway
+    include signalbox
+
+    personC -> signalbox.web 'Add HTTPS_PROXY' {
+      notes """
+        - **Start:** a secret named `HTTPS_PROXY`, `OTEL_*` or `CLAUDE_CODE_USE_FOUNDRY` at folder Company
+      """
+    }
+    signalbox.web -> signalbox.tree 'Place secret' {
+      navigateTo folders_placement_kind_secret
+    }
+    signalbox.harness -> signalbox.harness 'Refuse repo base URLs' {
+      navigateTo work_harness_credential_guards
+      notes """
+        - Turn start: a repo `.claude/settings.json` that repoints base URLs is refused too
+      """
+    }
+    signalbox.harness -> signalbox.gateway.egress 'Build turn env' {
+      navigateTo folders_gateway_routing_env_guard
+    }
+    signalbox.harness <- signalbox.gateway.egress 'Skipped, with notice' {
+      notes """
+        - Reserved routing and telemetry prefixes are skipped; the notice says why
+      """
+    }
+    signalbox.harness -> signalbox.gateway.modelGateway 'Model traffic' {
+      notes """
+        - **End:** the harness stays on the gateway
+        - **#decided** #600 / #626 (2026-10-16)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_144_secret_in_screenshot {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Secret In Screenshot'
+    description '''
+      What happens when a secret shows up on screen or in a screenshot?
+      Assumption: fix the `save=true` leak, add no gate or OCR on `includeImage`, and document the limit. Why: deterministic
+      mechanisms only for repeatable rules (pixels aren't one), principle 8; pending #598; card numbers withheld per #654/#724 (2026-10-16).
+      SCN-144 · v1 no · T-BRW-09, W-ATT-06, R-MGW-06
+    '''
+
+    include personB, signalbox.harness, signalbox.browser, signalbox.thread.threadActor, signalbox.gateway.modelGateway, signalbox.gateway.egress
+    include signalbox
+
+    personB -> signalbox.harness 'Turn in Team' {
+      notes """
+        - **Start:** a dev error page or dashboard prints an env value
+      """
+    }
+    signalbox.harness -> signalbox.browser 'Screenshot' {
+      navigateTo work_browser_capture
+    }
+    alt 'how it is taken' {
+      when 'save=true' {
+        signalbox.browser -> signalbox.thread.threadActor 'Image to thread only' {
+          navigateTo work_attachments_agent_images
+          notes """
+            - Never in the tool result, so it never reaches the model
+          """
+        }
+      }
+      else 'includeImage' {
+        signalbox.harness -> signalbox.gateway.modelGateway 'Image to model'
+        signalbox.gateway.modelGateway -> signalbox.gateway.egress 'Text scrub only' {
+          navigateTo folders_gateway_egress_filter
+          notes """
+            - Pixels can't be scrubbed deterministically; no gate, no OCR
+          """
+        }
+      }
+    }
+    personB <- signalbox.thread.threadActor 'Sees the screenshot' {
+      notes """
+        - User docs say what can't be hidden: images, screenshots, compressed files
+        - Card numbers stay withheld as before
+        - **End:** saved screenshots never reach the model; included images are a documented risk
+        - **#assumption** fix `save=true`, document `includeImage` (pending #598)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_145_secret_rotated_mid_history {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Rotated Secret'
+    description '''
+      What happens when a secret is rotated while threads still hold the old value?
+      Assumption: keep every filled value for the thread's life and delete it with the thread (option 1); fills always resolve fresh.
+      Why: VMs exist only while commands run, so "clear on machine release" would drop masks constantly; "the model never sees a
+      secret" (#591); pending #612.
+      SCN-145 · v1 no · R-SEC-08, R-MGW-06, R-TRE-10
+    '''
+
+    include personC, personB, signalbox.thread.threadActor, signalbox.gateway.egress, signalbox.connections, signalbox.tree, services.onepassword
+    include signalbox, services
+
+    personC -> services.onepassword 'Rotate secret' {
+      notes """
+        - **Start:** the old value is still in B's conversation and restored files
+      """
+    }
+    personB -> signalbox.thread.threadActor 'Next turn in Team'
+    signalbox.thread.threadActor -> signalbox.gateway.egress 'Fill {{secret:NAME}}'
+    signalbox.gateway.egress -> signalbox.connections 'Resolve fresh' {
+      navigateTo folders_secrets_placeholder_fill
+      notes """
+        - No cached value is substituted
+      """
+    }
+    signalbox.connections -> services.onepassword 'Read new value'
+    signalbox.gateway.egress -> signalbox.thread.threadActor 'Register value' {
+      notes """
+        - The thread keeps every value it ever filled, encrypted, for its life
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.gateway.egress 'Re-send history' {
+      navigateTo folders_gateway_egress_filter
+      notes """
+        - The old value in history stays masked
+      """
+    }
+    signalbox.tree -> signalbox.thread.threadActor 'Purge at 30 days' {
+      navigateTo folders_tree_purge
+      notes """
+        - Values are deleted with the thread at the trash purge
+        - **End:** old values stay masked; new fills use the new value
+        - **#assumption** keep values for the thread's life (pending #612)
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_146_snapshot_holds_secrets {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Snapshot Secrets'
+    description '''
+      What happens to a `.env` built from secrets in machine files and snapshots?
+      Assumption: don't scrub snapshot packs; scrub where content is seen (gateway, session rows, logs, transcript). Why: scrubbing
+      corrupts restores (#591 comment); A26 encrypts `.env*` in the private kept-local ref; s4 C5.
+      SCN-146 · v1 no · W-CMP-12, R-MGW-06, W-CMP-16
+    '''
+
+    include personB, signalbox.harness, signalbox.computer, signalbox.drive, signalbox.gateway.egress, signalbox.thread.threadActor
+    include signalbox
+
+    personB -> signalbox.harness 'Turn in Team' {
+      notes """
+        - **Start:** B's agent writes `.env` from readable or filled secrets
+      """
+    }
+    signalbox.harness -> signalbox.computer 'Write .env'
+    signalbox.computer -> signalbox.drive 'Kept-local, encrypted' {
+      navigateTo work_computer_paths_kept_local
+      notes """
+        - Persisted in the thread's private `machine/<thread>` ref with `.env*` encrypted
+        - Never merged by accept, never pushed to a forge
+      """
+    }
+    signalbox.computer <- signalbox.drive 'Restore raw' {
+      navigateTo work_computer_egress_vm
+      notes """
+        - Restores, including onto a VM, bring the real values back intact
+      """
+    }
+    signalbox.harness -> signalbox.gateway.egress 'Output to model' {
+      navigateTo folders_gateway_egress_filter
+      notes """
+        - Anything the model or a person reads from it is scrubbed
+      """
+    }
+    signalbox.gateway.egress -> signalbox.thread.threadActor 'Scrubbed rows' {
+      notes """
+        - **End:** kept raw but encrypted and private, never shown to the model or pushed
+        - **#assumption** scrub where seen, not the snapshot
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_147_codex_fills_placeholders {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Codex Placeholders'
+    description '''
+      What happens when Codex writes a secret placeholder into a file or command?
+      Assumption: fill at the kernel boundary for every harness instead of per-harness hooks. Why: A33 (both harnesses' file and exec
+      tools go through the kernel in the isolate tier); #592 (2026-10-16) decided files and commands are filled; mechanism pending #699.
+      SCN-147 · v1 no · R-SEC-04, W-CMP-02, W-CMP-20
+    '''
+
+    include personB
+    include signalbox.harness with {
+      title 'Harness · Codex'
+    }
+    include signalbox.computer, signalbox.gateway.egress, signalbox.thread.threadActor
+    include signalbox
+
+    personB -> signalbox.harness 'Codex turn in Team' {
+      notes """
+        - **Start:** Codex writes `{{secret:NAME}}` into a file or a command
+      """
+    }
+    signalbox.harness -> signalbox.computer 'Write / exec' {
+      navigateTo work_computer_kernel_exec
+    }
+    signalbox.computer -> signalbox.gateway.egress 'Fill before run' {
+      navigateTo folders_secrets_placeholder_fill
+      notes """
+        - The same kernel path Claude Code's tools use; no harness hook, no trust prompt
+      """
+    }
+    opt 'on a VM' {
+      signalbox.computer -> signalbox.computer 'Exec daemon fills' {
+        navigateTo work_computer_identity
+        notes """
+          - The VM's exec daemon does the same fill
+        """
+      }
+    }
+    signalbox.harness -> signalbox.computer 'Read file back'
+    signalbox.computer -> signalbox.gateway.egress 'Scrub'
+    signalbox.gateway.egress -> signalbox.thread.threadActor 'Placeholder only' {
+      notes """
+        - **End:** the value is on disk or in the command; read-back and transcript show the placeholder
+        - **#assumption** fill at the kernel for every harness (pending #699)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_148_agent_requests_secret {
+    #decided
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Secret Request'
+    description '''
+      What happens when an agent needs a secret nobody has stored?
+      Decided: #335 (2026-10-15) secrets go through a private request, never chat; #637 (2026-10-16) human-only, separate path.
+      SCN-148 · v1 no · R-SEC-06, W-APR-17, P-BLK-08, R-GAT-03
+    '''
+
+    include personB, signalbox.harness, signalbox.gateway.toolGateway, signalbox.attention, signalbox.operations, signalbox.connections, signalbox.tree, services.onepassword
+    include signalbox, services
+
+    signalbox.harness -> signalbox.gateway.toolGateway 'request_secret' {
+      navigateTo folders_secrets_secret_request
+      notes """
+        - **Start:** B's agent in folder Team lacks a token
+        - Name and reason only
+      """
+    }
+    signalbox.gateway.toolGateway -[async]-> signalbox.attention 'Secret card' {
+      navigateTo work_approvals_secret_request
+    }
+    signalbox.attention -> personB 'Private secret card' {
+      navigateTo person_pipeline_blocker_human_only
+      notes """
+        - Separate from asks and forms; agents can't answer it
+      """
+    }
+    personB -> signalbox.operations 'Enter value' {
+      navigateTo folders_gates_confirm_in_app
+      notes """
+        - Human-only; the value never touches chat
+      """
+    }
+    signalbox.operations -> signalbox.connections "Store via folder's binding"
+    signalbox.connections -> services.onepassword 'Write'
+    signalbox.connections -> signalbox.tree 'Place ref at folder' {
+      notes """
+        - A secret reference placed at the thread's folder
+      """
+    }
+    signalbox.harness <- signalbox.gateway.toolGateway 'Use {{secret:NAME}}' {
+      notes """
+        - **End:** the agent continues; the value never touched chat or the transcript
+        - **#decided** #335 (2026-10-15), #637 (2026-10-16)
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_149_agent_reads_provider_key {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Provider Key Read'
+    description '''
+      What does an agent see when it tries to read its own provider credential?
+      Assumption: provider keys and grant tokens never reach exec; the agent sees a dummy. Why: #74 (keys stay off the machine),
+      design S8 and the §3.6 exec env rule; proof owed by spike S13 (#30).
+      SCN-149 · v1 no · W-HAR-13, R-MGW-01, W-HAR-12, W-CMP-19
+    '''
+
+    include personB, signalbox.harness, signalbox.computer, signalbox.gateway.modelGateway, signalbox.gateway.grants, signalbox.gateway.egress
+    include signalbox
+
+    personB -> signalbox.harness 'Turn in Team' {
+      notes """
+        - **Start:** the agent runs `echo $ANTHROPIC_API_KEY`
+      """
+    }
+    signalbox.harness -> signalbox.computer 'echo $ANTHROPIC_API_KEY' {
+      navigateTo work_harness_credential_guards
+    }
+    signalbox.harness <- signalbox.computer 'Constant dummy' {
+      notes """
+        - Exec env is built only from `PlaceholderEnv`, provider auth vars stripped
+      """
+    }
+    signalbox.harness -> signalbox.gateway.modelGateway 'Model call' {
+      navigateTo folders_gateway_grant
+      notes """
+        - The grant token lives only in the harness's fetch shim, which swaps it in
+      """
+    }
+    signalbox.gateway.modelGateway -> signalbox.gateway.grants 'Verify grant'
+    opt 'on a VM' {
+      signalbox.computer -> signalbox.gateway.egress 'Machine egress token' {
+        navigateTo work_computer_egress_vm
+        notes """
+          - The VM's egress proxy holds a separate machine-bound token; the grant token never reaches the VM
+          - **End:** the agent sees a dummy; the grant token is unreachable from exec
+          - **#assumption** keys never reach exec (proof owed by S13, #30)
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view scn_150_secret_raw_socket {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Secrets/Raw Socket Egress'
+    description '''
+      What stops a computer holding filled secrets from sending them over a raw socket?
+      Assumption: close non-HTTP egress on secret-holding computers except destinations placed at the folder (#655 option 2, adapted).
+      Why: owner 2026-10-18 dropped light Containers, so the isolate tier and A12's VM allowlist are the only paths; pending #655.
+      SCN-150 · v1 no · W-CMP-16, W-CMP-18, R-PLC-22, W-CMP-17
+    '''
+
+    include personB, signalbox.harness, signalbox.computer, signalbox.gateway.egress, signalbox.tree, platform.boxd
+    include signalbox, platform
+
+    personB -> signalbox.harness 'Turn in Team' {
+      notes """
+        - **Start:** a placeholder was filled into a command or file on B's thread's computer
+      """
+    }
+    alt 'where the command runs' {
+      when 'isolate tier' {
+        signalbox.harness -> signalbox.computer 'nc / ssh / DNS' {
+          navigateTo work_computer_egress_kernel
+        }
+        signalbox.harness <- signalbox.computer 'No raw sockets' {
+          notes """
+            - Programs here have no sockets; outbound goes through the gateway only
+          """
+        }
+      }
+      else 'escalated to a VM' {
+        signalbox.harness -> signalbox.computer 'ssh / database'
+        signalbox.computer -> platform.boxd 'Fork VM'
+        signalbox.computer -> signalbox.gateway.egress 'HTTP via proxy' {
+          navigateTo work_computer_egress_vm
+          notes """
+            - On a VM the EgressFilter runs as its proxy adapter
+            - The allowlist is the floor; the proxy fills only bound hosts
+          """
+        }
+        signalbox.computer -> signalbox.tree 'Placed destinations?' {
+          navigateTo folders_placement_kind_setting
+        }
+        signalbox.harness <- signalbox.computer 'connection refused' {
+          notes """
+            - While the thread holds filled secrets, non-HTTP ports stay closed except placed destinations
+            - A value scrambled before sending can't be caught; the UI says programs can read their files
+            - **End:** non-HTTP egress closed unless the folder placed that destination
+            - **#assumption** #655 option 2, adapted (pending #655)
+          """
+        }
+      }
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Connections/Privacy ─────────────────────────────
+
+  dynamic view scn_151_pii_stripping {
+    #assumption
+    variant sequence
+    title 'Scenarios/Connections/Privacy/PII Stripping'
+    description '''
+      Can an enterprise strip personal data before it reaches the model?
+      Assumption: off by default, enabled per folder as a placement, shipped only once benchmark numbers exist. Why: #380 (2026-10-14)
+      idea, per folder, off by default, behind benchmarks; A3 reach below; existence pending #380.
+      SCN-151 · v1 no · R-MGW-12, R-ACC-21
+    '''
+
+    include personC, personB, signalbox.web, signalbox.observability, signalbox.tree, signalbox.harness, signalbox.gateway.modelGateway, signalbox.gateway.egress
+    include signalbox
+
+    personC -> signalbox.web 'Open privacy setting' {
+      notes """
+        - **Start:** off; C is admin of folder Company on Enterprise
+      """
+    }
+    signalbox.web -> signalbox.observability 'Benchmark cost' {
+      notes """
+        - The measured quality cost is shown before turning it on
+      """
+    }
+    personC -> signalbox.tree 'Enable at Company' {
+      navigateTo folders_access_folder_policy
+      notes """
+        - A placement at Company with reach below
+      """
+    }
+    personB -> signalbox.harness 'Turn in Team'
+    signalbox.harness -> signalbox.gateway.modelGateway 'Model request'
+    signalbox.gateway.modelGateway -> signalbox.gateway.egress 'Pseudonymize' {
+      navigateTo folders_gateway_egress_filter
+      notes """
+        - Model requests, tool arguments and outputs
+        - Restored in streams from a per-thread vault
+      """
+    }
+    personC -> signalbox.tree 'Turn off' {
+      notes """
+        - The next turn goes unredacted
+        - **End:** Company's model requests are pseudonymized, cost shown first
+        - **#assumption** off by default, per folder (pending #380)
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+}

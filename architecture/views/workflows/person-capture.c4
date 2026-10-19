@@ -1,0 +1,1381 @@
+// Quick capture, drafts, notes and their journeys. Not v1.
+// Clients talk to Capture over Funnel → Operations (one Tree.can per call); both are left out
+// of the lanes to keep 4-8 participants. Tree, Thread and Capture are black boxes here: drafts and
+// private notes are rows in A's Person record, shared notes and catalog rows in the Level record,
+// both behind the Tree interface. Level agent = the folder's agent thread (Team agent for folder Team);
+// the assistant = A's top-level agent thread.
+global {
+  styleGroup capture_lanes {
+    style signalbox, hier, domain, smDraft, smNote {
+      color muted
+      opacity 10%
+    }
+  }
+}
+
+views {
+
+  // ───────────────────────────── Journeys/Capture ─────────────────────────────
+
+  dynamic view journey_capture_open {
+    variant sequence
+    title 'Journeys/Capture/Open quick capture'
+    description 'P-CAP-01, P-CAP-02, P-CAP-03, T-MOB-31 · one capture panel from every entry point; it never navigates away'
+
+    include personA, signalbox, signalbox.web, signalbox.desktop, signalbox.mobile, signalbox.capture, signalbox.tree, hier, hier.asstA
+
+    alt 'where A is' {
+      when 'in the app' {
+        personA -> signalbox.web 'New or shortcut' {
+          notes '''
+            - A clicks **New**, presses `mod+shift+space`, or picks Capture in the palette
+            - The panel floats over the current page; nothing navigates
+          '''
+        }
+      }
+      when 'Mac, app hidden' {
+        personA -> signalbox.desktop 'global hotkey' {
+          notes '''
+            - A small capture window opens outside the app window
+          '''
+        }
+      }
+      else 'on the phone' {
+        personA -> signalbox.mobile 'tile or quick action' {
+          notes '''
+            - Capture screen, Android quick-settings tile, or long-press icon › **New**
+            - The quick actions also list recent threads, which open directly
+          '''
+        }
+      }
+    }
+    personA -> signalbox.web 'types with chips' {
+      notes '''
+        - One text box; `#` folder, `@` person or agent, `+` share; files attach as chips
+        - Private by default
+      '''
+    }
+    signalbox.web -> signalbox.capture 'save draft' {
+      navigateTo person_capture_save
+      notes '''
+        - Same call from web, desktop and mobile
+      '''
+    }
+    signalbox.capture -> signalbox.tree 'store A\'s draft' {
+      notes '''
+        - A row in A's Person record, keyed by its folder; routing to task or note happens later
+        - Private: B, C, D and every agent see nothing
+      '''
+    }
+    signalbox.web <- signalbox.capture 'saved' {
+      notes '''
+        - A sees "Saved to Team" and the panel clears; a capture never interrupts
+      '''
+    }
+    opt 'A wants the assistant' {
+      signalbox.web -> hier.asstA 'hand to assistant' {
+        navigateTo person_assistant_from_capture
+        notes '''
+          - Opens A's assistant with the text
+        '''
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view journey_capture_open_draft {
+    variant sequence
+    title 'Journeys/Capture/Open a draft where you are'
+    description 'W-THR-08, W-THR-17, T-THR-48 · a prompt link or New at a level opens a draft there; non-repo levels open their agent'
+
+    include personA, signalbox, signalbox.web, signalbox.desktop, signalbox.capture, signalbox.tree, hier, hier.company.team.agentTeam
+
+    alt 'how A arrives' {
+      when 'prompt link' {
+        personA -> signalbox.web 'opens prompt link' {
+          notes '''
+            - The hosted landing offers desktop, phone app or browser, and remembers the choice
+          '''
+        }
+        opt 'A picked the app' {
+          signalbox.web -> signalbox.desktop 'hand off link' {
+            notes '''
+              - The app opens the same link; nothing ran yet
+            '''
+          }
+        }
+      }
+      else 'New at a folder' {
+        personA -> signalbox.web 'New at Team' {
+          notes '''
+            - A is inside Company › Team and clicks New
+          '''
+        }
+      }
+    }
+    signalbox.web -> signalbox.capture 'draft at Place' {
+      navigateTo person_drafts_save
+      notes '''
+        - Prefilled once; a link draft never runs by itself and uses the level's defaults
+      '''
+    }
+    signalbox.capture -> signalbox.tree 'store A\'s draft' {
+      notes '''
+        - A row in A's Person record at Team; `#Team` resolves via A's own mount of Company
+        - Invisible to B, C, D and every agent
+      '''
+    }
+    alt 'what the level is' {
+      when 'repo folder' {
+        signalbox.web -> personA 'draft composer' {
+          navigateTo work_threads_start_send_draft
+          notes '''
+            - A sees the full draft page: text, model picker, Send
+          '''
+        }
+      }
+      else 'non-repo or top level' {
+        signalbox.web -> hier.company.team.agentTeam 'level agent composer' {
+          navigateTo journey_capture_resume_draft
+          notes '''
+            - Team's agent thread opens with the text in its composer, unsent
+            - At the top level that agent is A's assistant
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view journey_capture_resume_draft {
+    variant sequence
+    title 'Journeys/Capture/Find and resume a draft'
+    description 'P-DRF-03, P-DRF-04 · drafts group at the top of Home; resuming opens the composer or the level agent'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.tree, hier, hier.company.team.agentTeam, hier.asstA
+
+    personA -> signalbox.web 'opens Home' {
+      notes '''
+        - A sees a **Drafts** group at the top of Home: top-level and New-bar drafts
+        - Folder drafts also sit inside their folder
+      '''
+    }
+    signalbox.web -> signalbox.capture 'drafts view' {
+      notes '''
+        - Capture is the only home of the drafts lens (M1)
+      '''
+    }
+    signalbox.capture -> signalbox.tree 'read A\'s drafts' {
+      notes '''
+        - A's Person record only; nothing from shared folders
+        - B, C and D each see only their own drafts
+      '''
+    }
+    signalbox.web <- signalbox.capture 'Drafts group'
+    personA -> signalbox.web 'opens a draft' {
+      navigateTo journey_capture_open_draft
+      notes '''
+        - Same list on every device of A
+      '''
+    }
+    alt 'where it sits' {
+      when 'repo folder' {
+        signalbox.web -> personA 'draft composer' {
+          navigateTo person_drafts_send
+          notes '''
+            - Text and files back exactly as left
+          '''
+        }
+      }
+      when 'non-repo folder' {
+        signalbox.web -> hier.company.team.agentTeam 'level agent composer' {
+          notes '''
+            - The folder's agent thread (here Team's), text ready to send
+          '''
+        }
+      }
+      else 'top level' {
+        signalbox.web -> hier.asstA 'assistant composer' {
+          navigateTo person_assistant_from_capture
+          notes '''
+            - A's assistant opens with the text
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view journey_capture_snapshot {
+    variant sequence
+    title 'Journeys/Capture/Snap a window into a draft'
+    description 'W-ATT-07 · desktop only: SnapShot puts a window image and its accessibility data into the draft'
+
+    include personA, signalbox, signalbox.desktop, signalbox.capture, signalbox.tree
+
+    personA -> signalbox.desktop 'SnapShot shortcut' {
+      notes '''
+        - Windows highlight under the pointer; desktop only
+      '''
+    }
+    personA -> signalbox.desktop 'clicks a window' {
+      notes '''
+        - The shell captures the image plus the window's accessibility tree
+      '''
+    }
+    signalbox.desktop -> signalbox.capture 'attach to draft' {
+      navigateTo work_attachments_attach
+      notes '''
+        - The open draft, or a new draft at the current level
+      '''
+    }
+    signalbox.capture -> signalbox.tree 'draft refs blob' {
+      navigateTo person_drafts_attachments
+      notes '''
+        - In A's Person record; held server-side until the draft is sent or discarded
+      '''
+    }
+    signalbox.desktop -> personA 'chip in composer' {
+      navigateTo state_attachment
+      notes '''
+        - A sees a thumbnail chip; the agent later gets image and accessibility data
+      '''
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view journey_capture_voice_dictation {
+    variant sequence
+    title 'Journeys/Capture/Dictate into the draft on iPhone'
+    description 'T-TRN-52 · on-device transcription; audio never leaves the phone'
+
+    include personA, signalbox, signalbox.mobile, signalbox.capture
+
+    personA -> signalbox.mobile 'taps the mic' {
+      navigateTo journey_capture_open
+      notes '''
+        - In the capture screen or any composer on iPhone
+      '''
+    }
+    signalbox.mobile -> signalbox.mobile 'transcribes on device' {
+      notes '''
+        - Apple's on-device speech model; no audio is uploaded
+      '''
+    }
+    signalbox.mobile -> personA 'text appears' {
+      notes '''
+        - Words appear live; A edits them like typed text
+      '''
+    }
+    signalbox.mobile -> signalbox.capture 'save draft text' {
+      notes '''
+        - Ordinary draft text from here: server-side, every device
+        - Nothing reaches an agent until A sends
+      '''
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view journey_capture_add_to_composer {
+    variant sequence
+    title 'Journeys/Capture/Add a page element, terminal excerpt or diff lines to the composer'
+    description 'T-BRW-10, T-GIT-27, T-TRN-34, T-TRN-36 · context chips from the browser mirror, the terminal and the Code tab'
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.browser, signalbox.computer
+
+    alt 'what A adds' {
+      when 'page element' {
+        personA -> signalbox.web 'pick or annotate' {
+          navigateTo work_previews_open
+          notes '''
+            - Pick in the thread's preview, or draw an annotation
+            - On the preview URL and the browser mirror (unconfirmed)
+          '''
+        }
+        signalbox.web -> signalbox.browser 'resolve on mirror' {
+          navigateTo work_browser_watch_takeover
+          notes '''
+            - The rrweb mirror maps the click to a selector and a crop
+          '''
+        }
+        signalbox.web <- signalbox.browser 'element chip'
+      }
+      when 'terminal excerpt' {
+        personA -> signalbox.web 'Add to chat' {
+          navigateTo work_computer_terminal
+          notes '''
+            - A selects terminal lines and uses the context menu
+          '''
+        }
+        signalbox.web <- signalbox.computer 'excerpt chip' {
+          notes '''
+            - Lines plus the command and working directory
+          '''
+        }
+      }
+      else 'PR diff lines' {
+        personA -> signalbox.web 'Add to agent' {
+          navigateTo work_git_pr_work
+          notes '''
+            - Code tab: A selects lines in the PR diff
+          '''
+        }
+        signalbox.web <- signalbox.thread 'diff chip' {
+          notes '''
+            - Lines with file path and sha
+          '''
+        }
+      }
+    }
+    signalbox.web -> personA 'chip in composer' {
+      notes '''
+        - A removable chip above the text; part of the draft
+      '''
+    }
+    personA -> signalbox.web 'sends'
+    signalbox.web -> signalbox.thread 'turn with chips' {
+      notes '''
+        - The agent gets the element, excerpt or lines verbatim as context
+        - In a shared thread the chips are part of the turn, so B sees them too
+      '''
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view journey_capture_browse_to_thread {
+    variant sequence
+    title 'Journeys/Capture/Turn browsing into a thread'
+    description 'W-THR-16 · tabs A browsed become a new private thread at the current level'
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.browser
+
+    personA -> signalbox.web 'browses' {
+      notes '''
+        - Browser panel, A's own signed-in profile
+      '''
+    }
+    signalbox.web -> signalbox.browser 'browsing session' {
+      notes '''
+        - A browsing record exists; no thread yet
+      '''
+    }
+    signalbox.web <- signalbox.browser 'mirror'
+    personA -> signalbox.web 'tabs to thread' {
+      notes '''
+        - A selects tabs and picks "New thread from these"
+      '''
+    }
+    signalbox.web -> signalbox.thread 'NewThread here' {
+      navigateTo work_threads_start_send_draft
+      notes '''
+        - Private, at the level A is in; via checked against A's tree (S1)
+        - Draft-like: nothing runs until A sends a first turn
+      '''
+    }
+    signalbox.thread -> signalbox.browser 'adopt tabs' {
+      notes '''
+        - The session now belongs to the thread
+      '''
+    }
+
+    global style capture_lanes
+  }
+
+  // ───────────────────────────── States ─────────────────────────────
+
+  dynamic view state_draft {
+    title 'States/Draft/Walk through'
+    description 'P-DRF-08 · walks one draft: page → saved → sent, or discarded with Undo; the state machine itself is the element view state-draft'
+
+    autoLayout TopBottom
+    include smDraft, smDraft.page, smDraft.saved, smDraft.sent, smDraft.discarded, smDraft.gone
+
+    smDraft.page -> smDraft.saved 'A types' {
+      notes '''
+        - Capture autosaves the text: a row in A's Person record at its folder, on every device of A
+        - Private: B, C, D, every agent and Search see nothing
+      '''
+    }
+    alt 'what A does' {
+      when 'sends' {
+        smDraft.saved -> smDraft.sent 'A sends' {
+          navigateTo person_drafts_send
+          notes '''
+            - It becomes a thread at its folder; the row is dropped and never returns
+            - Only now can others see it, per the share chips
+          '''
+        }
+      }
+      else 'discards' {
+        smDraft.saved -> smDraft.discarded 'A discards' {
+          notes '''
+            - A sees "Draft discarded · Undo"
+            - Text and attachments kept through the Undo window
+          '''
+        }
+        alt 'Undo window' {
+          when 'Undo' {
+            smDraft.discarded -> smDraft.saved 'A undoes' {
+              notes 'Text and attachments return as they were'
+            }
+          }
+          else 'window passes' {
+            smDraft.discarded -> smDraft.gone 'window passes' {
+              navigateTo person_drafts_attachments
+              notes 'Row and attachment blobs deleted'
+            }
+          }
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view state_note {
+    title 'States/Note/Walk through'
+    description 'P-NOTE-11, P-NOTE-12 · walks one note: live ↔ archived, discarded with Undo; no status, never a needs-you; the state machine itself is the element view state-note'
+
+    autoLayout TopBottom
+    include personA, smNote, smNote.live, smNote.archived, smNote.discarded, smNote.gone
+
+    personA -> smNote.live 'A writes a note' {
+      navigateTo person_notes_write
+      notes '''
+        - Private: a row in A's Person record, seen only by A and A's assistant
+        - Shared: a row in the folder's Level record; B and C see it, D too if the folder is Team
+        - No status, never in the pipeline, never a needs-you
+      '''
+    }
+    alt 'what happens next' {
+      when 'archived' {
+        alt 'by whom' {
+          when 'A' {
+            smNote.live -> smNote.archived 'A archives'
+          }
+          else 'the assistant' {
+            smNote.live -> smNote.archived 'assistant folds' {
+              navigateTo person_notes_tend
+              notes '''
+                - A's private notes only, folded into "older" and logged as "tidied"
+                - Shared notes are never touched by anyone's assistant
+              '''
+            }
+          }
+        }
+        opt 'A wants it back' {
+          smNote.archived -> smNote.live 'A restores'
+        }
+      }
+      else 'discarded' {
+        smNote.live -> smNote.discarded 'A discards' {
+          notes '''
+            - "Note discarded · Undo"; only a person discards, never the assistant
+          '''
+        }
+        alt 'Undo window' {
+          when 'Undo' {
+            smNote.discarded -> smNote.live 'A undoes'
+          }
+          else 'window passes' {
+            smNote.discarded -> smNote.gone 'window passes'
+          }
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  // ───────────────────────────── Workflows/Person/Capture ─────────────────────────────
+
+  dynamic view person_capture_save {
+    variant sequence
+    title 'Workflows/Person/Capture/Save or open a capture'
+    description 'P-CAP-05, P-CAP-06, P-CAP-14 · Enter saves in place, mod+Enter opens; acknowledged only once durable'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.tree, signalbox.automations, hier, hier.company.team.agentTeam, hier.asstA
+
+    personA -> signalbox.web 'Enter or mod+Enter' {
+      notes '''
+        - Chips pick the Place: `#Team` → Team (via A's mount of Company); none → top level
+      '''
+    }
+    loop 'until acknowledged' {
+      try {
+        signalbox.web -> signalbox.capture 'save draft' {
+          notes '''
+            - Carries a requestId; Operations checks `Tree.can` for A at the Place
+          '''
+        }
+        signalbox.capture -> signalbox.tree 'upsert A\'s draft' {
+          notes '''
+            - A row in A's Person record, deduped on requestId: a retry never makes a second draft
+            - Private: B, C, D and agents see nothing
+          '''
+        }
+        signalbox.web <- signalbox.capture 'durable receipt'
+      } catch 'network drops' {
+        signalbox.web -> signalbox.web 'keep text, retry' {
+          notes '''
+            - Shows "Saving…" and retries with the same requestId
+            - Never "Saved" before the row is durable
+          '''
+        }
+      }
+    }
+    signalbox.capture -> signalbox.automations 'capture event' {
+      navigateTo person_capture_routing
+      notes '''
+        - Routing decides task or note in the background
+      '''
+    }
+    alt 'which key' {
+      when 'Enter' {
+        signalbox.web -> personA 'Saved, stays put' {
+          navigateTo journey_capture_resume_draft
+          notes '''
+            - "Saved to Team"; A stays where they were
+          '''
+        }
+      }
+      when 'mod+Enter, repo folder' {
+        signalbox.web -> personA 'opens full draft' {
+          notes '''
+            - The draft page at the Place, chips applied
+          '''
+        }
+      }
+      when 'mod+Enter, non-repo folder' {
+        signalbox.web -> hier.company.team.agentTeam 'opens level agent' {
+          notes '''
+            - Team's agent composer prefilled, not sent
+          '''
+        }
+      }
+      else 'mod+Enter, top level' {
+        signalbox.web -> hier.asstA 'opens assistant' {
+          notes '''
+            - Assistant composer prefilled, not sent
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view person_capture_grammar {
+    variant sequence
+    title 'Workflows/Person/Capture/File, hand off and share with capture tokens'
+    description 'P-CAP-04, P-CAP-11, P-CAP-12 · # files, @ hands off, + shares, +private forces private; private by default; who sees what for B, C and D'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.thread, signalbox.tree, personB, personC, personD
+
+    personA -> signalbox.web 'types tokens' {
+      notes '''
+        - "#Team @B +team fix login": tokens become chips
+        - The `#` picker lists only A's own tree; `#Team` → Team via A's mount of Company (S1)
+      '''
+    }
+    signalbox.web -> signalbox.capture 'save capture'
+    alt 'token' {
+      when '# folder only' {
+        signalbox.capture -> signalbox.tree 'private draft' {
+          navigateTo person_capture_save
+          notes '''
+            - A row in A's Person record at Team
+            - Private by default, even in a shared folder: B, C and D see nothing
+          '''
+        }
+      }
+      when '@B' {
+        signalbox.capture -> signalbox.thread 'thread with B' {
+          navigateTo work_threads_start_capture_tokens
+          notes '''
+            - Drafts can't be shared, so handing off means a thread with Participants [A, B]
+            - Enter keeps it A's draft with B preset until send
+          '''
+        }
+        signalbox.thread -> signalbox.tree 'catalog row' {
+          notes 'Listed in Team, visible to its Participants only'
+        }
+        signalbox.tree -> personB 'new thread' {
+          notes '''
+            - B sees it in their own tree (Work › Company › Team) and can reply
+            - Not shared with Team, so it is not listed for D
+          '''
+        }
+      }
+      when '+team' {
+        signalbox.capture -> signalbox.thread 'thread for Team' {
+          notes 'Visibility: everyone with access to Team'
+        }
+        signalbox.thread -> signalbox.tree 'catalog row' {
+          notes 'Team\'s Level record lists it; access resolves by the tree, not by who sent it'
+        }
+        signalbox.tree -> personB 'visible: member' {
+          notes 'B reaches Team through their mount of Company'
+        }
+        signalbox.tree -> personC 'visible: admin' {
+          notes 'C\'s Admin role on Company inherits down to Team'
+        }
+        signalbox.tree -> personD 'visible: collaborator' {
+          notes '''
+            - D has access to just Team, so D sees it under Shared with me
+            - Nothing above Team shows for D
+          '''
+        }
+      }
+      else '+private' {
+        signalbox.capture -> signalbox.tree 'forced private' {
+          notes '''
+            - Overrides a folder's share preset
+            - Stays in A's Person record; B, C and D never see it
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view person_capture_routing {
+    variant sequence
+    title 'Workflows/Person/Capture/Route a capture to a task or a note'
+    description 'P-CAP-07, P-CAP-08, P-CAP-09, P-CAP-10 · editable default automation; a bounded judgment picks intent vs thought; insufficient evidence → note'
+
+    include personA, signalbox, signalbox.capture, signalbox.automations, signalbox.judge, signalbox.thread, signalbox.tree
+
+    personA -> signalbox.capture 'saves capture' {
+      navigateTo person_capture_save
+      notes '''
+        - A is already back at work; nothing below interrupts A
+      '''
+    }
+    signalbox.capture -> signalbox.automations 'capture event' {
+      navigateTo person_capture_settings
+      notes '''
+        - Triggers the **Capture routing** default automation at A's top level
+        - A run with no via; editable, pausable, forkable
+      '''
+    }
+    opt 'a capture came minutes ago' {
+      signalbox.automations -> signalbox.judge 'related to last?' {
+        notes '''
+          - Time proximity gates it; relatedness is a bounded judgment (#70)
+        '''
+      }
+      opt 'related' {
+        signalbox.automations -> signalbox.capture 'join earlier capture' {
+          notes '''
+            - Appended to the earlier note, or a follow-up into the earlier task; routing stops
+          '''
+        }
+      }
+    }
+    signalbox.automations -> signalbox.judge 'intent or thought?' {
+      notes '''
+        - TypeSafe Jev: `Intent | Thought | Insufficient`, with p
+      '''
+    }
+    alt 'judgment' {
+      when 'intent' {
+        signalbox.automations -> signalbox.thread 'task at home' {
+          navigateTo work_threads_start_capture_route
+          notes '''
+            - A task that starts preparing at the capture's home folder
+            - Private to A unless the tokens shared it
+          '''
+        }
+        signalbox.thread -> signalbox.tree 'catalog row' {
+          notes '''
+            - pending → live in the home folder's Level record
+          '''
+        }
+      }
+      else 'thought or insufficient' {
+        signalbox.automations -> signalbox.capture 'make a note' {
+          navigateTo person_notes_write
+          notes '''
+            - When unsure, a note: cheap to promote, never a surprise task
+          '''
+        }
+        signalbox.capture -> signalbox.tree 'private note' {
+          notes '''
+            - A row in A's Person record, keyed by its home folder
+            - B, C, D and the folder's agent never read it
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  dynamic view person_capture_settings {
+    variant sequence
+    title 'Workflows/Person/Capture/Review captures and edit the routing rule'
+    description 'P-CAP-15, P-CAP-16 · recent captures with where each went; the routing built-in can be edited, paused or forked, never removed'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.automations
+
+    personA -> signalbox.web 'Settings › Capture'
+    signalbox.web -> signalbox.capture 'recent captures'
+    signalbox.web <- signalbox.capture 'where each went' {
+      notes '''
+        - "note at Personal", "task in Team", "joined earlier capture"
+      '''
+    }
+    opt 'A disagrees with one' {
+      personA -> signalbox.web 'reroute one' {
+        navigateTo person_capture_routing
+        notes '''
+          - One click: make it a task, or a note; the overturn is a decision the learner sees
+        '''
+      }
+    }
+    personA -> signalbox.web 'opens routing rule' {
+      notes '''
+        - The automation source and its LikeC4 view, with Edit, Pause, Fork
+      '''
+    }
+    alt 'change' {
+      when 'edit' {
+        signalbox.web -> signalbox.automations 'define new version' {
+          navigateTo work_automations_define
+          notes '''
+            - Runs from the next capture are pinned to it
+          '''
+        }
+      }
+      when 'pause' {
+        signalbox.web -> signalbox.automations 'Disable' {
+          navigateTo state_automation
+          notes '''
+            - Captures stay saved drafts until A resumes it
+          '''
+        }
+      }
+      when 'fork' {
+        signalbox.web -> signalbox.automations 'define at Personal' {
+          notes '''
+            - A folder copy; the nearest definition wins below it
+          '''
+        }
+      }
+      else 'remove' {
+        signalbox.web -> signalbox.automations 'Delete'
+        signalbox.web <- signalbox.automations 'Invalid: built-in' {
+          notes '''
+            - A sees "Pause or edit it instead"; the built-in always exists
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+  }
+
+  // ───────────────────────────── Workflows/Person/Drafts ─────────────────────────────
+
+  dynamic view person_drafts_save {
+    variant sequence
+    title 'Workflows/Person/Drafts/Start and save a draft'
+    description 'P-DRF-01, P-DRF-02, P-DRF-05, P-DRF-13 · drafts save server-side to every device of A; B, agents and Search see nothing'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.mobile, signalbox.capture, signalbox.tree, hier.company.team.agentTeam
+
+    personA -> signalbox.web 'clicks + on Team' {
+      navigateTo journey_capture_open_draft
+      notes '''
+        - A draft page opens; nothing stored yet
+        - From a `?prompt=` link it prefills once; a reload doesn't prefill again
+      '''
+    }
+    loop 'while A types' {
+      signalbox.web -> signalbox.capture 'upsert draft' {
+        navigateTo state_draft
+        notes '''
+          - Debounced; becomes a draft on first keystroke, send, or opened tab
+        '''
+      }
+      signalbox.capture -> signalbox.tree 'save in A\'s record' {
+        notes '''
+          - `Tree.change`: a row in A's own Person record, at Team via A's mount
+          - A's other devices get the same draft; nothing lands in Team's shared record
+        '''
+      }
+    }
+    personB -> signalbox.mobile 'opens Team'
+    signalbox.mobile -> signalbox.tree 'Team catalog'
+    signalbox.mobile <- signalbox.tree 'no draft row' {
+      notes '''
+        - B shares Team with A, yet sees nothing: drafts make no catalog row
+        - Same for C (admin of Company) and D (outside collaborator on Team)
+      '''
+    }
+    hier.company.team.agentTeam -> signalbox.tree 'lists Team'
+    hier.company.team.agentTeam <- signalbox.tree 'no draft either' {
+      navigateTo person_drafts_send
+      notes '''
+        - Agents can't see drafts; Search has no rows for them
+        - Visible to anyone only after Send
+      '''
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+  dynamic view person_drafts_send {
+    variant sequence
+    title 'Workflows/Person/Drafts/Send a draft as a new thread'
+    description 'P-DRF-06, P-DRF-07, P-DRF-11, P-DRF-12, T-THR-51 · requestId from the draft id; catalog pending → live; share preset after confirm; a retry returns the same thread'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.capture, signalbox.thread, signalbox.tree, signalbox.search
+
+    personA -> signalbox.web 'Send' {
+      notes '''
+        - Enter opens the thread; mod+Enter starts it in the background
+      '''
+    }
+    signalbox.web -> signalbox.capture 'send draft'
+    try 'create the thread' {
+      signalbox.capture -> signalbox.thread 'NewThread from draft' {
+        navigateTo work_threads_start_send_draft
+        notes '''
+          - requestId derived from the draft id: a retry returns the same thread
+          - via checked again against A's tree (S1)
+        '''
+      }
+      parallel {
+        signalbox.thread -> signalbox.tree 'Team catalog row' {
+          notes '''
+            - `Tree.change`: pending → live in Team's shared record
+            - From here B (member) and C (admin) can see it exists
+          '''
+        }
+        signalbox.thread -> signalbox.search 'history rows' {
+          notes '''
+            - Indexed from the first item
+          '''
+        }
+      }
+      signalbox.capture -> signalbox.tree 'drop A\'s draft' {
+        navigateTo state_draft
+        notes '''
+          - Removed from A's Person record only after the thread exists
+          - A failed drop is swept; the retry dedupes
+        '''
+      }
+    } catch 'send fails' {
+      signalbox.web -> personA 'toast with Restore' {
+        notes '''
+          - The draft is still in A's Person record; Restore reopens text and files
+        '''
+      }
+    }
+    opt 'share preset' {
+      signalbox.web -> personA 'confirm share' {
+        notes '''
+          - `+B` chip or `?share=` link; never applied silently
+        '''
+      }
+      signalbox.web -> signalbox.thread 'add participant B'
+      signalbox.thread -> personB 'joins the thread' {
+        notes '''
+          - B's clients subscribe to the same Thread; private threads stay closed to D
+        '''
+      }
+    }
+    alt 'after send' {
+      when 'mod+Enter' {
+        signalbox.web -> personA 'fresh draft opens' {
+          notes '''
+            - The thread runs; A writes the next one
+          '''
+        }
+      }
+      else 'Enter' {
+        signalbox.web -> personA 'opens the thread' {
+          navigateTo state_thread
+          notes '''
+            - A reload never brings the sent prompt back as a draft (#862)
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree, signalbox.thread { color primary }
+  }
+
+  dynamic view person_drafts_attachments {
+    variant sequence
+    title 'Workflows/Person/Drafts/Hold attachments for a capture or draft'
+    description 'P-CAP-13, P-DRF-09 · attachments are owned server-side until the draft is sent or discarded'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.drive, signalbox.tree, signalbox.thread
+
+    personA -> signalbox.web 'adds a file'
+    signalbox.web -> signalbox.capture 'upload' {
+      notes '''
+        - Held server-side for A, not by any device: A's phone sees the same file
+      '''
+    }
+    signalbox.capture -> signalbox.drive 'store blob' {
+      notes '''
+        - Drive's attachment store (R2 behind it); Capture never talks to R2 itself
+      '''
+    }
+    signalbox.capture -> signalbox.tree 'draft refs blob' {
+      notes '''
+        - The ref sits on the draft row in A's Person record; B and agents see neither
+      '''
+    }
+    signalbox.web <- signalbox.capture 'chip'
+    alt 'draft ends' {
+      when 'sent' {
+        signalbox.capture -> signalbox.thread 'thread takes files' {
+          navigateTo state_attachment
+          notes '''
+            - Ownership moves to the thread; Capture's hold ends
+            - Now everyone in the thread sees them
+          '''
+        }
+      }
+      else 'discarded' {
+        signalbox.capture -> signalbox.tree 'mark discarded' {
+          navigateTo state_draft
+          notes '''
+            - Undo inside the window brings the files back
+          '''
+        }
+        opt 'window passes' {
+          signalbox.capture -> signalbox.drive 'delete blob'
+        }
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree, signalbox.thread { color primary }
+  }
+
+  dynamic view person_drafts_move {
+    variant sequence
+    title "Workflows/Person/Drafts/Change a draft's folder"
+    description 'P-DRF-10 · move a draft before sending; the via is checked against your own tree (S1), again at NewThread'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.tree
+
+    personA -> signalbox.web 'picks a folder' {
+      notes '''
+        - In the draft heading; the picker lists A's own tree, mounts included
+      '''
+    }
+    signalbox.web -> signalbox.capture 'move draft'
+    signalbox.capture -> signalbox.tree 'check A\'s mount' {
+      notes '''
+        - Into Company › Team the via is A's own mount of Company (S1)
+      '''
+    }
+    alt 'check' {
+      when 'valid' {
+        signalbox.capture -> signalbox.tree 'rekey A\'s draft' {
+          notes '''
+            - Still a row in A's own Person record; B sees nothing in Team
+          '''
+        }
+        signalbox.web <- signalbox.capture 'new folder shown' {
+          navigateTo person_drafts_send
+          notes '''
+            - The via is checked once more at NewThread
+          '''
+        }
+      }
+      else 'invalid via' {
+        signalbox.web <- signalbox.capture 'Invalid, unchanged' {
+          notes '''
+            - Never silently rewritten; the draft stays where it was
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+  dynamic view person_drafts_stash {
+    variant sequence
+    title 'Workflows/Person/Drafts/Stash and recall a prompt'
+    description 'P-DRF-14 · prompt stash and recall of sent prompts, server-side per principle 2'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.tree
+
+    personA -> signalbox.web 'stash shortcut' {
+      notes '''
+        - A parks the composer text to write something else first
+      '''
+    }
+    signalbox.web -> signalbox.capture 'stash prompt'
+    signalbox.capture -> signalbox.tree 'row in A\'s record' {
+      notes '''
+        - Server-side in A's Person record, so the stash follows A to every device
+        - Private like a draft: nobody else sees it
+      '''
+    }
+    personA -> signalbox.web 'recall shortcut'
+    signalbox.web -> signalbox.capture 'stash and history'
+    signalbox.web <- signalbox.capture 'prompt list' {
+      notes '''
+        - A's stash plus A's own sent prompts
+        - A picks one; it fills the composer, nothing is sent
+      '''
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+  // ───────────────────────────── Workflows/Person/Notes ─────────────────────────────
+
+  dynamic view person_notes_write {
+    variant sequence
+    title 'Workflows/Person/Notes/Write a private or shared note'
+    description 'P-NOTE-01, P-NOTE-02, P-NOTE-17 · private notes live in the author Person actor keyed by home level; shared ones in the Level; B, C and the Company agent never read A private notes'
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.capture, signalbox.tree, hier.company.agentCo
+
+    personA -> signalbox.web 'note at Company' {
+      notes '''
+        - On Company's Notes pad; private is the default
+        - No status, never in the pipeline, never a needs-you
+      '''
+    }
+    signalbox.web -> signalbox.capture 'write note' {
+      navigateTo pgap_notes_links
+    }
+    alt 'visibility' {
+      when 'private' {
+        signalbox.capture -> signalbox.tree 'into A\'s record' {
+          navigateTo state_note
+          notes '''
+            - `Tree.change` on A's own Person record, keyed by home level Company
+            - Never enters Company's shared Level record
+          '''
+        }
+        parallel {
+          personB -> signalbox.capture 'reads Company pad'
+          personC -> signalbox.capture 'reads as admin'
+          hier.company.agentCo -> signalbox.capture 'reads as agent'
+        }
+        signalbox.capture -> signalbox.tree 'Company record only' {
+          notes '''
+            - Others' reads hit only Company's shared record
+            - B, C and the Company agent get none of A's private notes
+            - C's admin role governs folder Company, not A's Person record
+          '''
+        }
+      }
+      else 'shared' {
+        signalbox.capture -> signalbox.tree 'into Company record' {
+          notes '''
+            - `Tree.change` on Company's shared Level record
+            - Version bump; indexed in Search, re-checked at query time
+          '''
+        }
+        signalbox.capture -> personB 'sees the note' {
+          navigateTo person_notes_share
+          notes '''
+            - So do C (admin) and the Company agent: resolved by folder, not by author
+            - D (outside collaborator on Team only) never sees Company notes
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+  dynamic view person_notes_read {
+    variant sequence
+    title "Workflows/Person/Notes/Read a level's notes"
+    description 'P-NOTE-03, P-NOTE-14, P-NOTE-15 · the pad shows shared notes plus your own private ones; the level agent reads shared; notes resurface only in context'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.capture, signalbox.tree, hier.company.team.agentTeam
+
+    alt 'who reads' {
+      when 'A opens a pad' {
+        personA -> signalbox.web 'opens Team pad' {
+          notes '''
+            - The top level has its own pad, with only A's notes
+          '''
+        }
+        signalbox.web -> signalbox.capture 'notes view'
+        signalbox.capture -> signalbox.tree 'Team + A\'s private' {
+          notes '''
+            - `Tree.view`: Team's shared record plus A's own Person record at Team
+          '''
+        }
+        signalbox.web <- signalbox.capture 'shared plus mine' {
+          navigateTo person_notes_write
+          notes '''
+            - Private ones are marked
+            - B on the same pad sees shared + B's own, never A's
+            - D (outside collaborator on Team) sees Team's shared notes too
+          '''
+        }
+      }
+      when 'Team agent turn' {
+        hier.company.team.agentTeam -> signalbox.capture 'reads Team notes'
+        signalbox.capture -> signalbox.tree 'Team record only' {
+          notes '''
+            - The folder's agent gets shared notes as context, never private ones
+          '''
+        }
+      }
+      else 'related work opens' {
+        personB -> signalbox.web 'opens Team thread'
+        signalbox.capture -> signalbox.web 'note beside it' {
+          navigateTo state_note
+          notes '''
+            - Notes resurface only in context: no push, no badge, no digest
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+  dynamic view person_notes_share {
+    variant sequence
+    title 'Workflows/Person/Notes/Share or unshare a note'
+    description 'P-NOTE-07, P-NOTE-08 · the note-share saga keyed by noteId: upsert in the destination, then delete in the source'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.capture, signalbox.tree
+
+    alt 'direction' {
+      when 'share' {
+        personA -> signalbox.web 'Share note' {
+          navigateTo person_notes_write
+        }
+        signalbox.web -> signalbox.capture 'share'
+        loop 'saga by noteId' {
+          signalbox.capture -> signalbox.tree 'add to Team record' {
+            notes '''
+              - Destination first: upsert in Team's shared record, idempotent by noteId
+            '''
+          }
+          signalbox.capture -> signalbox.tree 'drop from A\'s record' {
+            notes '''
+              - Then delete from A's Person record
+              - A crash in between leaves a duplicate the retry collapses; never a lost note
+            '''
+          }
+        }
+        signalbox.capture -> personB 'appears on pad' {
+          notes '''
+            - For everyone on Team: B, D and the Team agent; C as admin of Company above
+          '''
+        }
+      }
+      else 'unshare' {
+        personA -> signalbox.web 'Unshare' {
+          notes '''
+            - Assumption: only the author unshares
+          '''
+        }
+        signalbox.web -> signalbox.capture 'unshare'
+        loop 'saga by noteId' {
+          signalbox.capture -> signalbox.tree 'add to A\'s record' {
+            navigateTo state_note
+            notes '''
+              - Upsert in A's Person record first
+            '''
+          }
+          signalbox.capture -> signalbox.tree 'drop from Team record'
+        }
+        signalbox.capture -> personB 'leaves the pad'
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+  dynamic view person_notes_edit_move {
+    variant sequence
+    title 'Workflows/Person/Notes/Edit or move a note'
+    description 'P-NOTE-09, P-NOTE-10 · B may edit shared notes; a move rekeys in the Person (private) or moves Level → Level (shared)'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.capture, signalbox.tree
+
+    alt 'who edits' {
+      when 'A, private note' {
+        personA -> signalbox.web 'edits'
+        signalbox.web -> signalbox.capture 'edit'
+        signalbox.capture -> signalbox.tree 'update A\'s record' {
+          notes '''
+            - Only A can: the row lives in A's Person record
+          '''
+        }
+      }
+      else 'B, shared note' {
+        personB -> signalbox.web 'edits'
+        signalbox.web -> signalbox.capture 'edit' {
+          notes '''
+            - `Tree.can(B, edit, Team)`: anyone with edit on Team may edit shared notes
+          '''
+        }
+        signalbox.capture -> signalbox.tree 'update Team record' {
+          notes '''
+            - Version bump; A's open pad updates live
+          '''
+        }
+      }
+    }
+    personA -> signalbox.web 'Move to Personal' {
+      notes '''
+        - A picks a folder in their own tree
+      '''
+    }
+    signalbox.web -> signalbox.capture 'move'
+    alt 'visibility' {
+      when 'private' {
+        signalbox.capture -> signalbox.tree 'rekey in A\'s record' {
+          navigateTo state_note
+          notes '''
+            - Same Person record, new home-level key: nothing crosses records
+          '''
+        }
+      }
+      else 'shared' {
+        loop 'saga by noteId' {
+          signalbox.capture -> signalbox.tree 'add at destination'
+          signalbox.capture -> signalbox.tree 'drop from Team' {
+            notes '''
+              - Same saga shape as share; it leaves Team's pad for B
+            '''
+          }
+        }
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+  dynamic view person_notes_overlay {
+    variant sequence
+    title "Workflows/Person/Notes/Accept or ignore a note's suggestion"
+    description 'P-NOTE-04, P-NOTE-05, P-NOTE-06 · one gentle overlay; the level agent suggests for shared notes, the assistant for private ones'
+
+    include personA, signalbox, signalbox.web, signalbox.capture, signalbox.thread, signalbox.tree, hier.asstA, hier.company.agentCo
+
+    alt 'who suggests' {
+      when 'private note' {
+        signalbox.capture -> hier.asstA 'fresh private note' {
+          notes '''
+            - Only A's own assistant reads A's private notes
+          '''
+        }
+        hier.asstA -> signalbox.capture 'suggestion'
+      }
+      else 'shared note' {
+        signalbox.capture -> hier.company.agentCo 'fresh shared note'
+        hier.company.agentCo -> signalbox.capture 'suggestion'
+      }
+    }
+    signalbox.capture -> signalbox.web 'overlay' {
+      notes '''
+        - "Did you mean …? I can …" under the note, once
+        - Not an ask; never enters the pipeline
+      '''
+    }
+    alt 'A responds' {
+      when 'accept' {
+        personA -> signalbox.web 'accept'
+        signalbox.web -> signalbox.capture 'link'
+        signalbox.capture -> signalbox.thread 'task or Ready' {
+          navigateTo person_toplayer_scratchpad
+          notes '''
+            - A task at the note's home level, or an item on A's Ready shelf
+            - The assistant only proposed it; the work runs in that thread
+          '''
+        }
+        signalbox.capture -> signalbox.tree 'note stays linked' {
+          navigateTo state_note
+          notes '''
+            - The link is stored on the note's row (A's Person or the folder's record)
+          '''
+        }
+      }
+      else 'ignore' {
+        personA -> signalbox.web 'ignore' {
+          notes '''
+            - Or "that's wrong": the overlay fades, it stays a plain note
+            - No retry, no reminder
+          '''
+        }
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree, signalbox.thread { color primary }
+  }
+
+  dynamic view person_notes_tend {
+    variant sequence
+    title 'Workflows/Person/Notes/Private notes get tidied'
+    description 'P-NOTE-13 · a default automation on A\'s top level clusters, merges, marks absorbed with a "tidied" log and folds into "older"; never deletes, never asks'
+
+    include personA, hier.asstA, signalbox, signalbox.automations, signalbox.judge, signalbox.capture, signalbox.tree
+
+    hier.asstA -> signalbox.automations 'owns tidy rule' {
+      notes '''
+        - A default automation placed on A's top level; A's assistant represents A and owns it, but never runs the work itself
+        - B's and C's tidy rules sit on their own top levels; nobody's tidy sees another's notes
+      '''
+    }
+    signalbox.automations -> signalbox.capture 'read private notes' {
+      notes '- Periodic; only A\'s private notes'
+    }
+    signalbox.capture -> signalbox.tree 'A\'s Person record'
+    signalbox.automations -> signalbox.judge 'cluster related' {
+      notes '''
+        - Bounded judgment: which notes say the same thing across folders
+        - Insufficient evidence → leave them alone
+      '''
+    }
+    signalbox.automations -> signalbox.capture 'merge, mark absorbed' {
+      notes '- Sources marked absorbed, never deleted; a "tidied" log says what changed'
+    }
+    signalbox.automations -> signalbox.capture 'fold into older' {
+      navigateTo state_note
+      notes '- Archive with restore'
+    }
+    signalbox.capture -> signalbox.tree 'write changes' {
+      notes '- Still only A\'s Person record; nothing moves to a shared folder'
+    }
+    opt 'A disagrees' {
+      personA -> signalbox.capture 'restore from log' {
+        notes '- Every tidy is reversible; nothing asks and nothing notifies'
+      }
+    }
+
+    global style capture_lanes
+    style signalbox.tree { color primary }
+  }
+
+}

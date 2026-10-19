@@ -1,0 +1,164 @@
+// Build layer (logical) and production topology. No container ever hosts a harness or a machine:
+// Containers run CLIProxyAPI only; boxd VMs only execute commands.
+model {
+  build = system 'Build & infra' {
+    description 'Effect v4 everywhere'
+
+    iac = part 'IaC' {
+      description 'every resource, plan-first'
+      technology 'Alchemy v2 · Cloudflare Secrets Store (state) · Wrangler (dev, types)'
+    }
+    toolchain = part 'Toolchain' {
+      technology 'Vite+ (vp) · Rolldown · Vitest · @effect/vitest · Playwright · oxlint · oxfmt · @shadcn/lint'
+    }
+    types = part 'Packages & types' {
+      technology 'pnpm workspaces · TypeScript 7 · tsc-rs · @effect/tsgo · knip · dependency-cruiser · Effect v4'
+    }
+    distribution = part 'Distribution' {
+      technology 'GitHub Releases · EAS Build/Update/Submit · TestFlight · Play internal · electron-builder · @electron/osx-sign · Azure Trusted Signing'
+    }
+    secrets = part 'Deploy secrets' {
+      technology '1Password service account · load-secrets-action'
+    }
+    ci = part 'CI' {
+      description 'moves to the CI on Base automation'
+      technology 'GitHub Actions · Blacksmith (interim)'
+    }
+    review = part 'Review & e2e' {
+      technology 'CodeRabbit · Macroscope · vouch · TesterArmy · Playwright · agent-device'
+    }
+    devAccess = part 'Dev access' {
+      technology 'Tailscale (maintainers only)'
+    }
+    analysis = part 'Analysis tools' {
+      technology 'Bun (bundle graph extraction)'
+    }
+    marketing = part 'Marketing site' {
+      technology 'Astro on Workers static assets'
+    }
+    retired = part 'Retired' {
+      #planned
+      description 'removed in the target'
+      technology 'Clerk · Vercel · PlanetScale · Hyperdrive · drizzle · @effect/sql-pg · T3 Connect relay · boat · Rust resource-monitor · QuickJS · Better Auth · Nango runtime · WorkOS Pipes · WorkOS FGA · AI Search · AI Gateway · D1 · KV · Sandbox SDK (reference) · zustand · electron-store · expo-auth-session'
+    }
+  }
+
+  build.iac -> signalbox 'provisions · deploys'
+  build.iac -> platform.boxd 'host-bound platform secrets'
+  build.secrets -> services.onepassword 'service account'
+  build.ci -> services.github 'Actions'
+  build.distribution -> services.github 'Releases'
+}
+
+deployment {
+  stage prod 'Production' {
+    zone cloudflare 'Cloudflare (EU jurisdiction)' {
+      worker app 'app script' {
+        instanceOf signalbox.funnel
+        instanceOf signalbox.ingress
+        instanceOf signalbox.operations
+        instanceOf signalbox.identity
+        durableObject appActors 'App Durable Objects' {
+          instanceOf signalbox.tree.levelActor
+          instanceOf signalbox.tree.personActor
+          instanceOf signalbox.drive.repoActor
+          instanceOf signalbox.models.custody
+          instanceOf signalbox.connections.connectionActor
+          instanceOf signalbox.search.shard
+        }
+      }
+      worker threadHost 'thread host script' {
+        durableObject threadDO 'Thread DO' {
+          instanceOf signalbox.thread.threadActor
+          isolate sessionFacet 'Session facet' {
+            instanceOf signalbox.harness.agents.claudeCode
+            instanceOf signalbox.harness.agents.codex
+            instanceOf signalbox.computer.backend.kernelFs
+          }
+          isolate children 'Child Dynamic Workers' {
+            instanceOf signalbox.computer.childIsolates
+          }
+        }
+      }
+      worker poolHost 'pool host script' {
+        durableObject cpaDO 'CPA host DO' {
+          instanceOf signalbox.models.cpaHost
+          container cpa 'CPA container' {
+            instanceOf signalbox.models.backend.cpaContainer
+          }
+        }
+      }
+      worker modelGw 'ModelGateway' {
+        instanceOf signalbox.gateway.modelGateway
+      }
+      worker toolGw 'ToolGateway' {
+        instanceOf signalbox.gateway.toolGateway
+        isolate codemode 'Codemode Dynamic Worker' {
+          instanceOf signalbox.gateway.codemode
+        }
+      }
+      workflow workflows 'Workflows' {
+        instanceOf signalbox.automations.engine.dynamicWorkflows
+      }
+      queue queues 'Queues' {
+        instanceOf signalbox.actorhost.outbox
+      }
+      storage driveStore 'Artifacts + R2 (EU)' {
+        instanceOf signalbox.drive.store.artifactsR2
+      }
+      worker browserRun 'Browser Run' {
+        instanceOf signalbox.browser.render.browserRun
+      }
+    }
+    zone boxdZone 'boxd' {
+      vm threadVm 'Thread VM (forked from Base)' {
+        instanceOf signalbox.computer.execDaemon
+      }
+      vm baseSnapshot 'Base snapshot' {
+        instanceOf signalbox.bases.snapshots.boxdSnapshots
+      }
+      vm proxyVm 'EgressProxy machines' {
+        instanceOf signalbox.gateway.egress.egressProxy
+      }
+    }
+    zone saas 'SaaS' {
+      instanceOf platform.workos
+      instanceOf modelProviders.anthropic
+      instanceOf modelProviders.openai
+      instanceOf services.google
+      instanceOf services.atlassian
+      instanceOf services.github
+      instanceOf services.onepassword
+      instanceOf platform.kernel
+      instanceOf platform.typesafe
+      instanceOf telemetry.sentry
+      instanceOf telemetry.axiom
+      instanceOf telemetry.posthog
+    }
+    // Deployment-level traffic (logical relationships are inherited too)
+    cloudflare.app -> cloudflare.threadHost 'thread commands'
+    cloudflare.threadHost -> cloudflare.modelGw 'model wire'
+    cloudflare.threadHost -> cloudflare.toolGw 'mcp wire'
+    cloudflare.modelGw -> cloudflare.poolHost 'stream'
+    cloudflare.threadHost -> cloudflare.driveStore 'commit · fork'
+    cloudflare.threadHost -> cloudflare.browserRun 'render'
+    cloudflare.app -> cloudflare.workflows 'runs'
+    cloudflare.app -> cloudflare.queues 'outbox fan-out'
+    cloudflare.threadHost -> boxdZone.threadVm 'escalate argv'
+    boxdZone.threadVm -> boxdZone.proxyVm 'egress (CONNECT)'
+    boxdZone.proxyVm -> cloudflare.toolGw 'fill'
+    devices -> cloudflare.app 'WS · HTTP'
+    zone devices 'Devices' {
+      device browserDevice 'Browser' {
+        instanceOf signalbox.web
+      }
+      device laptop 'Laptop' {
+        instanceOf signalbox.desktop
+        instanceOf laptopCli
+      }
+      device phone 'Phone' {
+        instanceOf signalbox.mobile
+      }
+    }
+  }
+}

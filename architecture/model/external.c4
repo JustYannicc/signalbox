@@ -1,0 +1,269 @@
+// External services, grouped so the landscape stays readable; drill into a group to see each one.
+// Cloudflare products are the `technology` of the parts that use them.
+model {
+  modelProviders = system 'Model providers' {
+    icon bootstrap:cpu
+    description 'reached only through CLIProxyAPI'
+    anthropic = external 'Anthropic' {
+      #v1
+      icon tech:anthropic-icon
+      technology 'Messages API · Claude subscriptions'
+    }
+    openai = external 'OpenAI' {
+      #v1
+      icon tech:openai-icon
+      technology 'Responses API · ChatGPT subscriptions'
+    }
+    xai = external 'xAI' {
+      icon tech:x
+      technology 'Grok API'
+    }
+    gcloudcode = external 'Google cloudcode' {
+      icon tech:google-gemini
+      technology 'Gemini / Antigravity endpoints'
+    }
+    openrouter = external 'OpenRouter' {
+      icon bootstrap:signpost-split
+      technology 'API keys'
+    }
+  }
+
+  services = system 'Connected services' {
+    icon bootstrap:plug
+    description 'one-click hosted OAuth · tools'
+    google = external 'Google APIs' {
+      #v1
+      icon tech:google-icon
+      technology 'Drive · Docs · Sheets · Gmail · Calendar'
+    }
+    atlassian = external 'Atlassian' {
+      #v1
+      icon tech:confluence
+      technology 'Confluence · Jira'
+    }
+    microsoft365 = external 'Microsoft 365' {
+      icon tech:microsoft-icon
+    }
+    slack = external 'Slack' {
+      icon tech:slack-icon
+      technology 'API · webhooks'
+    }
+    notion = external 'Notion' {
+      icon tech:notion-icon
+    }
+    todoist = external 'Todoist' {
+      icon tech:todoist-icon
+    }
+    trello = external 'Trello' {
+      icon tech:trello
+    }
+    github = external 'GitHub' {
+      icon tech:github-icon
+      technology 'GitHub App · OAuth · REST/GraphQL · Actions · Releases'
+    }
+    gitlab = external 'GitLab' {
+      icon tech:gitlab-icon
+    }
+    onepassword = external '1Password' {
+      icon bootstrap:key-fill
+      technology 'device link · service account · @1password/sdk'
+    }
+    smsGateway = external 'SMS gateway' {
+      icon bootstrap:chat-left-text
+      description 'reads SMS login codes'
+      technology 'phone SMS gateway · API'
+    }
+    toolService = external 'Tool service' {
+      icon bootstrap:tools
+      description 'any service reached as tools'
+      technology 'REST · remote MCP'
+    }
+    boundHost = external 'Bound host' {
+      icon bootstrap:hdd-network
+      description 'host a placed secret is bound to'
+      technology 'HTTPS · filled at egress only'
+    }
+    webhookSender = external 'Webhook sender' {
+      icon bootstrap:send
+      description 'any app that posts webhooks'
+    }
+    zapierN8n = external 'Zapier · n8n' {
+      icon bootstrap:diagram-3
+      description 'outside automation tools'
+      technology 'webhooks · MCP'
+    }
+  }
+
+  platform = system 'Platform services' {
+    icon bootstrap:boxes
+    description 'identity · VMs · browser · judgments · upstreams'
+    workos = external 'WorkOS' {
+      #v1
+      icon tech:workos-icon
+      description 'sign-in · organizations · roles'
+      technology 'AuthKit · directory sync · Admin Portal'
+      metadata { stack 'AuthKit · Google Workspace sign-in · directory sync · Admin Portal · Radar · MCP authz' }
+    }
+    boxd = external 'boxd' {
+      icon bootstrap:pc-display
+      description 'VMs · forks · snapshots'
+      technology 'VMs · fork · named snapshots'
+      metadata { stack 'machines · fork · named snapshots · egress allowlist · host-bound secrets · deleteAfter · usage API' }
+    }
+    kernel = external 'Kernel' {
+      icon tech:chrome
+      description 'real-web browser'
+      technology 'Kernel API · Managed Auth'
+    }
+    typesafe = external 'TypeSafe' {
+      icon bootstrap:signpost-split
+      description 'bounded judgments'
+      technology 'Jev'
+    }
+    t3upstream = external 'T3 Code upstream' {
+      icon tech:git
+      technology 'git · releases'
+    }
+    cpaUpstream = external 'CLIProxyAPI upstream' {
+      icon tech:go
+      technology 'releases · carry patches'
+    }
+    artifacts = external 'Cloudflare Artifacts' {
+      icon tech:cloudflare-icon
+      description 'hot git repos · fork per thread'
+      technology 'Artifacts (git over HTTP)'
+    }
+    r2 = external 'R2' {
+      icon tech:cloudflare-icon
+      description 'full record · objects · chunks'
+      technology 'R2 object storage'
+    }
+    deviceHost = external 'Cloud device host' {
+      icon bootstrap:phone
+      description 'cloud phones and desktops'
+      technology 'DeviceHost provider'
+    }
+    routerForMe = external 'router-for-me/models' {
+      icon tech:github-icon
+      description 'model catalog feed'
+      technology 'models.json · releases'
+    }
+    nango = external 'Nango catalog' {
+      icon bootstrap:journal-code
+      description 'provider definitions, imported as data'
+      technology 'open-source catalog (never deployed)'
+    }
+    stripe = external 'Stripe' {
+      icon tech:stripe
+      description 'payments · invoices'
+      technology 'Billing API'
+    }
+    metronome = external 'Metronome' {
+      icon bootstrap:speedometer2
+      description 'usage-based billing'
+      technology 'usage ingest API'
+    }
+  }
+
+  upstreams = system 'Distribution and upstreams' {
+    icon bootstrap:box-seam
+    description 'where builds ship and what we follow'
+    cloudflare = external 'Cloudflare API' {
+      icon tech:cloudflare-icon
+      description 'deploy target'
+      technology 'Workers · DO · Queues · Secrets Store'
+    }
+    alchemyUpstream = external 'Alchemy upstream' {
+      icon tech:github-icon
+      description 'IaC providers · we contribute missing ones'
+      technology 'Alchemy v2 releases'
+    }
+    npm = external 'npm registry' {
+      icon tech:npm
+      description 'Claude Code · Codex releases'
+    }
+    eas = external 'Expo EAS' {
+      icon tech:expo-icon
+      description 'mobile builds · OTA updates · submit'
+      technology 'EAS Build · Update · Submit'
+    }
+    appStores = external 'App Store · Play' {
+      icon tech:apple
+      description 'TestFlight · Play internal'
+    }
+    updateFeed = external 'Update feed' {
+      icon bootstrap:cloud-arrow-down
+      description 'desktop releases'
+      technology 'electron-updater feed · GitHub Releases'
+    }
+    skillsSh = external 'skills.sh' {
+      icon bootstrap:stars
+      description 'public skill registry'
+    }
+    claudePlugins = external 'Claude plugin marketplace' {
+      icon tech:claude-icon
+      description 'Claude Code plugins'
+    }
+    codexPlugins = external 'Codex plugin marketplace' {
+      icon tech:openai-icon
+      description 'Codex plugins'
+    }
+  }
+
+  telemetry = system 'Observability and push' {
+    icon bootstrap:activity
+    description 'ids only · push delivery'
+    sentry = external 'Sentry' {
+      icon tech:sentry-icon
+      technology 'EU · errors · traces · alerts · feedback · Seer'
+    }
+    axiom = external 'Axiom' {
+      icon bootstrap:bar-chart-line
+      technology 'raw wide events · spans'
+    }
+    posthog = external 'PostHog' {
+      icon tech:posthog-icon
+      technology 'EU · product analytics (off until enabled)'
+    }
+    apns = external 'APNs' {
+      icon tech:apple
+    }
+    fcm = external 'FCM' {
+      icon tech:firebase-icon
+      technology 'Firebase'
+    }
+    webPush = external 'Web Push' {
+      icon tech:chrome
+    }
+  }
+
+  platform.workos -[async]-> signalbox.ingress 'webhooks · callbacks'
+  services.github -[async]-> signalbox.ingress 'forge webhooks'
+  services.gitlab -[async]-> signalbox.ingress 'forge webhooks'
+  telemetry.apns -> signalbox.mobile 'push'
+  telemetry.fcm -> signalbox.mobile 'push'
+  telemetry.webPush -> signalbox.web 'push'
+
+  services.webhookSender -[async]-> signalbox.ingress 'webhooks'
+  services.zapierN8n -[async]-> signalbox.ingress 'webhooks'
+  signalbox.connections -[tool]-> services.toolService 'tool calls'
+  signalbox.connections -> services.smsGateway 'read login codes'
+  signalbox.gateway -> services.boundHost 'filled request'
+  signalbox.drive -> platform.artifacts 'git repos'
+  signalbox.drive -> platform.r2 'full record · attachments'
+  signalbox.bases -> platform.r2 'chunks'
+  signalbox.computer -> platform.deviceHost 'cloud devices'
+  signalbox.models -> platform.routerForMe 'model catalog'
+  signalbox.connections -> platform.nango 'catalog import'
+  signalbox.models -[async]-> platform.metronome 'usage totals'
+  platform.stripe -[async]-> signalbox.ingress 'billing events'
+  build.iac -> upstreams.cloudflare 'deploy'
+  build.iac -> upstreams.alchemyUpstream 'providers'
+  signalbox.harness -> upstreams.npm 'CLI releases'
+  build.distribution -> upstreams.eas 'builds · OTA'
+  upstreams.eas -> upstreams.appStores 'submit'
+  upstreams.eas -> signalbox.mobile 'OTA update'
+  upstreams.appStores -> signalbox.mobile 'install'
+  build.distribution -> upstreams.updateFeed 'publish'
+  upstreams.updateFeed -> signalbox.desktop 'update'
+}

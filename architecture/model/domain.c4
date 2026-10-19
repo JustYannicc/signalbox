@@ -1,0 +1,146 @@
+// Domain entities (ER style). Crow head = has many. Plain arrow = refers to one.
+model {
+  domain = system 'Domain model' {
+    owner = entity 'Owner' {
+      description 'person or organization'
+    }
+    person = entity 'Person' {
+      description 'one sign-in, one tree'
+    }
+    level = entity 'Level' {
+      description 'top level or folder · nests'
+    }
+    mount = entity 'Mount' {
+      description 'organization folder into a member tree'
+    }
+    place = entity 'Place' {
+      description '{level, via?}'
+    }
+    placement = entity 'Placement' {
+      description 'kind · ref · reach · until'
+    }
+    loan = entity 'Loan' {
+      description 'placement into a level you do not own'
+    }
+    role = entity 'Role' {
+      description 'Owner · Admin · Member · Viewer'
+    }
+    scope = entity 'Scope' {
+      description 'resolved chain, frozen per turn'
+    }
+    thread = entity 'Thread' {
+      description 'chat or task · forks are threads'
+    }
+    turn = entity 'Turn'
+    ask = entity 'Ask' {
+      description 'Blocker · Ready · Considering'
+    }
+    session = entity 'Session' {
+      description 'native resume state'
+    }
+    grant = entity 'Grant' {
+      description 'short-lived, one subject'
+    }
+    note = entity 'Note'
+    draft = entity 'Draft'
+    device = entity 'Device'
+    pool = entity 'Pool'
+    account = entity 'Account' {
+      description 'subscription or API key'
+    }
+    usageRow = entity 'Usage row' {
+      description 'tokens · compute · storage'
+    }
+    connection = entity 'Connection' {
+      description 'one credential'
+    }
+    tool = entity 'Tool'
+    secretRef = entity 'Secret reference' {
+      description 'value in 1Password'
+    }
+    source = entity 'Source' {
+      description '/sources/<label>/'
+    }
+    drive = entity 'Drive'
+    workingRef = entity 'Working ref'
+    computer = entity 'Computer' {
+      description 'cache, leased by a thread'
+    }
+    base = entity 'Base' {
+      description '(drive, recipeHash, sha)'
+    }
+    automation = entity 'Automation'
+    skill = entity 'Skill'
+    harnessPlugin = entity 'Harness plugin' {
+      description 'Claude Code or Codex plugin'
+    }
+    mcpServer = entity 'MCP server' {
+      description 'catalog entry or remote URL'
+    }
+    instructions = entity 'Instructions' {
+      description 'AGENTS.md block'
+    }
+    app = entity 'App' {
+      description 'folder app'
+    }
+    listing = entity 'Listing' {
+      description 'marketplace item · code or text + needs'
+    }
+    listingVersion = entity 'Listing version' {
+      description 'immutable · content hash'
+    }
+
+    owner -[owns]-> level 'owns'
+    owner -[owns]-> pool 'owns'
+    owner -[owns]-> connection 'owns'
+    person -> level 'top level'
+    person -[owns]-> mount 'has'
+    person -[owns]-> draft 'has'
+    person -[owns]-> device 'has'
+    person -[owns]-> note 'private notes'
+    level -[owns]-> placement 'has'
+    level -[owns]-> role 'has'
+    level -[owns]-> thread 'home of'
+    level -[owns]-> note 'shared notes'
+    level -> thread 'agent thread'
+    mount -> level 'mounted folder'
+    place -> level 'at'
+    place -> mount 'via?'
+    loan -> placement 'is a'
+    role -> person 'held by'
+    placement -> pool 'ref'
+    placement -> connection 'ref'
+    placement -> secretRef 'ref'
+    placement -> source 'ref'
+    placement -> drive 'ref'
+    placement -> automation 'ref'
+    placement -> skill 'ref'
+    placement -> harnessPlugin 'ref'
+    placement -> mcpServer 'ref'
+    placement -> instructions 'ref'
+    placement -> app 'ref'
+    placement -> listingVersion 'installed from'
+    level -[owns]-> listing 'published at'
+    listing -[owns]-> listingVersion 'versions'
+    thread -> place 'filed at'
+    thread -[owns]-> turn 'has'
+    thread -[owns]-> ask 'raises'
+    thread -[owns]-> session 'has'
+    thread -> computer 'leases one'
+    thread -> workingRef 'writes'
+    turn -> scope 'frozen'
+    turn -> grant 'uses'
+    ask -> person 'decider'
+    pool -[owns]-> account 'has'
+    pool -[owns]-> usageRow 'writes'
+    usageRow -> level 'level at use'
+    connection -[owns]-> tool 'manifest'
+    source -> connection 'narrows'
+    drive -[owns]-> workingRef 'forks'
+    drive -[owns]-> base 'has'
+    computer -> base 'VM forked from'
+    automation -[owns]-> thread 'runs'
+    device -> level 'home'
+    draft -> place 'at'
+  }
+}

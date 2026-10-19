@@ -1,0 +1,1423 @@
+// Scenario shard 12: attention. Asks, devices, Focus, drafts and the assistant's day, one
+// journey per scenario (SCN-242–SCN-264). Modules are black boxes; clients reach them through
+// the Funnel (drawn only where it matters). People: A and B are members of folder Company
+// (owner: organization), B works in folder Team under it; C is admin of folder Company.
+// The assistant is A's top-level agent thread (hier.asstA).
+global {
+  styleGroup scn12Lanes {
+    style signalbox, hier, telemetry, services, platform {
+      color muted
+      opacity 10%
+    }
+  }
+}
+
+views {
+
+  // ───────────────────────────── Scenarios/Attention/Asks ─────────────────────────────
+
+  dynamic view scn_242_ask_outlives_turn {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Asks/Ask Outlives Turn'
+    description """
+      Does an ask survive the turn, the session and the machine ending?
+      Decided: #667 (2026-10-16, from #630/#637); PR #780 merged 2026-10-18. One Signalbox ask record, durable beyond turn and session; the answer arrives as a normal message.
+      SCN-242 · P-ASK-01 · P-ASK-02 · P-BLK-01 · P-BLK-15 · P-PIP-03 · not v1
+    """
+
+    include personB, signalbox.mobile, signalbox.funnel, signalbox.thread, signalbox.harness, signalbox.attention, signalbox.computer
+    include signalbox
+    global style scn12Lanes
+
+    signalbox.harness -> signalbox.thread 'Calls ask tool' {
+      navigateTo person_asks_record
+      notes '''
+        - **Start:** B's agent in folder Team hits a blocker mid-turn.
+        - The Thread actor commits one durable ask record and `ask.raised` in its outbox.
+      '''
+    }
+    signalbox.thread -> signalbox.attention 'Projects the ask' {
+      navigateTo person_pipeline_blocker_raise
+      notes '''
+        - Outbox delivery into B's pipeline, on B's chain: top level › Work › Company › Team.
+      '''
+    }
+    signalbox.attention -> signalbox.mobile 'Blocker row' {
+      notes '''
+        - B sees one Blocker row on the top layer. B is busy and leaves it.
+      '''
+    }
+    signalbox.thread -> signalbox.harness 'Parks the turn' {
+      notes '''
+        - The turn parks or ends; the session facet idles out.
+        - The ask lives in the Thread actor, not in the turn or the session.
+      '''
+    }
+    signalbox.harness -> signalbox.computer 'Releases the VM' {
+      notes '''
+        - The boxd VM is released. Nothing about the ask was on it.
+      '''
+    }
+    personB -> signalbox.mobile 'Answers days later' {
+      navigateTo journey_daily_pipeline_rounds
+      notes '''
+        - B answers it in a round, days later.
+      '''
+    }
+    signalbox.mobile -> signalbox.funnel 'Thread.send(answer)'
+    signalbox.funnel -> signalbox.thread 'Delivers answer' {
+      notes '''
+        - A normal message on the thread's log, like any other send.
+      '''
+    }
+    alt 'is the native question still parked?' {
+      when 'yes' {
+        signalbox.thread -> signalbox.harness 'Resumes tool result' {
+          notes '''
+            - The parked native question resumes with the answer as its pending tool result.
+          '''
+        }
+      }
+      else 'the turn ended' {
+        signalbox.thread -> signalbox.harness 'Starts a new turn' {
+          notes '''
+            - The answer is the new turn's input.
+          '''
+        }
+      }
+    }
+    opt 'real commands run' {
+      signalbox.harness -> signalbox.computer 'Forks from Base' {
+        notes '''
+          - A VM forks from the warm Base only if the agent runs real commands.
+        '''
+      }
+    }
+    signalbox.thread -> signalbox.attention 'Ask resolved' {
+      notes '''
+        - **End:** the answer reached the agent as a normal message; B's row clears.
+        - `#decided` #667 (2026-10-16), PR #780.
+      '''
+    }
+  }
+
+  dynamic view scn_243_partial_round {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Asks/Partial Round'
+    description """
+      What happens when someone answers part of a round and skips the rest?
+      Decided: #667 (2026-10-16) leftovers carry into the next round; #635 (2026-10-16) Later is a per-person snooze, back on time or earlier if the waiting cost jumps. Later never marks an ask answered (bug #309).
+      SCN-243 · P-PIP-03 · P-PIP-05 · P-BLK-18 · P-BLK-19 · not v1
+    """
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.attention, signalbox.tree, signalbox.thread
+    include signalbox
+    global style scn12Lanes
+
+    signalbox.attention -> signalbox.web 'Company round' {
+      navigateTo journey_daily_pipeline_rounds
+      notes '''
+        - **Start:** a round of 4 asks from folder Company on A's top layer.
+      '''
+    }
+    personA -> signalbox.web 'Answers two' {
+      notes '''
+        - A writes two answers and starts a third.
+      '''
+    }
+    signalbox.funnel -> signalbox.tree 'Saves half-written' {
+      notes '''
+        - Half-written answers sit in A's Person actor: they survive reload and show on A's other devices.
+      '''
+    }
+    personA -> signalbox.web 'Later on one' {
+      notes '''
+        - A taps Later on the third.
+      '''
+    }
+    signalbox.funnel -> signalbox.attention 'defer(A, ask)' {
+      navigateTo person_pipeline_blocker_snooze
+      notes '''
+        - Snoozed for A only; the agent keeps waiting.
+        - Later never marks the ask answered (#309).
+      '''
+    }
+    personA -> signalbox.web 'Sends 2 answers'
+    parallel {
+      signalbox.funnel -> signalbox.thread 'Answer 1' {
+        navigateTo journey_daily_answer_ask
+        notes '''
+          - One `Thread.send(answer)` to each ask's own thread.
+        '''
+      }
+      signalbox.funnel -> signalbox.thread 'Answer 2'
+    }
+    signalbox.thread -> signalbox.attention 'Two resolved'
+    signalbox.attention -> signalbox.web 'Next round' {
+      navigateTo state_ask
+      notes '''
+        - **End:** the untouched ask and the snoozed one (back on time, or earlier if its waiting cost jumps) carry into folder Company's next round.
+        - `#decided` #667, #635 (2026-10-16).
+      '''
+    }
+  }
+
+  dynamic view scn_244_undo_answer {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Asks/Undo Answer'
+    description """
+      Can an answer be undone right after sending it?
+      Assumption: Retract works only while the answer hasn't reached a turn; after that Undo becomes "Change answer" (a correction message plus a reopened ask), with no automatic rollback. Why: answers are Thread.send events in an append-only log (§3.13); #309 wants retraction before the agent acts; every one-way door needs a way out (S12).
+      SCN-244 · P-PIP-12 · P-ASK-02 · P-PIP-03 · P-BLK-16 · not v1
+    """
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.harness, signalbox.attention, signalbox.drive
+    include signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.web 'Sends answers' {
+      notes '''
+        - **Start:** A just sent a round's answers.
+      '''
+    }
+    signalbox.web -> personA 'Receipt with Undo' {
+      notes '''
+        - "Company: 2 answers sent" with Undo.
+      '''
+    }
+    personA -> signalbox.web 'Clicks Undo' {
+      navigateTo person_pipeline_undo_answer
+    }
+    signalbox.web -> signalbox.funnel 'Retract each'
+    signalbox.funnel -> signalbox.thread 'Retract(answer)'
+    alt 'did a turn consume it?' {
+      when 'still queued' {
+        signalbox.thread -> signalbox.thread 'Drops the answer' {
+          notes '''
+            - No turn has read it, so it's dropped from the queue.
+          '''
+        }
+        signalbox.thread -> signalbox.attention 'Reopens ask'
+      }
+      else 'agent already acted' {
+        signalbox.thread -> signalbox.web 'Offers Change answer' {
+          notes '''
+            - Undo turns into "Change answer"; the ask reopens in A's pipeline.
+          '''
+        }
+        personA -> signalbox.web 'New answer'
+        signalbox.funnel -> signalbox.thread 'Steer message' {
+          navigateTo person_pipeline_blocker_approval
+        }
+        signalbox.thread -> signalbox.harness 'Steers the turn' {
+          notes '''
+            - The agent gets the correction as a message; what it already did stays done.
+          '''
+        }
+      }
+    }
+    opt 'A wants the work undone too' {
+      signalbox.funnel -> signalbox.drive 'Restores checkpoint' {
+        notes '''
+          - A separate action of A's. Nothing rolls back on its own.
+        '''
+      }
+    }
+    signalbox.web -> personA 'Shows the outcome' {
+      notes '''
+        - **End:** retracted before the agent acted, or corrected after.
+        - `#assumption` retract only while undelivered; otherwise correction + reopened ask.
+      '''
+    }
+  }
+
+  dynamic view scn_245_answer_race_devices {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Asks/Answer Race'
+    description """
+      What if the same ask is answered on phone and laptop at once?
+      Assumption: the first committed answer wins; the late one gets AlreadyAnswered and that device shows what was sent, with Change answer. Why: the Thread actor serializes commands, and the same first-answer-wins rule already holds for shared asks (P-BLK-14, §3.13).
+      SCN-245 · P-BLK-14 · P-PIP-08 · P-ASK-08 · P-PIP-12 · not v1
+    """
+
+    include personA, signalbox.mobile, signalbox.desktop, signalbox.funnel, signalbox.thread, signalbox.attention
+    include signalbox
+    global style scn12Lanes
+
+    parallel {
+      personA -> signalbox.mobile 'Answers "yes"' {
+        notes '''
+          - **Start:** one ask, two different answers in flight.
+        '''
+      }
+      personA -> signalbox.desktop 'Answers "no"' {
+        notes '''
+          - The laptop hadn't synced the phone's answer yet.
+        '''
+      }
+    }
+    signalbox.mobile -> signalbox.funnel 'Thread.send(answer)' {
+      navigateTo journey_daily_answer_ask
+    }
+    signalbox.desktop -> signalbox.funnel 'Thread.send(answer)'
+    signalbox.funnel -> signalbox.thread 'Phone first: commits' {
+      navigateTo person_pipeline_shared_asks
+      notes '''
+        - The Thread actor serializes commands; the first one commits.
+      '''
+    }
+    signalbox.funnel -> signalbox.thread 'Laptop second'
+    signalbox.funnel <- signalbox.thread 'AlreadyAnswered' {
+      notes '''
+        - Identical retries dedupe by requestId; a different late answer gets `AlreadyAnswered`.
+      '''
+    }
+    signalbox.thread -> signalbox.attention 'Ask resolved' {
+      navigateTo person_pipeline_project_ask
+      notes '''
+        - The projection drops on every device.
+      '''
+    }
+    signalbox.attention -> signalbox.desktop 'Answered on phone' {
+      navigateTo person_pipeline_undo_answer
+      notes '''
+        - **End:** the laptop shows "Answered on your phone: yes" with Change answer (see Undo Answer).
+        - `#assumption` first committed wins.
+      '''
+    }
+  }
+
+  dynamic view scn_247_deadline_passes {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Asks/Deadline Passes'
+    description """
+      What happens as a hard deadline approaches and passes?
+      Decided: #635 (2026-10-16) order and rise; #316 wants never push unless a deadline nears; #180 commitments pass any filter.
+      Assumption (after it passes): nothing auto-answers or drops; the agent is told and the ask stays overdue. Why: gate asks are never auto-answered (P-RDY-09); nothing is deleted on a clock.
+      SCN-247 · P-PIP-02 · P-RDY-13 · P-TOP-05 · P-ASK-01 · not v1
+    """
+
+    include personA, hier.asstA, signalbox.mobile, signalbox.attention, signalbox.thread, signalbox.harness
+    include hier, signalbox
+    global style scn12Lanes
+
+    signalbox.attention -> signalbox.attention 'Want on the shelf' {
+      navigateTo person_pipeline_ready_placement
+      notes '''
+        - **Start:** a Ready want with a deadline and no waiting cost yet. Never pushed (#316).
+      '''
+    }
+    hier.asstA -> signalbox.attention 'Intent: Personal only' {
+      navigateTo person_toplayer_intent
+      notes '''
+        - A set today's intent through the assistant this morning.
+      '''
+    }
+    signalbox.attention -> signalbox.attention 'Deadline nears' {
+      navigateTo person_pipeline_queue_order
+      notes '''
+        - Waiting cost rises; it's promoted into the Ready lane and may push.
+        - Queue order: deadline › unblocked › waiting cost › age, so it goes first.
+      '''
+    }
+    signalbox.attention -> signalbox.mobile 'First, with reason' {
+      notes '''
+        - The intent filter can't hide a commitment (#180); the row says why it's there.
+      '''
+    }
+    alt 'before the deadline' {
+      when 'A answers' {
+        personA -> signalbox.mobile 'Answers'
+        signalbox.mobile -> signalbox.thread 'Thread.send(answer)'
+      }
+      else 'the deadline passes' {
+        signalbox.attention -> signalbox.thread 'deadline.passed' {
+          navigateTo person_asks_record
+          notes '''
+            - A message to the thread, so the agent can re-plan.
+          '''
+        }
+        signalbox.thread -> signalbox.harness 'Agent re-plans' {
+          notes '''
+            - Reschedule, take the fallback it stated, or withdraw the ask.
+          '''
+        }
+        signalbox.attention -> signalbox.mobile 'Marked overdue' {
+          notes '''
+            - **End:** stays overdue until answered or withdrawn. Nothing auto-answers or drops.
+            - `#decided` #635, #316, #180 · `#assumption` after the deadline.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view scn_249_unready_pr_merge {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Asks/Unready PR'
+    description """
+      What happens when an unready PR asks to merge?
+      Decided: #397 (2026-10-16) default merge gate; #522 an unready PR never reaches a person.
+      SCN-249 · P-RDY-02 · P-RDY-03 · P-RDY-01 · not v1
+    """
+
+    include personB, personC, signalbox.web, signalbox.thread, signalbox.operations, signalbox.automations, signalbox.attention, services.github
+    include signalbox, services
+    global style scn12Lanes
+
+    personB -> signalbox.web 'Asks to ship' {
+      notes '''
+        - **Start:** B's thread in folder Team has a PR with red CI.
+      '''
+    }
+    signalbox.web -> signalbox.thread 'Sends a turn'
+    signalbox.thread -> signalbox.operations 'Requests merge' {
+      navigateTo person_pipeline_ready_merge_gate
+      notes '''
+        - The merge goes through the decision gate.
+      '''
+    }
+    signalbox.operations -> signalbox.automations 'Readiness check' {
+      notes '''
+        - Code, not judgment: CI status, unresolved bot findings.
+      '''
+    }
+    signalbox.automations -> services.github 'Reads checks'
+    signalbox.operations <- signalbox.automations 'Not ready'
+    signalbox.operations -> signalbox.thread 'Wake: what is missing' {
+      notes '''
+        - The agent is woken with the list. No needs-you; neither B nor C sees it (#522).
+      '''
+    }
+    loop 'until green' {
+      signalbox.thread -> services.github 'Fixes and pushes'
+    }
+    alt 'how reversible' {
+      when 'reversible, evidence-backed' {
+        signalbox.operations -> services.github 'Merges itself' {
+          notes '''
+            - **End:** merged with no person involved.
+          '''
+        }
+      }
+      else 'hard to reverse' {
+        signalbox.operations -> signalbox.attention 'Ready ask to C' {
+          navigateTo person_pipeline_ready_gate
+          notes '''
+            - Evidence pinned to the head sha. C is the merge decider for folder Company.
+          '''
+        }
+        signalbox.attention -> personC 'Ready row'
+        alt 'before C decides' {
+          when 'a new push lands' {
+            signalbox.automations -> signalbox.attention 'Head moved' {
+              notes '''
+                - The approval is invalidated and the ask is raised again at the new sha.
+              '''
+            }
+          }
+          else 'head unchanged' {
+            personC -> signalbox.web 'Approves'
+            signalbox.web -> signalbox.operations 'Approve at sha'
+            signalbox.operations -> services.github 'Merges' {
+              notes '''
+                - **End:** merged on C's approval.
+                - `#decided` #397 (2026-10-16), #522.
+              '''
+            }
+          }
+        }
+      }
+    }
+  }
+
+  dynamic view scn_250_considering_resurfaces {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Asks/Considering Resurfaces'
+    description """
+      What happens to a big call parked in Considering?
+      Decided: #630 and #673 (2026-10-16).
+      SCN-250 · P-CON-01 · P-CON-02 · P-CON-03 · P-CON-04 · P-CON-05 · not v1
+    """
+
+    include personA, signalbox.web, signalbox.thread, signalbox.harness, signalbox.attention, signalbox.judge, signalbox.search, signalbox.automations
+    include signalbox
+    global style scn12Lanes
+
+    signalbox.thread -> signalbox.attention 'Move to Considering' {
+      navigateTo person_pipeline_considering_park
+      notes '''
+        - **Start:** a big call for a folder under A's Personal.
+        - It must carry an exit condition: a date, an event, or new evidence.
+      '''
+    }
+    alt 'exit condition given?' {
+      when 'no' {
+        signalbox.attention -> signalbox.thread 'Refused' {
+          notes '''
+            - No parking without a way back.
+          '''
+        }
+      }
+      else 'yes' {
+        signalbox.attention -> signalbox.attention 'Off the pipeline'
+      }
+    }
+    signalbox.harness -> signalbox.thread 'Keeps preparing' {
+      notes '''
+        - The agent keeps working on it; A sees nothing.
+      '''
+    }
+    alt 'what brings it back' {
+      when 'date or event' {
+        signalbox.attention -> signalbox.attention 'Condition fires'
+      }
+      when 'new evidence' {
+        signalbox.search -> signalbox.attention 'Related item appears' {
+          notes '''
+            - A new thread or note shows up in search.
+          '''
+        }
+        signalbox.attention -> signalbox.judge 'Is it related?' {
+          notes '''
+            - A Jev relatedness judgment, bounded to this item.
+          '''
+        }
+        signalbox.attention <- signalbox.judge 'Related'
+      }
+      else 'nothing, gone stale' {
+        signalbox.automations -> signalbox.attention 'Weekly review' {
+          navigateTo person_pipeline_weekly_review
+        }
+      }
+    }
+    signalbox.attention -> signalbox.web 'Back with what changed' {
+      navigateTo person_pipeline_considering_surface
+      notes '''
+        - **End:** back on A's pipeline with "what changed".
+        - `#decided` #630, #673 (2026-10-16).
+      '''
+    }
+    personA -> signalbox.web 'Decides'
+  }
+
+  // ───────────────────────────── Scenarios/Attention/Assistant ─────────────────────────────
+
+  dynamic view scn_248_on_behalf_overturned {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Assistant/On Behalf Overturned'
+    description """
+      What if the assistant answers on someone's behalf and gets it wrong?
+      Decided: #632 (2026-10-16) route via assistants first, logged with the rule, never pushed; #675 (2026-10-18) narrowed to the personal path: a per-person learner never stands in for a company authority (company routing in #1132).
+      SCN-248 · P-AST-08 · P-AST-09 · P-AST-28 · P-AST-45 · P-BLK-12 · not v1
+    """
+
+    include personA, hier.asstA, personB, personC, signalbox.web, signalbox.thread, signalbox.learner, signalbox.attention
+    include hier, signalbox
+    global style scn12Lanes
+
+    alt 'where the asking worker sits' {
+      when 'a folder under Personal' {
+        signalbox.thread -> hier.asstA 'Question climbs' {
+          navigateTo person_pipeline_route
+          notes '''
+            - **Start:** a worker asks its folder agent; the question climbs while it's that level's interest, up to A's assistant.
+          '''
+        }
+        hier.asstA -> signalbox.learner 'RouteAuthority?'
+        hier.asstA <- signalbox.learner 'Served rule' {
+          notes '''
+            - A's personal learner has a rule for this kind of question.
+          '''
+        }
+        hier.asstA -> signalbox.thread 'Answers as A' {
+          navigateTo person_assistant_answer_on_behalf
+          notes '''
+            - Logged with the rule it used. Never pushed.
+          '''
+        }
+        hier.asstA -> signalbox.web 'Weekly quiet digest' {
+          navigateTo person_assistant_weekly_digest
+          notes '''
+            - Low-confidence answers first.
+          '''
+        }
+        personA -> signalbox.web 'Overturns it'
+        signalbox.web -> signalbox.thread 'Correction message' {
+          notes '''
+            - Goes in as a message; the original answer stays in the log.
+          '''
+        }
+        signalbox.thread -> signalbox.learner 'Teaches learner' {
+          navigateTo person_assistant_teach
+          notes '''
+            - **End:** the personal learner updates; next time it answers the new way.
+          '''
+        }
+      }
+      else 'folder Team, under Company' {
+        signalbox.thread -> signalbox.attention 'No authority here' {
+          notes '''
+            - B's worker asks. No per-person learner may answer for folder Company, so the hop records `no-authority-at-this-level`.
+          '''
+        }
+        parallel {
+          signalbox.attention -> personB 'Blocker row'
+          signalbox.attention -> personC 'Blocker row' {
+            notes '''
+              - **End:** the responsible people (B, admin C) get it as a Blocker.
+              - `#decided` #632 (2026-10-16), #675 (2026-10-18).
+            '''
+          }
+        }
+      }
+    }
+  }
+
+  dynamic view scn_264_assistant_day_rollover {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Assistant/Day Rollover'
+    description """
+      What happens when the assistant's day rolls over?
+      Assumption: one continuous assistant history with days as a view; carried items are read live. Pending #48. Why: the Drive audit (2026-10-15) keeps one source of truth; history is searchable rows in one index; #48 "only changes storage, not the screens".
+      SCN-264 · P-AST-36 · P-AST-37 · P-AST-38 · P-TOP-01 · not v1
+    """
+
+    include personA, hier.asstA, signalbox.web, signalbox.attention, signalbox.search
+    include hier, signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.web 'Opens next morning' {
+      notes '''
+        - **Start:** yesterday's assistant chat. First open after 4:00, or after a long idle.
+      '''
+    }
+    signalbox.web -> hier.asstA 'Opens Now' {
+      navigateTo journey_daily_assistant_days
+      notes '''
+        - One continuous history. Now shows a day boundary and the fresh-start screen.
+      '''
+    }
+    hier.asstA -> signalbox.attention 'Open items?' {
+      navigateTo person_toplayer_open_now
+    }
+    hier.asstA <- signalbox.attention 'Live items' {
+      notes '''
+        - Computed live from A's pipeline and status lines, not copied summaries.
+      '''
+    }
+    hier.asstA -> signalbox.web 'New-day screen'
+    personA -> signalbox.web 'Opens yesterday' {
+      notes '''
+        - Through History or the breadcrumb. Same history; a day is a view.
+      '''
+    }
+    personA -> signalbox.web 'Searches last week'
+    signalbox.web -> signalbox.search 'One index'
+    signalbox.web <- signalbox.search 'Rows by day' {
+      notes '''
+        - **End:** old days are browsable and searchable, one row per item.
+        - `#assumption` days are a view over one history.
+      '''
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Attention/Devices ─────────────────────────────
+
+  dynamic view scn_246_push_clears_elsewhere {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Devices/Push Clears'
+    description """
+      Does a push clear from the phone once the ask is answered elsewhere?
+      Assumption: pushes are retracted like toasts: once the thread stops waiting, a best-effort clear goes out on the same Queue, keyed by ask id. Why: extends #841 (2026-10-17, toasts close when the thread stops waiting) to push; a stale signal is a lying badge (principle 3); reverse states (S12).
+      SCN-246 · P-NOT-02 · P-NOT-03 · P-NOT-06 · P-PIP-07 · not v1
+    """
+
+    include personA, signalbox.mobile, signalbox.desktop, signalbox.thread, signalbox.attention, telemetry.apns, telemetry.fcm
+    include signalbox, telemetry
+    global style scn12Lanes
+
+    signalbox.thread -> signalbox.attention 'Ask raised' {
+      notes '''
+        - **Start:** a needs-you for A.
+      '''
+    }
+    signalbox.attention -> telemetry.apns 'Push, keyed by ask' {
+      navigateTo person_notifications_deliver
+      notes '''
+        - Keyed by the ask id (FCM and Web Push tag the same way).
+      '''
+    }
+    telemetry.apns -> signalbox.mobile 'Notification shows'
+    personA -> signalbox.desktop 'Answers on laptop' {
+      navigateTo journey_daily_answer_ask
+    }
+    signalbox.desktop -> signalbox.thread 'Thread.send(answer)'
+    signalbox.thread -> signalbox.attention 'Stops waiting' {
+      navigateTo person_notifications_turn_pushes
+      notes '''
+        - In-app toasts close (#841).
+      '''
+    }
+    parallel {
+      signalbox.attention -> telemetry.apns 'Background clear' {
+        notes '''
+          - iOS: a background push removes the delivered notification.
+        '''
+      }
+      signalbox.attention -> telemetry.fcm 'Data clear' {
+        notes '''
+          - Android: a data message removes it. Web Push replaces it by tag.
+        '''
+      }
+    }
+    telemetry.apns -> signalbox.mobile 'Removes notification' {
+      notes '''
+        - **End:** the phone notification is gone.
+      '''
+    }
+    opt 'the clear did not land' {
+      personA -> signalbox.mobile 'Taps stale push' {
+        navigateTo journey_daily_tap_push
+      }
+      signalbox.mobile -> personA 'Shows Answered' {
+        notes '''
+          - The thread opens showing "Answered", never a live ask.
+          - `#assumption` best-effort clear keyed by ask id.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_251_phone_quiet_at_desk {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Devices/Phone Quiet At Desk'
+    description """
+      Does the phone stay quiet while the person is at the computer?
+      Assumption: no active-device guess; each device's notify setting decides and answered pushes clear. "Phone only when away" is an editable automation on device signals. Pending #43. Why: A31 drops the 3-s ack-first idea; principle 8 (behavior ships as default automations, not special code).
+      SCN-251 · P-NOT-01 · P-DEV-03 · P-NOT-15 · P-DEV-10 · not v1
+    """
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.attention, signalbox.tree, signalbox.automations, telemetry.apns
+    include signalbox, telemetry
+    global style scn12Lanes
+
+    signalbox.attention -> signalbox.tree 'Covering devices?' {
+      navigateTo person_notifications_route_ping
+      notes '''
+        - **Start:** a needs-you arrives while A works on the laptop, phone in pocket.
+        - Devices whose home covers the ask's level.
+      '''
+    }
+    signalbox.attention <- signalbox.tree 'Laptop, phone, settings' {
+      navigateTo journey_devices_manage
+    }
+    signalbox.attention -> signalbox.desktop 'In-app row'
+    signalbox.attention -> telemetry.apns 'Per phone setting' {
+      notes '''
+        - All, Quiet badge, Urgent only or Off. No guess about where A is.
+      '''
+    }
+    telemetry.apns -> signalbox.mobile 'Delivered'
+    personA -> signalbox.desktop 'Answers'
+    signalbox.attention -> telemetry.apns 'Clears push' {
+      navigateTo scn_246_push_clears_elsewhere
+      notes '''
+        - **End:** the phone push clears once answered (see Push Clears).
+      '''
+    }
+    opt 'A wants the phone only when away' {
+      personA -> signalbox.desktop 'Builds away rule'
+      signalbox.desktop -> signalbox.automations 'Saves automation' {
+        navigateTo person_devices_signals
+        notes '''
+          - An editable automation on device signals, like any other.
+        '''
+      }
+      signalbox.automations -> signalbox.attention 'Flips phone setting' {
+        notes '''
+          - Sets the phone to Off at the desk, back to All when away.
+          - `#assumption` settings decide; pending #43.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_252_phone_homed_personal {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Devices/Phone Homed Personal'
+    description """
+      Does a Company ask reach a phone homed at Personal?
+      Decided: #319 and #225 §9 (2026-10-14): a needs-you in folder F reaches devices whose home is F or above, each by its own setting.
+      SCN-252 · P-NOT-01 · P-NOT-12 · P-DEV-02 · P-DEV-03 · not v1
+    """
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.thread, signalbox.attention, signalbox.tree
+    include signalbox
+    global style scn12Lanes
+
+    signalbox.thread -> signalbox.attention 'Ask in Company' {
+      notes '''
+        - **Start:** a thread in folder Company needs A. A's phone is homed at Personal, the laptop at the top level.
+      '''
+    }
+    signalbox.attention -> signalbox.tree 'Chain on A mount' {
+      notes '''
+        - On A's own mount: top level › Work › Company.
+      '''
+    }
+    signalbox.attention <- signalbox.tree 'Laptop covers, phone not' {
+      navigateTo journey_devices_manage
+      notes '''
+        - Top level is on the chain; Personal is not.
+      '''
+    }
+    signalbox.attention -> signalbox.tree 'Rules at Company?' {
+      navigateTo person_notifications_set_rule
+      notes '''
+        - Only a delivery rule placed at folder Company naming the phone adds it.
+      '''
+    }
+    signalbox.attention <- signalbox.tree 'None placed'
+    signalbox.attention -> signalbox.desktop 'Delivers to laptop' {
+      navigateTo person_notifications_route_ping
+      notes '''
+        - The laptop's notify setting decides how it shows.
+      '''
+    }
+    opt 'a rule at Company names the phone' {
+      signalbox.attention -> signalbox.mobile 'Also delivers'
+    }
+    personA -> signalbox.desktop 'Sees it' {
+      notes '''
+        - **End:** it reached the laptop, not the phone.
+        - `#decided` #319, #225 §9 (2026-10-14).
+      '''
+    }
+  }
+
+  dynamic view scn_254_why_phone_buzzed {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Devices/Why It Buzzed'
+    description """
+      Can someone see why their phone buzzed?
+      Assumption: yes. Every routing decision is recorded at send time and shown in Recent pings, respecting Focus. Why: principle 4 (traceable down to the exact message); #51 (suppressed notifications visible with a reason); #304.
+      SCN-254 · P-NOT-10 · P-NOT-09 · P-AST-19 · not v1
+    """
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.attention, signalbox.tree, signalbox.observability, mcpClient
+    include signalbox
+    global style scn12Lanes
+
+    signalbox.attention -> signalbox.attention 'Routes a ping' {
+      notes '''
+        - **Start:** a ping goes out that A doesn't expect.
+        - Decided from covered devices, notify settings, Focus, mute and any breakthrough rule.
+      '''
+    }
+    signalbox.attention -> signalbox.tree 'Records the decision' {
+      navigateTo person_notifications_delivery_record
+      notes '''
+        - Stored on A's Person actor at send time, not reconstructed later.
+      '''
+    }
+    signalbox.attention -> signalbox.observability 'Wide event'
+    personA -> signalbox.mobile 'Opens Recent pings'
+    signalbox.mobile -> signalbox.funnel 'Recent pings'
+    signalbox.funnel -> signalbox.tree 'Reads records'
+    signalbox.mobile -> personA 'Where and why' {
+      navigateTo journey_assistant_trace
+      notes '''
+        - **End:** where it landed and why.
+        - Focus-hidden pings appear only if a rule broke through; suppressed ones show with their reason in the agent's chat and trace.
+      '''
+    }
+    mcpClient -> signalbox.funnel 'Same record via MCP' {
+      notes '''
+        - Agents read the same record.
+        - `#assumption` every routing decision is recorded.
+      '''
+    }
+  }
+
+  dynamic view scn_255_long_turn_push {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Devices/Long Turn Push'
+    description """
+      Does a long finished turn push or not?
+      Decided: #396 (2026-10-15) and #841 (2026-10-17): push finished person-started turns of 60 s or more; an editable default (A28). #51's "completion isn't attention" is unruled; the shipped rule stands.
+      SCN-255 · P-NOT-04 · P-NOT-05 · P-NOT-03 · not v1
+    """
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.harness, signalbox.thread, signalbox.automations, signalbox.attention, telemetry.apns
+    include signalbox, telemetry
+    global style scn12Lanes
+
+    personA -> signalbox.desktop 'Starts a turn' {
+      notes '''
+        - **Start:** a turn that runs over a minute. A switches away.
+      '''
+    }
+    signalbox.harness -> signalbox.thread 'Turn completes'
+    signalbox.thread -> signalbox.automations 'turn.completed' {
+      navigateTo person_notifications_turn_pushes
+      notes '''
+        - The default completed-turn automation checks who started it and how long it ran.
+      '''
+    }
+    alt 'who started it, how long' {
+      when 'a person, 60 s or more' {
+        signalbox.automations -> signalbox.attention 'Notify covering devices'
+        parallel {
+          signalbox.attention -> signalbox.desktop 'In-app toast'
+          signalbox.attention -> telemetry.apns 'Push'
+        }
+        telemetry.apns -> signalbox.mobile 'Delivered'
+      }
+      else 'an automation, MCP, or short' {
+        signalbox.thread -> signalbox.desktop 'Status line only' {
+          notes '''
+            - No signal. The status line updates quietly.
+          '''
+        }
+      }
+    }
+    opt 'A changes the rule' {
+      personA -> signalbox.desktop 'Edits the rule'
+      signalbox.desktop -> signalbox.automations 'Edit or turn off' {
+        notes '''
+          - **End:** the rule is A's to edit or switch off.
+          - `#decided` #396, #841.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_256_dead_push_token {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Devices/Dead Token'
+    description """
+      What happens when a push goes to a dead device token?
+      Assumption: permanent token rejections clear the token at once; only transient errors retry, then go to the DLQ. Why: #396/#445 (2026-10-15) Queue with retries and DLQ; APNs and FCM mark these tokens permanently invalid; device Unregister is the reverse door (S12).
+      SCN-256 · P-NOT-02 · P-DEV-01 · P-DEV-05 · P-NOT-09 · not v1
+    """
+
+    include personA, signalbox.mobile, signalbox.identity, signalbox.attention, signalbox.tree, signalbox.observability, telemetry.apns
+    include signalbox, telemetry
+    global style scn12Lanes
+
+    signalbox.attention -> signalbox.tree 'Covering devices' {
+      notes '''
+        - **Start:** A uninstalled the app on an old phone; it's still among A's covering devices.
+      '''
+    }
+    signalbox.attention -> telemetry.apns 'Push to old phone' {
+      navigateTo person_notifications_deliver
+    }
+    alt 'what APNs or FCM says' {
+      when 'permanent: Unregistered, BadDeviceToken' {
+        signalbox.attention <- telemetry.apns '410 Unregistered' {
+          notes '''
+            - APNs 410 or FCM `UNREGISTERED`. No retries.
+          '''
+        }
+        signalbox.attention -> signalbox.tree 'Clears the token' {
+          navigateTo person_devices_sign_out_remove
+          notes '''
+            - Devices shows the phone as "not reachable by push".
+          '''
+        }
+      }
+      else 'transient' {
+        loop 'Queue retries' {
+          signalbox.attention -> telemetry.apns 'Retry'
+        }
+        signalbox.attention -> signalbox.observability 'DLQ when exhausted'
+      }
+    }
+    signalbox.attention -> signalbox.tree 'Recent pings row' {
+      navigateTo person_notifications_delivery_record
+      notes '''
+        - **End:** the failed delivery shows with its reason; the token isn't retried forever.
+      '''
+    }
+    opt 'A signs in on that phone again' {
+      personA -> signalbox.mobile 'Signs in'
+      signalbox.mobile -> signalbox.identity 'New session'
+      signalbox.mobile -> signalbox.attention 'Registers a token' {
+        navigateTo person_devices_register
+        notes '''
+          - `#assumption` permanent rejections clear at once; transient ones retry, then DLQ.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_257_remove_device {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Devices/Remove Device'
+    description """
+      How is a lost phone removed?
+      Assumption: Unregister removes the push token, ends the session and removes the device's placements; signing in again is the way back. Why: design S12 lists device Unregister as a reverse door; #302 (2026-10-17) lists devices at their folder; P-DEV-05.
+      SCN-257 · P-DEV-05 · P-DEV-04 · P-OUT-01 · P-DEV-08 · v1: partial (ending the sign-in session only)
+    """
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.attention, signalbox.tree, signalbox.identity, platform.workos
+    include signalbox, platform
+    global style scn12Lanes
+
+    personA -> signalbox.web 'Opens Devices' {
+      navigateTo journey_devices_manage
+      notes '''
+        - **Start:** the lost phone is listed at folder Personal, its home (#302).
+      '''
+    }
+    personA -> signalbox.web 'Unregisters phone'
+    signalbox.web -> signalbox.attention 'device(Unregister)' {
+      navigateTo person_devices_sign_out_remove
+      notes '''
+        - Through the Funnel, like every client command.
+      '''
+    }
+    parallel {
+      signalbox.attention -> signalbox.tree 'Drops push token'
+      signalbox.attention -> signalbox.identity 'Ends session'
+      signalbox.attention -> signalbox.tree 'Removes placements' {
+        notes '''
+          - Its gateway capability placements at Personal go; threads there can no longer reach the phone.
+        '''
+      }
+    }
+    signalbox.identity -> platform.workos 'Revokes session'
+    signalbox.web -> personA 'Phone removed' {
+      notes '''
+        - **End:** no more pushes, session ended, at once.
+      '''
+    }
+    opt 'the phone turns up' {
+      personA -> signalbox.mobile 'Signs in again'
+      signalbox.mobile -> signalbox.identity 'New session'
+      signalbox.mobile -> signalbox.attention 'Registers fresh' {
+        navigateTo person_devices_register
+        notes '''
+          - A new device record; nothing of the old one comes back.
+          - `#assumption` Unregister = token + session + placements.
+        '''
+      }
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Attention/Focus ─────────────────────────────
+
+  dynamic view scn_253_focus_breakthrough {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Focus/Breakthrough'
+    description """
+      Can an approval break through a Focus that hides Work?
+      Assumption: breakthrough is a deliveryRule placement, shipped as an editable default automation at the folder, naming statuses and devices; the assistant only proposes rules. Pending #329. Why: principle 8; §3.13 (rules are placements evaluated deterministically); hierarchy resolution.
+      SCN-253 · P-FOC-06 · P-FOC-07 · P-FOC-03 · P-NOT-01 · P-AST-47 · not v1
+    """
+
+    include personA, hier.asstA, personB, signalbox.mobile, signalbox.web, signalbox.thread, signalbox.attention, signalbox.tree
+    include hier, signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.mobile 'Focus: Personal' {
+      navigateTo person_focus_out_of_sight
+      notes '''
+        - **Start:** the phone is focused on Personal; Work is out of sight, server-side.
+      '''
+    }
+    personB -> signalbox.web 'Works in Team'
+    signalbox.web -> signalbox.thread 'Sends a turn'
+    signalbox.thread -> signalbox.attention 'Approval for A' {
+      notes '''
+        - B's thread in folder Team needs an approval A decides.
+      '''
+    }
+    signalbox.attention -> signalbox.tree 'Rules at Team?' {
+      navigateTo person_focus_breakthrough_rule
+      notes '''
+        - A default delivery-rule automation placed at folder Team names statuses (approvals) and A's phone.
+        - Evaluated deterministically, nearest wins.
+      '''
+    }
+    signalbox.attention <- signalbox.tree 'Approvals: A phone'
+    signalbox.attention -> signalbox.mobile 'Breaks through Focus' {
+      navigateTo person_focus_breakthrough
+      notes '''
+        - **End:** a push and one calm "Breaks through Focus" row. No other Work rows or counts.
+      '''
+    }
+    opt 'after an exception' {
+      hier.asstA -> signalbox.mobile 'Proposes a rule' {
+        navigateTo person_assistant_teach
+        notes '''
+          - The assistant only proposes.
+        '''
+      }
+      personA -> signalbox.mobile 'Accepts' {
+        notes '''
+          - Accepting makes it A's rule.
+          - `#assumption` breakthrough is a placed rule; pending #329.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_258_widen_focus {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Focus/Widen Focus'
+    description """
+      Does a widened Focus stick?
+      Assumption: two moves. The chip peek is transient and client-side; a widen is a server-side, per-device Focus that persists. Pending #319. Why: Focus applies server-side before delivery (§3.13), out of sight is server-side (P-FOC-03), and Focus is per device (#319, 2026-10-14).
+      SCN-258 · P-FOC-01 · P-FOC-02 · P-FOC-05 · P-FOC-09 · not v1
+    """
+
+    include personA, signalbox.mobile, signalbox.attention, signalbox.tree
+    include signalbox
+    global style scn12Lanes
+
+    signalbox.mobile -> signalbox.attention 'Focus = home' {
+      navigateTo person_focus_set
+      notes '''
+        - **Start:** the phone's Focus defaults to its home, Personal.
+      '''
+    }
+    alt 'how A looks at Work' {
+      when 'quick look' {
+        personA -> signalbox.mobile 'Taps Work hidden' {
+          navigateTo journey_daily_focus_peek
+        }
+        signalbox.mobile -> personA 'Peek, view-only'
+        personA -> signalbox.mobile 'Leaves'
+        signalbox.mobile -> personA 'Tucks away' {
+          notes '''
+            - Client-side only; nothing is stored.
+          '''
+        }
+      }
+      else 'deliberate widen' {
+        personA -> signalbox.mobile 'Widens to top level'
+        signalbox.mobile -> signalbox.attention 'focus(phone, top)'
+        signalbox.attention -> signalbox.tree 'Stores per device' {
+          notes '''
+            - The laptop's Focus is untouched.
+          '''
+        }
+        signalbox.attention -> signalbox.mobile 'Work rows and pushes' {
+          notes '''
+            - Follow the widened Focus until A narrows it.
+          '''
+        }
+      }
+    }
+    personA -> signalbox.mobile 'Reopens the app'
+    signalbox.mobile -> signalbox.attention 'Reads Focus'
+    signalbox.mobile <- signalbox.attention 'As left' {
+      notes '''
+        - **End:** a widen persists on that device; a peek never did.
+        - `#assumption` peek is client-side, widen is server-side per device.
+      '''
+    }
+  }
+
+  // ───────────────────────────── Scenarios/Attention/Drafts ─────────────────────────────
+
+  dynamic view scn_259_open_reuses_folder_draft {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Drafts/Stale Folder Draft'
+    description """
+      Does opening the app reuse an old folder draft?
+      Decided: #427 (2026-10-15), fixed via #551: plain New starts at the top level; a draft keeps its folder only when started from that folder's New.
+      SCN-259 · W-THR-07 · W-THR-08 · P-DRF-03 · P-DRF-04 · not v1
+    """
+
+    include personA, signalbox.web, signalbox.capture, signalbox.tree, signalbox.thread, signalbox.computer
+    include signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.web 'Opens bare /' {
+      notes '''
+        - **Start:** A's last draft was started from folder Team's New.
+      '''
+    }
+    signalbox.web -> signalbox.capture 'Plain New' {
+      navigateTo journey_capture_open_draft
+      notes '''
+        - The old bug (#427) reopened the last folder draft, so a quick message ran with that folder's setup. Fixed via #551.
+      '''
+    }
+    signalbox.capture -> signalbox.tree 'Draft at top level' {
+      notes '''
+        - A plain New starts at the top level.
+        - A draft keeps a folder only when started from that folder's New.
+      '''
+    }
+    opt 'A wants the old folder draft' {
+      personA -> signalbox.web 'Opens it from Drafts' {
+        navigateTo journey_capture_resume_draft
+      }
+    }
+    personA -> signalbox.web 'Types and sends'
+    signalbox.capture -> signalbox.thread 'Level agent, with text' {
+      navigateTo work_threads_start_send_draft
+      notes '''
+        - **End:** the top level's agent opens with the text.
+      '''
+    }
+    opt 'real commands run' {
+      signalbox.thread -> signalbox.computer 'Forks a VM' {
+        notes '''
+          - Only then: the VM exists while real commands execute.
+          - `#decided` #427 (2026-10-15), #551.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_260_sent_message_redraft {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Drafts/Sent Comes Back'
+    description """
+      Can a sent message come back as a draft after reload?
+      Decided: #862 (2026-10-18): a sent message clears the composer's draft for good; fix PR #908. Native restart walks on iOS and Android still owed.
+      SCN-260 · P-DRF-06 · P-DRF-07 · W-THR-02 · P-DEV-12 · not v1
+    """
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.thread, signalbox.capture, signalbox.tree
+    include signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.web 'Sends' {
+      notes '''
+        - **Start:** A sends a message from a draft.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'NewThread fromDraft' {
+      navigateTo person_drafts_send
+      notes '''
+        - The requestId is derived from the draft id.
+      '''
+    }
+    signalbox.funnel -> signalbox.thread 'Creates thread'
+    signalbox.thread -> signalbox.capture 'Committed'
+    signalbox.capture -> signalbox.tree 'Drops the draft' {
+      notes '''
+        - On commit, for good (#862).
+      '''
+    }
+    personA -> signalbox.web 'Reloads'
+    signalbox.web -> signalbox.capture 'Loads composer'
+    signalbox.web <- signalbox.capture 'Empty' {
+      notes '''
+        - **End:** the composer stays empty; no double send.
+      '''
+    }
+    opt 'a stale client resends' {
+      signalbox.web -> signalbox.funnel 'Same requestId' {
+        navigateTo work_threads_start_send_draft
+      }
+      signalbox.funnel -> signalbox.thread 'Dedupes'
+      signalbox.funnel <- signalbox.thread 'Same thread'
+    }
+    opt 'mobile offline queue' {
+      signalbox.mobile -> signalbox.funnel 'Flush on reconnect' {
+        navigateTo clients_mobile_offline_send
+        notes '''
+          - Dedupes the same way.
+          - `#decided` #862 (2026-10-18), PR #908.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_261_draft_attachment_later {
+    #decided
+    variant sequence
+    title 'Scenarios/Attention/Drafts/Attachment Later'
+    description """
+      Is an attachment still there when a draft is sent days later?
+      Decided: #514 (ledger decided-now, 2026-10-18): a draft owns its attachments server-side until sent or discarded; abandoned uploads are still swept. Cloud uploads in drafts are still missing (#24).
+      SCN-261 · P-DRF-09 · P-CAP-13 · P-DRF-06 · not v1
+    """
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.capture, signalbox.tree, signalbox.drive, signalbox.thread
+    include signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.web 'Attaches screenshot' {
+      notes '''
+        - **Start:** a draft with a screenshot, Friday.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Uploads'
+    signalbox.funnel -> signalbox.drive 'Stores, owner: draft' {
+      navigateTo person_drafts_attachments
+      notes '''
+        - Server-side in R2, owned by the draft.
+      '''
+    }
+    signalbox.capture -> signalbox.tree 'Draft holds the ref'
+    signalbox.drive -> signalbox.drive 'Sweep skips it' {
+      notes '''
+        - The weekend passes; the abandoned-upload sweep skips owned attachments.
+      '''
+    }
+    alt 'what A does on Monday' {
+      when 'sends, on any device' {
+        personA -> signalbox.mobile 'Sends'
+        signalbox.mobile -> signalbox.funnel 'Send draft' {
+          navigateTo person_drafts_send
+        }
+        signalbox.funnel -> signalbox.thread 'NewThread + attachment'
+        signalbox.thread -> signalbox.drive 'Takes ownership' {
+          notes '''
+            - **End:** sent with the attachment intact; the thread owns it now.
+          '''
+        }
+      }
+      else 'discards' {
+        signalbox.capture -> signalbox.drive 'Releases to sweep' {
+          notes '''
+            - Only then can the sweep take it.
+            - `#decided` #514 (2026-10-18).
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view scn_262_draft_other_device {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Drafts/Draft Other Device'
+    description """
+      Can a draft started on the laptop be continued on the phone?
+      Assumption: drafts are server records in the Person actor that follow A to every device; last write wins per draft. Pending #333. Why: principle 2 (nothing runs on the client); design A22; ledger P-DRF-02.
+      SCN-262 · P-DRF-02 · W-THR-06 · P-CAP-03 · P-DRF-03 · not v1
+    """
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.capture, signalbox.tree, signalbox.thread
+    include signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.desktop 'Types on laptop' {
+      navigateTo journey_capture_open
+      notes '''
+        - **Start:** a draft written on the laptop.
+      '''
+    }
+    signalbox.desktop -> signalbox.funnel 'Debounced upserts' {
+      navigateTo person_drafts_save
+    }
+    signalbox.funnel -> signalbox.capture 'Upsert draft'
+    signalbox.capture -> signalbox.tree 'Saves draft'
+    personA -> signalbox.mobile 'Opens the phone'
+    signalbox.capture -> signalbox.mobile 'Drafts lens streams' {
+      navigateTo journey_capture_resume_draft
+      notes '''
+        - The same text, at its folder.
+      '''
+    }
+    personA -> signalbox.mobile 'Edits'
+    signalbox.mobile -> signalbox.funnel 'Upsert draft'
+    parallel {
+      signalbox.capture -> signalbox.tree 'Saves'
+      signalbox.capture -> signalbox.desktop 'Live update'
+    }
+    opt 'both edit at once' {
+      signalbox.capture -> signalbox.capture 'Later write wins' {
+        notes '''
+          - Per draft; the other device shows the new text.
+        '''
+      }
+    }
+    signalbox.mobile -> signalbox.funnel 'Sends'
+    signalbox.funnel -> signalbox.thread 'Draft requestId' {
+      navigateTo work_threads_start_capture_route
+      notes '''
+        - **End:** continued and sent from the phone, same text and folder.
+        - `#assumption` drafts are server records, last write wins; pending #333.
+      '''
+    }
+  }
+
+  dynamic view scn_263_discard_draft_undo {
+    #assumption
+    variant sequence
+    title 'Scenarios/Attention/Drafts/Discard Undo'
+    description """
+      Can a discarded draft be brought back?
+      Assumption: discard is soft; Undo restores it in place, and the 30-day trash is the fallback. Why: design S12 (Discard/Undo for drafts); #333 prototype (2026-10-14, not owner-confirmed); #514 (attachments live until discarded); the work-storage rule (30-day trash).
+      SCN-263 · P-DRF-08 · P-DRF-09 · not v1
+    """
+
+    include personA, signalbox.web, signalbox.capture, signalbox.tree, signalbox.drive
+    include signalbox
+    global style scn12Lanes
+
+    personA -> signalbox.web 'Clicks X' {
+      notes '''
+        - **Start:** A discards a draft by mistake.
+      '''
+    }
+    signalbox.web -> signalbox.capture 'change(Discard)'
+    signalbox.capture -> signalbox.tree 'Soft discard' {
+      navigateTo state_draft
+      notes '''
+        - The draft and its attachments stay held.
+      '''
+    }
+    signalbox.web -> personA 'Toast with Undo'
+    alt 'when A notices' {
+      when 'in the toast' {
+        personA -> signalbox.web 'Undo'
+        signalbox.web -> signalbox.capture 'change(Restore)'
+      }
+      else 'later' {
+        personA -> signalbox.web 'Opens trash' {
+          notes '''
+            - Discarded drafts sit in the 30-day trash.
+          '''
+        }
+        signalbox.web -> signalbox.capture 'Restore from trash'
+      }
+    }
+    signalbox.capture -> signalbox.tree 'Back in its folder' {
+      notes '''
+        - **End:** restored with its text and attachments, in its folder.
+      '''
+    }
+    opt 'the trash empties' {
+      signalbox.capture -> signalbox.drive 'Releases attachments' {
+        navigateTo person_drafts_attachments
+        notes '''
+          - Only now can the sweep take them.
+          - `#assumption` soft discard, Undo, 30-day trash.
+        '''
+      }
+    }
+  }
+}

@@ -1,0 +1,180 @@
+// Vocabulary for the Signalbox target architecture.
+specification {
+  element system {
+    notation "System boundary"
+    style { color slate; opacity 8% }
+  }
+  element person {
+    notation "Person"
+    style { shape person; color green }
+  }
+  element client {
+    notation "Client (gateway, holds no work)"
+    style { shape browser; color secondary }
+  }
+  element door {
+    notation "Front door (stateless transport)"
+    style { color indigo }
+  }
+  element actor {
+    notation "Durable Object actor (state home)"
+    style { shape component; color amber }
+  }
+  element module {
+    notation "Deep module (black box: interface verbs)"
+    style { color primary }
+  }
+  element adapter {
+    notation "Adapter at a seam"
+    style { color muted; size sm }
+  }
+  element iface {
+    notation "Module interface: the only way in (verbs · deletion test)"
+    style { color green; icon bootstrap:box-arrow-in-right }
+  }
+  element part {
+    notation "Hidden part or seam"
+    style { color slate; size sm }
+  }
+  element store {
+    notation "Store or projection"
+    style { shape storage; color gray; size sm }
+  }
+  element external {
+    notation "External service"
+    style { color gray; border dashed }
+  }
+  element toplevel {
+    notation "A person's top level"
+    style { icon bootstrap:house-door; color blue }
+  }
+  element folder {
+    notation "Folder (nests freely)"
+    style { icon bootstrap:folder; color sky }
+  }
+  element thread {
+    notation "Thread (one Thread actor)"
+    style { icon bootstrap:chat-dots; shape component; color amber }
+  }
+  element app {
+    notation "Folder app: server + UI placed in a folder"
+    style { icon bootstrap:window-stack; shape component; color secondary }
+  }
+  element state {
+    notation "State"
+    style { color blue; size sm }
+  }
+  element entity {
+    notation "Domain entity"
+    style { color indigo; size sm }
+  }
+
+  deploymentNode stage {
+    notation "Deployment stage"
+    style { color gray }
+  }
+  deploymentNode zone {
+    notation "Provider or network zone"
+    style { color slate }
+  }
+  deploymentNode worker {
+    notation "Worker script (deploy domain)"
+    style { color primary }
+  }
+  deploymentNode durableObject {
+    notation "Durable Object class"
+    style { color amber }
+  }
+  deploymentNode isolate {
+    notation "Isolate (facet or Dynamic Worker)"
+    style { color secondary }
+  }
+  deploymentNode container {
+    notation "Cloudflare Container (CPA only)"
+    style { color red }
+  }
+  deploymentNode workflow {
+    notation "Workflow engine"
+    style { color indigo }
+  }
+  deploymentNode queue {
+    notation "Queue"
+    style { shape queue; color amber }
+  }
+  deploymentNode storage {
+    notation "Object or git storage"
+    style { shape storage; color gray }
+  }
+  deploymentNode vm {
+    notation "boxd VM or snapshot"
+    style { color blue }
+  }
+  deploymentNode device {
+    notation "Person's device"
+    style { shape mobile; color green }
+  }
+
+  relationship sync {
+    notation "Call"
+    color gray; line solid
+  }
+  relationship async {
+    notation "Outbox delivery (async)"
+    color amber; line dashed
+  }
+  relationship model {
+    notation "Model wire"
+    color red; line solid
+  }
+  relationship tool {
+    notation "Tool / MCP wire"
+    color indigo; line solid
+  }
+  relationship reach {
+    notation "Placement reaches (nearest wins)"
+    color green; line dotted
+  }
+  relationship lend {
+    notation "Loan (explicit, revocable)"
+    color secondary; line dashed
+  }
+  relationship mount {
+    notation "Mount (only edge across owners)"
+    color primary; line solid; head diamond
+  }
+  relationship transition {
+    notation "State transition"
+    color slate; line solid
+  }
+  relationship owns {
+    notation "Owns / has many"
+    color slate; line solid; head crow
+  }
+
+  tag v1 { color green }
+  tag deep { color primary }
+  tag shallow { color amber }
+  tag passthrough { color red }
+  tag hypothetical-seam { color red }
+  tag planned { color muted }
+  // Scenario answers: settled by a recorded decision vs our best guess.
+  tag decided { color green }
+  tag assumption { color amber }
+  tag smell { color red }
+  // An element that is its module's front door: steps landing on it are calls into the module, not reaches inside.
+  tag port { color green }
+  // Useful outside Signalbox: its own public repo, published on npm, consumed as a dependency (#1245).
+  tag publishable { color sky }
+}
+
+global {
+  styleGroup depth {
+    style element.tag = #planned { opacity 40%; border dashed }
+    style element.tag = #hypothetical-seam { color red; border dashed }
+  }
+  styleGroup smells {
+    style element.tag = #shallow { color amber }
+    style element.tag = #passthrough { color red }
+    style element.tag = #hypothetical-seam { color red; border dashed }
+  }
+}

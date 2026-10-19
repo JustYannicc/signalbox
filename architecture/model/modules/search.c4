@@ -1,0 +1,47 @@
+model {
+  extend signalbox {
+    search = module 'Search' {
+      #deep #publishable
+      icon bootstrap:search
+      description 'query'
+      technology 'one index for person and model'
+      metadata {
+        interface '1'
+        deletion 'each surface fans out its own query'
+      }
+
+      api = iface 'Search · interface' {
+        description '1 verb: query'
+        technology 'Deletion test: without it, each surface fans out its own query'
+      }
+
+      index = part 'Index seam · 2 adapters (+1 planned)' {
+        metadata { adapters '2' }
+        doFts = adapter 'DO SQLite FTS5' {
+          icon tech:sqlite
+          description 'prod: sharded by owner root'
+        }
+        nodeFts = adapter 'Node SQLite FTS5' {
+          icon tech:sqlite
+        }
+        vectorize = adapter 'Vectorize' {
+          #planned
+          icon tech:cloudflare-icon
+          technology 'Cloudflare Vectorize'
+        }
+      }
+      visibility = part 'Visibility re-check' {
+        icon bootstrap:eye
+        description 'before any snippet'
+      }
+
+      visibility -> index.doFts 'hits'
+    }
+
+    search.visibility -> signalbox.tree.api 'can'
+    search.index -> signalbox.drive.api 'index · search files'
+
+    // Interface → hidden parts (the only way in)
+    search.api -> search.visibility 'query'
+  }
+}

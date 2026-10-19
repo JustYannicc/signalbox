@@ -1,0 +1,1574 @@
+// Shard 22: usage on folders, and operations (deploy, loops, observability, previews, recovery).
+// Generic folders only: top level, folder "Company" (owner: organization), folder "Team" inside it.
+// Person A and B are members of Company, C is its admin. The Operator runs the Signalbox server.
+views {
+
+  // Containers are lanes, not participants: keep them quiet.
+  style signalbox, build, telemetry, platform, services, modelProviders, hier, hier.company, hier.company.team {
+    color muted
+    opacity 8%
+  }
+
+  // ───────────────────────── Folders / Usage ─────────────────────────
+
+  dynamic view folders_usage_cost_view {
+    variant sequence
+    title 'Workflows/Folders/Usage/See costs by level and pool'
+    description 'R-USG-04, R-USG-07, T-USG-10 (aliases T-OBS-12, T-USG-01). Rail Usage for members vs the pool admin view for C. Private chats only ever show as totals.'
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.models
+
+    opt 'keyboard' {
+      personA -> signalbox.web 'Usage shortcut' {
+        navigateTo folders_pools_open_view
+        notes """
+          - T-USG-10: the kept T3 Code shortcuts open and move through Usage
+        """
+      }
+    }
+    alt 'who looks' {
+      when 'A or B: rail Usage' {
+        personA -> signalbox.web 'Open Usage' {
+          navigateTo person_settings_usage
+          notes """
+            - Rail → Usage; it follows Focus, so A sees the level they are focused on
+          """
+        }
+        signalbox.web -> signalbox.funnel 'view costs'
+        signalbox.funnel -> signalbox.tree 'Costs lens' {
+          navigateTo folders_usage_rollup
+          notes """
+            - Reads Level aggregates; cross-owner totals (A's tree + Company) compose at read time
+          """
+        }
+        signalbox.web <- signalbox.funnel 'Levels · Paid by' {
+          notes """
+            - Drill-down per level with a **Paid by** pool column
+            - A level with nothing placed shows "No pool on its path"
+            - Private chats count in totals without a row
+          """
+        }
+        personB -> signalbox.web 'Same rows' {
+          navigateTo person_focus_out_of_sight
+          notes """
+            - B sees the same Team and Company rows as A, never A's Personal folder
+          """
+        }
+      }
+      else 'C: pool admin view' {
+        personC -> signalbox.web 'Open pool costs' {
+          notes """
+            - C is Admin of Company, where pool P2 is placed
+          """
+        }
+        signalbox.web -> signalbox.funnel 'view pool'
+        signalbox.funnel -> signalbox.models 'Admin view' {
+          notes """
+            - `Models.view` by role: admins get costs, members get remaining + reset only
+          """
+        }
+        signalbox.web <- signalbox.funnel 'Per-thread costs' {
+          notes """
+            - Shared threads with title; private ones as "private chat in folder Team, cost X"
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view folders_usage_ledger_exports {
+    title 'Workflows/Folders/Usage/Feed billing and analytics from the ledger'
+    description 'R-USG-11, R-USG-14. The pool ledger in Models is read, never steered: billing and analytics are exports, and neither enforces caps.'
+    autoLayout TopBottom
+
+    include operator
+    include signalbox, signalbox.models, signalbox.observability, telemetry, telemetry.posthog, platform, platform.metronome
+
+    signalbox.models -> signalbox.models 'Close period' {
+      navigateTo folders_usage_record
+      notes """
+        - The pool ledger is the only cost source; Pool custody inside Models is its one writer
+      """
+    }
+    parallel {
+      signalbox.models -> platform.metronome 'Billing export' {
+        notes """
+          - Per-period totals to Metronome, invoiced through Stripe (proposed)
+          - Billing never enforces caps; nothing flows back
+        """
+      }
+      signalbox.models -> signalbox.observability '$ai_generation rows' {
+        notes """
+          - One event per ledger row, hashed ids, no content
+        """
+      }
+    }
+    signalbox.observability -> telemetry.posthog 'Hashed ids' {
+      navigateTo operations_ops_obs_sinks
+      notes """
+        - PostHog EU, off until its project exists
+      """
+    }
+    operator -> telemetry.posthog 'Read analytics'
+  }
+
+  dynamic view folders_usage_payer {
+    title 'Workflows/Folders/Usage/Resolve who pays for a turn or run'
+    description 'R-USG-09. The payer is the pool the turn or run Scope resolved from where the thread sits in the tree. Compute follows tokens; there is no separate compute payer.'
+    autoLayout TopBottom
+
+    include personA, personB, signalbox, signalbox.thread, signalbox.tree, signalbox.gateway, signalbox.gateway.modelGateway, signalbox.models, signalbox.computer
+    style signalbox.gateway {
+      color muted
+      opacity 12%
+    }
+
+    parallel {
+      personA -> signalbox.thread 'Send turn'
+      personB -> signalbox.thread 'Send turn' {
+        notes """
+          - Same shared thread in folder Team; turns queue in the one Thread
+        """
+      }
+    }
+    signalbox.thread -> signalbox.tree 'Resolve Scope' {
+      notes """
+        - Nearest pool from Team up: Company's P2, for A's turn and B's alike
+        - Never by who sends; A's own P1 and B's P3 are not on the path
+        - The Scope is frozen for the turn
+      """
+    }
+    alt 'pool on the path?' {
+      when 'P2 resolves' {
+        signalbox.thread -> signalbox.gateway.modelGateway 'Grant names P2' {
+          navigateTo folders_gateway_grant
+        }
+        signalbox.gateway.modelGateway -> signalbox.models 'Pin account' {
+          notes """
+            - P2 pays these tokens
+          """
+        }
+      }
+      else 'nothing placed' {
+        signalbox.thread -> signalbox.thread 'NeedsPool' {
+          navigateTo folders_pools_needs_pool
+          notes """
+            - An ask to Company's admins (C); nobody pays from a personal pool by accident
+          """
+        }
+      }
+    }
+    signalbox.computer -[async]-> signalbox.thread 'Measurements' {
+      notes """
+        - VM minutes and storage bytes for this thread's commands
+      """
+    }
+    signalbox.thread -[async]-> signalbox.models 'Bill same pool' {
+      navigateTo folders_usage_record
+      notes """
+        - Compute goes to the pool that paid the tokens: P2
+      """
+    }
+  }
+
+  dynamic view folders_usage_record {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Usage/Record usage in the pool ledger'
+    description 'v1 partial (local-key rows; thread and compute rows come later) · R-USG-01, R-USG-02, R-USG-08 (aliases T-USG-02, T-USG-03, T-OBS-06). Three sources, one ledger in Models, one writer.'
+
+    include personA, laptopCli, signalbox, signalbox.thread, signalbox.computer, signalbox.gateway, signalbox.gateway.modelGateway, signalbox.models, signalbox.tree
+    style signalbox.gateway {
+      color muted
+      opacity 12%
+    }
+
+    alt 'source' {
+      when 'turn in a thread' {
+        signalbox.thread -> signalbox.gateway.modelGateway 'Model call' {
+          navigateTo folders_gateway_model_call
+          notes """
+            - e.g. B's turn in the shared Team thread
+          """
+        }
+        signalbox.gateway.modelGateway -> signalbox.models 'Stamped request' {
+          navigateTo work_turns_usage_metering
+          notes """
+            - Signed stamp `(requestId, subject, level, poolId)` rides into the usage record
+          """
+        }
+      }
+      when 'local key or MCP (v1)' {
+        personA -> laptopCli 'Run locally'
+        laptopCli -> signalbox.gateway.modelGateway 'sbk_ key call' {
+          navigateTo folders_gateway_usage_metering
+          notes """
+            - Subject A, level = where the key's pool resolved; same stamp
+            - MCP sessions record the same way through ToolGateway
+          """
+        }
+        signalbox.gateway.modelGateway -> signalbox.models 'Stamped request'
+      }
+      else 'compute and storage' {
+        signalbox.computer -[async]-> signalbox.thread 'Measurements' {
+          notes """
+            - boxd usage and storage bytes go to the owning thread's outbox
+          """
+        }
+        signalbox.thread -[async]-> signalbox.models 'To paying pool' {
+          navigateTo folders_usage_payer
+        }
+      }
+    }
+    signalbox.models -> signalbox.models 'Append ledger row' {
+      notes """
+        - Token rows come only from the CPA drain; each row is self-describing, so no pending rows
+        - Append-only; Pool custody is the one writer
+      """
+    }
+    signalbox.models -[async]-> signalbox.tree 'Usage aggregates' {
+      navigateTo folders_usage_rollup
+      notes """
+        - Per level, so costs roll up the tree
+      """
+    }
+  }
+
+  dynamic view folders_usage_rollup {
+    variant sequence
+    title 'Workflows/Folders/Usage/Roll usage up the tree'
+    description 'R-USG-03, R-USG-05, R-USG-06, R-USG-10. Shared-thread costs land on Team, then Company, never on A or B. Private chats count without a row. A moved thread keeps its past where it happened.'
+
+    include personA, personB, hier, hier.company, hier.company.team, hier.company.team.sharedThread, hier.company.team.teamPrivateB, hier.company.team.costsTeam, hier.company.costsCo, signalbox, signalbox.models, personC
+
+    parallel {
+      personA -> hier.company.team.sharedThread 'Turn'
+      personB -> hier.company.team.sharedThread 'Turn'
+    }
+    hier.company.team.sharedThread -[async]-> signalbox.models 'Usage rows' {
+      navigateTo folders_usage_record
+      notes """
+        - Every row carries the level at use: Team
+        - Paid by P2 on Company, whoever sent the turn
+      """
+    }
+    hier.company.team.teamPrivateB -[async]-> signalbox.models 'Private usage' {
+      notes """
+        - B's private draft spec also spends P2; it counts, but never as a titled row
+      """
+    }
+    signalbox.models -[async]-> hier.company.team.costsTeam 'Team aggregate' {
+      notes """
+        - Coalesced into the Level aggregates of Team
+      """
+    }
+    hier.company.team.costsTeam -[async]-> hier.company.costsCo 'Roll up' {
+      navigateTo person_people_shared_costs
+      notes """
+        - Parents within one owner (the organization) only
+        - Never into A's or B's own top level
+      """
+    }
+    personC -> hier.company.costsCo 'Read Company costs' {
+      navigateTo folders_usage_cost_view
+      notes """
+        - Shared thread with title, "private chat in folder Team" as a total
+      """
+    }
+    opt 'thread moved later' {
+      hier.company.team.sharedThread -> hier.company.team.sharedThread 'Moved' {
+        navigateTo work_threads_lifecycle_move_within
+        notes """
+          - Past usage stays on Team; only new rows land at the new level
+        """
+      }
+    }
+  }
+
+  dynamic view folders_usage_vendor_costs {
+    variant sequence
+    title 'Workflows/Folders/Usage/Watch cross-vendor costs'
+    description 'R-USG-12. The operator sees month to date, forecast and caps across vendors (model providers, Cloudflare, boxd), plus a "forecast over X" automation.'
+
+    include operator
+    include signalbox, signalbox.web, signalbox.funnel, signalbox.connections, signalbox.automations, signalbox.attention, modelProviders, modelProviders.anthropic, upstreams, upstreams.cloudflare, platform, platform.boxd
+
+    operator -> signalbox.web 'Open vendor costs'
+    signalbox.web -> signalbox.funnel 'view'
+    signalbox.funnel -> signalbox.connections 'Vendor accounts' {
+      notes """
+        - The operator's own connections to each vendor's billing API, placed on the operator's level
+      """
+    }
+    parallel {
+      signalbox.connections -> modelProviders.anthropic 'Read spend'
+      signalbox.connections -> upstreams.cloudflare 'Read billing'
+      signalbox.connections -> platform.boxd 'Read usage'
+    }
+    signalbox.web <- signalbox.funnel 'MTD · forecast · caps' {
+      navigateTo folders_usage_ledger_exports
+      notes """
+        - Vendor bills; what people spent through pools comes from the pool ledger instead
+      """
+    }
+    opt 'forecast over X' {
+      signalbox.automations -> signalbox.connections 'Daily forecast' {
+        notes """
+          - An editable default automation, not special-case code
+        """
+      }
+      signalbox.automations -> signalbox.attention 'Over X' {
+        navigateTo operations_ops_obs_alerts
+      }
+      signalbox.attention -> operator 'Notify'
+    }
+  }
+
+  dynamic view folders_usage_vendor_limit {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Usage/Surface a vendor limit error'
+    description 'v1 yes · R-USG-13. A vendor limit shows as a plain error with no workaround; internal guardrails alert the operator, never a user-visible cap.'
+
+    include personA
+    include operator
+    include mcpClient, signalbox, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.connections, signalbox.observability, services, services.google, telemetry, telemetry.sentry
+    style signalbox.gateway {
+      color muted
+      opacity 12%
+    }
+
+    personA -> mcpClient 'Use a tool'
+    mcpClient -> signalbox.gateway.toolGateway 'tools/call'
+    signalbox.gateway.toolGateway -> signalbox.connections 'call' {
+      notes """
+        - The owning module meets the vendor: Connections here, Computer for boxd, Models for providers
+      """
+    }
+    signalbox.connections -> services.google 'API call'
+    signalbox.connections <- services.google '429 quota' {
+      notes """
+        - The vendor's plan limit, not ours
+      """
+    }
+    mcpClient <- signalbox.gateway.toolGateway 'Plain error' {
+      notes """
+        - Said as it is ("Google quota reached"); no retry loop, no workaround
+      """
+    }
+    signalbox.connections -> signalbox.observability 'Limit event'
+    signalbox.observability -> telemetry.sentry 'Guardrail' {
+      navigateTo operations_ops_obs_alerts
+    }
+    telemetry.sentry -> operator 'Alert' {
+      navigateTo operations_ops_model_outage
+      notes """
+        - We raise the plan or drop the feature; people never see an internal cap
+      """
+    }
+  }
+
+  // ───────────────────────── Operations / Deploy ─────────────────────────
+
+  dynamic view operations_ops_actor_schemas {
+    title 'Workflows/Operations/Deploy/Each actor creates its own tables'
+    description 'T-OBS-10. Replaces numbered migrations: each actor class ensures its own tables on wake (CREATE TABLE IF NOT EXISTS).'
+    autoLayout TopBottom
+
+    include signalbox, signalbox.actorhost, signalbox.thread, signalbox.tree, signalbox.models
+
+    signalbox.actorhost -> signalbox.thread 'Wake on call' {
+      notes """
+        - First call after a deploy reaches the new class code
+      """
+    }
+    signalbox.thread -> signalbox.thread 'Ensure own tables' {
+      notes """
+        - `CREATE TABLE IF NOT EXISTS` per table; idempotent
+        - No migration runner, so upstream's numbered migrations stay untouched
+      """
+    }
+    parallel {
+      signalbox.actorhost -> signalbox.tree 'Wake Person · Level'
+      signalbox.actorhost -> signalbox.models 'Wake Pool custody' {
+        notes """
+          - Every actor class does the same ensure on its own SQLite
+        """
+      }
+    }
+    signalbox.actorhost -> signalbox.thread 'Serve new RPC' {
+      navigateTo work_recovery_new_rpc_after_deploy
+    }
+  }
+
+  dynamic view operations_ops_alchemy_providers {
+    title 'Workflows/Operations/Deploy/Add a missing Alchemy provider'
+    description 'R-OPS-10. Missing providers (boxd, Sentry, WorkOS, 1Password source, GitHub App) are written in-stack, then upstreamed.'
+    autoLayout TopBottom
+
+    include operator
+    include build, build.iac, platform, platform.boxd, platform.workos, telemetry, telemetry.sentry, services, services.onepassword, upstreams, upstreams.alchemyUpstream
+
+    operator -> build.iac 'Need a resource' {
+      notes """
+        - A resource type Alchemy v2 has no provider for
+      """
+    }
+    build.iac -> build.iac 'Write provider in-stack' {
+      notes """
+        - create · update · delete · adopt, so prod resources are adopted, not recreated
+      """
+    }
+    parallel {
+      build.iac -> platform.boxd 'Manage'
+      build.iac -> telemetry.sentry 'Manage'
+      build.iac -> platform.workos 'Manage'
+      build.iac -> services.onepassword 'Read source'
+    }
+    build.iac -> build.iac 'Plan, then apply' {
+      navigateTo operations_ops_deploy_prod
+    }
+    operator -> upstreams.alchemyUpstream 'Upstream PR' {
+      notes """
+        - To Alchemy; we keep using ours until it merges, never wait for maintainers
+      """
+    }
+  }
+
+  dynamic view operations_ops_client_distribution {
+    title 'Workflows/Operations/Deploy/Ship desktop and mobile builds'
+    description 'R-OPS-11. Desktop nightly and stable; mobile only on TestFlight internal and Play internal, no public track.'
+    autoLayout TopBottom
+
+    include operator
+    include services, services.github, build, build.ci, build.distribution, upstreams, upstreams.updateFeed, upstreams.eas, upstreams.appStores, signalbox, signalbox.desktop, signalbox.mobile
+
+    operator -> services.github 'Tag a release' {
+      navigateTo operations_ops_deploy_prod
+      notes """
+        - Clients are gateways; the server ships on its own path
+      """
+    }
+    services.github -> build.ci 'Build'
+    alt 'client' {
+      when 'desktop' {
+        build.ci -> build.distribution 'Package · sign' {
+          notes """
+            - electron-builder, macOS signing, Azure Trusted Signing
+          """
+        }
+        build.distribution -> upstreams.updateFeed 'Release' {
+          notes """
+            - Nightly or stable channel, on GitHub Releases
+          """
+        }
+        upstreams.updateFeed -> signalbox.desktop 'Auto-update'
+      }
+      else 'mobile' {
+        build.distribution -> upstreams.eas 'EAS build · submit'
+        upstreams.eas -> upstreams.appStores 'Submit'
+        upstreams.appStores -> signalbox.mobile 'Internal tracks' {
+          notes """
+            - TestFlight internal and Play internal only; no public track until the owner decides
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view operations_ops_deploy_domains {
+    title 'Workflows/Operations/Deploy/Three deploy domains'
+    description 'R-OPS-07. The app script deploys often; pool host and thread host rarely; engine and harness code load by versioned Worker Loader id at turn boundaries.'
+    autoLayout TopBottom
+
+    include operator
+    include build, build.iac, signalbox, signalbox.funnel, signalbox.models, signalbox.thread, signalbox.actorhost, signalbox.harness
+
+    operator -> build.iac 'Merge to main'
+    alt 'what changed' {
+      when 'app script (often)' {
+        build.iac -> signalbox.funnel 'Deploy app' {
+          navigateTo operations_ops_deploy_prod
+          notes """
+            - Funnel, Ingress, modules and most actors; sockets reconnect
+          """
+        }
+      }
+      when 'pool host (rare)' {
+        build.iac -> signalbox.models 'Deploy pool host' {
+          navigateTo operations_ops_pool_deploy
+          notes """
+            - The CPA host script in Models; drops only in-flight streams, a custody deploy drops none
+          """
+        }
+      }
+      when 'thread host (rare)' {
+        build.iac -> signalbox.thread 'Deploy thread host' {
+          notes """
+            - The Thread module's script; sessions resume from the session mirror
+          """
+        }
+      }
+      else 'engine or harness code' {
+        build.iac -> signalbox.actorhost 'Upload version' {
+          notes """
+            - A new Worker Loader id; nothing restarts
+          """
+        }
+        signalbox.thread -> signalbox.harness 'Load at turn boundary' {
+          navigateTo operations_ops_harness_release
+          notes """
+            - A running turn finishes on its version; the next one picks the new id
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view operations_ops_deploy_prod {
+    variant sequence
+    title 'Workflows/Operations/Deploy/Deploy production'
+    description 'R-OPS-01, R-OPS-02, R-OPS-06, R-OPS-09 (alias T-UPD-07). Alchemy v2, plan first, EU, secrets from 1Password, prod resources adopted in place; one version, fast revert.'
+
+    include operator
+    include services, services.github, services.onepassword, build, build.iac, signalbox, telemetry, telemetry.sentry
+    style signalbox {
+      color primary
+      opacity 100%
+    }
+
+    alt 'entry' {
+      when 'merge' {
+        operator -> services.github 'Merge on green' {
+          notes """
+            - Auto-merge on green; one version, no staging split
+          """
+        }
+      }
+      else 'secret rotation' {
+        operator -> services.onepassword 'Rotate secret' {
+          notes """
+            - Rotation due or a leak; the redeploy picks up the new value
+          """
+        }
+      }
+    }
+    services.github -> build.iac 'Run deploy' {
+      navigateTo operations_ops_preview_stage
+    }
+    build.iac -> services.onepassword 'Read secrets' {
+      notes """
+        - Service account; secrets never live in the repo
+      """
+    }
+    build.iac -> build.iac 'Plan' {
+      notes """
+        - Alchemy v2, state in Cloudflare Secrets Store
+      """
+    }
+    alt 'plan' {
+      when 'clean' {
+        build.iac -> signalbox 'Apply (EU)' {
+          navigateTo operations_ops_deploy_domains
+          notes """
+            - Prod resources adopted in place, never recreated
+          """
+        }
+      }
+      else 'replace or delete' {
+        build.iac -> operator 'Stop for a human' {
+          notes """
+            - The plan-first guard trips; nothing is applied
+          """
+        }
+      }
+    }
+    opt 'bad deploy' {
+      signalbox -> telemetry.sentry 'Release health drops'
+      telemetry.sentry -> operator 'Alert'
+      operator -> services.github 'Revert' {
+        notes """
+          - Revert redeploys the last good version in minutes
+        """
+      }
+      operator -> signalbox 'PITR if state broke' {
+        navigateTo operations_ops_pitr
+      }
+    }
+  }
+
+  dynamic view operations_ops_owner_tasks {
+    variant sequence
+    title 'Workflows/Operations/Deploy/Do an owner-only setup step'
+    description 'R-OPS-38. Owner tasks as a wizard: one prepared human step per click; secrets travel browser → target, never through chat.'
+
+    include operator
+    include signalbox, signalbox.web, signalbox.funnel, signalbox.attention, signalbox.thread, build, build.iac, services, services.onepassword
+
+    signalbox.thread -> signalbox.attention 'Owner-only step' {
+      navigateTo person_pipeline_blocker_human_only
+      notes """
+        - An agent hits a step only the owner can do (e.g. create an OAuth app)
+      """
+    }
+    signalbox.attention -> operator 'Blocker'
+    operator -> signalbox.web 'Open wizard'
+    loop 'each prepared step' {
+      signalbox.web -> operator 'One step' {
+        notes """
+          - Everything the agent could prepare is filled in; one click or paste left
+        """
+      }
+      operator -> services.onepassword 'Secret straight in' {
+        notes """
+          - Browser → 1Password or the target service; never through chat or an agent
+        """
+      }
+    }
+    signalbox.web -> signalbox.funnel 'Mark done'
+    signalbox.funnel -> signalbox.thread 'Answer ask'
+    signalbox.thread -> build.iac 'Redeploy' {
+      navigateTo operations_ops_deploy_prod
+    }
+  }
+
+  dynamic view operations_ops_pool_deploy {
+    #smell
+    variant sequence
+    title 'Workflows/Operations/Deploy/Deploy pool scripts under live streams'
+    description 'R-OPS-08. A custody deploy drops zero streams; a pool host deploy or container restart drops only in-flight streams. Smell on purpose: it opens Models (custody vs CPA host) because which script deploys is the whole question.'
+
+    include personA, personB, signalbox, signalbox.thread, signalbox.gateway, signalbox.gateway.modelGateway, signalbox.models, signalbox.models.custody, signalbox.models.cpaHost, build, build.iac, modelProviders, modelProviders.anthropic
+    style signalbox.gateway, signalbox.models {
+      color muted
+      opacity 12%
+    }
+
+    parallel {
+      personA -> signalbox.thread 'Turn'
+      personB -> signalbox.thread 'Turn'
+    }
+    signalbox.thread -> signalbox.gateway.modelGateway 'Model stream' {
+      navigateTo folders_gateway_model_call
+    }
+    signalbox.gateway.modelGateway -> signalbox.models.cpaHost 'Bytes' {
+      notes """
+        - Bytes never pass custody; the pin is cached per lease
+        - Reach into Models' CPA host (smell): kept because this view is about which Models script deploys
+      """
+    }
+    signalbox.models.cpaHost -> modelProviders.anthropic 'Messages'
+    alt 'what deploys' {
+      when 'Pool custody' {
+        build.iac -> signalbox.models.custody 'Deploy custody' {
+          navigateTo operations_ops_deploy_domains
+          notes """
+            - Zero streams drop: they don't run through custody
+          """
+        }
+      }
+      else 'pool host or container restart' {
+        build.iac -> signalbox.models.cpaHost 'Deploy pool host'
+        signalbox.gateway.modelGateway <- signalbox.models.cpaHost 'In-flight dropped' {
+          notes """
+            - Only streams open at that moment; rare by design
+          """
+        }
+        signalbox.gateway.modelGateway -> signalbox.models.cpaHost 'Next request' {
+          notes """
+            - The harness retries the request; new streams land on the new host
+          """
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Operations / Loops ─────────────────────────
+
+  dynamic view operations_ops_cpa_release {
+    variant sequence
+    title 'Workflows/Operations/Loops/Follow CLIProxyAPI releases'
+    description 'R-OPS-27, R-OPS-28, R-OPS-29. Detect, bump release.json, eval gate, auto-merge on green, rebuild with carry patches; roll back on an upstream regression.'
+
+    include platform, platform.cpaUpstream, signalbox, signalbox.automations, signalbox.thread, signalbox.observability, signalbox.models, services, services.github, build, build.iac
+
+    platform.cpaUpstream -> signalbox.automations 'New release' {
+      notes """
+        - The release follower is a default automation
+      """
+    }
+    signalbox.automations -> signalbox.thread 'Run thread'
+    signalbox.thread -> services.github 'Bump release.json'
+    services.github -> services.github 'CI + eval gate'
+    alt 'result' {
+      when 'green' {
+        services.github -> build.iac 'Auto-merge'
+        build.iac -> signalbox.models 'Rebuild CPA image' {
+          notes """
+            - Reapplies carry patches; fails loudly on drift
+          """
+        }
+      }
+      else 'regression' {
+        signalbox.observability -> signalbox.automations 'Regression alert' {
+          navigateTo operations_ops_self_healing
+        }
+        signalbox.thread -> services.github 'Rollback PR' {
+          notes """
+            - Our bug: a fix PR instead
+            - Upstream bug: roll back `release.json`, a visible liftable held range
+          """
+        }
+        signalbox.thread -> platform.cpaUpstream 'Issue with repro' {
+          notes """
+            - Re-bump once upstream ships the fix
+          """
+        }
+      }
+    }
+    opt 'upstream merged our patch' {
+      signalbox.thread -> services.github 'Drop carry patch'
+    }
+  }
+
+  dynamic view operations_ops_day_one_stack {
+    variant sequence
+    title 'Workflows/Operations/Loops/Give a new service the day-one stack'
+    description 'R-OPS-23. Every new service gets evlog, Sentry, PostHog, metrics and the self-healing loop, shipped as a default automation plus skill.'
+
+    include operator
+    include build, build.iac, signalbox, signalbox.automations, signalbox.observability, telemetry, telemetry.sentry, telemetry.axiom, telemetry.posthog
+
+    operator -> build.iac 'Add a service'
+    build.iac -> signalbox.automations 'service.created' {
+      notes """
+        - A default automation plus a skill; editable like any other
+      """
+    }
+    signalbox.automations -> signalbox.observability 'Wire evlog unit' {
+      navigateTo operations_ops_obs_wide_event
+    }
+    parallel {
+      signalbox.observability -> telemetry.sentry 'Project + alerts'
+      signalbox.observability -> telemetry.axiom 'Dataset'
+      signalbox.observability -> telemetry.posthog 'Events (off)'
+    }
+    signalbox.automations -> signalbox.automations 'Attach the loop' {
+      navigateTo operations_ops_self_healing
+    }
+    signalbox.automations -> operator 'Stack ready'
+  }
+
+  dynamic view operations_ops_feedback_loop {
+    variant sequence
+    title 'Workflows/Operations/Loops/Send feedback that becomes a fix'
+    description 'R-OPS-17. In-app feedback through Sentry user feedback; the first automation turns it into a thread, a fix and a PR.'
+
+    include personA, signalbox, signalbox.web, signalbox.ingress, signalbox.automations, signalbox.thread, telemetry, telemetry.sentry, services, services.github
+
+    personA -> signalbox.web 'Send feedback' {
+      navigateTo person_settings_feedback
+      notes """
+        - Rail → Feedback
+      """
+    }
+    opt 'screenshot' {
+      signalbox.web -> signalbox.web 'Attach screenshot' {
+        notes """
+          - On by default, A can turn it off; masked
+        """
+      }
+    }
+    signalbox.web -> telemetry.sentry 'User feedback' {
+      notes """
+        - Tagged with release and trace id
+      """
+    }
+    telemetry.sentry -> signalbox.ingress 'Webhook'
+    signalbox.ingress -> signalbox.automations 'feedback event'
+    signalbox.automations -> signalbox.thread 'Open thread'
+    signalbox.thread -> signalbox.thread 'Reproduce, fix' {
+      navigateTo operations_ops_self_healing
+    }
+    signalbox.thread -> services.github 'Fix PR'
+  }
+
+  dynamic view operations_ops_harness_release {
+    variant sequence
+    title 'Workflows/Operations/Loops/Follow harness releases'
+    description 'R-OPS-30 (alias T-UPD-09). Publish on green; pin threads to the last green release on red.'
+
+    include operator
+    include upstreams, upstreams.npm, signalbox, signalbox.automations, signalbox.harness, signalbox.actorhost, signalbox.thread
+
+    upstreams.npm -> signalbox.automations 'New CLI release' {
+      navigateTo work_harness_ship_releases
+      notes """
+        - A Claude Code or Codex release on npm
+      """
+    }
+    signalbox.automations -> signalbox.harness 'Build + parity evals' {
+      notes """
+        - Unmodified official CLI in the isolate tier
+      """
+    }
+    alt 'result' {
+      when 'green' {
+        signalbox.automations -> signalbox.actorhost 'Publish version' {
+          navigateTo operations_ops_deploy_domains
+          notes """
+            - A new Worker Loader id
+          """
+        }
+        signalbox.thread -> signalbox.harness 'Next turn loads it'
+      }
+      else 'red' {
+        signalbox.automations -> signalbox.thread 'Pin last green' {
+          notes """
+            - Threads keep running on the last green release
+          """
+        }
+        signalbox.automations -> operator 'Report'
+      }
+    }
+  }
+
+  dynamic view operations_ops_prod_checks {
+    variant sequence
+    title 'Workflows/Operations/Loops/Run checks with test identities'
+    description 'R-OPS-37. E2E on a WorkOS sandbox with fictional users; a production-safe test person, excluded from analytics, feeds a prod regression automation.'
+
+    include operator
+    include signalbox, signalbox.automations, signalbox.thread, signalbox.identity, signalbox.observability, platform, platform.workos
+
+    alt 'which check' {
+      when 'CI on every PR' {
+        signalbox.automations -> signalbox.thread 'Run E2E'
+        signalbox.thread -> platform.workos 'Fictional users' {
+          navigateTo identity_identity_test_identities
+          notes """
+            - WorkOS sandbox; never real people
+          """
+        }
+      }
+      else 'scheduled prod check' {
+        signalbox.automations -> signalbox.thread 'Run prod check'
+        signalbox.thread -> signalbox.identity 'Sign in test person' {
+          notes """
+            - Production-safe test person, flagged; excluded from analytics
+          """
+        }
+      }
+    }
+    signalbox.thread -> signalbox.observability 'Results'
+    opt 'regression' {
+      signalbox.observability -> operator 'Alert' {
+        navigateTo operations_ops_obs_alerts
+      }
+    }
+  }
+
+  dynamic view operations_ops_self_healing {
+    variant sequence
+    title 'Workflows/Operations/Loops/Self-healing loop'
+    description 'R-OPS-21, R-OPS-22. Alert → dedupe → evlog by correlation id → failing test first → fix PR → merge gate. A human only for the merge or when it cannot reproduce.'
+
+    include operator
+    include telemetry, telemetry.sentry, signalbox, signalbox.automations, signalbox.judge, signalbox.thread, signalbox.observability, signalbox.drive, signalbox.learner
+
+    telemetry.sentry -> signalbox.automations 'Alert' {
+      navigateTo operations_ops_obs_alerts
+    }
+    signalbox.automations -> signalbox.judge 'Duplicate?' {
+      notes """
+        - `w.judge`: same root cause as an open fix thread? Then attach, don't open
+      """
+    }
+    signalbox.automations -> signalbox.thread 'Open fix thread'
+    signalbox.thread -> signalbox.observability 'Trace by id' {
+      notes """
+        - evlog wide events by correlation id; ids only
+      """
+    }
+    signalbox.thread -> signalbox.thread 'Failing test first'
+    alt 'reproduced?' {
+      when 'yes' {
+        signalbox.thread -> signalbox.drive 'Fix PR' {
+          navigateTo work_git_merge_gate
+          notes """
+            - Through the folder's merge gate
+          """
+        }
+        signalbox.drive -> operator 'Ready: merge' {
+          navigateTo work_drive_accept
+        }
+      }
+      else 'no' {
+        signalbox.thread -> operator 'Blocker ask' {
+          navigateTo work_automations_step_ask
+          notes """
+            - Can't reproduce: a human looks
+          """
+        }
+      }
+    }
+    opt 'exception closed' {
+      signalbox.thread -> signalbox.learner 'Propose rule' {
+        notes """
+          - Every exception proposes the rule that would have handled it
+        """
+      }
+    }
+  }
+
+  dynamic view operations_ops_upstream_babysitter {
+    variant sequence
+    title 'Workflows/Operations/Loops/Babysit an upstream contribution'
+    description 'R-OPS-26. Each upstream PR gets a thread that answers reviews and keeps CI green until merged; proposals ship with a demo branch.'
+
+    include operator
+    include signalbox, signalbox.automations, signalbox.thread, signalbox.connections, services, services.github
+
+    signalbox.thread -> signalbox.connections 'Open upstream PR' {
+      navigateTo operations_ops_upstream_sync
+    }
+    signalbox.connections -> services.github 'PR + demo branch' {
+      notes """
+        - Proposals ship with a working demo branch
+      """
+    }
+    loop 'until merged' {
+      services.github -> signalbox.automations 'Review or CI event'
+      signalbox.automations -> signalbox.thread 'Wake babysitter'
+      signalbox.thread -> signalbox.connections 'Reply · push fix'
+      signalbox.connections -> services.github 'Update PR'
+    }
+    opt 'judgment call' {
+      signalbox.thread -> operator 'Ask'
+    }
+  }
+
+  dynamic view operations_ops_upstream_sync {
+    variant sequence
+    title 'Workflows/Operations/Loops/Sync upstream T3 Code'
+    description 'R-OPS-24, R-OPS-25. Every 6 h: merge into a sync branch, open a PR, wait for CI, merge gate with a merge commit. Conflicts are resolved first, or ported when cheaper.'
+
+    include operator
+    include signalbox, signalbox.automations, signalbox.thread, signalbox.drive, platform, platform.t3upstream, services, services.github
+
+    signalbox.automations -> signalbox.thread 'Every 6 h' {
+      notes """
+        - Tick trigger on a default automation
+      """
+    }
+    signalbox.thread -> platform.t3upstream 'Fetch main'
+    signalbox.thread -> signalbox.drive 'Merge to sync branch'
+    alt 'merge' {
+      when 'clean' {
+        signalbox.thread -> services.github 'Open PR' {
+          navigateTo operations_ops_upstream_babysitter
+        }
+        signalbox.thread <- services.github 'CI green'
+        signalbox.thread -> signalbox.drive 'Merge gate' {
+          navigateTo work_git_merge_gate
+          notes """
+            - A merge commit, never a rebase of shared history
+          """
+        }
+      }
+      else 'conflicted' {
+        signalbox.thread -> signalbox.thread 'Conflict-cost check'
+        alt 'cost' {
+          when 'resolvable' {
+            signalbox.thread -> signalbox.drive 'Resolve, then same path' {
+              notes """
+                - By the agent, or by hand first
+              """
+            }
+          }
+          else 'costs more than porting' {
+            signalbox.thread -> operator 'Port instead?' {
+              notes """
+                - Port the upstream change instead of merging
+              """
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Operations / Observability ─────────────────────────
+
+  dynamic view operations_ops_obs_alerts {
+    title 'Workflows/Operations/Observability/Raise an operational alert'
+    description 'R-OPS-20. Alerts fire from Sentry, Workers Issues, percentile breaches, "needs a pool", stuck automations and unmetered usage.'
+    autoLayout TopBottom
+
+    include operator
+    include telemetry, telemetry.sentry, signalbox, signalbox.models, signalbox.automations, signalbox.tree, signalbox.observability, signalbox.attention
+
+    parallel {
+      telemetry.sentry -> signalbox.observability 'Error spike' {
+        notes """
+          - Also Workers Issues and p95/p99 breaches per action
+        """
+      }
+      signalbox.models -> signalbox.observability 'Unmetered usage' {
+        notes """
+          - A started event with no drained row after the window
+        """
+      }
+      signalbox.automations -> signalbox.observability 'Stuck run'
+      signalbox.tree -> signalbox.observability 'Needs a pool' {
+        navigateTo folders_pools_needs_pool
+        notes """
+          - Also an ask to the folder's admins; this is the operator copy
+        """
+      }
+    }
+    signalbox.observability -> signalbox.attention 'Operational alert'
+    signalbox.attention -> operator 'Notify'
+    signalbox.attention -> signalbox.automations 'Start the loop' {
+      navigateTo operations_ops_self_healing
+    }
+  }
+
+  dynamic view operations_ops_obs_dev_mode {
+    variant sequence
+    title 'Workflows/Operations/Observability/Trace work in developer mode'
+    description 'R-OPS-18. A traces their own threads down to agent-to-agent messages; C gets rollups only for folders C administers.'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.observability, signalbox.tree
+
+    personA -> signalbox.web 'Developer mode on' {
+      navigateTo person_settings_developer_mode
+    }
+    alt 'who traces' {
+      when 'A, their threads' {
+        signalbox.web -> signalbox.funnel 'trajectory'
+        signalbox.funnel -> signalbox.thread 'Events'
+        signalbox.funnel -> signalbox.observability 'Spans by id' {
+          navigateTo work_recovery_one_trace
+        }
+        signalbox.web <- signalbox.funnel 'Down to agent messages' {
+          notes """
+            - Every step, down to the exact message one agent sent another
+          """
+        }
+      }
+      else 'C, admin of Company' {
+        personC -> signalbox.web 'Open Company'
+        signalbox.web -> signalbox.funnel 'rollups'
+        signalbox.funnel -> signalbox.tree 'Admin rollups' {
+          navigateTo folders_tree_catalog
+          notes """
+            - Only folders C administers; never A's or B's private threads
+          """
+        }
+        signalbox.web <- signalbox.funnel 'Rollups only'
+      }
+    }
+  }
+
+  dynamic view operations_ops_obs_latency {
+    title 'Workflows/Operations/Observability/Measure action latency'
+    description 'R-OPS-16. Per-action latency percentiles and input-to-visible feedback, measured as Sentry spans.'
+    autoLayout TopBottom
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, telemetry, telemetry.sentry
+
+    personA -> signalbox.web 'Click' {
+      notes """
+        - The span starts at input, not at the request
+      """
+    }
+    signalbox.web -> signalbox.funnel 'Command'
+    signalbox.web <- signalbox.funnel 'View update'
+    signalbox.web -> signalbox.web 'Visible: end span' {
+      notes """
+        - Ends when A can see the result
+      """
+    }
+    signalbox.web -> telemetry.sentry 'Span per action'
+    telemetry.sentry -> telemetry.sentry 'p50 · p95 · p99' {
+      navigateTo operations_ops_obs_alerts
+      notes """
+        - A percentile breach raises an alert
+      """
+    }
+  }
+
+  dynamic view operations_ops_obs_profiling {
+    variant sequence
+    title 'Workflows/Operations/Observability/Profile an isolate on demand'
+    description 'T-OBS-04. On-demand isolate profiling on the edge; replaces the event-loop monitor and heap snapshots.'
+
+    include operator
+    include signalbox, signalbox.observability, signalbox.actorhost, telemetry, telemetry.sentry
+
+    operator -> signalbox.observability 'Profile isolate' {
+      navigateTo operations_ops_obs_dev_mode
+      notes """
+        - On request, or sampled
+      """
+    }
+    signalbox.observability -> signalbox.actorhost 'Start profiling' {
+      notes """
+        - workerd on-demand profiling
+      """
+    }
+    signalbox.actorhost -> signalbox.actorhost 'Sample CPU · memory'
+    signalbox.observability <- signalbox.actorhost 'Profile'
+    signalbox.observability -> telemetry.sentry 'Attach to trace' {
+      navigateTo operations_ops_obs_wide_event
+    }
+    operator -> telemetry.sentry 'Read flame graph'
+  }
+
+  dynamic view operations_ops_obs_sinks {
+    title 'Workflows/Operations/Observability/Route telemetry to its stores'
+    description 'R-OPS-13, R-OPS-14, R-OPS-15, R-OPS-19 (aliases T-DSK-22, T-ENV-07, T-ENV-10, T-MOB-35, T-OBS-03, T-OBS-01). Each store holds one thing.'
+    autoLayout TopBottom
+
+    include operator
+    include signalbox, signalbox.web, signalbox.observability, telemetry, telemetry.sentry, telemetry.axiom, telemetry.posthog
+
+    signalbox.web -> signalbox.observability 'Client events' {
+      notes """
+        - Server modules emit the same way
+      """
+    }
+    signalbox.observability -> signalbox.observability 'Wide event' {
+      navigateTo operations_ops_obs_wide_event
+    }
+    parallel {
+      signalbox.observability -> telemetry.sentry 'Errors · traces' {
+        notes """
+          - v1. Sampled traces, release health, uptime and cron monitors; EU
+        """
+      }
+      signalbox.observability -> telemetry.axiom 'Every wide event' {
+        notes """
+          - Raw and unsampled
+        """
+      }
+      signalbox.observability -> telemetry.posthog 'Analytics (off)' {
+        navigateTo folders_usage_ledger_exports
+        notes """
+          - Product, usage, cost and attention; off until the EU project exists
+        """
+      }
+      signalbox.observability -> signalbox.observability 'Ops metrics' {
+        notes """
+          - Analytics Engine, ops only, never billing
+        """
+      }
+    }
+    opt 'Cloudflare logs' {
+      operator -> signalbox.observability 'Workers Logs off' {
+        notes """
+          - Off before per-GB pricing, with a billing notification backstop
+        """
+      }
+    }
+    telemetry.sentry -> operator 'Alerts' {
+      navigateTo operations_ops_obs_alerts
+    }
+  }
+
+  dynamic view operations_ops_obs_wide_event {
+    title 'Workflows/Operations/Observability/One wide event per unit of work'
+    description 'R-OPS-12 (alias T-PRV-34). One correlation id client → Worker → DO → facet → isolate → VM → tools → CPA; ids only.'
+    autoLayout TopBottom
+
+    include signalbox, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.harness, signalbox.computer, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.gateway.modelGateway, signalbox.observability
+    style signalbox.gateway {
+      color muted
+      opacity 12%
+    }
+
+    signalbox.web -> signalbox.funnel 'Command + id' {
+      notes """
+        - The client mints the correlation id
+      """
+    }
+    signalbox.funnel -> signalbox.thread 'Same id'
+    signalbox.thread -> signalbox.harness 'Turn'
+    parallel {
+      signalbox.harness -> signalbox.computer 'Exec'
+      signalbox.harness -> signalbox.gateway.toolGateway 'Tool call'
+      signalbox.harness -> signalbox.gateway.modelGateway 'Model call' {
+        notes """
+          - The id rides the signed stamp on to Models and the CPA host
+        """
+      }
+    }
+    signalbox.thread -> signalbox.observability 'One wide event each' {
+      navigateTo operations_ops_obs_sinks
+      notes """
+        - Every hop emits one event per unit of work
+        - Ids only, never content
+      """
+    }
+    signalbox.observability -> signalbox.observability 'Join by id' {
+      navigateTo work_recovery_one_trace
+    }
+  }
+
+  // ───────────────────────── Operations / Previews ─────────────────────────
+
+  dynamic view operations_ops_preview_seed {
+    variant sequence
+    title 'Workflows/Operations/Previews/Seed a preview from prod'
+    description 'R-OPS-04. Copies placements, pools linked to prod pools, connections and settings; never threads. Same-tab hand-off.'
+
+    include operator
+    include signalbox, signalbox.thread, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.tree, signalbox.models, signalbox.connections
+
+    alt 'who opens it' {
+      when 'an agent' {
+        signalbox.thread -> signalbox.web 'Open preview' {
+          navigateTo operations_ops_preview_stage
+        }
+      }
+      else 'a maintainer' {
+        operator -> signalbox.web 'Open preview'
+      }
+    }
+    signalbox.web -> signalbox.funnel 'preview-setup/start'
+    signalbox.funnel -> signalbox.identity 'Prod session' {
+      notes """
+        - Empty pool: sign in to prod in the same tab, then back
+      """
+    }
+    parallel {
+      signalbox.funnel -> signalbox.tree 'Copy placements'
+      signalbox.funnel -> signalbox.models 'Link prod pools' {
+        navigateTo folders_pools_add_account
+      }
+      signalbox.funnel -> signalbox.connections 'Copy connections' {
+        navigateTo folders_connections_oauth_connect
+      }
+    }
+    signalbox.web <- signalbox.funnel 'Ready, no threads' {
+      notes """
+        - Setup and settings only; chats never copy
+      """
+    }
+  }
+
+  dynamic view operations_ops_preview_stage {
+    variant sequence
+    title 'Workflows/Operations/Previews/Deploy and tear down a PR preview'
+    description 'R-OPS-03, R-OPS-05. One stage and domain per PR; deploy waits for its own certificates; teardown deletes exactly its resources and verifies.'
+
+    include operator
+    include services, services.github, build, build.iac, signalbox
+    style signalbox {
+      color primary
+      opacity 100%
+    }
+
+    operator -> services.github 'Open PR'
+    alt 'PR event' {
+      when 'opened or updated' {
+        services.github -> build.iac 'Deploy stage pr-N' {
+          navigateTo operations_ops_deploy_prod
+        }
+        build.iac -> signalbox 'Own domain' {
+          notes """
+            - One domain per preview
+          """
+        }
+        build.iac -> build.iac 'Wait for own certs' {
+          notes """
+            - Never reuses or waits on another stage's certificates
+          """
+        }
+        services.github <- build.iac 'Preview URL' {
+          navigateTo operations_ops_preview_seed
+        }
+      }
+      else 'closed' {
+        services.github -> build.iac 'Destroy pr-N'
+        build.iac -> signalbox 'Delete its resources' {
+          notes """
+            - Stage-scoped, so prod is never touched
+          """
+        }
+        build.iac -> signalbox 'Verify absence'
+      }
+    }
+  }
+
+  // ───────────────────────── Operations / Recovery ─────────────────────────
+
+  dynamic view operations_ops_connection_outage {
+    #v1
+    variant sequence
+    title 'Workflows/Operations/Recovery/Handle a connected-service outage'
+    description 'v1 partial (connection health and repair; the thread caller comes later) · R-OPS-36. The caller gets a ProviderError; health marks the connection; only a refused token asks a person.'
+
+    include personA, personC, signalbox, signalbox.thread, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.connections, signalbox.attention, services, services.atlassian
+    style signalbox.gateway {
+      color muted
+      opacity 12%
+    }
+
+    personA -> signalbox.thread 'Ask about a page' {
+      notes """
+        - A in the shared Team thread; Company's Confluence reaches it
+      """
+    }
+    signalbox.thread -> signalbox.gateway.toolGateway 'Tool call'
+    signalbox.gateway.toolGateway -> signalbox.connections 'Tool call'
+    signalbox.connections -> services.atlassian 'API call' {
+      notes """
+        - Company's Confluence connection; the token is filled inside Connections
+      """
+    }
+    signalbox.connections <- services.atlassian '5xx or 401'
+    signalbox.gateway.toolGateway <- signalbox.connections 'ProviderError'
+    signalbox.thread <- signalbox.gateway.toolGateway 'ProviderError' {
+      notes """
+        - The agent sees a plain error and tells A
+      """
+    }
+    alt 'kind' {
+      when 'service down' {
+        signalbox.connections -> signalbox.connections 'Mark degraded' {
+          notes """
+            - Clears itself when health checks pass; no ask
+          """
+        }
+      }
+      else 'token refused' {
+        signalbox.connections -> signalbox.attention 'Repair ask'
+        signalbox.attention -> personC 'Blocker: reconnect' {
+          navigateTo state_connection
+          notes """
+            - C, admin of Company, where the connection is placed
+          """
+        }
+        personC -> signalbox.connections 'Reconnect'
+      }
+    }
+  }
+
+  dynamic view operations_ops_custody_sweeper {
+    #v1
+    title 'Workflows/Operations/Recovery/Run the custody sweeper'
+    description 'v1 yes · R-OPS-32. Resumes delete-pool, disconnect and account-move sagas; deletes custody actors left unplaced past their TTL.'
+    autoLayout TopBottom
+
+    include signalbox, signalbox.automations, signalbox.models, signalbox.connections, signalbox.tree
+
+    signalbox.automations -> signalbox.automations 'Scheduled tick' {
+      notes """
+        - A default automation
+      """
+    }
+    parallel {
+      signalbox.automations -> signalbox.models 'Resume pool sagas' {
+        navigateTo folders_pools_delete_pool
+        notes """
+          - Delete-pool and account-move, keyed by `requestId`, idempotent
+        """
+      }
+      signalbox.automations -> signalbox.connections 'Resume disconnect' {
+        navigateTo folders_connections_disconnect
+      }
+    }
+    signalbox.automations -> signalbox.tree 'Placed anywhere?' {
+      navigateTo folders_placement_create_then_place
+      notes """
+        - Create-then-place: a custody actor exists before its placement
+      """
+    }
+    opt 'unplaced past TTL' {
+      signalbox.automations -> signalbox.models 'Delete unplaced' {
+        notes """
+          - A pool custody actor nobody placed; same for an unplaced connection
+        """
+      }
+    }
+  }
+
+  dynamic view operations_ops_model_outage {
+    #v1
+    variant sequence
+    title 'Workflows/Operations/Recovery/Fail over during a model provider outage'
+    description 'v1 partial (pool failover; thread turns come later, in v1 the caller is a local key) · R-OPS-35. UpstreamError or PoolExhausted: fail over across the resolved set; notify only when nothing is left.'
+
+    include personA, personB, signalbox, signalbox.thread, signalbox.gateway, signalbox.gateway.modelGateway, signalbox.models, signalbox.attention, modelProviders, modelProviders.anthropic
+    style signalbox.gateway {
+      color muted
+      opacity 12%
+    }
+
+    parallel {
+      personA -> signalbox.thread 'Turn'
+      personB -> signalbox.thread 'Turn'
+    }
+    signalbox.thread -> signalbox.gateway.modelGateway 'Model call'
+    signalbox.gateway.modelGateway -> signalbox.models 'Pinned request' {
+      notes """
+        - P2 on Company resolved for both A and B
+      """
+    }
+    signalbox.models -> modelProviders.anthropic 'Request'
+    signalbox.models <- modelProviders.anthropic 'Overloaded' {
+      notes """
+        - `UpstreamError`
+      """
+    }
+    loop 'over the resolved set' {
+      signalbox.models -> signalbox.models 'Next account' {
+        navigateTo folders_pools_failover
+        notes """
+          - Failover across the nearest set; sticky round-robin
+        """
+      }
+      signalbox.models -> modelProviders.anthropic 'Retry'
+    }
+    alt 'result' {
+      when 'one works' {
+        signalbox.thread <- signalbox.gateway.modelGateway 'Stream continues' {
+          notes """
+            - Nobody is told; A and B never notice
+          """
+        }
+      }
+      else 'nothing left' {
+        signalbox.thread <- signalbox.gateway.modelGateway 'PoolExhausted' {
+          navigateTo work_turns_pool_exhausted
+        }
+        signalbox.thread -> signalbox.attention 'Blocker' {
+          notes """
+            - Only now: to A's and B's lanes and to P2's managers on Company (C)
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view operations_ops_outbox {
+    title 'Workflows/Operations/Recovery/Deliver the outbox'
+    description 'R-OPS-31 (aliases T-SYS-03, T-SYS-04). Alarm-driven retries, Queues for fan-out, handlers idempotent on (sourceKey, seq).'
+    autoLayout TopBottom
+
+    include signalbox, signalbox.thread, signalbox.actorhost, signalbox.tree, signalbox.attention, signalbox.models
+
+    signalbox.thread -> signalbox.thread 'Commit + outbox row' {
+      notes """
+        - State and outbox row in one SQLite transaction
+      """
+    }
+    signalbox.thread -> signalbox.actorhost 'Alarm job'
+    parallel {
+      signalbox.actorhost -[async]-> signalbox.tree 'Catalog row'
+      signalbox.actorhost -[async]-> signalbox.attention 'Ask projection' {
+        navigateTo person_pipeline_project_ask
+      }
+      signalbox.actorhost -[async]-> signalbox.models 'Measurements' {
+        notes """
+          - Fan-out goes through Queues
+        """
+      }
+    }
+    loop 'until acked' {
+      signalbox.actorhost -> signalbox.actorhost 'Retry with backoff' {
+        navigateTo work_recovery_outbox_retries
+      }
+    }
+    signalbox.tree -> signalbox.tree 'Dedupe' {
+      notes """
+        - Idempotent on `(sourceKey, seq)`, so a retry never applies twice
+      """
+    }
+  }
+
+  dynamic view operations_ops_pitr {
+    variant sequence
+    title 'Workflows/Operations/Recovery/Undo with point-in-time recovery'
+    description 'R-OPS-33. Durable Object PITR (30 days) is an undo window after a bad deploy or corrupt state, never a backup.'
+
+    include operator
+    include services, services.github, signalbox, signalbox.observability, signalbox.actorhost
+
+    signalbox.observability -> operator 'Corrupt state' {
+      notes """
+        - After a bad deploy, or a bug that wrote bad rows
+      """
+    }
+    operator -> services.github 'Revert first' {
+      navigateTo operations_ops_deploy_prod
+      notes """
+        - Stop the code that broke it
+      """
+    }
+    operator -> signalbox.observability 'Find last good time' {
+      notes """
+        - From the actor's wide events
+      """
+    }
+    operator -> signalbox.actorhost 'Restore actor to T' {
+      notes """
+        - Per actor, within 30 days
+      """
+    }
+    signalbox.actorhost -> signalbox.actorhost 'Rewind SQLite'
+    operator <- signalbox.actorhost 'Restored' {
+      notes """
+        - An undo, never the backup: R2 holds the full record
+      """
+    }
+  }
+
+  dynamic view operations_ops_workos_outage {
+    #v1
+    variant sequence
+    title 'Workflows/Operations/Recovery/Ride out a WorkOS outage'
+    description 'v1 yes · R-OPS-34. New sign-ins fail closed; Signalbox-issued sessions keep working; membership webhooks catch up on recovery.'
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, platform, platform.workos
+
+    alt 'who' {
+      when 'C signs in fresh' {
+        personC -> signalbox.web 'Sign in'
+        signalbox.web -> signalbox.identity 'signIn'
+        signalbox.identity -> platform.workos 'AuthKit'
+        signalbox.identity <- platform.workos 'Timeout'
+        signalbox.web <- signalbox.identity 'Fails closed' {
+          notes """
+            - No fallback login; C tries again later
+          """
+        }
+      }
+      else 'A and B already in' {
+        parallel {
+          personA -> signalbox.web 'Keep working'
+          personB -> signalbox.web 'Keep working'
+        }
+        signalbox.web -> signalbox.identity 'verify' {
+          navigateTo identity_identity_session
+          notes """
+            - Signalbox-issued sessions verify locally; WorkOS isn't called
+          """
+        }
+      }
+    }
+    platform.workos -> signalbox.ingress 'Membership webhooks' {
+      navigateTo organization_identity_membership_webhook
+      notes """
+        - After recovery; at least once
+      """
+    }
+    signalbox.ingress -> signalbox.identity 'Catch up roles' {
+      notes """
+        - Ordered by WorkOS event time
+      """
+    }
+  }
+}

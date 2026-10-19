@@ -1,0 +1,39 @@
+model {
+  extend signalbox {
+    learner = module 'Learner' {
+      #shallow #publishable
+      icon bootstrap:lightbulb
+      description 'observe · lenses'
+      technology 'one instance per level'
+      metadata {
+        interface '2'
+        deletion 'ask routing has no memory of past answers'
+      }
+
+      api = iface 'Learner · interface' {
+        description '2 verbs: observe · lenses'
+        technology 'Deletion test: without it, ask routing has no memory of past answers'
+      }
+
+      memories = store 'Memories' {
+        #planned
+        icon bootstrap:journal-bookmark
+        description 'undecided home · sourced per folder'
+      }
+      routeAuthority = part 'Routing seam · 1 adapter' {
+        #hypothetical-seam
+        metadata { adapters '1' }
+        ownLearner = adapter 'Signalbox learner' {
+          icon bootstrap:lightbulb
+          description 'decision lenses per level'
+        }
+      }
+    }
+
+    learner.routeAuthority.ownLearner -> signalbox.thread.api 'lenses (ask routing)'
+
+    // Interface → hidden parts (the only way in)
+    learner.api -> learner.routeAuthority 'observe · lenses'
+    learner.api -> learner.memories 'observe (planned)'
+  }
+}

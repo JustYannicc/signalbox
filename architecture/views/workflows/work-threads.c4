@@ -1,0 +1,1455 @@
+// Shard 07: work-threads. Starting threads, their lifecycle, the thread state walk and two journeys.
+// People: A and B are members of folder Company (owner: organization), C is its Admin.
+// The shared thread lives in folder Team inside Company. Modules stay black boxes; the Thread,
+// Level and Person actors are named where the row is about the state they own.
+views {
+
+  // ───────────────────────────── Journeys/Threads ─────────────────────────────
+
+  dynamic view journey_threads_details {
+    title "Journeys/Threads/See and change a thread's details"
+    description 'T-MOB-16, T-THR-34, T-THR-35. A on web and B on mobile open the same shared Team thread and see the same details: pool, models and title resolve by the thread position, never by who looks. Every action on the card opens its own flow.'
+
+    variant sequence
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.mobile,
+      signalbox.funnel,
+      signalbox.thread.threadActor with { title 'Thread (shared, Team)' },
+      signalbox.tree,
+      signalbox.models
+
+    personA -> signalbox.web 'hovers a row' {
+      notes '''
+        - A sees the hover card: title, status line, people
+        - Built from the catalog row the sidebar already holds, no extra fetch
+      '''
+      navigateTo state_thread
+    }
+    personA -> signalbox.web 'opens details' {
+      notes '''
+        - Header toggle or `threadPanel.toggle` opens the Thread details card
+        - Headers stay minimal; everything else lives in this card
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'watch details'
+    parallel {
+      signalbox.funnel -> signalbox.thread.threadActor 'Thread.watch' {
+        notes '''
+          - Lineage, harness, branch/PR, and the pool from the last turn's frozen Scope (pool P2 on Company)
+          - Computer shows running or not only; where it runs stays hidden
+          - A and B see the same pool: resolution is by position, not by who looks
+        '''
+      }
+      signalbox.funnel -> signalbox.tree 'breadcrumb' {
+        notes '''
+          - Path on A's own tree: Top level › Work › Company › Team
+          - B's card shows B's own path through B's mount; same folder, same thread
+        '''
+      }
+    }
+    signalbox.web -> personA 'details card' {
+      notes '''
+        - Level, lineage, harness, pool shown, computer, terminal, branch/PR
+        - Kind flip, pin, move, archive, accept/discard sit here as actions
+      '''
+    }
+
+    alt 'an action on the card' {
+      when 'move' {
+        personA -> signalbox.web 'Move to…' {
+          navigateTo work_threads_lifecycle_move_within
+          notes 'Opens the move flow; Member+ at both ends'
+        }
+      }
+      when 'open a child thread' {
+        personA -> signalbox.web 'child status' {
+          navigateTo work_threads_child_status
+          notes 'Lineage rows open forks and subagents with their own status'
+        }
+      }
+      when 'switch harness' {
+        personA -> signalbox.web 'switch harness' {
+          navigateTo work_harness_switch
+          notes 'Takes effect at the next turn boundary'
+        }
+      }
+    }
+
+    opt 'B opens it on mobile' {
+      personB -> signalbox.mobile 'settings sheet' {
+        notes '''
+          - B opens the same shared thread on the phone
+          - The sheet is the mobile form of the details card
+        '''
+      }
+      signalbox.mobile -> signalbox.funnel 'catalog · rename'
+      signalbox.funnel -> signalbox.models 'catalog(Scope)' {
+        notes '''
+          - Models only from pool P2, the nearest pool above folder Team
+          - B gets exactly what A gets: same position, same answer
+        '''
+      }
+      signalbox.funnel -> signalbox.thread.threadActor 'rename' {
+        navigateTo work_threads_lifecycle_title
+        notes 'The new title flows into A’s and B’s catalogs alike'
+      }
+      signalbox.mobile -> personB 'sheet updated'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view journey_threads_rich_messages {
+    title 'Journeys/Threads/Read and copy rich messages'
+    description 'T-TRN-41, T-TRN-45. Rich rendering and copy are client-only; files open from the drive.'
+
+    autoLayout TopBottom
+    include personA, signalbox.web, signalbox.funnel, signalbox.drive
+
+    personA -> signalbox.web 'reads a message' {
+      notes '''
+        - Markdown with mermaid blocks, thread links, images and video, file paths
+        - Rendering happens in the client; the thread stores plain text
+      '''
+    }
+    alt 'what A clicks' {
+      when 'mermaid block' {
+        signalbox.web -> signalbox.web 'renders diagram' {
+          notes 'Rendered lazily when scrolled into view; no repainting animation'
+        }
+      }
+      when 'thread link' {
+        signalbox.web -> signalbox.funnel 'open linked thread' {
+          navigateTo work_threads_open
+          notes 'Visibility re-checked: a link to a thread A cannot see shows not-found'
+        }
+      }
+      when 'image or video' {
+        signalbox.web -> signalbox.web 'zoom · save' {
+          notes 'Media zoom and save stay on the device'
+        }
+      }
+      when 'file path' {
+        signalbox.web -> signalbox.drive 'preview file' {
+          navigateTo journey_files_browse
+          notes '''
+            - Opens the file from the thread's drive fork
+            - What A sees is what the agent got
+          '''
+        }
+      }
+      when 'external link' {
+        signalbox.web -> personA 'link menu' {
+          notes 'Open, copy or open in the in-app browser'
+        }
+      }
+    }
+    personA -> signalbox.web 'copy message' {
+      notes 'Copy button on the message'
+    }
+    signalbox.web -> personA 'Markdown with links' {
+      notes '''
+        - Clipboard gets Markdown; thread links become absolute links
+        - Paste anywhere: links work for anyone who can see the thread
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── States/Thread ─────────────────────────────
+
+  dynamic view state_thread {
+    title 'States/Thread/Walk through'
+    description '''
+      W-DRV-11, W-LIF-07, W-LIF-08, W-LIF-12, W-LIF-22, W-LVL-11, R-ACC-17, T-THR-44.
+      Walks the thread lifecycle once, in order, with who triggers each transition. The element view is state-thread.
+    '''
+
+    autoLayout TopBottom
+    include smThread with {
+      navigateTo state-thread
+    }
+
+    smThread.pending -> smThread.idle 'live' {
+      navigateTo work_threads_start_send_draft
+      notes '''
+        - Created by a send; the Level catalog row flips pending → live
+        - Pin and unpin are a flag, not a state: global, so B sees A's pin (W-LIF-12)
+      '''
+    }
+    smThread.idle -> smThread.running 'send' {
+      notes '''
+        - A or B sends; turns queue in the one Thread actor, one run at a time
+        - Task status shows working (W-LIF-22)
+      '''
+    }
+    smThread.running -> smThread.waiting 'ask raised' {
+      notes '''
+        - The turn parks on an ask; status waiting
+        - A Ready or Considering ask shows in each decider's lane of that name
+      '''
+    }
+    smThread.waiting -> smThread.running 'answer' {
+      notes 'First answer wins by receipt: A, B or C, whoever is on the route'
+    }
+    smThread.running -> smThread.idle 'turn ends' {
+      navigateTo work_levelagents_agent_thread
+      notes 'Back to idle; a level agent thread idles here between asks'
+    }
+    smThread.idle -> smThread.settled 'settle' {
+      navigateTo work_threads_lifecycle_auto_settle
+      notes '''
+        - A settles early; A's assistant records dropped vs done enough (W-LIF-07)
+        - Or a done-condition or merged PR, a run thread after its run (T-THR-44), the Company agent when its work is done (W-LVL-11)
+      '''
+    }
+    smThread.settled -> smThread.idle 'reopen' {
+      navigateTo work_levelagents_pave
+      notes '''
+        - One click, or a new message from A or B (W-LIF-08)
+        - A level agent thread reopens on its next ask
+      '''
+    }
+    smThread.idle -> smThread.archived 'archive' {
+      navigateTo work_threads_lifecycle_archive
+      notes '''
+        - A, or the Chat auto-archive automation
+        - Archive never merges: the working ref is kept (W-DRV-11)
+      '''
+    }
+    smThread.settled -> smThread.archived 'archive' {
+      notes 'Settled tasks archive with their one-line outcome'
+    }
+    smThread.archived -> smThread.idle 'unarchive' {
+      notes 'Fresh computer from the drive; the harness resumes from the mirror'
+    }
+    smThread.idle -> smThread.trashed 'trash' {
+      navigateTo work_threads_lifecycle_trash
+      notes '''
+        - Tombstone first: every effect stops; archived threads trash the same way
+        - 30 days to restore
+      '''
+    }
+    smThread.trashed -> smThread.idle 'restore' {
+      notes 'Within 30 days, rebuilt from the R2 record'
+    }
+    opt 'A leaves the organization (R-ACC-17)' {
+      smThread.idle -> smThread.idle 'sealed' {
+        navigateTo organization_identity_leave
+        notes '''
+          - A's private chats in folder Company stay, readable by nobody; rejoining unseals them
+          - Only C (Admin) can delete one, and only into the 30-day trash
+        '''
+      }
+    }
+  }
+
+  // ───────────────────────── Workflows/Work/Threads/Lifecycle ─────────────────────────
+
+  dynamic view work_threads_arrange {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Arrange threads: order, pin, settle, wake'
+    description 'T-MOB-12, T-THR-15. Order and snooze belong to the person; pin and settle belong to the thread.'
+
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.mobile,
+      signalbox.funnel,
+      signalbox.tree.personActor with { title 'Person (A)' },
+      signalbox.thread.threadActor with { title 'Thread (shared, Team)' }
+
+    alt 'client' {
+      when 'web: drag or row menu' {
+        personA -> signalbox.web 'drags a row' {
+          notes 'Drag, or Move up / Move down from the row menu'
+        }
+        signalbox.web -> signalbox.funnel 'arrange command'
+      }
+      when 'mobile: arrangement sheet' {
+        personA -> signalbox.mobile 'arrangement sheet' {
+          notes 'Reorder, pin, settle and wake by drag between groups'
+        }
+        signalbox.mobile -> signalbox.funnel 'arrange command'
+      }
+    }
+
+    alt 'what changed' {
+      when 'reorder' {
+        signalbox.funnel -> signalbox.tree.personActor 'set order' {
+          notes '''
+            - Per-person order (fractional index) in A's Person actor
+            - B's order of the same shared thread is untouched
+          '''
+        }
+      }
+      when 'pin or unpin' {
+        signalbox.funnel -> signalbox.thread.threadActor 'Pin · Unpin' {
+          navigateTo state_thread
+          notes 'Global flag on the thread: B sees it pinned too'
+        }
+      }
+      when 'settle' {
+        signalbox.funnel -> signalbox.thread.threadActor 'Settle' {
+          navigateTo state_thread
+          notes 'Settles for everyone; reopen by a click or a new message'
+        }
+      }
+      when 'wake (drag out of snoozed)' {
+        signalbox.funnel -> signalbox.tree.personActor 'unsnooze' {
+          navigateTo person_people_snooze
+          notes '''
+            - `Attention.defer(null)`: snooze is per person
+            - B never saw it snoozed
+          '''
+        }
+      }
+    }
+    parallel 'who sees what' {
+      signalbox.web -> personA 'A: everything' {
+        notes 'Every client of A gets the same arrangement: order, snooze, pin, settle'
+      }
+      signalbox.mobile -> personB 'B: pin · settle only' {
+        notes '''
+          - Pin and settle live on the Thread, so B sees them too
+          - Order and snooze live in A’s Person actor: B’s sidebar keeps B’s own
+        '''
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_bulk_undo {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Act on several threads at once, and undo'
+    description 'T-THR-30, T-THR-52. A bulk action is one command per thread; undo sends the reverse.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.tree.personActor
+
+    personA -> signalbox.web 'selects threads' {
+      notes 'Shift or mod-click rows in the sidebar'
+    }
+    signalbox.web -> signalbox.funnel 'bulk action' {
+      notes 'One `requestId` per thread, so a retry never doubles an action'
+    }
+    loop 'each selected thread' {
+      alt 'action' {
+        when 'archive, settle or pin' {
+          signalbox.funnel -> signalbox.thread.threadActor 'Thread.send' {
+            navigateTo state_thread
+          }
+        }
+        when 'delete' {
+          signalbox.funnel -> signalbox.thread.threadActor 'Trash' {
+            navigateTo work_threads_lifecycle_trash
+            notes 'Delete is always trash: 30 days to restore'
+          }
+        }
+        when 'snooze or mark unread' {
+          signalbox.funnel -> signalbox.tree.personActor 'per-person state' {
+            navigateTo work_threads_multiplayer_per_person_state
+            notes 'Only A’s view changes; B’s copy of a shared thread is untouched'
+          }
+        }
+      }
+    }
+    signalbox.web -> personA 'toast with Undo' {
+      notes 'Five seconds; mod+z works too'
+    }
+    opt 'A undoes' {
+      personA -> signalbox.web 'Undo'
+      signalbox.web -> signalbox.funnel 'reverse command' {
+        notes '''
+          - Unarchive, Reopen, Unpin, Restore, unsnooze
+          - Every way in has its way out
+        '''
+      }
+      signalbox.funnel -> signalbox.thread.threadActor 'reverse per thread' {
+        navigateTo state_thread
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_archive {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Archive and unarchive a thread'
+    description 'W-LIF-09, W-LIF-10, W-LIF-11. Archive frees the machine and keeps the fork; unarchive builds a fresh computer from the drive.'
+
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.automations,
+      signalbox.thread.threadActor with { title 'Thread (shared, Team)' },
+      signalbox.computer,
+      signalbox.drive,
+      signalbox.harness
+
+    alt 'who archives' {
+      when 'A archives' {
+        personA -> signalbox.web 'Archive' {
+          notes 'From the row, the details card or a bulk action'
+        }
+        signalbox.web -> signalbox.thread.threadActor 'Archive' {
+          navigateTo state_thread
+          notes 'Through Funnel and Operations; Thread is the one home of archive'
+        }
+      }
+      when 'chat idle N days (W-LIF-11)' {
+        signalbox.automations -> signalbox.thread.threadActor 'Archive' {
+          notes '''
+            - Default automation "Chat auto-archive", editable at the level
+            - Chats only; tasks settle instead
+          '''
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.computer 'save and release' {
+      navigateTo state_computer
+      notes '`Computer.save` drains pending writes into the drive fork first'
+    }
+    signalbox.computer -> signalbox.drive 'drain into fork' {
+      notes 'Then the VM is deleted: it is cache, only regenerable state is lost'
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'keep working ref' {
+      notes '''
+        - Archive never merges into `main` (W-DRV-11)
+        - Nothing is removed except by delete with the 30-day trash
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'archived' {
+      navigateTo work_search_tiers
+      notes '''
+        - History moves to the archive tier, still searchable
+        - A and B both see the shared thread archived: one Thread, one state
+      '''
+    }
+
+    opt 'later: unarchive (W-LIF-10)' {
+      alt 'trigger' {
+        when 'A unarchives' {
+          personA -> signalbox.web 'Unarchive'
+        }
+        when 'B sends a message' {
+          personB -> signalbox.web 'sends a message' {
+            notes '''
+              - Any participant's message unarchives the shared thread
+              - B does not need A: archive is a state of the one Thread, not of A's view
+            '''
+          }
+        }
+      }
+      signalbox.web -> signalbox.thread.threadActor 'Unarchive'
+      signalbox.thread.threadActor -> signalbox.computer 'open fresh computer' {
+        notes 'Built from the drive fork; no VM until a command needs one'
+      }
+      signalbox.computer -> signalbox.drive 'mount fork'
+      signalbox.thread.threadActor -> signalbox.harness 'resume from mirror' {
+        notes 'Session files were mirrored byte for byte; the agent continues where it stopped'
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_auto_settle {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Automation settles a task'
+    description 'W-LIF-06, W-LIF-19. Settling is an automation built from primitives, not special-case code.'
+
+    include
+      personA,
+      personB,
+      services.github,
+      signalbox.automations,
+      signalbox.thread.threadActor with { title 'Thread (shared task, Team)' },
+      signalbox.computer
+
+    alt 'which condition' {
+      when 'done-condition holds (W-LIF-06)' {
+        signalbox.automations -> signalbox.automations 'done-condition holds' {
+          navigateTo work_git_confirm_live
+          notes '''
+            - The task's done-condition automation; folder default "merged and live"
+            - Editable per folder like any automation
+          '''
+        }
+      }
+      when 'PR merged (W-LIF-19)' {
+        services.github -> signalbox.automations 'PR merged' {
+          navigateTo work_git_pr_watch
+          notes 'Forge webhook through Ingress into the PR watch automation'
+        }
+      }
+    }
+    signalbox.automations -> signalbox.thread.threadActor 'Settle' {
+      navigateTo state_thread
+      notes 'Same command a person sends; the automation acts for the folder'
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'archive with outcome' {
+      notes 'Archived with a one-line outcome: what shipped, where'
+    }
+    signalbox.thread.threadActor -> signalbox.computer 'release machine' {
+      notes 'Cleanup frees the machine only; fork, history and asks stay'
+    }
+    parallel 'no push for anyone' {
+      signalbox.thread.threadActor -> personA 'recently settled' {
+        notes 'A sees it under "recently settled"; no push for a finished task'
+      }
+      signalbox.thread.threadActor -> personB 'recently settled' {
+        notes '''
+          - B sees exactly the same: settle is a state of the one Thread
+          - The automation is placed on folder Team (or above), so it acts for the folder, not for A or B
+        '''
+      }
+    }
+
+    include signalbox, services
+    style signalbox, services { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_folder_trash {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Folder trash cascades to its threads'
+    description 'W-LIF-18. C (Admin of Company) trashes folder Team: every thread homed in Team is tombstoned, shared or private, and Team leaves every tree that mounts it (A and B through Company, D directly). Restore brings all of it back.'
+
+    include
+      personC,
+      personA,
+      personB,
+      personD,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.tree.levelActor with { title 'Level (folder Team)' },
+      hier.company.team.sharedThread,
+      hier.company.team.teamPrivateB
+
+    personC -> signalbox.web 'deletes folder Team' {
+      notes 'C is Admin of folder Company, so C may trash a folder below it'
+    }
+    signalbox.web -> signalbox.funnel 'Trash folder' {
+      navigateTo folders_tree_trash
+    }
+    signalbox.funnel -> signalbox.tree.levelActor 'tombstone folder' {
+      navigateTo state_level
+      notes '''
+        - Team's Level actor commits the tombstone first
+        - Instructions, placements and notes are kept for restore
+      '''
+    }
+    parallel 'each thread homed in Team' {
+      signalbox.tree.levelActor -> hier.company.team.sharedThread 'tombstone' {
+        navigateTo work_threads_lifecycle_trash
+        notes 'Outbox delivery, idempotent per thread; A and B lose it together'
+      }
+      signalbox.tree.levelActor -> hier.company.team.teamPrivateB 'tombstone' {
+        notes '''
+          - B's private draft goes too: it is homed in Team
+          - C never sees its title, only a count in the trash
+        '''
+      }
+    }
+    parallel 'how it lands for each person' {
+      signalbox.web -> personA 'Team gone' {
+        notes 'Gone from Work › Company in A’s tree'
+      }
+      signalbox.web -> personB 'Team gone' {
+        notes 'Gone from B’s tree; B’s private draft waits in Team’s trash, visible only to B'
+      }
+      signalbox.web -> personD 'mount empty' {
+        notes 'D’s only access was the Team mount: “Shared with me” is now empty'
+      }
+    }
+    signalbox.web -> personC 'restore within 30 days' {
+      notes 'Restoring the folder restores every thread and every mount with it'
+    }
+
+    include signalbox, hier
+    style signalbox, hier { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_history_tier {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Archived history moves to the archive tier'
+    description 'W-LIF-20. One index, tiered: the chat path reads hot only, search reads both.'
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.search
+
+    signalbox.thread.threadActor -> signalbox.search 'idle or archived' {
+      navigateTo work_threads_lifecycle_archive
+      notes 'The thread goes idle for a while or is archived'
+    }
+    signalbox.search -> signalbox.search 'rows to archive tier' {
+      navigateTo work_search_tiers
+      notes '''
+        - One row per item stays one row per item; never batched into blobs
+        - Archive tier lives in R2; hot rows leave the shard
+      '''
+    }
+    personA -> signalbox.web 'searches' {
+      notes 'Palette or search box'
+    }
+    signalbox.web -> signalbox.search 'query' {
+      notes '''
+        - Hits from hot and archive tiers, one index to person and model
+        - Visibility re-checked before any snippet
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.search 'reopen promotes' {
+      notes '''
+        - Reopen or unarchive promotes the thread's rows back to hot
+        - The chat path never waits on the archive tier
+      '''
+    }
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_move_across {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Move a thread across owners'
+    description 'W-LIF-02, W-LIF-21. A move between folder Company and A’s Personal: via from A’s own tree, policy from C, reindex across owner roots.'
+
+    include personA, personC, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.search, signalbox.drive
+
+    opt 'C has set the Company policy' {
+      personC -> signalbox.tree 'allow moves out of Company' {
+        navigateTo folders_access_move_chat_out
+        notes 'Policy on folder Company; without it, moves out are denied'
+      }
+    }
+    personA -> signalbox.web 'moves own chat to Personal' {
+      navigateTo person_leaving_move_chats_out
+      notes '''
+        - W-LIF-21: after linking, A moves a private chat out of Company
+        - Moving back into Company works the same way, via A's mount
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Move'
+    signalbox.thread.threadActor -> signalbox.tree 'policy · via check' {
+      notes '''
+        - Across owners, `via` comes from A's own tree: none for Personal
+        - Company policy decides whether the move out is allowed
+      '''
+    }
+    alt 'policy' {
+      when 'moves out allowed' {
+        signalbox.thread.threadActor -> signalbox.web 'confirm' {
+          notes 'The confirm lists the Company sources the thread used'
+        }
+        personA -> signalbox.web 'confirms'
+        signalbox.web -> signalbox.thread.threadActor 'confirmed'
+        signalbox.thread.threadActor -> signalbox.thread.threadActor 'moved' {
+          notes '''
+            - Access epoch bumps: B's socket fails the re-check and drops
+            - Past usage stays where it happened, in Company's totals
+          '''
+        }
+        parallel {
+          signalbox.thread.threadActor -> signalbox.tree 'both catalogs' {
+            notes 'Row leaves Company (or Team) and appears in Personal'
+          }
+          signalbox.thread.threadActor -> signalbox.search 'reindex' {
+            notes 'Across owners: reindex into A’s top-level shards, drop from Company’s'
+          }
+          signalbox.thread.threadActor -> signalbox.drive 'rebase saga' {
+            navigateTo work_threads_lifecycle_move_within
+            notes 'Fresh fork of the destination drive; can end in Conflict'
+          }
+        }
+      }
+      else 'not allowed' {
+        signalbox.thread.threadActor -> signalbox.web 'Denied' {
+          notes 'A can ask C; the thread stays where it is'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_move_within {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Move a thread within one owner'
+    description 'W-LIF-01, W-LIF-03, W-LIF-04. Move keeps via, updates both catalogs and search in place, rebases the fork.'
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.search, signalbox.drive, signalbox.bases
+
+    personA -> signalbox.web 'Move to…' {
+      navigateTo work_threads_lifecycle_move_across
+      notes '''
+        - Drag, or Move to… from folder Team to another folder in Company
+        - A needs Member+ at both ends; a move to Personal is across owners
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Move'
+    alt 'what is moved' {
+      when 'a fork or subagent alone (W-LIF-04)' {
+        signalbox.thread.threadActor -> signalbox.web 'refused' {
+          notes 'Children share their root’s Place; moving the root carries them'
+        }
+      }
+      else 'a root thread' {
+        signalbox.thread.threadActor -> signalbox.thread.threadActor 'moved' {
+          notes '''
+            - Same owner: `via` (A's mount) stays unchanged
+            - Access epoch bumps; B keeps watching if B is a member of the destination
+          '''
+        }
+        parallel {
+          signalbox.thread.threadActor -> signalbox.tree.levelActor 'both catalogs' {
+            notes 'Source and destination Level catalogs update'
+          }
+          signalbox.thread.threadActor -> signalbox.search 'path update in place' {
+            navigateTo work_search_move
+            notes 'Same owner root: no reindex, only the path column changes'
+          }
+          signalbox.thread.threadActor -> signalbox.drive 'rebase saga' {
+            notes 'Working ref pushed as a fresh fork of the destination drive (Artifacts)'
+          }
+          signalbox.thread.threadActor -> signalbox.bases 'release leases' {
+            notes 'The old folder’s Base leases go; the next VM forks the destination’s Base'
+          }
+        }
+        opt 'rebase cannot apply (W-LIF-03)' {
+          signalbox.drive -> signalbox.thread.threadActor 'Conflict' {
+            navigateTo work_drive_accept_recovery
+            notes 'The old fork stays read-only until resolved or trashed'
+          }
+        }
+        signalbox.thread.threadActor -> signalbox.thread.threadActor 'next turn re-resolves' {
+          navigateTo state_thread
+          notes 'Pool, connections and loans come from the new chain at the next turn'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_title {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Title or rename a thread'
+    description 'W-LIF-05, W-THR-14. Auto title and regenerate are one direct model call on the folder’s pool; renames are a Thread command.'
+
+    include
+      personA,
+      hier.company.team.agentTeam,
+      signalbox.web,
+      signalbox.thread.threadActor,
+      signalbox.tree.levelActor with { title 'Level (folder Team)' },
+      signalbox.gateway,
+      modelProviders
+
+    alt 'how the title changes' {
+      when 'first turn or Regenerate (W-THR-14)' {
+        opt 'A asks' {
+          personA -> signalbox.web 'Regenerate title'
+          signalbox.web -> signalbox.thread.threadActor 'regenerate'
+        }
+        signalbox.thread.threadActor -> signalbox.gateway 'direct model call' {
+          navigateTo work_turns_model_call
+          notes '''
+            - Paid by the pool the thread's Scope resolved, pool P2 for folder Team
+            - Not a turn: no harness, no computer
+            - Through the one model gateway (`serve`), like every model call
+          '''
+        }
+        signalbox.gateway -> modelProviders 'small model'
+        signalbox.thread.threadActor <- signalbox.gateway 'title'
+      }
+      when 'A renames (W-LIF-05)' {
+        personA -> signalbox.web 'Rename'
+        signalbox.web -> signalbox.thread.threadActor 'rename'
+      }
+      when 'an agent renames' {
+        hier.company.team.agentTeam -> signalbox.thread.threadActor 'rename' {
+          notes 'The Team agent, through Gateway and Operations (`t3_thread_update`), with the agent’s rights'
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.tree.levelActor 'catalog row' {
+      notes '''
+        - Coalesced row to folder Team's catalog; A and B see the new title
+        - A private thread's title stays invisible to others, C included
+      '''
+    }
+
+    include signalbox, hier
+    style signalbox, hier { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_lifecycle_trash {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Trash, restore and purge a thread'
+    description 'W-LIF-15, W-LIF-16, W-LIF-17. Tombstone first, purge workers in parallel, 30 days to restore from R2.'
+
+    include personA, personC, signalbox.web, signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.search, signalbox.drive, signalbox.computer
+
+    alt 'who deletes' {
+      when 'A deletes' {
+        personA -> signalbox.web 'Delete' {
+          navigateTo folders_tree_trash
+          notes 'An agent deleting goes through the decision gate first'
+        }
+      }
+      when 'C (Admin) deletes' {
+        personC -> signalbox.web 'Delete' {
+          notes 'Admin of folder Company; the only way a sealed chat goes'
+        }
+      }
+      when 'folder Team trashed' {
+        signalbox.tree.levelActor -> signalbox.thread.threadActor 'tombstone' {
+          navigateTo work_threads_lifecycle_folder_trash
+          notes 'Cascade from the folder; same purge below'
+        }
+      }
+    }
+    signalbox.web -> signalbox.thread.threadActor 'Trash' {
+      navigateTo state_thread
+      notes 'Tombstone committed first: every effect stops before any purge'
+    }
+    parallel 'purge workers' {
+      signalbox.thread.threadActor -> signalbox.tree.levelActor 'drop catalog row' {
+        notes 'Also drops A’s and B’s Person projections: asks, order, snooze'
+      }
+      signalbox.thread.threadActor -> signalbox.search 'drop history rows'
+      signalbox.thread.threadActor -> signalbox.drive 'drop fork' {
+        notes '''
+          - Artifacts fork and kept-local ref go
+          - The R2 record stays 30 days
+        '''
+      }
+      signalbox.thread.threadActor -> signalbox.computer 'drop machine' {
+        notes '''
+          - VM deleted by its deterministic name, so a lost reply never orphans one
+          - Base lease released
+        '''
+      }
+    }
+    alt 'within 30 days' {
+      when 'A restores (W-LIF-16)' {
+        personA -> signalbox.web 'Restore' {
+          notes 'From the trash list of the level'
+        }
+        signalbox.web -> signalbox.thread.threadActor 'un-tombstone'
+        signalbox.thread.threadActor -> signalbox.tree.levelActor 'catalog row'
+        signalbox.thread.threadActor -> signalbox.search 'reindex'
+        signalbox.thread.threadActor -> signalbox.drive 'rebuild fork' {
+          notes 'Rebuilt from the R2 record'
+        }
+      }
+      else 'timer ends (W-LIF-17)' {
+        signalbox.thread.threadActor -> signalbox.drive 'delete R2 record' {
+          notes 'Purge: nothing of the thread is left'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_open {
+    variant sequence
+    title 'Workflows/Work/Threads/Lifecycle/Open a thread from a row, the palette or a link'
+    description 'T-THR-12. Every entry ends in Thread.watch with visibility re-checked; no environment in the link.'
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.thread.threadActor
+
+    alt 'entry' {
+      when 'row' {
+        personA -> signalbox.web 'clicks row'
+      }
+      when 'palette' {
+        personA -> signalbox.web 'palette' {
+          navigateTo work_search_palette
+        }
+      }
+      when 'link' {
+        personA -> signalbox.web 'opens link' {
+          navigateTo state_thread
+          notes 'Links carry the thread id only, no environment segment'
+        }
+      }
+    }
+    signalbox.web -> signalbox.funnel 'Thread.watch'
+    signalbox.funnel -> signalbox.thread.threadActor 'watch' {
+      notes 'Visibility re-checked on every open'
+    }
+    signalbox.funnel <- signalbox.thread.threadActor 'snapshot + events' {
+      navigateTo work_turns_open_live
+      notes 'A live turn streams in as it runs'
+    }
+    signalbox.web <- signalbox.funnel 'thread view'
+
+    personB -> signalbox.web 'opens the same link'
+    signalbox.web -> signalbox.funnel 'Thread.watch'
+    signalbox.funnel -> signalbox.thread.threadActor 'watch'
+    alt 'B access' {
+      when 'shared thread in Team' {
+        signalbox.funnel <- signalbox.thread.threadActor 'snapshot + events' {
+          notes 'A and B watch the one Thread actor live'
+        }
+        signalbox.web -> personB 'same thread' {
+          notes 'Same thread, B’s own breadcrumb through B’s mount of Company'
+        }
+      }
+      else 'private to A' {
+        signalbox.web <- signalbox.funnel 'not found' {
+          notes 'Not "forbidden": a private thread’s existence is never revealed'
+        }
+        signalbox.web -> personB 'not found'
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Workflows/Work/Threads/Start ─────────────────────────
+
+  dynamic view work_threads_import {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Bring existing work in'
+    description 'P-ONB-21. The onboarding entry: desktop reads local sources and hands them to the import flow.'
+
+    include personA, signalbox.desktop, signalbox.funnel, signalbox.thread.threadActor, signalbox.drive
+
+    personA -> signalbox.desktop 'Bring existing work in' {
+      notes 'Offered in onboarding and later from the folder page'
+    }
+    alt 'source' {
+      when 'T3 Code' {
+        signalbox.desktop -> signalbox.desktop 'read T3 Code state' {
+          notes 'Read-only copy of the local T3 Code database'
+        }
+      }
+      when 'CLI sessions' {
+        signalbox.desktop -> signalbox.desktop 'read session files' {
+          notes 'Claude JSONL and Codex rollouts from this laptop'
+        }
+      }
+      when 'folder' {
+        signalbox.desktop -> signalbox.desktop 'read folder' {
+          notes 'Any local folder A picks'
+        }
+      }
+    }
+    signalbox.desktop -> signalbox.funnel 'upload' {
+      navigateTo work_threads_start_import
+      notes 'Desktop only gathers; the server does the import'
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'seeded threads'
+    signalbox.thread.threadActor -> signalbox.drive 'import commit'
+    signalbox.desktop <- signalbox.funnel 'threads in the tree' {
+      notes 'Filed where A chose: Personal by default'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_agent_launch {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Agent launches top-level threads'
+    description 'W-THR-15. An agent creates threads at its own Place; via only from its level owner’s mounts (S1).'
+
+    include
+      personA,
+      personB,
+      hier.company.team.sharedThread,
+      hier.company.agentCo,
+      signalbox.gateway,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.thread.threadActor with { title 'New thread' }
+
+    personA -> hier.company.team.sharedThread 'split this up' {
+      notes 'A asks the agent in the shared thread in folder Team'
+    }
+    alt 'which agent launches' {
+      when 'agent in the shared thread' {
+        hier.company.team.sharedThread -> signalbox.gateway 't3_thread_launch' {
+          notes '''
+            - Through the one MCP endpoint (`serve`); or `create_threads` for a batch
+            - A or B could have asked: the agent acts for the thread, not for the sender
+          '''
+        }
+        signalbox.gateway -> signalbox.operations 'agent op'
+        signalbox.operations -> signalbox.tree 'via check' {
+          notes '''
+            - Place inherited from the thread: Team, via A's mount
+            - Same answer whoever typed the message
+          '''
+        }
+      }
+      when 'Company agent' {
+        hier.company.agentCo -> signalbox.gateway 't3_thread_launch'
+        signalbox.gateway -> signalbox.operations 'agent op'
+        signalbox.operations -> signalbox.tree 'via check' {
+          notes 'An organization’s agent owns no mounts: its threads have no via and resolve on the Company chain only'
+        }
+      }
+    }
+    loop 'each requested thread' {
+      signalbox.operations -> signalbox.thread.threadActor 'NewThread' {
+        navigateTo work_threads_start_send_draft
+        notes '''
+          - Top-level threads, not children: they move and settle on their own
+          - For a child with a parent, delegate instead
+        '''
+      }
+    }
+    signalbox.operations -> signalbox.thread.threadActor 'delegate instead?' {
+      navigateTo work_threads_delegate_subagent
+      notes 'Delegation keeps lineage and returns a result to the parent'
+    }
+    parallel 'who sees them' {
+      signalbox.thread.threadActor -> personA 'new threads in Team' {
+        navigateTo state_thread
+        notes 'Homed in Team, so they resolve on Team’s chain: pool P2 on Company'
+      }
+      signalbox.thread.threadActor -> personB 'new threads in Team' {
+        notes '''
+          - B sees them through B’s own mount of Company, with the same pool
+          - C sees them only if Team’s default visibility allows
+        '''
+      }
+    }
+
+    include signalbox, hier
+    style signalbox, hier { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_capture_route {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Quick capture becomes a task or a note'
+    description 'W-THR-03, W-THR-05, W-THR-06. Capture never interrupts; the capture-routing automation decides.'
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.capture, signalbox.automations, signalbox.judge, signalbox.thread.threadActor
+
+    alt 'device (W-THR-06)' {
+      when 'Mac hotkey' {
+        personA -> signalbox.desktop 'mod+shift+space'
+        signalbox.desktop -> signalbox.funnel 'capture'
+      }
+      when 'Android tile or share sheet' {
+        personA -> signalbox.mobile 'capture'
+        signalbox.mobile -> signalbox.funnel 'capture' {
+          notes 'Web New bar and palette end in the same call'
+        }
+      }
+    }
+    signalbox.funnel -> signalbox.capture 'draft or note' {
+      navigateTo person_capture_routing
+    }
+    signalbox.capture -> signalbox.automations 'capture event' {
+      notes 'Capture routing is a default automation, editable like any other'
+    }
+    signalbox.automations -> signalbox.judge 'intent? related?' {
+      notes '''
+        - Intent vs thought; insufficient evidence counts as thought
+        - Relatedness to a capture close in time
+      '''
+    }
+    alt 'judgment' {
+      when 'intent' {
+        signalbox.automations -> signalbox.thread.threadActor 'new task' {
+          navigateTo work_threads_start_send_draft
+          notes 'The task prepares and ends Ready in A’s lanes'
+        }
+      }
+      when 'thought or insufficient' {
+        signalbox.automations -> signalbox.capture 'keep as note' {
+          navigateTo person_notes_write
+          notes '''
+            - Private note in A's Person actor; a shared one goes to the folder's Level
+            - A note never enters the pipeline
+          '''
+        }
+      }
+      when 'follow-up (W-THR-05)' {
+        signalbox.automations -> signalbox.thread.threadActor 'join earlier thread' {
+          navigateTo state_thread
+          notes 'Joins the thread the earlier capture started'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_capture_tokens {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Capture tokens file, hand off and share'
+    description 'W-THR-04. # files to a level, @ hands to a person or chain agent, + shares.'
+
+    include personA, personB, signalbox.web, signalbox.capture, signalbox.tree, signalbox.thread.threadActor, hier.company.team.agentTeam
+
+    personA -> signalbox.web 'capture with tokens' {
+      notes 'e.g. "fix sign-in #Team @B +B"'
+    }
+    signalbox.web -> signalbox.capture 'parse tokens' {
+      navigateTo person_capture_grammar
+    }
+    opt '# file' {
+      signalbox.capture -> signalbox.tree 'resolve target level' {
+        notes 'Only levels in A’s own tree: folder Team via A’s mount'
+      }
+    }
+    opt '@ hand off' {
+      alt 'to whom' {
+        when '@B' {
+          signalbox.capture -> signalbox.thread.threadActor 'NewThread with B'
+          signalbox.thread.threadActor -> personB 'handed to B' {
+            notes 'B drives it; C’s assistant is never mentionable'
+          }
+        }
+        when '@ a chain agent' {
+          signalbox.capture -> hier.company.team.agentTeam 'hand to Team agent' {
+            notes 'Only agents on the chain of the target level: Team’s or Company’s agent, never C’s assistant'
+          }
+        }
+      }
+    }
+    opt '+ share' {
+      signalbox.capture -> signalbox.thread.threadActor 'Visibility · Participants' {
+        navigateTo work_threads_multiplayer_share
+      }
+    }
+
+    include signalbox, hier
+    style signalbox, hier { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_chat_vs_task {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Classify chat vs task, and flip'
+    description 'W-THR-13. Display only: a flip never changes tool access.'
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.judge
+
+    alt 'who decides' {
+      when 'real work starts in a chat' {
+        signalbox.thread.threadActor -> signalbox.judge 'chat or task?' {
+          notes 'TypeSafe classifier on the turn so far'
+        }
+        signalbox.thread.threadActor <- signalbox.judge 'task'
+        signalbox.thread.threadActor -> signalbox.thread.threadActor 'SetDisplay(task)' {
+          notes 'Skipped once a person has overridden'
+        }
+      }
+      when 'A flips' {
+        personA -> signalbox.web 'show as task'
+        signalbox.web -> signalbox.thread.threadActor 'SetDisplay' {
+          navigateTo state_thread
+          notes 'A person’s override persists'
+        }
+      }
+    }
+    signalbox.web <- signalbox.thread.threadActor 'display changed' {
+      notes '''
+        - B sees the same display in the shared thread
+        - Tools, pool and computer are unchanged
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_default_visibility {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Folder default visibility for new chats'
+    description 'W-MPL-21, W-THR-12. A placement on the folder; the nearest one applies at creation.'
+
+    include personC, personA, personB, personD, signalbox.web, signalbox.tree, signalbox.thread.threadActor with { title 'New chat (Team)' }
+
+    personC -> signalbox.web 'sets default visibility' {
+      navigateTo folders_access_folder_policy
+      notes 'C, Admin of folder Company, picks: private, people, or folder members'
+    }
+    signalbox.web -> signalbox.tree 'place default' {
+      notes 'Placed on folder Company, reach below'
+    }
+    personA -> signalbox.web 'new chat in Team'
+    signalbox.web -> signalbox.thread.threadActor 'NewThread' {
+      notes 'Every entry point: composer, capture, agent launch'
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'nearest default' {
+      notes 'Team’s own placement if set, else Company’s'
+    }
+    signalbox.thread.threadActor <- signalbox.tree 'folder members'
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'visibility set' {
+      notes 'Existing threads keep their visibility; only new chats take the default'
+    }
+    parallel 'who sees the new chat' {
+      signalbox.thread.threadActor -> personB 'visible' {
+        notes 'B is a member of Team through Company: sees it at once'
+      }
+      signalbox.thread.threadActor -> personD 'visible' {
+        notes 'D is a member of Team only (outside collaborator): folder members includes D'
+      }
+      signalbox.thread.threadActor -> personC 'visible' {
+        notes 'C is Admin of Company and so a member below it; with a "private" default, C would not see it'
+      }
+    }
+    opt 'A changes it' {
+      personA -> signalbox.web 'Share' {
+        navigateTo work_threads_multiplayer_share
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_door {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Ask a folder for work'
+    description 'W-THR-09. The door model: the thread is started for A on the folder’s chain; A drives it whatever A’s role.'
+
+    include personA, personC, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.thread.threadActor
+
+    personC -> signalbox.tree 'manages folder Company' {
+      notes 'C set up the folder: pool, connections, its agent, who may ask'
+    }
+    personA -> signalbox.web 'ask folder Company' {
+      navigateTo folders_access_ask_folder
+      notes 'A asks the folder (or its agent) for something'
+    }
+    signalbox.web -> signalbox.funnel 'request' {
+      navigateTo person_people_door
+    }
+    signalbox.funnel -> signalbox.operations 'NewThread at folder'
+    signalbox.operations -> signalbox.tree 'can A ask here?'
+    signalbox.operations -> signalbox.thread.threadActor 'started for A' {
+      navigateTo work_threads_multiplayer_same_resolution
+      notes '''
+        - Place is the folder, created by its agent: no via, the folder's chain only
+        - The folder's pool pays, not A's
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'catalog row'
+    signalbox.thread.threadActor -> personA 'A drives it' {
+      notes '''
+        - A sends turns and answers asks, even as Viewer
+        - C sees it in the folder catalog when visibility allows
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_import {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Import existing work'
+    description 'W-THR-18. Seeded thread events and session rows, one import commit into the level’s drive, search backfill.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.drive, signalbox.search
+
+    personA -> signalbox.web 'Import' {
+      notes 'Into the folder A is looking at'
+    }
+    alt 'source' {
+      when 'T3 Code threads' {
+        signalbox.web -> signalbox.funnel 'T3 Code export'
+      }
+      when 'Claude Code or Codex sessions' {
+        signalbox.web -> signalbox.funnel 'session files'
+      }
+      when 'a local folder' {
+        signalbox.web -> signalbox.funnel 'folder upload'
+      }
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'seed thread' {
+      notes '''
+        - Thread events seeded from the source transcript
+        - Native session rows kept, so the harness can resume
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'import commit' {
+      navigateTo work_drive_placement
+      notes 'One import commit into the level’s drive (Artifacts)'
+    }
+    signalbox.thread.threadActor -> signalbox.search 'backfill' {
+      navigateTo work_search_indexing
+      notes 'One row per item, like any thread'
+    }
+    signalbox.web <- signalbox.funnel 'imported threads'
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_pick_model {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Pick harness and model at start'
+    description 'W-THR-10, W-THR-11. The picker shows only the resolved pool set; no pool means Add pool here or a Blocker to C.'
+
+    include personA, personC, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.models, signalbox.thread.threadActor, signalbox.attention
+
+    personA -> signalbox.web 'opens picker' {
+      notes 'Composer in folder Team'
+    }
+    signalbox.web -> signalbox.funnel 'models here'
+    signalbox.funnel -> signalbox.tree 'resolve(place)'
+    alt 'pools on the chain' {
+      when 'resolved (W-THR-10)' {
+        signalbox.funnel <- signalbox.tree 'Scope' {
+          notes 'Pool P2 on folder Company is nearest; B gets the same answer'
+        }
+        signalbox.funnel -> signalbox.models 'catalog(Scope)' {
+          notes 'Only models of the resolved pool set; defaultModel placement preselects'
+        }
+        signalbox.web <- signalbox.funnel 'harnesses · models'
+        personA -> signalbox.web 'picks harness and model' {
+          navigateTo work_harness_switch
+        }
+        signalbox.web -> signalbox.thread.threadActor 'NewThread' {
+          navigateTo work_threads_start_send_draft
+        }
+      }
+      else 'NeedsPool (W-THR-11)' {
+        signalbox.funnel <- signalbox.tree 'NeedsPool'
+        signalbox.web -> personA 'Add pool here' {
+          notes 'Offered only where A can place; no pool switcher'
+        }
+        opt 'A cannot place' {
+          signalbox.thread.threadActor -> signalbox.attention 'Blocker ask' {
+            navigateTo folders_lending_access_request
+            notes 'An ordinary Blocker ask; its answer is Place or Lend'
+          }
+          signalbox.attention -> personC 'Blocker in C’s lanes' {
+            notes 'C, Admin of Company, places a pool or lends one'
+          }
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_send_draft {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/Send a draft as a new thread'
+    description 'W-THR-01, W-THR-02, W-THR-07. Create-thread saga: draft id → requestId, via checked, catalog and search follow. Part 2: work_threads_start_send_draft_via (B files into the same folder through B’s own mount).'
+
+    include personA, signalbox.web, signalbox.capture, signalbox.tree, signalbox.thread.threadActor with { title 'New thread' }, signalbox.search
+
+    personA -> signalbox.web 'Send draft' {
+      navigateTo person_drafts_send
+      notes '''
+        - From a folder's "+" draft page; the draft was private to A on every device
+        - Harness and model come from the picker
+      '''
+    }
+    signalbox.web -> signalbox.capture 'Send' {
+      navigateTo work_threads_start_pick_model
+      notes 'Through Funnel and Operations'
+    }
+    signalbox.capture -> signalbox.thread.threadActor 'NewThread fromDraft' {
+      notes '`requestId` derived from the draft id'
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'via check' {
+      navigateTo work_threads_start_send_draft_via
+      notes '''
+        - A Place’s via must be a mount in the creator’s own tree
+        - What happens when B tries A’s mount: see part 2
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'created at its Place' {
+      notes '''
+        - In folder Team: owner is the home owner, the organization owning Company
+        - Or unfiled at a level (W-THR-07): top level, Personal, Work or Company itself; an unfiled chat at Company is private, owned by its organization
+      '''
+    }
+    parallel {
+      signalbox.thread.threadActor -> signalbox.tree 'catalog row' {
+        navigateTo state_thread
+      }
+      signalbox.thread.threadActor -> signalbox.search 'index first item'
+      signalbox.capture -> signalbox.capture 'drop draft' {
+        navigateTo person_drafts_move
+        notes 'The Person actor drops the draft'
+      }
+    }
+    opt 'retry after a failed draft drop (W-THR-02)' {
+      signalbox.capture -> signalbox.thread.threadActor 'same requestId'
+      signalbox.capture <- signalbox.thread.threadActor 'same thread' {
+        notes 'Receipt dedupe: never a second thread'
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view work_threads_start_send_draft_via {
+    variant sequence
+    title 'Workflows/Work/Threads/Start/File into a shared folder through your own mount'
+    description 'W-MPL-20. Part 2 of work_threads_start_send_draft. A and B both file into folder Team, each through their own mount of Company; both threads resolve on the same chain (Team › Company), so pool P2 and Company connections reach them alike. Borrowing A’s mount is refused, never rewritten.'
+
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.thread.threadActor with { title 'New thread (Team)' },
+      signalbox.tree
+
+    personA -> signalbox.web 'send into Team' {
+      navigateTo work_threads_start_send_draft
+      notes 'Via A’s mount: Top level (A) › Work › Company › Team'
+    }
+    signalbox.web -> signalbox.thread.threadActor 'NewThread · via A'
+    signalbox.thread.threadActor -> signalbox.tree 'via check' {
+      notes 'The mount is in A’s own tree: accepted'
+    }
+    try 'B files with A’s mount as via' {
+      personB -> signalbox.web 'send via A’s mount' {
+        notes 'e.g. a link or a stale picker that carries A’s path'
+      }
+      signalbox.web -> signalbox.thread.threadActor 'NewThread · via A'
+      signalbox.thread.threadActor -> signalbox.tree 'via check'
+    } catch 'via not in B’s tree' {
+      signalbox.thread.threadActor <- signalbox.tree 'Invalid' {
+        notes 'Never silently rewritten: B must name B’s own path'
+      }
+      signalbox.web -> personB 'refused'
+    }
+    personB -> signalbox.web 'send via own mount' {
+      notes 'Top level (B) › Work › Company › Team'
+    }
+    signalbox.web -> signalbox.thread.threadActor 'NewThread · via B'
+    signalbox.thread.threadActor -> signalbox.tree 'resolve' {
+      navigateTo work_threads_multiplayer_same_resolution
+      notes '''
+        - Same folder, same chain: Team › Company
+        - Pool P2 and Company’s connections reach B’s thread exactly as they reach A’s
+        - The mount only proves access; it never changes what resolves
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+}

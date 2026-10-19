@@ -1,0 +1,95 @@
+model {
+  extend signalbox {
+    gateway = module 'Gateway' {
+      #deep #v1
+      icon bootstrap:shield-lock
+      description 'grant · serve · fill'
+      technology 'Workers service bindings · WorkerEntrypoint · grant JWT'
+      metadata {
+        interface '3'
+        deletion 'credentials spread into machines, facets and automations; MCP gets two homes'
+      }
+
+      api = iface 'Gateway · interface' {
+        description '3 verbs: grant · serve · fill (model and MCP wires enter at the two ports)'
+        technology 'Deletion test: without it, credentials spread into machines, facets and automations; MCP gets two homes'
+      }
+
+      modelGateway = iface 'ModelGateway · model port' {
+        #v1
+        icon bootstrap:cpu
+        description 'port: model wire · grant verify · pin · usage stamp'
+        technology 'Worker'
+      }
+      toolGateway = iface 'ToolGateway · MCP port' {
+        #v1 #publishable #decided
+        icon bootstrap:plugin
+        description 'port: Executor · every connector; per-tool exposure: search (default) or direct (normal name); built-ins go to Computer'
+        technology 'Worker · @modelcontextprotocol/sdk'
+        metadata {
+          exposure 'placement on a folder, nearest wins, resolved by the thread place: search (default, found via search + execute) or direct (normal name)'
+          mcpConfig 'one executor entry (search + execute) plus one native-named entry per server with direct tools; every entry points at Executor; never managed-mcp.json'
+          decided '2026-10-19'
+        }
+      }
+      codemode = part 'Codemode sandbox' {
+        #v1
+        icon tech:typescript-icon
+        description 'code mode: owned by Gateway (ToolGateway) · callTool only · ActorHost only hosts its Dynamic Worker'
+        technology '@opencode-ai/codemode · Dynamic Worker (globalOutbound null)'
+      }
+      grants = part 'Grants' {
+        #v1
+        icon bootstrap:key
+        description 'mint · refresh · deny on removals'
+        technology 'signed JWT · 15 s epoch cache'
+      }
+      egress = part 'EgressFilter seam · 2 adapters' {
+        #publishable
+        description 'fill · scrub · guard · allowlist · branch guard'
+        metadata {
+          adapters '2'
+          builtins 'working plan (#assumption): built-in tool traffic (curl, git push, npm, gh, WebFetch) from the isolate or a VM; fills from the Connections vault keyed by destination; git push and gh get a short-lived folder GitHub App token, own branch only'
+        }
+        inProcess = adapter 'In-process filter' {
+          icon bootstrap:shield-check
+          description 'isolate: kernel programs · WebFetch'
+        }
+        egressProxy = adapter 'EgressProxy' {
+          icon bootstrap:shield-lock
+          description 'VMs: CONNECT proxy'
+          technology 'process on boxd · machine-bound egress token'
+        }
+      }
+      transport = part 'Transport seam · 2 adapters' {
+        metadata { adapters '2' }
+        workerTransport = adapter 'Worker' {
+          #v1
+          icon tech:cloudflare-workers-icon
+        }
+        nodeTransport = adapter 'Node' {
+          icon tech:nodejs-icon
+        }
+      }
+
+      modelGateway -> grants 'verify'
+      toolGateway -> grants 'verify'
+      toolGateway -> codemode 'execute'
+      egress.egressProxy -> grants 'egress token'
+    }
+
+    gateway.modelGateway -[model]-> signalbox.models.api 'model calls · pin'
+    gateway.modelGateway -[async]-> signalbox.models.api 'meter (started events)'
+    gateway.toolGateway -[tool]-> signalbox.connections.api 'tool calls'
+    gateway.toolGateway -> signalbox.operations.api 'op calls · catalog'
+    gateway.toolGateway -> signalbox.search.api 'query'
+    gateway.grants -> signalbox.tree.api 'resolve on refresh'
+    gateway.grants -> signalbox.identity.api 'mint · verify'
+    gateway.egress.inProcess -> signalbox.connections.api 'fill'
+    gateway.egress.egressProxy -> signalbox.connections.api 'fill'    gateway.codemode -> signalbox.actorhost.api 'host my Dynamic Worker'
+
+    // Interface → hidden parts (the only way in)
+    gateway.api -> gateway.grants 'grant'
+    gateway.api -> gateway.egress 'fill'
+  }
+}

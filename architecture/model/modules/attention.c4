@@ -1,0 +1,76 @@
+model {
+  extend signalbox {
+    attention = module 'Attention' {
+      #deep
+      icon bootstrap:bell
+      description 'queue · defer · device · focus'
+      technology 'main push/PushNotifier · Queues retries'
+      metadata {
+        interface '4'
+        deletion 'the pipeline, the top layer and push disagree'
+      }
+
+      api = iface 'Attention · interface' {
+        description '4 verbs: queue · defer · device · focus'
+        technology 'Deletion test: without it, the pipeline, the top layer and push disagree'
+      }
+
+      delivery = part 'Delivery seam · 4 adapters' {
+        metadata { adapters '4' }
+        apnsSender = adapter 'APNs' {
+          icon tech:apple
+        }
+        fcmSender = adapter 'FCM' {
+          icon tech:firebase-icon
+        }
+        webPushSender = adapter 'Web Push' {
+          icon tech:chrome
+        }
+        inApp = adapter 'In-app socket' {
+          icon bootstrap:broadcast-pin
+        }
+      }
+
+      ordering = part 'Queue order' {
+        icon bootstrap:sort-down
+        description 'deadline › unblocked › cost › age'
+      }
+      rules = part 'Delivery rules' {
+        icon bootstrap:funnel
+        description 'Focus · home level · per recipient'
+      }
+      deliveryRecords = store 'Delivery records' {
+        icon bootstrap:receipt
+        description 'one per routed ping · status and reason'
+      }
+      topLayer = part 'Top-layer projection' {
+        icon bootstrap:inboxes
+        description 'lanes: Blocker · Ready · Considering'
+      }
+
+      personState = store 'Per-person attention' {
+        icon bootstrap:person-lines-fill
+        description 'Focus · devices · deferrals · pipeline rows'
+      }
+
+      rules -> personState 'Focus · devices'
+      ordering -> personState 'deferrals · pipeline rows'
+      rules -> deliveryRecords 'record'
+      ordering -> topLayer 'pipeline'
+      rules -> delivery.apnsSender 'push'
+      rules -> delivery.fcmSender 'push'
+      rules -> delivery.webPushSender 'push'
+      rules -> delivery.inApp 'push'
+    }
+
+    attention.delivery.apnsSender -> telemetry.apns 'push'
+    attention.delivery.fcmSender -> telemetry.fcm 'push'
+    attention.delivery.webPushSender -> telemetry.webPush 'push'
+    attention.topLayer -> signalbox.funnel.api 'pipeline'
+    attention.delivery.inApp -> signalbox.funnel.api 'in-app push'
+
+    // Interface → hidden parts (the only way in)
+    attention.api -> attention.ordering 'queue'
+    attention.api -> attention.rules 'defer · device · focus'
+  }
+}

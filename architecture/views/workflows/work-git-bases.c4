@@ -1,0 +1,1496 @@
+// Shard 14: Git hosts, PRs and Bases. Not v1 (none of these rows are in v1).
+// Lanes: run threads (CI, Base builds, PR watch, reviews) = hier.company.team.runThread;
+// the work thread people share = hier.company.team.sharedThread (folder Team). In busy PR views the
+// client's hop through the Funnel is collapsed (web → module) to stay under 8 participants.
+// Forge traffic: git transport (push, fetch, ingest) is Drive's; PR API calls go through Connections.
+// Only work_git_forge_adapter opens Drive (its own drill-down); everything else treats Drive as a box.
+views {
+
+  // ───────────────────────── States/Base ─────────────────────────
+
+  dynamic view state_base {
+    title 'States/Base/Walk through'
+    description 'W-BAS-05 · walks the Base lifecycle; the state machine itself is the element view state-base'
+
+    autoLayout TopBottom
+    include smBase, signalbox.computer, signalbox.bases, signalbox
+
+    style signalbox, smBase {
+      color muted
+      opacity 10%
+    }
+
+    smBase.building -> smBase.ready 'base.ready' {
+      notes '''
+        - The builder machine of a run thread finished: snapshot saved, chunks exported
+        - The Base status tick reads it from boxd and emits `base.ready`
+      '''
+      navigateTo work_bases_build
+    }
+    alt 'build outcome' {
+      when 'build failed' {
+        smBase.building -> smBase.failed 'base.failed' {
+          notes '''
+            - The previous active pointer stays; machines keep forking the last good Base
+            - The failure goes to the level agent (assumed)
+          '''
+          navigateTo work_bases_promote
+        }
+      }
+    }
+    smBase.ready -> smBase.active 'promote' {
+      notes '''
+        - `Bases.promote` flips the pointer per (drive, recipeHash) in the Repo actor
+        - Only after `Ready`; `NotReady` or `Stale` otherwise
+      '''
+      navigateTo work_bases_promote
+    }
+    smBase.active -> smBase.superseded 'newer promoted' {
+      notes '''
+        - A newer version takes the pointer
+        - Running VMs forked from this version keep their leases
+      '''
+    }
+    loop 'until zero unexpired leases' {
+      signalbox.computer -> signalbox.bases 'release lease' {
+        notes '''
+          - Thread outbox on machine delete, reconcile on NOT_FOUND, expiry, trash purge
+          - Expired leases do not count
+        '''
+        navigateTo work_bases_lease
+      }
+    }
+    smBase.superseded -> smBase.retired 'retire' {
+      notes '''
+        - `Bases.retire` succeeds only at zero unexpired leases (`InUse` otherwise)
+        - Lossless: anything a Base held is regenerable
+      '''
+    }
+  }
+
+  // ───────────────────────── Workflows/Work/Bases ─────────────────────────
+
+  dynamic view work_bases_build {
+    variant sequence
+    title 'Workflows/Work/Bases/Build a Base'
+    description 'W-BAS-02, W-BAS-06 · Base refresh on green main and the nightly cold rebuild'
+
+    include hier.company.team.runThread, hier.company.team, signalbox.drive, signalbox.automations, signalbox.bases, signalbox.computer, platform.boxd, platform.r2, signalbox, platform
+
+    style signalbox, hier.company.team, platform {
+      color muted
+      opacity 10%
+    }
+
+    alt 'trigger' {
+      when 'green main (lead)' {
+        signalbox.drive -> signalbox.automations 'main advanced' {
+          notes '''
+            - An accept advanced `main` in Drive's merge queue (the Repo record)
+            - Base refresh is a default automation, editable like any other
+          '''
+          navigateTo work_drive_accept
+        }
+      }
+      when 'forge main ingested (follow)' {
+        signalbox.drive -> signalbox.automations 'forge main ingested' {
+          notes '''
+            - Protected repos: `main` only moves by ingesting the forge's `main`
+            - Bases key on that ingested `main`
+          '''
+          navigateTo work_git_forge_ingest
+        }
+      }
+      else 'nightly' {
+        signalbox.automations -> signalbox.automations 'nightly tick' {
+          notes '''
+            - Nightly cold rebuild (W-BAS-06): builds from the recipe, not from the previous Base
+            - Catches drift a chain of warm forks hides
+          '''
+        }
+      }
+    }
+    signalbox.automations -> hier.company.team.runThread 'start run thread' {
+      notes '''
+        - A `Thread{kind: run}` at the drive's placement level (folder Team), no `via`
+        - Its grant, forge connection and pool resolve on Team's chain (Pool P2 on Company), never A's or B's
+      '''
+    }
+    loop 'each live recipe hash' {
+      hier.company.team.runThread -> signalbox.bases 'build' {
+        notes '''
+          - `build(drive, recipeHash, sha, run)` for every recipe hash with live placements or leases
+          - Returns a `BuildRef` at once; `Busy` if one is already running
+        '''
+      }
+      signalbox.bases -> signalbox.drive 'record build' {
+        notes 'Drive keeps Base records and the active pointer in its Repo record'
+      }
+      hier.company.team.runThread -> signalbox.computer 'open builder machine' {
+        notes '''
+          - The builder is the run's own machine: granted, paid and metered as the run
+          - Only builders are ever captured; CI, thread and merge machines never are
+        '''
+      }
+      alt 'starting point' {
+        when 'refresh' {
+          signalbox.computer -> platform.boxd 'fork previous Base' {
+            notes 'Forked from the previous Base of the same recipe hash'
+          }
+        }
+        else 'nightly or first build' {
+          signalbox.computer -> platform.boxd 'create cold' {
+            notes 'Cold machine from the recipe toolchain'
+          }
+        }
+      }
+      signalbox.computer -> signalbox.computer 'prepare, wipe identity' {
+        notes '''
+          - Checkout of `sha`, `prepare`, warm steps, dev services; forge objects come through the run's forge connection at the proxy
+          - The builder holds no credential (placeholders only); machine identity is wiped before capture
+        '''
+      }
+      signalbox.computer -> signalbox.bases 'capture' {
+        notes 'Computer captures through Bases, so the dependency stays Computer → Bases (no cycle)'
+      }
+      signalbox.bases -> platform.r2 'chunk export to R2' {
+        notes '''
+          - Regenerable chunk set, content-addressed and deduplicated across versions
+          - See the dependency cache budget
+        '''
+        navigateTo work_bases_cache_budget
+      }
+      signalbox.bases -> platform.boxd 'save snapshot' {
+        notes 'Named `b-{drive}-{recipe}-{sha12}`'
+      }
+    }
+    signalbox.automations <- signalbox.bases 'base.ready or base.failed' {
+      notes 'Base status tick turns boxd status into events; promotion follows'
+      navigateTo work_bases_promote
+    }
+  }
+
+  dynamic view work_bases_cache_budget {
+    title 'Workflows/Work/Bases/Dependency cache budget'
+    description 'W-BAS-16 · chunk export shares installs per folder; the budget itself is open (#848)'
+
+    include signalbox.tree, hier.company.team.runThread, hier.company.team, signalbox.computer, signalbox.bases, platform.r2, signalbox, platform
+
+    style signalbox, hier.company.team, platform {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.tree -> signalbox.bases 'recipe per folder' {
+      notes '''
+        - Each folder that places its own recipe for the same drive gets its own Base
+        - Many subfolders mean many installs of mostly the same dependencies
+      '''
+    }
+    hier.company.team.runThread -> signalbox.computer 'builder run' {
+      notes 'Each Base refresh run installs dependencies on its builder machine'
+      navigateTo work_bases_build
+    }
+    signalbox.computer -> signalbox.bases 'regenerable chunks' {
+      notes 'The regenerable glob set of the recipe (installs, caches)'
+    }
+    signalbox.bases -> platform.r2 'store each chunk once' {
+      notes '''
+        - Chunks are content-addressed, so identical installs across recipes and versions store once
+        - Team's recipe and a subfolder's own recipe share most chunks
+      '''
+    }
+    opt 'budget (open, undecided)' {
+      signalbox.bases -> signalbox.bases 'budget check' {
+        notes '''
+          - Open (#848): no limit or eviction rule is decided yet
+          - Chunks are regenerable, so any future eviction is lossless
+        '''
+      }
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view work_bases_ci {
+    variant sequence
+    title 'Workflows/Work/Bases/Run CI on the Base'
+    description 'W-BAS-10, W-BAS-11, W-BAS-13 · CI on Base triggers, shards as child run threads, CI finished wakes work'
+
+    include hier.company.team.sharedThread, hier.company.team.runThread, hier.company.team, signalbox.drive, signalbox.automations, signalbox.computer, signalbox.bases, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    alt 'trigger' {
+      when 'accept candidate or explicit run' {
+        hier.company.team.sharedThread -> signalbox.automations 'accept candidate' {
+          notes '''
+            - Never on every working-ref push: every turn end pushes one
+            - Or A, B or the agent asks for a run explicitly
+            - A and B both work in this thread; one candidate, one CI run
+          '''
+        }
+      }
+      when 'PR or MR update' {
+        services.github -> signalbox.automations 'PR updated' {
+          notes 'Forge webhook via Ingress'
+        }
+      }
+      else 'push to main' {
+        signalbox.drive -> signalbox.automations 'main advanced' {
+          notes 'Drive\'s merge queue advanced `main`'
+        }
+      }
+    }
+    opt 'older run for the same ref' {
+      signalbox.automations -> hier.company.team.runThread 'cancel superseded' {
+        notes 'A newer trigger for the same ref cancels its superseded runs'
+      }
+    }
+    signalbox.automations -> hier.company.team.runThread 'start CI run' {
+      notes '''
+        - A run thread at the drive's home (folder Team), no `via`
+        - Paid by the pool resolved on Team's chain, whoever pushed (A or B)
+      '''
+    }
+    hier.company.team.runThread -> hier.company.team.runThread 'Delegate N shards' {
+      notes 'One child run thread per shard, each with its own Computer'
+      navigateTo work_threads_delegate_subagent
+    }
+    parallel {
+      hier.company.team.runThread -> signalbox.computer 'shard 1' {
+        notes 'Each child run thread opens its own Computer'
+      }
+      hier.company.team.runThread -> signalbox.computer 'shard N'
+    }
+    signalbox.computer -> signalbox.bases 'acquire lease' {
+      notes '''
+        - Every shard's VM forks the active Base for the drive's recipe hash
+        - Lease committed before the create
+      '''
+      navigateTo work_bases_lease
+    }
+    signalbox.computer -> signalbox.computer 'run shard' {
+      notes 'Tests run on the warm machine; it is never captured'
+    }
+    opt 'a step runs on GitHub Actions' {
+      hier.company.team.runThread -> services.github 'w.run on Actions' {
+        notes 'For steps that must run on GitHub-hosted runners'
+        navigateTo work_bases_ci_actions
+      }
+    }
+    hier.company.team.runThread -> services.github 'post statuses' {
+      notes 'Check results go to the forge through the folder\'s forge connection'
+    }
+    hier.company.team.runThread -> signalbox.automations 'run.finished' {
+      notes 'An app event; automations on the thread\'s chain see it'
+    }
+    alt 'who wakes' {
+      when 'a PR is linked' {
+        signalbox.automations -> hier.company.team.sharedThread 'PR watch wakes' {
+          notes 'PR watch sends the result into the thread; A and B see the same wake'
+          navigateTo work_git_pr_watch
+        }
+      }
+      else 'no PR' {
+        signalbox.automations -> hier.company.team.sharedThread 'wake the thread' {
+          notes 'The CI-finished trigger sends the result straight into the thread'
+        }
+      }
+    }
+  }
+
+  dynamic view work_bases_ci_actions {
+    variant sequence
+    title 'Workflows/Work/Bases/Run a CI step on GitHub Actions'
+    description 'W-BAS-12, W-GIT-24 · w.run on github-actions, as the folder\'s GitHub App or a lent login'
+
+    include personA, personC, hier.company.team.runThread, hier.company.team, signalbox.web, signalbox.tree, signalbox.automations, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    hier.company.team.runThread -> signalbox.automations 'w.run on Actions' {
+      notes '''
+        - `w.run(…, {on: "github-actions"})` inside a run
+        - The step runs on GitHub instead of a Computer
+      '''
+      navigateTo work_automations_step_run
+    }
+    signalbox.automations -> signalbox.tree 'resolve GitHub' {
+      navigateTo folders_connections_github
+      notes '''
+        - Nearest GitHub connection on the run's chain (folder Team, then Company)
+        - Never by who started the run
+      '''
+    }
+    alt 'GitHub on the chain' {
+      when 'Company has the GitHub App' {
+        signalbox.automations <- signalbox.tree 'App connection' {
+          notes 'Placed on folder Company by C (admin); reaches Team'
+        }
+      }
+      else 'no GitHub App yet' {
+        signalbox.automations <- signalbox.tree 'none on the chain' {
+          notes 'The step cannot run until something is placed or lent'
+        }
+        personA -> signalbox.web 'lend my GitHub' {
+          navigateTo folders_lending_lend
+          notes '''
+            - A lends A's own GitHub connection into folder Team
+            - Explicit and revocable; B's runs in Team use it too, by position
+          '''
+        }
+        signalbox.web -> signalbox.tree 'Lend to Team' {
+          notes 'A loan is a placement into a level A does not own'
+        }
+        opt 'later: C installs the App' {
+          personC -> signalbox.web 'install App on Company' {
+            notes '''
+              - The loan on Team is nearer than the App on Company, so it still wins
+              - A revokes the loan to switch Team to the App
+            '''
+          }
+          personA -> signalbox.web 'revoke loan'
+        }
+      }
+    }
+    signalbox.automations -> signalbox.connections 'dispatch workflow' {
+      notes 'A tool call through the resolved connection'
+    }
+    signalbox.connections -> services.github 'run signalbox-step.yml' {
+      notes '''
+        - Runs as the App, or "as @login" when A's login is lent
+        - The run shows who it acted as
+      '''
+    }
+    services.github -> signalbox.automations 'step results' {
+      notes 'Workflow completion comes back through Ingress'
+    }
+    signalbox.automations -> hier.company.team.runThread 'results into run' {
+      notes 'The step resumes the run with its result'
+    }
+  }
+
+  dynamic view work_bases_folder_page {
+    variant sequence
+    title 'Workflows/Work/Bases/Manage a Base from the folder page'
+    description 'W-BAS-07, W-BAS-09 · Base section on the folder page; delete a Base (agents go through the decision gate)'
+
+    include personC, hier.company.team.agentTeam, hier.company.team, signalbox.web, signalbox.operations, signalbox.automations, signalbox.bases, signalbox.attention, signalbox
+
+    style signalbox, hier.company.team {
+      color muted
+      opacity 10%
+    }
+
+    personC -> signalbox.web 'open folder Team' {
+      notes '''
+        - The repo folder's page has a Base section
+        - A and B see the same section; actions need the role C holds
+      '''
+    }
+    signalbox.web -> signalbox.bases 'status' {
+      notes 'Per recipe hash: active version, building, last failure'
+      navigateTo state_base
+    }
+    signalbox.web <- signalbox.bases 'active · building · failed'
+    alt 'action' {
+      when 'C rebuilds' {
+        personC -> signalbox.web 'rebuild'
+        signalbox.web -> signalbox.automations 'manual Base refresh' {
+          notes '`Manual{Base refresh, by C}`: the same automation as green main'
+          navigateTo work_bases_build
+        }
+        signalbox.automations -> signalbox.bases 'build' {
+          notes 'From a run thread at folder Team, recorded in Drive\'s Repo record'
+        }
+      }
+      when 'C deletes' {
+        personC -> signalbox.web 'delete Base' {
+          notes 'People holding the role delete directly'
+        }
+        signalbox.web -> signalbox.bases 'delete' {
+          notes '''
+            - Lossless: the next refresh rebuilds, the next machine forks cold
+            - Live leases keep their VMs running
+          '''
+        }
+      }
+      else 'an agent deletes' {
+        hier.company.team.agentTeam -> signalbox.operations 'delete Base' {
+          notes 'The agent of folder Team (the drive\'s folder): destructive operations from agents go through the decision gate'
+        }
+        signalbox.operations -> signalbox.attention 'Ready ask' {
+          notes 'A Ready ask to the decider: C, admin of folder Company'
+          navigateTo work_approvals_destructive
+        }
+        signalbox.attention -> personC 'approve delete?' {
+          notes 'Lands in C\'s own Ready lane, not A\'s or B\'s'
+        }
+        opt 'C approves' {
+          personC -> signalbox.operations 'approve'
+          signalbox.operations -> signalbox.bases 'delete'
+        }
+      }
+    }
+  }
+
+  dynamic view work_bases_lease {
+    variant sequence
+    title 'Workflows/Work/Bases/Fork a VM from the current Base'
+    description 'W-BAS-08, W-BAS-14, #1217 · Base lease lifecycle; intent first, acquire idempotent on operationId, leases expire at deleteAfter; resume on the current Base'
+
+    include signalbox.thread, signalbox.computer, signalbox.bases, signalbox.drive, signalbox.automations, platform.boxd, signalbox, platform
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.thread -> signalbox.computer 'escalate command' {
+      notes '''
+        - A command needs a real machine (build, tests, dev server)
+        - The thread never sees a Base; it only sees its Computer
+      '''
+      navigateTo work_computer_escalate
+    }
+    signalbox.computer -> signalbox.thread 'persist intent' {
+      notes '''
+        - The caller records the create intent and its `operationId` first (#1217)
+        - A crash after this point retries the same operationId, never a second hold
+      '''
+    }
+    signalbox.computer -> signalbox.bases 'acquire' {
+      notes '''
+        - `acquire(drive, recipeHash, operationId)` before any create: idempotent on operationId
+        - `lease.expiresAt` equals the machine's `deleteAfter` horizon, so no hold is orphaned
+      '''
+    }
+    signalbox.bases -> signalbox.drive 'commit lease' {
+      notes 'Committed in Drive\'s Repo record, so the version cannot retire mid-create'
+    }
+    alt 'Base available' {
+      when 'active version' {
+        signalbox.computer <- signalbox.bases 'lease' {
+          notes 'Always the current active version, also when the thread resumes after a Base advance'
+        }
+      }
+      else 'no Base yet' {
+        signalbox.computer <- signalbox.bases 'none' {
+          notes '''
+            - The machine starts cold from the recipe
+            - #1071 ships the port with only this None adapter (cold create)
+          '''
+        }
+      }
+    }
+    signalbox.computer -> platform.boxd 'fork machine' {
+      notes 'Named `t-{threadId}-g{gen}`; egress and `deleteAfter` set before any command'
+      navigateTo state_computer
+    }
+    opt 'resume after a Base advance' {
+      signalbox.computer -> signalbox.computer 'apply thread changes' {
+        notes '''
+          - Current Base plus the thread's changes from its working ref
+          - The thread does not stay pinned to the old Base
+        '''
+      }
+    }
+    loop 'while the machine lives' {
+      signalbox.computer -> signalbox.bases 'renew lease' {
+        notes 'Renewed together with `deleteAfter`'
+      }
+    }
+    alt 'release' {
+      when 'machine deleted or thread purged' {
+        signalbox.computer -> signalbox.thread 'machine deleted'
+        signalbox.thread -> signalbox.bases 'release' {
+          notes '''
+            - Through the Thread outbox
+            - A trash purge of the thread releases the same way
+          '''
+        }
+      }
+      else 'machine lost or lease expired' {
+        signalbox.automations -> platform.boxd 'hourly sweep' {
+          notes '''
+            - Machine reconcile: `NOT_FOUND` for a machine removed by `deleteAfter` or lost in a crash
+            - Such a machine never produces an outbox release
+          '''
+        }
+        signalbox.automations -> signalbox.bases 'release' {
+          notes 'Also any lease whose `expiresAt` passed; `retire` never counts expired leases'
+        }
+      }
+    }
+    opt 'last lease of a superseded version' {
+      signalbox.bases -> signalbox.bases 'retire' {
+        notes 'Zero unexpired leases: the version retires'
+        navigateTo state_base
+      }
+    }
+  }
+
+  dynamic view work_bases_place_recipe {
+    variant sequence
+    title 'Workflows/Work/Bases/Place a Base recipe'
+    description 'W-BAS-01 · Tree Place{baseRecipe}, nearest wins, admin-only by default; Repo keys Bases by (drive, recipeHash)'
+
+    include personC, personA, signalbox.web, signalbox.tree, signalbox.drive, signalbox.bases, signalbox
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+
+    personC -> signalbox.web 'place recipe on Team' {
+      notes '''
+        - Folder Team holds the repo drive; the recipe lists toolchain, pinned CLIs, `prepare`, warm steps, dev services
+        - Also `regenerable` and `inspect` globs, `machine` argv patterns, direct egress destinations
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Place{baseRecipe}' {
+      navigateTo folders_placement_kind_base_recipe
+      notes '''
+        - Admin-only by default: C is admin of Company, inherited down to Team
+        - Stored in Team's Level actor, reach below
+      '''
+    }
+    opt 'A (member) tries' {
+      personA -> signalbox.web 'place recipe'
+      signalbox.web <- signalbox.tree 'Denied' {
+        notes 'Members (A, B) cannot place recipes unless C changes the default'
+      }
+    }
+    signalbox.tree -> signalbox.drive 'recipe placed' {
+      notes '''
+        - Placement event through the Level outbox
+        - Every thread in Team, A's or B's, resolves this recipe by position
+      '''
+    }
+    opt 'subfolder override' {
+      personC -> signalbox.web 'own recipe on subfolder' {
+        notes '''
+          - Nearest wins: threads below that subfolder use its recipe
+          - Same drive, new recipe hash, its own Base
+        '''
+      }
+      signalbox.web -> signalbox.tree 'Place on subfolder'
+    }
+    signalbox.drive -> signalbox.bases 'live recipe hash' {
+      notes '''
+        - Bases are keyed by (drive, recipeHash) in Drive's Repo record
+        - The next Base refresh builds every live recipe hash
+      '''
+      navigateTo work_bases_build
+    }
+  }
+
+  dynamic view work_bases_promote {
+    variant sequence
+    title 'Workflows/Work/Bases/Promote a Base or keep the last one'
+    description 'W-BAS-03, W-BAS-04, W-BAS-15 · Base status poll, promote, build failed'
+
+    include hier.company.team.agentTeam, hier.company.team, signalbox.automations, signalbox.bases, signalbox.drive, signalbox
+
+    style signalbox, hier.company.team {
+      color muted
+      opacity 10%
+    }
+
+    loop 'Tick while builds are pending' {
+      signalbox.automations -> signalbox.bases 'status' {
+        notes '''
+          - Base status is a default automation on a Tick: polling boxd forces on us
+          - No special-case alarms, no sleep loops
+        '''
+        navigateTo work_bases_build
+      }
+      signalbox.automations <- signalbox.bases 'Pending · Ready · Failed'
+    }
+    alt 'result' {
+      when 'Ready' {
+        signalbox.bases -> signalbox.automations 'base.ready' {
+          notes 'Base refresh was waiting on it with `w.waitForEvent`'
+        }
+        signalbox.automations -> signalbox.bases 'promote' {
+          notes '`promote(drive, recipeHash, version)`; `NotReady` or `Stale` refuse'
+          navigateTo state_base
+        }
+        signalbox.bases -> signalbox.drive 'flip pointer' {
+          notes '''
+            - Versioned pointer per (drive, recipeHash) in Drive's Repo record
+            - The next VM for any thread in Team forks the new version
+          '''
+        }
+        opt 'old version has zero leases' {
+          signalbox.bases -> signalbox.bases 'retire'
+        }
+      }
+      else 'Failed' {
+        signalbox.bases -> signalbox.automations 'base.failed' {
+          notes 'The previous pointer stays; nothing is half-promoted'
+        }
+        signalbox.automations -> hier.company.team.agentTeam 'report failure' {
+          notes '''
+            - To the agent of the drive's folder, Team (assumed); it can fix the recipe or ask
+            - A and B keep working on the last good Base
+          '''
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Workflows/Work/Git/PRs ─────────────────────────
+
+  dynamic view work_git_confirm_live {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Confirm a merged change is live'
+    description 'W-GIT-16 · Confirm live checks the done-condition after a merge, then the thread settles'
+
+    include hier.company.team.sharedThread, hier.company.team.runThread, hier.company.team, signalbox.automations, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    services.github -> signalbox.automations 'forge.merged' {
+      notes 'The merge landed (forge webhook via Ingress, or a lead-mode accept)'
+      navigateTo work_git_merge_gate
+    }
+    signalbox.automations -> hier.company.team.runThread 'Confirm live run' {
+      notes 'A default automation: a run thread checks the thread\'s done-condition'
+    }
+    hier.company.team.runThread -> hier.company.team.runThread 'check done-condition' {
+      notes '''
+        - The condition recorded on the work thread, not merely "merged"
+        - Evidence is kept on the run
+      '''
+    }
+    hier.company.team.runThread -> signalbox.automations 'run.finished'
+    alt 'live?' {
+      when 'confirmed live' {
+        signalbox.automations -> hier.company.team.sharedThread 'settle' {
+          notes 'The shared thread settles for A and B at once'
+          navigateTo work_threads_lifecycle_auto_settle
+        }
+      }
+      else 'not live' {
+        signalbox.automations -> hier.company.team.sharedThread 'wake the agent' {
+          notes '''
+            - The thread stays open with what failed
+            - Nobody is pinged; the agent works on it first
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_git_merge_gate {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Merge gate'
+    description 'W-GIT-14, W-GIT-15 · merge on complete evidence, else one Ready ask to the right person; a changed head voids approval'
+
+    include personA, personC, hier.company.team.sharedThread, hier.company.team, signalbox.automations, signalbox.attention, signalbox.drive, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    hier.company.team.sharedThread -> signalbox.automations 'merge candidate' {
+      notes '''
+        - Lead mode: the agent proposes an accept; follow mode: the PR turned ready on the forge
+        - For agents, the Merge gate is the only caller of `accept`
+      '''
+    }
+    signalbox.automations -> signalbox.automations 'pin sha, collect evidence' {
+      notes '''
+        - CI green at the pinned head sha, bot findings handled, preview walked
+        - Complete and reversible: merge without asking anyone (attention is scarce)
+      '''
+    }
+    opt 'evidence incomplete or hard to undo' {
+      signalbox.automations -> signalbox.attention 'Ready ask' {
+        notes 'One ask, raised by the thread, answered into the thread'
+        navigateTo person_pipeline_ready_merge_gate
+      }
+      alt 'who decides' {
+        when 'hard to undo' {
+          signalbox.attention -> personC 'Ready: merge?' {
+            notes 'C, admin of folder Company, decides; only C\'s Ready lane shows it'
+          }
+          personC -> signalbox.attention 'approve at sha'
+        }
+        else 'evidence missing' {
+          signalbox.attention -> personA 'Ready: merge?' {
+            notes '''
+              - A and B both work in the thread: it shows in both their Ready lanes
+              - First answer wins; the other lane clears
+            '''
+          }
+          personA -> signalbox.attention 'approve at sha'
+        }
+      }
+      opt 'new push after approval' {
+        services.github -> signalbox.automations 'new head sha' {
+          notes 'The approval covered the pinned sha only'
+        }
+        signalbox.automations -> signalbox.attention 'void, ask again'
+      }
+    }
+    alt 'merge path' {
+      when 'lead' {
+        signalbox.automations -> signalbox.drive 'accept at sha' {
+          notes 'Enqueued in the Repo record\'s merge queue, the single writer of `main`'
+          navigateTo work_git_sync_lead
+        }
+      }
+      else 'follow' {
+        signalbox.automations -> signalbox.connections 'merge PR at sha' {
+          notes 'Through the forge connection placed on Team\'s chain, whoever approved'
+        }
+        signalbox.connections -> services.github 'merge' {
+          notes 'Refused by the forge if the head moved'
+          navigateTo work_git_confirm_live
+        }
+      }
+    }
+  }
+
+  dynamic view work_git_pr_checkout {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Check out a PR into a thread'
+    description 'T-GIT-15 · a new thread whose working ref forks the PR head, read through the folder\'s forge connection (unconfirmed)'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.connections, signalbox.thread, signalbox.drive, services.github, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    personA -> signalbox.web 'check out PR' {
+      notes 'From the PR page, or a prompt link with `pr=`'
+    }
+    signalbox.web -> signalbox.funnel 'prepare PR thread'
+    signalbox.funnel -> signalbox.operations 'command'
+    signalbox.operations -> signalbox.connections 'resolve PR' {
+      notes 'Through the forge connection placed on the folder\'s chain'
+    }
+    signalbox.connections -> services.github 'PR head'
+    signalbox.operations <- signalbox.connections 'head sha · branch'
+    signalbox.operations -> signalbox.thread 'new thread' {
+      notes '''
+        - Filed in the folder whose repo drive matches the PR (unconfirmed)
+        - In folder Team, B sees it like any thread there
+      '''
+    }
+    signalbox.thread -> signalbox.drive 'fork at PR head' {
+      notes 'The working ref forks the PR head, not `main`'
+      navigateTo work_drive_thread_fork
+    }
+    signalbox.drive -> services.github 'fetch on demand' {
+      notes 'Promisor base: PR objects load only when read'
+      navigateTo work_git_forge_base
+    }
+    personA -> signalbox.web 'work the PR' {
+      notes 'Read, comment and act from the thread'
+      navigateTo work_git_pr_work
+    }
+  }
+
+  dynamic view work_git_pr_ready {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Open a PR only when it\'s ready'
+    description 'W-GIT-13 · checks, reviewer agent and preview walk on the thread revision before the PR opens'
+
+    include hier.company.team.sharedThread, hier.company.team.runThread, hier.company.team, signalbox.automations, signalbox.computer, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    loop 'until ready' {
+      hier.company.team.sharedThread -> signalbox.automations 'open PR' {
+        notes 'The agent in the shared thread wants a PR from its revision'
+      }
+      parallel {
+        signalbox.automations -> hier.company.team.runThread 'checks' {
+          notes 'Run threads at folder Team, on the thread revision'
+        }
+        signalbox.automations -> hier.company.team.runThread 'reviewer agent'
+        signalbox.automations -> hier.company.team.runThread 'preview walk' {
+          navigateTo work_previews_open
+        }
+      }
+      hier.company.team.runThread -> signalbox.computer 'run on revision' {
+        notes 'Machines fork the Base; nothing touches the forge yet'
+      }
+      alt 'result' {
+        when 'all pass' {
+          signalbox.automations -> signalbox.connections 'open PR, ready' {
+            notes '''
+              - Ready for review, never a draft
+              - Through the forge connection placed on Team\'s chain
+            '''
+          }
+          signalbox.connections -> services.github 'create PR' {
+            notes 'Next stop: the merge gate'
+            navigateTo work_git_merge_gate
+          }
+        }
+        else 'something fails' {
+          signalbox.automations -> hier.company.team.sharedThread 'wake with findings' {
+            notes 'The agent fixes and tries again; nobody is pinged'
+          }
+        }
+      }
+    }
+  }
+
+  dynamic view work_git_pr_watch {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Link a PR and let it wake the agent'
+    description 'W-GIT-07, W-GIT-22, T-GIT-21, T-GIT-32 · link, unwatch or unlink a PR on the shared thread; the watch itself is part 2 (work_git_pr_watch_wake)'
+
+    include personA, personB, signalbox.web, signalbox.automations, hier.company.team.sharedThread, hier.company.team, signalbox
+
+    style signalbox, hier.company.team {
+      color muted
+      opacity 10%
+    }
+
+    alt 'who links' {
+      when 'A links' {
+        personA -> signalbox.web 'link PR' {
+          notes '''
+            - Linked PRs panel, the palette, or a review header
+            - One Thread: B sees the link live
+          '''
+          navigateTo work_git_review_guide
+        }
+        signalbox.web -> hier.company.team.sharedThread 'PR link'
+      }
+      else 'the agent links' {
+        hier.company.team.sharedThread -> hier.company.team.sharedThread 'link PR tool' {
+          notes 'The agent links the PR it opened'
+        }
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.automations 'PR linked' {
+      notes '''
+        - Watch is on by default: the PR watch automation follows this thread\'s PRs
+        - Part 2: what wakes the agent
+      '''
+      navigateTo work_git_pr_watch_wake
+    }
+    opt 'B turns the watch off' {
+      personB -> signalbox.web 'unwatch' {
+        notes 'The toggle is per thread, so it is off for A too; it can be turned back on'
+      }
+      signalbox.web -> signalbox.automations 'disable watch'
+    }
+    opt 'A unlinks' {
+      personA -> signalbox.web 'unlink'
+      signalbox.web -> hier.company.team.sharedThread 'remove link'
+      hier.company.team.sharedThread -> signalbox.automations 'watch ends' {
+        notes 'Unlink is the way out: the watch ends with it'
+      }
+    }
+  }
+
+  dynamic view work_git_pr_watch_wake {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Link a PR and let it wake the agent (2: the watch)'
+    description 'W-GIT-08, W-GIT-22 · PR events wake the shared thread\'s agent; unreadable links stop polling; part 1 is work_git_pr_watch'
+
+    include hier.company.team.sharedThread, hier.company.team.runThread, hier.company.team, signalbox.automations, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    loop 'while linked and watched' {
+      services.github -> signalbox.automations 'PR event' {
+        notes '''
+          - CI result, review, comment or conflict (forge webhook via Ingress)
+          - CI on Base results arrive as `run.finished`
+        '''
+        navigateTo work_bases_ci
+      }
+      signalbox.automations -> hier.company.team.runThread 'PR watch run' {
+        notes 'A run thread at folder Team, paid by Team\'s pool, not A\'s or B\'s'
+      }
+      hier.company.team.runThread -> signalbox.connections 'read PR' {
+        notes 'Through the forge connection placed on Team\'s chain'
+      }
+      alt 'readable?' {
+        when 'readable' {
+          hier.company.team.runThread -> hier.company.team.sharedThread 'wake the agent' {
+            notes '''
+              - `Thread.send` with what changed
+              - A and B see the same message
+            '''
+          }
+        }
+        else 'link unreadable' {
+          hier.company.team.runThread -> signalbox.automations 'stop polling' {
+            notes 'Deleted repo or lost access: polling stops, the link stays visible'
+          }
+        }
+      }
+    }
+    services.github -> signalbox.automations 'merged' {
+      notes 'The watch hands over to Confirm live; the thread settles once live'
+      navigateTo work_git_confirm_live
+    }
+  }
+
+  dynamic view work_git_pr_work {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Read, comment on and act on PRs'
+    description 'W-GIT-09, W-GIT-10, T-GIT-20, T-TRN-28 · A and the agent read and comment through the same forge connection on Team\'s chain; authority and merges are part 2 (work_git_pr_authority)'
+
+    include personA, signalbox.web, signalbox.automations, signalbox.connections, hier.company.team.sharedThread, hier.company.team, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    alt 'who reads' {
+      when 'A in the PR panel' {
+        personA -> signalbox.web 'list · details · review' {
+          notes '`#` in the composer lists PRs the same way'
+        }
+        signalbox.web -> signalbox.connections 'call' {
+          notes 'The forge connection placed on Team\'s chain'
+        }
+      }
+      else 'the agent' {
+        hier.company.team.sharedThread -> signalbox.connections 'tool call' {
+          notes '''
+            - Through the Gateway, which fills the credential
+            - The same connection reaches the thread by position
+          '''
+        }
+      }
+    }
+    signalbox.connections -> services.github 'REST · GraphQL' {
+      notes 'Same connection whether A, B or the agent asks'
+    }
+    opt 'checks badge' {
+      personA -> signalbox.web 'open checks'
+      parallel {
+        signalbox.web -> signalbox.automations 'CI on Base runs' {
+          navigateTo work_bases_ci
+        }
+        signalbox.web -> signalbox.connections 'forge statuses'
+      }
+    }
+    personA -> signalbox.web 'comment · review' {
+      notes 'Labels, reviewers and merges are checked against folder authority (part 2)'
+      navigateTo work_git_pr_authority
+    }
+    signalbox.web -> signalbox.connections 'post'
+    signalbox.connections -> services.github 'post' {
+      notes 'Posts as the placed connection (the App, or a lent login), not as A'
+    }
+  }
+
+  dynamic view work_git_pr_authority {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Read, comment on and act on PRs (2: authority)'
+    description 'W-GIT-11, T-GIT-28 · C sets PR authority on folder Company; labels, reviewers and merges are checked on it; part 1 is work_git_pr_work'
+
+    include personC, personA, signalbox.web, signalbox.tree, signalbox.connections, signalbox.automations, signalbox
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+
+    personC -> signalbox.web 'set PR authority' {
+      notes 'C, admin of folder Company, decides who may label, request reviewers or merge'
+    }
+    signalbox.web -> signalbox.tree 'store on Company' {
+      notes 'Inherited down to Team: A and B get the same rule by position'
+      navigateTo folders_connections_github
+    }
+    personA -> signalbox.web 'set labels · reviewers' {
+      notes 'Pickers (unconfirmed)'
+    }
+    signalbox.web -> signalbox.tree 'Tree.can' {
+      notes 'Checked on the authority C set, never on who owns the credential'
+    }
+    alt 'allowed?' {
+      when 'allowed' {
+        signalbox.web -> signalbox.connections 'call' {
+          notes 'Through the forge connection on Team\'s chain'
+        }
+      }
+      else 'denied' {
+        signalbox.web <- signalbox.tree 'Denied' {
+          notes 'A sees why; C can widen the rule'
+        }
+      }
+    }
+    personA -> signalbox.web 'merge'
+    signalbox.web -> signalbox.automations 'via Merge gate' {
+      notes 'Merges always go through the Merge gate, for people and agents'
+      navigateTo work_git_merge_gate
+    }
+  }
+
+  dynamic view work_git_review_guide {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Write and read a review guide'
+    description 'W-GIT-12 · an agent run writes the guide into the shared thread; A and B read it, each with their own viewed-file ticks'
+
+    include personA, personB, signalbox.web, signalbox.funnel, hier.company.team.sharedThread, hier.company.team.runThread, hier.company.team, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    personA -> signalbox.web 'generate guide'
+    signalbox.web -> signalbox.funnel 'write guide'
+    signalbox.funnel -> hier.company.team.sharedThread 'request guide'
+    hier.company.team.sharedThread -> hier.company.team.runThread 'agent run' {
+      notes 'A run thread at folder Team reads the change and writes the tour'
+    }
+    hier.company.team.runThread -> signalbox.connections 'read PR diff' {
+      notes 'Through the forge connection placed on Team\'s chain'
+    }
+    signalbox.connections -> services.github 'diff · files'
+    hier.company.team.runThread -> hier.company.team.sharedThread 'guide stored' {
+      notes '''
+        - Stored with the PR head it describes
+        - Marked stale after a push
+      '''
+    }
+    parallel {
+      personA -> signalbox.web 'read guide' {
+        notes 'Read in the Guide tab'
+        navigateTo work_git_pr_work
+      }
+      personB -> signalbox.web 'read guide' {
+        notes 'B reads the same guide in the shared thread'
+      }
+    }
+    signalbox.web -> signalbox.funnel 'mark file viewed'
+    signalbox.funnel -> hier.company.team.sharedThread 'viewed-file state' {
+      notes 'Viewed state per reader (assumed): B\'s ticks do not mark A\'s files'
+    }
+  }
+
+  dynamic view work_git_stacks {
+    variant sequence
+    title 'Workflows/Work/Git/PRs/Work a PR stack'
+    description 'T-GIT-30 · navigate layers, merge stack, rebase stack, retry refresh (unconfirmed)'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.automations, signalbox.drive, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    personA -> signalbox.web 'open stack menu'
+    signalbox.web -> signalbox.funnel 'read stack'
+    signalbox.funnel -> signalbox.connections 'stack layers' {
+      notes 'Through the forge connection placed on the folder\'s chain'
+    }
+    signalbox.connections -> services.github 'PRs bottom to top'
+    alt 'action' {
+      when 'navigate' {
+        personA -> signalbox.web 'open a layer'
+      }
+      when 'merge stack' {
+        signalbox.web -> signalbox.funnel 'merge stack'
+        signalbox.funnel -> signalbox.automations 'Merge gate per layer' {
+          notes 'Bottom to top, each layer through the Merge gate (unconfirmed)'
+          navigateTo work_git_merge_gate
+        }
+      }
+      when 'rebase stack' {
+        signalbox.web -> signalbox.funnel 'rebase stack'
+        signalbox.funnel -> signalbox.drive 'rebase layers' {
+          notes 'Git work is Drive\'s; Drive\'s forge seam pushes'
+        }
+        signalbox.drive -> services.github 'push with lease' {
+          navigateTo work_git_push_limits
+        }
+      }
+      else 'refresh failed' {
+        loop 'retry refresh' {
+          signalbox.web -> signalbox.funnel 'refresh stack' {
+            notes 'The stack menu shows the failure and a retry'
+          }
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Workflows/Work/Git/Sync ─────────────────────────
+
+  dynamic view work_git_forge_adapter {
+    title 'Workflows/Work/Git/Sync/Inside Drive: any forge behind one seam'
+    description 'W-GIT-19, T-GIT-34 · Drive drill-down: the forge seam has two real adapters (GitHub, GitLab) and one hypothetical (other hosts); callers only ever see Drive'
+
+    include signalbox.automations, signalbox.drive.repoActor, signalbox.connections, signalbox.drive.forges.githubForge, signalbox.drive.forges.gitlabForge, signalbox.drive.forges.otherForges, services.github, services.gitlab, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.automations -> signalbox.drive.repoActor 'push or open PR' {
+      notes '''
+        - Enters through Drive\'s interface; the Repo actor is Drive\'s inside
+        - Git-host sync speaks one forge interface, whatever the host
+      '''
+      navigateTo work_git_sync_lead
+    }
+    signalbox.drive.repoActor -> signalbox.connections 'forge connection' {
+      notes 'The connection placed on the drive\'s folder chain decides the host and the credential'
+    }
+    alt 'host' {
+      when 'GitHub' {
+        signalbox.drive.repoActor -> signalbox.drive.forges.githubForge 'GitHub App' {
+          notes 'Real adapter'
+        }
+        signalbox.drive.forges.githubForge -> services.github 'git · PRs'
+      }
+      when 'GitLab' {
+        signalbox.drive.repoActor -> signalbox.drive.forges.gitlabForge 'GitLab' {
+          notes 'Real adapter: two real adapters make this a real seam'
+        }
+        signalbox.drive.forges.gitlabForge -> services.gitlab 'git · MRs' {
+          notes 'Company GitLab repos are usually protected: `follow` mode'
+          navigateTo work_git_sync_follow
+        }
+      }
+      else 'other host' {
+        signalbox.drive.repoActor -> signalbox.drive.forges.otherForges 'other forge' {
+          notes 'Bitbucket, Azure DevOps, Forgejo: hypothetical until built'
+        }
+      }
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view work_git_forge_base {
+    variant sequence
+    title 'Workflows/Work/Git/Sync/Read forge base content on demand'
+    description 'W-GIT-05, W-GIT-06 · promisor base via the forge connection on Team\'s chain (B\'s loan here); when the loan ends, base content is gone for everyone'
+
+    include personA, personB, hier.company.team.sharedThread, hier.company.team, signalbox.computer, signalbox.drive, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, hier.company.team, services {
+      color muted
+      opacity 10%
+    }
+
+    hier.company.team.sharedThread -> signalbox.computer 'read file · git log' {
+      notes 'The agent in the shared thread reads base content or history'
+      navigateTo work_drive_live_fs_read
+    }
+    signalbox.computer -> signalbox.drive 'open · history'
+    alt 'object' {
+      when 'Signalbox change' {
+        signalbox.drive -> signalbox.drive 'Artifacts or R2' {
+          notes '''
+            - Signalbox-origin objects: Artifacts hot tier, R2 full record
+            - R2 holds only Signalbox objects, as thin bundles
+          '''
+        }
+      }
+      else 'forge base object' {
+        signalbox.drive -> signalbox.connections 'forge connection' {
+          notes '''
+            - The one placed on Team\'s chain: B\'s GitHub login, lent into Team
+            - Same for A and B by position, whoever reads
+          '''
+        }
+        signalbox.drive -> services.github 'partial-clone fetch' {
+          notes '''
+            - Promisor remote: blobs and history fetched only when read
+            - Cached in Artifacts as an evictable cache, never written to R2
+          '''
+        }
+      }
+    }
+    signalbox.computer <- signalbox.drive 'content'
+    personB -> signalbox.connections 'end loan' {
+      notes '''
+        - B revokes the loan, or B leaves folder Company and the loan ends with it
+        - Revoking the connection itself has the same effect
+      '''
+      navigateTo work_threads_multiplayer_leaver
+    }
+    signalbox.connections -> signalbox.drive 'connection gone' {
+      notes 'Drive purges the cached forge objects at once'
+    }
+    personA -> hier.company.team.sharedThread 'keep working' {
+      notes 'A still sees every Signalbox change; only forge base content is gone'
+    }
+    hier.company.team.sharedThread -> signalbox.computer 'read base file'
+    signalbox.computer <- signalbox.drive 'unreadable' {
+      notes '''
+        - By design: losing forge access loses the base content
+        - C (admin) places a Company connection, or someone lends one, to restore it
+      '''
+    }
+  }
+
+  dynamic view work_git_forge_ingest {
+    variant sequence
+    title 'Workflows/Work/Git/Sync/Forge events come back in'
+    description 'W-GIT-04, W-GIT-23 · forge webhooks become forge.pushed / forge.merged; Drive ingests them as external:forge through its one merge queue'
+
+    include services.github, signalbox.ingress, signalbox.drive, signalbox.automations, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    services.github -> signalbox.ingress 'webhook' {
+      notes 'Push or merge on the forge'
+    }
+    signalbox.ingress -> signalbox.drive 'forge.pushed · forge.merged' {
+      notes '''
+        - Ingress is a thin door: decode and hand to Drive
+        - Ingested as actor `external:forge`, in the same merge queue as accepts
+      '''
+    }
+    signalbox.drive -> services.github 'read refs' {
+      notes 'Refs read before and after: push events can be truncated and out of order'
+    }
+    alt 'what moved' {
+      when 'someone merged on the forge directly' {
+        signalbox.drive -> signalbox.drive 'reconcile' {
+          notes '''
+            - Interleaved external merges are queued like any accept
+            - Zero divergence between forge `main` and Signalbox `main`
+          '''
+        }
+      }
+      else 'expected merge or push' {
+        signalbox.drive -> signalbox.drive 'CAS main' {
+          notes 'In `follow` mode this is the only way `main` advances'
+          navigateTo work_git_sync_follow
+        }
+      }
+    }
+    signalbox.drive -> signalbox.automations 'main advanced' {
+      notes 'Base refresh, CI and Confirm live key on the ingested `main`'
+      navigateTo work_bases_build
+    }
+  }
+
+  dynamic view work_git_forge_media {
+    variant sequence
+    title 'Workflows/Work/Git/Sync/Show GitHub media from PRs'
+    description 'T-SYS-16 · images in PR bodies and comments load through the placed forge connection (unconfirmed); native app icons resolve locally in the desktop shell, no forge involved'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    personA -> signalbox.web 'open PR' {
+      notes 'A PR body or comment with private images or attachments'
+      navigateTo work_git_pr_work
+    }
+    signalbox.web -> signalbox.funnel 'media request'
+    signalbox.funnel -> signalbox.connections 'fetch via forge' {
+      notes 'The forge connection placed on the thread\'s folder chain (unconfirmed)'
+    }
+    signalbox.connections -> services.github 'authenticated fetch'
+    signalbox.funnel <- signalbox.connections 'bytes'
+    signalbox.web <- signalbox.funnel 'media' {
+      notes 'Shown inline; B sees the same image through the same connection'
+    }
+  }
+
+  dynamic view work_git_push_limits {
+    variant sequence
+    title 'Workflows/Work/Git/Sync/Big pushes and push with lease'
+    description 'W-GIT-20, W-GIT-21 · over host or Worker limit → LFS or a plain error; git panel push after a rebase uses force-with-lease'
+
+    include personA, signalbox.web, signalbox.drive, services.github, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    alt 'push' {
+      when 'big push' {
+        personA -> signalbox.web 'push'
+        signalbox.web -> signalbox.drive 'commit' {
+          notes 'Large files or a large change set'
+        }
+        alt 'size' {
+          when 'large files' {
+            signalbox.drive -> signalbox.drive 'store as Git LFS' {
+              notes 'Large blobs go to LFS'
+              navigateTo work_drive_large_files
+            }
+          }
+          else 'over host or Worker limit' {
+            signalbox.web <- signalbox.drive 'TooLarge' {
+              notes '''
+                - A plain error naming the limit
+                - Vendor limits surface plainly; no workaround (#684)
+              '''
+            }
+          }
+        }
+      }
+      else 'push after rebase' {
+        personA -> signalbox.web 'push from git panel'
+        signalbox.web -> signalbox.drive 'push'
+        signalbox.drive -> services.github 'force-with-lease' {
+          notes 'Overwrites only the ref A last saw'
+        }
+        alt 'lease' {
+          when 'lease holds' {
+            signalbox.web <- signalbox.drive 'pushed'
+          }
+          else 'remote moved' {
+            signalbox.web <- signalbox.drive 'rejected' {
+              notes 'Someone (maybe B) pushed meanwhile; nothing is overwritten'
+            }
+          }
+        }
+      }
+    }
+  }
+
+  dynamic view work_git_sync_follow {
+    variant sequence
+    title 'Workflows/Work/Git/Sync/Follow: an accept opens or updates a PR'
+    description 'W-GIT-03, W-GIT-18 · accept → Pending{review} → PR; main advances only on ingest; PR titled from the thread'
+
+    include personA, personB, signalbox.web, signalbox.drive, signalbox.automations, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    personA -> signalbox.web 'accept' {
+      notes 'A accepts the shared thread\'s work on a protected repo'
+      navigateTo work_drive_accept
+    }
+    signalbox.web -> signalbox.drive 'accept(ref)'
+    signalbox.web <- signalbox.drive 'Pending{review}' {
+      notes '''
+        - Sync mode `follow`: `main` does not move
+        - The review happens on the forge
+      '''
+    }
+    signalbox.drive -> signalbox.automations 'review pending' {
+      notes 'Git-host sync (a default automation) picks up the pending review'
+    }
+    signalbox.automations -> signalbox.connections 'open or update PR' {
+      notes '''
+        - Through the forge connection placed on the folder\'s chain
+        - Titled from the thread, never left as a branch name
+      '''
+      navigateTo work_git_merge_gate
+    }
+    signalbox.connections -> services.github 'PR or MR'
+    personB -> services.github 'review on the forge' {
+      notes 'B reviews with B\'s own forge identity'
+    }
+    services.github -> signalbox.drive 'forge.merged' {
+      notes 'Webhook via Ingress, ingested by Drive as `external:forge`'
+      navigateTo work_git_forge_ingest
+    }
+    signalbox.drive -> signalbox.drive 'main advances' {
+      notes 'Only now; CI and Bases key on the ingested `main`'
+    }
+  }
+
+  dynamic view work_git_sync_lead {
+    variant sequence
+    title 'Workflows/Work/Git/Sync/Lead: publish and push main to the forge'
+    description 'W-GIT-01, W-GIT-02, W-GIT-17 · sync mode follows forge permissions; lead pushes main fast-forward; publish a folder as a new repository'
+
+    include personA, signalbox.web, signalbox.drive, signalbox.automations, signalbox.connections, services.github, signalbox, services
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+
+    opt 'publish a folder' {
+      personA -> signalbox.web 'publish as repo' {
+        notes 'A publishes the folder\'s drive as a new repository'
+      }
+      signalbox.web -> signalbox.connections 'create repo' {
+        notes 'With the forge connection placed on the folder\'s chain'
+      }
+      signalbox.connections -> services.github 'new repository'
+      signalbox.web -> signalbox.drive 'link forge' {
+        notes 'A fresh repo is unprotected: sync mode `lead`'
+        navigateTo folders_connections_github
+      }
+    }
+    signalbox.drive -> signalbox.connections 'forge permissions' {
+      notes 'Decided by the forge, not by a person'
+    }
+    signalbox.connections -> services.github 'branch protection'
+    alt 'sync mode' {
+      when 'can push main' {
+        signalbox.drive -> signalbox.drive 'mode lead' {
+          notes 'Signalbox\'s `main` is upstream'
+        }
+      }
+      else 'protected branch' {
+        signalbox.drive -> signalbox.drive 'mode follow' {
+          notes 'The normal case at companies: accepts open PRs instead'
+          navigateTo work_git_sync_follow
+        }
+      }
+    }
+    personA -> signalbox.web 'accept' {
+      notes 'Lead mode: the accept merges'
+      navigateTo work_drive_accept
+    }
+    signalbox.web -> signalbox.drive 'accept' {
+      notes 'Into the Repo record\'s merge queue'
+    }
+    signalbox.drive -> signalbox.automations 'drive.main.advanced'
+    signalbox.automations -> signalbox.drive 'push main' {
+      notes 'Git-host sync is a default automation; Drive\'s forge seam does the push'
+      navigateTo work_git_forge_adapter
+    }
+    try 'push' {
+      signalbox.drive -> services.github 'fast-forward push' {
+        notes 'With the credential of the forge connection on the folder\'s chain'
+      }
+    } catch 'forge moved' {
+      signalbox.drive -> signalbox.drive 'ingest, then retry' {
+        notes 'Someone pushed on the forge; ingest reconciles, then the push retries'
+        navigateTo work_git_forge_ingest
+      }
+    }
+  }
+}

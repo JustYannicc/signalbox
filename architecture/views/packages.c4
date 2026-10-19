@@ -1,0 +1,50 @@
+// Which deep modules leave the repo as public npm packages (#1245, #1191 addendum).
+views {
+  view packages {
+    title 'Overview/Decisions/Packages'
+    description '''
+      Which modules become their own public repos on npm, and which stay in Signalbox? Decided 2026-10-19 (#1245):
+      a deep module useful outside Signalbox gets its own repo, is published on npm and comes back as a dependency,
+      cloudflare/computer style. The isolate runtime goes first. Tree stays; only its hierarchy resolver is published.
+      Everything in the two Publishable groups is tagged `#publishable`.
+    '''
+    group 'Publishable · first: isolate runtime' {
+      color sky
+      opacity 8%
+      include signalbox.computer.backend.kernelFs with { title 'Kernel'; description 'live FS · programs · escalation hook' }
+      include signalbox.harness.shims
+      include signalbox.harness.host.isolate with { title 'Harness host + release scanner' }
+      include signalbox.harness.codexWasm
+    }
+    group 'Publishable · next' {
+      color sky
+      opacity 8%
+      include signalbox.gateway.egress with { title 'Secret fill · scrub' }
+      include signalbox.connections with { title 'Connections + tool gateway' }
+      include signalbox.models with { title 'Model pools' }
+      include signalbox.drive
+      // One box: a second Computer part here makes LikeC4 wrap both in a Computer box and break the groups.
+      include signalbox.bases with { title 'Computer escalation + Bases'; description 'escalation table · VM lifecycle · Base leases' }
+      include signalbox.search
+      include signalbox.automations with { title 'Automations engine' }
+      include signalbox.judge
+      include signalbox.learner
+      include signalbox.tree.resolver with { title 'Hierarchy resolver' }
+    }
+    group 'Stays in Signalbox' {
+      color muted
+      opacity 8%
+      // The assistant has no box inside Signalbox (it is a person's top-level thread); any element outside the
+      // Signalbox box makes LikeC4 wrap everything in it and empties the groups, so it rides on Attention's card.
+      include signalbox.attention with { title 'Attention + assistant'; description 'asks · pipeline lanes · the assistant at the top layer' }
+      include signalbox.funnel
+      include signalbox.operations
+      include signalbox.identity
+      // Tree itself (its actors) stays. Drawn by one actor: an edge between two parts of one module makes
+      // LikeC4 wrap both in the module box, which would swallow the published resolver.
+      include signalbox.tree.personActor with { title 'Tree'; description 'Level and Person actors · placements · roles · mounts' }
+    }
+    exclude * -> *
+    autoLayout TopBottom 60 40
+  }
+}

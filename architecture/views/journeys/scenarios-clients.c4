@@ -1,0 +1,548 @@
+// Scenario shard 14: clients (SCN-279 to SCN-287).
+// Clients are gateways: the server is authoritative, transport loss is an unknown outcome
+// recovered by receipt (request id), and only message sends keep a durable mobile outbox (#742).
+// Modules are black boxes here: steps target Thread, Tree, Operations, never their actors.
+global {
+  styleGroup scn14Lanes {
+    style signalbox {
+      color muted
+      opacity 8%
+    }
+    style personA, personB, personC {
+      color green
+    }
+  }
+}
+
+views {
+
+  // ─── Scenarios / Clients / Offline ───────────────────────────────────────
+
+  dynamic view scn_279_offline_phone_then_desktop {
+    #assumption
+    variant sequence
+    title 'Scenarios/Clients/Offline/Phone Then Desktop'
+    description 'What happens when A moves a thread offline on the phone, then edits the same thread on desktop? Assumption: online intent only; a lost ack is an unknown outcome recovered by receipt, never replayed over a newer edit; only message sends keep the durable outbox. Why: #742 (2026-10-17) server authoritative, transport loss = unknown outcome; s4 H1; pending #764. SCN-279 · not v1.'
+
+    include personA, signalbox.mobile, signalbox.desktop, signalbox.funnel, signalbox.thread, signalbox.tree
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.mobile 'Moves a thread' {
+      navigateTo clients_mobile_launch_connect
+      notes '''
+        - **Start:** A's thread sits in folder Personal; A moves it to folder Team on the phone.
+        - It shows in Team at once (optimistic, with a request id).
+      '''
+    }
+    signalbox.mobile -> signalbox.funnel 'Sends move' {
+      notes '''
+        - The connection drops before any ack comes back.
+        - The phone marks the move **unconfirmed**: not done, not failed.
+      '''
+    }
+    personA -> signalbox.mobile 'Closes the app' {
+      notes '''
+        - The unconfirmed move is **not** queued for replay. Only message sends use the durable outbox.
+      '''
+    }
+    personA -> signalbox.desktop 'Edits same thread' {
+      notes '''
+        - On the laptop A moves the thread to folder Work instead.
+      '''
+    }
+    signalbox.desktop -> signalbox.funnel 'Sends edit' {
+      navigateTo work_recovery_command_commit
+    }
+    signalbox.funnel -> signalbox.thread 'Commits new Place' {
+      notes '''
+        - Thread commits the edit and its receipt. This is now the server's state.
+      '''
+    }
+    signalbox.thread -> signalbox.tree 'Catalog row' {
+      notes '''
+        - Tree lists the thread in folder Work; the desktop shows it there.
+      '''
+    }
+    signalbox.mobile -> signalbox.funnel 'Checks receipt' {
+      navigateTo clients_shell_reconnect
+      notes '''
+        - The phone reconnects and asks for the receipt of its old request id. It never resends blindly.
+      '''
+    }
+    alt 'did the phone move land?' {
+      when 'never landed' {
+        signalbox.mobile <- signalbox.funnel 'No receipt' {
+          notes '''
+            - The phone drops its optimistic move and shows "Not applied" with Retry.
+          '''
+        }
+      }
+      else 'landed before the edit' {
+        signalbox.mobile <- signalbox.funnel 'Receipt, superseded' {
+          notes '''
+            - The move landed, then the desktop edit replaced it. The phone shows the server's state.
+          '''
+        }
+      }
+    }
+    signalbox.mobile -> personA 'Desktop edit stands' {
+      notes '''
+        - **End:** both devices show the thread in folder Work.
+        - **Assumption** (pending #764): online intent only, recovered by receipt, never replayed over newer edits.
+      '''
+    }
+  }
+
+  dynamic view scn_280_offline_send_restart {
+    #decided
+    variant sequence
+    title 'Scenarios/Clients/Offline/Send Then Restart'
+    description 'If A sends a message offline and the app restarts, is it delivered exactly once? Decided: #742 / #764 (2026-10-17), "Preserve the existing durable mobile send outbox". SCN-280 · not v1.'
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.thread
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.mobile 'Sends offline' {
+      navigateTo clients_mobile_composer
+      notes '''
+        - **Start:** A writes in the shared Team thread with no connection.
+        - The message lands in the durable send outbox with a stable request id; A sees "Waiting to send".
+      '''
+    }
+    signalbox.mobile -> signalbox.mobile 'App restarts' {
+      notes '''
+        - The OS kills the app or A relaunches it.
+        - The outbox lives in device storage, so the queued message survives.
+      '''
+    }
+    signalbox.mobile -> signalbox.funnel 'Drains outbox' {
+      navigateTo clients_mobile_offline_send
+      notes '''
+        - On reconnect the outbox sends with the **same** request id it minted at send.
+      '''
+    }
+    signalbox.funnel -> signalbox.thread 'send(requestId)' {
+      navigateTo work_threads_start_send_draft
+    }
+    alt 'seen this request id?' {
+      when 'new' {
+        signalbox.thread -> signalbox.thread 'Queues turn' {
+          notes '''
+            - If B sent meanwhile, A's turn queues behind B's in the one thread.
+          '''
+        }
+      }
+      else 'already landed' {
+        signalbox.thread -> signalbox.thread 'Dedupes' {
+          notes '''
+            - Same receipt as before: no second message, no duplicate thread.
+          '''
+        }
+      }
+    }
+    signalbox.mobile <- signalbox.funnel 'Receipt' {
+      navigateTo clients_mobile_launch_connect
+    }
+    signalbox.mobile -> personA 'Delivered once' {
+      notes '''
+        - **End:** the outbox entry clears; A sees the message once, in order.
+        - **Decided** #742 / #764 (2026-10-17): keep the durable mobile send outbox.
+      '''
+    }
+  }
+
+  // ─── Scenarios / Clients / Optimistic ────────────────────────────────────
+
+  dynamic view scn_281_optimistic_action_rejected {
+    #decided
+    variant sequence
+    title 'Scenarios/Clients/Optimistic/Action Rejected'
+    description 'What does A see when the server rejects an action that already showed as done? Decided: #742 (2026-10-17), "A rejection reverts it visibly with the reason"; shared optimistic ledger #913 merged. SCN-281 · not v1.'
+
+    include personA, personC, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.web 'Renames Team thread' {
+      notes '''
+        - **Start:** A is a member of folder Team.
+        - The new name shows in under 100 ms from the client command ledger.
+      '''
+    }
+    personC -> signalbox.web 'Removes A from Team' {
+      navigateTo folders_access_roles
+      notes '''
+        - C, admin of folder Company, removes A's access to folder Team.
+      '''
+    }
+    signalbox.web -> signalbox.tree 'Role removed' {
+      notes '''
+        - Tree drops A's role on folder Team. A loses access on the next request.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Sends rename' {
+      navigateTo work_recovery_command_commit
+      notes '''
+        - A's rename (and A's later edits elsewhere) reach the server after C's change.
+      '''
+    }
+    signalbox.funnel -> signalbox.operations 'invoke rename'
+    signalbox.operations -> signalbox.tree 'can(A, rename)?'
+    signalbox.operations <- signalbox.tree 'No access' {
+      notes '''
+        - Authority is checked on every op against the hierarchy, never trusted from the client.
+      '''
+    }
+    signalbox.web <- signalbox.funnel 'Rejected + reason' {
+      navigateTo clients_shell_reconnect
+    }
+    signalbox.web -> signalbox.web 'Drops only that op' {
+      navigateTo work_threads_lifecycle_move_within
+      notes '''
+        - The ledger removes the rejected op and recomputes the view from the rest.
+        - A's later, valid edits (e.g. a pin in folder Personal) stay.
+      '''
+    }
+    signalbox.web -> personA 'Reverts with reason' {
+      notes '''
+        - **End:** the old name returns with "You no longer have access to folder Team"; a safe retry shows only where one exists.
+        - **Decided** #742 (2026-10-17); ledger foundation #913.
+      '''
+    }
+  }
+
+  dynamic view scn_282_drop_before_confirm {
+    #decided
+    variant sequence
+    title 'Scenarios/Clients/Optimistic/Drop Before Confirm'
+    description 'What happens when the connection drops before the server confirms an action? Decided: #742 (2026-10-17), transport loss is an unknown outcome and the server is authoritative; recovery ticket #769 waits on #764. SCN-282 · not v1.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.web 'Acts' {
+      navigateTo work_threads_start_send_draft
+      notes '''
+        - **Start:** A sends a message, or merges a PR, in the shared Team thread on web.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Request (id)' {
+      notes '''
+        - The network drops; the request times out with no answer.
+      '''
+    }
+    signalbox.web -> personA 'Shows unconfirmed' {
+      notes '''
+        - Neither done nor failed: A sees "Not confirmed yet".
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Checks receipt' {
+      navigateTo clients_shell_reconnect
+      notes '''
+        - On reconnect the client asks for the receipt of that request id **before** resending the same id.
+      '''
+    }
+    signalbox.funnel -> signalbox.thread 'Receipt lookup' {
+      navigateTo work_recovery_command_commit
+    }
+    alt 'receipt found?' {
+      when 'committed' {
+        signalbox.funnel <- signalbox.thread 'Committed result'
+      }
+      else 'no receipt' {
+        signalbox.web -> signalbox.funnel 'Resend same id' {
+          navigateTo work_recovery_outbox_retries
+          notes '''
+            - Only a message send resends on its own, with the same id; Thread dedupes by request id.
+            - Merges and PR comments are **never** retried blindly; they wait for A's explicit retry.
+          '''
+        }
+        signalbox.funnel -> signalbox.thread 'Dedupes by id'
+      }
+    }
+    signalbox.web <- signalbox.funnel 'Server state'
+    signalbox.web -> personA 'Settles' {
+      notes '''
+        - **End:** the view settles on the server's state with no duplicate side effects.
+        - **Decided** #742 (2026-10-17); recovery #769 waits on #764.
+      '''
+    }
+  }
+
+  dynamic view scn_283_share_lend_pending_only {
+    #v1
+    #decided
+    variant sequence
+    title 'Scenarios/Clients/Optimistic/Pending Only'
+    description 'Can sharing, lending or connecting ever show as done before the server confirms it? Decided: #742 (2026-10-17), share/unshare, secrets and lending are pending-only and never applied optimistically. SCN-283 · v1 partial: connection placement only.'
+
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.tree, signalbox.connections, signalbox.gateway
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.web 'Shares a folder' {
+      navigateTo journey_sharing_share_dialog
+      notes '''
+        - **Start:** A shares a folder in Personal with B.
+        - The dialog shows "Sharing…", not "Shared".
+      '''
+    }
+    personA -> signalbox.web 'Lends a connection' {
+      navigateTo folders_lending_lend
+      notes '''
+        - A lends A's Google connection into folder Team: a revocable placement there.
+        - It shows pending, including any consent A still has to give.
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Pending ops' {
+      notes '''
+        - Neither op touches the client ledger optimistically.
+      '''
+    }
+    parallel {
+      signalbox.funnel -> signalbox.tree 'Grant B' {
+        navigateTo work_threads_multiplayer_share
+      }
+      signalbox.funnel -> signalbox.tree 'Place loan' {
+        navigateTo folders_placement_kind_pool_connection
+      }
+    }
+    alt 'server answer' {
+      when 'confirmed' {
+        signalbox.tree -> signalbox.connections 'Placement event'
+        signalbox.connections -> signalbox.gateway 'Tools reach Team' {
+          notes '''
+            - Only now do agents in folder Team see the tools, by position.
+          '''
+        }
+        signalbox.mobile <- signalbox.tree 'Access appears' {
+          notes '''
+            - Only now does B see the shared folder in B's tree.
+          '''
+        }
+        personB <- signalbox.mobile 'Sees folder'
+        signalbox.web -> personA 'Done' {
+          notes '''
+            - **End:** both controls flip to done on the server's confirm.
+          '''
+        }
+      }
+      else 'failed' {
+        signalbox.web -> personA 'Fails with reason' {
+          navigateTo person_pipeline_blocker_access
+          notes '''
+            - **End:** the reason shows (e.g. consent missing). Nothing was ever shown as granted.
+            - **Decided** #742 (2026-10-17): never pretend authentication or secret resolution succeeded.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view scn_284_clicks_stop_twice {
+    #decided
+    variant sequence
+    title 'Scenarios/Clients/Optimistic/Stop Twice'
+    description 'What happens when A clicks Stop twice on a running turn? Decided: #742 (2026-10-17) plan, Stop shows "Stopping" and a second click cannot become Resume (#781). SCN-284 · not v1.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.harness
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.web 'Clicks Stop' {
+      notes '''
+        - **Start:** a turn is running in the Team thread.
+        - The button shows "Stopping", not "Stopped".
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'interrupt(id)' {
+      navigateTo work_turns_interrupt_stop
+    }
+    signalbox.funnel -> signalbox.thread 'Interrupt turn'
+    signalbox.thread -> signalbox.harness 'Stop session' {
+      navigateTo work_recovery_effect_cancel
+      notes '''
+        - Thread tells the harness session to stop and cancels pending effects.
+      '''
+    }
+    personA -> signalbox.web 'Clicks again' {
+      notes '''
+        - The control is still "Stopping"; it can't turn into Resume.
+        - At most it resends the same interrupt id, which Thread dedupes.
+      '''
+    }
+    signalbox.thread <- signalbox.harness 'Stopped'
+    signalbox.web <- signalbox.funnel 'Turn stopped'
+    signalbox.web -> personA 'Shows stopped' {
+      notes '''
+        - **End:** the real stop is reported only once the harness confirms it.
+        - **Decided** #742 (2026-10-17), #781.
+      '''
+    }
+  }
+
+  // ─── Scenarios / Clients / Surfaces ──────────────────────────────────────
+
+  dynamic view scn_285_feature_missing_on_mobile {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Clients/Surfaces/Missing On Mobile'
+    description 'What does A see when a feature is missing on mobile? Decided: #826 (web and desktop required, mobile for asks and approvals), #742 (2026-10-17) unsupported cloud controls stay explicitly unavailable, #718 hide Connect flows on cloud. Assumption for native entry points: an explicit unavailable state with an "Open on web" hand-off until mobile gets them (no lying UI); pending #313. SCN-285 · not v1.'
+
+    include personA, signalbox.mobile, signalbox.web, signalbox.attention, signalbox.automations
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.mobile 'Opens automation' {
+      navigateTo journey_workspace_mobile_layout
+      notes '''
+        - **Start:** A is on the phone and looks for "Move to folder…" on an automation.
+      '''
+    }
+    signalbox.mobile -> personA 'Unavailable here' {
+      notes '''
+        - The control shows as unavailable on mobile with "Open on web". Never a broken screen.
+        - **Assumption** (pending #313): explicit unavailable state plus hand-off until mobile has it.
+      '''
+    }
+    personA -> signalbox.web 'Opens on web' {
+      navigateTo clients_shell_open_origin
+      notes '''
+        - The link opens the same automation on web at the same place.
+      '''
+    }
+    signalbox.web -> signalbox.automations 'Move to folder' {
+      navigateTo work_automations_move
+    }
+    personA -> signalbox.mobile 'Notification settings' {
+      notes '''
+        - The old Signalbox Connect prompt is gone on cloud (#718); A sees only real settings.
+      '''
+    }
+    signalbox.attention -> signalbox.mobile 'Ask arrives' {
+      navigateTo journey_daily_answer_ask
+      notes '''
+        - The automation's run asks A for an approval.
+      '''
+    }
+    personA -> signalbox.mobile 'Answers ask' {
+      notes '''
+        - **End:** asks and approvals work on mobile as normal; anything mobile lacks hands off to web.
+        - **Decided** scope #826, #742 (2026-10-17), #718.
+      '''
+    }
+  }
+
+  dynamic view scn_286_settings_were_local {
+    #assumption
+    variant sequence
+    title 'Scenarios/Clients/Surfaces/Settings Sync'
+    description 'If A changes a setting that was device-local in T3 Code, does it follow A to every device? Assumption: person preferences live in the Person actor and sync everywhere; work keys stay on the level chain; display state stays device-local. Why: #335 moves client-only UI state server-side; #440 recommended option, matches one interface everywhere; pending #440. SCN-286 · v1 no.'
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.tree
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.desktop 'Changes preference' {
+      navigateTo person_settings_change
+      notes '''
+        - **Start:** on the laptop A stars model favorites, mutes a notification kind and rebinds a key.
+      '''
+    }
+    signalbox.desktop -> signalbox.funnel 'Save preference'
+    signalbox.funnel -> signalbox.tree 'Commit revision' {
+      notes '''
+        - Stored with A (Tree keeps person state) as a committed revision, not in device storage.
+      '''
+    }
+    signalbox.tree -> signalbox.mobile 'New revision' {
+      notes '''
+        - The phone's subscription picks up the revision.
+      '''
+    }
+    signalbox.mobile -> signalbox.tree 'Default model?' {
+      notes '''
+        - A folder's default model is a work key placed on the level chain (nearest wins).
+        - A's favorites only order A's picker; they never change folder Team's default.
+      '''
+    }
+    signalbox.mobile -> signalbox.mobile 'Theme stays local' {
+      navigateTo clients_shell_appearance_keys
+      notes '''
+        - Display-only state like theme and zoom stays per device.
+      '''
+    }
+    signalbox.mobile -> signalbox.funnel 'Migrate old prefs' {
+      navigateTo person_settings_migrate
+      notes '''
+        - Old per-device T3 Code prefs migrate once into the Person actor; later devices just read it.
+      '''
+    }
+    signalbox.mobile -> personA 'Same on phone' {
+      notes '''
+        - **End:** the phone shows the same favorites, notification prefs and keybindings.
+        - **Assumption** (pending #440): person prefs in the Person actor; work keys on the chain; display local.
+      '''
+    }
+  }
+
+  // ─── Scenarios / Clients / CLI ───────────────────────────────────────────
+
+  dynamic view scn_287_local_agent_cli_answers {
+    #assumption
+    variant sequence
+    title 'Scenarios/Clients/CLI/Agent Answers Via CLI'
+    description 'Can a local agent use A\'s CLI login to answer a human-only ask for A? Assumption: no; CLI sessions are always agent-class for human-only and destructive ops and get a confirm URL; a TTY prompt never counts as human. Why: design A40 (local keys are agent-class with confirm URLs) and agents can fake a TTY; pending #441 (CLI shipping pending #456). SCN-287 · v1 no.'
+
+    include personA, laptopCli, signalbox.cli, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.operations, signalbox.attention
+    include signalbox
+    global style scn14Lanes
+
+    personA -> signalbox.cli 'Logs in' {
+      navigateTo identity_identity_device_code
+      notes '''
+        - **Start:** A signed the CLI in by device code on the laptop.
+      '''
+    }
+    signalbox.cli -> signalbox.identity 'Device code'
+    laptopCli -> signalbox.cli 'threads respond' {
+      notes '''
+        - A local agent in A's shell runs `signalbox threads respond …` on a human-only ask, using A's CLI login.
+      '''
+    }
+    signalbox.cli -> signalbox.funnel 'respond(ask)'
+    signalbox.funnel -> signalbox.operations 'invoke respond' {
+      navigateTo work_agenttools_app_ops
+      notes '''
+        - The CLI session is a LocalKeyActor: agent-class at the decision gate, whoever typed.
+      '''
+    }
+    signalbox.operations -> signalbox.attention 'Ask stays open' {
+      navigateTo person_asks_gated_op
+      notes '''
+        - No answer is recorded; the ask stays in A's lanes.
+      '''
+    }
+    signalbox.cli <- signalbox.operations 'HumanOnly{confirmUrl}' {
+      notes '''
+        - A TTY prompt is never accepted as proof of a human.
+      '''
+    }
+    personA -> signalbox.web 'Opens confirm link' {
+      navigateTo folders_gates_confirm_in_app
+      notes '''
+        - A opens the link and confirms in the app as themself, or ignores it.
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Confirm as A' {
+      notes '''
+        - **End:** only A's own confirm in the app answers the ask.
+        - **Assumption** (pending #441): CLI sessions are agent-class for human-only ops (design A40).
+      '''
+    }
+  }
+}

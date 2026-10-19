@@ -1,0 +1,20 @@
+// State machine for one mount. The walk through it with people and modules is the dynamic view state_mount.
+model {
+  smMount = state 'Mount lifecycle' {
+    active = state 'Active' { description 'folder shows in this tree · via resolves' }
+    inactive = state 'Inactive' { description 'same MountRef kept' }
+
+    active -[transition]-> inactive 'unmount · leave'
+    inactive -[transition]-> active 'remount'
+  }
+}
+views {
+  view state-mount of smMount {
+    title 'States/Mount/State machine'
+    description 'How does a mounted folder leave and come back into a person\'s tree? Start: green. No end state: every state has a way back. Click the frame for the walk with people and modules (state_mount).'
+    include *
+    include smMount with { navigateTo state_mount }
+    style smMount.active { color green }
+    autoLayout TopBottom
+  }
+}

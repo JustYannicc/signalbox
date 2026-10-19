@@ -1,0 +1,1770 @@
+// Placement, lending and gates on folders. The rule every view here follows: a thing resolves for a
+// thread iff it's placed at the thread's level or above with reach below; nearest wins; the answer is
+// the same for every person in the thread. Anything else comes in only by a loan.
+// Generic folders only: top level, folder "Company" (owner: organization), folder "Team" inside it.
+// A and B are members of Company, C is its admin, D an outside collaborator on Team only.
+views {
+
+  // ───────────────────────── States ─────────────────────────
+
+  dynamic view state_placement {
+    title 'States/Placement/Walk through'
+    variant sequence
+    description 'R-PLC-25 · How one placement lives and ends: placed on a level, resolved by every turn below it (whoever sends), then expired or removed.'
+
+    include signalbox, signalbox.tree, signalbox.tree.levelActor, domain, domain.placement, domain.loan, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway, signalbox.models, signalbox.models.custody
+
+    signalbox.tree.levelActor -> domain.placement 'Placed' {
+      navigateTo folders_placement_place
+      notes """
+        - `Place{kind, ref, at, reach, until?}` commits on the Level with a version bump
+        - Reach defaults to `below`; nearest wins
+      """
+    }
+    signalbox.thread.threadActor -> domain.placement 'Resolved by turns' {
+      notes """
+        - Every turn at or below the level resolves it, for A and B alike
+        - Each turn freezes the Scope it resolved
+      """
+    }
+    alt 'how it ends' {
+      when 'until passes' {
+        signalbox.tree.levelActor -> signalbox.tree.levelActor 'Alarm at until' {
+          notes """
+            - A row on the Level alarm job table fires; no person or agent acts
+          """
+        }
+        signalbox.tree.levelActor -> domain.placement 'Expired' {
+          notes """
+            - Row removed, version bump, same as an unplace
+          """
+        }
+      }
+      else 'someone removes it' {
+        signalbox.tree.levelActor -> domain.placement 'Unplaced' {
+          navigateTo folders_placement_unplace
+          notes """
+            - A person with the role, or an agent through the decision gate for pools
+          """
+        }
+      }
+    }
+    signalbox.tree.levelActor -[async]-> signalbox.models.custody 'Index drops it' {
+      notes """
+        - Outbox to the custody actor's outbound-placements index (S6)
+      """
+    }
+    signalbox.gateway -> domain.placement 'Refresh denies' {
+      notes """
+        - Removals deny at the next grant refresh (M11): model calls and tools alike
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'Next turn re-resolves' {
+      navigateTo folders_placement_change_to_turns
+      notes """
+        - Running turns finish on their frozen Scope
+        - The next turn finds the next nearest item, or `NeedsPool` / `AccessRequired`
+      """
+    }
+    domain.placement -> domain.loan 'Into another owner: loan' {
+      navigateTo state_loan
+      notes """
+        - A placement into a level the lender doesn't own is a loan
+      """
+    }
+
+    style domain, signalbox, signalbox.tree, signalbox.thread, signalbox.models {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view state_loan {
+    title 'States/Loan/Walk through'
+    variant sequence
+    description 'R-LND-06 · How one loan is offered, used and ends (until or End loan). While active it resolves for everyone in the folder, not just the lender.'
+
+    include personA, personB, domain, domain.loan, domain.placement, signalbox, signalbox.tree, signalbox.tree.levelActor, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway
+
+    personA -> domain.loan 'Lend' {
+      navigateTo folders_lending_lend
+      notes """
+        - Offered: A owns the item, is Member+ at Team, and consents themselves (human-only)
+      """
+    }
+    alt 'destination' {
+      when 'kind accepted' {
+        signalbox.tree.levelActor -> domain.loan 'Active' {
+          notes """
+            - Team's Level commits the row, shown as "lent by A"
+          """
+        }
+      }
+      else 'kind refused' {
+        signalbox.tree.levelActor -> domain.loan 'Refused' {
+          navigateTo folders_lending_accept_kinds
+          notes """
+            - Team doesn't accept the kind, or Enterprise refuses personal pools
+          """
+        }
+      }
+    }
+    personB -> signalbox.thread.threadActor 'Turns use it' {
+      notes """
+        - B's turns in Team resolve the loan exactly like A's would
+      """
+    }
+    alt 'how it ends' {
+      when 'until passes' {
+        signalbox.tree.levelActor -> domain.loan 'Expired' {
+          notes """
+            - The Level alarm fires at `until`
+          """
+        }
+      }
+      else 'A ends it' {
+        personA -> domain.loan 'End loan' {
+          navigateTo folders_lending_end_loan
+          notes """
+            - From the lent thing's own row, even without reach into Team
+          """
+        }
+      }
+    }
+    signalbox.gateway -> signalbox.thread.threadActor 'Refresh re-checks' {
+      notes """
+        - Running turns finish on their frozen Scope (§3.3)
+        - Open: Gateway M11 also lists a loan's end as a refresh deny; the two rules disagree
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'Next turn re-resolves' {
+      notes """
+        - Next pool on the chain, or `NeedsPool` as a Blocker ask
+      """
+    }
+    domain.loan -> domain.placement 'A loan is a placement' {
+      navigateTo state_placement
+    }
+
+    style domain, signalbox, signalbox.tree, signalbox.thread {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Gates ─────────────────────────
+
+  dynamic view folders_gates_assistant_answers {
+    variant sequence
+    title 'Workflows/Folders/Gates/Assistant answers a delegated gate'
+    description 'R-GAT-05 · A gate ask answered by the assistant on the person\'s behalf: logged with the rule, never pushed; an overturn teaches the Learner.'
+
+    include personA, hier, hier.asstA, signalbox, signalbox.thread, signalbox.thread.threadActor, signalbox.attention, signalbox.learner
+
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'Gate ask raised' {
+      navigateTo person_pipeline_route
+      notes """
+        - A Ready ask with a gate in the shared Team thread; the route lists A and admin C
+      """
+    }
+    signalbox.attention -> hier.asstA 'Assistant first' {
+      navigateTo person_pipeline_ready_delegate_kind
+      notes """
+        - A delegated this gate kind, so A's assistant answers as A would
+        - C didn't delegate: C still sees it in their Ready lane until it's answered
+      """
+    }
+    hier.asstA -> signalbox.thread.threadActor 'Answer with rule' {
+      notes """
+        - `Thread.send(answer)`; the first receipt wins
+      """
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'Ask resolved' {
+      navigateTo state_ask
+      notes """
+        - Everyone's projection drops; nothing is pushed to A
+      """
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.learner 'Log decision' {
+      notes """
+        - Recorded as on-behalf, with the rule used
+      """
+    }
+    opt 'A disagrees' {
+      personA -> signalbox.thread.threadActor 'Overturn' {
+        notes """
+          - A sees the logged answer in the thread and reverses it
+        """
+      }
+      signalbox.thread.threadActor -[async]-> signalbox.learner 'Overturn teaches' {
+        notes """
+          - The Learner's lens at that level shifts for next time
+        """
+      }
+    }
+
+    style hier, signalbox, signalbox.thread {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_gates_confirm_in_app {
+    variant sequence
+    title 'Workflows/Folders/Gates/Confirm in the app: NeedsDecision and HumanOnly'
+    description 'R-GAT-02, R-GAT-03 · External sessions get a confirm URL instead of an ask; in-app agents are refused human-only operations.'
+
+    include personA, personB, mcpClient, hier, hier.company, hier.company.team, hier.company.team.agentTeam, signalbox, signalbox.web, signalbox.operations, signalbox.identity
+
+    mcpClient -> signalbox.identity 'Authenticate session' {
+      notes """
+        - MCP bearer → `McpSessionActor{A, place}`: carries A, but is agent-class
+      """
+    }
+    mcpClient -> signalbox.operations 'Invoke operation' {
+      notes """
+        - Arrives through ToolGateway; Operations checks the operation's class
+      """
+    }
+    alt 'operation and caller' {
+      when 'destructive, external session' {
+        mcpClient <- signalbox.operations 'NeedsDecision{confirmUrl}' {
+          navigateTo folders_gates_destructive
+          notes """
+            - No thread to raise an ask in, so no ask record is created
+          """
+        }
+      }
+      when 'human-only, external session' {
+        mcpClient <- signalbox.operations 'HumanOnly{confirmUrl}' {
+          notes """
+            - Loan consent, final OAuth step, gate answers, linking 1Password, sign-in grants
+          """
+        }
+      }
+      else 'human-only, in-app agent' {
+        hier.company.team.agentTeam -> signalbox.operations 'Invoke consent' {
+          navigateTo work_agenttools_app_ops
+        }
+        hier.company.team.agentTeam <- signalbox.operations 'Refused' {
+          navigateTo person_pipeline_blocker_approval
+          notes """
+            - Agent-class actors (Team's agent here) never perform human-only operations; it asks A instead
+          """
+        }
+      }
+    }
+    personA -> signalbox.web 'Open confirm link' {
+      notes """
+        - A follows the URL their MCP client showed them
+      """
+    }
+    signalbox.web -> signalbox.identity 'Session as A' {
+      navigateTo identity_identity_mcp_signin
+      notes """
+        - Cookie session → `PersonActor{A}`
+      """
+    }
+    signalbox.web -> signalbox.operations 'Confirm as A' {
+      notes """
+        - Runs as a person, so the gate or human-only check passes
+      """
+    }
+    opt 'B opens the link' {
+      personB -> signalbox.web 'Open A\'s link'
+      signalbox.web <- signalbox.identity 'Denied' {
+        notes """
+          - Assumed: the confirm is bound to the session's person, like a `placeId` (S1)
+        """
+      }
+    }
+
+    style signalbox, hier, hier.company, hier.company.team {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_gates_destructive {
+    variant sequence
+    title 'Workflows/Folders/Gates/Run a destructive operation'
+    description 'R-GAT-01, R-GAT-04 · People with the role act directly; an agent or run gets NeedsDecision and a Ready ask to the level\'s responsible people.'
+
+    include personA, personC, hier, hier.asstC, hier.company, hier.company.team, hier.company.team.sharedThread, signalbox, signalbox.operations, signalbox.automations, signalbox.attention
+
+    alt 'who invokes' {
+      when 'C, holding the role' {
+        personC -> signalbox.operations 'Delete folder' {
+          notes """
+            - In the app; C is admin of Company, inherited down to Team (R-GAT-04)
+            - `Tree.can` passes; no gate for a person with the role
+          """
+        }
+      }
+      else 'an agent or run' {
+        personA -> hier.company.team.sharedThread 'Drop the old pool' {
+          notes """
+            - A asks the agent in the shared Team thread; run threads take the same path
+          """
+        }
+        hier.company.team.sharedThread -> signalbox.operations 'Invoke unplace' {
+          notes """
+            - `AgentActor`: agent-class, so destructive ops return `NeedsDecision`
+          """
+        }
+        signalbox.operations -> signalbox.automations 'Decision gate' {
+          navigateTo person_pipeline_ready_gate
+          notes """
+            - The gate is a default automation, editable like any other
+          """
+        }
+        signalbox.automations -> hier.company.team.sharedThread 'Ready ask' {
+          navigateTo state_ask
+          notes """
+            - `gate: destructive`, decider: Team's responsible people (C)
+          """
+        }
+        hier.company.team.sharedThread -[async]-> signalbox.attention 'Route to C'
+        signalbox.attention -> hier.asstC 'Assistant first' {
+          navigateTo folders_gates_assistant_answers
+          notes """
+            - Only if C delegated destructive gates; otherwise it lands in C's Ready lane
+          """
+        }
+        personC -> hier.company.team.sharedThread 'Approve' {
+          notes """
+            - Answer is a message into the thread
+          """
+        }
+        hier.company.team.sharedThread -> signalbox.operations 'Run decided op'
+      }
+    }
+
+    style signalbox, hier, hier.company, hier.company.team {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Lending ─────────────────────────
+
+  dynamic view folders_lending_accept_kinds {
+    variant sequence
+    title 'Workflows/Folders/Lending/Choose accepted loan kinds for a folder'
+    description 'R-ACC-23 · An admin sets which kinds a folder accepts as loans, and can withhold the inherited home pool.'
+
+    include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree
+
+    personC -> signalbox.web 'Open Team lending' {
+      notes """
+        - Folder page › Lending; C is admin on Company, inherited by Team
+      """
+    }
+    signalbox.web -> signalbox.operations 'Set accepted kinds'
+    signalbox.operations -> signalbox.tree 'AcceptKinds' {
+      notes """
+        - `Tree.change(AcceptKinds{Team, kinds})`, checked by `Tree.can`
+      """
+    }
+    signalbox.tree -> signalbox.tree 'Commit, version++'
+    opt 'withhold the home pool' {
+      signalbox.web -> signalbox.operations 'Withhold home pool'
+      signalbox.tree -> signalbox.tree 'Mark withheld' {
+        notes """
+          - Assumed: A's and B's top-level pools stop reaching Team through their mounts
+          - Team then needs a Company pool or a loan, else `NeedsPool`
+        """
+      }
+    }
+    signalbox.web <- signalbox.operations 'Receipt' {
+      navigateTo folders_lending_lend
+      notes """
+        - Every later Lend into Team is checked against these kinds
+      """
+    }
+
+    style signalbox, signalbox.tree {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_access_request {
+    variant sequence
+    title 'Workflows/Folders/Lending/Ask for access: Place or Lend'
+    description 'R-LND-08 · A call blocked because nothing on Team\'s chain has it parks the turn behind a Blocker whose only answers are Place (C, who has the role) or Lend (A, who owns one). Part 2: folders_lending_access_request_agent.'
+
+    include personB, personC, personA, signalbox, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway, signalbox.attention, signalbox.operations
+
+    personB -> signalbox.thread.threadActor 'Send turn' {
+      notes """
+        - B, in the shared Team thread, asks for something in Gmail
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.gateway 'Call Gmail tool'
+    signalbox.thread.threadActor <- signalbox.gateway 'AccessRequired' {
+      navigateTo folders_placement_resolve_shared
+      notes """
+        - No Google connection on Team's chain, so nobody's turn here has one (A's, B's or D's)
+        - `canPlace: [C]` (role holders on the chain), `orAskToLend: true`
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'Park, raise Blocker' {
+      navigateTo state_ask
+      notes """
+        - The turn parks instead of failing; answers: Place or Lend only
+      """
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'Route Blocker' {
+      navigateTo person_pipeline_blocker_access
+    }
+    parallel {
+      signalbox.attention -> personC 'Place option' {
+        notes """
+          - C may place a Company Google connection: it then reaches every thread below
+        """
+      }
+      signalbox.attention -> personA 'Lend option' {
+        notes """
+          - A owns a Google account they could lend into Team
+        """
+      }
+    }
+    alt 'answer' {
+      when 'C places' {
+        personC -> signalbox.operations 'Place at Company' {
+          navigateTo folders_placement_place
+        }
+      }
+      else 'A lends' {
+        personA -> signalbox.operations 'Lend into Team' {
+          navigateTo folders_lending_lend
+          notes """
+            - Consent is human-only: A themselves
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.thread.threadActor 'Answer resumes' {
+      navigateTo folders_lending_access_request_agent
+      notes """
+        - The answer arrives as a normal message; the parked turn resolves again and continues
+      """
+    }
+
+    style signalbox, signalbox.thread {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_access_request_agent {
+    variant sequence
+    title 'Workflows/Folders/Lending/Ask for access: Team agent needs a person\'s thing'
+    description 'R-LND-09 · Part 2 of folders_lending_access_request: Team\'s agent hits something only A owns; A\'s assistant answers first, but only A can lend.'
+
+    include personA, hier, hier.asstA, hier.company, hier.company.team, hier.company.team.agentTeam, signalbox, signalbox.attention, signalbox.operations
+
+    hier.company.team.agentTeam -[async]-> signalbox.attention 'Ask A' {
+      navigateTo folders_lending_access_request
+      notes """
+        - Team's agent thread needs a person-owned resource of A that isn't placed or lent into Team
+      """
+    }
+    signalbox.attention -> hier.asstA 'Assistant first' {
+      navigateTo person_pipeline_route
+    }
+    alt 'assistant decides' {
+      when 'approve one step' {
+        hier.asstA -> hier.company.team.agentTeam 'Approve step' {
+          notes """
+            - Within what A delegated; no standing access is created
+          """
+        }
+      }
+      else 'needs a loan' {
+        hier.asstA -> personA 'Escalate to A' {
+          notes """
+            - Lending needs A's own consent, so the assistant can't do it
+          """
+        }
+        personA -> signalbox.operations 'Lend into Team' {
+          navigateTo folders_lending_lend
+          notes """
+            - From then on it resolves for every thread in Team, not just the agent's
+          """
+        }
+      }
+    }
+
+    style hier, hier.company, hier.company.team, signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_company_pool {
+    variant sequence
+    title "Workflows/Folders/Lending/An organization lends its pool to employees' assistants"
+    description 'R-LND-11 · Admin C lends Company pool P2 into A\'s and B\'s top levels so their assistants can run on it.'
+
+    include personC, personA, personB, hier, hier.asstA, signalbox, signalbox.operations, signalbox.tree, signalbox.models
+
+    personC -> signalbox.operations 'Lend P2 to members' {
+      navigateTo folders_lending_lend
+      notes """
+        - In the app: Company › Pool P2 › Lend into members' top levels
+      """
+    }
+    signalbox.operations -> signalbox.tree 'Lend into top levels' {
+      navigateTo state_loan
+      notes """
+        - One `Lend{P2, into: top level}` per member
+        - Assumed: each top level accepts lent pools by default
+      """
+    }
+    signalbox.tree -[async]-> signalbox.models 'Custody index' {
+      notes """
+        - P2's row on Company lists "lent to A's top level, B's top level" with End loan
+      """
+    }
+    personA -> signalbox.operations 'Pick P2' {
+      notes """
+        - A marks P2 `preferred` among the pools at their top level
+        - A's top level now has P1 (own) and P2 (lent); the assistant uses the preferred one
+      """
+    }
+    hier.asstA -> signalbox.models 'Turns on P2' {
+      notes """
+        - A's assistant now spends Company tokens
+      """
+    }
+    personB -> signalbox.operations 'Keep P3' {
+      notes """
+        - B leaves P3 preferred, so B's assistant stays on B's own pool
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_end_loan {
+    variant sequence
+    title "Workflows/Folders/Lending/End a loan from the lent thing's row"
+    description 'R-LND-05 · The lender ends a loan from the lent thing\'s own row, via the custody outbound index, even without reach into the destination.'
+
+    include personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.models.custody
+
+    personA -> signalbox.web 'Open P1 row' {
+      notes """
+        - Pool P1 on A's top level
+      """
+    }
+    signalbox.web -> signalbox.operations 'Read placements'
+    signalbox.operations -> signalbox.models.custody 'Outbound index' {
+      notes """
+        - Lists "lent to Team" even if A can no longer open Team
+      """
+    }
+    signalbox.web -> signalbox.operations 'End loan'
+    signalbox.operations -> signalbox.tree 'EndLoan' {
+      navigateTo state_loan
+      notes """
+        - Authority is owning P1, not reach into Team
+      """
+    }
+    signalbox.tree -> signalbox.tree 'Drop row' {
+      notes """
+        - Team's Level bumps its version; running turns finish on their frozen Scope
+      """
+    }
+    signalbox.tree -[async]-> signalbox.models.custody 'Index updated'
+    signalbox.web <- signalbox.operations 'Receipt'
+
+    style signalbox, signalbox.tree, signalbox.models {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_leaver_loans {
+    variant sequence
+    title "Workflows/Folders/Lending/End a leaver's loans"
+    description 'P-OUT-12 · Loans survive leaving; the leaver ends them from the lent thing\'s own row through the outbound index.'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.tree, signalbox.models, signalbox.models.custody, signalbox.connections
+
+    personA -> signalbox.web 'Leave Company' {
+      navigateTo person_leaving_leave_org
+      notes """
+        - A's mount goes inactive; their loans into Team stay
+      """
+    }
+    signalbox.web -> signalbox.tree 'Unmount'
+    personC -> signalbox.web 'Open Team page' {
+      notes """
+        - C still sees "Google · A (lent by A)"
+      """
+    }
+    personA -> signalbox.web 'Open own Google' {
+      notes """
+        - Settings on A's top level; A can't open Team anymore
+      """
+    }
+    signalbox.web -> signalbox.connections 'Read outbound index'
+    signalbox.web -> signalbox.tree 'EndLoan' {
+      navigateTo folders_lending_end_loan
+      notes """
+        - Through Operations; no reach into Team needed
+      """
+    }
+    signalbox.tree -[async]-> signalbox.connections 'Index updated'
+    opt 'P1 was lent too' {
+      signalbox.web -> signalbox.tree 'End P1 loan'
+      signalbox.tree -[async]-> signalbox.models.custody 'Index updated'
+    }
+
+    style signalbox, signalbox.models {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_lend {
+    variant sequence
+    title 'Workflows/Folders/Lending/Lend into a folder or thread'
+    description 'R-LND-01, R-LND-02, R-LND-03, R-LND-04 · A lends their thing into folder Team or one thread; B uses it; refused when Team doesn\'t accept the kind.'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.models.custody, signalbox.thread, signalbox.thread.threadActor
+
+    personA -> signalbox.web 'Lend into…' {
+      notes """
+        - Google · A or pool P1, from its row on A's top level
+      """
+    }
+    signalbox.web -> signalbox.operations 'Invoke Lend' {
+      navigateTo folders_gates_confirm_in_app
+      notes """
+        - A's own act is the consent (human-only, R-LND-03)
+        - An agent proposing it gets `HumanOnly`
+      """
+    }
+    signalbox.operations -> signalbox.tree 'Check owner, Member+' {
+      notes """
+        - A owns it and is Member+ at Team
+      """
+    }
+    alt 'Team accepts the kind?' {
+      when 'accepted' {
+        alt 'into' {
+          when 'folder Team' {
+            signalbox.operations -> signalbox.tree 'Lend into Team'
+          }
+          else 'one thread' {
+            signalbox.operations -> signalbox.tree 'Lend into thread' {
+              notes """
+                - Reaches only that thread (R-LND-02)
+              """
+            }
+          }
+        }
+        signalbox.tree -> signalbox.tree 'Row: lent by A' {
+          navigateTo journey_admin_folder_row_origins
+          notes """
+            - C sees it on Team's page as "lent by A"
+          """
+        }
+        signalbox.tree -[async]-> signalbox.models.custody 'Outbound index' {
+          navigateTo state_loan
+        }
+        personB -> signalbox.thread.threadActor 'Send turn'
+        signalbox.thread.threadActor -> signalbox.tree 'Resolve: from loan' {
+          notes """
+            - B's turn gets the item with `from: Team, lentBy: A`
+          """
+        }
+      }
+      else 'refused' {
+        signalbox.tree -> signalbox.operations 'Invalid' {
+          navigateTo folders_lending_accept_kinds
+          notes """
+            - Kind not accepted, or Enterprise refuses personal pools (R-LND-04)
+          """
+        }
+        signalbox.web <- signalbox.operations 'One-time warning'
+      }
+    }
+    opt 'later' {
+      personA -> signalbox.web 'End loan' {
+        navigateTo folders_lending_end_loan
+      }
+    }
+
+    style signalbox, signalbox.tree, signalbox.models, signalbox.thread {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_make_org {
+    variant sequence
+    title 'Workflows/Folders/Lending/Make an organization and auto-lend its pool'
+    description 'R-LND-10 · Making a folder an organization\'s auto-lends the inherited pool ("lent by A"), revocable.'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree, signalbox.models, platform, platform.workos
+
+    personA -> signalbox.web 'Make organization' {
+      notes """
+        - On A's folder Company, which A owned until now
+      """
+    }
+    signalbox.web -> signalbox.operations 'MakeOrganization'
+    signalbox.operations -> signalbox.identity 'Create organization'
+    signalbox.identity -> platform.workos 'Create WorkOS org' {
+      notes """
+        - A becomes its owner; C joins later as admin
+      """
+    }
+    signalbox.operations -> signalbox.tree 'Re-own Company' {
+      navigateTo folders_tree_make_org
+      notes """
+        - Company's owner becomes the organization; the organization's defaults are placed
+      """
+    }
+    signalbox.tree -> signalbox.tree 'Auto-lend P1' {
+      navigateTo state_loan
+      notes """
+        - P1 used to reach Company from A's top level; now it's a loan "lent by A"
+      """
+    }
+    signalbox.tree -[async]-> signalbox.models 'Custody index'
+    opt 'C places a Company pool' {
+      personC -> signalbox.web 'Place P2' {
+        notes """
+          - P2 at Company is nearest and wins; A can end the P1 loan any time
+        """
+      }
+      signalbox.web -> signalbox.operations 'Place pool'
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_lending_round_robin {
+    variant sequence
+    title 'Workflows/Folders/Lending/Balance turns across several lent pools'
+    description 'R-LND-07 · Two pools lent into Team: turns spread round-robin, sticky per thread.'
+
+    include personA, personB, hier, hier.company, hier.company.team, hier.company.team.sharedThread, hier.company.team.teamPrivateB, signalbox, signalbox.tree, signalbox.gateway, signalbox.models, signalbox.models.custody
+
+    personA -> hier.company.team.sharedThread 'Send turn'
+    hier.company.team.sharedThread -> signalbox.tree 'Resolve pools' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - `nearestSet(pool)` at Team = {P1 lent by A, P3 lent by B}
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.gateway 'Model call'
+    signalbox.gateway -> signalbox.models.custody 'Pin P1' {
+      navigateTo folders_pools_pins
+      notes """
+        - Round-robin over the set; the pick sticks to this thread
+        - Two pools are two custody actors, drawn as one lane
+      """
+    }
+    personB -> hier.company.team.teamPrivateB 'Send turn'
+    hier.company.team.teamPrivateB -> signalbox.gateway 'Model call'
+    signalbox.gateway -> signalbox.models.custody 'Pin P3' {
+      notes """
+        - Next thread gets the next pool
+      """
+    }
+    loop 'later turns' {
+      hier.company.team.sharedThread -> signalbox.gateway 'Cached pin P1'
+    }
+    opt 'P1 exhausted' {
+      signalbox.gateway -> signalbox.models.custody 'Fail over to P3' {
+        notes """
+          - Failover stays within the resolved set (#281)
+        """
+      }
+    }
+
+    style hier, hier.company, hier.company.team, signalbox, signalbox.models {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Placement: lifecycle ─────────────────────────
+
+  dynamic view folders_placement_place {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Placement/Lifecycle/Place a thing at a level'
+    description 'v1 (pool, connection) · R-PLC-01, R-PLC-03 · Place{kind, ref, at, reach}: role checked per kind, version bump, outbox to the custody index; then toggle reach.'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.models.custody
+
+    personC -> signalbox.web 'Add on Company' {
+      navigateTo folders_placement_create_then_place
+      notes """
+        - "Add" in any folder section; agents call the same operation
+      """
+    }
+    signalbox.web -> signalbox.operations 'Invoke Place'
+    signalbox.operations -> signalbox.tree 'Place{kind, ref, at, reach}' {
+      navigateTo apps_place
+      notes """
+        - Kind registry says who may place: pools need Admin+
+      """
+    }
+    alt 'role for this kind?' {
+      when 'C is Admin on Company' {
+        signalbox.tree -> signalbox.tree 'Row, version++' {
+          navigateTo state_placement
+          notes """
+            - Reach `below` by default; nearest wins
+          """
+        }
+        signalbox.tree -[async]-> signalbox.models.custody 'Outbound index' {
+          notes """
+            - Same transaction as the row, delivered by outbox (S6)
+          """
+        }
+        signalbox.web <- signalbox.operations 'Receipt' {
+          navigateTo folders_placement_change_to_turns
+          notes """
+            - A's and B's next turns below Company pick it up
+          """
+        }
+      }
+      else 'A is only Member' {
+        signalbox.tree -> signalbox.operations 'Denied' {
+          navigateTo folders_lending_lend
+          notes """
+            - A can lend their own item instead
+          """
+        }
+      }
+    }
+    opt 'set reach (R-PLC-03)' {
+      personC -> signalbox.web 'Toggle folders inside' {
+        notes """
+          - "Available to folders inside": `below` ↔ `here`
+        """
+      }
+      signalbox.web -> signalbox.operations 'SetReach'
+      signalbox.tree -> signalbox.tree 'version++' {
+        notes """
+          - `here`: Team stops seeing it; running turns keep their frozen Scope
+        """
+      }
+    }
+
+    style signalbox, signalbox.tree, signalbox.models {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_unplace {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Placement/Lifecycle/Remove a placement'
+    description 'v1 · R-PLC-02 · Unplace: running turns finish on their frozen Scope; grant refresh denies the removed item; agents unplacing a pool hit the gate.'
+
+    include personC, hier, hier.company, hier.company.team, hier.company.team.agentTeam, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway
+
+    alt 'who removes' {
+      when 'C, from the row' {
+        personC -> signalbox.web 'Row › Remove'
+        signalbox.web -> signalbox.operations 'Invoke Unplace'
+      }
+      else 'an agent' {
+        hier.company.team.agentTeam -> signalbox.operations 'Invoke Unplace' {
+          navigateTo folders_gates_destructive
+          notes """
+            - Unplacing a pool is destructive: `NeedsDecision`, Ready ask to the level's people
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.tree 'Unplace'
+    signalbox.tree -> signalbox.tree 'Drop row, version++' {
+      navigateTo state_placement
+      notes """
+        - Outbox also updates the custody index
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'Turn keeps Scope' {
+      notes """
+        - The running turn in Team keeps what it resolved
+      """
+    }
+    signalbox.gateway -> signalbox.tree 'Refresh re-checks' {
+      navigateTo folders_placement_change_to_turns
+      notes """
+        - A removal used by the frozen Scope → deny at refresh (M11)
+      """
+    }
+    signalbox.thread.threadActor <- signalbox.gateway 'Denied for item' {
+      notes """
+        - The next turn resolves without it
+      """
+    }
+
+    style signalbox, hier, hier.company, hier.company.team, signalbox.thread {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_create_then_place {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Placement/Lifecycle/Create then place a pool or connection'
+    description 'v1 · R-PLC-28 · Custody actor created first, then placed; a sweeper deletes custody unplaced past a TTL.'
+
+    include personC, signalbox, signalbox.web, signalbox.operations, signalbox.connections, signalbox.tree, signalbox.automations
+
+    personC -> signalbox.web 'Connect Confluence' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - Company › Connections; pools follow the same saga
+      """
+    }
+    signalbox.web -> signalbox.operations 'Complete connect'
+    signalbox.operations -> signalbox.connections 'Create, requestId' {
+      notes """
+        - Idempotent by `requestId`; starts Unplaced
+      """
+    }
+    try {
+      signalbox.connections -> signalbox.tree 'Place at Company' {
+        navigateTo folders_placement_place
+        notes """
+          - Second step of the saga, retry-safe
+        """
+      }
+      signalbox.web <- signalbox.operations 'Connected'
+    } catch 'crash before place' {
+      signalbox.automations -> signalbox.connections 'Sweep past TTL' {
+        notes """
+          - Custody sweeper (a default automation) deletes it
+          - Nothing ever referenced it, so nothing breaks
+        """
+      }
+    }
+
+    style signalbox, signalbox.connections {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Placement: kinds ─────────────────────────
+
+  dynamic view folders_placement_kind_pool_connection {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place a pool or a connection'
+    description 'v1 · R-PLC-12, R-PLC-13 · Pools resolve nearestSet (Admin+ to place, round-robin sticky); connections resolve union by name (no role → lend).'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.connections
+
+    alt 'kind' {
+      when 'pool' {
+        personC -> signalbox.web 'Add subscription' {
+          navigateTo folders_pools_add_account
+          notes """
+            - `into` is always explicit: new pool P2 placed at Company
+          """
+        }
+        signalbox.web -> signalbox.models 'Connect into new'
+        signalbox.models -> signalbox.tree 'Place pool' {
+          navigateTo folders_placement_create_then_place
+          notes """
+            - Admin+ on Company; merge rule `nearestSet`
+          """
+        }
+        signalbox.tree -> signalbox.tree 'Nearest set at Team' {
+          navigateTo folders_lending_round_robin
+          notes """
+            - P2 now wins below Company for A, B and Company's agent
+            - Several pools at one level: round-robin, sticky per thread
+          """
+        }
+      }
+      else 'connection' {
+        personA -> signalbox.web 'Add Google' {
+          navigateTo folders_connections_oauth_connect
+          notes """
+            - A wants their Google account usable in Team
+          """
+        }
+        signalbox.web -> signalbox.connections 'Connect'
+        alt 'role at Team?' {
+          when 'may place' {
+            signalbox.connections -> signalbox.tree 'Place connection' {
+              notes """
+                - Merge rule `union` by name: nearest per name
+              """
+            }
+          }
+          else 'Member only' {
+            signalbox.connections -> signalbox.tree 'Lend into Team' {
+              navigateTo folders_lending_lend
+              notes """
+                - Placed on A's top level, lent into Team
+              """
+            }
+          }
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_secret {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place a secret reference'
+    description 'R-PLC-14 · A secret reference placed on a folder; the value stays in 1Password. Reach default below vs own-folder-only is an open conflict.'
+
+    include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.gateway, services, services.onepassword
+
+    personC -> signalbox.web 'Add secret on Team' {
+    }
+    alt 'reference' {
+      when 'op:// ref' {
+        signalbox.web -> signalbox.operations 'Place secretRef' {
+          notes """
+            - `op://vault/item/field`; Signalbox never stores the value
+          """
+        }
+      }
+      else 'vault or Environment' {
+        signalbox.web -> signalbox.operations 'Bind folder vault' {
+          navigateTo folders_secrets_service_account
+          notes """
+            - A folder vault or 1Password Environment binding
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.tree 'Place, reach' {
+      notes """
+        - CONFLICT: reach `below` (default for every kind) vs own-folder-only for secrets
+      """
+    }
+    signalbox.gateway -> signalbox.tree 'Resolve at fill' {
+      navigateTo folders_secrets_placeholder_fill
+      notes """
+        - `{{secret:NAME}}` filled on the way out, never in the computer
+      """
+    }
+    signalbox.gateway -> services.onepassword 'Read value'
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_skill_plugin {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place a skill, plugin or MCP server'
+    description 'R-PLC-15, R-PLC-21 · Skills install with a with-vs-without eval and publish at Company with reach below; plugins and MCP servers are config with one home.'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.judge, signalbox.drive, signalbox.harness
+
+    alt 'what' {
+      when 'skill' {
+        personA -> signalbox.web 'Install skill' {
+          navigateTo journey_admin_plugins_view
+          notes """
+            - From skills.sh, onto Team
+          """
+        }
+        signalbox.web -> signalbox.judge 'Eval with vs without' {
+          navigateTo mkt_install_skill
+          notes """
+            - Bounded judgment on Team's own tasks
+          """
+        }
+        signalbox.web -> signalbox.drive 'Store content' {
+          navigateTo mkt_update
+          notes """
+            - Versioned by content hash; invalid ones kept with a badge
+          """
+        }
+        signalbox.operations -> signalbox.tree 'Place skill'
+        opt 'publish for everyone' {
+          personC -> signalbox.operations 'Place at Company' {
+            notes """
+              - Team publishing = a home on Company with reach below
+            """
+          }
+        }
+      }
+      else 'plugin or MCP server' {
+        personC -> signalbox.web 'Add plugin config'
+        signalbox.operations -> signalbox.tree 'Place config'
+      }
+    }
+    signalbox.harness -> signalbox.tree 'Apply per turn' {
+      notes """
+        - Resolved by `union` at each turn wherever it runs
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_instructions {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place AGENTS.md and preview the cascade'
+    description 'R-PLC-16 · AGENTS.md cascades top first, nearest block per heading, per-harness blocks; the preview is exactly what a turn gets.'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.harness
+
+    personC -> signalbox.web 'Edit Company AGENTS.md'
+    signalbox.web -> signalbox.operations 'Place instructions'
+    signalbox.operations -> signalbox.tree 'Place'
+    personA -> signalbox.web 'Edit Team AGENTS.md' {
+      notes """
+        - Overrides only the headings Team writes
+      """
+    }
+    signalbox.web -> signalbox.tree 'Preview cascade' {
+      navigateTo folders_placement_resolve
+      notes """
+        - `Scope.cascade(instructions)`: top level, Work, Company, Team
+        - Nearest block per heading; Claude/Codex blocks split
+      """
+    }
+    signalbox.harness -> signalbox.tree 'Same at turn' {
+      notes """
+        - A turn in Team gets byte-for-byte the preview
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_automation {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place or move an automation'
+    description 'R-PLC-17, R-PLC-30 · A definition is placed at its home level and runs on that chain; after a move it runs on the new chain from the next run.'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.automations, signalbox.tree
+
+    alt 'action' {
+      when 'define' {
+        personA -> signalbox.web 'New on Team' {
+          navigateTo work_automations_define
+        }
+        signalbox.web -> signalbox.automations 'define(Team)'
+        signalbox.automations -> signalbox.tree 'Place definition' {
+          notes """
+            - Team's agent is responsible; runs are run threads at Team, no `via`
+          """
+        }
+      }
+      else 'move' {
+        personC -> signalbox.web 'Move to Company' {
+          navigateTo work_automations_move
+        }
+        signalbox.web -> signalbox.automations 'change(Move)'
+        alt 'movable?' {
+          when 'user automation' {
+            signalbox.automations -> signalbox.tree 'Re-place' {
+              notes """
+                - Next run resolves on Company's chain; current runs stay pinned
+              """
+            }
+          }
+          else 'built-in or guard' {
+            signalbox.automations -> signalbox.web 'Invalid' {
+              notes """
+                - Decision gate and machine reconcile can't move
+              """
+            }
+          }
+        }
+      }
+    }
+    signalbox.tree -> signalbox.automations 'Ticks from home' {
+      navigateTo state_automation
+      notes """
+        - Tick rows live on the home Level's alarm table
+      """
+    }
+
+    style signalbox, signalbox.tree {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_base_recipe {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place a Base recipe'
+    description 'R-PLC-19 · baseRecipe resolves nearest with reach below; a subfolder\'s own recipe gets its own Base.'
+
+    include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.bases, signalbox.drive, signalbox.drive.repoActor
+
+    personC -> signalbox.web 'Set Base recipe' {
+      notes """
+        - Admin-only by default, on the repo folder
+      """
+    }
+    signalbox.web -> signalbox.operations 'Place baseRecipe'
+    signalbox.operations -> signalbox.tree 'Place, nearest'
+    signalbox.tree -[async]-> signalbox.bases 'Recipe live' {
+      navigateTo work_bases_place_recipe
+    }
+    signalbox.bases -> signalbox.drive.repoActor 'Key (drive, hash)' {
+      navigateTo state_base
+      notes """
+        - Two recipes on one drive never share a Base
+      """
+    }
+    opt 'subfolder recipe' {
+      personC -> signalbox.operations 'Place on subfolder'
+      signalbox.bases -> signalbox.drive.repoActor 'Second Base' {
+        notes """
+          - Threads below the subfolder fork that Base instead
+        """
+      }
+    }
+
+    style signalbox, signalbox.drive {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_device {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place a device'
+    description 'R-PLC-18 · A device has a home level and a notify setting; a phone homed at Personal never rings for Company work unless a delivery rule names it.'
+
+    include personA, signalbox, signalbox.mobile, signalbox.operations, signalbox.attention, signalbox.tree
+
+    personA -> signalbox.mobile 'Register phone' {
+      navigateTo journey_devices_manage
+      notes """
+        - Home: Personal; notify on
+      """
+    }
+    signalbox.mobile -> signalbox.operations 'device(Register)'
+    signalbox.operations -> signalbox.attention 'Register'
+    signalbox.attention -> signalbox.tree 'Store device' {
+      notes """
+        - Devices live on the Person actor, not a Level
+      """
+    }
+    signalbox.attention -> signalbox.tree 'Covers ask?' {
+      notes """
+        - Ask in Team: chain via A's mount doesn't include Personal → no ring
+      """
+    }
+    opt 'delivery rule' {
+      signalbox.attention -> signalbox.mobile 'Push anyway' {
+        notes """
+          - Only if a `deliveryRule` on Company names this phone
+        """
+      }
+    }
+
+    style signalbox, signalbox.tree {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_source {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place a source'
+    description 'R-PLC-20 · A source narrows a connection or another drive to one resource, mounted as /sources/<label>/.'
+
+    include personA, signalbox, signalbox.web, signalbox.operations, signalbox.connections, signalbox.drive, signalbox.tree
+
+    personA -> signalbox.web 'Map a Drive folder' {
+      navigateTo folders_connections_map_source
+      notes """
+        - On Team, from Company's Google connection
+      """
+    }
+    signalbox.web -> signalbox.operations 'Map'
+    signalbox.operations -> signalbox.connections 'change(Map)'
+    opt 'from another drive' {
+      signalbox.connections -> signalbox.drive 'Validate DriveRef'
+    }
+    signalbox.connections -> signalbox.tree 'Place source' {
+      notes """
+        - `union` by label; reach below
+      """
+    }
+    signalbox.drive -> signalbox.tree 'Mount /sources/' {
+      notes """
+        - Turns in Team see `/sources/google-drive/…`
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_kind_setting {
+    variant sequence
+    title 'Workflows/Folders/Placement/Kinds/Place a folder setting (egress, default model, delivery rule)'
+    description 'R-PLC-22, R-PLC-23, R-PLC-24, T-APR-11, T-GIT-35 · Settings are placements: one Place step, then each kind feeds its module.'
+
+    include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.computer, signalbox.models, signalbox.attention, signalbox.drive
+
+    personC -> signalbox.web 'Folder settings' {
+      notes """
+        - On Company or Team; nearest wins below
+      """
+    }
+    signalbox.web -> signalbox.operations 'Place setting' {
+      navigateTo folders_placement_place
+    }
+    signalbox.operations -> signalbox.tree 'Place{kind}'
+    alt 'kind' {
+      when 'egress' {
+        signalbox.computer -> signalbox.tree 'Allowlist' {
+          navigateTo work_computer_open
+          notes """
+            - `union`: feeds the VM egress allowlist (R-PLC-22)
+          """
+        }
+      }
+      when 'default model' {
+        signalbox.models -> signalbox.tree 'Default order' {
+          notes """
+            - explicit → folder → personal → economical → choose (R-PLC-23)
+          """
+        }
+      }
+      when 'delivery rule' {
+        signalbox.attention -> signalbox.tree 'Rules' {
+          notes """
+            - Deterministic escalation at a level (R-PLC-24)
+          """
+        }
+      }
+      when 'permission mode' {
+        signalbox.operations -> signalbox.tree 'Policy' {
+          navigateTo work_approvals_modes
+          notes """
+            - Default permission mode as a placement (T-APR-11, unconfirmed)
+          """
+        }
+      }
+      else 'git style' {
+        signalbox.drive -> signalbox.tree 'Writing, branches' {
+          navigateTo work_git_sync_follow
+          notes """
+            - Writing style and branch naming for git-host sync (T-GIT-35, unconfirmed)
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Placement: resolution ─────────────────────────
+  // The core rule, drawn in three views: (1) one shared thread gives A, B and D the same Scope,
+  // (2) how a Place resolves (walk up, nearest wins, union for connections), (3) Company's own
+  // agents and runs stop at Company. Inputs are only the Place and the placements above it.
+
+  dynamic view folders_placement_resolve {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Placement/Resolution/Resolve a Place to a Scope'
+    description 'v1 partial (pools and connections for local keys and MCP sessions) · R-PLC-04, R-PLC-31 · Walk up from the Place, nearest wins per kind, connections union by name, then the purpose filter. Inputs: the Place and the placements above it, nothing about who asks.'
+
+    include
+      hier,
+      hier.topA,
+      hier.topA.poolA,
+      hier.company,
+      hier.company.poolCo,
+      hier.company.confluence,
+      hier.company.team,
+      hier.company.team.sharedThread,
+      signalbox,
+      signalbox.tree,
+      signalbox.gateway
+
+    hier.company.team.sharedThread -> signalbox.tree 'resolve(Place)' {
+      navigateTo folders_placement_resolve_shared
+      notes """
+        - The thread's Place: `{Team, via?}`; turn start, grants, local keys, MCP sessions and the picker all call this
+        - Inputs: the Place and the placements on its chain. Never who sends, who started the thread, or who owns the credential
+      """
+    }
+    signalbox.tree -> signalbox.tree 'Walk up: Team, Company' {
+      notes """
+        - Each level's placements with reach `below` (or `here` at the Place itself)
+        - Parents inside the owner first: Team, then Company
+      """
+    }
+    opt 'has via' {
+      signalbox.tree -> signalbox.tree 'Continue: Work, top level' {
+        navigateTo folders_placement_authority
+        notes """
+          - `via` is part of the thread's position, written once when it was filed or moved, never per turn
+          - So every sender of this thread walks the same chain
+          - Company's agent and runs have no `via`: they stop at Company
+        """
+      }
+    }
+    alt 'pool: nearest wins' {
+      when 'P2 on Company' {
+        signalbox.tree -> hier.company.poolCo 'Pool P2' {
+          navigateTo folders_placement_kind_pool_connection
+          notes """
+            - The first level up that has a pool wins; P2 at Company beats P1 further up
+          """
+        }
+      }
+      else 'nothing on Company' {
+        signalbox.tree -> hier.topA.poolA 'Next up: P1' {
+          navigateTo folders_pools_needs_pool
+          notes """
+            - Only through the thread's `via`; without one: `NeedsPool`, answered by Place or Lend
+          """
+        }
+      }
+    }
+    signalbox.tree -> hier.company.confluence 'Connections: union' {
+      notes """
+        - Union by name, nearest per name; AGENTS.md cascades top first
+        - Every item carries `from` (the level it came from, or "lent by")
+      """
+    }
+    signalbox.tree -> signalbox.gateway 'Scope, purpose filter' {
+      navigateTo folders_placement_change_to_turns
+      notes """
+        - worker: all · coordinator: no exec, secrets or write tools · external: what resolved
+        - Memo by (ownRev, parentRev); a turn freezes the Scope it got
+      """
+    }
+
+    style hier, hier.topA, hier.company, hier.company.team, signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_resolve_shared {
+    variant sequence
+    title 'Workflows/Folders/Placement/Resolution/One shared thread resolves the same for A, B and D'
+    description 'R-PLC-05, R-PLC-06 · The core rule: Scope = f(Place, placements above it). A, B and outside collaborator D send turns into one Team thread and get the same pool and connections. Nearest wins; anything not above Team only comes in by a loan.'
+
+    include
+      personA,
+      personB,
+      personD,
+      hier,
+      hier.topA,
+      hier.topA.googleA,
+      hier.company,
+      hier.company.poolCo,
+      hier.company.confluence,
+      hier.company.team,
+      hier.company.team.sharedThread,
+      signalbox,
+      signalbox.tree
+
+    personA -> hier.company.team.sharedThread 'A sends a turn' {
+      navigateTo state_thread
+      notes """
+        - Member of Company; reaches Team through their own Work folder
+      """
+    }
+    personB -> hier.company.team.sharedThread 'B sends a turn' {
+      notes """
+        - Member of Company; the turn queues in the same Thread actor
+      """
+    }
+    personD -> hier.company.team.sharedThread 'D sends a turn' {
+      notes """
+        - Outside collaborator: has only folder Team, nothing above it
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.tree 'resolve(Team)' {
+      navigateTo folders_placement_resolve
+      notes """
+        - One call per turn, same input every time: the thread's Place
+        - Who sends is not an input, so A, B and D can't get different answers
+      """
+    }
+    hier.company.poolCo -[reach]-> hier.company.team.sharedThread 'Pool: P2, nearest' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - Team has no pool; Company is the nearest level with one
+        - A's P1 and B's P3 sit on their own top levels: never used here
+      """
+    }
+    hier.company.confluence -[reach]-> hier.company.team.sharedThread 'Confluence: reaches' {
+      notes """
+        - Placed on Company with reach below: every thread in Team gets it
+      """
+    }
+    hier.topA.googleA -[lend]-> hier.company.team.sharedThread 'Google · A: lent' {
+      navigateTo folders_lending_lend
+      notes """
+        - A's own account is not above Team; it reaches only because A lent it into Team
+        - B and D use it too, shown as "lent by A"; A can end the loan any time
+      """
+    }
+    signalbox.tree -> hier.company.team.sharedThread 'Same Scope for all' {
+      navigateTo folders_lending_access_request
+      notes """
+        - A, B and D: P2 · Confluence · Google · A (lent)
+        - Missing something? Place it on Team or Company, or lend it. Nothing else
+      """
+    }
+
+    style hier, hier.topA, hier.company, hier.company.team, signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_resolve_org_chain {
+    variant sequence
+    title 'Workflows/Folders/Placement/Resolution/Company agents and runs resolve on folder Company chain only'
+    description 'R-PLC-07 · Company\'s agent, Company automations and threads filed at Company without a mount have no via, so the chain is Company alone; nothing there → NeedsPool to admin C.'
+
+    include
+      personC,
+      hier,
+      hier.company,
+      hier.company.poolCo,
+      hier.company.agentCo,
+      hier.company.runCo,
+      signalbox,
+      signalbox.automations,
+      signalbox.tree,
+      signalbox.attention
+
+    signalbox.automations -> hier.company.runCo 'Start run at Company' {
+      navigateTo work_automations_run
+      notes """
+        - `Thread{kind: run}` at the automation's home, with no `via` mount
+      """
+    }
+    parallel {
+      hier.company.runCo -> signalbox.tree 'resolve(Company)' {
+        navigateTo folders_placement_resolve
+        notes """
+          - No `via`: the chain is Company and nothing above it
+        """
+      }
+      hier.company.agentCo -> signalbox.tree 'resolve(Company)' {
+        notes """
+          - Company's agent thread, same rule
+          - A's, B's and C's top-level pools never reach, whoever set the automation up
+        """
+      }
+    }
+    alt 'pool on Company?' {
+      when 'P2 placed' {
+        hier.company.poolCo -[reach]-> hier.company.runCo 'Pool P2'
+      }
+      else 'nothing' {
+        signalbox.tree -> signalbox.attention 'NeedsPool' {
+          navigateTo person_pipeline_blocker_needs_pool
+        }
+        signalbox.attention -> personC 'Blocker: Place or Lend' {
+          notes """
+            - To Company's admins (C): place a Company pool, or someone lends one into Company
+          """
+        }
+      }
+    }
+
+    style hier, hier.company, signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_change_to_turns {
+    variant sequence
+    title 'Workflows/Folders/Placement/Resolution/Placement changes reach running and next turns'
+    description 'R-PLC-10, R-PLC-11 · A change bumps the Level version; refresh denies only removals the running turn used; additions arrive at the next turn, for A and B alike.'
+
+    include personC, personA, personB, signalbox, signalbox.tree, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway
+
+    personC -> signalbox.tree 'Place or unplace' {
+      navigateTo folders_placement_place
+      notes """
+        - On Company: changes what Team's threads resolve
+      """
+    }
+    signalbox.tree -> signalbox.tree 'version++' {
+      notes """
+        - Child memos keyed (ownRev, parentRev) go stale; recomputed on next read
+      """
+    }
+    alt 'change' {
+      when 'removal' {
+        signalbox.gateway -> signalbox.tree 'Refresh: deny' {
+          navigateTo folders_placement_unplace
+          notes """
+            - Only removals the running turn's frozen Scope used are denied (M11)
+          """
+        }
+      }
+      else 'addition' {
+        signalbox.gateway -> signalbox.tree 'Refresh: keep' {
+          notes """
+            - The running turn keeps its frozen Scope
+          """
+        }
+      }
+    }
+    parallel {
+      personA -> signalbox.thread.threadActor 'Next turn (A)'
+      personB -> signalbox.thread.threadActor 'Next turn (B)'
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Resolve again' {
+      navigateTo folders_placement_resolve_shared
+      notes """
+        - Both turns pick up the change the same way (R-PLC-11)
+      """
+    }
+
+    style signalbox, signalbox.thread {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_authority {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Placement/Resolution/Check who may use a Place'
+    description 'v1 partial (MCP URL, local key) · R-PLC-08, R-PLC-09 · A Place\'s via must be a mount in the creator\'s own tree; a placeId presented by another person is Denied. This limits who may write a Place, never what resolves from it.'
+
+    include personA, personB, mcpClient, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.gateway
+
+    personA -> signalbox.web 'New thread in Team'
+    signalbox.web -> signalbox.tree 'Check via' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Same check at NewThread, Move, LocalKey and McpSession creation
+        - Only who may write a Place; what it resolves to is the same for everyone
+      """
+    }
+    alt 'via' {
+      when 'A\'s own mount' {
+        signalbox.web <- signalbox.tree 'Created' {
+          navigateTo identity_identity_agent_identities
+        }
+      }
+      else 'B\'s mount' {
+        signalbox.web <- signalbox.tree 'Invalid' {
+          notes """
+            - Never silently rewritten (S1)
+          """
+        }
+      }
+    }
+    personA -> signalbox.web 'Copy MCP URL' {
+      navigateTo folders_connections_mcp_url
+      notes """
+        - `/mcp/p/<placeId>` minted for A only
+      """
+    }
+    mcpClient -> signalbox.gateway 'B presents it' {
+      navigateTo folders_pools_local_key
+      notes """
+        - B pasted A's URL (or local key) into B's client
+      """
+    }
+    signalbox.gateway -> signalbox.identity 'Who is this?'
+    mcpClient <- signalbox.gateway 'Denied' {
+      notes """
+        - Authenticated as B, not A's placeId; B makes their own URL for their own Place
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_placement_move_thread {
+    variant sequence
+    title 'Workflows/Folders/Placement/Resolution/Moving a thread changes what it resolves'
+    description 'R-PLC-29 · After a move the next turn resolves at the new Place; pins and loans clear; past usage stays where it happened.'
+
+    include personA, signalbox, signalbox.web, signalbox.operations, signalbox.thread, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.models.custody
+
+    personA -> signalbox.web 'Move to Team' {
+      navigateTo work_threads_lifecycle_move_within
+      notes """
+        - From A's Personal to Team: across owners
+      """
+    }
+    signalbox.web -> signalbox.operations 'Move'
+    signalbox.operations -> signalbox.thread.threadActor 'moved{from, to}' {
+      navigateTo work_threads_lifecycle_move_across
+      notes """
+        - Across owners `via` comes from A's own tree (A's mount)
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'Next turn resolves' {
+      notes """
+        - Team's chain: Company's pool and connections now apply
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.models.custody 'Pins clear' {
+      notes """
+        - Old pool pin and thread loans clear
+      """
+    }
+    signalbox.models.custody -> signalbox.models.custody 'Past rows stay' {
+      navigateTo folders_usage_rollup
+      notes """
+        - Earlier usage stays on Personal (#116)
+      """
+    }
+
+    style signalbox, signalbox.thread, signalbox.models {
+      color muted
+      opacity 10%
+    }
+  }
+}
