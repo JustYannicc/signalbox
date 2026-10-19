@@ -1,20 +1,25 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalFetch:off globalDate:off - isolated diagnostic host without an Effect runtime.
 import { DurableObject } from "cloudflare:workers";
-import { createFacetFilePersistence } from "../../src/kernel/FacetFilePersistence.ts";
-import { createMemoryFilePersistencePorts } from "../../src/kernel/MemoryFilePersistencePorts.ts";
-import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
-import { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
-import { createNodeFs } from "../../src/isolate/NodeFs.ts";
-import { createNodeProcess } from "../../src/isolate/NodeProcess.ts";
+import { createProofFilesystemHost } from "./proofFilesystem.ts";
+import { createProofProgramRuntime } from "./proofProgramRuntime.ts";
+import type { ProofProgramModules } from "./proofPrograms.ts";
 import { createNodePath } from "../../src/isolate/NodePath.ts";
 import { createNodeOs } from "../../src/isolate/NodeOs.ts";
 import * as NodeConstants from "node:constants";
 import { createNodeConstants } from "../../src/isolate/NodeConstants.ts";
-import { createProofEnvironment, type ProofPackages } from "./proofEnvironment.ts";
+import {
+  createProofEnvironment,
+  createProofIdentity,
+  createProofProcessEnvironment,
+  type ProofPackages,
+} from "./proofEnvironment.ts";
 import { bootNodeRelease } from "../../src/isolate/NodeBootstrap.ts";
 import type { NodeBridge } from "../../src/isolate/NodeBridge.ts";
-import { createProofBun } from "./proofBun.ts";
 import { decodeVerifiedAssetBundle } from "./assetBundle.ts";
+import {
+  createPreparedAssetModuleResolver,
+  type PreparedAssetModuleCatalog,
+} from "./preparedAssetModules.ts";
 import { createMockMessagesApi } from "./mockMessages.ts";
 import { getNativeHostModules } from "./proofNativeModules.ts";
 import { createGuestObservation, errorDetail, readAssetBody } from "./proofObservation.ts";
@@ -28,9 +33,13 @@ import {
 } from "./proofScenario.ts";
 import { TOOL_SCENARIO } from "./toolScenario.ts";
 import { verifySeededAssets } from "./proofAssets.ts";
+import {
+  createProofExecutableSeedRoute,
+  type ProofExecutableFileCatalog,
+} from "./proofExecutableSeed.ts";
 
 export interface ClaudeTurnProofConfig {
-  readonly assets: Readonly<Record<string, { bytes: number; sha256: string }>>;
+  readonly assets: PreparedAssetModuleCatalog;
   readonly pins: Readonly<Record<string, unknown>>;
   readonly requireSeed: boolean;
   readonly assetsOnly?: boolean;
@@ -39,24 +48,31 @@ export interface ClaudeTurnProofConfig {
   readonly scenario: ProofScenario;
   readonly contextTokenEquivalent?: ContextTokenEquivalent;
   readonly loadRelease: () => Promise<unknown>;
+  readonly programs?: ProofProgramModules;
+  readonly programFiles?: ProofExecutableFileCatalog;
 }
 
 export function createClaudeTurnProofClass(
   config: ClaudeTurnProofConfig,
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => DurableObject {
+  if ((config.programs === undefined) !== (config.programFiles === undefined)) {
+    throw new Error("Proof executable modules and seeded file catalog must be configured together");
+  }
   return class ClaudeTurnProof extends DurableObject {
-    private filesystemHost: ReturnType<typeof createFilesystemHost> | undefined;
+    private filesystemHost: ReturnType<typeof createProofFilesystemHost> | undefined;
+    private programSeedRoute: ReturnType<typeof createProofExecutableSeedRoute> | undefined;
     private bootStarted = false;
     private assetsSeeded = false;
 
     private filesystem() {
-      return (this.filesystemHost ??= createFilesystemHost(this.ctx.storage));
+      return (this.filesystemHost ??= createProofFilesystemHost(this.ctx.storage));
     }
 
     override async fetch(request: Request) {
       try {
         const path = new URL(request.url).pathname;
         if (path === "/seed-assets") return await this.seedAssets(request);
+        if (path === "/seed-programs") return await this.seedPrograms(request);
         if (path === "/verify-assets") {
           if (request.method !== "GET") return new Response("GET required", { status: 405 });
           if (!this.assetsSeeded) throw new Error("ERR_DIAGNOSTIC_ASSETS_NOT_SEEDED");
@@ -67,6 +83,8 @@ export function createClaudeTurnProofClass(
           return Response.json({ ok: false, error: "Unknown proof endpoint" }, { status: 404 });
         if (config.requireSeed && !this.assetsSeeded)
           throw new Error("ERR_DIAGNOSTIC_ASSETS_NOT_SEEDED");
+        if (config.programFiles !== undefined && !this.programSeedHandler().seeded)
+          throw new Error("ERR_DIAGNOSTIC_PROGRAMS_NOT_SEEDED");
         if (this.bootStarted) throw new Error("ERR_DIAGNOSTIC_BOOT_ALREADY_STARTED");
         this.bootStarted = true;
         return await this.boot();
@@ -102,9 +120,38 @@ export function createClaudeTurnProofClass(
       });
     }
 
+    private programSeedHandler() {
+      const catalog = config.programFiles;
+      if (catalog === undefined) throw new Error("ERR_DIAGNOSTIC_PROGRAMS_NOT_CONFIGURED");
+      return (this.programSeedRoute ??= createProofExecutableSeedRoute({
+        catalog,
+        filesystem: () => this.filesystem().filesystem,
+        storage: this.ctx.storage,
+      }));
+    }
+
+    private async seedPrograms(request: Request) {
+      if (config.programFiles === undefined) {
+        return new Response("Program seeding is not configured", { status: 404 });
+      }
+      return await this.programSeedHandler().handle(request, {
+        bootStarted: this.bootStarted,
+        assetsRequired: config.requireSeed,
+        assetsSeeded: this.assetsSeeded,
+      });
+    }
+
     private async boot() {
       const observation = createGuestObservation();
       const { output, done, complete, guestError, streams } = observation;
+      let cpuRoot: ReturnType<typeof createProofProgramRuntime>["cpuRoot"] | undefined;
+      let leaveCpuUser: (() => void) | undefined;
+      const stopCpuAccounting = () => {
+        leaveCpuUser?.();
+        leaveCpuUser = undefined;
+        cpuRoot?.stop();
+        cpuRoot = undefined;
+      };
       try {
         const mock = createMockMessagesApi({
           bootText: "mock",
@@ -116,26 +163,21 @@ export function createClaudeTurnProofClass(
         const filesystemHost = this.filesystem();
         const { filesystem, fs } = filesystemHost;
         if (config.scenario === "tools") seedToolScenario(filesystemHost);
-        const env = proofEnvironment();
+        const env = createProofProcessEnvironment();
         const prompt = proofPrompt(config.scenario, config.contextTokenEquivalent);
-        const identity = proofIdentity(prompt.text);
-        const host = {
-          filesystem: {
-            get cwd() {
-              try {
-                return filesystem.cwd;
-              } catch (error) {
-                output.errors.push({ operation: "host-filesystem.cwd", ...errorDetail(error) });
-                throw error;
-              }
-            },
-            chdir: (directory: string) => filesystem.chdir(directory),
-          },
+        const identity = createProofIdentity(prompt.text);
+        const runtime = createProofProgramRuntime({
+          ...filesystemHost,
+          ...(config.programs === undefined ? {} : { modules: config.programs }),
           env,
           identity,
           streams,
-        };
-        const process = createNodeProcess(host);
+          assets: config.assets,
+          isSeeded: () => this.assetsSeeded,
+          onMissing: (member) => output.bunMissing.push(member),
+        });
+        const { process, childProcess, bun } = runtime;
+        cpuRoot = runtime.cpuRoot;
         process.on("exit", (code: number) => {
           output.exitCode = code;
           complete("process-exit");
@@ -145,21 +187,20 @@ export function createClaudeTurnProofClass(
           bridge: () => bridge,
           loadPackages: config.loadPackages,
           onBuiltinFailure: (specifier) => output.builtinMissing.push(specifier),
+          prepared: createPreparedAssetModuleResolver({
+            assets: config.assets,
+            fs,
+            isSeeded: () => this.assetsSeeded,
+          }),
         });
         let packageLoad: Awaited<ReturnType<typeof environment.load>> | undefined;
         const path = createNodePath(filesystem);
-        const bun = createProofBun({
-          fs,
-          env,
-          assets: config.assets,
-          isSeeded: () => this.assetsSeeded,
-          onMissing: (member) => output.bunMissing.push(member),
-        });
         const modules = {
           ...getNativeHostModules(),
           ...fs,
           process,
-          os: createNodeOs(host),
+          child_process: childProcess,
+          os: createNodeOs(runtime.processContext),
           path,
           "path/posix": path.posix,
           "path/win32": path.win32,
@@ -170,28 +211,34 @@ export function createClaudeTurnProofClass(
         observation.startDeadline();
         try {
           await Promise.race([
-            bootNodeRelease({ modules, globals: { Bun: bun, process } }, async (installed) => {
-              bridge = installed;
-              output.milestones.push("package-load-start");
-              packageLoad = await environment.load();
-              output.milestones.push("package-load-returned");
-              if (config.packagesOnly) {
-                complete("package-load-success");
-                return;
-              }
-              output.milestones.push("release-import-start");
-              const release = await config.loadRelease();
-              output.milestones.push("release-import-returned");
-              if (
-                !release ||
-                typeof release !== "object" ||
-                typeof Reflect.get(release, "launch") !== "function"
-              )
-                throw new Error("ERR_DIAGNOSTIC_RELEASE_LAUNCH_MISSING");
-              output.milestones.push("release-launch-start");
-              await Reflect.apply(Reflect.get(release, "launch"), release, []);
-              output.milestones.push("release-launch-returned");
-              return release;
+            runtime.cpuRoot.run(() => {
+              leaveCpuUser = runtime.cpuRoot.enterUser();
+              return bootNodeRelease(
+                { modules, globals: { Bun: bun, process } },
+                async (installed) => {
+                  bridge = installed;
+                  output.milestones.push("package-load-start");
+                  packageLoad = await environment.load();
+                  output.milestones.push("package-load-returned");
+                  if (config.packagesOnly) {
+                    complete("package-load-success");
+                    return;
+                  }
+                  output.milestones.push("release-import-start");
+                  const release = await config.loadRelease();
+                  output.milestones.push("release-import-returned");
+                  if (
+                    !release ||
+                    typeof release !== "object" ||
+                    typeof Reflect.get(release, "launch") !== "function"
+                  )
+                    throw new Error("ERR_DIAGNOSTIC_RELEASE_LAUNCH_MISSING");
+                  output.milestones.push("release-launch-start");
+                  await Reflect.apply(Reflect.get(release, "launch"), release, []);
+                  output.milestones.push("release-launch-returned");
+                  return release;
+                },
+              );
             }),
             done,
           ]);
@@ -199,6 +246,7 @@ export function createClaudeTurnProofClass(
           guestError("release-error", error);
         }
         await done;
+        stopCpuAccounting();
         const scenarioResult =
           config.scenario === "tools"
             ? await verifyCommittedToolScenario(filesystemHost, output, mock)
@@ -211,6 +259,7 @@ export function createClaudeTurnProofClass(
           scenarioResult,
           pins: config.pins,
           assetsSeeded: this.assetsSeeded,
+          programsSeeded: this.programSeedRoute?.seeded ?? false,
           ok: config.packagesOnly
             ? packageLoad !== undefined && output.errors.length === 0
             : terminalSuccess(output) && (scenarioResult?.ok ?? mock.complete),
@@ -223,86 +272,9 @@ export function createClaudeTurnProofClass(
           filesystem: { cwd: filesystem.cwd, workEntries: fs.fs.readdirSync("/work") },
         });
       } finally {
+        stopCpuAccounting();
         observation.restore();
       }
     }
-  };
-}
-
-function createFilesystemHost(storage: DurableObjectStorage) {
-  const wakes = new KernelWakeRegistry();
-  const ports = createMemoryFilePersistencePorts();
-  const persistence = createFacetFilePersistence(storage, () => BigInt(Date.now()) * 1_000_000n, {
-    wakes,
-    ports,
-  });
-  const filesystem = new KernelFileSystem({
-    mounts: [{ path: "/", storage: persistence.storage }],
-    cwd: "/",
-  });
-  const fs = createNodeFs(filesystem);
-  for (const directory of ["/work", "/home/claude", "/tmp", "/usr/local/bin"])
-    fs.fs.mkdirSync(directory, { recursive: true });
-  filesystem.chdir("/work");
-  return { wakes, ports, persistence, filesystem, fs };
-}
-
-function proofEnvironment() {
-  return {
-    HOME: "/home/claude",
-    TMPDIR: "/tmp",
-    PATH: "/usr/local/bin:/usr/bin:/bin",
-    TERM: "dumb",
-    NO_COLOR: "1",
-    ANTHROPIC_API_KEY: "mock-only-dummy-key",
-    ANTHROPIC_BASE_URL: "http://mock.anthropic.invalid",
-    DISABLE_TELEMETRY: "1",
-    DISABLE_ERROR_REPORTING: "1",
-    DISABLE_AUTOUPDATER: "1",
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-    CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1",
-    CI: "1",
-    CLAUDE_CODE_SIMPLE: "1",
-    HTTP_PROXY: "",
-    HTTPS_PROXY: "",
-    ALL_PROXY: "",
-    http_proxy: "",
-    https_proxy: "",
-    all_proxy: "",
-    NO_PROXY: "*",
-    no_proxy: "*",
-  };
-}
-
-function proofIdentity(prompt: string) {
-  return {
-    version: "v24.18.0",
-    versions: { node: "24.18.0", bun: "1.3.11" },
-    platform: "linux",
-    arch: "x64",
-    type: "Linux",
-    endianness: "LE" as const,
-    availableParallelism: 1,
-    user: { username: "claude", uid: 1000, gid: 1000, shell: "/bin/bash" },
-    homedir: "/home/claude",
-    tmpdir: "/tmp",
-    pid: 100,
-    ppid: 1,
-    execPath: "/usr/local/bin/claude",
-    argv0: "claude",
-    argv: [
-      "claude",
-      "/$bunfs/root/cli",
-      "-p",
-      prompt,
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--permission-mode",
-      "bypassPermissions",
-      "--allowedTools",
-      "Read,Edit,Write,Grep,Glob,Bash",
-      "--bare",
-    ],
   };
 }
