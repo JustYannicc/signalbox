@@ -184,10 +184,23 @@ export class KernelFileSystem {
   }
 
   open(path: string, flags: number, mode?: number): number {
-    return this.#system(() => {
-      this.#assertOpen();
-      return this.#open.open(path, flags, mode);
-    });
+    let allocated: number | undefined;
+    try {
+      return this.#system(() => {
+        this.#assertOpen();
+        allocated = this.#open.open(path, flags, mode);
+        return allocated;
+      });
+    } catch (error) {
+      if (allocated !== undefined) {
+        try {
+          this.#open.close(allocated);
+        } catch {
+          // Closing consumes the mapping before its release hook. Keep the original failure.
+        }
+      }
+      throw error;
+    }
   }
 
   createInode(

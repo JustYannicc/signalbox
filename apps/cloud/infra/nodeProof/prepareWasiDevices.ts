@@ -32,11 +32,17 @@ export async function prepareKernelWasiDevicesProof(
     `export const encoded = ${JSON.stringify(encoded)};\n`,
   );
   await NodeFSP.writeFile(NodePath.join(destination, "device.wasm"), deviceOpenCommandBytes());
+  await NodeFSP.writeFile(
+    NodePath.join(destination, "device-zero.wasm"),
+    deviceOpenCommandBytes(0),
+  );
   const runtime = await Esbuild.build({
     stdin: {
       sourcefile: "wasi-device-runtime.ts",
       resolveDir: NodeURL.fileURLToPath(new URL("../../src/", import.meta.url)),
       contents: `export {ABI_VERSION,KernelProgramRegistry} from './kernel/KernelAbi.ts';
+export {KernelCpuAccounting} from './kernel/KernelCpuAccounting.ts';
+export {KernelCpuExecution} from './kernel/KernelCpuExecution.ts';
 export {KernelWakeRegistry} from './kernel/KernelWakeRegistry.ts';
 export {KernelFileSystem} from './kernel/KernelFileSystem.ts';
 export {KernelProgramHost} from './kernel/KernelProgramHost.ts';
@@ -75,6 +81,7 @@ export {createNodeChildProcess} from './isolate/NodeChildProcess.ts';`,
           ["runtime.js", { path: "runtime.js", type: "js" }],
           ["program-bytes.js", { path: "program-bytes.js", type: "js" }],
           ["device.wasm", { path: "device.wasm", type: "wasm" }],
+          ["device-zero.wasm", { path: "device-zero.wasm", type: "wasm" }],
           ...programs.map(([name]) => [name + ".wasm", { path: name + ".wasm", type: "wasm" }]),
         ]),
         paths: ["/status", "/again"],
@@ -86,7 +93,7 @@ export {createNodeChildProcess} from './isolate/NodeChildProcess.ts';`,
 }
 
 // The probe command exits with the errno from opening dev/null on preopen fd 3.
-function deviceOpenCommandBytes() {
+function deviceOpenCommandBytes(rights: 0 | 2 = 2) {
   const name = (value: string) => {
     const bytes = [...new TextEncoder().encode(value)];
     return [bytes.length, ...bytes];
@@ -94,8 +101,30 @@ function deviceOpenCommandBytes() {
   // Every fixed section here is shorter than 128 bytes, so its length fits one LEB byte.
   const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
   const body = [
-    0, 0x41, 3, 0x41, 0, 0x41, 0, 0x41, 8, 0x41, 0, 0x42, 2, 0x42, 0, 0x41, 0, 0x41, 32, 0x10, 0,
-    0x10, 1, 0x0b,
+    0,
+    0x41,
+    3,
+    0x41,
+    0,
+    0x41,
+    0,
+    0x41,
+    8,
+    0x41,
+    0,
+    0x42,
+    rights,
+    0x42,
+    0,
+    0x41,
+    0,
+    0x41,
+    32,
+    0x10,
+    0,
+    0x10,
+    1,
+    0x0b,
   ];
   return new Uint8Array([
     0,
@@ -139,8 +168,9 @@ import {Buffer} from 'node:buffer';
 import bash from './bash.wasm';
 import busybox from './busybox.wasm';
 import device from './device.wasm';
+import deviceZero from './device-zero.wasm';
 import {encoded} from './program-bytes.js';
-import {ABI_VERSION,KernelProgramRegistry,KernelWakeRegistry,KernelFileSystem,KernelProgramHost,WASI,createKernelAsyncWasi,createFacetSqliteStorage,createKernelBashProgram,KERNEL_BASH_ARTIFACT,registerKernelBusyboxCat,createNodeFs,createNodeChildProcess} from './runtime.js';
+import {ABI_VERSION,KernelProgramRegistry,KernelCpuAccounting,KernelCpuExecution,KernelWakeRegistry,KernelFileSystem,KernelProgramHost,WASI,createKernelAsyncWasi,createFacetSqliteStorage,createKernelBashProgram,KERNEL_BASH_ARTIFACT,registerKernelBusyboxCat,createNodeFs,createNodeChildProcess} from './runtime.js';
 const credentials={uid:1000,gid:1000,euid:1000,egid:1000};
 const env={PATH:'/bin',HOME:'/home/claude',TMPDIR:'/tmp',SHELL:'/bin/bash'};
 const command=OFFICIAL_BASH_COMMAND_JSON;
@@ -167,6 +197,23 @@ export class WasiDevicesFacet extends DurableObject {
       results.asyncWasiExit=await binding.wasi.start(direct);checks.asyncWasiDevice=results.asyncWasiExit===0;
       const opened=new DataView(direct.exports.memory.buffer).getUint32(32,true);
       checks.asyncWasiCanonicalDescriptor=fs.fstatSync(opened).isCharacterDevice();fs.closeSync(opened);await binding.wasi.close();binding=undefined;
+      for(const persistent of [false,true]) {
+        const before=[...kernel.descriptors.entries()].map(([fd])=>fd);
+        const failure=new Error('device allocation clock failed');let armed=false,failed=false,caught;
+        const execution=new KernelCpuExecution(new KernelCpuAccounting(()=>{
+          if(armed&&[...kernel.descriptors.entries()].length>before.length)failed=true;
+          if(failed){if(!persistent)failed=false;throw failure;}return 0n;
+        }));
+        const faultBinding=createKernelAsyncWasi({filesystem:kernel,wakes});
+        try {
+          const instance=new WebAssembly.Instance(deviceZero,faultBinding.wasi.getImportObject());
+          const memory=new DataView(instance.exports.memory.buffer);memory.setUint32(32,123456,true);armed=true;
+          try{await execution.root.run(()=>faultBinding.wasi.start(instance));}catch(error){caught=error;}
+          armed=false;failed=false;
+          checks['clockFailureIdentity'+persistent]=caught===failure;
+          checks['unpublishedDeviceReleased'+persistent]=memory.getUint32(32,true)===123456&&JSON.stringify([...kernel.descriptors.entries()].map(([fd])=>fd))===JSON.stringify(before);
+        }finally{armed=false;failed=false;execution.root.stop();await faultBinding.wasi.close();}
+      }
       const manifest={name:'device-open',version:'1',abiVersion:ABI_VERSION,entrypoint:'device-open-v1',requiredCapabilities:[]};registry.register(manifest);
       const bashManifest={name:'bash',version:KERNEL_BASH_ARTIFACT.version,abiVersion:ABI_VERSION,entrypoint:'bash-device-proof',requiredCapabilities:[]};registry.register(bashManifest);
       const programs=new Map(registerKernelBusyboxCat(registry,busybox));
