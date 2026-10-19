@@ -6,7 +6,7 @@ import {
   type KernelFileByteView,
 } from "./KernelFileBytes.ts";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
-import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
+import { KernelFileSystem } from "./KernelFileSystem.ts";
 import { createKernelSyscallHost } from "./KernelSyscallHost.ts";
 import type { KernelSyscallResponse } from "./KernelSyscallPort.ts";
 import type { Storage } from "./Wasi.ts";
@@ -194,9 +194,21 @@ describe("KernelFileByteSelection", () => {
       signal: new AbortController().signal,
     });
     const readOnlyFilesystem = new KernelFileSystem({
-      mounts: [{ path: "/", storage, readOnly: true }],
+      mounts: [{ path: "/", storage }],
       fileBytes: selection,
     });
+    const readOnlyHost = createKernelSyscallHost({
+      filesystem: readOnlyFilesystem,
+      args: [],
+      env: {},
+      signal: new AbortController().signal,
+    });
+    const readOnlyPreopen = readOnlyFilesystem.descriptors.get(3);
+    expect(readOnlyPreopen.rightsBase & (1n << 19n)).toBe(1n << 19n);
+    const readOnlyMount = readOnlyPreopen.mount;
+    if (!readOnlyMount) throw new Error("Missing root mount");
+    // Preserve preopen rights so path_open reaches the mount's EROFS check.
+    Object.assign(readOnlyMount, { readOnly: true });
 
     try {
       const initialStat = await pathStat(host, "file");
@@ -217,12 +229,10 @@ describe("KernelFileByteSelection", () => {
       expect(rejectedRights).toMatchObject({ kind: "return", value: 76 });
       expect(calls.binds).toBe(beforeRejectedOpens);
 
-      expect(() =>
-        readOnlyFilesystem.open("/file", KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC),
-      ).toThrow(expect.objectContaining({ code: "EROFS" }));
-      expect(() =>
-        filesystem.open("/directory", KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_TRUNC),
-      ).toThrow(expect.objectContaining({ code: "EISDIR" }));
+      const rejectedReadOnly = await pathOpen(readOnlyHost, "file", O_TRUNCATE, 0, 2n);
+      expect(rejectedReadOnly).toMatchObject({ kind: "return", value: 69 });
+      const rejectedDirectory = await pathOpen(host, "directory", O_TRUNCATE);
+      expect(rejectedDirectory).toMatchObject({ kind: "return", value: 31 });
       expect(calls.binds).toBe(beforeRejectedOpens);
 
       const opened = await pathOpen(host, "file");
@@ -336,7 +346,13 @@ describe("KernelFileByteSelection", () => {
       expect(u32At(append, 304)).toBe(4);
       expect(calls.appends).toEqual([{ offset: 70_001n, length: 4 }]);
       expect(filesystem.descriptors.get(appendFd).offset).toBe(70_005n);
-      await host.call({ name: "fd_close", args: [appendFd], memorySize: 0, regions: [] });
+      const closeAppend = await host.call({
+        name: "fd_close",
+        args: [appendFd],
+        memorySize: 0,
+        regions: [],
+      });
+      expect(closeAppend).toMatchObject({ kind: "return", value: 0 });
       expect(calls.releases).toBe(3);
       expect(storageReleases).toBe(releasesBeforeOpenedFiles + 2);
 
@@ -344,12 +360,19 @@ describe("KernelFileByteSelection", () => {
       expect(truncated).toMatchObject({ kind: "return", value: 0 });
       const truncatedFd = u32At(truncated, 32);
       expect(calls.truncates).toEqual([0n]);
-      await host.call({ name: "fd_close", args: [truncatedFd], memorySize: 0, regions: [] });
+      const closeTruncated = await host.call({
+        name: "fd_close",
+        args: [truncatedFd],
+        memorySize: 0,
+        regions: [],
+      });
+      expect(closeTruncated).toMatchObject({ kind: "return", value: 0 });
       expect(calls.releases).toBe(4);
       expect(storageReleases).toBe(releasesBeforeOpenedFiles + 3);
       expect(storage.stat(inode).size).toBe(9n);
     } finally {
       host.close();
+      readOnlyHost.close();
       readOnlyFilesystem.dispose();
       filesystem.dispose();
       fixture.close();
