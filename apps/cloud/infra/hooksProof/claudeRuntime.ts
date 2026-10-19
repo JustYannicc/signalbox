@@ -33,6 +33,7 @@ import { createSeededChildProgramCatalog } from "../childPrograms/runtime.ts";
 import type { ChildProgramSources } from "../childPrograms/prepare.ts";
 import type { ClaudeHookScenario } from "./claudeScenario.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
+import type { StandardProofAdapter } from "./standardProofAdapter.ts";
 
 const monotonicNowNs = NodeProcess.hrtime.bigint.bind(NodeProcess.hrtime);
 
@@ -53,6 +54,7 @@ export interface ClaudeHookRuntimeOptions {
   readonly codeGeneration: NodeGeneratedCodeOpenPort;
   readonly scenario: ClaudeHookScenario;
   readonly dispatches: ClaudeHooksDispatchRecord[];
+  readonly standard: StandardProofAdapter;
 }
 
 /** Builds the official child-process path and registers Signalbox's opaque hook executable. */
@@ -173,7 +175,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
       const contextual = withOfficialHookContext(registration, payload);
       const service = createHookService({
         registrations: new Map([[id, contextual]]),
-        commands: computer.isolate,
+        commands: options.standard.commands(computer.isolate),
         generated,
         capacity,
       });

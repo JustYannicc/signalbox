@@ -38,6 +38,8 @@ import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/NodeGeneratedC
 import { createClaudeHookRuntime } from "./claudeRuntime.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
 import { runClaudeProofLifecycle } from "./claudeLifecycle.ts";
+import { createStandardProofAdapter, type StandardProofAdapter } from "./standardProofAdapter.ts";
+import { installStandardProofFiles } from "./standardProofFiles.ts";
 import {
   claudeToolScript,
   createClaudeHookScenario,
@@ -141,25 +143,40 @@ export function createClaudeTurnProofClass(
       const { output, done, complete, guestError, streams } = observation;
       const originalFetch = globalThis.fetch;
       let runtime: ReturnType<typeof createClaudeHookRuntime> | undefined;
+      let standard: StandardProofAdapter | undefined;
+      let restoreFiles: (() => void) | undefined;
       let lifecycleOwnsRuntime = false;
       const restore = () => {
         try {
           globalThis.fetch = originalFetch;
         } finally {
-          observation.restore();
+          try {
+            restoreFiles?.();
+            standard?.close();
+          } finally {
+            observation.restore();
+          }
         }
       };
       try {
-        const scenario = createClaudeHookScenario();
         const filesystemHost = this.filesystem();
-        seedClaudeHookScenario(filesystemHost, scenario.settings);
         const mock = createMockMessagesApi({
           bootText: "mock",
           finalText: "mock",
           recordRequestBodies: true,
           tools: [claudeToolScript()],
         });
-        globalThis.fetch = mock.fetch;
+        standard = createStandardProofAdapter(
+          this.ctx.storage,
+          "claude-standard-hooks",
+          (request) => mock.fetch(request),
+        );
+        await standard.prepare();
+        restoreFiles = installStandardProofFiles(filesystemHost.fs, standard);
+        const scenario = createClaudeHookScenario(standard.callback);
+        seedClaudeHookScenario(filesystemHost, scenario.settings);
+        const modelGateway = standard;
+        globalThis.fetch = (input, init) => modelGateway.serve(new Request(input, init));
         const env = createProofProcessEnvironment();
         const prompt = proofPrompt("tools", config.contextTokenEquivalent);
         const identity = createProofIdentity(prompt.text);
@@ -186,6 +203,7 @@ export function createClaudeTurnProofClass(
           ).CODE_GENERATION,
           scenario,
           dispatches,
+          standard,
         });
         runtime.process.on("exit", (code: number) => {
           output.exitCode = code;
@@ -271,6 +289,7 @@ export function createClaudeTurnProofClass(
           machineCalls: runtime.machineCalls.count,
         });
         const terminalOk = terminalSuccess(output);
+        const standardResult = standard.inspect();
         return Response.json({
           ...output,
           lifecycle,
@@ -278,12 +297,25 @@ export function createClaudeTurnProofClass(
           scenario: "official-claude-hooks",
           prompt: { estimatedTokens: prompt.estimatedTokens, paddingBytes: prompt.paddingBytes },
           scenarioResult,
+          standard: {
+            ...standardResult,
+            nativeWrite: {
+              kind: "whole-utf8-workspace-write-test-adapter",
+              writes: standardResult.gateway.writes,
+              sameByteLengthValues: true,
+              variableLengthFill: "unproved",
+              arbitraryFileReadScrubbing: "unproved",
+            },
+          },
           pins: config.pins,
           assetsSeeded: this.assetsSeeded,
           programsSeeded: this.programSeedHandler().seeded,
           ok:
             terminalOk &&
             scenarioResult.ok === true &&
+            standardResult.ok &&
+            standardResult.gateway.writes === 1 &&
+            standardResult.modelGateway?.nativeForwardCount === mock.requests.length &&
             output.errors.length === 0 &&
             runtime.capacity.active === 0,
           mock: { requests: mock.requests, denied: mock.deniedRequests, complete: mock.complete },
