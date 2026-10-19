@@ -1642,6 +1642,7 @@ function codexReplayPreamble(input: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
             extensions: {
+              "openai/standard-form-input": {},
               "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
             },
           },
@@ -1668,7 +1669,10 @@ function codexReplayPreamble(input: {
       frame: {
         id: 2,
         method: "thread/start",
-        params: { config: CodexAdapterV2ThreadConfig.CODEX_THREAD_CONFIG },
+        params: {
+          threadSource: "user",
+          config: CodexAdapterV2ThreadConfig.CODEX_THREAD_CONFIG,
+        },
       },
     },
     {
@@ -1691,7 +1695,7 @@ function codexReplayPreamble(input: {
             cwd: "/workspace",
             cliVersion: "0.144.0",
             source: "vscode",
-            threadSource: null,
+            threadSource: "user",
             agentNickname: null,
             agentRole: null,
             gitInfo: null,
@@ -2502,7 +2506,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("identifies sessions to Codex with the same client info as main", () =>
+  // signalbox: full-access MCP forms require the host to declare standard input support.
+  it.effect("declares standard MCP form input with the main client identity", () =>
     Effect.gen(function* () {
       const transcript = makeCodexReplayTranscript({
         scenario: "initialize-client-info",
@@ -2528,6 +2533,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
             extensions: {
+              "openai/standard-form-input": {},
               "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
             },
           },

@@ -92,6 +92,7 @@ export default {
         "infra/check-plan.ts",
         "infra/nodeProof/*.ts",
         "infra/kernelProof/*.ts",
+        "infra/runStoreProof/proof.ts!", // signalbox: Wrangler loads the standalone store proof by filename.
         "infra/computerPolicyProof/prepare.mjs", // Standalone exact-policy proof builder.
         "infra/computerPolicyProof/proof-source.ts", // Loaded by the generated policy proof entry.
         "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
