@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parent
 
 def prepare(artifact: Path, output: Path):
     info = json.loads((artifact / "manifest.json").read_text())
-    if info["target"] != "wasm32-wasip1":
-        raise ValueError("Only wasm32-wasip1 artifacts are supported")
+    if info["target"] not in ("wasm32-wasip1", "wasm32-unknown-emscripten"):
+        raise ValueError("Only wasm32-wasip1 and wasm32-unknown-emscripten artifacts are supported")
     module = artifact / "engine.wasm"
     if hashlib.sha256(module.read_bytes()).hexdigest() != info["moduleSha256"]:
         raise ValueError("Engine module hash differs from its manifest")
@@ -27,7 +27,8 @@ def prepare(artifact: Path, output: Path):
     output.mkdir(parents=True, exist_ok=False)
     shutil.copy2(module, output / "engine.wasm")
     shutil.copy2(artifact / "loader.mjs", output / "loader.mjs")
-    shutil.copy2(ROOT / "probe.mjs", output / "main.js")
+    emscripten = info["target"] == "wasm32-unknown-emscripten"
+    shutil.copy2(ROOT / ("probe-emscripten.mjs" if emscripten else "probe.mjs"), output / "main.js")
     (output / "engine-info.mjs").write_text("export const info = " + json.dumps(info) + ";\n")
     modules = {"main.js": {"path": "main.js", "type": "js"},
                     "loader.mjs": {"path": "loader.mjs", "type": "js"},
@@ -38,6 +39,9 @@ def prepare(artifact: Path, output: Path):
         "mainModule": "main.js", "entrypoint": "ProbeFacet", "modules": modules,
         "paths": ["/status", "/version"],
     }
+    if emscripten:
+        shutil.copy2(artifact / "engine.mjs", output / "engine.mjs")
+        modules["engine.mjs"] = {"path": "engine.mjs", "type": "js"}
     (output / "manifest.json").write_text(json.dumps(fixture, indent=2) + "\n")
 
 

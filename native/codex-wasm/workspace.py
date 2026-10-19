@@ -40,6 +40,17 @@ def write_toml(path: Path, data):
     path.write_text(output)
 
 
+def patch_entries(patches):
+    """Cargo aliases must retain package identity when several versions coexist."""
+    entries = {}
+    for alias, path in patches.items():
+        package = tomllib.loads((path / "Cargo.toml").read_text())["package"]["name"]
+        entries[alias] = {"path": str(path.resolve())}
+        if alias != package:
+            entries[alias]["package"] = package
+    return entries
+
+
 def prepare_workspace(source: Path, engine: Path, patches, version: str) -> Path:
     root = source / "codex-rs"
     manifest = root / "Cargo.toml"
@@ -50,11 +61,7 @@ def prepare_workspace(source: Path, engine: Path, patches, version: str) -> Path
     # Official release packaging stamps this same workspace version from its tag.
     data["workspace"]["package"]["version"] = version
     replacements = data.setdefault("patch", {}).setdefault("crates-io", {})
-    for alias, path in patches.items():
-        package = tomllib.loads((path / "Cargo.toml").read_text())["package"]["name"]
-        replacements[alias] = {"path": str(path.resolve())}
-        if alias != package:
-            replacements[alias]["package"] = package
+    replacements.update(patch_entries(patches))
     data["profile"]["release"] = {
         "opt-level": "z", "lto": "thin", "codegen-units": 16,
         "debug": False, "strip": "symbols", "panic": "abort",
