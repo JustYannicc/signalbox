@@ -177,7 +177,7 @@ or `vp run knip:production --workspace apps/web` to find code kept alive only by
 The full export audit still has findings and is not a repo-wide CI gate. Extend the
 export check's workspace selectors as more workspaces become clean. Review callers before
 deleting code; production mode can also report development scripts and test fixtures.
-Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
+Runtime-discovered entrypoints and dependency exceptions belong in [knip.ts](../../knip.ts).
 
 ## Desktop artifacts
 
