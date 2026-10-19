@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalFetch:off globalDate:off - isolated diagnostic host without an Effect runtime.
 import { DurableObject } from "cloudflare:workers";
+import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import * as NodeConstants from "node:constants";
 import { createNodeConstants } from "../../src/isolate/NodeConstants.ts";
 import { createNodeOs } from "../../src/isolate/NodeOs.ts";
@@ -31,8 +32,9 @@ import { terminalSuccess, proofPrompt } from "../claudeTurnProof/proofScenario.t
 import { decodeVerifiedAssetBundle } from "../claudeTurnProof/assetBundle.ts";
 import { verifySeededAssets } from "../claudeTurnProof/proofAssets.ts";
 import type { ClaudeTurnProofConfig } from "../claudeTurnProof/ClaudeTurnProof.ts";
-import type { NodeGeneratedCodeFetcher } from "../../src/isolate/NodeGeneratedCode.ts";
+import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/node/generated/invocation.ts";
 import { createClaudeHookRuntime, type ClaudeHooksDispatchRecord } from "./claudeRuntime.ts";
+import { runClaudeProofLifecycle } from "./claudeLifecycle.ts";
 import {
   claudeToolScript,
   createClaudeHookScenario,
@@ -50,6 +52,7 @@ export function createClaudeTurnProofClass(
     throw new Error("Claude hooks proof requires the pinned Bash, BusyBox and ripgrep programs");
   }
   return class ClaudeHooksProof extends DurableObject {
+    private readonly capacity = new ChildWorkerCapacity();
     private filesystemHost: ReturnType<typeof createProofFilesystemHost> | undefined;
     private programSeedRoute: ReturnType<typeof createProofExecutableSeedRoute> | undefined;
     private bootStarted = false;
@@ -133,7 +136,14 @@ export function createClaudeTurnProofClass(
       const { output, done, complete, guestError, streams } = observation;
       const originalFetch = globalThis.fetch;
       let runtime: ReturnType<typeof createClaudeHookRuntime> | undefined;
-      let leaveCpuUser: (() => void) | undefined;
+      let lifecycleOwnsRuntime = false;
+      const restore = () => {
+        try {
+          globalThis.fetch = originalFetch;
+        } finally {
+          observation.restore();
+        }
+      };
       try {
         const scenario = createClaudeHookScenario();
         const filesystemHost = this.filesystem();
@@ -150,6 +160,7 @@ export function createClaudeTurnProofClass(
         const identity = createProofIdentity(prompt.text);
         const dispatches: ClaudeHooksDispatchRecord[] = [];
         runtime = createClaudeHookRuntime({
+          capacity: this.capacity,
           ...filesystemHost,
           storage: this.ctx.storage,
           programs,
@@ -160,7 +171,7 @@ export function createClaudeTurnProofClass(
           isSeeded: () => this.assetsSeeded,
           onMissing: (member) => output.bunMissing.push(member),
           codeGeneration: (
-            this.env as Cloudflare.Env & { CODE_GENERATION: NodeGeneratedCodeFetcher }
+            this.env as Cloudflare.Env & { CODE_GENERATION: NodeGeneratedCodeOpenPort }
           ).CODE_GENERATION,
           scenario,
           dispatches,
@@ -195,11 +206,15 @@ export function createClaudeTurnProofClass(
           constants: createNodeConstants(NodeConstants, filesystemHost.fs.fs),
         };
         output.milestones.push("hook-host-ready");
-        observation.startDeadline();
-        try {
-          await runtime.cpuRoot.run(() => {
-            leaveCpuUser = runtime!.enterUser();
-            return bootNodeRelease(
+        lifecycleOwnsRuntime = true;
+        const lifecycle = await runClaudeProofLifecycle({
+          runtime,
+          terminal: done,
+          guestError,
+          restore,
+          retain: (lifetime) => this.ctx.waitUntil(lifetime),
+          launch: () =>
+            bootNodeRelease(
               { modules, globals: { Bun: runtime!.bun, process: runtime!.process } },
               async (installed) => {
                 bridge = installed;
@@ -221,13 +236,20 @@ export function createClaudeTurnProofClass(
                 output.milestones.push("release-launch-returned");
                 return release;
               },
-            );
+            ),
+        });
+        if (lifecycle.deadlineExceeded) {
+          return Response.json({
+            ...output,
+            packageLoad,
+            scenario: "official-claude-hooks",
+            pins: config.pins,
+            phase: "deadline",
+            lifecycle,
+            ok: false,
+            mock: { requests: mock.requests, denied: mock.deniedRequests, complete: mock.complete },
           });
-        } catch (error) {
-          guestError("release-error", error);
         }
-        await done;
-        await runtime.close();
         const scenarioResult = await verifyClaudeHookScenario({
           ...filesystemHost,
           dispatches,
@@ -240,6 +262,7 @@ export function createClaudeTurnProofClass(
         const terminalOk = terminalSuccess(output);
         return Response.json({
           ...output,
+          lifecycle,
           packageLoad,
           scenario: "official-claude-hooks",
           prompt: { estimatedTokens: prompt.estimatedTokens, paddingBytes: prompt.paddingBytes },
@@ -261,10 +284,13 @@ export function createClaudeTurnProofClass(
           runtimeBoundary: "proof-local Bash binding; child-worker Bash binding remains pending",
         });
       } finally {
-        leaveCpuUser?.();
-        await runtime?.close();
-        globalThis.fetch = originalFetch;
-        observation.restore();
+        if (!lifecycleOwnsRuntime) {
+          try {
+            await runtime?.close();
+          } finally {
+            restore();
+          }
+        }
       }
     }
   };

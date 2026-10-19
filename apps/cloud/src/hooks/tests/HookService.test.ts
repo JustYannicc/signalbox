@@ -17,7 +17,7 @@ const notUsed = async (): Promise<never> => {
 const defaults = {
   commands: { exec: notUsed },
   generated: { invoke: notUsed },
-  capacity: { run: async <T>(_signal: AbortSignal, work: () => Promise<T>) => work() },
+  capacity: { tryAcquire: () => ({ release() {} }) },
 };
 
 describe("configured hook execution", () => {
@@ -134,13 +134,13 @@ describe("configured hook execution", () => {
       ...defaults,
       registrations: scriptRegistration(),
       capacity: {
-        run: async (_signal, work) => {
+        tryAcquire: () => {
           admitted = true;
-          try {
-            return await work();
-          } finally {
-            admitted = false;
-          }
+          return {
+            release() {
+              admitted = false;
+            },
+          };
         },
       },
       generated: {
@@ -173,13 +173,11 @@ describe("configured hook execution", () => {
       ...defaults,
       registrations: scriptRegistration(),
       capacity: {
-        run: async (_signal, work) => {
-          try {
-            return await work();
-          } finally {
+        tryAcquire: () => ({
+          release() {
             releasedAfterConsumption = consumed;
-          }
-        },
+          },
+        }),
       },
       generated: {
         invoke: async () =>

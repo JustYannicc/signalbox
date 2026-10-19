@@ -1,13 +1,13 @@
 import { withOfficialHookContext } from "./officialHookContext.ts";
+import { createClaudeProofCleanup } from "./claudeLifecycle.ts";
+import { createNodeGeneratedCodeFetcher } from "../../src/isolate/node/generated/invocation-fetcher.ts";
+import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/node/generated/invocation.ts";
 // @effect-diagnostics nodeBuiltinImport:off - this runtime is an isolated proof host.
 import * as NodeProcess from "node:process";
-import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
-import {
-  createNodeGeneratedCode,
-  type NodeGeneratedCodeFetcher,
-} from "../../src/isolate/NodeGeneratedCode.ts";
+import { createNodeGeneratedCode } from "../../src/isolate/NodeGeneratedCode.ts";
 import { createBunShim, type BunFileTarget } from "../../src/isolate/BunShim.ts";
 import { createNodeBunHost } from "../../src/isolate/NodeBun.ts";
 import { createNodeChildProcess } from "../../src/isolate/NodeChildProcess.ts";
@@ -60,6 +60,7 @@ export interface ClaudeHooksDispatchRecord {
 }
 
 export interface ClaudeHookRuntimeOptions {
+  readonly capacity: ChildWorkerCapacity;
   readonly filesystem: KernelFileSystem;
   readonly fs: NodeFsModules;
   readonly wakes: KernelWakeRegistry;
@@ -71,14 +72,14 @@ export interface ClaudeHookRuntimeOptions {
   readonly assets: Readonly<Record<string, unknown>>;
   readonly isSeeded: () => boolean;
   readonly onMissing: (member: string) => void;
-  readonly codeGeneration: NodeGeneratedCodeFetcher;
+  readonly codeGeneration: NodeGeneratedCodeOpenPort;
   readonly scenario: ClaudeHookScenario;
   readonly dispatches: ClaudeHooksDispatchRecord[];
 }
 
 /** Builds the official child-process path and registers Signalbox's opaque hook executable. */
 export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
-  const capacity = new ChildWorkerCapacity();
+  const capacity = options.capacity;
   const cpuAccounting = new KernelCpuAccounting(monotonicNowNs);
   const machineCalls = { count: 0 };
   let dispatch: KernelHookInvoker | undefined;
@@ -156,7 +157,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
   const generated = createNodeGeneratedCode({
     storage: options.storage,
     scopeId: "claude-hooks-official-proof",
-    fetcher: options.codeGeneration,
+    fetcher: createNodeGeneratedCodeFetcher(options.codeGeneration),
   });
   const machine = {
     async spawn() {
@@ -211,17 +212,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     }
   };
 
-  let closing: Promise<void> | undefined;
-  const close = () =>
-    (closing ??= (async () => {
-      try {
-        const result = await kernelHost.processes.dispose();
-        if (result.status !== "ok")
-          throw new Error(`Claude hook process cleanup failed: ${JSON.stringify(result)}`);
-      } finally {
-        cpuRoot.stop();
-      }
-    })());
+  const cleanup = createClaudeProofCleanup(kernelHost.processes, cpuRoot);
   return {
     kernelHost,
     processContext,
@@ -230,7 +221,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     bun,
     cpuRoot,
     machineCalls,
-    close,
+    ...cleanup,
     enterUser: () => cpuRoot.enterUser(),
   };
 }

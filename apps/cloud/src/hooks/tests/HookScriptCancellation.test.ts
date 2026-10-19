@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
+import { NodeGeneratedCodeCleanupError } from "../../isolate/node/generated/invocation-errors.ts";
 import { createHookService, type HookServiceOptions } from "../HookService.ts";
 
 const unused = async (): Promise<never> => {
@@ -23,6 +24,68 @@ function service(generated: HookServiceOptions["generated"], capacity: ChildWork
 }
 
 describe("script hook cancellation", () => {
+  it("retains admission when native invocation cleanup cannot be confirmed", async () => {
+    const capacity = new ChildWorkerCapacity(1);
+    const failure = new NodeGeneratedCodeCleanupError(
+      new Error("Generated child cleanup is unconfirmed"),
+    );
+    let started = 0;
+    const hooks = service(
+      {
+        invoke: async () => {
+          started++;
+          throw failure;
+        },
+      },
+      capacity,
+    );
+    const invocation = { cwd: "/work", env: {}, signal: new AbortController().signal };
+    await expect(hooks.invoke("script", {}, invocation)).rejects.toBe(failure);
+    expect(capacity.active).toBe(1);
+    await expect(hooks.invoke("script", {}, invocation)).rejects.toMatchObject({
+      code: "RESOURCE_LIMIT",
+    });
+    expect(started).toBe(1);
+  });
+
+  it("retains admission when response cancellation returns an unconfirmed cleanup failure", async () => {
+    const capacity = new ChildWorkerCapacity(1);
+    const reading = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const failure = new NodeGeneratedCodeCleanupError(
+      new Error("Generated child cancellation disconnected"),
+    );
+    const hooks = service(
+      {
+        invoke: async () =>
+          new Response(
+            new ReadableStream(
+              {
+                pull() {
+                  reading.resolve();
+                },
+                cancel() {
+                  throw failure;
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          ),
+      },
+      capacity,
+    );
+    const pending = hooks.invoke(
+      "script",
+      {},
+      { cwd: "/work", env: {}, signal: controller.signal },
+    );
+    void pending.catch(() => undefined);
+    await reading.promise;
+    controller.abort(new Error("Stop script"));
+    await expect(pending).rejects.toBe(failure);
+    expect(capacity.active).toBe(1);
+  });
+
   it("cancels the response body and holds admission until its cancellation finishes", async () => {
     const capacity = new ChildWorkerCapacity(1);
     const reading = Promise.withResolvers<void>();

@@ -1,4 +1,5 @@
 import { parse } from "smol-toml";
+import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { createFacetSqliteStorage } from "../../src/kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
@@ -21,6 +22,7 @@ function fixture() {
   const runtime = createCodexHookRuntime(
     new WebAssembly.Module(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0)),
     wakes,
+    new ChildWorkerCapacity(),
   );
   return {
     database,
@@ -33,7 +35,7 @@ function fixture() {
       env: {
         CHILD_WORKERS: {},
         CODE_GENERATION: {
-          async fetch(): Promise<Response> {
+          async open(): Promise<never> {
             throw new Error("Setup must not execute generated code");
           },
         },

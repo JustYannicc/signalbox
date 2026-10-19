@@ -148,6 +148,53 @@ describe("Node generated code", () => {
     }
   });
 
+  it("forwards cancellation to the Fetcher and skips a pre-aborted invocation", async () => {
+    const fixture = sqliteFixture();
+    const controller = new AbortController();
+    const abortReason = new Error("caller cancelled generated work");
+    const response = new Response("still returned unchanged");
+    let requestSignal: AbortSignal | undefined;
+    const generated = createNodeGeneratedCode({
+      scopeId: "facet-a",
+      storage: fixture.storage,
+      fetcher: {
+        async fetch(request) {
+          requestSignal = request.signal;
+          return response;
+        },
+      },
+    });
+    const preAbortedController = new AbortController();
+    const preAbortReason = new Error("caller cancelled before dispatch");
+    preAbortedController.abort(preAbortReason);
+    let preAbortedFetcherCalled = false;
+    const preAborted = createNodeGeneratedCode({
+      scopeId: "facet-b",
+      storage: fixture.storage,
+      fetcher: {
+        async fetch() {
+          preAbortedFetcherCalled = true;
+          return new Response("should not be reached");
+        },
+      },
+    });
+
+    try {
+      await expect(generated.invoke(request(), { signal: controller.signal })).resolves.toBe(
+        response,
+      );
+      controller.abort(abortReason);
+      expect(requestSignal?.aborted).toBe(true);
+      expect(requestSignal?.reason).toBe(abortReason);
+      await expect(
+        preAborted.invoke(request(), { signal: preAbortedController.signal }),
+      ).rejects.toBe(preAbortReason);
+      expect(preAbortedFetcherCalled).toBe(false);
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("preserves binding rejection and non-success responses", async () => {
     const fixture = sqliteFixture();
     const failure = new Error("binding failed");

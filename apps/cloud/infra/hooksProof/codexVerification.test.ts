@@ -2,6 +2,7 @@
 import { EXEC_ARGUMENTS, PATCH_INPUT } from "../codexTurn/MockResponses.mjs";
 import { verifyCodexHookPayloads } from "./codexPayloads.ts";
 import { describe, expect, it } from "vite-plus/test";
+import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { createFacetSqliteStorage } from "../../src/kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem, KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
@@ -33,6 +34,7 @@ function fixture() {
   const runtime = createCodexHookRuntime(
     new WebAssembly.Module(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0)),
     wakes,
+    new ChildWorkerCapacity(),
   );
   const configured = runtime.configure({
     filesystem,
@@ -42,7 +44,7 @@ function fixture() {
     env: {
       CHILD_WORKERS: {},
       CODE_GENERATION: {
-        async fetch() {
+        async open() {
           throw new Error("Unexpected generated execution");
         },
       },
@@ -74,7 +76,7 @@ function fixture() {
       hook_event_name: names[event],
       session_id: "native-session",
       cwd: "/workspace",
-      turn_id: "native-turn",
+      ...(event !== "session-start" ? { turn_id: "native-turn" } : {}),
       ...(event === "pre-tool-use" || event === "post-tool-use" ? tool : {}),
       ...(event === "post-tool-use"
         ? {
@@ -200,7 +202,15 @@ describe("Codex hook proof result validation", () => {
         if (failure === "signal termination")
           record.exit = { exitCode: 0, signal: 15, coreDumped: false };
         if (failure === "core dump") record.exit = { exitCode: 0, signal: 0, coreDumped: true };
-        expect(await verifyCodexHooks(test.input)).toMatchObject({ ok: false });
+        const result = await verifyCodexHooks(test.input);
+        const message =
+          failure === "malformed later JSON"
+            ? "did not return a JSON object"
+            : failure === "later wrong event"
+              ? "returned the wrong result event"
+              : "did not complete successfully";
+        expect(result.ok).toBe(false);
+        expect(result.failures).toContain(`${record.id} ${message}`);
       } finally {
         await test.close();
       }
@@ -215,7 +225,15 @@ describe("Codex hook proof result validation", () => {
         if (typeof payload !== "object" || payload === null)
           throw new Error("Expected payload object");
         Reflect.deleteProperty(payload, field);
-        expect(verifyCodexHookPayloads(test.invocations).length).toBeGreaterThan(0);
+        const message =
+          field === "session_id" || field === "cwd"
+            ? "lost its native session_id or cwd"
+            : field === "tool_response"
+              ? "lost the real tool_response"
+              : "lost the expected native tool call";
+        expect(verifyCodexHookPayloads(test.invocations)).toContain(
+          `${test.invocations[2]!.id} ${message}`,
+        );
       } finally {
         await test.close();
       }
@@ -230,7 +248,24 @@ describe("Codex hook proof result validation", () => {
         test.invocations[5]!,
         ...test.invocations.slice(1, 5),
       ];
-      expect(verifyCodexHookPayloads(reordered).length).toBeGreaterThan(0);
+      expect(verifyCodexHookPayloads(reordered)).toContain(
+        "Native hook order differs at invocation 1",
+      );
+    } finally {
+      await test.close();
+    }
+  });
+
+  it.each([2, 3, 5])("rejects a mismatched turn_id at invocation %s", async (index) => {
+    const test = fixture();
+    try {
+      const entry = test.invocations[index]!;
+      if (typeof entry.input !== "object" || entry.input === null)
+        throw new Error("Expected payload object");
+      Reflect.set(entry.input, "turn_id", "another-turn");
+      expect(verifyCodexHookPayloads(test.invocations)).toContain(
+        `${entry.id} did not retain the native turn_id`,
+      );
     } finally {
       await test.close();
     }

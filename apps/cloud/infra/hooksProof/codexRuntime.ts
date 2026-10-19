@@ -1,6 +1,8 @@
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { withOfficialHookContext } from "./officialHookContext.ts";
-import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
+import { createNodeGeneratedCodeFetcher } from "../../src/isolate/node/generated/invocation-fetcher.ts";
+import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/node/generated/invocation.ts";
+import type { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import {
   createCodexHookServiceRegistrations,
@@ -12,7 +14,6 @@ import {
 } from "./codexScenario.ts";
 import {
   createNodeGeneratedCode,
-  type NodeGeneratedCodeFetcher,
   type NodeGeneratedCodeInvokeInput,
 } from "../../src/isolate/NodeGeneratedCode.ts";
 import {
@@ -82,8 +83,11 @@ export interface CodexHookRuntimeComposition {
 }
 
 /** Registers the interim Bash and host-owned hook dispatcher in the session kernel. */
-export function createCodexHookRuntime(bashModule: WebAssembly.Module, wakes: KernelWakeRegistry) {
-  const capacity = new ChildWorkerCapacity();
+export function createCodexHookRuntime(
+  bashModule: WebAssembly.Module,
+  wakes: KernelWakeRegistry,
+  capacity: ChildWorkerCapacity,
+) {
   const invocations: HookInvocationRecord[] = [];
   const isolateCalls: IsolateCallRecord[] = [];
   const generatedCalls: GeneratedCallRecord[] = [];
@@ -163,7 +167,9 @@ export function createCodexHookRuntime(bashModule: WebAssembly.Module, wakes: Ke
 
       seedCodexSettings(configuration.filesystem);
       getBinding(configuration.env, "CHILD_WORKERS");
-      const codeGeneration = asFetcher(getBinding(configuration.env, "CODE_GENERATION"));
+      const codeGeneration = createNodeGeneratedCodeFetcher(
+        asOpenPort(getBinding(configuration.env, "CODE_GENERATION")),
+      );
 
       const generatedService = createNodeGeneratedCode({
         storage: configuration.facetStorage,
@@ -427,15 +433,15 @@ function getBinding(env: ProofEnv, name: string): unknown {
   return value;
 }
 
-function asFetcher(value: unknown): NodeGeneratedCodeFetcher {
+function asOpenPort(value: unknown): NodeGeneratedCodeOpenPort {
   if (
     typeof value !== "object" ||
     value === null ||
-    typeof (value as { fetch?: unknown }).fetch !== "function"
+    typeof (value as { open?: unknown }).open !== "function"
   ) {
-    throw new Error("CODE_GENERATION is not a fetch binding");
+    throw new Error("CODE_GENERATION is not a managed invocation binding");
   }
-  return value as NodeGeneratedCodeFetcher;
+  return value as NodeGeneratedCodeOpenPort;
 }
 
 function register(

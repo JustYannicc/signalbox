@@ -1,3 +1,6 @@
+// @ts-expect-error The shared MJS fixture has no declaration.
+import { EXEC_ARGUMENTS, PATCH_INPUT } from "../codexTurn/MockResponses.mjs";
+
 const expected = [
   { event: "session-start" },
   { event: "pre-tool-use", tool: "Bash", id: "call-1069-exec" },
@@ -13,6 +16,7 @@ export function verifyCodexHookPayloads(
 ) {
   const failures: string[] = [];
   const session = record(invocations[0]?.input)?.session_id;
+  const turn = record(invocations[1]?.input)?.turn_id;
   if (typeof session !== "string" || session.length === 0)
     failures.push("SessionStart did not supply a native session_id");
   for (const [index, entry] of invocations.entries()) {
@@ -22,6 +26,11 @@ export function verifyCodexHookPayloads(
       failures.push(`Native hook order differs at invocation ${index}`);
     if (!payload || payload.session_id !== session || payload.cwd !== "/workspace")
       failures.push(`${entry.id} lost its native session_id or cwd`);
+    if (
+      entry.event !== "session-start" &&
+      (typeof turn !== "string" || turn.length === 0 || payload?.turn_id !== turn)
+    )
+      failures.push(`${entry.id} did not retain the native turn_id`);
     if (!wanted || !("tool" in wanted)) continue;
     const input = record(payload?.tool_input);
     if (
@@ -42,8 +51,6 @@ export function verifyCodexHookPayloads(
       )
         failures.push(`${entry.id} lost the real tool_response`);
     }
-    if (typeof payload?.turn_id !== "string" || payload.turn_id.length === 0)
-      failures.push(`${entry.id} lost turn_id`);
   }
   return failures;
 }
@@ -53,5 +60,3 @@ function record(value: unknown): Record<string, unknown> | undefined {
     ? (value as Record<string, unknown>)
     : undefined;
 }
-// @ts-expect-error The shared MJS fixture has no declaration.
-import { EXEC_ARGUMENTS, PATCH_INPUT } from "../codexTurn/MockResponses.mjs";

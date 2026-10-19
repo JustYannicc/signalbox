@@ -1,9 +1,13 @@
 import type { ComputerExecPort } from "../computer/Computer.ts";
-import type { ChildWorkerCapacity } from "../computer/ChildWorkerCapacity.ts";
+import {
+  ChildWorkerLimitError,
+  type ChildWorkerCapacity,
+} from "../computer/ChildWorkerCapacity.ts";
 import type {
   NodeGeneratedCode,
   NodeGeneratedCodeInvokeInput,
 } from "../isolate/NodeGeneratedCode.ts";
+import { NodeGeneratedCodeCleanupError } from "../isolate/node/generated/invocation-errors.ts";
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
 import type {
   HarnessHookCallback,
@@ -39,7 +43,7 @@ export interface HookServiceOptions {
   readonly commands: ComputerExecPort;
   readonly generated: Pick<NodeGeneratedCode, "invoke">;
   /** The same admission pool used by every child program in this DO. */
-  readonly capacity: Pick<ChildWorkerCapacity, "run">;
+  readonly capacity: Pick<ChildWorkerCapacity, "tryAcquire">;
 }
 
 const encoder = new TextEncoder();
@@ -84,7 +88,10 @@ export function createHookService(options: HookServiceOptions) {
           exit: successExit,
         };
       }
-      return options.capacity.run(invocation.signal, async () => {
+      const permit = options.capacity.tryAcquire(invocation.signal);
+      if (!permit) throw new ChildWorkerLimitError();
+      let cleanupConfirmed = true;
+      try {
         invocation.signal.throwIfAborted();
         const response = await options.generated.invoke(
           {
@@ -98,7 +105,13 @@ export function createHookService(options: HookServiceOptions) {
         invocation.signal.throwIfAborted();
         if (!response.ok) throw new Error(`Hook script failed with HTTP ${response.status}`);
         return { stdout, stderr: new Uint8Array(), exit: successExit };
-      });
+      } catch (error) {
+        // A disconnected cancellation RPC does not establish that the child stopped.
+        cleanupConfirmed = !(error instanceof NodeGeneratedCodeCleanupError);
+        throw error;
+      } finally {
+        if (cleanupConfirmed) permit.release();
+      }
     },
   };
 }

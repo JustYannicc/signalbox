@@ -1,4 +1,5 @@
 import type { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
+import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import type { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import type { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import {
@@ -21,7 +22,10 @@ type ProofFacetClass = new (...args: never[]) => object;
 
 type ProofFacetFactory = (
   engine: WebAssembly.Module,
-  createHost: (wakes: KernelWakeRegistry) => KernelProgramHost,
+  createHost: (
+    wakes: KernelWakeRegistry,
+    owner: { readonly context: DurableObjectState },
+  ) => KernelProgramHost,
   options: ProofFacetOptions,
 ) => ProofFacetClass;
 
@@ -32,10 +36,16 @@ export function createCodexHooksProofClass(
   createProofFacet: ProofFacetFactory,
 ): ProofFacetClass {
   const runtimes = new WeakMap<KernelProgramHost, ReturnType<typeof createCodexHookRuntime>>();
+  const capacities = new WeakMap<DurableObjectState, ChildWorkerCapacity>();
   return createProofFacet(
     engine,
-    (wakes) => {
-      const runtime = createCodexHookRuntime(bash, wakes);
+    (wakes, owner) => {
+      let capacity = capacities.get(owner.context);
+      if (!capacity) {
+        capacity = new ChildWorkerCapacity();
+        capacities.set(owner.context, capacity);
+      }
+      const runtime = createCodexHookRuntime(bash, wakes, capacity);
       runtimes.set(runtime.host, runtime);
       return runtime.host;
     },
