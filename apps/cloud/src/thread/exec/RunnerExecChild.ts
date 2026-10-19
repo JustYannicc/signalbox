@@ -86,12 +86,27 @@ export class RunnerExecChild implements KernelCommandChild {
       close: async () => {
         if (this.#failed !== null) throw this.#failed;
         if (this.#closedReceived || this.#exitReceived) return;
-        await this.#sendAwaitingAck({
+        const command: ExecCommand = {
           type: "stdin.close",
           generation: this.generation,
           processId: this.processId,
           requestId: id(),
-        });
+        };
+        try {
+          // A terminal frame can retire this child before the later EOF acknowledgement arrives.
+          await Promise.race([this.#sendAwaitingAck(command), this.exited]);
+        } catch (error) {
+          // Exit can reach the Runner before this EOF request. Exit and closed reports still own settlement.
+          if (
+            !(error instanceof ExecCommandRejected) ||
+            error.report.operation !== "stdin.close" ||
+            error.report.error?.code !== "process_exited"
+          ) {
+            throw error;
+          }
+        } finally {
+          this.#acks.forget(command);
+        }
       },
       abort: async () => this.#cancel(),
     });

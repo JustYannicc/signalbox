@@ -26,3 +26,26 @@ credentials, endpoints or command configuration. This workflow enables proof
 execution. A successful run establishes only the cases recorded in that receipt.
 The proof source's Bases and revision backing are test adapters, separate from
 production Bases and Artifacts wiring.
+
+For the local workerd pass, build the command Runner from `apps/server` with
+`node runner-command.config.ts`, then run
+`node apps/cloud/infra/computerBoxdProof/local.ts --program-dir DIR --stage-file FILE --output FILE`
+from the repository root. Use a clean, reviewed commit and supply `BOXD_API_KEY`
+through the process environment. The local pass needs `cloudflared` for the VM's
+Runner callback. Put it on PATH or set `CLOUDFLARED_BIN` to its executable path;
+its endpoint stays out of receipts. It keeps SQLite ownership
+state beside the stage file. Recover an interrupted local pass with the same
+commit and `local.ts --recover-stage-file FILE --output NEW_FILE`.
+
+Both passes compare a real Bash child Dynamic Worker with the same command over
+the real VM Runner socket, including binary streams, argv0, cwd, environment and
+exit status. The VM pass forks one run-owned prepared source and applies the
+result into an already-open kernel inode. This covers the proof's one-file
+workspace adapter; it does not establish a general native mount or production
+Bases lifecycle.
+
+The provider credential stays in the Worker. The VM receives only the scoped
+Runner callback token, never tenant connection credentials. This probe makes no
+tenant-service requests and does not prove the egress bridge. Bound-host egress
+must bridge to the Cloudflare connections gateway, which owns credential fill
+and response scrubbing.
