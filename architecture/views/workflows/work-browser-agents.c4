@@ -1,0 +1,1138 @@
+// Shard 12: agent tools, outside agents, level agent pages, and the Browser module's workflows.
+// The calling agent is the Harness (the loop in the calling thread); a target thread is the Thread module (black box).
+// Browser tools reach the Browser through Connections' browser provider, behind ToolGateway (design §3.16).
+// Funnel hops are drawn where the view has room; elsewhere a client call goes "over Funnel".
+views {
+
+  // Container lanes: system boundaries muted, like LikeC4's homepage examples.
+  style signalbox, platform, services, signalbox.gateway, signalbox.tree {
+    color muted
+    opacity 10%
+  }
+
+  // ─────────────────────────────── Journeys/Agents ───────────────────────────────
+
+  dynamic view journey_agents_agent_page {
+    variant sequence
+    title 'Journeys/Agents/Open a level\'s agent page'
+    description 'W-LVL-02 · Agent page tabs Coordinates, Access, History; the agent represents its level, so A and B see one Team agent and C (admin) opens the Company agent.'
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.thread
+
+    personA -> signalbox.web 'Open Team agent' {
+      notes '''
+        - A clicks the agent row on folder Team, reached through A's mount of Company
+        - The page opens on Coordinates
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Query agent page' {
+      notes "- One client rpc; Funnel decodes and calls Operations"
+    }
+    signalbox.funnel -> signalbox.operations 'Check and query' {
+      notes '''
+        - `Tree.can` first: A is a Member of Company; roles add downward to Team
+      '''
+    }
+    parallel {
+      signalbox.operations -> signalbox.tree 'Coordinates tab' {
+        notes '''
+          - `Tree.view(catalog)` from the Team Level actor: threads it coordinates and their status lines
+          - Streams as Level view deltas, so the tab stays live
+        '''
+      }
+      signalbox.operations -> signalbox.tree 'Access tab' {
+        notes '''
+          - `Tree.view(access)`: usable items and where each comes from (Team or Company)
+          - `missing[]` names only role holders on the chain who can place it, plus "or ask someone to lend"
+        '''
+      }
+      signalbox.operations -> signalbox.thread 'History tab' {
+        notes "- The Team agent thread itself: its turns and the asks it routed"
+        navigateTo work_levelagents_chat
+      }
+    }
+    signalbox.web -> personA 'Shows three tabs' {
+      notes '''
+        - A sees Coordinates, Access and History
+        - "Who does this agent represent" reads as the level: folder Team
+      '''
+    }
+    personB -> signalbox.web 'Open same agent' {
+      notes '''
+        - B opens Team through B's own mount of Company
+        - Same Level actor, same chain Team → Company: the same three tabs and the same Access answer
+      '''
+    }
+    personC -> signalbox.web 'Open Company agent' {
+      notes '''
+        - C, admin of folder Company, opens its agent
+        - The Company agent has no `via`: it resolves the Company chain only, the same for every member
+        - Access lists C under `canPlace` for kinds an admin may place
+      '''
+    }
+  }
+
+  dynamic view journey_agents_mention_chain {
+    variant sequence
+    title 'Journeys/Agents/@ offers chain agents'
+    description 'W-LVL-12 · `@` offers the agents on the composer\'s own chain plus people with access; another person\'s assistant is never offered.'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.web 'Types @' {
+      notes "- A is in the shared thread in folder Team and types `@` in the composer"
+    }
+    signalbox.web -> signalbox.funnel 'Mention candidates'
+    signalbox.funnel -> signalbox.operations 'Query as A'
+    signalbox.operations -> signalbox.tree 'Chain agents, people' {
+      notes '''
+        - Walks A's chain: Team → Company → A's Work → A's top level
+        - Agents: Team, Company and Work agents, and A's own assistant
+        - People: those with access to the thread (B; C as Company admin; D, the outside collaborator on Team)
+      '''
+    }
+    signalbox.web -> personA 'Offers A\'s chain' {
+      notes '''
+        - A sees the Team, Company and Work agents, A's assistant, and B, C and D
+        - B's assistant is not listed: it represents B, not this chain
+      '''
+      navigateTo person_assistant_mention
+    }
+    personB -> signalbox.mobile 'Types @' {
+      notes "- B types `@` in the same thread on the phone"
+    }
+    signalbox.mobile -> signalbox.funnel 'Mention candidates'
+    signalbox.funnel -> signalbox.operations 'Query as B'
+    signalbox.operations -> signalbox.tree 'Chain agents, people' {
+      notes "- Walks B's chain: Team → Company → B's Work → B's top level"
+    }
+    signalbox.mobile -> personB 'Offers B\'s chain' {
+      notes '''
+        - Team and Company agents are the same for A and B
+        - B sees B's own Work agent and assistant, never A's
+      '''
+    }
+  }
+
+  // ─────────────────────────────── Workflows/Work/AgentTools ───────────────────────────────
+
+  dynamic view work_agenttools_tools_in_turn {
+    variant sequence
+    title 'Workflows/Work/AgentTools/Agent finds and runs tools in a turn'
+    description 'W-MCP-01, W-MCP-02, W-MCP-03 · A per-turn MCP URL serves search and execute over the toolbox and native ops; codemode runs in a sandbox that can only callTool.'
+
+    include signalbox, signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.connections, signalbox.operations, signalbox.actorhost
+
+    signalbox.thread -> signalbox.harness 'Turn with grant' {
+      notes '''
+        - The grant holds the per-turn MCP URL; its token lives only in the fetch shim
+        - A's turn and B's turn in the shared Team thread get the same tools: the Scope depends on the Place only
+      '''
+    }
+    signalbox.harness -> signalbox.gateway.toolGateway 'List tools' {
+      notes "- Over the per-turn URL; ToolGateway is the only MCP endpoint"
+    }
+    parallel {
+      signalbox.gateway.toolGateway -> signalbox.connections 'Toolbox for Scope' {
+        navigateTo folders_connections_turn_and_run_reach
+        notes '''
+          - Connections placed on Team, Company and up, nearest per name
+          - A loan into Team shows up here; nothing else from A's or B's own trees does
+        '''
+      }
+      signalbox.gateway.toolGateway -> signalbox.operations 'Op catalog' {
+        notes "- Native app operations, filtered by the purpose profile (worker or coordinator)"
+      }
+    }
+    signalbox.harness <- signalbox.gateway.toolGateway 'Search and execute' {
+      navigateTo folders_connections_tool_exposure
+      notes '''
+        - The agent sees search and execute, plus any tool exposed `direct` under its normal name; never hundreds
+        - Built-in tools (Bash, Read, Edit …) are not here: they go to Computer
+      '''
+    }
+    signalbox.harness -> signalbox.gateway.toolGateway 'Search tools' {
+      navigateTo folders_connections_tool_search_call
+      notes "- W-MCP-02: one search over connection tools and native ops"
+    }
+    signalbox.harness <- signalbox.gateway.toolGateway 'Matching tools'
+    alt 'how the agent runs it' {
+      when 'one call' {
+        signalbox.harness -> signalbox.gateway.toolGateway 'Call tool' {
+          notes "- Connection tool → `Connections.call`; native op → `Operations.invoke`"
+        }
+        signalbox.gateway.toolGateway -> signalbox.operations 'Invoke op' {
+          notes "- Native ops follow the app-operation flow"
+          navigateTo work_agenttools_app_ops
+        }
+      }
+      else 'codemode program (W-MCP-03)' {
+        signalbox.harness -> signalbox.gateway.toolGateway 'Execute program'
+        signalbox.gateway.toolGateway -> signalbox.actorhost 'Load sandbox' {
+          notes '''
+            - A Worker Loader Dynamic Worker with `globalOutbound: null`
+            - Its only binding is `callTool`; it never runs in the isolate that caches tokens
+          '''
+        }
+        loop 'each callTool' {
+          signalbox.actorhost -> signalbox.gateway.toolGateway 'callTool' {
+            notes "- Same authority and fill path as a direct call"
+          }
+          signalbox.gateway.toolGateway -> signalbox.connections 'Call'
+        }
+        signalbox.gateway.toolGateway <- signalbox.actorhost 'Program result'
+      }
+    }
+    signalbox.harness <- signalbox.gateway.toolGateway 'Result'
+    signalbox.harness -> signalbox.thread 'Tool events' {
+      notes "- Recorded in the thread; A and B both watch them live"
+    }
+  }
+
+  dynamic view work_agenttools_app_ops {
+    variant sequence
+    title 'Workflows/Work/AgentTools/Agent calls an app operation'
+    description 'W-MCP-04, W-MCP-05, W-MCP-08, W-MCP-10, T-APR-04, T-PRV-31, T-THR-41, T-TRN-15 · Agents do what people can through Operations under Tree.can; human-only ops refuse them, destructive ones hit the gate.'
+
+    include signalbox, signalbox.harness, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.models, signalbox.attention
+
+    signalbox.harness -> signalbox.gateway.toolGateway 'app_call' {
+      notes '''
+        - Found earlier with `app_search` over `Operations.catalog(profile)`
+        - Nothing is UI-only: the same operation a person clicks
+      '''
+      navigateTo work_agenttools_tools_in_turn
+    }
+    signalbox.gateway.toolGateway -> signalbox.operations 'Invoke as agent' {
+      notes "- `AgentActor` carries no person: its rights are its level's and its profile's"
+    }
+    signalbox.operations -> signalbox.tree 'Can at target' {
+      notes '''
+        - One authority check for every op, at the target
+        - Same answer whether A or B started the turn
+      '''
+    }
+    alt 'what kind of op' {
+      when 'allowed op' {
+        signalbox.operations -> signalbox.models 'Pool check' {
+          navigateTo folders_pools_model_catalog
+          notes '''
+            - Capabilities (W-MCP-08): only harnesses and models in the pools resolved at the thread's Place
+            - Thread configuration (T-PRV-31): a model switch must stay inside that set (see work_harness_switch)
+          '''
+        }
+        signalbox.operations -> signalbox.thread 'Apply op' {
+          navigateTo work_threads_lifecycle_title
+          notes '''
+            - Set model, rename, title, PR (T-THR-41), read the queue (T-TRN-15), pin, settle, archive (W-MCP-10)
+            - List and read asks (T-APR-04); answering an approval stays human-only
+          '''
+        }
+        opt 'snooze (per person)' {
+          signalbox.operations -> signalbox.attention 'Snooze' {
+            notes "- `Attention.defer` is per person: only for the person the agent acts for, e.g. A's assistant for A"
+          }
+        }
+      }
+      when 'human-only (W-MCP-05)' {
+        signalbox.operations -> signalbox.operations 'HumanOnly' {
+          notes '''
+            - Approvals, secret answers, sign-in grants, linking 1Password, loan consent, the final OAuth step
+            - Refused for every agent-class actor
+          '''
+        }
+      }
+      else 'destructive' {
+        signalbox.operations -> signalbox.thread 'Ready ask (gate)' {
+          notes '''
+            - `NeedsDecision`: a Ready ask (gate `destructive`) to the target level's responsible people
+            - For Team: A and B as members, C as Company admin, each in their own lanes
+          '''
+          navigateTo work_approvals_destructive
+        }
+      }
+    }
+    signalbox.gateway.toolGateway <- signalbox.operations 'Receipt or error'
+    signalbox.harness <- signalbox.gateway.toolGateway 'Tool result'
+  }
+
+  dynamic view work_agenttools_other_thread {
+    variant sequence
+    title 'Workflows/Work/AgentTools/Send to, wait on or read another thread'
+    description 'W-LIN-14, W-LIN-15 · An agent sends to, waits on or pages through another thread; every call is authorized at the destination.'
+
+    include signalbox, signalbox.harness, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.operations, signalbox.tree, signalbox.thread
+
+    signalbox.harness -> signalbox.gateway.toolGateway 'Thread tool' {
+      notes "- `thread_send`, `thread_wait` or `thread_read`; outside agents use the same tools"
+      navigateTo work_agenttools_outside_agent
+    }
+    signalbox.gateway.toolGateway -> signalbox.operations 'Invoke as agent'
+    signalbox.operations -> signalbox.tree 'Can at destination' {
+      notes '''
+        - Checked on the target thread's level, e.g. the shared thread in Team, never on the caller's chain
+        - Private threads (B's draft spec in Team) stay invisible: `Denied`
+      '''
+    }
+    alt 'what the agent needs' {
+      when 'send and wait (W-LIN-14)' {
+        signalbox.operations -> signalbox.thread 'Send message' {
+          notes '''
+            - Queues in the target's one Thread actor, like a turn from A or B
+            - A and B watching the target see it live, attributed to the agent
+          '''
+          navigateTo work_turns_open_live
+        }
+        signalbox.operations -> signalbox.thread 'Wait for run' {
+          notes "- The caller's turn parks until the run is terminal"
+          navigateTo state_thread
+        }
+        signalbox.operations <- signalbox.thread 'Terminal state'
+      }
+      when 'read (W-LIN-15)' {
+        loop 'page by page' {
+          signalbox.operations -> signalbox.thread 'Read page' {
+            notes "- Paged history rows, never a blob"
+          }
+          signalbox.operations <- signalbox.thread 'Page'
+        }
+      }
+      else 'no access' {
+        signalbox.operations -> signalbox.operations 'Denied'
+      }
+    }
+    signalbox.gateway.toolGateway <- signalbox.operations 'Result'
+    signalbox.harness <- signalbox.gateway.toolGateway 'Tool result'
+  }
+
+  dynamic view work_agenttools_outside_agent {
+    variant sequence
+    title 'Workflows/Work/AgentTools/Outside agent works with threads'
+    description 'W-MCP-06, W-MCP-07 · An outside agent signed in as A works with threads at A\'s Place; destructive ops return a confirm URL; B presenting A\'s placeId is Denied.'
+
+    include personA, personB, signalbox.web, mcpClient, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.operations, signalbox.thread, platform, platform.workos
+
+    personA -> mcpClient 'Ask outside agent' {
+      notes "- A asks Claude Code in a terminal to start a thread in folder Team"
+    }
+    mcpClient -> signalbox.gateway.toolGateway 'Call A\'s MCP URL' {
+      notes "- `/mcp/p/<placeId>` copied from folder Team; the `placeId` was minted for A only"
+      navigateTo work_agenttools_outside_agent_connect
+    }
+    opt 'no session yet' {
+      mcpClient -> platform.workos 'AuthKit sign-in' {
+        navigateTo folders_connections_mcp_url
+        notes "- AuthKit is the MCP authorization server; A signs in once"
+      }
+      mcpClient <- platform.workos 'Bearer'
+    }
+    alt 'who presents the URL' {
+      when 'A, owner of the placeId' {
+        signalbox.gateway.toolGateway -> signalbox.operations 'Invoke as session' {
+          notes '''
+            - `McpSessionActor{A, placeId}`: start, read and message threads at Team
+            - Agent-class, even though it carries A
+          '''
+        }
+        signalbox.operations -> signalbox.thread 'Start or send' {
+          notes "- The new thread is filed at Team; B sees it in Team's catalog like any thread there"
+        }
+        opt 'destructive op' {
+          signalbox.gateway.toolGateway <- signalbox.operations 'NeedsDecision' {
+            notes "- No thread to raise an ask in, so no ask record: a `confirmUrl` instead"
+          }
+          mcpClient <- signalbox.gateway.toolGateway 'Confirm URL'
+          personA -> signalbox.web 'Open confirm' {
+            notes "- An in-app confirm where A acts as `PersonActor`"
+          }
+          signalbox.web -> signalbox.operations 'Confirm as A' {
+            notes "- Client rpc over Funnel"
+          }
+        }
+        mcpClient <- signalbox.gateway.toolGateway 'Results'
+      }
+      else 'B presents A\'s placeId (W-MCP-07)' {
+        personB -> mcpClient 'Use A\'s URL' {
+          notes "- B pasted A's URL and signed in as B"
+        }
+        mcpClient -> signalbox.gateway.toolGateway 'Call as B'
+        mcpClient <- signalbox.gateway.toolGateway 'Denied' {
+          notes '''
+            - A `placeId` is bound to the person it was minted for
+            - B copies Team's MCP URL for B's own `placeId`; it resolves the same tools
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_agenttools_outside_agent_connect {
+    #v1
+    variant sequence
+    title 'Workflows/Work/AgentTools/Connect or remove an outside agent'
+    description 'v1 · P-ONB-08, P-OUT-02 · Copy a folder\'s MCP URL into an outside agent, sign in through AuthKit, get tool search at that Place; remove it by revoking its session or local key.'
+
+    include personA, signalbox.web, mcpClient, signalbox.gateway, signalbox.gateway.api, signalbox.gateway.toolGateway, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Copy MCP URL' {
+      navigateTo pgap_onboarding_agent_setup
+      notes "- On folder Team's page, or on A's top level"
+    }
+    signalbox.web -> signalbox.gateway.api 'Mint placeId' {
+      notes '''
+        - Per person and per Place: this `placeId` is A's alone; B copying the same URL gets another
+        - Over Funnel to Gateway's interface, not through Operations: the surface table names Gateway as owner
+      '''
+    }
+    personA -> mcpClient 'Paste URL' {
+      notes "- Claude Code, ChatGPT or any MCP client"
+    }
+    mcpClient -> signalbox.gateway.toolGateway 'Connect'
+    mcpClient <- signalbox.gateway.toolGateway '401, authz metadata'
+    mcpClient -> platform.workos 'OAuth via AuthKit' {
+      notes "- AuthKit is the MCP authorization server (CIMD/DCR, resource indicators)"
+      navigateTo identity_identity_mcp_signin
+    }
+    personA -> platform.workos 'Sign in, consent'
+    mcpClient <- platform.workos 'Access token'
+    mcpClient -> signalbox.gateway.toolGateway 'MCP with bearer'
+    signalbox.gateway.toolGateway -> signalbox.identity 'Authenticate' {
+      notes "- Returns `McpSessionActor{A, placeId}`; any other person with this `placeId` is `Denied`"
+    }
+    signalbox.gateway.toolGateway -> signalbox.tree 'Resolve Place' {
+      notes '''
+        - Gateway grants the session for that Place, then resolves it
+        - Purpose `external`: exactly what resolves at Team (Team, Company, then up A's chain)
+        - v1: the Google and Confluence connections placed there
+      '''
+    }
+    mcpClient <- signalbox.gateway.toolGateway 'Tool search' {
+      notes "- Search and execute over those tools"
+      navigateTo work_agenttools_outside_agent
+    }
+    alt 'remove (P-OUT-02)' {
+      when 'MCP session' {
+        personA -> signalbox.web 'Remove agent' {
+          notes "- From Settings or the folder's outside agents"
+        }
+        signalbox.web -> signalbox.gateway.api 'Revoke session'
+        signalbox.gateway.api -> signalbox.identity 'Revoke subject' {
+          notes "- The client's next call is refused"
+        }
+      }
+      else 'local key' {
+        personA -> signalbox.web 'Revoke laptop key' {
+          navigateTo folders_modelgateway_laptop_pool
+          notes "- The `sbk_` key local Claude Code or Codex uses"
+        }
+        signalbox.web -> signalbox.gateway.api 'Revoke key'
+        signalbox.gateway.api -> signalbox.identity 'Revoke subject'
+      }
+    }
+  }
+
+  dynamic view work_agenttools_mcp_app_render {
+    variant sequence
+    title 'Workflows/Work/AgentTools/Show an MCP app in the thread'
+    description 'T-MCP-17, T-MCP-21 (kept from T3 Code, unconfirmed) · A tool\'s UI resource replaces its card for everyone watching; when the agent stops, a message restarts it.'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.gateway.toolGateway
+
+    signalbox.harness -> signalbox.gateway.toolGateway 'Call tool' {
+      navigateTo work_agenttools_tools_in_turn
+    }
+    signalbox.harness <- signalbox.gateway.toolGateway 'Result with UI'
+    signalbox.harness -> signalbox.thread 'Tool event' {
+      notes "- The event carries the UI resource reference, not the app"
+    }
+    signalbox.thread -> signalbox.funnel 'View delta'
+    parallel {
+      signalbox.funnel -> signalbox.web 'To A'
+      signalbox.funnel -> signalbox.mobile 'To B'
+    }
+    signalbox.web -> personA 'App replaces card' {
+      notes '''
+        - The app renders in place of the tool card; full screen on demand
+        - B sees the same app on the phone
+      '''
+    }
+    opt 'agent stopped (T-MCP-21)' {
+      signalbox.thread -> signalbox.harness 'Session stops' {
+        notes "- The turn ended or was stopped; the app has nothing to talk to"
+        navigateTo work_levelagents_status_rollup
+      }
+      signalbox.web -> personA 'App unavailable' {
+        notes "- A sees \"send a message to restart\""
+      }
+      personA -> signalbox.web 'Send message'
+      signalbox.web -> signalbox.funnel 'Send to thread'
+      signalbox.funnel -> signalbox.thread 'Queue turn'
+      signalbox.thread -> signalbox.harness 'Resume session' {
+        notes "- The app is live again for A and B"
+      }
+    }
+  }
+
+  dynamic view work_agenttools_mcp_app_calls {
+    variant sequence
+    title 'Workflows/Work/AgentTools/MCP app calls tools, reads resources and adds context'
+    description 'T-MCP-18, T-MCP-19, T-MCP-20 (kept from T3 Code, unconfirmed) · An MCP app calls tools (asking unless read-only), reads resources, and adds a context note.'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.connections, signalbox.thread
+
+    personA -> signalbox.web 'Uses MCP app' {
+      navigateTo work_agenttools_mcp_app_render
+    }
+    alt 'app request' {
+      when 'call tool (T-MCP-18)' {
+        opt 'not read-only' {
+          signalbox.web -> personA 'Confirm call?' {
+            notes "- A confirms; read-only tools skip this"
+          }
+          personA -> signalbox.web 'Allow'
+        }
+        signalbox.web -> signalbox.funnel 'callTool'
+        signalbox.funnel -> signalbox.gateway.toolGateway 'Call tool' {
+          notes '''
+            - Assumption: re-homed through ToolGateway so the app sees the thread's resolved tools
+            - Smell: Funnel serves no MCP by design; this hop is unconfirmed
+          '''
+          navigateTo work_agenttools_tools_in_turn
+        }
+        signalbox.gateway.toolGateway -> signalbox.connections 'Call' {
+          navigateTo folders_connections_tool_search_call
+        }
+      }
+      when 'tool info (T-MCP-18)' {
+        signalbox.web -> signalbox.funnel 'toolInfo'
+        signalbox.funnel -> signalbox.gateway.toolGateway 'Tool info'
+        signalbox.gateway.toolGateway -> signalbox.connections 'Toolbox entry'
+      }
+      when 'read resource (T-MCP-19)' {
+        signalbox.web -> signalbox.funnel 'readResource'
+        signalbox.funnel -> signalbox.gateway.toolGateway 'Read resource'
+        signalbox.gateway.toolGateway -> signalbox.connections 'Resource'
+      }
+      else 'update context (T-MCP-20)' {
+        signalbox.web -> signalbox.funnel 'updateModelContext'
+        signalbox.funnel -> signalbox.operations 'Invoke as A'
+        signalbox.operations -> signalbox.thread 'Context note' {
+          notes "- Rides with the next message, whoever sends it (A or B)"
+        }
+      }
+    }
+    signalbox.web <- signalbox.funnel 'Result'
+  }
+
+  // ─────────────────────────────── Workflows/Work/Browser ───────────────────────────────
+
+  dynamic view work_browser_render {
+    variant sequence
+    title 'Workflows/Work/Browser/Render own content'
+    description 'W-BRW-11 (absorbs T-MCP-22, T-MCP-23) · html_render, previews, PDFs and screenshots go through Browser.render on Browser Run: one renderer for every thread, never a person\'s profile.'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.harness, signalbox.browser
+
+    personA -> signalbox.web 'Ask for PDF' {
+      notes "- Or the agent renders a page, chart or report on its own"
+    }
+    signalbox.web -> signalbox.funnel 'Send to thread'
+    signalbox.funnel -> signalbox.thread 'Queue turn'
+    signalbox.thread -> signalbox.harness 'Run turn'
+    alt 'render target' {
+      when 'html' {
+        signalbox.harness -> signalbox.browser 'Render HTML'
+      }
+      when 'port URL' {
+        signalbox.harness -> signalbox.browser 'Render port' {
+          notes "- The thread's own dev server through the port gateway"
+          navigateTo work_previews_agent_tests
+        }
+      }
+      else 'drive file' {
+        signalbox.harness -> signalbox.browser 'Render file'
+      }
+    }
+    signalbox.browser -> signalbox.browser 'Browser Run' {
+      notes '''
+        - Cloudflare Browser Run, the same whether the thread has a machine or not
+        - Never A's Kernel profile: own content carries no sign-ins
+      '''
+    }
+    signalbox.harness <- signalbox.browser 'PNG, PDF or snapshot'
+    signalbox.harness -> signalbox.thread 'Attach result' {
+      navigateTo work_attachments_agent_images
+    }
+    signalbox.thread -> signalbox.funnel 'View delta'
+    signalbox.funnel -> signalbox.web 'Render'
+    signalbox.web -> personA 'Sees PDF' {
+      notes "- Inline in the thread; B sees it too when the thread is shared"
+    }
+  }
+
+  dynamic view work_browser_site_watch {
+    variant sequence
+    title 'Workflows/Work/Browser/Site change watch'
+    description 'W-BRW-18 · A default automation at folder Team snapshots a page on schedule and raises an ask only when it changed; no person\'s profile reaches it.'
+
+    include signalbox, signalbox.automations, signalbox.thread, signalbox.browser, signalbox.attention, platform, platform.kernel
+
+    signalbox.automations -> signalbox.automations 'Schedule tick' {
+      notes '''
+        - The site-watch default automation, placed at folder Team
+        - Built from primitives; anyone can read and edit it
+      '''
+      navigateTo work_automations_defaults
+    }
+    signalbox.automations -> signalbox.thread 'Start run' {
+      notes "- A run thread at Team records every step"
+      navigateTo work_automations_triggers
+    }
+    signalbox.automations -> signalbox.browser 'Snapshot step' {
+      notes "- A real-web session at Team: a public page, headless"
+    }
+    signalbox.browser -> platform.kernel 'Load page' {
+      notes "- No profile: A's sits on A's top level and does not reach a run at Team"
+    }
+    signalbox.browser <- platform.kernel 'Snapshot'
+    signalbox.automations -> signalbox.thread 'Diff with last' {
+      notes "- A deterministic diff step; unchanged ends the run quietly"
+    }
+    opt 'page changed' {
+      signalbox.thread -> signalbox.attention 'Ready ask' {
+        notes '''
+          - Routed to Team's responsible people: A and B each see it in their own lanes
+          - First answer wins
+        '''
+      }
+    }
+    opt 'site offers an API' {
+      signalbox.automations -> signalbox.browser 'Cheaper rung' {
+        notes "- Repeated watches climb down the ladder to API calls"
+        navigateTo work_browser_to_api
+      }
+    }
+  }
+
+  dynamic view work_browser_to_api {
+    variant sequence
+    title 'Workflows/Work/Browser/Browsing becomes API calls'
+    description 'W-BRW-17 · A repeated browser task drops to the cheapest rung that works: WebMCP, a generated API tool, cached replay, a Jev loop, then a full agent.'
+
+    include signalbox, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.judge, platform, platform.kernel
+
+    signalbox.harness -> signalbox.connections 'Repeat task' {
+      notes "- The same browser task again (a site watch, a weekly export)"
+      navigateTo work_browser_site_watch
+    }
+    alt 'cheapest rung that works' {
+      when '1 WebMCP' {
+        signalbox.connections -> signalbox.browser 'Site tools'
+        signalbox.browser -> platform.kernel 'Call WebMCP' {
+          notes "- The site publishes its own tools; no page driving"
+        }
+      }
+      when '2 generated API tool' {
+        signalbox.connections -> signalbox.connections 'API tool' {
+          notes '''
+            - Generated from observed requests and placed where the login lives (A's top level for A's profile)
+            - It reaches only threads below that level, like every placement
+          '''
+        }
+      }
+      when '3 cached replay' {
+        signalbox.connections -> signalbox.browser 'Replay'
+        signalbox.browser -> platform.kernel 'Replay steps'
+      }
+      when '4 Jev loop' {
+        signalbox.connections -> signalbox.browser 'Judged steps'
+        loop 'until done' {
+          signalbox.browser -> signalbox.judge 'Next action?' {
+            notes "- A bounded judgment per step instead of a full agent turn"
+          }
+          signalbox.browser -> platform.kernel 'Act'
+        }
+      }
+      else '5 full agent' {
+        signalbox.connections -> signalbox.browser 'Agent drives'
+        signalbox.browser -> platform.kernel 'Every step'
+      }
+    }
+    signalbox.harness <- signalbox.connections 'Result'
+  }
+
+  // ─────────────────────────────── Workflows/Work/Browser/Sessions ───────────────────────────────
+
+  dynamic view work_browser_real_web {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Agent browses the real web'
+    description 'W-BRW-01 (absorbs T-BRW-07, T-DSK-29), W-BRW-10 (absorbs T-BRW-13) · Real web only through Kernel on the profile placed at a person\'s top level; after 72 h standby the thread asks "redo it?".'
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.tree, platform, platform.kernel
+
+    signalbox.thread -> signalbox.harness 'Live turn'
+    signalbox.harness -> signalbox.connections 'Open public URL' {
+      notes "- A browser tool from Connections' browser provider, behind ToolGateway"
+    }
+    signalbox.connections -> signalbox.browser 'Real-web session'
+    signalbox.browser -> signalbox.tree 'Which profile?' {
+      navigateTo folders_secrets_browser_identity
+      notes '''
+        - The profile is a placement at A's top level and reaches what is below it
+        - A Team thread filed through A's mount resolves it for A's and B's turns alike (never by sender)
+      '''
+    }
+    alt 'profile on the chain' {
+      when 'reaches' {
+        signalbox.browser -> platform.kernel 'Attach profile' {
+          notes '''
+            - One writer: a second thread on the same profile waits
+            - Headless by default; watching is the rrweb mirror
+          '''
+          navigateTo work_browser_watch_takeover
+        }
+      }
+      else 'none reaches' {
+        signalbox.connections <- signalbox.browser 'Denied' {
+          notes "- Recorded assumption: no profile placed above means no real-web session here"
+        }
+      }
+    }
+    opt 'site needs a login' {
+      signalbox.browser -> signalbox.browser 'Sign in' {
+        navigateTo work_browser_sign_in
+      }
+    }
+    signalbox.harness <- signalbox.connections 'Page result'
+    signalbox.browser -> platform.kernel 'Standby' {
+      notes "- The turn ends; live turns only, so the session goes to standby"
+    }
+    opt '72 h standby passes (W-BRW-10)' {
+      signalbox.browser <- platform.kernel 'Session gone'
+      signalbox.browser -> signalbox.thread 'Session lost'
+      signalbox.thread -> signalbox.web 'Redo it?' {
+        notes "- A message in the thread, not a push"
+      }
+      signalbox.web -> personA 'Asks to redo' {
+        notes "- A replies to rerun the browsing in a fresh session"
+      }
+    }
+  }
+
+  dynamic view work_browser_watch_takeover {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Watch, take over and hand back a tab'
+    description 'W-BRW-08 (absorbs T-BRW-08), W-BRW-09 · The panel streams an rrweb mirror only while visible, never extending Kernel; A can take over and hand back with URL, scroll and form values.'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.harness, signalbox.browser, platform, platform.kernel
+
+    personA -> signalbox.web 'Open browser panel' {
+      notes "- On a thread where the agent browses"
+    }
+    signalbox.web -> signalbox.funnel 'Subscribe mirror'
+    signalbox.browser -> platform.kernel 'Record DOM' {
+      notes "- rrweb record on the live tab; it adds no Kernel time"
+    }
+    signalbox.browser -> signalbox.funnel 'Mirror stream'
+    signalbox.funnel -> signalbox.web 'Replay'
+    signalbox.web -> personA 'Sees agent tab' {
+      notes '''
+        - Live and read-only
+        - B watching the shared thread sees the same mirror
+      '''
+    }
+    opt 'take over (W-BRW-09)' {
+      personA -> signalbox.web 'Take over'
+      signalbox.web -> signalbox.funnel 'Take over'
+      signalbox.funnel -> signalbox.operations 'Invoke as A' {
+        notes "- One driver at a time; a second person gets \"A is driving\""
+      }
+      signalbox.operations -> signalbox.browser 'Lock tab'
+      signalbox.browser -> signalbox.harness 'Person driving' {
+        notes "- Surfaces as the browser tool's result; the agent waits"
+      }
+      loop 'A drives' {
+        signalbox.web -> signalbox.funnel 'Input'
+        signalbox.funnel -> signalbox.browser 'Input'
+        signalbox.browser -> platform.kernel 'Act'
+      }
+      personA -> signalbox.web 'Hand back'
+      signalbox.web -> signalbox.funnel 'Hand back'
+      signalbox.funnel -> signalbox.browser 'Hand back state' {
+        notes "- Carries URL, scroll position and form values"
+      }
+      signalbox.browser -> signalbox.harness 'Resume' {
+        notes "- The agent continues where A left the page"
+        navigateTo work_browser_real_web
+      }
+    }
+    personA -> signalbox.web 'Close panel'
+    signalbox.web -> signalbox.funnel 'Unsubscribe' {
+      notes "- The mirror stops; the Kernel session lives only as long as the turn"
+      navigateTo work_browser_payment
+    }
+  }
+
+  dynamic view work_browser_payment {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Payment handoff'
+    description 'W-BRW-07 · The agent stops before paying; the Payment step raises a pay Blocker (Done, Failed, Open the browser) and the agent waits while A drives.'
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.harness, signalbox.automations, signalbox.attention, signalbox.browser, platform, platform.kernel
+
+    signalbox.harness -> signalbox.browser 'Fill checkout' {
+      notes "- Through browser tools on the profile that reaches this thread"
+    }
+    signalbox.browser -> platform.kernel 'Checkout page'
+    signalbox.harness -> signalbox.automations 'Stop before paying' {
+      notes "- Paying is never the agent's step; the Payment step takes over"
+    }
+    signalbox.automations -> signalbox.thread 'Pay Blocker' {
+      notes '''
+        - Raised in the thread: Done / Failed / Open the browser
+        - Pay gates go to named deciders: in a shared Team thread, A as decider; B sees the turn waiting, no card
+      '''
+      navigateTo work_automations_step_ask
+    }
+    signalbox.thread -> signalbox.attention 'Route ask' {
+      navigateTo person_pipeline_blocker_payment
+    }
+    signalbox.attention -> signalbox.web 'Spend card'
+    signalbox.web -> personA 'Sees payment' {
+      notes "- A spend card in A's Blocker lane"
+    }
+    alt 'A answers' {
+      when 'Done' {
+        personA -> signalbox.web 'Done'
+        signalbox.web -> signalbox.thread 'Answer' {
+          notes "- `Thread.send(answer)` over Funnel"
+        }
+      }
+      when 'Failed' {
+        personA -> signalbox.web 'Failed'
+        signalbox.web -> signalbox.thread 'Answer'
+      }
+      else 'Open the browser' {
+        personA -> signalbox.web 'Open browser'
+        signalbox.web -> signalbox.browser 'Take over' {
+          notes "- The agent waits while A drives"
+          navigateTo work_browser_watch_takeover
+        }
+        signalbox.browser -> platform.kernel 'A pays'
+        signalbox.web -> signalbox.thread 'Hand back, Done'
+      }
+    }
+    signalbox.thread -> signalbox.harness 'Resume' {
+      notes "- The answer arrives as a normal message"
+    }
+  }
+
+  dynamic view work_browser_capture {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Screenshot or record a tab'
+    description 'T-BRW-09 (kept from T3 Code, re-homed) · A from the panel or an agent through a tool screenshots or records a tab; the file lands in the thread\'s drive.'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.drive
+
+    alt 'who captures' {
+      when 'A from the panel' {
+        personA -> signalbox.web 'Screenshot or record' {
+          notes "- From the browser panel toolbar"
+        }
+        signalbox.web -> signalbox.funnel 'Capture'
+        signalbox.funnel -> signalbox.operations 'Invoke as A'
+        signalbox.operations -> signalbox.browser 'Capture tab'
+      }
+      else 'agent tool' {
+        signalbox.harness -> signalbox.connections 'Capture tool' {
+          notes "- `preview_screenshot`, `recording_start` / `stop`, behind ToolGateway"
+        }
+        signalbox.connections -> signalbox.browser 'Capture tab'
+      }
+    }
+    signalbox.browser -> signalbox.drive 'Save file' {
+      notes "- Into the thread's working ref, like any file the thread makes"
+      navigateTo work_browser_render
+    }
+    opt 'A asked' {
+      signalbox.web <- signalbox.funnel 'File ref'
+      signalbox.web -> personA 'Reveal or copy' {
+        navigateTo work_browser_watch_takeover
+      }
+    }
+  }
+
+  dynamic view work_browser_pin_tab {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Pin a tab to a folder'
+    description 'W-BRW-15 · Pinning a tab is a placement on a level; pinned at folder Team, every thread there sees it, whoever sends.'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.mobile, signalbox.operations, signalbox.tree, signalbox.thread
+
+    personA -> signalbox.web 'Pin tab to Team' {
+      notes "- From a thread's browser panel"
+    }
+    signalbox.web -> signalbox.operations 'Pin' {
+      notes "- Client rpc over Funnel"
+    }
+    signalbox.operations -> signalbox.tree 'Can place?' {
+      notes "- A is a Member of Company; roles add downward to Team"
+    }
+    signalbox.operations -> signalbox.tree 'Place tab' {
+      navigateTo folders_placement_place
+      notes "- A placement on the Team Level actor, reach below"
+    }
+    parallel {
+      signalbox.tree -> signalbox.mobile 'Level view delta'
+      signalbox.tree -> signalbox.thread 'Next turn\'s Scope' {
+        notes "- Resolution by position: every thread in Team, whoever sends"
+      }
+    }
+    signalbox.mobile -> personB 'Sees pinned tab' {
+      notes "- B sees it on Team and in Team threads, not on B's Personal threads"
+    }
+  }
+
+  dynamic view work_browser_tabs_navigate {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Navigate, list and close browser tabs'
+    description 'T-BRW-02, T-BRW-14 (kept from T3 Code, re-homed) · A navigates from the panel; an agent lists and closes its own tabs through tools.'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.harness, signalbox.connections, signalbox.browser, platform, platform.kernel
+
+    personA -> signalbox.web 'URL bar, back' {
+      notes "- Or forward, refresh, stop, and the `preview.*` keys"
+    }
+    signalbox.web -> signalbox.funnel 'Navigate'
+    signalbox.funnel -> signalbox.operations 'Invoke as A'
+    signalbox.operations -> signalbox.browser 'Navigate tab'
+    signalbox.browser -> platform.kernel 'CDP navigate'
+    signalbox.browser -> signalbox.funnel 'Mirror' {
+      notes "- A sees the new page through the mirror"
+      navigateTo work_browser_watch_takeover
+    }
+    signalbox.harness -> signalbox.connections 'List tabs' {
+      notes "- T-BRW-14: the agent tidies its own tabs, behind ToolGateway"
+    }
+    signalbox.connections -> signalbox.browser 'Thread tabs'
+    signalbox.connections <- signalbox.browser 'Tab list'
+    signalbox.harness -> signalbox.connections 'Close tab'
+    signalbox.connections -> signalbox.browser 'Close tab'
+    signalbox.browser -> platform.kernel 'Close'
+  }
+
+  dynamic view work_browser_unload_tabs {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Only the open thread\'s tabs stay loaded'
+    description 'W-BRW-22 · Switching threads unloads the other threads\' tab views on the client; Kernel sessions of live turns keep running headless.'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.browser, platform, platform.kernel
+
+    personA -> signalbox.web 'Switch to thread Y' {
+      notes "- A leaves thread X, where the agent was browsing"
+    }
+    signalbox.web -> signalbox.web 'Unload X tabs' {
+      notes "- Only thread Y's tab views stay loaded; memory and GPU stay flat"
+    }
+    signalbox.web -> signalbox.funnel 'Mirror Y only'
+    signalbox.funnel -> signalbox.browser 'Switch mirror' {
+      notes "- X's mirror stops; Y's starts while visible"
+      navigateTo work_browser_watch_takeover
+    }
+    opt 'X has a live turn' {
+      signalbox.browser -> platform.kernel 'X keeps running' {
+        notes "- Headless, live turns only; unloading the view never stops the agent"
+      }
+    }
+  }
+
+  dynamic view work_browser_record_sync {
+    variant sequence
+    title 'Workflows/Work/Browser/Sessions/Browsing record syncs'
+    description 'W-BRW-14 · Tab changes from any device merge into the thread\'s browsing log field by field (last writer wins); private tabs never enter it.'
+
+    include personA, signalbox, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.thread, signalbox.browser
+
+    personA -> signalbox.web 'Opens tab' {
+      notes "- On the desktop or web"
+    }
+    signalbox.web -> signalbox.funnel 'URL and title'
+    personA -> signalbox.mobile 'Moves tab' {
+      notes "- Later, on the phone"
+    }
+    signalbox.mobile -> signalbox.funnel 'Order and scroll'
+    signalbox.browser -> signalbox.funnel 'Agent tab changes'
+    signalbox.funnel -> signalbox.thread 'Browsing log' {
+      notes '''
+        - Per-field LWW: url, title, order and scroll merge field by field
+        - Private tabs never reach the log
+      '''
+    }
+    signalbox.thread -> signalbox.funnel 'Log delta' {
+      notes "- B, in the shared thread, follows A's non-private tabs"
+      navigateTo journey_sharing_browser_tab
+    }
+    parallel {
+      signalbox.funnel -> signalbox.web 'Tabs'
+      signalbox.funnel -> signalbox.mobile 'Tabs'
+    }
+  }
+
+  // ─────────────────────────────── Workflows/Work/Browser/SignIn ───────────────────────────────
+
+  dynamic view work_browser_sign_in {
+    variant sequence
+    title 'Workflows/Work/Browser/SignIn/Agent signs in to a site'
+    description 'W-BRW-02 (absorbs T-BRW-05), W-BRW-03, W-BRW-04, W-BRW-06 · Managed Auth signs in with A\'s 1Password reference after A\'s human-only grant; codes come from a connection; the model sees status only.'
+
+    include personA, signalbox, signalbox.thread, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.browser.api, signalbox.browser.loginService, signalbox.browser.signInGrants, platform, platform.kernel, services, services.onepassword
+
+    style signalbox.browser {
+      color muted
+      opacity 20%
+    }
+
+    alt 'entry' {
+      when 'agent calls sign_in (W-BRW-02)' {
+        signalbox.harness -> signalbox.connections 'sign_in site' {
+          notes "- A browser tool from Connections' browser provider, behind ToolGateway"
+        }
+        signalbox.connections -> signalbox.browser.api 'session: sign in'
+      }
+      else 'Kernel reports NEEDS_AUTH (W-BRW-06)' {
+        platform.kernel -> signalbox.browser.api 'NEEDS_AUTH' {
+          notes "- A saved sign-in on A's profile expired; nobody is watching, so it re-logs in unattended"
+        }
+      }
+    }
+    signalbox.browser.api -> signalbox.browser.loginService 'Start login' {
+      notes "- From here on it is Browser's own flow (the Browser box): the login service drives Kernel Managed Auth"
+    }
+    signalbox.browser.loginService -> signalbox.browser.signInGrants 'Grant for site?' {
+      navigateTo state_signingrant
+      notes "- Sign-in grants are A's own records, kept per person in Browser's grant rows"
+    }
+    opt 'first sign-in to site (W-BRW-04)' {
+      signalbox.browser.loginService -> signalbox.thread 'Blocker ask' {
+        notes '''
+          - "Let agents sign in to X? Once / Always", human-only, routed by Attention to A's Blocker lane
+          - Only A can grant use of A's 1Password; B in a shared thread cannot answer it
+        '''
+      }
+      personA -> signalbox.thread 'Always' {
+        notes "- A answers from any client, as `PersonActor`"
+      }
+      signalbox.browser.loginService <- signalbox.thread 'Answer: Always'
+      signalbox.browser.loginService -> signalbox.browser.signInGrants 'Grant record'
+    }
+    signalbox.browser.loginService -> platform.kernel 'Managed Auth' {
+      notes "- `save_credentials: false`; factors password > TOTP > email > SMS, never SSO"
+      navigateTo work_browser_passkey
+    }
+    signalbox.browser.loginService -> signalbox.connections 'Login secrets'
+    signalbox.connections -> services.onepassword 'A\'s reference' {
+      navigateTo folders_secrets_agent_sign_in
+      notes "- Read by the isolated vault worker; Signalbox stores no value"
+    }
+    opt 'site sends a code (W-BRW-03)' {
+      signalbox.browser.loginService -> signalbox.connections 'Fetch code'
+      signalbox.connections -> signalbox.connections 'Gmail or SMS gateway' {
+        notes "- Read from the connection placed on the chain; the code goes straight to Managed Auth, never to the model"
+      }
+    }
+    alt 'outcome' {
+      when 'signed in' {
+        signalbox.connections <- signalbox.browser.loginService 'Status'
+        signalbox.harness <- signalbox.connections 'signed_in' {
+          notes "- Status only: no password, code or cookie"
+        }
+      }
+      else 'SSO or human-only step' {
+        signalbox.browser.loginService -> signalbox.thread 'Blocker' {
+          notes "- A signs in by hand through the mirror"
+          navigateTo person_pipeline_blocker_human_only
+        }
+      }
+    }
+  }
+
+  dynamic view work_browser_passkey {
+    variant sequence
+    title 'Workflows/Work/Browser/SignIn/Agent passkey per site'
+    description 'W-BRW-21 (absorbs T-BRW-06) · A CDP virtual authenticator makes one passkey per site, stored as an item in A\'s 1Password; deleting the item undoes it.'
+
+    include personA, signalbox, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.browser.api, signalbox.browser.loginService, platform, platform.kernel, services, services.onepassword
+
+    style signalbox.browser {
+      color muted
+      opacity 20%
+    }
+
+    signalbox.harness -> signalbox.connections 'sign_in site' {
+      navigateTo work_browser_sign_in
+    }
+    signalbox.connections -> signalbox.browser.api 'session: sign in'
+    signalbox.browser.api -> signalbox.browser.loginService 'Start login'
+    alt 'passkey exists?' {
+      when 'first time' {
+        signalbox.browser.loginService -> platform.kernel 'Create passkey' {
+          notes '''
+            - CDP virtual authenticator on A's profile
+            - Needs A's sign-in grant for this site first
+          '''
+        }
+        signalbox.browser.loginService <- platform.kernel 'Credential'
+        signalbox.browser.loginService -> signalbox.connections 'Store item'
+        signalbox.connections -> services.onepassword 'Item in A\'s vault' {
+          navigateTo folders_secrets_browser_identity
+          notes "- A sees it next to their own logins"
+        }
+      }
+      else 'later sign-in' {
+        signalbox.browser.loginService -> signalbox.connections 'Read item'
+        signalbox.connections -> services.onepassword 'A\'s passkey'
+        signalbox.browser.loginService -> platform.kernel 'Assert passkey'
+      }
+    }
+    signalbox.harness <- signalbox.connections 'signed_in'
+    opt 'undo' {
+      personA -> services.onepassword 'Delete item' {
+        notes "- The agent loses the passkey for that site; nothing else to clean up"
+      }
+    }
+  }
+
+  dynamic view work_browser_profile {
+    variant sequence
+    title 'Workflows/Work/Browser/SignIn/Clear or export the browser profile'
+    description 'W-BRW-19 · From Settings, A clears the profile\'s saved sign-ins or exports it; the profile is owner-only.'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.browser, platform, platform.kernel
+
+    personA -> signalbox.web 'Settings, Browser' {
+      navigateTo folders_secrets_browser_identity
+      notes "- A's one profile, placed at A's top level"
+    }
+    signalbox.web -> signalbox.funnel 'Profile command'
+    signalbox.funnel -> signalbox.operations 'Invoke as A' {
+      notes '''
+        - Owner-only: B or C invoking it gets `Denied`
+        - An agent asking would hit the decision gate
+      '''
+    }
+    alt 'what A picks' {
+      when 'clear sign-ins' {
+        signalbox.operations -> signalbox.browser 'Clear'
+        signalbox.browser -> platform.kernel 'Drop auth state' {
+          notes "- The next sign-in runs Managed Auth again; grants stay"
+        }
+      }
+      else 'export' {
+        signalbox.operations -> signalbox.browser 'Export'
+        signalbox.browser -> platform.kernel 'Export profile'
+        signalbox.browser <- platform.kernel 'Archive'
+      }
+    }
+    signalbox.web <- signalbox.funnel 'Done or download'
+  }
+}

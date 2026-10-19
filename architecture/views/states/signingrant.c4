@@ -1,0 +1,25 @@
+// State machine for one sign-in grant. The walk through it with people and modules is the dynamic view state_signingrant.
+model {
+  smSignInGrant = state 'Sign-in grant lifecycle' {
+    none = state 'None' { description 'agent asks first' }
+    grantedOnce = state 'Granted once' { description 'this sign-in only' }
+    grantedAlways = state 'Granted always' { description 'standing · per site or *' }
+    revoked = state 'Revoked' { description 'by the person or an agent' }
+
+    none -[transition]-> grantedOnce 'Once (person)'
+    none -[transition]-> grantedAlways 'Always (person)'
+    grantedOnce -[transition]-> none 'used'
+    grantedAlways -[transition]-> revoked 'revoke'
+    revoked -[transition]-> grantedAlways 'grant again (person)'
+  }
+}
+views {
+  view state-signingrant of smSignInGrant {
+    title 'States/Sign-in grant/State machine'
+    description 'When may an agent sign in to a site for a person, and how is that taken back? Start: green. No end state: every state has a way back. Click the frame for the walk with people and modules (state_signingrant).'
+    include *
+    include smSignInGrant with { navigateTo state_signingrant }
+    style smSignInGrant.none { color green }
+    autoLayout TopBottom
+  }
+}

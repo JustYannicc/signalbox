@@ -1,0 +1,130 @@
+// The outermost picture: who uses Signalbox and what it reaches. Click any box to go one level down.
+views {
+  view index {
+    title 'Overview/Landscape'
+    description '''
+      Who uses Signalbox and what it reaches. Four people share one Signalbox (A and B members of folder Company,
+      C its admin, D an outside collaborator on folder Team only); an operator runs it through Build & infra.
+      It reaches five groups of outside services.
+      Click Signalbox for the modules, a person for the hierarchy, the operator for deployment, a group for its services.
+      The sidebar holds the rest: Domain, States, Workflows, Journeys, Scenarios.
+    '''
+    include personA with { navigateTo hierarchy }
+    include personB with { navigateTo hierarchy }
+    include personC with { navigateTo hierarchy }
+    include personD with { navigateTo people-meet }
+    include operator with { navigateTo deployment }
+    include build with { navigateTo deployment }
+    include signalbox with { navigateTo containers }
+    group 'Outside Signalbox' {
+      color muted
+      opacity 10%
+      include modelProviders with { navigateTo ext-providers }
+      include services with { navigateTo ext-services }
+      include platform with { navigateTo ext-platform }
+      include telemetry with { navigateTo ext-telemetry }
+      include upstreams with { navigateTo ext-upstreams }
+    }
+    exclude build -> services, build -> platform, build -> upstreams
+    style personA, personB, personC, personD { color green }
+    style operator, build { color slate }
+    style signalbox { color primary }
+    style modelProviders, services, platform, telemetry, upstreams { color secondary }
+    autoLayout LeftRight 120 60
+  }
+
+  view ext-upstreams of upstreams {
+    title 'Overview/Outside Signalbox/Distribution and upstreams'
+    description 'Where builds ship (Cloudflare, EAS, stores, update feed) and which upstreams we follow (Alchemy, npm, skill and plugin registries).'
+    include *
+    include build.* -> upstreams.*, signalbox.* -> upstreams.*, upstreams.* -> signalbox.*
+    style upstreams { color muted; opacity 10% }
+    autoLayout LeftRight
+  }
+
+  view ext-providers of modelProviders {
+    title 'Overview/Outside Signalbox/Model providers'
+    description 'Who talks to model providers? Only Models (the pool host, via CLIProxyAPI); everything else goes through the one ModelGateway.'
+    include *
+    include signalbox.models -> modelProviders.*
+    style modelProviders { color muted; opacity 10% }
+    autoLayout LeftRight
+  }
+
+  view ext-services of services {
+    title 'Overview/Outside Signalbox/Connected services'
+    description 'Which module reaches which outside service? Connections calls tools, Drive syncs forges, Ingress takes webhooks, Gateway fills secrets at egress.'
+    group 'Tools (via Connections)' {
+      color muted
+      opacity 8%
+      include services.google, services.atlassian, services.microsoft365, services.slack, services.notion, services.todoist, services.trello, services.toolService, services.smsGateway
+    }
+    group 'Forges (via Drive)' {
+      color muted
+      opacity 8%
+      include services.github, services.gitlab
+    }
+    group 'Webhooks in (via Ingress)' {
+      color muted
+      opacity 8%
+      include services.webhookSender, services.zapierN8n
+    }
+    group 'Secrets' {
+      color muted
+      opacity 8%
+      include services.onepassword, services.boundHost
+    }
+    include signalbox.connections, signalbox.drive, signalbox.ingress, signalbox.gateway, signalbox.automations
+    // Connections also calls GitHub as tools; the forge link is Drive's job, so keep one edge per service.
+    exclude signalbox.connections -> services.github
+    // Only the edges that cross the boundary: module-to-module wiring lives in Modules/All modules.
+    exclude signalbox.* -> signalbox.*
+    style signalbox.connections, signalbox.drive, signalbox.ingress, signalbox.gateway, signalbox.automations { color primary }
+    autoLayout TopBottom 80 40
+  }
+
+  view ext-platform of platform {
+    title 'Overview/Outside Signalbox/Platform services'
+    description 'Which platform service backs which module? Identity, compute, storage, catalogs and judgments, billing, and the upstreams we follow.'
+    group 'Identity and billing' {
+      color muted
+      opacity 8%
+      include platform.workos, platform.stripe, platform.metronome
+    }
+    group 'Machines and browser' {
+      color muted
+      opacity 8%
+      include platform.boxd, platform.deviceHost, platform.kernel
+    }
+    group 'Storage' {
+      color muted
+      opacity 8%
+      include platform.artifacts, platform.r2
+    }
+    group 'Catalogs and judgments' {
+      color muted
+      opacity 8%
+      include platform.routerForMe, platform.nango, platform.typesafe
+    }
+    group 'Upstreams we follow' {
+      color muted
+      opacity 8%
+      include platform.t3upstream, platform.cpaUpstream
+    }
+    include signalbox.identity, signalbox.ingress, signalbox.models, signalbox.computer, signalbox.bases, signalbox.browser,
+      signalbox.drive, signalbox.connections, signalbox.judge, signalbox.automations
+    exclude signalbox.web -> platform.workos
+    exclude signalbox.* -> signalbox.*
+    style signalbox.* { color primary }
+    autoLayout LeftRight 120 30
+  }
+
+  view ext-telemetry of telemetry {
+    title 'Overview/Outside Signalbox/Observability and push'
+    description 'Where telemetry (ids only, never content) and push notifications leave Signalbox.'
+    include *
+    include signalbox.* -> telemetry.*, telemetry.* -> signalbox.*
+    style telemetry { color muted; opacity 10% }
+    autoLayout LeftRight
+  }
+}

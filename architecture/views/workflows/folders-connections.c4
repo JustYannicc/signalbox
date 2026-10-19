@@ -1,0 +1,1654 @@
+// Shard 21: connections and secrets on folders.
+// Generic folders only: a person's top level, folder "Company" (owner: organization) and folder "Team" inside it.
+// A and B are members of Company, C is its admin, D is an outside collaborator on Team only.
+// Every module is a black box here (Thread, Gateway, Connections, Tree, Browser ...). The one exception is
+// folders_secrets_onepassword_link, which enters Connections through its interface to show the isolated vault worker.
+views {
+
+  // ───────────────────────── States ─────────────────────────
+
+  dynamic view state_connection {
+    #v1
+    title 'States/Connection/Walk through'
+    description '''
+      R-CON-08 (v1 partial). One connection from connect to delete, with reauth after an expired or revoked token.
+      Click the frame for the full state machine (state-connection).
+    '''
+
+    include smConnection with {
+      navigateTo state-connection
+    }
+
+    smConnection.connecting -> smConnection.unplaced 'complete' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - The OAuth callback (or key, or import) creates the Connection actor
+        - It holds one sealed credential, its manifest and an `epoch`
+      """
+    }
+    alt 'placed in time?' {
+      when 'placed' {
+        smConnection.unplaced -> smConnection.live 'place' {
+          notes """
+            - Placed at the level it was added from (A: their top level, C: folder Company)
+            - Its tools now reach every thread below: Company's reach A, B and D in Team alike
+          """
+        }
+      }
+      else 'never placed' {
+        smConnection.unplaced -> smConnection.swept 'sweeper' {
+          notes """
+            - A connect that never got placed is swept after a TTL
+          """
+        }
+      }
+    }
+    smConnection.live -> smConnection.needsReauth 'health check fails' {
+      notes """
+        - Token expired or revoked at the provider, found by a health check or a failing call
+        - The row shows Reauth; a repair chat comes later
+      """
+    }
+    smConnection.needsReauth -> smConnection.live 'reauth' {
+      notes """
+        - A (their own) or C (Company's) runs the one-click flow again
+        - Same Connection actor, same placements; nothing to re-place
+      """
+    }
+    smConnection.live -> smConnection.retiring 'disconnect' {
+      navigateTo folders_connections_disconnect
+      notes """
+        - Serve refuses at once; an emergency revoke only bumps `epoch` and stays Live
+      """
+    }
+    smConnection.retiring -> smConnection.deleted 'all unplaced' {
+      navigateTo folders_connections_cut_off
+      notes """
+        - Every indexed placement and loan is gone, then the sealed credential is deleted
+        - Turns still using it get `Denied` at their next refresh
+      """
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view state_signingrant {
+    variant sequence
+    title 'States/Sign-in grant/Walk through'
+    description '''
+      W-BRW-05, R-SEC-10 (not v1). A standing permission for agents to sign in to a site (per site or `*`):
+      granted by the person only (Once / Always), revoked by the person or an agent.
+    '''
+
+    include personA, signalbox, signalbox.harness, signalbox.browser, signalbox.attention, signalbox.operations, signalbox.tree
+
+    signalbox.harness -> signalbox.browser 'sign_in(site)' {
+      navigateTo folders_secrets_agent_sign_in
+      notes """
+        - An agent in A's turn needs a login at a site
+      """
+    }
+    signalbox.browser -> signalbox.tree 'Grant for site?' {
+      notes """
+        - Grants are kept on A's Person, keyed by site or `*`
+        - Per person: B's and D's agents never use A's grants
+      """
+    }
+    alt 'grant state' {
+      when 'none' {
+        signalbox.browser -[async]-> signalbox.attention 'Once or Always?' {
+          navigateTo person_pipeline_blocker_human_only
+          notes """
+            - "Let agents sign in to X? Once / Always" in A's Blocker lane
+          """
+        }
+        signalbox.attention -> personA 'Let agents sign in?' {
+          notes """
+            - Human-only: an agent can't answer it, not even A's assistant
+          """
+        }
+        personA -> signalbox.operations 'Once · Always' {
+          notes """
+            - Once: this sign-in only, nothing is kept
+            - Always: a standing grant for the site (or `*`)
+          """
+        }
+        signalbox.operations -> signalbox.tree 'Store grant' {
+          notes """
+            - Operations checks the caller is A as a person, then stores it
+          """
+        }
+      }
+      else 'granted' {
+        signalbox.browser <- signalbox.tree 'Granted' {
+          navigateTo work_browser_sign_in
+          notes """
+            - The sign-in proceeds without asking
+          """
+        }
+      }
+    }
+    alt 'who revokes' {
+      when 'A' {
+        personA -> signalbox.operations 'Revoke' {
+          notes """
+            - Settings › sign-in grants; takes effect on the next sign-in
+          """
+        }
+      }
+      else 'an agent' {
+        signalbox.harness -> signalbox.operations 'Revoke' {
+          notes """
+            - Agents may check and revoke grants, never create them
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.tree 'Grant removed' {
+      notes """
+        - The next sign-in asks again
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Connect ─────────────────────────
+
+  dynamic view folders_connections_first_connection {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Connections/Add a first connection in one click'
+    description 'P-ONB-07 (v1 yes) · A adds their first Google connection from the page they are on, and it is placed right there.'
+
+    include personA, signalbox, signalbox.web, signalbox.connections, signalbox.tree, services, services.google
+
+    personA -> signalbox.web 'Open Connections' {
+      notes """
+        - The Connections section on their top level or any folder page
+        - Nothing to set up first: the hosted OAuth clients are already there
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect(Google, here)' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - Through the Funnel; `here` is the level A is looking at
+      """
+    }
+    signalbox.web -> services.google 'Consent' {
+      notes """
+        - Same tab on web; the system browser on desktop and mobile
+        - Confluence works the same way (Atlassian's hosted client)
+      """
+    }
+    services.google -> signalbox.connections 'Callback' {
+      notes """
+        - Through Ingress, not through the client
+        - The Connection is created with A's sealed tokens
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Place here' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - At their top level: reaches only their own threads
+        - Where they may place on a shared folder: every thread below, for A, B and D alike
+      """
+    }
+    signalbox.web <- signalbox.tree 'Row appears' {
+      notes """
+        - "Google · A" in the section; usable from the next turn
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_catalog_clients {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Connections/Connect/What can be connected: catalog and OAuth clients'
+    description '''
+      R-CON-23 (v1 partial: static data), R-CON-24 (v1 yes). What makes "one click" possible: a versioned provider catalog
+      and OAuth clients the hosted service provides. Self-hosted, the operator brings their own OAuth apps.
+    '''
+
+    include operator
+    include signalbox, signalbox.automations, signalbox.connections
+    include build, build.secrets, build.iac
+    include platform, platform.nango, services, services.google
+
+    signalbox.automations -> platform.nango 'Import definitions' {
+      notes """
+        - A scheduled default automation; provider definitions arrive as data
+        - The PR auto-merges when green; Nango itself is never deployed
+      """
+    }
+    alt 'where OAuth clients come from' {
+      when 'hosted' {
+        build.secrets -> build.iac 'Hosted client secrets' {
+          notes """
+            - Google and Atlassian (v1); GitHub App, Microsoft 365, Slack, Notion, Todoist, Trello, Sentry later
+            - Client secrets live in 1Password and load into the deploy (Alchemy)
+          """
+        }
+      }
+      else 'self-hosted' {
+        operator -> build.iac 'Own OAuth apps' {
+          notes """
+            - Same product; the operator registers their own apps and sets them as deploy secrets
+          """
+        }
+      }
+    }
+    build.iac -> signalbox.connections 'Deploy catalog + clients' {
+      navigateTo operations_ops_deploy_prod
+      notes """
+        - Static catalogs ship as versioned data with the release (v1)
+        - Remote MCP and API imports are per connection instead (folders_connections_tool_service)
+      """
+    }
+    signalbox.connections -> services.google 'One-click OAuth' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - Every person's connect uses these clients; A, B and C never create an OAuth app
+      """
+    }
+
+    style signalbox, build, platform, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_github {
+    variant sequence
+    title 'Workflows/Folders/Connections/Connect/Connect GitHub as a folder or as yourself'
+    description '''
+      R-CON-03 (aliases T-GIT-33, T-SET-18), R-CON-04 (not v1). A GitHub App at a repo folder acts as the folder;
+      a person's own GitHub login acts as that person.
+    '''
+
+    include personC, personA, signalbox, signalbox.web, signalbox.connections, signalbox.drive, services, services.github
+
+    alt 'who connects' {
+      when 'C: App at a repo folder' {
+        personC -> signalbox.web 'Add GitHub App' {
+          notes """
+            - At a repo folder inside Company (needs the role there)
+          """
+        }
+        signalbox.web -> signalbox.connections 'connect(githubApp)' {
+          notes """
+            - Through the Funnel
+          """
+        }
+        signalbox.connections -> services.github 'Install App' {
+          notes """
+            - Installed on the organization's repos; the final click is human-only
+          """
+        }
+        signalbox.connections -> signalbox.connections 'Seal installation' {
+          navigateTo state_connection
+          notes """
+            - One Connection, placed at the repo folder
+          """
+        }
+        signalbox.drive -> signalbox.connections 'Forge token' {
+          navigateTo work_git_sync_lead
+          notes """
+            - The folder's repos act as the folder: bot author, the driving person as co-author
+            - Same for A's, B's and D's turns there: resolution is by position
+            - Automation turns carry no co-author trailer
+          """
+        }
+      }
+      else 'A: their own login' {
+        personA -> signalbox.web 'Add GitHub' {
+          notes """
+            - At their top level; reaches only their own tree
+          """
+        }
+        signalbox.web -> signalbox.connections 'connect(oauth)'
+        signalbox.connections -> services.github 'OAuth consent'
+        signalbox.connections -> signalbox.connections 'Seal tokens' {
+          navigateTo state_connection
+        }
+        signalbox.connections -> services.github 'Calls as A' {
+          navigateTo folders_lending_lend
+          notes """
+            - Fresh token per call; acts as A
+            - Used in Team only if A lends it
+          """
+        }
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_map_source {
+    variant sequence
+    title 'Workflows/Folders/Connections/Connect/Map or unmap a source at a folder'
+    description 'R-CON-22 (not v1) · A Drive folder, Confluence space or another drive becomes /sources/<label>/ for threads below.'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.connections, signalbox.drive, signalbox.tree, services, services.google, services.atlassian
+
+    alt 'who maps what' {
+      when 'C at Company' {
+        personC -> signalbox.web 'Map Confluence space' {
+          notes """
+            - Sources section of folder Company, from Company's Confluence connection
+          """
+        }
+        signalbox.web -> signalbox.connections 'Map{from, resource, at}'
+        signalbox.connections -> services.atlassian 'Check space' {
+          navigateTo folders_connections_oauth_connect
+        }
+      }
+      else 'A at their Personal folder' {
+        personA -> signalbox.web 'Map Drive folder' {
+          notes """
+            - From their own Google connection at their top level
+          """
+        }
+        signalbox.web -> signalbox.connections 'Map{from, resource, at}'
+        signalbox.connections -> services.google 'Check folder'
+      }
+    }
+    opt 'from another drive' {
+      signalbox.connections -> signalbox.drive 'Validate DriveRef' {
+        notes """
+          - A drive source is validated by Drive, not by a provider
+        """
+      }
+    }
+    signalbox.connections -> signalbox.tree 'Place source' {
+      navigateTo folders_placement_kind_source
+      notes """
+        - Mounted as `/sources/<label>/` in every thread below
+        - C's space: A, B and D see the same files in Team; A's folder stays in their Personal
+      """
+    }
+    opt 'unmap' {
+      personC -> signalbox.web 'Unmap'
+      signalbox.web -> signalbox.connections 'Unmap{source}'
+      signalbox.connections -> signalbox.tree 'Unplace source' {
+        notes """
+          - Next turns no longer see the folder; running turns keep their frozen Scope
+        """
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_oauth_connect {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Connections/Connect/Connect a service in one click'
+    description '''
+      R-CON-01, R-CON-02, R-CON-06 (v1 yes), R-CON-05 (not v1). Hosted OAuth, result by webhook,
+      the Connection created and then placed. A connects at their top level, C at folder Company.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.ingress, signalbox.connections, signalbox.tree, services, services.google, services.atlassian
+
+    alt 'who and where' {
+      when 'A at their top level' {
+        personA -> signalbox.web 'Add connection' {
+          notes """
+            - A's own Google; reaches only A's tree
+          """
+        }
+      }
+      else 'C at folder Company' {
+        personC -> signalbox.web 'Add connection' {
+          notes """
+            - The organization's Google; reaches the shared Team thread for A, B and D alike
+          """
+        }
+      }
+    }
+    signalbox.web -> signalbox.connections 'connect(service, at)' {
+      navigateTo folders_connections_catalog_clients
+      notes """
+        - Through the Funnel; returns an authorize URL with `return_to`
+      """
+    }
+    alt 'which service' {
+      when 'Google' {
+        signalbox.web -> services.google 'Consent' {
+          notes """
+            - Same tab on web; the system browser on desktop and mobile
+            - The final click is human-only
+          """
+        }
+        services.google -> signalbox.ingress 'OAuth callback'
+      }
+      else 'Confluence · Jira' {
+        signalbox.web -> services.atlassian 'Consent' {
+          notes """
+            - Other hosted OAuth services work the same way (not v1):
+              Microsoft 365, Slack, Notion, Todoist, Trello, Sentry
+          """
+        }
+        services.atlassian -> signalbox.ingress 'OAuth callback'
+      }
+    }
+    signalbox.ingress -> signalbox.connections 'complete(ticket)' {
+      notes """
+        - The result arrives by webhook, not through the client
+      """
+    }
+    signalbox.connections -> signalbox.connections 'Create, seal' {
+      navigateTo state_connection
+      notes """
+        - One Connection actor per credential: tokens, label, manifest, `epoch`
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Place at level' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - A saga: created, then placed; a sweeper finishes stalls
+      """
+    }
+    signalbox.web <- signalbox.tree 'Row appears' {
+      notes """
+        - "Google · work" in the Connections section
+      """
+    }
+    opt 'same service again' {
+      personA -> signalbox.web 'Add another account' {
+        navigateTo folders_connections_relabel
+        notes """
+          - Same button; a new Connection with its own label
+          - Unlimited labelled accounts per service
+        """
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_tool_service {
+    variant sequence
+    title 'Workflows/Folders/Connections/Connect/Connect a tool service by MCP URL, API spec or key'
+    description 'R-CON-12, R-CON-13, R-CON-14 (not v1) · Services without hosted OAuth: a remote MCP server, an OpenAPI or GraphQL import, or an API key.'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.connections, services, services.toolService
+
+    personC -> signalbox.web 'Add connection' {
+      notes """
+        - C at folder Company; A does the same at their top level for their own
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect(method)' {
+      notes """
+        - Through the Funnel
+      """
+    }
+    alt 'method' {
+      when 'remote MCP URL' {
+        signalbox.connections -> services.toolService 'List tools' {
+          notes """
+            - Passthrough; the manifest is stored per connection
+          """
+        }
+      }
+      when 'OpenAPI · GraphQL' {
+        signalbox.connections -> services.toolService 'Read spec' {
+          notes """
+            - Operations become tools in the manifest
+          """
+        }
+      }
+      else 'API key' {
+        signalbox.connections -> signalbox.connections 'Seal key' {
+          notes """
+            - C pastes the key once; it is sealed and never shown again
+          """
+        }
+      }
+    }
+    signalbox.connections -> signalbox.connections 'Store manifest' {
+      navigateTo state_connection
+      notes """
+        - The Connection owns the credential and the manifest with `manifestVersion`
+      """
+    }
+    opt 'reimport' {
+      personA -> signalbox.web 'Reimport' {
+        notes """
+          - A reimports their own API after it changed
+        """
+      }
+      signalbox.web -> signalbox.connections 'change(Reimport)'
+      signalbox.connections -> signalbox.connections 'manifestVersion++' {
+        navigateTo folders_connections_tool_search_call
+        notes """
+          - Invalidates toolbox memos; the next tool search sees the new tools
+        """
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Lifecycle ─────────────────────────
+
+  dynamic view folders_connections_cut_off {
+    #v1
+    variant sequence
+    title "Workflows/Folders/Connections/Lifecycle/Cut off a connection while it's in use"
+    description '''
+      R-CON-11, R-CON-27 (v1 yes). A's turn in the shared Team thread is using Company's Confluence when C cuts it off:
+      an emergency revoke stops it within 15 s, an unplace or disconnect at the next grant refresh.
+    '''
+
+    include personA, personC, signalbox, signalbox.web, signalbox.thread, signalbox.gateway, signalbox.connections
+
+    personA -> signalbox.thread 'Turn in Team' {
+      notes """
+        - Shared thread; Company's Confluence reaches it by position
+        - B's and D's turns there use it exactly the same way
+      """
+    }
+    signalbox.thread -> signalbox.gateway 'Tool calls'
+    signalbox.gateway -> signalbox.connections 'call' {
+      notes """
+        - The Gateway caches the token (until 60 s before expiry) and the `epoch` (15 s)
+      """
+    }
+    alt 'how C cuts it off' {
+      when 'emergency revoke · rotate' {
+        personC -> signalbox.web 'Revoke or rotate' {
+          notes """
+            - A leak or compromise; an operator can do the same
+          """
+        }
+        signalbox.web -> signalbox.connections 'Revoke' {
+          navigateTo state_connection
+          notes """
+            - `epoch` bump; the connection stays Live
+          """
+        }
+        signalbox.gateway -> signalbox.connections 'Epoch check' {
+          notes """
+            - The cached epoch expires within 15 s, mid-turn
+          """
+        }
+        signalbox.thread <- signalbox.gateway 'Denied'
+      }
+      else 'unplace · disconnect' {
+        personC -> signalbox.web 'Disconnect' {
+          navigateTo folders_connections_disconnect
+          notes """
+            - Or an unplace at Company (folders_placement_unplace)
+          """
+        }
+        signalbox.web -> signalbox.connections 'change(Disconnect)'
+        signalbox.thread -> signalbox.gateway 'Grant refresh' {
+          notes """
+            - Refresh denies only on removals (M11)
+          """
+        }
+        signalbox.thread <- signalbox.gateway 'Denied: removed' {
+          navigateTo state_connection
+          notes """
+            - The turn's calls to that connection get `Denied`
+          """
+        }
+      }
+    }
+    signalbox.thread -> signalbox.thread 'Next turn re-resolves' {
+      navigateTo folders_placement_change_to_turns
+      notes """
+        - B's next turn in Team finds no Confluence, or a nearer one
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_disconnect {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Connections/Lifecycle/Disconnect a connection'
+    description 'R-CON-10 (v1 yes) · The delete saga: retiring, unplace every indexed placement and loan, delete the sealed credential.'
+
+    include personC, signalbox, signalbox.web, signalbox.thread, signalbox.operations, signalbox.connections, signalbox.tree
+
+    alt 'who disconnects' {
+      when 'a person with the role' {
+        personC -> signalbox.web 'Disconnect' {
+          notes """
+            - C for Company's Google; A only for their own connections
+          """
+        }
+        signalbox.web -> signalbox.operations 'Disconnect'
+      }
+      else 'an agent' {
+        signalbox.thread -> signalbox.operations 'Disconnect'
+        signalbox.thread <- signalbox.operations 'NeedsDecision' {
+          navigateTo folders_gates_destructive
+          notes """
+            - Destructive: a Ready ask to C; continues only on approve
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.connections 'change(Disconnect)' {
+      navigateTo state_connection
+      notes """
+        - The Connection turns Retiring: serve refuses from now on
+      """
+    }
+    loop 'each indexed placement' {
+      signalbox.connections -> signalbox.tree 'Unplace' {
+        navigateTo folders_placement_unplace
+        notes """
+          - The outbound-placements index lists every place it reached
+        """
+      }
+      signalbox.connections -> signalbox.tree 'End loan' {
+        navigateTo folders_lending_end_loan
+        notes """
+          - Includes A's loans into Team
+        """
+      }
+    }
+    signalbox.connections -> signalbox.connections 'Delete credential' {
+      notes """
+        - Sealed tokens gone; a sweeper resumes a stalled saga
+      """
+    }
+    signalbox.web <- signalbox.tree 'Row gone' {
+      notes """
+        - Gone for A, B, C and D at once
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_relabel {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Connections/Lifecycle/Rename a connection'
+    description 'R-CON-07 (v1 yes) · The label is what the model sees ("Service · label"), so renaming changes how agents pick the account.'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.connections, signalbox.gateway
+
+    alt 'whose connection' {
+      when "Company's" {
+        personC -> signalbox.web 'Rename' {
+          notes """
+            - "Google · sales" on folder Company
+          """
+        }
+      }
+      else "A's own" {
+        personA -> signalbox.web 'Rename' {
+          notes """
+            - "Google · personal" on their top level
+          """
+        }
+      }
+    }
+    signalbox.web -> signalbox.connections 'change(Relabel)' {
+      navigateTo state_connection
+      notes """
+        - Through the Funnel; only the label changes, not placements
+      """
+    }
+    signalbox.web <- signalbox.connections 'Row renamed'
+    signalbox.gateway -> signalbox.connections 'Next toolbox' {
+      navigateTo folders_connections_tool_search_call
+      notes """
+        - Agents in A's, B's and D's next turns in Team see "Google · sales" when picking `$account`
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_token_refresh {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Connections/Lifecycle/Refresh a connection token once for concurrent calls'
+    description 'R-CON-09 (v1 yes) · Many calls hit one near-expired token; exactly one refresh runs and the rotated refresh token is saved first.'
+
+    include mcpClient, signalbox, signalbox.thread, signalbox.gateway, signalbox.connections, services, services.google
+
+    parallel {
+      signalbox.thread -> signalbox.gateway 'Tool call' {
+        notes """
+          - B's turn in the shared Team thread
+        """
+      }
+      mcpClient -> signalbox.gateway 'Tool call' {
+        navigateTo folders_connections_mcp_url
+        notes """
+          - A's MCP client on folder Company, same Company Google
+        """
+      }
+    }
+    signalbox.gateway -> signalbox.connections 'call ×N'
+    alt 'cached token' {
+      when 'over 60 s left' {
+        signalbox.connections -> services.google 'API calls' {
+          notes """
+            - Token cached per serving isolate until 60 s before expiry; no actor hop
+          """
+        }
+      }
+      else 'near expiry' {
+        signalbox.connections -> services.google 'One refresh' {
+          navigateTo state_connection
+          notes """
+            - Every waiter asks the one Connection actor for this credential; it serializes them
+            - Single-flight: one refresh request no matter how many waiters
+          """
+        }
+        signalbox.connections -> signalbox.connections 'Save rotated token' {
+          notes """
+            - The rotating refresh token is persisted before anyone uses the new access token
+          """
+        }
+        signalbox.connections -> services.google 'API calls' {
+          notes """
+            - All waiters get the same fresh token
+          """
+        }
+      }
+    }
+    signalbox.gateway <- signalbox.connections 'Results' {
+      navigateTo folders_connections_tool_search_call
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Tools ─────────────────────────
+
+  dynamic view folders_connections_access_required {
+    #v1
+    variant sequence
+    title "Workflows/Folders/Connections/Tools/Call a connection that isn't on the chain"
+    description '''
+      R-CON-18 (v1 partial: the error; the ask comes later). AccessRequired{kind, canPlace, orAskToLend}:
+      an external session gets the error, a thread parks on a Blocker ask whose answers are Place or Lend.
+    '''
+
+    include personB, personC, mcpClient, signalbox, signalbox.thread, signalbox.gateway, signalbox.connections, signalbox.attention
+
+    alt 'who calls' {
+      when 'B from an MCP client' {
+        mcpClient -> signalbox.gateway 'Call Gmail tool' {
+          notes """
+            - B's MCP URL for Team; no Google is placed on Team's chain
+          """
+        }
+        signalbox.gateway -> signalbox.connections 'call'
+        signalbox.gateway <- signalbox.connections 'AccessRequired'
+        mcpClient <- signalbox.gateway 'Error, no ask' {
+          navigateTo folders_lending_lend
+          notes """
+            - `canPlace: [C]`, `orAskToLend: true`; nobody is pinged
+          """
+        }
+      }
+      else 'a turn in the Team thread' {
+        personB -> signalbox.thread 'Send turn' {
+          notes """
+            - Same result for A's or D's turn: what's on Team's chain decides, not who sends
+          """
+        }
+        signalbox.thread -> signalbox.gateway 'Call Gmail tool'
+        signalbox.gateway -> signalbox.connections 'call'
+        signalbox.thread <- signalbox.gateway 'AccessRequired' {
+          notes """
+            - Only role holders on the chain are offered as `canPlace`
+          """
+        }
+        signalbox.thread -> signalbox.thread 'Park' {
+          navigateTo person_pipeline_blocker_access
+          notes """
+            - The turn parks instead of failing
+          """
+        }
+        signalbox.thread -[async]-> signalbox.attention 'Blocker ask' {
+          navigateTo folders_lending_access_request
+          notes """
+            - Answers: Place or Lend only
+          """
+        }
+        signalbox.attention -> personC 'Place?' {
+          navigateTo folders_placement_kind_pool_connection
+          notes """
+            - C may place a Company Google; A could lend theirs instead (folders_lending_lend)
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_mcp_url {
+    #v1
+    variant sequence
+    title "Workflows/Folders/Connections/Tools/Use a folder's tools from any MCP client"
+    description '''
+      R-CON-15 (aliases T-MCP-01, T-MCP-05; v1 yes). A and B each copy their own MCP URL for folder Company:
+      one placeId per Place, per person. A URL presented by anyone else is Denied.
+    '''
+
+    include personA, personB, signalbox, signalbox.web, mcpClient, signalbox.identity, signalbox.gateway, signalbox.tree
+
+    personA -> signalbox.web 'Copy MCP URL' {
+      notes """
+        - On folder Company: `/mcp/p/<placeId>`, minted for A only
+        - B copying the same folder gets a different URL; D can only copy one for Team
+      """
+    }
+    personA -> mcpClient 'Paste URL' {
+      notes """
+        - Claude, Codex, Cursor, any MCP client
+      """
+    }
+    mcpClient -> signalbox.identity 'OAuth sign-in' {
+      notes """
+        - AuthKit is the MCP authorization server
+      """
+    }
+    mcpClient -> signalbox.gateway 'Connect' {
+      navigateTo folders_placement_authority
+      notes """
+        - Subject `{A, Place}`; the placeId must belong to the signed-in person
+      """
+    }
+    signalbox.gateway -> signalbox.tree 'Resolve chain' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Company and above: the same tools A's and B's threads get there
+      """
+    }
+    alt 'who presents the URL' {
+      when 'A' {
+        mcpClient <- signalbox.gateway 'Tools at Company' {
+          navigateTo folders_connections_tool_search_call
+        }
+      }
+      else "B with A's URL" {
+        personB -> mcpClient "Uses A's URL"
+        mcpClient <- signalbox.gateway 'Denied' {
+          notes """
+            - Another authenticated person presenting A's placeId is refused
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_tool_call_gates {
+    variant sequence
+    title 'Workflows/Folders/Connections/Tools/Gate a tool call by policy'
+    description '''
+      R-CON-19, R-CON-20 (not v1). Every call gets a tool.beforeCall verdict from policies on the chain;
+      irreversible or undeclared writes become a Ready ask through the folder's gate placement.
+    '''
+
+    include personA, signalbox, signalbox.thread, signalbox.gateway, signalbox.connections, signalbox.tree, signalbox.automations, signalbox.attention
+
+    signalbox.thread -> signalbox.gateway 'Write tool call' {
+      navigateTo person_assistant_guardrails
+      notes """
+        - From a work turn in Team; the coordinator profile never sees write tools
+      """
+    }
+    signalbox.gateway -> signalbox.connections 'call'
+    signalbox.connections -> signalbox.tree 'Policies on chain' {
+      notes """
+        - `tool.beforeCall` policies bound to levels (Airlock shape)
+        - Undeclared tools count as write and irreversible
+      """
+    }
+    alt 'verdict' {
+      when 'allow' {
+        signalbox.thread <- signalbox.gateway 'Result' {
+          navigateTo folders_connections_tool_search_call
+        }
+      }
+      when 'deny' {
+        signalbox.thread <- signalbox.gateway 'Denied'
+      }
+      else 'irreversible write' {
+        signalbox.connections -> signalbox.automations 'Folder gate' {
+          notes """
+            - The gate placement on Team or above says who decides, whoever sent the turn
+          """
+        }
+        signalbox.thread <- signalbox.gateway 'NeedsDecision'
+        signalbox.thread -[async]-> signalbox.attention 'Ready ask' {
+          navigateTo folders_gates_destructive
+        }
+        signalbox.attention -> personA 'Approve?'
+        personA -> signalbox.thread 'Approve' {
+          notes """
+            - The answer resumes the parked turn; the call runs once
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_tool_call_log {
+    #v1
+    title 'Workflows/Folders/Connections/Tools/Log every tool call without content'
+    description 'R-CON-21 (v1 yes) · Ids and Signalbox dimensions only, never arguments or results.'
+
+    include signalbox, signalbox.gateway, signalbox.connections, signalbox.observability, telemetry, telemetry.sentry, telemetry.axiom
+
+    signalbox.gateway -> signalbox.connections 'call' {
+      navigateTo folders_connections_tool_search_call
+    }
+    signalbox.connections -> signalbox.connections 'Call row' {
+      notes """
+        - Content-free call log on the connection: tool, time, outcome, ids
+      """
+    }
+    signalbox.gateway -> signalbox.observability 'TOOL span' {
+      notes """
+        - Dimensions: level, owner root, thread, connection, actor class
+      """
+    }
+    parallel {
+      signalbox.observability -> telemetry.sentry 'Traces' {
+        notes """
+          - No prompt, argument or result content leaves
+        """
+      }
+      signalbox.observability -> telemetry.axiom 'Wide events'
+    }
+    autoLayout TopBottom
+
+    style signalbox, telemetry {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_tool_search_call {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Connections/Tools/Find and call tools'
+    description '''
+      R-CON-16 (v1 partial: no native ops), R-CON-17 (v1 yes). Search over every connection on the chain plus native operations;
+      code runs in a sandbox with only callTool; the account is chosen per call.
+    '''
+
+    include mcpClient, signalbox, signalbox.thread, signalbox.gateway, signalbox.connections, signalbox.operations, services, services.google
+
+    alt 'who asks' {
+      when 'a turn' {
+        signalbox.thread -> signalbox.gateway 'Search tools' {
+          navigateTo folders_connections_tool_exposure
+          notes """
+            - A's or B's turn in Team: the same toolbox, by position
+            - Covers `search`-exposed tools (the default); `direct` tools are called by name
+          """
+        }
+      }
+      else "A's MCP client" {
+        mcpClient -> signalbox.gateway 'Search tools' {
+          navigateTo folders_connections_mcp_url
+        }
+      }
+    }
+    parallel {
+      signalbox.gateway -> signalbox.connections 'toolbox(Scope)' {
+        notes """
+          - Search over union(connection) at the Place, memoized per Scope version and manifests
+        """
+      }
+      signalbox.gateway -> signalbox.operations 'catalog' {
+        notes """
+          - Native Signalbox operations (later than v1)
+        """
+      }
+    }
+    signalbox.gateway -> signalbox.gateway 'Codemode execute' {
+      notes """
+        - Agent code runs in a Dynamic Worker with no network, only `callTool`
+      """
+    }
+    signalbox.gateway -> signalbox.connections 'call($account)' {
+      navigateTo folders_connections_tool_call_gates
+    }
+    alt 'which account' {
+      when 'given or default' {
+        signalbox.connections -> services.google 'API call' {
+          navigateTo folders_connections_token_refresh
+        }
+        signalbox.gateway <- signalbox.connections 'Result'
+      }
+      when 'several, no default' {
+        signalbox.gateway <- signalbox.connections 'Lists accounts' {
+          notes """
+            - "Google · work", "Google · personal": the agent picks and calls again
+          """
+        }
+      }
+      else 'not on the chain' {
+        signalbox.gateway <- signalbox.connections 'AccessRequired' {
+          navigateTo folders_connections_access_required
+        }
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_connections_tool_exposure {
+    #decided
+    variant sequence
+    title 'Workflows/Folders/Connections/Tools/Expose a tool by search or by name'
+    description '''
+      Decided 2026-10-19. Executor (ToolGateway + Connections) is the one gateway for every connector. Each tool has an
+      exposure, placed on a folder like any placement: `search` (default) is found through search and execute, `direct`
+      shows under its normal name. Nearest wins, resolved by the thread's place, never by who sends.
+    '''
+
+    include personA, hier.company.team.sharedThread, signalbox.tree, signalbox.harness, signalbox.gateway.toolGateway, signalbox.connections, services.google, services.github
+
+    personA -> hier.company.team.sharedThread 'Send turn' {
+      notes """
+        - A's thread in folder Team; B's turn there resolves the same
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.tree 'Resolve exposure' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Company leaves Gmail at `search` (the default)
+        - Team sets GitHub `create_issue` to `direct`; nearest wins
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.harness 'MCP config' {
+      notes """
+        - One `executor` entry (search + execute) and one `github` entry for its direct tools
+        - Every entry points at Executor; never `managed-mcp.json`
+      """
+    }
+    signalbox.harness -> signalbox.gateway.toolGateway 'List tools' {
+      notes """
+        - Sees `search`, `execute` and `create_issue`: never hundreds of tools in context
+      """
+    }
+    alt 'exposure of the tool' {
+      when 'search (default)' {
+        signalbox.harness -> signalbox.gateway.toolGateway 'search "send mail"' {
+          navigateTo folders_connections_tool_search_call
+        }
+        signalbox.gateway.toolGateway -> signalbox.connections 'toolbox(Scope)'
+        signalbox.harness <- signalbox.gateway.toolGateway 'gmail.send'
+        signalbox.harness -> signalbox.gateway.toolGateway 'execute(gmail.send)'
+        signalbox.gateway.toolGateway -> signalbox.connections 'call($account)'
+        signalbox.connections -> services.google 'API call' {
+          notes """
+            - 100 Gmail accounts on Company are 100 one-click connections, still one search hit
+            - The account is an argument, so the context never grows with accounts
+          """
+        }
+      }
+      else 'direct' {
+        signalbox.harness -> signalbox.gateway.toolGateway 'create_issue' {
+          notes """
+            - Called by its native name on the `github` entry, no search first
+          """
+        }
+        signalbox.gateway.toolGateway -> signalbox.connections 'call'
+        signalbox.connections -> services.github 'API call' {
+          notes """
+            - Credential keyed by server URL, from the Connections vault
+          """
+        }
+      }
+    }
+    signalbox.harness <- signalbox.gateway.toolGateway 'Result'
+
+    include signalbox, hier, hier.company, hier.company.team, services
+    style signalbox, hier, services {
+      color muted
+      opacity 10%
+    }
+    style hier.company, hier.company.team {
+      color muted
+      opacity 20%
+    }
+  }
+
+  dynamic view folders_connections_turn_and_run_reach {
+    variant sequence
+    title 'Workflows/Folders/Connections/Tools/Turns and automation runs reach connections'
+    description '''
+      R-CON-25, R-CON-26 (not v1). Every harness gets connections as MCP through a per-turn URL in its grant;
+      an automation calls as its folder's run actor and sees only its home chain.
+    '''
+
+    include signalbox, signalbox.thread, signalbox.automations, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.tree
+
+    alt 'who calls' {
+      when 'a turn' {
+        signalbox.thread -> signalbox.gateway 'grant(TurnSubject)'
+        signalbox.gateway -> signalbox.tree 'Resolve Place' {
+          navigateTo folders_placement_change_to_turns
+          notes """
+            - Frozen Scope for the turn; same for A's and B's turns in Team
+          """
+        }
+        signalbox.thread -> signalbox.harness 'Start with grant' {
+          notes """
+            - The grant carries a per-turn MCP URL
+          """
+        }
+        signalbox.harness -> signalbox.gateway 'MCP calls' {
+          notes """
+            - Claude Code, Codex, OpenCode and the rest: all speak MCP
+          """
+        }
+      }
+      else 'an automation run' {
+        signalbox.automations -> signalbox.gateway 'grant(RunSubject)' {
+          notes """
+            - The folder's run actor, not the person who wrote it
+          """
+        }
+        signalbox.gateway -> signalbox.tree 'Home chain only' {
+          notes """
+            - Only what's placed on the automation's home folder and above
+          """
+        }
+        signalbox.automations -> signalbox.gateway 'w.call'
+      }
+    }
+    signalbox.gateway -> signalbox.connections 'call' {
+      navigateTo folders_connections_tool_search_call
+    }
+    signalbox.gateway -> signalbox.tree 'Refresh' {
+      navigateTo folders_connections_cut_off
+      notes """
+        - The grant re-resolves; removals deny at the next refresh
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────── Secrets ─────────────────────────
+
+  dynamic view folders_secrets_agent_sign_in {
+    variant sequence
+    title 'Workflows/Folders/Secrets/Agent signs in to a site with one call'
+    description '''
+      R-SEC-09, R-SEC-11, R-SEC-12, R-SEC-13 (not v1). sign_in → Kernel Managed Auth answered from A's 1Password;
+      a standing grant first; codes fetched from their Gmail; unattended re-login when a session expires.
+    '''
+
+    include personA, signalbox, signalbox.thread, signalbox.attention, signalbox.browser, signalbox.connections, platform, platform.kernel, services, services.onepassword, services.google
+
+    alt 'what starts it' {
+      when 'an agent needs a login' {
+        signalbox.thread -> signalbox.browser 'sign_in(site)' {
+          navigateTo work_browser_sign_in
+          notes """
+            - One call from A's turn; the agent never sees credentials
+          """
+        }
+      }
+      else 'Kernel NEEDS_AUTH' {
+        platform.kernel -> signalbox.browser 'NEEDS_AUTH' {
+          notes """
+            - A site session expired; an alarm on A's Person re-logs in unattended
+          """
+        }
+      }
+    }
+    signalbox.browser -> signalbox.browser 'Grant for site?' {
+      navigateTo state_signingrant
+      notes """
+        - A's sign-in grants, kept on their Person, per site or `*`
+      """
+    }
+    opt 'no grant yet' {
+      signalbox.browser -[async]-> signalbox.attention 'Once or Always?' {
+        navigateTo person_pipeline_blocker_human_only
+      }
+      signalbox.attention -> personA 'Let agents sign in?'
+      personA -> signalbox.attention 'Always' {
+        notes """
+          - Human-only, per site or `*`
+        """
+      }
+    }
+    signalbox.browser -> platform.kernel 'Managed Auth' {
+      navigateTo folders_secrets_browser_identity
+      notes """
+        - In A's own browser profile; `save_credentials: false`
+      """
+    }
+    signalbox.browser -> signalbox.connections 'Login secrets' {
+      notes """
+        - By 1Password reference only
+      """
+    }
+    signalbox.connections -> services.onepassword 'Login item' {
+      notes """
+        - The vault worker reads A's item; no VM can reach it
+      """
+    }
+    signalbox.connections -> platform.kernel 'Answer factor' {
+      notes """
+        - password > TOTP > email > SMS, never SSO
+      """
+    }
+    opt 'email or SMS code' {
+      signalbox.connections -> services.google 'Read code' {
+        notes """
+          - From A's Gmail (or SMS-gateway) connection; never reaches the model
+        """
+      }
+    }
+    signalbox.thread <- signalbox.browser 'Signed in'
+
+    style signalbox, platform, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_secrets_browser_identity {
+    variant sequence
+    title "Workflows/Folders/Secrets/Keep a person's browser profile and passkeys"
+    description '''
+      R-SEC-14, R-SEC-15 (aliases T-BRW-04, T-SET-16; not v1). One Kernel profile per person, placed at their top level;
+      agent-owned passkeys stored in their 1Password.
+    '''
+
+    include personA, signalbox, signalbox.web, signalbox.browser, signalbox.connections, platform, platform.kernel, services, services.onepassword
+
+    alt 'what A manages' {
+      when 'browser profile' {
+        personA -> signalbox.web 'Browser profile' {
+          navigateTo work_browser_profile
+          notes """
+            - Settings; the profile is a placement at A's top level
+            - Owner-only: B, C and D never load it, even in the shared thread
+          """
+        }
+        signalbox.web -> signalbox.browser 'Clear or export' {
+          notes """
+            - Through the Funnel
+          """
+        }
+        signalbox.browser -> platform.kernel 'Clear or export' {
+          notes """
+            - Clears saved sign-ins, or exports the profile for A
+          """
+        }
+      }
+      else 'passkey for a site' {
+        signalbox.browser -> platform.kernel 'Create passkey' {
+          navigateTo work_browser_passkey
+          notes """
+            - CDP virtual authenticator during a sign-in at a site that supports it
+          """
+        }
+        signalbox.browser -> signalbox.connections 'Save passkey'
+        signalbox.connections -> services.onepassword "Item in A's vault" {
+          navigateTo folders_secrets_agent_sign_in
+          notes """
+            - Agent-owned, per site; A undoes it by deleting the item
+          """
+        }
+      }
+    }
+
+    style signalbox, platform, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_secrets_onepassword_link {
+    variant sequence
+    title 'Workflows/Folders/Secrets/Link or unlink your 1Password'
+    description 'R-SEC-01, R-SEC-02 (not v1) · A links their own 1Password as a device (human-only, isolated vault worker), or unlinks it. Enters Connections through its interface to show the vault worker.'
+
+    include personA, signalbox, signalbox.web, signalbox.connections, signalbox.connections.api, signalbox.connections.vault, signalbox.connections.connectionActor, services, services.onepassword
+
+    alt 'link or unlink' {
+      when 'link' {
+        personA -> signalbox.web 'Settings › 1Password' {
+          notes """
+            - A sheet in Settings; human-only (agents are refused)
+          """
+        }
+        signalbox.web -> signalbox.connections.api 'connect(onePasswordDevice)' {
+          notes """
+            - Through the Funnel
+          """
+        }
+        signalbox.connections.api -> signalbox.connections.vault 'Link device'
+        signalbox.connections.vault -> services.onepassword 'Device sign-in' {
+          notes """
+            - The isolated vault worker; VMs can't reach it
+          """
+        }
+        signalbox.connections.vault -> signalbox.connections.connectionActor 'Seal device link' {
+          navigateTo folders_secrets_placeholder_fill
+          notes """
+            - Now `{{op://…}}` references in A's tree can be filled
+          """
+        }
+      }
+      else 'unlink' {
+        personA -> signalbox.web 'Disconnect'
+        signalbox.web -> signalbox.connections.api 'change(Disconnect)'
+        signalbox.connections.api -> signalbox.connections.connectionActor 'Disconnect' {
+          navigateTo state_connection
+        }
+        signalbox.connections.vault -> services.onepassword 'Sign out'
+        signalbox.connections.connectionActor -> signalbox.connections.connectionActor 'Wipe material'
+        signalbox.web <- signalbox.connections.api 'Deauthorize hint' {
+          notes """
+            - Tells A to remove the device in 1Password too
+          """
+        }
+      }
+    }
+    opt 'next' {
+      signalbox.connections.vault -> services.onepassword 'Agent sign-ins' {
+        navigateTo folders_secrets_agent_sign_in
+      }
+    }
+
+    style signalbox, signalbox.connections, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_secrets_placeholder_fill {
+    variant sequence
+    title 'Workflows/Folders/Secrets/Fill secret placeholders on the way out'
+    description '''
+      R-SEC-04, R-SEC-05, R-SEC-08 (not v1). Agents write placeholders; the Gateway fills them on the way out, scrubs them on the way in,
+      and asks once for a new destination. The secret comes from the folder's chain, never from who sent the turn.
+    '''
+
+    include personA, signalbox, signalbox.thread, signalbox.computer, signalbox.gateway, signalbox.connections, signalbox.attention, services, services.onepassword, services.boundHost
+
+    signalbox.thread -> signalbox.computer 'Run program' {
+      notes """
+        - Code holds `{{secret:NAME}}` or `{{op://…}}`, never the value
+      """
+    }
+    alt 'where it runs' {
+      when 'kernel' {
+        signalbox.computer -> signalbox.gateway 'Send (EgressFilter)' {
+          navigateTo work_computer_egress_kernel
+          notes """
+            - In-process filter
+          """
+        }
+      }
+      else 'VM' {
+        signalbox.computer -> signalbox.gateway 'Send (EgressProxy)' {
+          navigateTo work_computer_egress_vm
+          notes """
+            - CONNECT proxy with a machine-bound egress token
+          """
+        }
+      }
+    }
+    opt 'new destination' {
+      signalbox.gateway -> signalbox.thread 'NeedsDecision'
+      signalbox.thread -[async]-> signalbox.attention 'Ask once' {
+        navigateTo work_approvals_secret_destination
+      }
+      signalbox.attention -> personA "Don't · turn · Always" {
+        notes """
+          - Keyed folder + secret + destination
+          - Always applies for B's and D's turns in Team too
+        """
+      }
+    }
+    signalbox.gateway -> signalbox.connections 'fill(ref)' {
+      navigateTo folders_placement_kind_secret
+      notes """
+        - The reference comes from the Scope (the folder's chain), not from who sent the turn
+      """
+    }
+    signalbox.connections -> services.onepassword 'Resolve value' {
+      notes """
+        - Vault worker; a value rotated in 1Password resolves fresh on the next fill
+        - A stale substitution in flight is retried, never cached
+      """
+    }
+    signalbox.gateway -> services.boundHost 'Real bytes out' {
+      notes """
+        - Only to the bound host
+      """
+    }
+    signalbox.gateway <- services.boundHost 'Reply'
+    signalbox.computer <- signalbox.gateway 'Scrubbed reply' {
+      notes """
+        - Any secret echoed back is replaced by its placeholder
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_secrets_readable {
+    variant sequence
+    title 'Workflows/Folders/Secrets/Let programs read a secret'
+    description '''
+      R-SEC-07 (not v1, CONFLICT C1, undecided). Default swap-in only, versus a per-secret "programs may read" flag.
+      Both branches drawn.
+    '''
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.computer, signalbox.gateway, signalbox.connections, services, services.onepassword
+
+    signalbox.thread -> signalbox.computer 'Program reads env' {
+      notes """
+        - e.g. a CLI that wants `$API_TOKEN` itself
+      """
+    }
+    alt 'CONFLICT C1 (undecided)' {
+      when 'swap-in only (default)' {
+        signalbox.computer -> signalbox.computer 'Sees placeholder' {
+          notes """
+            - The env holds `{{secret:NAME}}`; the value exists only on egress
+          """
+        }
+        signalbox.computer -> signalbox.gateway 'Send request' {
+          navigateTo folders_secrets_placeholder_fill
+        }
+      }
+      else '"programs may read" flag' {
+        personA -> signalbox.web 'Flag secret' {
+          notes """
+            - Per secret, set by someone with the role at its folder
+          """
+        }
+        signalbox.web -> signalbox.connections 'Set flag'
+        signalbox.computer -> signalbox.gateway 'Read secret' {
+          navigateTo work_computer_egress_kernel
+        }
+        signalbox.gateway -> signalbox.connections 'fill'
+        signalbox.connections -> services.onepassword 'Resolve value'
+        signalbox.computer <- signalbox.gateway 'Value in env' {
+          notes """
+            - The value enters the computer; scrubbing can no longer guarantee it stays
+          """
+        }
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_secrets_secret_request {
+    variant sequence
+    title 'Workflows/Folders/Secrets/Agent asks a person for a secret'
+    description 'R-SEC-06 (not v1) · A separate secret card, never an ask or a form; answering is human-only and the value goes straight to 1Password.'
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.operations, signalbox.connections, services, services.onepassword
+
+    signalbox.thread -> signalbox.web 'Secret card' {
+      navigateTo work_approvals_secret_request
+      notes """
+        - The agent needs a missing secret; not an ask, not a form
+      """
+    }
+    personA -> signalbox.web 'Enter value' {
+      notes """
+        - In the card; never in the transcript
+      """
+    }
+    signalbox.web -> signalbox.operations 'Answer' {
+      navigateTo person_asks_gated_op
+      notes """
+        - Human-only: checked as A, a person
+      """
+    }
+    signalbox.operations -> signalbox.connections 'Store'
+    signalbox.connections -> services.onepassword 'Write item' {
+      navigateTo folders_secrets_placeholder_fill
+    }
+    signalbox.operations -> signalbox.thread 'Reference ready' {
+      notes """
+        - The thread gets `{{secret:NAME}}`, never the value
+      """
+    }
+    opt 'an agent tries to answer' {
+      signalbox.thread -> signalbox.operations 'Answer'
+      signalbox.thread <- signalbox.operations 'Refused' {
+        navigateTo person_pipeline_blocker_human_only
+        notes """
+          - Not even A's assistant may answer
+        """
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view folders_secrets_service_account {
+    variant sequence
+    title 'Workflows/Folders/Secrets/Connect an organization 1Password service account'
+    description '''
+      R-SEC-03 (not v1). C connects folder Company's 1Password service account: one vault or Environment per folder,
+      named "Signalbox · <folder path>", shown as one source on the folder.
+    '''
+
+    include personC, personA, signalbox, signalbox.web, signalbox.connections, signalbox.tree, services, services.onepassword
+
+    personC -> signalbox.web 'Connect 1Password' {
+      notes """
+        - On folder Company; C is its admin
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect(serviceAccount)' {
+      notes """
+        - Through the Funnel
+      """
+    }
+    signalbox.connections -> services.onepassword 'Verify token'
+    loop 'each folder' {
+      signalbox.connections -> services.onepassword 'Vault per folder' {
+        notes """
+          - "Signalbox · Company", "Signalbox · Company/Team"
+        """
+      }
+      signalbox.connections -> signalbox.tree 'One source' {
+        navigateTo folders_placement_kind_secret
+        notes """
+          - secretRef placements on that folder, shown as one source
+        """
+      }
+    }
+    personA -> signalbox.web 'Open Team secrets'
+    signalbox.web <- signalbox.tree 'Names, never values' {
+      navigateTo folders_secrets_placeholder_fill
+      notes """
+        - A, B and D see secret names in Team, never values
+        - Their turns fill them on the way out exactly alike
+      """
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+}

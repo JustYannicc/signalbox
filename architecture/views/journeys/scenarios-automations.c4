@@ -1,0 +1,791 @@
+// Scenario shard 13: automations (SCN-265 – SCN-278).
+// Each view walks one "what happens if" as a journey: who does what, which black-box module answers,
+// and the start and end state on the first and last step. The answer (Decided / Assumption) leads the description,
+// and the view carries #decided or #assumption for the headline answer.
+views {
+
+  // ───────────────────────────── Homes ─────────────────────────────
+
+  dynamic view scn_265_moves_automation_to_another_folder {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Homes/Move Automation'
+    description """
+      Where does an automation run after it moves to another folder or owner?
+      Decided: #313 (2026-10-15) moving follows the thread rule; from the next run it resolves on the new home's chain.
+      Assumption: cross-owner moves need Owner/Admin at the source and Member+ at the destination, in-flight runs stay pinned, usage is never reattributed (W-LIF-02, R-TRE-06, A21; pending #826).
+      SCN-265 · W-AUT-20, W-LIF-02, R-TRE-06, W-AUT-09
+    """
+    include personA, personB, personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.automations, signalbox.models
+
+    personA -> signalbox.web 'Move to folder…' {
+      notes """
+        - **Start:** A's automation lives in folder Personal
+        - A picks folder Company as the new home
+      """
+    }
+    signalbox.web -> signalbox.operations 'moveAutomation' {
+      navigateTo work_threads_lifecycle_move_across
+      notes """
+        - Same rule as moving a thread across owners
+        - Personal → Company crosses owners
+      """
+    }
+    signalbox.operations -> signalbox.tree 'roles at both ends' {
+      navigateTo folders_tree_move_across
+      notes """
+        - Source: Owner/Admin at folder Personal
+        - Destination: Member+ at folder Company
+      """
+    }
+    alt 'A holds both roles?' {
+      when 'yes' {
+        signalbox.operations -> signalbox.automations 'change(Move)' {
+          navigateTo work_automations_move
+          notes """
+            - A run already in flight keeps its old chain and version
+            - Nothing is re-homed mid-run
+          """
+        }
+      }
+      else 'no role at Company' {
+        signalbox.web <- signalbox.operations 'refused' {
+          notes 'A sees why; C, admin of folder Company, can make the move instead'
+        }
+        personC -> signalbox.web 'moves it for A'
+      }
+    }
+    signalbox.automations -> signalbox.tree 'next run resolves' {
+      navigateTo work_automations_run
+      notes """
+        - Pool, connections and secret refs come from folder Company's chain
+        - Nearest wins; who started the run doesn't matter
+      """
+    }
+    signalbox.automations -> signalbox.models 'spends Company pool' {
+      notes 'New usage rows land in folder Company; old rows stay with Personal'
+    }
+    personB -> signalbox.web 'Company → Team' {
+      notes """
+        - Same owner, so B needs edit rights at both folders
+        - It just re-resolves at folder Team, nearest wins
+      """
+    }
+    personA -> signalbox.web 'moves it back' {
+      notes """
+        - **End:** the reverse door is the same move
+        - Usage already spent stays where it was booked
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_266_agent_saves_automation_from_team {
+    #assumption
+    variant sequence
+    title 'Scenarios/Automations/Homes/Save From Team Thread'
+    description """
+      When an agent in a folder Team thread saves an automation, where does it land?
+      Assumption: in the thread's home folder (folder Team), never the sender's top level. Why: `schedule_task` already files automations in the thread's folder (#367) and an automation lives only in its folder (#313); filing at the top level is the open bug, pending #826.
+      SCN-266 · W-AUT-02, W-AUT-01, W-LVL-09, W-AUT-28
+    """
+    include personB, personC, hier.company.team.sharedThread, signalbox.harness, signalbox.automations, signalbox.tree
+
+    personB -> hier.company.team.sharedThread 'automate this weekly' {
+      notes """
+        - **Start:** B asks the agent in a folder Team thread for a recurring job
+        - Team sits under folder Company (owner: organization)
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.harness 'runs the turn'
+    signalbox.harness -> signalbox.automations 'automation_save' {
+      navigateTo work_automations_define
+      notes """
+        - Called over MCP from inside the thread
+        - The call carries the thread's Place, not just B's identity
+      """
+    }
+    signalbox.automations -> signalbox.tree 'pick the home' {
+      notes "Home = the calling thread's Place: folder Team"
+    }
+    alt 'where it lands' {
+      when 'today (bug, #826)' {
+        signalbox.tree -> signalbox.automations "B's top level" {
+          notes """
+            - Team holds no automation files yet, so it falls back to B's top level
+            - Wrong owner: work owned by the organization ends up in B's personal tree
+          """
+        }
+      }
+      else 'fixed' {
+        signalbox.tree -> signalbox.automations 'folder Team' {
+          notes 'Placed at folder Team; the folder Team agent is responsible for it'
+        }
+      }
+    }
+    signalbox.automations -> signalbox.tree "runs on Team's chain" {
+      navigateTo work_automations_run
+      notes 'Pool and connections resolve from Team upward: Team → Company'
+    }
+    personC -> signalbox.tree 'browses folder Company' {
+      notes """
+        - **End:** C sees the automation under Company › Team
+        - Not hidden in B's own tree
+      """
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  // ───────────────────────────── Runs ─────────────────────────────
+
+  dynamic view scn_267_folder_trashed_while_run_waits {
+    #assumption
+    variant sequence
+    title 'Scenarios/Automations/Runs/Trashed While Waiting'
+    description """
+      What happens to a waiting automation run when its folder is trashed?
+      Assumption: trash cascades like threads (a run is a thread): run stopped, asks withdrawn, triggers off; restore brings back definitions and bindings exactly, never the killed run. Why: design §2.3 tombstone stops all effects, #474 folder trash keeps bindings for exact restore, P-BLK-17.
+      SCN-267 · R-TRE-08, R-TRE-09, W-LIF-18, P-BLK-17, P-ASK-09
+    """
+    include personC, personB, hier.company.team.runThread, signalbox.web, signalbox.tree, signalbox.automations, signalbox.attention
+
+    hier.company.team.runThread -> signalbox.attention 'w.ask needs-you' {
+      notes """
+        - **Start:** a folder Team automation run waits on `w.ask`
+        - B sees the needs-you in their lanes
+      """
+    }
+    personC -> signalbox.web 'trashes folder Team' {
+      notes 'C is admin of folder Company; an agent doing this would hit the decision gate'
+    }
+    signalbox.web -> signalbox.tree 'trash(Team)' {
+      navigateTo folders_tree_trash
+      notes 'The tombstone stops every effect under folder Team'
+    }
+    parallel {
+      signalbox.tree -> hier.company.team.runThread 'interrupt run' {
+        navigateTo work_threads_lifecycle_folder_trash
+        notes 'The run thread stops like any thread in a trashed folder'
+      }
+      signalbox.tree -> signalbox.automations 'triggers off' {
+        notes """
+          - The Workflow instance is terminated
+          - Triggers and alarms for automations homed at Team are disabled
+        """
+      }
+    }
+    hier.company.team.runThread -> signalbox.attention 'withdraw ask' {
+      navigateTo person_pipeline_blocker_withdrawn
+      notes "B's needs-you drops from the lanes"
+    }
+    opt 'B answers late' {
+      personB -> signalbox.web 'answers'
+      signalbox.web <- signalbox.attention 'NotFound' {
+        notes 'The answer goes nowhere; nothing resumes'
+      }
+    }
+    personC -> signalbox.web 'restores within 30 days'
+    signalbox.web -> signalbox.tree 'restore(Team)' {
+      navigateTo state_level
+      notes 'Definitions, bindings and triggers come back exactly as before (Drive keeps the record)'
+    }
+    signalbox.tree -> signalbox.automations 'triggers back on' {
+      notes """
+        - **End:** automation enabled as before; triggers missed while trashed aren't replayed
+        - The killed run shows as stopped, with "Run again"
+      """
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view scn_271_retries_failed_run {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Runs/Retry Failed Run'
+    description """
+      Can a failed automation run be retried without repeating its side effects?
+      Decided: #1049 (2026-10-18) a retry reuses the previous run's succeeded steps by stable key (still unfixed in the cloud, which reruns everything). #434 (2026-10-15): NonRetryableError keeps its class across RPC.
+      SCN-271 · W-AUT-21, W-AUT-09
+    """
+    include personA, signalbox.web, signalbox.automations, signalbox.tree, signalbox.models
+
+    signalbox.automations -> signalbox.automations 'step 4 fails' {
+      notes """
+        - **Start:** A's run in folder Personal fails at step 4
+        - Steps 1-3 already sent their effects
+      """
+    }
+    signalbox.web <- signalbox.automations 'run failed' {
+      notes 'The run column shows which step failed and why'
+    }
+    personA -> signalbox.web 'clicks Retry'
+    signalbox.web -> signalbox.automations 'retry' {
+      navigateTo work_automations_retry
+      notes 'A new run that carries `retry_of_run_id`'
+    }
+    signalbox.automations -> signalbox.automations 'reuse steps 1-3' {
+      notes """
+        - Looked up by stable step key in the failed run
+        - Their results are reused, their effects are not sent again
+      """
+    }
+    signalbox.automations -> signalbox.tree 'current chain' {
+      navigateTo work_automations_run
+      notes "Resolves on the automation's home as it is now, not as it was"
+    }
+    signalbox.automations -> signalbox.models 'current pool'
+    alt 'step 4' {
+      when 'retryable' {
+        signalbox.automations -> signalbox.automations 'reruns step 4 on' {
+          notes 'Only step 4 onward runs again'
+        }
+      }
+      else 'NonRetryableError' {
+        signalbox.automations -> signalbox.automations 'stays failed' {
+          notes 'Not looped; the error keeps its class across RPC (#434)'
+        }
+      }
+    }
+    signalbox.web <- signalbox.automations 'retry result' {
+      notes '**End:** one retry run, no duplicate side effects'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_272_new_version_during_run {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Runs/Version During Run'
+    description """
+      What happens to a waiting run when its automation gets a new version?
+      Decided: #445 (2026-10-15) "A run stays pinned to the automation version it started on"; verified across a deploy (#434).
+      SCN-272 · W-AUT-01, W-AUT-19, W-AUT-11
+    """
+    include personA, signalbox.web, signalbox.automations, signalbox.attention
+
+    signalbox.automations -> signalbox.attention 'version 1 run asks' {
+      navigateTo work_automations_step_ask
+      notes """
+        - **Start:** a run of version 1 waits on an ask
+        - A's automation lives in folder Personal
+      """
+    }
+    personA -> signalbox.web 'saves version 2' {
+      notes 'Saved means on: no separate publish step'
+    }
+    signalbox.web -> signalbox.automations 'new version' {
+      navigateTo work_automations_define
+      notes 'Version 2 loads as its own Dynamic Worker with a stable id'
+    }
+    opt 'platform deploy in between' {
+      signalbox.automations -> signalbox.automations 'deploy' {
+        notes 'Version ids are stable, so both versions survive a deploy'
+      }
+    }
+    signalbox.attention -> personA 'needs-you'
+    personA -> signalbox.web 'answers'
+    signalbox.web -> signalbox.automations 'answer'
+    signalbox.automations -> signalbox.automations 'resumes on version 1' {
+      navigateTo state_automation
+      notes 'The waiting run finishes on the version it started on'
+    }
+    signalbox.automations -> signalbox.automations 'next run on version 2' {
+      notes '**End:** every new run starts on version 2'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_273_answer_ask_engine_outage {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Runs/Answer During Outage'
+    description """
+      What happens to an answer given while the automation engine is down?
+      Decided: #434 (2026-10-15) run outcomes go through an outbox, so an outage delays delivery but never loses the answer.
+      SCN-273 · W-AUT-11, W-REC-01, P-ASK-08, P-BLK-11
+    """
+    include personA, hier.company.runCo, signalbox.web, signalbox.attention, signalbox.automations
+
+    signalbox.automations -> hier.company.runCo 'w.ask' {
+      navigateTo work_automations_step_ask
+      notes """
+        - **Start:** a folder Company run waits on `w.ask`, A is the named decider
+        - The ask lives in the run thread
+      """
+    }
+    hier.company.runCo -> signalbox.attention 'raise ask'
+    signalbox.attention -> personA 'needs-you' {
+      navigateTo person_pipeline_blocker_automation_ask
+    }
+    personA -> signalbox.web 'answers'
+    signalbox.web -> hier.company.runCo 'answer commits' {
+      navigateTo person_pipeline_project_ask
+      notes 'Committed right away with an outbox row; A is done'
+    }
+    try {
+      hier.company.runCo -> signalbox.automations 'deliver answer' {
+        notes 'The Workflows API is down; delivery fails'
+      }
+    }
+    catch 'engine down' {
+      loop 'until delivered' {
+        hier.company.runCo -> signalbox.automations 'outbox retry' {
+          navigateTo work_recovery_outbox_retries
+          notes 'The outbox keeps the outcome and retries with backoff'
+        }
+      }
+    }
+    signalbox.automations -> signalbox.automations 'resumes once' {
+      notes """
+        - **End:** the run resumes with A's answer, exactly once
+        - A never re-answers
+      """
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  dynamic view scn_275_composed_block_disabled {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Runs/Disabled Block'
+    description """
+      What happens to a composed automation when one of its blocks is disabled or moved?
+      Decided: #1056 (2026-10-18; engine slice #1085) `w.start` waits and a child's failure fails the parent step; names resolve own folder → parents → built-ins; a child never gets more access than its caller.
+      Assumption: a disabled or unreachable child fails the step, never skips; nesting is capped at a fixed depth. Why: fail loudly, pending #1056.
+      SCN-275 · W-AUT-17, W-AUT-19, W-AUT-20, W-AUT-21
+    """
+    include personA, signalbox.web, signalbox.automations, signalbox.tree, signalbox.gateway, signalbox.observability
+
+    personA -> signalbox.web 'composes two blocks' {
+      notes """
+        - **Start:** A's parent calls `w.start("wait for CI")` then `w.start("merge if green")`
+        - It lives in folder Personal
+      """
+    }
+    signalbox.web -> signalbox.automations 'save parent' {
+      navigateTo work_automations_compose
+    }
+    signalbox.automations -> signalbox.tree 'resolve child names' {
+      notes 'Own folder → each parent → built-ins; nearest wins'
+    }
+    signalbox.automations -> signalbox.gateway 'child grant ≤ parent' {
+      notes 'A child never gets more access than the run that started it'
+    }
+    alt 'A changes a child' {
+      when 'disables it' {
+        personA -> signalbox.web 'disables "merge if green"' {
+          navigateTo state_automation
+        }
+      }
+      else 'moves it off the chain' {
+        personA -> signalbox.web 'moves it away' {
+          navigateTo work_automations_move
+          notes 'Out of folder Personal and its parents, so the name no longer resolves'
+        }
+      }
+    }
+    signalbox.automations -> signalbox.automations 'child refused' {
+      notes """
+        - Next run: the child is disabled or not found
+        - The parent step fails; it never silently skips
+      """
+    }
+    signalbox.automations -> signalbox.observability 'failure + reason'
+    signalbox.web <- signalbox.automations 'step failed: why' {
+      notes 'The run shows which child and why'
+    }
+    personA -> signalbox.web 're-enables or repoints' {
+      navigateTo work_automations_retry
+      notes '**End:** the parent runs again with a reachable child'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_278_company_automation_needs_connection {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Runs/Company Needs Connection'
+    description """
+      Can a folder Company automation use a connection it lacks, or a person's personal email?
+      Decided: #592/#697 (2026-10-16) a company automation never uses a person's items; the folder's owner resolves. #314 + #225 §5 (2026-10-14) a cross-owner handoff reaches the person as a needs-you by default.
+      Assumption: a standing pre-approval is a revocable rule at A's top level; the receiver is always a person's assistant; the share list is a typed result; A's chain pool pays A's side (pending #314).
+      SCN-278 · W-AUT-28, W-AUT-25, P-AST-10, P-ASK-07, P-BLK-04
+    """
+    include personC, personA, hier.asstA, signalbox.automations, signalbox.tree, signalbox.thread, signalbox.connections, signalbox.attention
+
+    signalbox.automations -> signalbox.tree "resolve Company's chain" {
+      navigateTo work_automations_run
+      notes """
+        - **Start:** C's monthly expenses automation runs at night in folder Company
+        - The run has no `via`; only placements on folder Company's chain count
+      """
+    }
+    alt 'connection placed on the chain?' {
+      when 'yes' {
+        signalbox.automations -> signalbox.connections 'tool call' {
+          notes "Company's own connection; never borrowed from a member"
+        }
+      }
+      else 'missing' {
+        signalbox.automations -> signalbox.attention 'Place-or-Lend Blocker' {
+          navigateTo person_pipeline_blocker_access
+          notes "Goes to Company's responsible people, never a borrow of a person's item"
+        }
+        signalbox.attention -> personC 'Blocker'
+      }
+    }
+    signalbox.automations -> hier.asstA 'handoff: receipts' {
+      navigateTo work_automations_cross_owner_handoff
+      notes "A's receipts sit in A's personal mail, so the `handoff` step goes to A's Assistant"
+    }
+    hier.asstA -> signalbox.attention 'needs-you'
+    signalbox.attention -> personA 'what would cross' {
+      navigateTo person_assistant_cross_owner_handoff
+      notes 'Shows the request and exactly which results would cross back'
+    }
+    personA -> hier.asstA 'approves'
+    hier.asstA -> signalbox.thread 'delegates the search' {
+      notes """
+        - The assistant coordinates, never executes
+        - It starts a worker thread on A's top level
+      """
+    }
+    signalbox.thread -> signalbox.connections "A's mail, A's chain" {
+      notes """
+        - The worker resolves on A's chain: A's mail connection, A's pool pays A's side
+        - Folder Company never sees A's mailbox
+      """
+    }
+    signalbox.thread -> signalbox.automations 'matching PDFs only' {
+      notes """
+        - **End:** only the declared share list crosses back (Gateway checks it at the boundary)
+        - Each hop is traceable on both sides
+      """
+    }
+
+    include signalbox, hier
+    style signalbox, hier { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Triggers ─────────────────────────────
+
+  dynamic view scn_268_fixed_time_run_missed {
+    #assumption
+    variant sequence
+    title 'Scenarios/Automations/Triggers/Missed Fixed Time'
+    description """
+      What happens to a fixed-time run that falls in an outage?
+      Assumption: skip to the next occurrence, no late catch-up, record the skip visibly. Why: matches inherited T-SCH-05 and keeps a stale 9:00 job from firing at noon; alarms move to the home folder's object, pending #313.
+      Decided: timezone is the person's from their clients, an explicit one wins (#581, #1018 2026-10-18).
+      SCN-268 · T-SCH-05, W-AUT-04, W-AUT-08, P-SET-07
+    """
+    include personA, signalbox.web, signalbox.automations, signalbox.tree, signalbox.observability
+
+    personA -> signalbox.web 'every day at 9:00' {
+      navigateTo person_settings_timezone
+      notes """
+        - **Start:** A's automation in folder Personal has a fixed-time trigger
+        - 9:00 means A's timezone
+      """
+    }
+    signalbox.web -> signalbox.automations 'fixed-time trigger' {
+      navigateTo work_automations_triggers
+    }
+    signalbox.automations -> signalbox.tree 'alarm on home'
+    signalbox.tree -> signalbox.automations 'alarm due, outage' {
+      notes 'The platform is down at 9:00; nothing can run'
+    }
+    signalbox.automations -> signalbox.automations 'skip missed run' {
+      notes """
+        - On recovery the scheduler sees the missed occurrence
+        - It doesn't fire it late at noon
+      """
+    }
+    signalbox.automations -> signalbox.observability 'skip recorded'
+    signalbox.web <- signalbox.automations '"skipped" entry' {
+      notes 'One "skipped, platform unavailable" line in the run column; no ping'
+    }
+    opt "A wants today's run" {
+      personA -> signalbox.web 'Run now'
+      signalbox.web -> signalbox.automations 'trigger(Manual)'
+    }
+    signalbox.tree -> signalbox.automations 'next 9:00 fires' {
+      notes '**End:** tomorrow runs normally'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_269_rotates_webhook_secret {
+    #assumption
+    variant sequence
+    title 'Scenarios/Automations/Triggers/Rotate Webhook Secret'
+    description """
+      What happens to deliveries when a webhook secret is rotated?
+      Assumption: hard cutover on confirm, no overlap window; refused old-signed deliveries are visible and safe to redeliver. Why: secrets are human-only (R-GAT-03), delivery-id dedupe makes redelivery safe (#833).
+      Decided: #742 (2026-10-17) never pretend secret resolution succeeded.
+      SCN-269 · T-SCH-09, W-AUT-05, R-GAT-03, P-BLK-08
+    """
+    include personA, personC, signalbox.web, signalbox.operations, signalbox.connections, signalbox.ingress, signalbox.automations, services.onepassword, services.github
+
+    alt 'whose automation' {
+      when 'folder Company' {
+        personC -> signalbox.web 'clicks Rotate' {
+          notes """
+            - **Start:** the old signing secret is in use
+            - C is admin of folder Company, which homes the automation
+          """
+        }
+      }
+      else 'folder Personal' {
+        personA -> signalbox.web 'clicks Rotate' {
+          notes 'Same flow; rights come from the home folder'
+        }
+      }
+    }
+    signalbox.web -> signalbox.operations 'rotate secret' {
+      navigateTo person_pipeline_blocker_human_only
+      notes """
+        - Human-only: an agent can't rotate it
+        - The control stays pending until the server confirms
+      """
+    }
+    signalbox.operations -> signalbox.connections 'new secret ref' {
+      notes 'The secret is placed on the home folder like any secret'
+    }
+    signalbox.connections -> services.onepassword 'store secret' {
+      notes 'Only a ref is kept; the value is never in a transcript'
+    }
+    signalbox.web <- signalbox.operations 'confirmed' {
+      navigateTo folders_gates_confirm_in_app
+      notes 'Only now does it show done (#742)'
+    }
+    personC -> services.github 'pastes new secret'
+    alt 'delivery signed with' {
+      when 'old secret' {
+        services.github -> signalbox.ingress 'refused' {
+          notes 'In-flight old-signed deliveries fail the signature check and are logged in the run column'
+        }
+      }
+      else 'new secret' {
+        services.github -> signalbox.ingress 'verified' {
+          navigateTo work_automations_webhook
+        }
+        signalbox.ingress -> signalbox.automations 'start run'
+      }
+    }
+    personC -> services.github 'redelivers refused'
+    services.github -> signalbox.ingress 'redelivery' {
+      notes """
+        - **End:** new secret verified; old one refused
+        - Delivery-id dedupe keeps it to one run each
+      """
+    }
+
+    include signalbox, services
+    style signalbox, services { color muted; opacity 10% }
+  }
+
+  dynamic view scn_270_github_redelivers_webhook {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Triggers/Webhook Redelivery'
+    description """
+      What happens when GitHub redelivers the same webhook?
+      Decided: #833 (2026-10-17) "Redelivery returned 202 and left exactly one run"; the route verifies, dedupes by delivery id and wakes via the outbox (#520, #977).
+      SCN-270 · W-AUT-05, W-REC-01, T-SYS-01
+    """
+    include personB, personC, services.github, signalbox.ingress, signalbox.automations, hier.company.runCo
+
+    services.github -> signalbox.ingress 'signed PR event' {
+      notes """
+        - **Start:** C's PR automation in folder Company has a webhook trigger
+        - A Worker route receives the event
+      """
+    }
+    signalbox.ingress -> signalbox.automations 'verify + record id' {
+      navigateTo work_automations_webhook
+      notes 'Signature checked; the delivery id is recorded with the command'
+    }
+    signalbox.automations -> hier.company.runCo 'start run' {
+      navigateTo work_recovery_outbox_retries
+      notes "Woken through the outbox, so a crash here can't lose it"
+    }
+    services.github <- signalbox.ingress '202'
+    services.github -> signalbox.ingress 'same delivery id' {
+      notes 'GitHub redelivers (timeout or manual redeliver)'
+    }
+    signalbox.ingress -> signalbox.automations 'id already seen' {
+      navigateTo work_recovery_command_commit
+    }
+    services.github <- signalbox.ingress '202, nothing started'
+    parallel {
+      hier.company.runCo -> personB 'one run' {
+        notes '**End:** exactly one run thread in folder Company; B and C watch the same one'
+      }
+      hier.company.runCo -> personC 'one run'
+    }
+
+    include signalbox, services, hier, hier.company
+    style signalbox, services, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  dynamic view scn_276_watched_source_keeps_failing {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Triggers/Failing Watch'
+    description """
+      What happens when a watched source keeps failing?
+      Decided: #365 (merged via #431, 2026-10-15): baseline first, each new item once, back off, pause after N failures and tell the person once; in the cloud one DO per watched source plus a Queue, not a Workflow (#445).
+      SCN-276 · W-AUT-07, W-SRC-03, W-REC-01
+    """
+    include personA, signalbox.web, signalbox.automations, signalbox.connections, signalbox.attention
+
+    signalbox.automations -> signalbox.connections 'first poll' {
+      navigateTo work_sources_read
+      notes """
+        - **Start:** A watches a list through their own connection in folder Personal
+        - The first poll sets a baseline and emits nothing
+      """
+    }
+    signalbox.automations -> signalbox.connections 'poll' {
+      navigateTo work_automations_triggers
+      notes 'Each new item fires once; restarts never replay'
+    }
+    loop 'source returns 429 / 5xx' {
+      signalbox.automations -> signalbox.connections 'poll, backing off' {
+        navigateTo work_recovery_outbox_retries
+        notes 'The interval grows with each failure'
+      }
+      break 'after N failures' {
+        signalbox.automations -> signalbox.automations 'pause watch'
+      }
+    }
+    signalbox.automations -> signalbox.attention 'one needs-you'
+    signalbox.attention -> personA 'needs-you' {
+      notes 'One, not one per failure'
+    }
+    personA -> signalbox.web 'fixes connection'
+    signalbox.web -> signalbox.connections 'repair'
+    signalbox.web -> signalbox.automations 'resume watch' {
+      notes '**End:** watching again from the current baseline'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_277_scheduled_tasks_replaced {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/Triggers/Scheduled Tasks Replaced'
+    description """
+      What happens to existing scheduled tasks when automations replace them?
+      Decided: #367 (2026-10-14) "Our automations replace upstream's scheduled tasks entirely".
+      Assumption: convert each once into a cron automation, nothing left on the old path, nothing silently dropped. Why: one primitive (principle 8), nothing deleted behind the person's back; pending #302.
+      SCN-277 · W-AUT-03, W-AUT-02, W-AUT-04, P-SET-07
+    """
+    include personA, signalbox.web, signalbox.harness, signalbox.automations, signalbox.tree
+
+    signalbox.automations -> signalbox.automations 'one-time migration' {
+      navigateTo work_automations_retire_scheduled_tasks
+      notes """
+        - **Start:** A has scheduled tasks bound to threads in folder Personal and folder Company
+        - Each becomes a cron automation
+      """
+    }
+    signalbox.automations -> signalbox.tree "home = thread's folder" {
+      navigateTo person_settings_timezone
+      notes "Same schedule, in A's timezone"
+    }
+    personA -> signalbox.web 'old Settings link' {
+      notes 'Scheduled Tasks is gone from Settings; the link redirects to the folder'
+    }
+    signalbox.harness -> signalbox.automations 'schedule_task' {
+      navigateTo work_automations_define
+      notes "Agents' `schedule_task` now creates automations directly"
+    }
+    signalbox.automations -> signalbox.tree "Company's chain" {
+      navigateTo work_automations_triggers
+      notes 'The Company one runs like any folder Company automation'
+    }
+    personA -> signalbox.web 'edit, pause, delete'
+    signalbox.web -> signalbox.automations 'change(...)' {
+      notes '**End:** they behave like any automation; nothing left on the old path'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Built-ins ─────────────────────────────
+
+  dynamic view scn_274_remove_or_move_builtin {
+    #decided
+    variant sequence
+    title 'Scenarios/Automations/BuiltIns/Remove Or Move Builtin'
+    description """
+      Can a built-in automation be removed or moved?
+      Decided: #362 (2026-10-15) built-ins are readable, editable primitives; #331 built-ins sit unmovable at the top.
+      Assumption: no delete, but pause, edit, fork and Restore default. Why: principle 8 (change anything) plus reverse states; pending #53.
+      SCN-274 · W-AUT-27, W-AUT-29, W-AUT-19, P-CAP-15, P-CAP-07
+    """
+    include personA, personC, signalbox.web, signalbox.automations, signalbox.capture, signalbox.tree
+
+    personA -> signalbox.web 'opens capture routing' {
+      notes '**Start:** built-ins like capture routing and Merge gate sit at the top'
+    }
+    signalbox.web -> signalbox.automations 'edits it' {
+      navigateTo work_automations_defaults
+      notes 'Readable source like any automation; editing makes a new version'
+    }
+    personA -> signalbox.web 'pauses it'
+    signalbox.web -> signalbox.automations 'change(Disable)' {
+      navigateTo person_capture_routing
+    }
+    signalbox.automations -> signalbox.capture 'routing paused' {
+      navigateTo person_capture_settings
+      notes 'Captures stay as drafts until A resumes it'
+    }
+    personA -> signalbox.web 'tries to delete'
+    signalbox.web <- signalbox.automations 'refused' {
+      navigateTo state_automation
+      notes 'Offered Pause or Restore default instead'
+    }
+    personC -> signalbox.web 'moves Merge gate' {
+      notes "C, admin of folder Company, tries to move Company's Merge gate into folder Team"
+    }
+    signalbox.web <- signalbox.automations 'refused' {
+      notes 'Built-ins stay at the top level and the top of folder Company'
+    }
+    personC -> signalbox.web 'override at Team'
+    signalbox.web -> signalbox.tree 'place at Team' {
+      notes """
+        - **End:** built-in unmoved; the override wins at Team by nearness
+        - C can also just edit the built-in
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+}

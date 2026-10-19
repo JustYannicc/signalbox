@@ -1,0 +1,91 @@
+model {
+  extend signalbox {
+    models = module 'Models' {
+      #deep #v1 #publishable
+      icon bootstrap:cpu
+      description 'connect · complete · change · view · catalog · serve · meter'
+      technology 'pools placed on folders · CLIProxyAPI v8'
+      metadata {
+        interface '7'
+        deletion 'sign-in and custody smear into UI routes and Gateway'
+      }
+
+      api = iface 'Models · interface' {
+        description '7 verbs: connect · complete · change · view · catalog · serve · meter'
+        technology 'Deletion test: without it, sign-in and custody smear into UI routes and Gateway'
+      }
+
+      backend = part 'PoolBackend seam · 4 adapters' {
+        metadata { adapters '4' }
+        cpaContainer = adapter 'CpaContainer' {
+          #v1
+          icon tech:cloudflare-icon
+          description 'prod'
+          technology 'Cloudflare Containers (CPA host only) · CLIProxyAPI v8 (pinned release.json)'
+        }
+        cpaProcess = adapter 'CpaProcess' {
+          icon tech:go
+          description 'local · tests'
+        }
+        cpaExternal = adapter 'CpaExternal' {
+          icon tech:go
+        }
+        apiKeyDirect = adapter 'ApiKeyDirect' {
+          icon bootstrap:key
+        }
+      }
+
+      startedQueue = store 'Started events' {
+        icon bootstrap:list-ol
+        description 'batched off the request path'
+        technology 'Cloudflare Queues'
+      }
+      euEgress = part 'EU egress proxy' {
+        icon bootstrap:globe-europe-africa
+        description 'stable EU egress per account'
+      }
+      usage = store 'Usage ledger' {
+        icon bootstrap:receipt-cutoff
+        description 'usage rows · tokens · compute · storage'
+      }
+      grants = part 'Pool grants' {
+        icon bootstrap:people
+        description 'person or group · use | manage'
+      }
+      signIns = part 'Sign-in flows' {
+        #v1
+        icon bootstrap:box-arrow-in-right
+        description 'device code · pasted code · API key'
+      }
+      router = part 'Router' {
+        icon bootstrap:signpost-split
+        description 'round-robin sticky · failover'
+      }
+      catalog = part 'Model catalog' {
+        icon bootstrap:list-stars
+        technology 'router-for-me/models'
+      }
+
+      router -> backend.cpaContainer 'route'
+      signIns -> backend.cpaContainer 'auth files'
+    }
+
+    models.backend.cpaContainer -[model]-> modelProviders.anthropic 'messages'
+    models.backend.cpaContainer -[model]-> modelProviders.openai 'responses'
+    models.backend.cpaContainer -[model]-> modelProviders.xai 'chat'
+    models.backend.cpaContainer -[model]-> modelProviders.gcloudcode 'generate'
+    models.backend.cpaContainer -[model]-> modelProviders.openrouter 'chat'
+    models.api -[async]-> models.startedQueue 'meter'
+    models.startedQueue -[async]-> models.custody 'batched'
+    models.custody -> models.usage 'usage rows'
+    models.cpaHost -> models.euEgress 'egress'
+    models.euEgress -[model]-> modelProviders 'stable EU IP'
+    models.router -> signalbox.tree.api 'unplace (delete saga)'
+
+    // Interface → hidden parts (the only way in)
+    models.api -> models.signIns 'connect · complete'
+    models.api -> models.grants 'change · view'
+    models.api -> models.router 'serve'
+    models.api -> models.catalog 'catalog'
+  }
+}

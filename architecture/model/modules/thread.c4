@@ -1,0 +1,62 @@
+model {
+  extend signalbox {
+    thread = module 'Thread' {
+      #deep
+      icon bootstrap:chat-dots
+      description 'send · watch · read'
+      technology 'orchestration-v2 decider/projector · ProviderAdapterV2 contracts · fractional-indexing'
+      metadata {
+        interface '3'
+        deletion 'no single owner of a thread'
+      }
+
+      api = iface 'Thread · interface' {
+        description '3 verbs: send · watch · read'
+        technology 'Deletion test: without it, no single owner of a thread'
+      }
+
+      engine = part 'Engine' {
+        icon tech:effect-icon
+        description 'decide · project · receipts'
+        technology 'upstream orchestration-v2'
+      }
+      runQueue = part 'Run queue' {
+        icon bootstrap:list-ol
+        description 'queue · steer · restart · reject'
+        technology 'Rivet requestId/whenBusy pattern'
+      }
+      sagas = part 'Sagas' {
+        icon bootstrap:diagram-2
+        description 'fork · delegate (child thread, own computer) · move · accept · handoff'
+        technology 'ContextHandoffService · ThreadForkService · TaskLifecycle'
+      }
+      parking = part 'Park & resume' {
+        icon bootstrap:pause-circle
+        description 'turn waits on a human'
+      }
+      keepAlive = part 'Keep-alive job' {
+        icon bootstrap:heart-pulse
+        description 'only during active work'
+      }
+
+      runQueue -> engine 'commands'
+      engine -> sagas 'cross-thread work'
+      engine -> parking 'ask raised'
+      engine -> keepAlive 'turn live'
+    }
+
+    thread.engine -> signalbox.tree.api 'place → scope'
+    thread.engine -> signalbox.gateway.api 'grant request'
+    thread.engine -> signalbox.connections.api 'toolbox'
+    thread.engine -> signalbox.computer.api 'computer open'
+    thread.engine -> signalbox.harness.api 'turn input · control'
+    thread.engine -> signalbox.browser.api 'render request'
+    thread.sagas -> signalbox.drive.api 'fork · accept'
+    thread.engine -> signalbox.actorhost.api 'facet · isolates'
+    thread.engine -[async]-> signalbox.automations.api 'turn settled (never task completion)'
+
+    // Interface → hidden parts (the only way in)
+    thread.api -> thread.runQueue 'send'
+    thread.api -> thread.engine 'watch · read'
+  }
+}

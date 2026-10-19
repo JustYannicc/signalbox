@@ -1,0 +1,1509 @@
+// Shard 05: person devices, notifications, and the desktop and mobile clients.
+// Clients are gateways: they hold no work. Every step below crosses a module interface,
+// never a module's adapter. People: A and B are members of folder Company (owner: organization),
+// both working in folder Team's shared thread; C is admin of folder Company.
+views {
+
+  // ───────────────────────────── Journeys/Devices ─────────────────────────────
+
+  dynamic view journey_devices_browser_extension {
+    variant sequence
+    title 'Journeys/Devices/Connect your everyday browser'
+    description '''
+      Can an agent use a page only A's own browser can open, without ever driving that browser?
+      W-BRW-16 · the extension lends reach into A's own browser through the laptop; it never becomes the agent's browser
+    '''
+
+    include personA, signalbox.browserExtension, signalbox.desktop, signalbox.operations, signalbox.tree, signalbox.thread.threadActor, signalbox.browser
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    personA -> signalbox.browserExtension 'Adds extension' {
+      notes '''
+        - A installs the Signalbox extension in their everyday browser from Settings › Devices on the laptop.
+        - One click, no config.
+      '''
+    }
+    signalbox.browserExtension -> signalbox.desktop 'Pairs with laptop' {
+      notes '''
+        - Pairs with the laptop app over localhost. A sees "Connected to this laptop".
+      '''
+    }
+    signalbox.desktop -> signalbox.operations 'Offers browser reach' {
+      navigateTo person_devices_register
+      notes '''
+        - The laptop's gateway registers one more capability: reach into this browser.
+        - It belongs to the laptop's device record, so it sits at the laptop's home and acts as A.
+      '''
+    }
+    signalbox.operations -> signalbox.tree 'Place at home' {
+      notes '''
+        - A placement at the laptop's home (say A's Personal). It reaches threads at that level and below, nearest wins.
+        - B's thread in folder Team never reaches it unless A homes the laptop at Company or above on their own chain.
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.browser 'Needs a page A has' {
+      notes '''
+        - An agent in A's Personal thread needs a page only A's browser can open (an intranet tab, a localhost app).
+        - The real web for agents stays Kernel; this is reach into A's tab, nothing more.
+      '''
+    }
+    signalbox.browser -> signalbox.desktop 'Ask through laptop' {
+      navigateTo work_computer_laptop_gateway
+      notes '''
+        - Goes over the laptop's outbound link; no inbound port is ever opened.
+      '''
+    }
+    alt 'what A says' {
+      when 'A allows' {
+        signalbox.desktop -> personA 'Shows request' {
+          notes '''
+            - A sees which thread wants which page, and allows once or for this thread.
+          '''
+        }
+        signalbox.desktop -> signalbox.browserExtension 'Fetch page'
+        signalbox.desktop <- signalbox.browserExtension 'Page content'
+        signalbox.browser <- signalbox.desktop 'Returns page' {
+          notes '''
+            - Page content comes back to the thread; the agent never drives A's browser.
+          '''
+        }
+      }
+      else 'A declines or the laptop is closed' {
+        signalbox.browser -> signalbox.thread.threadActor 'Unavailable' {
+          notes '''
+            - The thread gets a plain "not available" and can raise a Blocker ask for A.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view journey_devices_manage {
+    variant sequence
+    title 'Journeys/Devices/Manage your devices'
+    description 'P-DEV-02 · P-DEV-03 · P-DEV-04 · see devices at their levels, change a home or notify setting'
+
+    include personA, signalbox.web, signalbox.attention, signalbox.tree.personActor, signalbox.tree.levelActor
+    include signalbox, signalbox.tree
+    global style shard05Lanes
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personA -> signalbox.web 'Opens Devices' {
+      notes '''
+        - A sees each device at its level: phone at Personal, laptop at Work › Company.
+        - Where Devices lives (Settings or the level pages) is still open.
+      '''
+    }
+    signalbox.web -> signalbox.attention 'Lists devices' {
+      notes '''
+        - Through Funnel and Operations. Device rows live in A's Person actor only.
+        - B and admin C never see A's devices, even at Company.
+      '''
+    }
+    signalbox.attention -> signalbox.tree.personActor 'Reads device rows'
+    alt 'what A changes' {
+      when 'home' {
+        personA -> signalbox.web 'Picks a new home' {
+          notes '''
+            - A moves the laptop from Personal to Work › Company.
+          '''
+        }
+        signalbox.web -> signalbox.attention 'device(SetHome)'
+        signalbox.attention -> signalbox.tree.personActor 'Saves home'
+        signalbox.attention -> signalbox.tree.levelActor 'Moves capabilities' {
+          notes '''
+            - The laptop's gateway capabilities (files, device, signals) move with the home: unplaced at Personal, placed at Company.
+            - Now threads under Company, including the shared Team thread, can reach them, acting as A.
+          '''
+        }
+      }
+      when 'notify setting' {
+        personA -> signalbox.web 'Picks notify' {
+          notes '''
+            - All, Quiet badge, Urgent only, or Off. Applied server-side before any push.
+          '''
+        }
+        signalbox.web -> signalbox.attention 'device(SetNotify)'
+        signalbox.attention -> signalbox.tree.personActor 'Saves setting'
+      }
+      when 'Focus' {
+        personA -> signalbox.web 'Sets Focus' {
+          navigateTo person_focus_set
+          notes '''
+            - Focus is per device and view-only; agents never read it.
+          '''
+        }
+      }
+      else 'remove' {
+        personA -> signalbox.web 'Removes a device' {
+          navigateTo person_devices_sign_out_remove
+        }
+      }
+    }
+    signalbox.web -> personA 'Shows the change' {
+      notes '''
+        - The device moves to its new level in the list; nothing else on screen changes.
+      '''
+    }
+  }
+
+  dynamic view journey_devices_qr_sign_in {
+    variant sequence
+    title 'Journeys/Devices/Sign in a new device by QR'
+    description 'P-DEV-06 · P-DEV-07 · one signed-in device signs in the other; token short-lived, single-use, bound to the new device'
+
+    include personA, signalbox.mobile, signalbox.desktop, signalbox.identity
+    include signalbox
+    global style shard05Lanes
+
+    alt 'who signs in whom' {
+      when 'phone signs in a new computer' {
+        signalbox.desktop -> signalbox.identity 'Requests QR' {
+          notes '''
+            - The new computer's sign-in screen asks Identity to mint a token bound to this computer.
+          '''
+        }
+        signalbox.desktop -> personA 'Shows QR' {
+          notes '''
+            - A sees a QR next to the normal sign-in button.
+          '''
+        }
+        personA -> signalbox.mobile 'Scans with camera' {
+          notes '''
+            - The system camera is enough; the app link opens Signalbox on the phone.
+          '''
+        }
+        signalbox.mobile -> personA 'Asks to confirm' {
+          notes '''
+            - A sees the computer's name and rough location, then taps Confirm.
+          '''
+        }
+        signalbox.mobile -> signalbox.identity 'Approves token' {
+          navigateTo identity_identity_device_code
+          notes '''
+            - verify: single-use, seconds-long, bound to the requesting computer. A replay or another device fails.
+          '''
+        }
+        signalbox.desktop <- signalbox.identity 'Session' {
+          navigateTo person_devices_register
+          notes '''
+            - The computer is signed in as A and registers itself as a device.
+          '''
+        }
+      }
+      else 'computer signs in a new phone' {
+        personA -> signalbox.desktop 'Opens Devices QR' {
+          notes '''
+            - Settings › Devices › Add phone shows a QR.
+          '''
+        }
+        signalbox.desktop -> signalbox.identity 'Mints token'
+        personA -> signalbox.mobile 'Scans with camera'
+        opt 'app not installed' {
+          signalbox.mobile -> signalbox.mobile 'Store, then resume' {
+            notes '''
+              - The app link falls through to App Store or Play; after install the same link resumes.
+              - Private distribution only: TestFlight and Play internal.
+            '''
+          }
+        }
+        signalbox.mobile -> signalbox.identity 'Redeems token'
+        signalbox.mobile <- signalbox.identity 'Session' {
+          navigateTo person_devices_register
+          notes '''
+            - DPoP-bound session in secure storage; the phone registers as a device.
+          '''
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────── Workflows/Clients/Desktop ─────────────────────────────
+
+  dynamic view clients_desktop_crash_recovery {
+    variant sequence
+    title 'Workflows/Clients/Desktop/Recover after a desktop crash'
+    description 'T-DSK-06 · T-DSK-28 · bounded renderer reloads; a pending SnapShot attaches on next launch'
+
+    include personA, signalbox.desktop, signalbox.funnel, signalbox.capture
+    include signalbox
+    global style shard05Lanes
+
+    alt 'what crashed' {
+      when 'renderer only' {
+        signalbox.desktop -> signalbox.desktop 'Renderer gone' {
+          notes '''
+            - Electron reports render-process-gone; the main process survives.
+          '''
+        }
+        loop 'bounded reloads' {
+          signalbox.desktop -> signalbox.desktop 'Reloads window' {
+            notes '''
+              - A few reloads inside a time window, then it stops trying.
+              - Nothing is lost: the client holds no work.
+            '''
+          }
+          signalbox.desktop -> signalbox.funnel 'Resubscribes' {
+            notes '''
+              - Views come back from the cloud where they left off.
+            '''
+          }
+        }
+        opt 'still crashing' {
+          signalbox.desktop -> personA 'Shows crash screen' {
+            notes '''
+              - A sees a plain "Signalbox crashed" with Reload and Report.
+            '''
+          }
+        }
+      }
+      else 'whole app, mid-SnapShot' {
+        personA -> signalbox.desktop 'Relaunches'
+        signalbox.desktop -> signalbox.desktop 'Finds pending SnapShot' {
+          notes '''
+            - A pending marker is written before capture starts, so it survives the crash.
+          '''
+        }
+        signalbox.desktop -> signalbox.capture 'Attaches to draft' {
+          navigateTo journey_capture_snapshot
+          notes '''
+            - The SnapShot attaches to the draft it was meant for (a server-side draft upsert).
+          '''
+        }
+        signalbox.desktop -> personA 'Shows it restored'
+      }
+    }
+  }
+
+  dynamic view clients_desktop_deep_links {
+    variant sequence
+    title 'Workflows/Clients/Desktop/Open deep links and prompt links on desktop'
+    description 'T-DSK-12 · Signalbox\'s own scheme; links queue until the window is ready'
+
+    include personA, signalbox.desktop, signalbox.funnel, signalbox.thread.threadActor
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    personA -> signalbox.desktop 'Clicks a link' {
+      notes '''
+        - A Signalbox scheme link or prompt link from mail or chat; the OS hands it to the registered handler (a .desktop file on Linux).
+      '''
+    }
+    signalbox.desktop -> signalbox.desktop 'Queues link' {
+      notes '''
+        - Held until the window is up and signed in, then opened once.
+      '''
+    }
+    alt 'link kind' {
+      when 'thread' {
+        signalbox.desktop -> signalbox.funnel 'Opens thread'
+        signalbox.funnel -> signalbox.thread.threadActor 'watch' {
+          notes '''
+            - Authority is checked for the person clicking. A and B both open the shared Team thread through their own mount.
+            - Someone outside Team gets "ask for access", never the content.
+          '''
+        }
+      }
+      when 'prompt link' {
+        signalbox.desktop -> signalbox.funnel 'Opens draft' {
+          navigateTo journey_capture_open_draft
+          notes '''
+            - A prefilled draft at the link's place. It's never sent by itself.
+          '''
+        }
+      }
+      else 'sign-in link' {
+        signalbox.desktop -> signalbox.funnel 'Completes QR sign-in' {
+          navigateTo journey_devices_qr_sign_in
+        }
+      }
+    }
+  }
+
+  dynamic view clients_desktop_lifecycle {
+    variant sequence
+    title 'Workflows/Clients/Desktop/Desktop app starts and quits'
+    description 'T-DSK-01 · T-DSK-02 · T-DSK-08 · T-DSK-09 · T-DSK-19 · a thin gateway: no local server'
+
+    include personA, signalbox.desktop, signalbox.funnel
+    include signalbox
+    global style shard05Lanes
+
+    personA -> signalbox.desktop 'Launches app' {
+      navigateTo operations_ops_client_distribution
+    }
+    alt 'already running?' {
+      when 'second launch' {
+        signalbox.desktop -> signalbox.desktop 'Hands argv over' {
+          notes '''
+            - Single-instance lock: the second process passes its argv (a deep link, say) to the first and exits.
+          '''
+        }
+      }
+      else 'first instance' {
+        signalbox.desktop -> signalbox.desktop 'Boots' {
+          notes '''
+            - Env fixes, compile cache, userData. Stable, nightly or dev name, icon and scheme picked at startup.
+            - No local server starts; the desktop is only a gateway.
+          '''
+        }
+        signalbox.desktop -> signalbox.funnel 'Connects to origin' {
+          notes '''
+            - One cloud origin, one socket. Views arrive; nothing runs here.
+          '''
+        }
+        opt 'update waiting' {
+          signalbox.desktop -> signalbox.desktop 'Checks for update' {
+            navigateTo clients_updates_desktop
+          }
+        }
+      }
+    }
+    personA -> signalbox.desktop 'Presses Cmd+Q'
+    opt 'hold-to-quit on' {
+      signalbox.desktop -> personA 'Shows hold overlay' {
+        notes '''
+          - Hold or double-press to quit; a stray tap does nothing.
+        '''
+      }
+    }
+    signalbox.desktop -> signalbox.desktop 'Flushes state' {
+      notes '''
+        - Window state and the pending link queue. There are no backends to stop.
+      '''
+    }
+    signalbox.desktop -> signalbox.funnel 'Closes socket'
+  }
+
+  dynamic view clients_desktop_session_storage {
+    variant sequence
+    title 'Workflows/Clients/Desktop/Keep the sign-in session in safeStorage'
+    description 'T-DSK-17 · stores only the sign-in session; there is no environment catalog'
+
+    include signalbox.desktop, signalbox.funnel, signalbox.identity
+    include signalbox
+    global style shard05Lanes
+
+    signalbox.desktop -> signalbox.identity 'Signs in' {
+      notes '''
+        - AuthKit in the system browser; the callback lands back in the desktop app.
+      '''
+    }
+    signalbox.desktop <- signalbox.identity 'Session' {
+      navigateTo identity_identity_session
+    }
+    signalbox.desktop -> signalbox.desktop 'Seals in safeStorage' {
+      navigateTo state_session
+      notes '''
+        - OS keychain (macOS Keychain, Windows DPAPI, the chosen Linux keyring).
+        - Only the session: one cloud origin, so no saved environments.
+      '''
+    }
+    signalbox.desktop -> signalbox.desktop 'Next launch: unseal'
+    signalbox.desktop -> signalbox.funnel 'Presents session'
+    signalbox.funnel -> signalbox.identity 'authenticate'
+    alt 'session state' {
+      when 'valid' {
+        signalbox.desktop <- signalbox.funnel 'Views'
+      }
+      else 'revoked or expired' {
+        signalbox.desktop -> signalbox.desktop 'Clears session' {
+          notes '''
+            - A removed device or ended session clears here on its next request.
+          '''
+        }
+        signalbox.desktop -> signalbox.identity 'Signs in again'
+      }
+    }
+  }
+
+  dynamic view clients_desktop_snapshot_setup {
+    variant sequence
+    title 'Workflows/Clients/Desktop/Set up SnapShot'
+    description 'T-DSK-25 · T-DSK-26 · permissions, shortcut and Linux desktop helpers (unconfirmed feature)'
+
+    include personA, signalbox.desktop
+    include signalbox
+    global style shard05Lanes
+
+    personA -> signalbox.desktop 'Opens SnapShots' {
+      notes '''
+        - Settings › SnapShots. Kept as a client capture feature; still unconfirmed.
+      '''
+    }
+    alt 'platform' {
+      when 'macOS' {
+        signalbox.desktop -> signalbox.desktop 'Checks Screen Recording' {
+          notes '''
+            - The only macOS permission kept; Full Disk Access is dropped.
+          '''
+        }
+        opt 'not granted' {
+          signalbox.desktop -> personA 'Asks for permission' {
+            notes '''
+              - Opens the System Settings pane, re-checks when the window regains focus.
+            '''
+          }
+        }
+      }
+      else 'Linux' {
+        signalbox.desktop -> signalbox.desktop 'Installs helpers' {
+          notes '''
+            - GNOME extension, KDE helper, or a Hyprland/Niri config edit.
+          '''
+        }
+      }
+    }
+    personA -> signalbox.desktop 'Sets shortcut'
+    signalbox.desktop -> personA 'Ready to capture' {
+      navigateTo journey_capture_snapshot
+    }
+  }
+
+  // ───────────────────────────── Workflows/Clients/Mobile ─────────────────────────────
+
+  dynamic view clients_mobile_composer {
+    variant sequence
+    title 'Workflows/Clients/Mobile/Compose with uploads that survive restarts'
+    description 'T-MOB-17 · drafts are server-side; the upload queue survives app restarts'
+
+    include personA, signalbox.mobile, signalbox.capture, signalbox.thread.threadActor
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Types and attaches' {
+      notes '''
+        - Native editor, slash and skill menu, chips, photos and files.
+      '''
+    }
+    signalbox.mobile -> signalbox.capture 'Saves draft' {
+      navigateTo person_drafts_attachments
+      notes '''
+        - Draft upsert at its place, private to A, on every device.
+      '''
+    }
+    loop 'until every upload lands' {
+      signalbox.mobile -> signalbox.mobile 'Queues upload' {
+        notes '''
+          - The queue is persisted on the phone, so killing or restarting the app resumes it.
+        '''
+      }
+      signalbox.mobile -> signalbox.capture 'Uploads attachment' {
+        navigateTo work_attachments_attach
+        notes '''
+          - Each finished upload is added to the draft as a reference.
+        '''
+      }
+    }
+    personA -> signalbox.mobile 'Taps send'
+    opt 'uploads still pending' {
+      signalbox.mobile -> personA 'Shows waiting chip' {
+        navigateTo state_attachment
+        notes '''
+          - Send waits for the queue; a message never goes out with half its attachments.
+        '''
+      }
+    }
+    signalbox.mobile -> signalbox.capture 'Send draft'
+    signalbox.capture -> signalbox.thread.threadActor 'send(requestId)' {
+      notes '''
+        - requestId comes from the draft id, so a retried send returns the same thread and turn.
+      '''
+    }
+  }
+
+  dynamic view clients_mobile_deep_links {
+    variant sequence
+    title 'Workflows/Clients/Mobile/Open deep links and prompt links on the phone'
+    description 'T-MOB-09 · Signalbox\'s scheme and app links'
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.thread.threadActor
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Opens a link' {
+      notes '''
+        - A Signalbox scheme link, an app link, or a push tap.
+      '''
+    }
+    opt 'signed out' {
+      signalbox.mobile -> signalbox.mobile 'Holds link' {
+        notes '''
+          - Kept until sign-in finishes, then opened once.
+        '''
+      }
+    }
+    alt 'link kind' {
+      when 'push tap' {
+        signalbox.mobile -> signalbox.funnel 'Opens the ask' {
+          navigateTo journey_daily_tap_push
+        }
+      }
+      when 'thread or settings' {
+        signalbox.mobile -> signalbox.funnel 'Opens thread'
+        signalbox.funnel -> signalbox.thread.threadActor 'watch' {
+          notes '''
+            - Checked for the person on this phone: B opening A's link to the Team thread gets it through B's own mount.
+          '''
+        }
+      }
+      when 'prompt link or new task' {
+        signalbox.mobile -> signalbox.funnel 'Opens draft' {
+          navigateTo journey_capture_open_draft
+        }
+      }
+      else 'QR sign-in' {
+        signalbox.mobile -> signalbox.funnel 'Confirms sign-in' {
+          navigateTo journey_devices_qr_sign_in
+        }
+      }
+    }
+  }
+
+  dynamic view clients_mobile_housekeeping {
+    variant sequence
+    title 'Workflows/Clients/Mobile/Storage, refresh and memory on the phone'
+    description 'T-MOB-34 · storage inspect and clear, pull to refresh, memory-warning GC, foreground handoff guard'
+
+    include personA, signalbox.mobile, signalbox.funnel
+    include signalbox
+    global style shard05Lanes
+
+    alt 'what happens' {
+      when 'Settings › Storage' {
+        personA -> signalbox.mobile 'Inspects storage'
+        signalbox.mobile -> personA 'Shows cache sizes' {
+          notes '''
+            - Only view caches and the upload queue; drafts and work are server-side.
+          '''
+        }
+        opt 'A clears it' {
+          personA -> signalbox.mobile 'Clears cache'
+          signalbox.mobile -> signalbox.funnel 'Refetches views'
+        }
+      }
+      when 'pull to refresh' {
+        personA -> signalbox.mobile 'Pulls down'
+        signalbox.mobile -> signalbox.funnel 'Resyncs view'
+      }
+      when 'memory warning' {
+        signalbox.mobile -> signalbox.mobile 'Drops caches' {
+          notes '''
+            - Off-screen lists and images go; nothing that matters is lost.
+          '''
+        }
+      }
+      else 'back to foreground' {
+        signalbox.mobile -> signalbox.mobile 'Guards handoff' {
+          notes '''
+            - A resumed link or reconnect is handled once, not twice.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view clients_mobile_launch_connect {
+    variant sequence
+    title 'Workflows/Clients/Mobile/Phone app launches and connects to the origin'
+    description 'T-MOB-01 · T-MOB-02 · T-MOB-03 · T-MOB-04 · one origin; offline shows cached views only'
+
+    include personA, signalbox.mobile, signalbox.funnel
+    include signalbox
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Opens app'
+    signalbox.mobile -> signalbox.mobile 'Boots' {
+      notes '''
+        - Splash, appearance, providers, native stack.
+      '''
+    }
+    signalbox.mobile -> signalbox.funnel 'Connects to origin' {
+      notes '''
+        - One cloud origin, one socket, DPoP session from secure storage.
+        - No per-environment supervisors.
+      '''
+    }
+    alt 'network' {
+      when 'online' {
+        signalbox.mobile <- signalbox.funnel 'Views'
+        signalbox.mobile -> signalbox.funnel 'Touches device' {
+          navigateTo person_devices_register
+          notes '''
+            - Stamps lastConnectedAt on this device's record.
+          '''
+        }
+      }
+      else 'offline' {
+        signalbox.mobile -> personA 'Cached views + notice' {
+          navigateTo clients_mobile_offline_send
+          notes '''
+            - A sees the last views and an "Offline" notice. Sends queue.
+          '''
+        }
+      }
+    }
+    personA -> signalbox.mobile 'Leaves the app'
+    opt 'back after 10 s or more' {
+      signalbox.mobile -> signalbox.funnel 'Reconnects' {
+        notes '''
+          - The OS likely closed the socket; reconnect and resync from the last sequence.
+        '''
+      }
+    }
+  }
+
+  dynamic view clients_mobile_offline_send {
+    variant sequence
+    title 'Workflows/Clients/Mobile/Send while offline'
+    description 'P-DEV-12 · messages queue offline and send on reconnect, deduped by requestId'
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.operations, signalbox.thread.threadActor, personB
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Sends offline' {
+      notes '''
+        - A replies in the shared Team thread on a train.
+      '''
+    }
+    signalbox.mobile -> signalbox.mobile 'Outbox + requestId' {
+      notes '''
+        - Held in the phone's outbox with a requestId minted at send. A sees "Waiting to send".
+      '''
+    }
+    personB -> signalbox.thread.threadActor 'B sends meanwhile' {
+      notes '''
+        - B is online and replies in the same Team thread from their own client. B's turn lands first.
+      '''
+    }
+    loop 'each reconnect, until acked' {
+      signalbox.mobile -> signalbox.funnel 'Retries send'
+      signalbox.funnel -> signalbox.operations 'invoke send'
+      signalbox.operations -> signalbox.thread.threadActor 'send(requestId)'
+      alt 'seen before?' {
+        when 'new' {
+          signalbox.thread.threadActor -> signalbox.thread.threadActor 'Queues turn' {
+            notes '''
+              - If B sent while A was offline, A's turn queues behind B's in the one Thread actor.
+            '''
+          }
+        }
+        else 'already landed' {
+          signalbox.thread.threadActor -> signalbox.thread.threadActor 'Dedupes' {
+            notes '''
+              - Same receipt as the first time; no second turn.
+            '''
+          }
+        }
+      }
+      signalbox.mobile <- signalbox.funnel 'Receipt' {
+        notes '''
+          - The outbox entry clears; A sees their message in order after B's.
+        '''
+      }
+    }
+  }
+
+  dynamic view clients_mobile_prebuild {
+    variant sequence
+    title 'Workflows/Clients/Mobile/Prebuild plugins and screenshot harness'
+    description '''
+      What happens to the phone app at build time, before anyone installs it?
+      T-MOB-37 · platform plugins and the showcase screenshot harness, then a private build
+    '''
+
+    include operator, build.ci, signalbox.mobile, upstreams.eas, upstreams.appStores
+    include build, signalbox, upstreams
+    global style shard05Lanes
+
+    operator -> build.ci 'Cuts a build' {
+      notes '''
+        - A release tag or a manual run; the operator never builds by hand.
+      '''
+    }
+    build.ci -> signalbox.mobile 'Runs prebuild' {
+      notes '''
+        - Expo prebuild generates the native projects for this private build.
+      '''
+    }
+    signalbox.mobile -> signalbox.mobile 'Applies plugins' {
+      notes '''
+        - Cleartext rules, predictive back, orientation, dialogs.
+      '''
+    }
+    signalbox.mobile -> signalbox.mobile 'Screenshot harness' {
+      notes '''
+        - The showcase screens render seeded data for store and docs screenshots. No real person's data.
+      '''
+    }
+    build.ci -> upstreams.eas 'Build and submit' {
+      navigateTo operations_ops_client_distribution
+    }
+    upstreams.eas -> upstreams.appStores 'Private tracks' {
+      notes '''
+        - TestFlight internal and Play internal only; no public build.
+      '''
+    }
+  }
+
+  dynamic view clients_mobile_thread_actions {
+    variant sequence
+    title 'Workflows/Clients/Mobile/Swipe, snooze and restore threads on the phone'
+    description 'T-MOB-11 · T-MOB-13 · archive and settle are thread-wide; snooze and dismiss are per person'
+
+    include personA, signalbox.mobile, signalbox.thread.threadActor, signalbox.attention
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Swipes a thread' {
+      notes '''
+        - On the shared Team thread, in A's list.
+      '''
+    }
+    alt 'action' {
+      when 'archive' {
+        signalbox.mobile -> signalbox.thread.threadActor 'Archive' {
+          navigateTo work_threads_lifecycle_archive
+          notes '''
+            - Thread-wide: it leaves A's and B's lists. Anyone with access can unarchive.
+          '''
+        }
+      }
+      when 'settle' {
+        signalbox.mobile -> signalbox.thread.threadActor 'Settle' {
+          navigateTo state_thread
+          notes '''
+            - Thread-wide; new activity reopens it.
+          '''
+        }
+      }
+      when 'snooze' {
+        opt 'custom time' {
+          personA -> signalbox.mobile 'Picks in sheet'
+        }
+        signalbox.mobile -> signalbox.attention 'defer(until)' {
+          navigateTo work_threads_multiplayer_per_person_state
+          notes '''
+            - Per person: hidden for A only. B still sees it and still gets pinged.
+          '''
+        }
+      }
+      else 'dismiss' {
+        signalbox.mobile -> signalbox.attention 'Dismiss' {
+          notes '''
+            - Clears A's attention item; the thread itself is untouched.
+          '''
+        }
+      }
+    }
+    opt 'restore later' {
+      personA -> signalbox.mobile 'Opens Archive' {
+        navigateTo person_settings_archived
+        notes '''
+          - Settings › Archive lists archived threads A can reach.
+        '''
+      }
+      signalbox.mobile -> signalbox.thread.threadActor 'Unarchive' {
+        notes '''
+          - Back in everyone's list who has access.
+        '''
+      }
+    }
+  }
+
+  // ───────────────────────────── Workflows/Clients/Updates ─────────────────────────────
+
+  dynamic view clients_updates_desktop {
+    variant sequence
+    title 'Workflows/Clients/Updates/Desktop updates itself'
+    description 'P-DEV-13 · T-UPD-02 · T-UPD-03 · T-UPD-04 · electron-updater on a thin gateway'
+
+    include personA, signalbox.desktop, signalbox.operations, upstreams.updateFeed
+    include signalbox, upstreams
+    global style shard05Lanes
+
+    opt 'pick a channel' {
+      personA -> signalbox.desktop 'Picks stable or nightly' {
+        notes '''
+          - Settings › Updates.
+        '''
+      }
+      signalbox.desktop -> signalbox.operations 'Saves preference' {
+        notes '''
+          - A Person preference, so it follows A to every laptop.
+        '''
+      }
+    }
+    signalbox.desktop -> upstreams.updateFeed 'Checks feed' {
+      navigateTo operations_ops_client_distribution
+      notes '''
+        - electron-updater reads the channel's release feed on launch and periodically.
+      '''
+    }
+    alt 'feed says' {
+      when 'update available' {
+        signalbox.desktop <- upstreams.updateFeed 'New version'
+        opt 'release notes' {
+          signalbox.desktop -> personA 'Shows release notes'
+        }
+        signalbox.desktop -> signalbox.desktop 'Installs on quit' {
+          notes '''
+            - Nothing to drain: work runs in the cloud, so a restart costs seconds.
+          '''
+        }
+      }
+      else 'up to date' {
+        signalbox.desktop -> signalbox.desktop 'Waits for next check'
+      }
+    }
+    opt 'relaunched on the old version' {
+      signalbox.desktop -> signalbox.desktop 'Finds restart marker' {
+        notes '''
+          - The marker says an update should have applied but didn't.
+        '''
+      }
+      signalbox.desktop -> personA 'Offers reinstall' {
+      }
+    }
+  }
+
+  dynamic view clients_updates_mobile_ota {
+    variant sequence
+    title 'Workflows/Clients/Updates/Phone app updates over the air'
+    description 'T-UPD-10 · EAS Update, private distribution only; drafts flushed before apply; rollback to embedded'
+
+    include personA, signalbox.mobile, signalbox.capture, upstreams.eas
+    include signalbox, upstreams
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Opens app' {
+      notes '''
+        - Also on foreground, or Settings › About › Check now.
+      '''
+    }
+    signalbox.mobile -> upstreams.eas 'Checks for update' {
+      notes '''
+        - EAS Update channel bound to this private build (TestFlight or Play internal).
+      '''
+    }
+    alt 'update?' {
+      when 'found' {
+        signalbox.mobile -> upstreams.eas 'Fetches bundle' {
+          navigateTo operations_ops_client_distribution
+        }
+        signalbox.mobile -> signalbox.capture 'Flushes drafts' {
+          notes '''
+            - Unsent composer text is saved as a server-side draft before reload.
+          '''
+        }
+        signalbox.mobile -> signalbox.mobile 'Applies in background'
+      }
+      else 'none' {
+        signalbox.mobile -> signalbox.mobile 'Keeps current'
+      }
+    }
+    try 'launch new bundle' {
+      signalbox.mobile -> signalbox.mobile 'Starts new bundle'
+    } catch 'it crashes on start' {
+      signalbox.mobile -> signalbox.mobile 'Rolls back' {
+        notes '''
+          - Back to the embedded bundle; the bad update is skipped.
+        '''
+      }
+    }
+  }
+
+  // ───────────────────────────── Workflows/Person/Devices ─────────────────────────────
+
+  dynamic view person_devices_device_only_resources {
+    variant sequence
+    title 'Workflows/Person/Devices/Reach things only a device has'
+    description 'P-DEV-09 · P-DEV-11 · the laptop dials out; agents never run on a device'
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.thread.threadActor, signalbox.gateway, signalbox.computer, signalbox.browser
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    signalbox.desktop -> signalbox.computer 'Dials out' {
+      navigateTo person_devices_register
+      notes '''
+        - The laptop opens an outbound link; no inbound port. It's a capability at the laptop's home, acting as A.
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.gateway 'Needs a local thing' {
+      notes '''
+        - A thread in A's Personal needs localhost:3000 on the laptop, or a login code from A's phone.
+      '''
+    }
+    alt 'what it needs' {
+      when 'localhost on the laptop' {
+        signalbox.gateway -> signalbox.computer 'Resolve capability' {
+          notes '''
+            - Allowed only if the laptop's home is on the thread's chain. B's Team thread doesn't reach it unless A homed the laptop at Company.
+          '''
+        }
+        signalbox.computer -> signalbox.desktop 'Tunnel request'
+        signalbox.computer <- signalbox.desktop 'Local response'
+        signalbox.computer -> signalbox.browser 'Port URL' {
+          notes '''
+            - The Browser opens it through the tunnel. The agent runs in the cloud, never on the laptop.
+          '''
+        }
+      }
+      else 'SMS login code' {
+        signalbox.gateway -> signalbox.mobile 'Asks for code' {
+          notes '''
+            - The phone's device gateway reads the SMS. A hosted SMS gateway reached as a connection is the other route.
+          '''
+        }
+        opt 'first time' {
+          signalbox.mobile -> personA 'Asks to share' {
+            notes '''
+              - A allows codes from this sender for this thread.
+            '''
+          }
+        }
+        signalbox.gateway <- signalbox.mobile 'Code'
+        signalbox.gateway -> signalbox.browser 'Fills login' {
+          notes '''
+            - Managed Auth factor order puts SMS last.
+          '''
+        }
+      }
+    }
+    try {
+      signalbox.gateway -> signalbox.thread.threadActor 'Result'
+    } catch 'device offline' {
+      signalbox.gateway -> signalbox.thread.threadActor '"device offline"' {
+        navigateTo work_computer_laptop_gateway
+        notes '''
+          - Its tools return "device offline" as a needs-you state: a Blocker for A, "open your laptop".
+        '''
+      }
+    }
+  }
+
+  dynamic view person_devices_register {
+    variant sequence
+    title 'Workflows/Person/Devices/Register a device on sign-in'
+    description 'P-DEV-01 · P-DEV-08 · T-REM-15 · record, push token, home at the top level, capabilities placed there'
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.identity, signalbox.operations, signalbox.attention, signalbox.tree
+    include signalbox
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Signs in' {
+      navigateTo identity_identity_sign_up
+    }
+    signalbox.mobile -> signalbox.identity 'Completes sign-in'
+    signalbox.mobile <- signalbox.identity 'Session'
+    signalbox.mobile -> signalbox.attention 'device(Register)' {
+      notes '''
+        - Name, platform, push token; home defaults to A's top level, notify to All.
+        - Stored in A's Person actor, never in a shared folder. B and C never see it.
+      '''
+    }
+    opt 'device has gateway capabilities' {
+      signalbox.mobile -> signalbox.operations 'Offer capabilities' {
+        notes '''
+          - Files, device, signals.
+        '''
+      }
+      signalbox.operations -> signalbox.tree 'Place at home' {
+        notes '''
+          - Placements at the device's home; they act as A and reach threads at and below it, nearest wins.
+        '''
+      }
+    }
+    signalbox.mobile -> personA 'Asks for a home' {
+      navigateTo journey_devices_manage
+      notes '''
+        - First open asks where this device belongs; skipping keeps the top level.
+      '''
+    }
+    loop 'every later connect' {
+      signalbox.mobile -> signalbox.funnel 'Connects'
+      signalbox.funnel -> signalbox.attention 'Touch device' {
+        notes '''
+          - Stamps lastConnectedAt and client metadata (app version, OS) on the device record.
+        '''
+      }
+    }
+  }
+
+  dynamic view person_devices_sign_out_remove {
+    #v1
+    variant sequence
+    title 'Workflows/Person/Devices/Sign out or remove a device'
+    description 'v1 partial (session end only) · P-DEV-05 · P-OUT-01 · end the session and stop the device ringing'
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.identity, signalbox.attention
+    include signalbox
+    global style shard05Lanes
+
+    alt 'where' {
+      when 'sign out on this device' {
+        personA -> signalbox.web 'Signs out'
+        signalbox.web -> signalbox.identity 'End session' {
+          notes '''
+            - v1. Fails closed from the next request.
+          '''
+        }
+        signalbox.web -> signalbox.attention 'device(Unregister)' {
+          navigateTo person_devices_register
+          notes '''
+            - Not v1. Push token dropped, so this device stops ringing.
+          '''
+        }
+      }
+      else 'remove another device' {
+        personA -> signalbox.web 'Removes the phone' {
+          notes '''
+            - From Devices on any signed-in device.
+          '''
+        }
+        parallel {
+          signalbox.web -> signalbox.identity 'Revoke its session'
+          signalbox.web -> signalbox.attention 'device(Unregister)' {
+            notes '''
+              - Push token gone; its gateway capabilities are unplaced from its home.
+            '''
+          }
+        }
+        signalbox.mobile -> signalbox.identity 'Next request'
+        signalbox.mobile <- signalbox.identity 'Revoked' {
+          notes '''
+            - The phone shows the sign-in screen. Nothing local to wipe: it held no work.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view person_devices_signals {
+    title 'Workflows/Person/Devices/Device signals trigger automations'
+    description 'P-DEV-10 · Wi-Fi, NFC, timezone and coarse location as automation triggers'
+
+    include signalbox
+    global style shard05Lanes
+
+    parallel {
+      signalbox.mobile -> signalbox.funnel 'Wi-Fi, NFC, location' {
+        notes '''
+          - Coarse only, and only signals A turned on. Only the change is reported.
+        '''
+      }
+      signalbox.desktop -> signalbox.funnel 'Timezone, network'
+    }
+    signalbox.funnel -> signalbox.operations 'report signal'
+    signalbox.operations -> signalbox.automations 'Device event' {
+      notes '''
+        - Reaches automations homed on the device home's chain, like any app event.
+      '''
+    }
+    signalbox.automations -> signalbox.attention 'Switch Focus' {
+      navigateTo person_focus_auto_switch
+      notes '''
+        - For example: "arrive at the office → Focus Work".
+      '''
+    }
+    autoLayout TopBottom
+  }
+
+  // ───────────────────────────── Workflows/Person/Notifications ─────────────────────────────
+
+  dynamic view person_notifications_capture_silent {
+    title 'Workflows/Person/Notifications/A capture never pings'
+    description 'P-NOT-16 · a capture never interrupts; the dotted red edge is the push that never happens'
+
+    include signalbox
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Quick capture' {
+      notes '''
+        - A jots a thought or a task from the lock screen.
+      '''
+    }
+    signalbox.mobile -> signalbox.capture 'note or draft' {
+      navigateTo journey_capture_open
+      notes '''
+        - Capture routing decides intent vs thought; unsure means note.
+      '''
+    }
+    signalbox.capture -> signalbox.attention 'never pings' {
+      color red
+      line dotted
+      notes '''
+        - This edge doesn't exist. A capture never enters the pipeline in the moment.
+        - If it becomes a Ready item, it shows on A's next round, not as a push.
+      '''
+    }
+    signalbox.mobile <- signalbox.capture 'Saved, quietly'
+    autoLayout TopBottom
+  }
+
+  dynamic view person_notifications_deliver {
+    variant sequence
+    title 'Workflows/Person/Notifications/Deliver a routed ping to devices'
+    description 'P-NOT-02 · P-NOT-13 · P-NOT-15 · T-MOB-27 · APNs, FCM, Web Push or the in-app socket, with Queue retries and a dead-letter queue'
+
+    include signalbox.web, signalbox.desktop, signalbox.mobile, signalbox.attention, signalbox.actorhost, telemetry.apns, telemetry.fcm, telemetry.webPush
+    include signalbox, telemetry
+    global style shard05Lanes
+
+    signalbox.attention -> signalbox.actorhost 'Enqueue delivery' {
+      navigateTo person_notifications_route_ping
+      notes '''
+        - One job per (ping, device). Routing already decided which devices.
+      '''
+    }
+    loop 'Queue retries, up to max attempts' {
+      signalbox.actorhost -> signalbox.attention 'Deliver attempt'
+      alt 'device' {
+        when 'iPhone' {
+          signalbox.attention -> telemetry.apns 'Send'
+          telemetry.apns -> signalbox.mobile 'Push' {
+            navigateTo person_notifications_live_activity
+          }
+        }
+        when 'Android' {
+          signalbox.attention -> telemetry.fcm 'Send'
+          telemetry.fcm -> signalbox.mobile 'Push' {
+            notes '''
+              - First notify creates channels: agent alerts, agent activity, grouped summary.
+            '''
+          }
+        }
+        when 'browser' {
+          signalbox.attention -> telemetry.webPush 'Send'
+          telemetry.webPush -> signalbox.web 'Push'
+        }
+        else 'desktop' {
+          signalbox.attention -> signalbox.desktop 'In-app socket'
+          signalbox.desktop -> signalbox.desktop 'OS notification' {
+            notes '''
+              - Electron raises a native notification.
+            '''
+          }
+        }
+      }
+    }
+    opt 'phone app in the foreground' {
+      signalbox.mobile -> signalbox.mobile 'Stays quiet' {
+        notes '''
+          - Ordinary alerts show in-app only; urgent ones still alert.
+        '''
+      }
+    }
+    alt 'outcome' {
+      when 'delivered' {
+        signalbox.actorhost <- signalbox.attention 'Ack'
+      }
+      else 'max attempts reached' {
+        signalbox.actorhost -> signalbox.actorhost 'Dead-letter' {
+          navigateTo person_notifications_delivery_record
+          notes '''
+            - The delivery record shows "failed" with the reason; ops get an alert.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view person_notifications_delivery_record {
+    variant sequence
+    title 'Workflows/Person/Notifications/See where a ping went and why'
+    description 'P-NOT-09 · P-NOT-10 · one delivery record per routed ping, read by people and agents alike'
+
+    include personA, hier.asstA, signalbox.web, signalbox.gateway, signalbox.attention, signalbox.thread.threadActor, signalbox.observability
+    include signalbox.thread
+    // no Signalbox or Tree lane boxes here: the assistant lane would split them
+    global style shard05Lanes
+
+    signalbox.attention -> signalbox.attention 'Records routing' {
+      navigateTo person_notifications_route_ping
+      notes '''
+        - Written when routed: devices chosen, devices skipped, and why (Focus, rule, setting).
+      '''
+    }
+    opt 'ping suppressed' {
+      parallel {
+        signalbox.attention -> signalbox.thread.threadActor 'Suppression note' {
+          notes '''
+            - The agent's chat shows "didn't ping A: Focus Personal". Never silent.
+          '''
+        }
+        signalbox.attention -> signalbox.observability 'Trace span'
+      }
+    }
+    alt 'who asks why' {
+      when 'A in Settings' {
+        personA -> signalbox.web 'Opens Recent pings' {
+          notes '''
+            - Settings › Notifications, or "why did I get this?" on a push.
+          '''
+        }
+        signalbox.web -> signalbox.attention 'Reads records'
+        signalbox.web <- signalbox.attention 'Where and why' {
+          notes '''
+            - Each ping with the device it landed on and the rule that decided it, respecting A's Focus.
+          '''
+        }
+      }
+      else 'an agent over MCP' {
+        hier.asstA -> signalbox.gateway 'recent pings'
+        signalbox.gateway -> signalbox.attention 'Reads records' {
+          notes '''
+            - Same records. A's assistant reads A's, never B's.
+          '''
+        }
+        hier.asstA <- signalbox.gateway 'Records'
+      }
+    }
+  }
+
+  dynamic view person_notifications_live_activity {
+    variant sequence
+    title 'Workflows/Person/Notifications/Follow running work on the lock screen'
+    description 'P-NOT-14 · T-MOB-29 · iOS Live Activity or Android ongoing notification, behind delivery rules and Focus'
+
+    include personA, signalbox.mobile, signalbox.thread.threadActor, signalbox.attention, telemetry.apns, telemetry.fcm
+    include signalbox, signalbox.thread, telemetry
+    global style shard05Lanes
+
+    personA -> signalbox.mobile 'Follows a turn' {
+      notes '''
+        - A taps Follow on a running turn in the shared Team thread. B can follow on their own phone; B's Focus applies to B.
+      '''
+    }
+    signalbox.mobile -> signalbox.attention 'Registers activity'
+    loop 'until the turn ends' {
+      signalbox.thread.threadActor -> signalbox.attention 'Turn progress' {
+        notes '''
+          - Status line, current step, elapsed time. Rate-limited.
+        '''
+      }
+      signalbox.attention -> signalbox.attention 'Rules and Focus' {
+        navigateTo person_focus_out_of_sight
+        notes '''
+          - If A's Focus hides Team on this phone, updates stop.
+        '''
+      }
+      alt 'platform' {
+        when 'iOS' {
+          signalbox.attention -> telemetry.apns 'Activity update' {
+            navigateTo person_notifications_deliver
+          }
+          telemetry.apns -> signalbox.mobile 'Live Activity'
+        }
+        else 'Android' {
+          signalbox.attention -> telemetry.fcm 'Ongoing update'
+          telemetry.fcm -> signalbox.mobile 'Ongoing notification'
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.attention 'Turn ended' {
+      navigateTo person_notifications_route_ping
+      notes '''
+        - The activity ends; anything that needs A becomes a normal routed ping.
+      '''
+    }
+    opt 'iOS widget' {
+      signalbox.mobile -> signalbox.attention 'Widget timeline' {
+        notes '''
+          - Agent Activity widget, read through the same rules and Focus (unconfirmed).
+        '''
+      }
+    }
+  }
+
+  dynamic view person_notifications_route_ping {
+    variant sequence
+    title 'Workflows/Person/Notifications/Route a ping to each recipient\'s devices'
+    description 'P-NOT-01 · P-NOT-11 · Focus → nearest notify rule on the chain → devices homed on the chain → breakthrough adds devices; per recipient'
+
+    include personA, personB, signalbox.thread.threadActor, signalbox.attention, signalbox.tree
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    signalbox.thread.threadActor -> signalbox.attention 'Deliverable event' {
+      notes '''
+        - A Blocker ask in the shared Team thread. Recipients: A and B, the deciders.
+      '''
+    }
+    signalbox.attention -> signalbox.tree 'Chain for A' {
+      notes '''
+        - Team → Company → A's Work → A's top level, through A's own mount.
+        - The nearest notify rule on it wins; "Nothing" mutes here.
+      '''
+    }
+    signalbox.attention -> signalbox.tree 'Chain for B' {
+      notes '''
+        - Team → Company → B's Work → B's top level, through B's mount. A's rules never apply to B.
+      '''
+    }
+    signalbox.attention -> signalbox.attention 'Filter A\'s devices' {
+      notes '''
+        - A's Focus and device rows (A's Person actor). Phone homed at Personal under Focus Personal: skipped.
+        - Laptop homed at Company covers Team: kept.
+      '''
+    }
+    signalbox.attention -> signalbox.attention 'Filter B\'s devices' {
+      notes '''
+        - B's phone is homed at Work, notify All: kept.
+      '''
+    }
+    signalbox.attention -> signalbox.attention 'Breakthrough adds' {
+      navigateTo person_focus_breakthrough
+      notes '''
+        - deliveryRule placements like "urgent Blockers ring my phone" add devices back. Deterministic, no model call.
+      '''
+    }
+    signalbox.attention -> signalbox.attention 'Writes record' {
+      navigateTo person_notifications_delivery_record
+      notes '''
+        - One record per recipient: what rang, what was skipped, and why.
+      '''
+    }
+    parallel 'deliver' {
+      signalbox.attention -> personA 'A\'s laptop rings' {
+        navigateTo person_notifications_deliver
+      }
+      signalbox.attention -> personB 'B\'s phone rings'
+    }
+  }
+
+  dynamic view person_notifications_set_rule {
+    variant sequence
+    title 'Workflows/Person/Notifications/Set a level\'s notification rule'
+    description 'P-NOT-07 · P-NOT-08 · P-NOT-12 · Everything, Only important or Nothing; nearest wins; set by bell, by chat, or by an admin at Company'
+
+    include personA, personC, hier.asstA, signalbox.web, signalbox.gateway, signalbox.operations, signalbox.tree
+    // no Signalbox or Tree lane boxes here: the assistant lane would split them
+    global style shard05Lanes
+
+    alt 'how it gets set' {
+      when 'A uses the bell' {
+        personA -> signalbox.web 'Opens bell on Team' {
+          notes '''
+            - Everything, Only important, or Nothing. The default is "Only important", a plain-words rule on A's top level.
+          '''
+        }
+        signalbox.web -> signalbox.operations 'Place deliveryRule'
+        signalbox.operations -> signalbox.tree 'change(Place)' {
+          notes '''
+            - A's rule names only A's devices; B's resolution on the same Team is untouched.
+          '''
+        }
+        opt 'Same as parent' {
+          personA -> signalbox.web 'Picks Same as parent'
+          signalbox.web -> signalbox.operations 'Unplace deliveryRule' {
+            notes '''
+              - The nearest rule above applies again.
+            '''
+          }
+        }
+      }
+      when 'A says it in chat' {
+        personA -> hier.asstA '"Only urgent for Work"'
+        hier.asstA -> signalbox.gateway 'set rule'
+        signalbox.gateway -> signalbox.operations 'invoke (agent)' {
+          notes '''
+            - The same operation. The assistant acts only on A's own rules.
+          '''
+        }
+        signalbox.operations -> signalbox.tree 'change(Place)'
+      }
+      else 'C places one at Company' {
+        personC -> signalbox.web 'Adds rule at Company' {
+          navigateTo person_focus_breakthrough_rule
+          notes '''
+            - Admin of folder Company only. Names devices for that subtree, say the on-call laptops.
+          '''
+        }
+        signalbox.web -> signalbox.operations 'Place @ Company'
+        signalbox.operations -> signalbox.tree 'change(Place)' {
+          notes '''
+            - Reaches every thread under Company, A's and B's alike, by position.
+          '''
+        }
+      }
+    }
+    signalbox.web <- signalbox.operations 'Effective rule' {
+      navigateTo person_notifications_route_ping
+      notes '''
+        - Shown with where it comes from ("from Company"), nearest wins.
+      '''
+    }
+  }
+
+  dynamic view person_notifications_turn_pushes {
+    variant sequence
+    title 'Workflows/Person/Notifications/Push when a turn needs you, fails or completes'
+    description 'P-NOT-03 · P-NOT-04 · P-NOT-05 · needs-you and failures from the Thread outbox; completion through an editable default automation'
+
+    include personA, signalbox.mobile, signalbox.thread.threadActor, signalbox.automations, signalbox.attention
+    include signalbox, signalbox.thread
+    global style shard05Lanes
+
+    personA -> signalbox.thread.threadActor 'Starts a turn' {
+      notes '''
+        - In the shared Team thread; B watches live.
+      '''
+    }
+    alt 'how the turn goes' {
+      when 'needs someone' {
+        signalbox.thread.threadActor -> signalbox.attention 'Ask (outbox)' {
+          navigateTo person_pipeline_blocker_raise
+          notes '''
+            - Approval, question, or a costly Ready. It goes to the ask's decider: A, B, or admin C.
+          '''
+        }
+        signalbox.attention -> signalbox.mobile 'Needs-you push' {
+          navigateTo person_notifications_route_ping
+        }
+      }
+      when 'fails' {
+        signalbox.thread.threadActor -> signalbox.attention 'Turn failed (outbox)'
+        signalbox.attention -> signalbox.mobile 'Failed push' {
+          notes '''
+            - To A, who started it. B sees the failure in the thread, no push.
+          '''
+        }
+      }
+      else 'completes' {
+        signalbox.thread.threadActor -> signalbox.automations 'turn completed'
+        opt '60 s or more, started by a person' {
+          signalbox.automations -> signalbox.attention 'Completed-turn push' {
+            notes '''
+              - An editable default automation homed at A's top level; it sees Team threads through A's mount.
+            '''
+          }
+          signalbox.attention -> signalbox.mobile 'Done push'
+        }
+      }
+    }
+    personA -> signalbox.mobile 'Taps the push' {
+      navigateTo journey_daily_tap_push
+    }
+  }
+}
+
+// Container lanes: the system and module boxes read as muted grouped columns, like the reference.
+global {
+  styleGroup shard05Lanes {
+    style signalbox, telemetry, services, hier, build, upstreams {
+      color muted
+      opacity 10%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+  }
+}

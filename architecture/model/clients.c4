@@ -1,0 +1,78 @@
+// Clients are gateways: they hold no work. Shared logic is packages/client-runtime.
+model {
+  extend signalbox {
+    web = client 'Web' {
+      #v1
+      icon tech:react
+      description 'tree · threads · top layer'
+      technology 'React 19 · Vite · TanStack Router'
+      metadata { stack 'React 19 · TanStack Router · Tailwind v4 · Base UI/shadcn · Tiptap · Pierre · Shiki · mermaid · Legend List · dnd-kit · three · Open VSX · Effect Atom' }
+      appFrame = part 'App frame' {
+        icon bootstrap:window
+        description 'sandboxed iframe for folder apps'
+      }
+    }
+    desktop = client 'Desktop' {
+      icon tech:electron
+      description 'thin gateway · localhost catch'
+      technology 'Electron 44 · electron-updater · electron-webauthn'
+      deviceGateway = part 'Device gateway' {
+        #port
+        icon bootstrap:laptop
+        description 'lends this laptop to agents as a device'
+      }
+    }
+    mobile = client 'Mobile' {
+      icon tech:expo-icon
+      description 'top layer · push · asks'
+      technology 'Expo SDK 58 · React Native'
+      metadata { stack 'Expo SDK 58 · React Native · React Navigation · uniwind · Reanimated · expo-notifications · expo-secure-store (DPoP) · expo-sqlite · @react-native-ai/apple' }
+      appFrame = part 'App frame' {
+        icon bootstrap:window
+        description 'WebView for folder apps'
+      }
+      phoneGateway = part 'Device gateway' {
+        #port
+        icon bootstrap:phone
+        description 'lends this phone to agents as a device (SMS, camera)'
+      }
+    }
+    browserExtension = client 'Browser extension' {
+      icon tech:chrome
+      description 'capture from any page'
+      technology 'WebExtension · client-runtime'
+    }
+    cli = client 'CLI' {
+      icon tech:terminal
+      description 'device-code sign-in · local keys'
+      technology 'apps/cli'
+    }
+
+    signalbox.web -> signalbox.funnel 'client rpc · views' {
+      technology 'Effect RPC over WS · HTTP'
+    }
+    signalbox.desktop -> signalbox.funnel 'client rpc · views'
+    signalbox.mobile -> signalbox.funnel 'client rpc · views'
+    signalbox.cli -> signalbox.funnel 'client rpc'
+    signalbox.browserExtension -> signalbox.funnel 'client rpc · capture'
+    signalbox.computer -> signalbox.desktop.deviceGateway 'device calls'
+    signalbox.computer -> signalbox.mobile.phoneGateway 'device calls'
+    signalbox.web -> platform.workos 'sign in'
+  }
+
+  laptopCli = client 'Local Claude Code · Codex' {
+    #v1
+    icon tech:claude-icon
+    description 'uses a pool via a local key'
+    technology 'official CLIs · sbk_ key'
+  }
+  mcpClient = client 'Any MCP client' {
+    #v1
+    icon bootstrap:plugin
+    description 'tools at one Place'
+    technology 'MCP · AuthKit OAuth'
+  }
+
+  laptopCli -[model]-> signalbox.gateway 'model wire'
+  mcpClient -[tool]-> signalbox.gateway 'mcp wire'
+}

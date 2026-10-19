@@ -1,0 +1,69 @@
+model {
+  extend signalbox {
+    automations = module 'Automations' {
+      #deep #publishable
+      icon bootstrap:lightning-charge
+      description 'define · change · trigger'
+      technology 'packages/automations · runs are threads'
+      metadata {
+        interface '3'
+        deletion 'workflow behavior becomes special-case code'
+      }
+
+      api = iface 'Automations · interface' {
+        description '3 verbs: define · change · trigger'
+        technology 'Deletion test: without it, workflow behavior becomes special-case code'
+      }
+
+      engine = part 'Engine seam · 2 adapters' {
+        metadata { adapters '2' }
+        dynamicWorkflows = adapter 'Dynamic Workflows' {
+          icon tech:cloudflare-icon
+          description 'prod: stable id per version'
+          technology 'Cloudflare Workflows · @cloudflare/dynamic-workflows · Worker Loader'
+        }
+        inProcessRunner = adapter 'In-process runner' {
+          icon tech:nodejs-icon
+          description 'tests · self-host'
+          technology 'Node + SQLite'
+        }
+      }
+
+      compiler = part 'Compiler' {
+        icon tech:typescript-icon
+        technology 'packages/automation-compiler · oxc-parser · oxc-transform'
+      }
+      steps = part 'Steps' {
+        icon bootstrap:list-ol
+        description 'agent · ask · call · judge · run · waitForEvent · gate'
+        technology 'Rivet step-key + compensation patterns'
+      }
+      defaults = part 'Default automations' {
+        icon bootstrap:ui-checks
+        description 'git-host sync · CI on Base · Base refresh · merge gate · reconcile · …'
+      }
+      triggers = part 'Triggers' {
+        icon tech:webhooks
+        description 'app event (e.g. turn settled) · webhook · tick · manual'
+      }
+
+      compiler -> engine.dynamicWorkflows 'versioned code'
+      triggers -> engine.dynamicWorkflows 'start run'
+      engine.dynamicWorkflows -> steps 'execute'
+      defaults -> compiler 'editable source'
+    }
+
+    automations.steps -> signalbox.thread.api 'run threads'
+    automations.steps -> signalbox.operations.api 'op calls'
+    automations.steps -[tool]-> signalbox.connections.api 'tool calls'
+    automations.steps -> signalbox.judge.api 'judge'
+    automations.steps -> signalbox.bases.api 'build · status · promote'
+    automations.steps -> services.github 'w.run (Actions)'
+    automations.defaults -> platform.t3upstream 'release follower'
+    automations.defaults -> platform.cpaUpstream 'release follower'
+
+    // Interface → hidden parts (the only way in)
+    automations.api -> automations.compiler 'define · change'
+    automations.api -> automations.triggers 'trigger'
+  }
+}

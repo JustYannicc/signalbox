@@ -1,0 +1,84 @@
+// The domain model in five readable cuts. Crow head = has many; plain arrow = refers to one.
+views {
+  view domain {
+    title 'Domain/Hierarchy core'
+    description '''
+      What is the hierarchy made of? An owner (person or organization) owns levels; a level is a top level or a folder and
+      nests. People hold roles on levels and mount shared folders into their tree. A placement on a level is how anything
+      reaches below it; a loan is a placement into a level you do not own. Threads live at a level.
+      Click Placement, Thread or Person for the next cut. Crow head = has many; plain arrow = refers to one.
+    '''
+    include domain.owner, domain.level, domain.mount, domain.role, domain.loan
+    include domain.person with { navigateTo domain-person }
+    include domain.placement with { navigateTo domain-placed }
+    include domain.thread with { navigateTo domain-work }
+    include domain.place
+    style domain.placement, domain.thread { color primary }
+    autoLayout TopBottom
+  }
+
+  view domain-placed {
+    title 'Domain/What can be placed'
+    description '''
+      What can sit on a level? Everything placed is one Placement that refers to one kind: pool, connection, secret,
+      source, drive, automation, skill, harness plugin, MCP server, instructions, app, or a marketplace listing version
+      (install = placement). All of them resolve the same way: by the thread's position, nearest wins.
+    '''
+    include domain.level, domain.placement, domain.loan
+    group 'Access and data' {
+      color muted
+      opacity 6%
+      include domain.pool with { navigateTo domain-pools }
+      include domain.connection with { navigateTo domain-pools }
+      include domain.secretRef, domain.source, domain.drive
+    }
+    group 'Behaviour' {
+      color muted
+      opacity 6%
+      include domain.automation, domain.skill, domain.harnessPlugin, domain.mcpServer, domain.instructions, domain.app
+    }
+    group 'From the marketplace' {
+      color muted
+      opacity 6%
+      include domain.listingVersion, domain.listing
+    }
+    exclude domain.source -> domain.connection, domain.drive -> *, domain.automation -> *
+    autoLayout TopBottom
+  }
+
+  view domain-work {
+    title 'Domain/Threads and turns'
+    description '''
+      What does a thread own while work happens? Turns (each with a frozen scope and a short-lived grant), asks for a
+      deciding person, the native session, one leased computer (a cache forked from a Base) and its working ref on a drive.
+      Automations run as threads.
+    '''
+    include domain.thread, domain.place, domain.turn, domain.scope, domain.grant, domain.ask, domain.person, domain.session
+    include domain.computer, domain.base, domain.drive, domain.workingRef, domain.automation
+    exclude domain.person -> *
+    autoLayout TopBottom
+  }
+
+  view domain-pools {
+    title 'Domain/Pools and connections'
+    description '''
+      What stands behind a pool and a connection? An owner owns both. A pool has accounts and writes usage rows stamped
+      with the level they were used at (costs roll up the tree). A connection is one credential with a tool manifest;
+      a source narrows a connection to a path. (Secrets are placed separately as references to 1Password: What can be placed.)
+    '''
+    include domain.owner, domain.pool, domain.account, domain.usageRow, domain.level
+    include domain.connection, domain.tool, domain.source
+    exclude domain.owner -> domain.level
+    autoLayout TopBottom
+  }
+
+  view domain-person {
+    title 'Domain/A person'
+    description '''
+      What belongs to one person rather than to a level? Their top level, mounts of shared folders, private drafts and
+      notes, and devices (each with a home level). Shared notes belong to the level instead.
+    '''
+    include domain.person, domain.level, domain.mount, domain.draft, domain.note, domain.device, domain.place
+    autoLayout TopBottom
+  }
+}

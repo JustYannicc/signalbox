@@ -1,0 +1,28 @@
+// State machine for one invitation. The walk through it with people and modules is the dynamic view state_invitation.
+model {
+  smInvitation = state 'Invitation lifecycle' {
+    pending = state 'Pending' { description 'WorkOS invitation sent' }
+    accepted = state 'Accepted' { description 'Role: Member' }
+    declined = state 'Declined'
+    cancelled = state 'Cancelled'
+    removed = state 'Removed' { description 'same path as leaving' }
+
+    pending -[transition]-> accepted 'accept'
+    pending -[transition]-> declined 'decline'
+    pending -[transition]-> cancelled 'cancel'
+    accepted -[transition]-> removed 'remove member'
+  }
+}
+views {
+  view state-invitation of smInvitation {
+    title 'States/Invitation/State machine'
+    description 'How does one invitation to a folder end: accepted, declined, cancelled, later removed? Start: green. End: gray. Click the frame for the walk with people and modules (state_invitation).'
+    include *
+    include smInvitation with { navigateTo state_invitation }
+    style smInvitation.pending { color green }
+    style smInvitation.declined { color gray }
+    style smInvitation.cancelled { color gray }
+    style smInvitation.removed { color gray }
+    autoLayout TopBottom
+  }
+}

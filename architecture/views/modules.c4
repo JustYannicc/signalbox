@@ -1,0 +1,325 @@
+// One scoped drill-down per module. Read top to bottom: callers → Interface (the only way in,
+// with its deletion test) → hidden parts → seams with their adapter count → what it uses.
+// Neighbours stay black boxes. A red dashed seam has one adapter (hypothetical seam).
+views {
+  view m-funnel of signalbox.funnel {
+    title 'Modules/Funnel'
+    description '''
+      What does Funnel offer, hide and plug in?
+
+      Verdict: passthrough by design: a stateless front door that only decodes, calls and maps errors. Shallow on purpose; its value is that clients never reach handlers directly.
+    '''
+    include *
+    include * -> signalbox.funnel, signalbox.funnel -> *
+    include signalbox.funnel.transport.*
+    include signalbox.funnel.replication.*
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-operations of signalbox.operations {
+    title 'Modules/Operations'
+    description '''
+      What does Operations offer, hide and plug in?
+
+      Verdict: deep: 4 verbs hide the registry, the authority check on every op, and the decision gate. No seams (pure in-process).
+    '''
+    include *
+    include * -> signalbox.operations, signalbox.operations -> *
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-identity of signalbox.identity {
+    title 'Modules/Identity'
+    description '''
+      What does Identity offer, hide and plug in?
+
+      Verdict: deep: 6 verbs hide AuthKit, the invisible personal owner, aliases, membership sync, MCP authorization, device code and the token signer. Its WorkOS seam is unnamed (AuthKit is the only implementation).
+    '''
+    include *
+    include * -> signalbox.identity, signalbox.identity -> *
+    include signalbox.identity -> platform, platform -> signalbox.identity
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-tree of signalbox.tree {
+    title 'Modules/Tree'
+    description '''
+      What does Tree offer, hide and plug in?
+
+      Verdict: deep: 4 verbs (resolve · change · view · can) hide the resolver, kind registry, mount check, lenses, memo and the Level and Person actors. Every placed thing resolves here, by hierarchy only.
+    '''
+    include *
+    include * -> signalbox.tree, signalbox.tree -> *
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-thread of signalbox.thread {
+    title 'Modules/Thread'
+    description '''
+      What does Thread offer, hide and plug in?
+
+      Verdict: deep: 3 verbs (send · watch · read) hide the engine, run queue, sagas, parking and keep-alive behind one Thread actor. No seams; neighbours are reached through their interfaces. Capture and Bases also start threads; they are left out to keep the picture readable.
+    '''
+    include *
+    include * -> signalbox.thread, signalbox.thread -> *
+    exclude signalbox.bases
+    exclude signalbox.capture
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-harness of signalbox.harness {
+    title 'Modules/Harness'
+    description '''
+      What does Harness offer, hide and plug in?
+
+      Verdict: deep: 4 verbs hide which agent CLI runs and where. The loop runs in the Thread DO facet plus Dynamic Workers (isolate tier: Claude Code and Codex); LocalProcess is for tests only. Built-in tools go to Computer, connectors to Executor. The harness's own Task subagents stay in-process; Signalbox delegation is a child thread. Seed receipts are durable, so a facet reincarnated before boot resumes from them.
+    '''
+    include *
+    include * -> signalbox.harness, signalbox.harness -> *
+    include signalbox.harness.agents.*
+    include signalbox.harness.host.*
+    include signalbox.harness -> upstreams, upstreams -> signalbox.harness
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-computer of signalbox.computer {
+    title 'Modules/Computer'
+    description '''
+      What does Computer offer, hide and plug in?
+
+      Verdict: deep: 5 verbs hide placement. Known kernel programs run in the kernel (child isolates); unknown binaries, apt, docker and native toolchains escalate to a boxd VM, and a process behind `port` stays there for its lifetime. A command is replayed on the VM only when the failure proves nothing ran; anything else is surfaced. No machine classes, no thread moves (#1071). The Machine seam has one adapter (boxd): a hypothetical seam.
+    '''
+    include *
+    include * -> signalbox.computer, signalbox.computer -> *
+    include signalbox.computer.backend.*
+    include signalbox.computer.machines.*
+    include signalbox.computer -> platform, platform -> signalbox.computer
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-bases of signalbox.bases {
+    title 'Modules/Bases'
+    description '''
+      What does Bases offer, hide and plug in?
+
+      Verdict: shallow: 6 verbs over a thin lease and pointer layer. `acquire(drive, recipeHash, operationId)` is idempotent on operationId; the caller persists the intent first and leases expire at the VM's deleteAfter horizon, so no hold is orphaned (#1217). The Snapshot seam has two adapters: None (cold create, ships with #1071) and boxd snapshots.
+    '''
+    include *
+    include * -> signalbox.bases, signalbox.bases -> *
+    include signalbox.bases.snapshots.*
+    include signalbox.bases -> platform, platform -> signalbox.bases
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-drive of signalbox.drive {
+    title 'Modules/Drive'
+    description '''
+      What does Drive offer, hide and plug in?
+
+      Verdict: deep: 8 verbs (incl. search over file contents) hide the single writer of main (Repo actor), the storage tiers (Artifacts hot, R2 full record), git-only forge sync and source reads. PR and issue APIs go through Connections.
+    '''
+    include *
+    include * -> signalbox.drive, signalbox.drive -> *
+    include signalbox.drive.store.*
+    include signalbox.drive.forges.*
+    include signalbox.drive.sources.*
+    include signalbox.drive -> platform, platform -> signalbox.drive
+    include signalbox.drive -> services, services -> signalbox.drive
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-models of signalbox.models {
+    title 'Modules/Models'
+    description '''
+      What does Models offer, hide and plug in?
+
+      Verdict: deep: 7 verbs (connect · complete · change · view · catalog · serve · meter) hide sign-in flows, pool custody, routing, metering and the CPA host. Pools are placed on folders; the Gateway is the one model gateway in front of it.
+    '''
+    include *
+    include * -> signalbox.models, signalbox.models -> *
+    include signalbox.models.backend.*
+    include signalbox.models -> modelProviders, modelProviders -> signalbox.models
+    include signalbox.models -> platform, platform -> signalbox.models
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-connections of signalbox.connections {
+    title 'Modules/Connections'
+    description '''
+      What does Connections offer, hide and plug in?
+
+      Verdict: deep: 6 verbs hide hosted OAuth, one actor per credential, tool search, exposure and the vault. Executor is absorbed here: with Gateway's ToolGateway it is the one gateway for every connector (MCP servers, GitHub, the browser, devices), so 100 Gmail accounts are 100 one-click connections. Servers are sorted by kind: remote HTTP proxied, network-only stdio as a kernel program, native or Python on the thread's VM, device-only through the device gateway. Credentials are keyed by server URL. Connections and exposure are placed on folders and resolve by hierarchy.
+    '''
+    include *
+    include * -> signalbox.connections, signalbox.connections -> *
+    include signalbox.connections.providers.*
+    include signalbox.connections -> services, services -> signalbox.connections
+    include signalbox.connections -> telemetry, telemetry -> signalbox.connections
+    include signalbox.connections -> platform, platform -> signalbox.connections
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-gateway of signalbox.gateway {
+    title 'Modules/Gateway'
+    description '''
+      What does Gateway offer, hide and plug in?
+
+      Verdict: deep: 3 verbs (grant · serve · fill) plus two ports (ModelGateway: the one model gateway, also for provider-side web search; ToolGateway: Executor's MCP port, per-tool exposure search or direct) hide the grant JWT, codemode and egress filling. Built-in tool traffic (curl, git push, npm, gh, WebFetch) leaves through the egress filter, filled from the same vault keyed by destination. Credentials never leave it.
+    '''
+    include *
+    include * -> signalbox.gateway, signalbox.gateway -> *
+    include signalbox.gateway.egress.*
+    include signalbox.gateway.transport.*
+    include signalbox.gateway -> services, services -> signalbox.gateway
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-automations of signalbox.automations {
+    title 'Modules/Automations'
+    description '''
+      What does Automations offer, hide and plug in?
+
+      Verdict: deep: 3 verbs hide the compiler, the versioned engine, steps and default automations. Runs are threads.
+    '''
+    include *
+    include * -> signalbox.automations, signalbox.automations -> *
+    include signalbox.automations.engine.*
+    include signalbox.automations -> services, services -> signalbox.automations
+    include signalbox.automations -> platform, platform -> signalbox.automations
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-attention of signalbox.attention {
+    title 'Modules/Attention'
+    description '''
+      What does Attention offer, hide and plug in?
+
+      Verdict: deep: 4 verbs hide queue order, delivery rules, records and the top-layer pipeline (Blocker · Ready · Considering).
+    '''
+    include *
+    include * -> signalbox.attention, signalbox.attention -> *
+    include signalbox.attention.delivery.*
+    include signalbox.attention -> telemetry, telemetry -> signalbox.attention
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-capture of signalbox.capture {
+    title 'Modules/Capture'
+    description '''
+      What does Capture offer, hide and plug in?
+
+      Verdict: shallow: 4 verbs over three small parts (quick capture, note share, send) and its own private rows. Shared notes go into folders through Tree.
+    '''
+    include *
+    include * -> signalbox.capture, signalbox.capture -> *
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-search of signalbox.search {
+    title 'Modules/Search'
+    description '''
+      What does Search offer, hide and plug in?
+
+      Verdict: deep: 1 verb (query) hides the index, sharding and the visibility re-check before any snippet.
+    '''
+    include *
+    include * -> signalbox.search, signalbox.search -> *
+    include signalbox.search.index.*
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-browser of signalbox.browser {
+    title 'Modules/Browser'
+    description '''
+      What does Browser offer, hide and plug in?
+
+      Verdict: passthrough: 2 verbs mostly forward to Kernel and Browser Run. Both real seams have one adapter each (hypothetical); the test-local seam is only candidates.
+    '''
+    include *
+    include * -> signalbox.browser, signalbox.browser -> *
+    include signalbox.browser.realWeb.*
+    include signalbox.browser.render.*
+    include signalbox.browser.testLocal.*
+    include signalbox.browser -> platform, platform -> signalbox.browser
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-judge of signalbox.judge {
+    title 'Modules/Judge'
+    description '''
+      What does Judge offer, hide and plug in?
+
+      Verdict: passthrough: 1 verb forwards to Jev or a direct model call. Kept because it gives every feature one typed decision with p, or Insufficient.
+    '''
+    include *
+    include * -> signalbox.judge, signalbox.judge -> *
+    include signalbox.judge.backend.*
+    include signalbox.judge -> platform, platform -> signalbox.judge
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-learner of signalbox.learner {
+    title 'Modules/Learner'
+    description '''
+      What does Learner offer, hide and plug in?
+
+      Verdict: shallow: 2 verbs over one hypothetical seam (only the Signalbox learner); memories are planned with an undecided home.
+    '''
+    include *
+    include * -> signalbox.learner, signalbox.learner -> *
+    include signalbox.learner.routeAuthority.*
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-observability of signalbox.observability {
+    title 'Modules/Observability'
+    description '''
+      What does Observability offer, hide and plug in?
+
+      Verdict: deep: 4 verbs (unit · event · query · rollup) hide sinks, sampling, the ids-only rule and the read side. Every module calls it; those edges are omitted to keep the picture readable. Not part of v1.
+    '''
+    include *
+    include * -> signalbox.observability, signalbox.observability -> *
+    include signalbox.observability -> telemetry, telemetry -> signalbox.observability
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-actorhost of signalbox.actorhost {
+    title 'Modules/ActorHost'
+    description '''
+      What does ActorHost offer, hide and plug in?
+
+      Verdict: deep: 4 verbs hide transactions, alarms, the job table and idempotent outbox delivery. Durable Objects in prod, Node + SQLite for tests and self-host.
+    '''
+    include *
+    include * -> signalbox.actorhost, signalbox.actorhost -> *
+    include signalbox.actorhost.hosts.*
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-marketplace of signalbox.marketplace {
+    title 'Modules/Marketplace'
+    description '''
+      What does Marketplace offer, hide and plug in?
+
+      Verdict: deep: 5 verbs hide listings, version review and install for every kind (skills, plugins, MCP/connections, automations, folder apps, instruction blocks, templates). Install = placement into one folder; it resolves by hierarchy.
+    '''
+    include *
+    include * -> signalbox.marketplace, signalbox.marketplace -> *
+    include signalbox.marketplace -> upstreams, upstreams -> signalbox.marketplace
+    global style depth
+    autoLayout TopBottom
+  }
+  view m-apps of signalbox.apps {
+    title 'Modules/Apps'
+    description '''
+      What does Apps offer, hide and plug in?
+
+      Verdict: deep: 6 verbs hide the App actor, immutable releases, the no-network runner and the frame bridge. Folder apps are placed in folders and resolve by hierarchy.
+    '''
+    include *
+    include * -> signalbox.apps, signalbox.apps -> *
+    global style depth
+    autoLayout TopBottom
+  }
+}

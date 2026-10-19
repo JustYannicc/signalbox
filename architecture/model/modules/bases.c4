@@ -1,0 +1,65 @@
+model {
+  extend signalbox {
+    bases = module 'Bases' {
+      #shallow #publishable
+      icon bootstrap:layers
+      description 'acquire · release · build · status · promote · retire'
+      technology 'boxd named snapshots · R2 chunk export'
+      metadata {
+        interface '6'
+        deletion 'Computer, CI and the folder page each invent snapshot lifecycles'
+      }
+
+      api = iface 'Bases · interface' {
+        description '6 verbs: acquire · release · build · status · promote · retire'
+        technology 'Deletion test: without it, Computer, CI and the folder page each invent snapshot lifecycles'
+      }
+
+      leases = part 'Leases' {
+        #decided
+        icon bootstrap:hourglass-split
+        description 'expiresAt = deleteAfter · idempotent on operationId'
+        metadata {
+          acquire 'acquire(drive, recipeHash, operationId) is idempotent on operationId; the caller persists the intent first, so no hold is orphaned (#1217)'
+        }
+      }
+      pointer = part 'Active pointer' {
+        icon bootstrap:pin-angle
+        description 'per (drive, recipeHash)'
+      }
+      builder = part 'Builder' {
+        icon bootstrap:hammer
+        description 'a run thread machine'
+      }
+      chunks = part 'Chunk export' {
+        icon tech:cloudflare-icon
+        description 'regenerable content'
+        technology 'R2 · content-addressed'
+      }
+      snapshots = part 'Snapshot seam · 2 adapters' {
+        metadata { adapters '2' }
+        noneSnapshots = adapter 'None' {
+          icon bootstrap:slash-circle
+          description 'cold create; ships with #1071'
+        }
+        boxdSnapshots = adapter 'boxd snapshots' {
+          icon bootstrap:camera
+          technology '@boxd-sh/sdk · b-{drive}-{recipe}-{sha12}'
+        }
+      }
+
+      builder -> snapshots.boxdSnapshots 'capture'
+      builder -> chunks 'export'
+      pointer -> leases 'retire at zero'
+    }
+
+    bases.snapshots.boxdSnapshots -> platform.boxd 'snapshots'
+    bases.pointer -> signalbox.drive.api 'records (Repo actor)'
+    bases.builder -> signalbox.thread.api 'run thread'
+
+    // Interface → hidden parts (the only way in)
+    bases.api -> bases.leases 'acquire · release'
+    bases.api -> bases.builder 'build'
+    bases.api -> bases.pointer 'status · promote · retire'
+  }
+}

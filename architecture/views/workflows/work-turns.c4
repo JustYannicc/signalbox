@@ -1,0 +1,1786 @@
+// Shard 09: work-turns. Turns (lifecycle, run control, models, recovery, viewing, composer)
+// and approvals (asks, gates, modes, secrets). One question per view, 4-8 participants,
+// lanes grouped by their container (Signalbox, external systems).
+// The shared thread lives in folder Team (inside folder Company, owner: organization); A and B are
+// members working in it, C is admin of Company. Steps target module boxes or their named actors.
+views {
+
+  style signalbox, platform, services, telemetry, hier {
+    color muted
+    opacity 10%
+  }
+
+  // ───────────────────────────── Approvals / Asks ─────────────────────────────
+
+  dynamic view work_approvals_harness_approval {
+    variant sequence
+    title "Workflows/Work/Approvals/Asks/Harness asks permission for a tool"
+    description "W-APR-04 (T-APR-01), W-APR-08, W-APR-11. A permission request becomes a human-only Blocker ask; agents get HumanOnly; an unanswered request expires."
+
+    include personA, hier, hier.asstA, signalbox, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.harness, signalbox.attention
+
+    signalbox.harness -> signalbox.thread.threadActor "runtime request" {
+      notes '''
+        - Claude Code or Codex in a supervised mode wants to run a tool (Bash, a file write)
+        - The tool call stays pending inside the session
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "raise Blocker ask" {
+      navigateTo state_ask
+      notes '''
+        - `ask.raised{kind: Blocker, surface: approval}`, committed with the turn state it blocks
+        - Human-only: the route skips every agent hop; the turn parks
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "project approval card" {
+      navigateTo person_pipeline_blocker_approval
+      notes '''
+        - A's Blocker lane on the top layer, plus a push to devices covering folder Team
+      '''
+    }
+
+    alt "who answers" {
+      when "Person A" {
+        personA -> signalbox.web "Approve or Deny"
+        signalbox.web -> signalbox.operations "send answer" {
+          notes '''
+            - A acts as `PersonActor`, so the human-only check passes
+          '''
+        }
+        signalbox.operations -> signalbox.thread.threadActor "resolve ask" {
+          navigateTo work_approvals_turn_parks
+          notes '''
+            - First receipt wins; the parked turn resumes from the mirror
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.harness "control(Respond)"
+      }
+      when "an agent" {
+        hier.asstA -> signalbox.operations "answer approval" {
+          notes '''
+            - A's assistant, a run or an MCP session: all agent-class actors
+          '''
+        }
+        hier.asstA <- signalbox.operations "HumanOnly" {
+          notes '''
+            - Agents can't approve themselves; the card stays in A's lane
+          '''
+        }
+      }
+      else "nobody, window passes" {
+        signalbox.thread.threadActor -> signalbox.harness "expiry refusal" {
+          notes '''
+            - The request outlived its window; the harness gets a denial as the tool result
+            - The ask resolves as expired and leaves A's lane
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_approvals_native_question {
+    variant sequence
+    title "Workflows/Work/Approvals/Asks/Harness question becomes a Blocker ask"
+    description "W-APR-05 (T-APR-02), W-APR-07 (T-APR-03), W-APR-10. A native AskUserQuestion is mirrored as a Blocker ask; answered (optionally with files) or dismissed."
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.attention
+
+    signalbox.harness -> signalbox.thread.threadActor "AskUserQuestion" {
+      notes '''
+        - Blocking from the harness's point of view
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "mirror as ask" {
+      navigateTo state_ask
+      notes '''
+        - One linked Blocker ask, Signalbox's own record, durable beyond turn and session
+        - The turn parks while it waits
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "project to lanes" {
+      navigateTo person_pipeline_blocker_raise
+    }
+
+    alt "A responds" {
+      when "answer" {
+        opt "with files" {
+          personA -> signalbox.web "attach files" {
+            navigateTo work_attachments_attach
+            notes '''
+              - Uploaded first; the answer carries their paths
+            '''
+          }
+        }
+        personA -> signalbox.web "type answer"
+        signalbox.web -> signalbox.thread.threadActor "send answer"
+        signalbox.thread.threadActor -> signalbox.harness "pending tool result" {
+          navigateTo work_approvals_turn_parks
+          notes '''
+            - Resumes from the mirror; the answer is the question tool's result
+          '''
+        }
+      }
+      else "dismiss" {
+        personA -> signalbox.web "Dismiss"
+        signalbox.web -> signalbox.thread.threadActor "user-input.dismiss"
+        signalbox.thread.threadActor -> signalbox.harness "question dismissed" {
+          notes '''
+            - The harness decides on its own; projections drop
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_approvals_shared_answer {
+    variant sequence
+    title "Workflows/Work/Approvals/Asks/Approvals in a shared thread"
+    description "W-APR-09, W-APR-12. An approval in a turn B started routes to B, A and C; first receipt wins, the other answer gets AlreadyAnswered."
+
+    include personA, personB, personC, signalbox, signalbox.thread.threadActor, signalbox.attention
+
+    personB -> signalbox.thread.threadActor "start turn" {
+      notes '''
+        - In the shared thread in folder Team (one Thread actor; A works here too)
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "raise with route" {
+      navigateTo work_threads_multiplayer_ask_routing
+      notes '''
+        - Route: B (started the turn), A (member of Team), C (admin of Company)
+        - Approvals are human-only: no assistant answers first
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "ask raised"
+    signalbox.attention -> personB "card in B's lane" {
+      navigateTo person_pipeline_shared_asks
+      notes '''
+        - One entry in each person's own Blocker lane, on their own top layer
+        - `area` comes from each one's own mount of Company: Work for all three
+      '''
+    }
+    signalbox.attention -> personA "card in A's lane"
+    signalbox.attention -> personC "card in C's lane" {
+      notes '''
+        - C sees it because C is admin of Company, above Team
+      '''
+    }
+    par {
+      personA -> signalbox.thread.threadActor "Approve"
+      personB -> signalbox.thread.threadActor "Deny" {
+        notes '''
+          - Same second, different devices
+        '''
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "first receipt wins" {
+      navigateTo state_ask
+      notes '''
+        - The one Thread actor serializes both answers
+      '''
+    }
+    personB <- signalbox.thread.threadActor "AlreadyAnswered" {
+      notes '''
+        - B sees A's answer; B can reply in the thread to reopen it
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "ask resolved"
+    signalbox.attention -> signalbox.attention "drop all three cards" {
+      notes '''
+        - The card leaves A's, B's and C's lanes; C never had to act
+      '''
+    }
+  }
+
+  dynamic view work_approvals_turn_parks {
+    variant sequence
+    title "Workflows/Work/Approvals/Asks/Turn parks while waiting on a human"
+    description "W-APR-06 (T-APR-06). Parking: mirror, clear keep-alive, evict facet, hibernate VM; the answer resumes from the mirror and wakes the VM only if needed."
+
+    include personA, signalbox, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.attention, platform, platform.boxd
+
+    signalbox.harness -> signalbox.thread.threadActor "blocked on ask" {
+      notes '''
+        - A Blocker question, a decision gate or an `AccessRequired` Place/Lend ask
+        - Waiting on a model or a running command is active work and never parks
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "raise ask" {
+      navigateTo person_pipeline_blocker_raise
+    }
+    par {
+      signalbox.thread.threadActor -> signalbox.harness "mirror, evict facet" {
+        notes '''
+          - Session files land in the Thread; the facet's isolate is released
+        '''
+      }
+      signalbox.thread.threadActor -> signalbox.thread.threadActor "clear keep-alive"
+      signalbox.thread.threadActor -> signalbox.computer "hibernate VM" {
+        notes '''
+          - Only if a VM was attached for commands
+        '''
+      }
+    }
+    signalbox.computer -> platform.boxd "hibernate" {
+      navigateTo state_computer
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "parked{ask}" {
+      notes '''
+        - Zero resident time while A is away, even for hours
+      '''
+    }
+    personA -> signalbox.thread.threadActor "answer ask"
+    signalbox.thread.threadActor -> signalbox.harness "resume from mirror" {
+      notes '''
+        - Same path as a cold wake; the answer is the pending tool result
+      '''
+    }
+    opt "next command needs a machine" {
+      signalbox.harness -> signalbox.computer "exec"
+      signalbox.computer -> platform.boxd "wake VM" {
+        notes '''
+          - Only when a real command needs it, never for the answer itself
+        '''
+      }
+    }
+  }
+
+  // ───────────────────────────── Approvals / Gates ─────────────────────────────
+
+  dynamic view work_approvals_access_place_lend {
+    variant sequence
+    title "Workflows/Work/Approvals/Gates/Blocked tool call becomes Place or Lend"
+    description "W-APR-13 (T-APR-07). A call for a connection not on the chain returns AccessRequired; a Blocker ask answered by Place (C) or Lend (owner A); the turn resumes on a re-resolved Scope."
+
+    include personA, personC, signalbox, signalbox.operations, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.tree
+
+    signalbox.harness -> signalbox.gateway "call Google · A" {
+      notes '''
+        - A's turn in the shared thread in folder Team wants A's personal Google account
+        - Google · A is placed on A's top level, which is not above Team
+      '''
+    }
+    signalbox.gateway -> signalbox.connections "tool call"
+    signalbox.gateway <- signalbox.connections "AccessRequired" {
+      navigateTo folders_connections_access_required
+      notes '''
+        - `{canPlace: C, orAskToLend: A}`; resolution is by position, never by who sent
+      '''
+    }
+    signalbox.harness -> signalbox.thread.threadActor "blocked call"
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "Blocker: Place or Lend" {
+      navigateTo person_pipeline_blocker_access
+      notes '''
+        - Projected (via Attention) into A's and C's Blocker lanes; consent is human-only
+        - The turn parks
+      '''
+    }
+
+    alt "resolution" {
+      when "C places" {
+        personC -> signalbox.operations "place Google · Company" {
+          notes '''
+            - C holds Admin on Company, so C may place at Team
+          '''
+        }
+        signalbox.operations -> signalbox.tree "change(Place)"
+        signalbox.operations -> signalbox.thread.threadActor "answer: placed"
+      }
+      when "A lends" {
+        personA -> signalbox.operations "lend into Team" {
+          navigateTo folders_lending_access_request
+          notes '''
+            - Explicit, revocable loan; agents can't consent
+            - B's turns in Team can use it too: reach is by position
+          '''
+        }
+        signalbox.operations -> signalbox.tree "change(Lend)"
+        signalbox.operations -> signalbox.thread.threadActor "answer: lent"
+      }
+      else "declined" {
+        personC -> signalbox.operations "Decline"
+        signalbox.operations -> signalbox.thread.threadActor "answer: declined"
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.tree "re-resolve Scope" {
+      navigateTo work_approvals_turn_parks
+      notes '''
+        - Placed or lent: the call retries on the new Scope; declined: the agent goes on without it
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "resume turn"
+  }
+
+  dynamic view work_approvals_destructive {
+    variant sequence
+    title "Workflows/Work/Approvals/Gates/Destructive operation from an agent"
+    description "W-APR-14. An agent's destructive operation returns NeedsDecision and raises a Ready ask (gate destructive) to the target level's responsible people."
+
+    include personC, hier, hier.company.agentCo, signalbox, signalbox.gateway, signalbox.operations, signalbox.thread.threadActor, signalbox.attention
+
+    hier.company.agentCo -> signalbox.gateway "delete pool P2" {
+      notes '''
+        - Company's agent thread calls a native operation through ToolGateway
+        - Same for deleting a thread, folder, connection or Base, unplacing a pool, force-push
+      '''
+    }
+    signalbox.gateway -> signalbox.operations "invoke op"
+    signalbox.operations -> signalbox.operations "decision gate" {
+      navigateTo folders_gates_destructive
+      notes '''
+        - Destructive + agent-class actor → `NeedsDecision`
+        - People with the role invoke it directly; external sessions get a confirm URL
+      '''
+    }
+    signalbox.operations -> signalbox.thread.threadActor "Ready ask (destructive)" {
+      notes '''
+        - Raised in the agent's own thread; deciders: the target level's responsible people
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "project to deciders" {
+      navigateTo person_pipeline_ready_gate
+    }
+    signalbox.attention -> personC "Ready card" {
+      navigateTo journey_daily_ready_decide
+      notes '''
+        - C is admin of Company, where P2 is placed
+      '''
+    }
+    alt "C decides" {
+      when "approve" {
+        personC -> signalbox.thread.threadActor "Approve"
+        signalbox.thread.threadActor -> signalbox.operations "invoke, decided" {
+          notes '''
+            - Runs the delete saga: retiring, unplace everything, delete credentials
+          '''
+        }
+      }
+      else "decline" {
+        personC -> signalbox.thread.threadActor "Decline"
+        hier.company.agentCo <- signalbox.thread.threadActor "declined, with reason"
+      }
+    }
+  }
+
+  dynamic view work_approvals_gated_write {
+    variant sequence
+    title "Workflows/Work/Approvals/Gates/Gate irreversible tool writes"
+    description "W-APR-15, W-APR-18. Undeclared or irreversible writes wait for the decider at the folder's gate placement; several batch into one 'N actions to review' ask while the agent keeps working."
+
+    include personA, signalbox, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.attention
+
+    signalbox.harness -> signalbox.gateway "send email" {
+      notes '''
+        - A connection write from a turn in the shared thread in folder Team
+      '''
+    }
+    signalbox.gateway -> signalbox.connections "tool call"
+    signalbox.connections -> signalbox.connections "check declaration" {
+      notes '''
+        - Tools declare `{read | write, reversible}`; undeclared = write, irreversible
+        - The folder's gate placement names the decider (A)
+      '''
+    }
+    signalbox.harness <- signalbox.gateway "held for review" {
+      navigateTo folders_connections_tool_call_gates
+      notes '''
+        - The turn doesn't park: the agent keeps working on other steps
+      '''
+    }
+    opt "more writes meanwhile" {
+      loop "each gated write" {
+        signalbox.harness -> signalbox.thread.threadActor "queue write"
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.attention "one Ready ask" {
+      navigateTo person_pipeline_ready_gate
+      notes '''
+        - "N actions to review", never N separate cards
+      '''
+    }
+    personA -> signalbox.thread.threadActor "approve or decline" {
+      navigateTo state_ask
+      notes '''
+        - Per action
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.gateway "release approved"
+    signalbox.gateway -> signalbox.connections "run approved calls" {
+      notes '''
+        - Declined writes never run
+      '''
+    }
+    signalbox.harness <- signalbox.gateway "results and refusals" {
+      notes '''
+        - The agent learns which writes ran, and which were declined and why
+      '''
+    }
+  }
+
+  // ───────────────────────────── Approvals / Modes ─────────────────────────────
+
+  dynamic view work_approvals_modes {
+    variant sequence
+    title "Workflows/Work/Approvals/Modes/Set runtime and interaction mode"
+    description "W-APR-01 (T-APR-10), W-APR-02 (T-PRV-29), T-APR-12. Runtime mode → per-harness permissions; interaction mode default/plan; unsupported modes step down; a change restarts the session."
+
+    include personA, signalbox, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.harness
+
+    alt "which mode" {
+      when "runtime mode" {
+        personA -> signalbox.web "pick runtime mode" {
+          notes '''
+            - In the composer, or the default in settings
+          '''
+        }
+        signalbox.web -> signalbox.operations "runtime-mode.set"
+        signalbox.operations -> signalbox.thread.threadActor "set mode"
+        signalbox.thread.threadActor -> signalbox.harness "translate permissions" {
+          navigateTo work_approvals_harness_approval
+          notes '''
+            - Claude permission modes, Codex sandbox and approval policy
+            - Supervised modes surface runtime requests as approval asks
+          '''
+        }
+      }
+      else "interaction mode" {
+        personA -> signalbox.web "toggle Plan"
+        signalbox.web -> signalbox.operations "interaction-mode.set"
+        signalbox.operations -> signalbox.thread.threadActor "set mode"
+        signalbox.thread.threadActor -> signalbox.harness "next turn: plan" {
+          navigateTo work_approvals_plan
+        }
+      }
+    }
+    alt "harness support" {
+      when "lacks the mode" {
+        signalbox.thread.threadActor <- signalbox.harness "step down: Supervised" {
+          notes '''
+            - Never broader than asked; A sees the effective mode
+          '''
+        }
+      }
+      else "live session" {
+        signalbox.thread.threadActor -> signalbox.harness "restart session" {
+          navigateTo work_harness_open_session
+          notes '''
+            - At the next turn boundary, resuming from the mirror
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_approvals_plan {
+    variant sequence
+    title "Workflows/Work/Approvals/Modes/Plan mode: propose, review, implement"
+    description "W-APR-03 (T-TRN-42), T-TRN-43. A plan-mode turn ends with a plan; A implements here in default mode or in a new thread."
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.capture, signalbox.harness
+
+    personA -> signalbox.web "send in Plan" {
+      navigateTo work_approvals_modes
+    }
+    signalbox.web -> signalbox.funnel "send"
+    signalbox.funnel -> signalbox.thread.threadActor "plan turn" {
+      navigateTo work_turns_end_to_end
+    }
+    signalbox.thread.threadActor -> signalbox.harness "turn"
+    signalbox.harness -> signalbox.thread.threadActor "proposed plan" {
+      notes '''
+        - The turn ends with a plan, not edits
+      '''
+    }
+    signalbox.web <- signalbox.thread.threadActor "plan card"
+    alt "A's choice" {
+      when "implement here" {
+        personA -> signalbox.web "Implement"
+        signalbox.web -> signalbox.funnel "default-mode turn"
+        signalbox.funnel -> signalbox.thread.threadActor "implement plan"
+      }
+      when "new thread" {
+        personA -> signalbox.web "Implement elsewhere"
+        signalbox.web -> signalbox.funnel "send plan draft"
+        signalbox.funnel -> signalbox.capture "draft → thread" {
+          navigateTo work_threads_start_send_draft
+          notes '''
+            - Same folder as the planning thread; `requestId` from the draft id, so no duplicates
+          '''
+        }
+      }
+      else "refine" {
+        personA -> signalbox.web "reply with changes"
+        signalbox.web -> signalbox.funnel "another plan turn"
+      }
+    }
+  }
+
+  // ───────────────────────────── Approvals / Secrets ─────────────────────────────
+
+  dynamic view work_approvals_secret_destination {
+    variant sequence
+    title "Workflows/Work/Approvals/Secrets/Secret sent to a new destination asks once"
+    description "W-APR-16. First fill of a secret to a new host asks once: Don't send, Send this turn, or Always (keyed folder + secret + destination)."
+
+    include personA, signalbox, signalbox.thread.threadActor, signalbox.computer, signalbox.gateway, signalbox.attention, services, services.onepassword
+
+    signalbox.computer -> signalbox.gateway "fill placeholder" {
+      navigateTo work_computer_egress_vm
+      notes '''
+        - A command sends `{{secret:STRIPE_KEY}}` to a host it never sent it to
+        - VMs via EgressProxy (machine-bound token); kernel programs via the in-process filter
+      '''
+    }
+    signalbox.gateway -> signalbox.gateway "new destination?" {
+      notes '''
+        - Keyed (folder, secret, destination); the reference comes from the Scope, never the sender
+      '''
+    }
+    signalbox.gateway -> signalbox.thread.threadActor "NeedsDecision" {
+      notes '''
+        - The request is held, not failed
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention "human-only ask" {
+      notes '''
+        - To the people responsible for the folder the secret is placed on (A here); agents can't answer
+      '''
+    }
+    personA -> signalbox.thread.threadActor "answer ask"
+    alt "A's answer" {
+      when "Don't send" {
+        signalbox.thread.threadActor -> signalbox.gateway "deny"
+        signalbox.computer <- signalbox.gateway "request blocked"
+      }
+      else "Send this turn, or Always" {
+        signalbox.thread.threadActor -> signalbox.gateway "allow" {
+          notes '''
+            - Always is stored on the folder; never asked again for this secret and host
+          '''
+        }
+        signalbox.gateway -> services.onepassword "read value" {
+          notes '''
+            - Through the isolated vault worker that VMs can't reach
+          '''
+        }
+        signalbox.computer <- signalbox.gateway "filled request" {
+          navigateTo folders_secrets_placeholder_fill
+        }
+      }
+    }
+  }
+
+  dynamic view work_approvals_secret_request {
+    variant sequence
+    title "Workflows/Work/Approvals/Secrets/Agent requests a secret"
+    description "W-APR-17 (T-APR-08, T-MCP-14, T-SCH-13). A private, human-only secret card; the value goes to 1Password, only a secretRef placement reaches the thread."
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway, services, services.onepassword
+
+    signalbox.harness -> signalbox.thread.threadActor "request_secret" {
+      navigateTo folders_secrets_secret_request
+      notes '''
+        - The agent needs a secret it doesn't have; never asked for in chat
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.web "private secret card" {
+      navigateTo person_pipeline_blocker_human_only
+      notes '''
+        - Human-only Blocker for A; B in the same thread sees a request was made, never the card
+      '''
+    }
+    personA -> signalbox.web "paste value"
+    signalbox.web -> signalbox.gateway "seal value" {
+      notes '''
+        - Straight to the isolated vault worker; never enters the Thread, the transcript or the agent
+      '''
+    }
+    signalbox.gateway -> services.onepassword "store in vault"
+    signalbox.web -> signalbox.thread.threadActor "answer: secretRef" {
+      notes '''
+        - A `secretRef` placement on the folder; the ask resolves
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "placeholder only" {
+      notes '''
+        - The harness sees `{{secret:NAME}}`
+      '''
+    }
+    signalbox.harness -> signalbox.gateway "request with placeholder"
+    signalbox.gateway -> services.onepassword "fill on egress" {
+      navigateTo work_approvals_secret_destination
+    }
+  }
+
+  // ───────────────────────────── Turns / Composer ─────────────────────────────
+
+  dynamic view work_turns_composer_commands {
+    variant sequence
+    title "Workflows/Work/Turns/Composer/Run a slash command or skill"
+    description "T-TRN-29, T-TRN-30. Pool-scoped /model and /usage-limits, provider commands, and skills placed on the thread's chain."
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.harness
+
+    personA -> signalbox.web "type / or $"
+    signalbox.web -> signalbox.funnel "command menu"
+    alt "A picks" {
+      when "/model" {
+        signalbox.funnel -> signalbox.models "catalog(Scope)" {
+          navigateTo work_harness_switch
+          notes '''
+            - Only the resolved pool set's models: P2 on Company, for A and B alike
+          '''
+        }
+      }
+      when "/usage-limits" {
+        signalbox.funnel -> signalbox.models "view(Place)" {
+          navigateTo work_turns_usage_metering
+          notes '''
+            - Members A and B see remaining and reset; admin C sees the admin view
+          '''
+        }
+      }
+      when "provider command" {
+        signalbox.funnel -> signalbox.thread.threadActor "send command"
+        signalbox.thread.threadActor -> signalbox.harness "native command" {
+          notes '''
+            - /compact and other provider commands
+          '''
+        }
+      }
+      else "$ or /skill:" {
+        signalbox.funnel -> signalbox.tree "chain's skills" {
+          navigateTo folders_placement_kind_skill_plugin
+          notes '''
+            - Skill placements on Team → Company, union by name
+          '''
+        }
+        personA -> signalbox.web "pick skill"
+        signalbox.web -> signalbox.thread.threadActor "message + skill"
+        signalbox.thread.threadActor -> signalbox.harness "native dispatch" {
+          navigateTo work_harness_turn_inputs
+        }
+      }
+    }
+  }
+
+  dynamic view work_turns_composer_mention {
+    variant sequence
+    title "Workflows/Work/Turns/Composer/Mention a file or a thread in a message"
+    description "T-THR-32, T-TRN-26, T-TRN-27. @ file mentions over /work and /sources/*; @title or a dragged thread becomes a reference chip, read with an access check."
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.drive, signalbox.search
+
+    alt "A mentions" {
+      when "@ a file" {
+        personA -> signalbox.web "type @"
+        signalbox.web -> signalbox.funnel "list paths"
+        signalbox.funnel -> signalbox.drive "/work, /sources/*" {
+          navigateTo journey_files_browse
+        }
+      }
+      when "@ a thread" {
+        personA -> signalbox.web "type @title"
+        signalbox.web -> signalbox.funnel "find threads"
+        signalbox.funnel -> signalbox.search "query titles" {
+          notes '''
+            - Visibility re-checked: B's private Draft spec never shows for A
+          '''
+        }
+      }
+      else "drag a thread" {
+        personA -> signalbox.web "drop thread" {
+          notes '''
+            - Same chip as @title
+          '''
+        }
+      }
+    }
+    signalbox.web -> signalbox.funnel "send with chips"
+    signalbox.funnel -> signalbox.thread.threadActor "message + refs"
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "read referenced thread" {
+      navigateTo work_agenttools_other_thread
+      notes '''
+        - `Thread.read`, checked at read time; a ref A lost access to resolves to `Denied`
+      '''
+    }
+  }
+
+  dynamic view work_turns_context_meter {
+    variant sequence
+    title "Workflows/Work/Turns/Composer/See a thread's context and cost"
+    description "T-TRN-38. Hover the meter: tokens from the Thread, cost from the pool ledger."
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.models
+
+    personA -> signalbox.web "hover meter"
+    signalbox.web -> signalbox.funnel "context and cost"
+    par {
+      signalbox.funnel -> signalbox.thread.threadActor "tokens in context" {
+        notes '''
+          - Last turn's usage against the model's window
+        '''
+      }
+      signalbox.funnel -> signalbox.models "thread's cost" {
+        navigateTo work_turns_usage_metering
+        notes '''
+          - Rows in the paying pool's ledger (P2 for the shared thread), not a client estimate
+        '''
+      }
+    }
+    signalbox.web <- signalbox.funnel "meter"
+  }
+
+  // ───────────────────────────── Turns / Lifecycle ─────────────────────────────
+
+  dynamic view work_turns_completed_push {
+    title "Workflows/Work/Turns/Lifecycle/Push when a long turn finishes"
+    description "W-TRN-16. A default automation pushes the starter of a person-started turn that ran 60 s or more."
+
+    include signalbox, telemetry
+
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "turn settles" {
+      navigateTo work_turns_settle
+    }
+    signalbox.thread.threadActor -> signalbox.automations "turn completed event" {
+      notes '''
+        - Outbox delivery, idempotent by (source, seq)
+      '''
+    }
+    signalbox.automations -> signalbox.automations "Completed-turn push" {
+      notes '''
+        - A default automation built from primitives, editable like any other
+      '''
+    }
+    opt "person-started, 60 s or more" {
+      signalbox.automations -> signalbox.attention "push to starter" {
+        navigateTo person_notifications_deliver
+        notes '''
+          - Only A, who started the turn; B in the same thread isn't pinged
+        '''
+      }
+      signalbox.attention -> telemetry.apns "deliver"
+      telemetry.apns -> personA "turn finished"
+    }
+
+    autoLayout TopBottom
+  }
+
+  dynamic view work_turns_end_to_end {
+    variant sequence
+    title "Workflows/Work/Turns/Lifecycle/Run a turn end to end"
+    description "W-TRN-01 (T-TRN-01), W-TRN-04. Send → prepare (resolve, grant, toolbox, open) → harness turn → outbox → settle; A or B may send the follow-up."
+
+    include personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.harness, signalbox.tree, signalbox.search
+
+    personA -> signalbox.web "send message" {
+      notes '''
+        - In the shared thread in folder Team
+      '''
+    }
+    signalbox.web -> signalbox.operations "invoke send" {
+      notes '''
+        - `Tree.can` authority check; carries a `requestId`
+      '''
+    }
+    signalbox.operations -> signalbox.thread.threadActor "thread input" {
+      notes '''
+        - Receipt = committed intent; a busy thread follows `whenBusy`
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "prepare turn" {
+      navigateTo work_turns_prepare
+      notes '''
+        - Resolve and freeze Scope, grant, toolbox, open the computer
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "run turn" {
+      navigateTo work_agenttools_tools_in_turn
+    }
+    signalbox.harness -> signalbox.harness "model and tools" {
+      navigateTo work_turns_model_call
+      notes '''
+        - Model wire through ModelGateway, MCP wire through ToolGateway, exec on the computer
+      '''
+    }
+    signalbox.harness -> signalbox.thread.threadActor "harness events" {
+      notes '''
+        - Events, projections, receipt and outbox commit in one DO transaction
+      '''
+    }
+    par {
+      signalbox.thread.threadActor -> signalbox.tree "catalog row" {
+        notes '''
+          - Outbox delivery; Tree coalesces it into folder Team's catalog
+        '''
+      }
+      signalbox.thread.threadActor -> signalbox.search "history rows"
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "settle" {
+      navigateTo work_turns_settle
+    }
+    opt "follow-up from B" {
+      personB -> signalbox.web "send next"
+      signalbox.web -> signalbox.operations "invoke send"
+      signalbox.operations -> signalbox.thread.threadActor "thread input"
+      signalbox.thread.threadActor -> signalbox.thread.threadActor "prepare again" {
+        navigateTo work_turns_prepare
+        notes '''
+          - Scope re-resolves: additions on the chain are picked up, then frozen again
+          - B sending changes nothing about what resolves
+        '''
+      }
+    }
+  }
+
+  dynamic view work_turns_prepare {
+    variant sequence
+    title "Workflows/Work/Turns/Lifecycle/Prepare a turn: resolve, grant, toolbox, open"
+    description "W-TRN-01, W-TRN-04 (preparation half, split out for readability). Tree.resolve (frozen Scope) → Gateway.grant → Connections.toolbox → Computer.open → Harness.turn."
+
+    include signalbox, signalbox.thread.threadActor, signalbox.tree, signalbox.gateway, signalbox.connections, signalbox.computer, signalbox.harness
+
+    signalbox.thread.threadActor -> signalbox.tree "resolve(place)" {
+      color gray
+      notes '''
+        - Synchronous call; the Thread's position is folder Team
+      '''
+    }
+    signalbox.thread.threadActor <- signalbox.tree "Scope, frozen" {
+      notes '''
+        - Pool P2, Confluence and Google · Company from Company reach Team
+        - Same for A and B: position decides, never who sent
+        - A follow-up turn resolves again, picking up additions
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.gateway "grant(Scope)"
+    signalbox.thread.threadActor <- signalbox.gateway "grant JWT" {
+      navigateTo work_turns_grant_refresh
+      notes '''
+        - Endpoints plus a token only the fetch shim holds; nothing placed → `NeedsPool`
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.connections "toolbox(Scope)" {
+      notes '''
+        - Tool search over every connection on the chain
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.computer "open computer" {
+      notes '''
+        - Mounts the thread's files for the isolate; no VM yet
+        - A boxd VM is forked from the Base only when a real command needs one
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "turn input" {
+      navigateTo work_turns_end_to_end
+    }
+  }
+
+  dynamic view work_turns_keepalive_mirror {
+    variant sequence
+    title "Workflows/Work/Turns/Lifecycle/Keep-alive and session mirror"
+    description "W-TRN-13 (T-PRV-36), W-TRN-17. An alarm heartbeat holds the Thread resident only during active work; session files mirror every 5 s and at settle, and every resume starts from that mirror."
+
+    include signalbox, signalbox.actorhost, signalbox.thread.threadActor, signalbox.harness
+
+    signalbox.thread.threadActor -> signalbox.actorhost "start keep-alive" {
+      notes '''
+        - A turn or an escalated exec went live: an alarm heartbeat row in the job table
+        - Nothing keeps the Thread resident outside active work
+      '''
+    }
+    loop "while work is active" {
+      signalbox.actorhost -> signalbox.thread.threadActor "heartbeat alarm" {
+        notes '''
+          - Keeps the Thread and its session facet in memory
+        '''
+      }
+      signalbox.harness -> signalbox.thread.threadActor "mirror every 5 s" {
+        navigateTo work_turns_crash_resume
+        notes '''
+          - Session files land in the Thread's storage: what crash recovery and cold wakes resume from
+        '''
+      }
+    }
+    signalbox.harness -> signalbox.thread.threadActor "mirror at settle"
+    signalbox.thread.threadActor -> signalbox.actorhost "clear keep-alive" {
+      navigateTo work_approvals_turn_parks
+      notes '''
+        - At settle, and also when a turn parks on an ask
+        - From here the Thread may be evicted at any time
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "resume from mirror" {
+      navigateTo work_turns_cold_wake
+      notes '''
+        - Later: on the next send after idle, after a crash, or when an ask is answered
+      '''
+    }
+  }
+
+  dynamic view work_turns_settle {
+    variant sequence
+    title "Workflows/Work/Turns/Lifecycle/Turn settles"
+    description "W-TRN-14 (T-TRN-02). Completion barrier first; then save, commit, mirror, status line, catalog row."
+
+    include signalbox, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.drive, signalbox.tree
+
+    signalbox.harness -> signalbox.thread.threadActor "turn completed"
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "completion barrier" {
+      notes '''
+        - Waits for in-flight tool results and buffered events
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.computer "save turn"
+    signalbox.computer -> signalbox.drive "commit revision" {
+      navigateTo work_checkpoints_commit
+      notes '''
+        - Every turn ends with a revision the app can diff and restore
+      '''
+    }
+    signalbox.thread.threadActor <- signalbox.harness "final mirror"
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "status line" {
+      navigateTo work_turns_status_line
+    }
+    signalbox.thread.threadActor -> signalbox.tree "catalog row" {
+      notes '''
+        - Outbox delivery into folder Team's catalog, coalesced
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "clear keep-alive" {
+      navigateTo work_turns_completed_push
+      notes '''
+        - Emits the turn-completed app event
+      '''
+    }
+  }
+
+  dynamic view work_turns_status_line {
+    variant sequence
+    title "Workflows/Work/Turns/Lifecycle/Status line and resume note roll up"
+    description "W-TRN-15 (T-THR-33, T-TRN-50). Code sets state and waiting-on, the agent writes the next step; folder Team rolls up '2 working · 1 waiting', and each person sees only rows they can see."
+
+    include personA, personB, signalbox, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.thread.threadActor, signalbox.harness
+
+    signalbox.harness -> signalbox.thread.threadActor "next step note" {
+      notes '''
+        - Agent-written: one line saying what happens next
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "set state (code)" {
+      notes '''
+        - Deterministic: working, waiting on B, done; never agent-written
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.tree "status row" {
+      navigateTo work_turns_settle
+      notes '''
+        - Outbox delivery into folder Team's catalog
+      '''
+    }
+    signalbox.tree -> signalbox.tree "roll up" {
+      notes '''
+        - Team: "2 working · 1 waiting"; Company shows Team's rollup
+      '''
+    }
+    signalbox.tree -> signalbox.funnel "status, per viewer" {
+      navigateTo person_asks_status_line
+      notes '''
+        - Filtered by what each viewer can see
+      '''
+    }
+    signalbox.funnel -> signalbox.web "push to clients"
+    signalbox.web -> personA "Team: 2 working · 1 waiting"
+    signalbox.web -> personB "Team: 3 working · 1 waiting" {
+      notes '''
+        - B's private Draft spec in Team counts only for B
+      '''
+    }
+  }
+
+  dynamic view work_turns_wakes {
+    variant sequence
+    title "Workflows/Work/Turns/Lifecycle/Wake a thread and deliver to the harness"
+    description "T-TRN-46, T-TRN-47. The notification mailbox delivers wakes at least once; background output wakes the thread as a continuation."
+
+    include signalbox, signalbox.actorhost, signalbox.thread.threadActor, signalbox.harness
+
+    alt "what wakes it" {
+      when "a notification" {
+        signalbox.actorhost -> signalbox.thread.threadActor "outbox delivery" {
+          navigateTo work_threads_delegate_subagent
+          notes '''
+            - A child finished, an ask was answered
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.thread.threadActor "mailbox row" {
+          navigateTo person_notifications_deliver
+          notes '''
+            - Deduped by id; survives restarts
+          '''
+        }
+        loop "until acked" {
+          signalbox.thread.threadActor -> signalbox.harness "deliver"
+          signalbox.thread.threadActor <- signalbox.harness "ack" {
+            notes '''
+              - At least once: maybe twice, never zero
+            '''
+          }
+        }
+      }
+      else "background output" {
+        signalbox.harness -> signalbox.thread.threadActor "buffered output" {
+          notes '''
+            - A background command printed after its turn ended
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.actorhost "keep-alive while active" {
+          navigateTo work_turns_keepalive_mirror
+        }
+        signalbox.thread.threadActor -> signalbox.harness "continuation turn"
+      }
+    }
+  }
+
+  // ───────────────────────────── Turns / Models ─────────────────────────────
+
+  dynamic view work_turns_grant_refresh {
+    variant sequence
+    title "Workflows/Work/Turns/Models/Grant refresh mid-turn"
+    description "W-TRN-24 (T-MCP-15). Mid-turn, refresh denies only on removals (an unplace, a loan ending, an epoch bump on revoke); additions wait for the next turn. Same for every turn in folder Team, whoever started it."
+
+    include personC, signalbox, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway, signalbox.tree
+
+    alt "mid-turn change" {
+      when "a removal" {
+        personC -> signalbox.tree "unplace Confluence" {
+          notes '''
+            - C, admin of Company, removes Confluence from Company while A's turn runs in Team
+            - Same for a loan into Team ending, or an epoch bump when a credential is revoked
+          '''
+        }
+        signalbox.harness -> signalbox.gateway "next call"
+        signalbox.gateway -> signalbox.tree "re-check removals" {
+          navigateTo folders_gateway_grant
+          notes '''
+            - Grant JWT verified statelessly; 15 s epoch cache
+          '''
+        }
+        signalbox.harness <- signalbox.gateway "Denied for that" {
+          navigateTo folders_connections_cut_off
+          notes '''
+            - Only calls that use the removed thing fail; the turn goes on
+            - Decided by Team's position, not by who started the turn
+          '''
+        }
+        signalbox.gateway -> signalbox.thread.threadActor "lease changed"
+      }
+      else "an addition" {
+        personC -> signalbox.tree "place Jira at Team"
+        signalbox.harness -> signalbox.gateway "next call"
+        signalbox.gateway -> signalbox.gateway "frozen Scope stands" {
+          navigateTo work_turns_prepare
+          notes '''
+            - A `Scope.version` bump alone never denies; the next turn picks Jira up
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_turns_model_call {
+    variant sequence
+    title "Workflows/Work/Turns/Models/Model call through the gateway"
+    description "W-TRN-02. Fetch shim → Gateway (grant JWT, cached pin) → Models (pool custody pins, CPA host pipes) → provider; bytes stream back untransformed."
+
+    include signalbox, signalbox.harness, signalbox.gateway, signalbox.models, modelProviders
+
+    signalbox.harness -> signalbox.gateway "model wire" {
+      navigateTo folders_gateway_model_call
+      notes '''
+        - The fetch shim swaps in the grant token; the harness env holds a dummy
+      '''
+    }
+    signalbox.gateway -> signalbox.gateway "verify grant" {
+      notes '''
+        - Stateless JWT check; the grant names the thread's pool set (P2 on Company for the shared thread)
+      '''
+    }
+    opt "no cached pin" {
+      signalbox.gateway -> signalbox.models "pin account" {
+        notes '''
+          - Sticky round-robin over the nearest pool set; once per lease
+        '''
+      }
+    }
+    signalbox.gateway -> signalbox.models "stream + stamp" {
+      navigateTo work_turns_usage_metering
+      notes '''
+        - A signed usage stamp rides in a header
+      '''
+    }
+    signalbox.models -> modelProviders "CLIProxyAPI request"
+    signalbox.models <- modelProviders "bytes"
+    signalbox.gateway <- signalbox.models "bytes" {
+      notes '''
+        - Inside Models the CPA host pipes them; pool custody never touches the bytes
+      '''
+    }
+    signalbox.harness <- signalbox.gateway "streamed bytes" {
+      navigateTo work_turns_pool_exhausted
+      notes '''
+        - Untransformed
+        - Out of quota: `PoolExhausted` instead
+      '''
+    }
+  }
+
+  dynamic view work_turns_pool_exhausted {
+    variant sequence
+    title "Workflows/Work/Turns/Models/Pool exhausted mid-turn"
+    description "W-TRN-23. Failover inside the nearest pool set, hand off to another pool that resolves on the chain, or a Blocker ask; C, admin of Company, may add accounts to P2."
+
+    include personC, signalbox, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway, signalbox.models, signalbox.attention
+
+    signalbox.harness -> signalbox.gateway "model call"
+    signalbox.gateway -> signalbox.models "stream"
+    signalbox.gateway <- signalbox.models "PoolExhausted" {
+      notes '''
+        - P2's pinned account hit its window (P2 is placed on Company and reaches Team)
+      '''
+    }
+    alt "recovery" {
+      when "account left in P2" {
+        signalbox.models -> signalbox.models "failover" {
+          navigateTo folders_pools_failover
+          notes '''
+            - Custody records the window and moves the pin; the stream continues
+          '''
+        }
+      }
+      when "other pool on chain" {
+        signalbox.harness <- signalbox.gateway "PoolExhausted"
+        signalbox.harness -> signalbox.thread.threadActor "PoolExhausted"
+        signalbox.thread.threadActor -> signalbox.thread.threadActor "hand off" {
+          navigateTo work_harness_failover
+          notes '''
+            - Only to what resolves on Team's chain, or is lent into it; never to A's own P1
+          '''
+        }
+      }
+      else "nothing left" {
+        signalbox.harness <- signalbox.gateway "PoolExhausted"
+        signalbox.harness -> signalbox.thread.threadActor "PoolExhausted"
+        signalbox.thread.threadActor -> signalbox.attention "Blocker: needs pool" {
+          navigateTo person_pipeline_blocker_needs_pool
+          notes '''
+            - To A (started the turn) and C (admin of Company, where P2 sits); the turn parks
+          '''
+        }
+        signalbox.attention -> personC "Blocker card"
+        personC -> signalbox.models "add account to P2"
+        personC -> signalbox.thread.threadActor "answer: added"
+        signalbox.thread.threadActor -> signalbox.harness "resume turn"
+      }
+    }
+  }
+
+  dynamic view work_turns_usage_metering {
+    variant sequence
+    title "Workflows/Work/Turns/Models/Meter token usage"
+    description "W-TRN-03. Signed stamp + batched started events; the CPA drain is the only ledger writer; shared-thread costs land on folder Team and roll up to Company, never on A or B; missing drain rows alert."
+
+    include signalbox, signalbox.gateway, signalbox.models, signalbox.tree, signalbox.observability, hier, hier.company.team.costsTeam, hier.company.costsCo
+
+    signalbox.gateway -> signalbox.models "stamped request" {
+      navigateTo folders_gateway_usage_metering
+      notes '''
+        - `{requestId, subject, level, poolId}`, carried by CPA into its usage record
+      '''
+    }
+    signalbox.gateway -> signalbox.models "started (Queue)" {
+      notes '''
+        - Batched; lets Models spot calls that never drain
+      '''
+    }
+    signalbox.models -> signalbox.models "CPA drain → ledger" {
+      notes '''
+        - Pool custody is the one writer; rows commit with the drain cursor
+      '''
+    }
+    signalbox.models -> signalbox.tree "usage aggregates" {
+      navigateTo folders_usage_rollup
+      notes '''
+        - Keyed by the thread's level, not by who sent the turn
+      '''
+    }
+    signalbox.tree -> hier.company.team.costsTeam "cost on Team" {
+      notes '''
+        - The shared thread sits in Team, so its turns cost Team whether A or B sent them
+      '''
+    }
+    hier.company.team.costsTeam -> hier.company.costsCo "roll up" {
+      notes '''
+        - C, admin of Company, sees Team's spend inside Company's total
+      '''
+    }
+    opt "started, never drained" {
+      signalbox.models -> signalbox.observability "unmetered alert"
+    }
+  }
+
+  // ───────────────────────────── Turns / Recovery ─────────────────────────────
+
+  dynamic view work_turns_cold_wake {
+    variant sequence
+    title "Workflows/Work/Turns/Recovery/Cold wake to first token"
+    description "W-TRN-18 (T-ENV-03, T-MOB-19). A thread idle 30+ min loads its facet by code id and resumes from the mirror; the client shows 'starting'."
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness
+
+    personA -> signalbox.web "send message" {
+      notes '''
+        - Idle 30+ minutes: the DO and facet are evicted
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor "thread input"
+    signalbox.web <- signalbox.thread.threadActor "starting" {
+      notes '''
+        - Shown at once; never a frozen spinner
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "load facet" {
+      navigateTo work_harness_open_session
+      notes '''
+        - By versioned code id, kept warm in Worker Loader
+      '''
+    }
+    signalbox.harness -> signalbox.harness "resume from mirror" {
+      navigateTo work_turns_keepalive_mirror
+    }
+    signalbox.harness -> signalbox.thread.threadActor "first token" {
+      notes '''
+        - Pass line: p95 ≤ 6 s after 30 minutes idle
+      '''
+    }
+    signalbox.web <- signalbox.thread.threadActor "streaming"
+  }
+
+  dynamic view work_turns_crash_resume {
+    variant sequence
+    title "Workflows/Work/Turns/Recovery/Resume after a session crash"
+    description "W-TRN-19 (T-PRV-37, T-SYS-08), W-TRN-21 (T-SYS-05). Facet OOM → alarm restart → resume from mirror; replay-safe calls rerun, unsafe ones surface OutcomeUnknown."
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness
+
+    signalbox.harness -> signalbox.harness "OOM crash" {
+      notes '''
+        - The session facet hit its heap limit: `RuntimeLost`
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness "restart facet" {
+      navigateTo work_turns_do_vm_recovery
+      notes '''
+        - The Thread's alarm notices the dead facet
+      '''
+    }
+    signalbox.harness -> signalbox.harness "resume from mirror" {
+      navigateTo work_turns_keepalive_mirror
+    }
+    loop "each in-flight call" {
+      alt "replay marker" {
+        when "replay: safe" {
+          signalbox.thread.threadActor -> signalbox.harness "rerun call"
+        }
+        else "replay: unsafe" {
+          signalbox.thread.threadActor -> signalbox.web "OutcomeUnknown" {
+            notes '''
+              - Never retried blindly: it may already have happened
+            '''
+          }
+          personA -> signalbox.web "check and decide"
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.harness "continue turn"
+  }
+
+  dynamic view work_turns_deploy_mid_turn {
+    variant sequence
+    title "Workflows/Work/Turns/Recovery/Deploy in the middle of a turn"
+    description "W-TRN-20 (T-ENV-11). The thread-host shell switches the engine code id at a turn boundary, or pays one resume per live turn."
+
+    include signalbox, signalbox.actorhost, signalbox.thread.threadActor, signalbox.harness
+
+    signalbox.actorhost -> signalbox.thread.threadActor "new code id" {
+      navigateTo operations_ops_deploy_domains
+      notes '''
+        - Engine and harness runner are loaded code; the thread-host shell stays
+      '''
+    }
+    alt "facet storage across ids" {
+      when "persists" {
+        signalbox.thread.threadActor -> signalbox.thread.threadActor "finish on old id"
+        signalbox.thread.threadActor -> signalbox.harness "next turn, new id" {
+          notes '''
+            - Switch only at turn boundaries
+          '''
+        }
+      }
+      else "doesn't (unverified)" {
+        signalbox.thread.threadActor -> signalbox.harness "one resume" {
+          navigateTo work_recovery_new_rpc_after_deploy
+          notes '''
+            - Whether facet storage survives a code id switch is not yet verified on Cloudflare
+            - If not: one resume per live turn, from the mirror; stated as the cost of an engine deploy
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_turns_do_vm_recovery {
+    variant sequence
+    title "Workflows/Work/Turns/Recovery/Recover from Thread and VM loss"
+    description "W-TRN-28 (T-SYS-07). Event log and receipts survive eviction; Computer reopens (adopt or re-fork), then Harness resumes."
+
+    include signalbox, signalbox.actorhost, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, platform, platform.boxd
+
+    signalbox.actorhost -> signalbox.thread.threadActor "restart actor" {
+      notes '''
+        - Event log, receipts, outbox and lease records live in DO SQLite
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.computer "reopen computer" {
+      navigateTo work_computer_vm_failures
+      notes '''
+        - Next generation; old one fenced
+        - Most turns have no VM at all: then this is just the file mount
+      '''
+    }
+    opt "a VM was running commands" {
+      signalbox.computer -> platform.boxd "adopt by name"
+      alt "VM" {
+        when "alive" {
+          signalbox.computer <- platform.boxd "adopted"
+        }
+        else "lost" {
+          signalbox.computer -> platform.boxd "fork from Base" {
+            navigateTo state_computer
+            notes '''
+              - Only regenerable state is lost; source lives in the drive
+            '''
+          }
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.harness "resume session" {
+      navigateTo work_turns_crash_resume
+    }
+  }
+
+  dynamic view work_turns_failed {
+    variant sequence
+    title "Workflows/Work/Turns/Recovery/Failed turn or failed preparation"
+    description "W-TRN-22 (T-THR-50). TurnFailed(cause) or a setup failure becomes a user-facing error with Retry; setup status and cancel go through the runner."
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.computer
+
+    alt "what failed" {
+      when "the turn" {
+        signalbox.harness -> signalbox.thread.threadActor "TurnFailed(cause)" {
+          navigateTo work_turns_pool_exhausted
+        }
+        signalbox.thread.threadActor -> signalbox.web "user-facing error" {
+          notes '''
+            - Plain cause and Retry; no stack traces
+          '''
+        }
+      }
+      else "preparation" {
+        signalbox.thread.threadActor -> signalbox.computer "run setup"
+        signalbox.thread.threadActor <- signalbox.computer "setup failed"
+        signalbox.thread.threadActor -> signalbox.web "status · Cancel" {
+          notes '''
+            - Setup status and cancel go through the runner
+          '''
+        }
+      }
+    }
+    personA -> signalbox.web "Retry"
+    signalbox.web -> signalbox.thread.threadActor "retry"
+    signalbox.thread.threadActor -> signalbox.harness "new turn"
+  }
+
+  dynamic view work_turns_resume_held_queue {
+    variant sequence
+    title "Workflows/Work/Turns/Recovery/Resume a held queue after a restart or interrupt"
+    description "T-SYS-09, T-TRN-13. Recovery holds queued runs; a restart resumes them, after an interrupt or limit A resumes the queue or continues in an empty composer."
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.actorhost, signalbox.thread.threadActor, signalbox.harness
+
+    signalbox.actorhost -> signalbox.thread.threadActor "recover thread"
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "hold queued runs"
+    alt "how it moves on" {
+      when "after a restart" {
+        signalbox.thread.threadActor -> signalbox.harness "resume queued runs" {
+          navigateTo work_turns_crash_resume
+          notes '''
+            - Nobody chose the restart, so queued work continues
+          '''
+        }
+      }
+      when "A resumes queue" {
+        personA -> signalbox.web "Resume"
+        signalbox.web -> signalbox.funnel "queue.resume"
+        signalbox.funnel -> signalbox.thread.threadActor "resume queue"
+        signalbox.thread.threadActor -> signalbox.harness "next queued run" {
+          navigateTo work_turns_send_while_busy
+        }
+      }
+      else "empty composer" {
+        personA -> signalbox.web "Resume, no message"
+        signalbox.web -> signalbox.funnel "continue"
+        signalbox.funnel -> signalbox.thread.threadActor "continue turn" {
+          navigateTo work_turns_interrupt_stop
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────── Turns / RunControl ─────────────────────────────
+
+  dynamic view work_turns_goal {
+    variant sequence
+    title "Workflows/Work/Turns/RunControl/Set, pause or clear a goal"
+    description "T-TRN-31. /goal sets done criteria beside the task's done-condition; pause, resume, clear, or met → settle."
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.harness
+
+    personA -> signalbox.web "/goal criteria"
+    signalbox.web -> signalbox.funnel "set goal"
+    signalbox.funnel -> signalbox.thread.threadActor "goal.set" {
+      notes '''
+        - Sits beside the task's done-condition
+      '''
+    }
+    loop "each turn" {
+      signalbox.thread.threadActor -> signalbox.harness "goal in context"
+      signalbox.harness -> signalbox.thread.threadActor "progress"
+    }
+    alt "then" {
+      when "pause or resume" {
+        personA -> signalbox.web "Pause / Resume"
+        signalbox.web -> signalbox.funnel "toggle goal"
+      }
+      when "clear" {
+        personA -> signalbox.web "Clear goal"
+        signalbox.web -> signalbox.funnel "goal.clear"
+      }
+      else "met" {
+        signalbox.thread.threadActor -> signalbox.thread.threadActor "met → settle" {
+          navigateTo work_threads_lifecycle_auto_settle
+        }
+      }
+    }
+  }
+
+  dynamic view work_turns_interrupt_stop {
+    variant sequence
+    title "Workflows/Work/Turns/RunControl/Interrupt a turn or stop a thread"
+    description "W-TRN-09, W-TRN-11 (T-TRN-07, T-TRN-48). Interrupt the turn only, or stop the thread with background execs and children; unsafe calls aren't replayed."
+
+    include personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.harness, signalbox.computer
+
+    alt "how far" {
+      when "interrupt turn" {
+        personB -> signalbox.web "Stop turn" {
+          notes '''
+            - B can stop A's turn in the shared thread: both are members of Team
+          '''
+        }
+        signalbox.web -> signalbox.operations "Interrupt"
+        signalbox.operations -> signalbox.thread.threadActor "thread input"
+        signalbox.thread.threadActor -> signalbox.harness "control(Interrupt)" {
+          navigateTo work_turns_crash_resume
+          notes '''
+            - Settles as interrupted; unsafe in-flight calls are `OutcomeUnknown`, never replayed
+          '''
+        }
+      }
+      else "stop thread" {
+        personA -> signalbox.web "Stop thread"
+        signalbox.web -> signalbox.operations "Stop"
+        signalbox.operations -> signalbox.thread.threadActor "thread input"
+        par {
+          signalbox.thread.threadActor -> signalbox.harness "control(Interrupt)"
+          signalbox.thread.threadActor -> signalbox.computer "stop background execs"
+          signalbox.thread.threadActor -> signalbox.thread.threadActor "cancel children" {
+            navigateTo work_threads_cancel_child
+            notes '''
+              - Delegated child threads stop too
+            '''
+          }
+        }
+        signalbox.thread.threadActor -> signalbox.thread.threadActor "hold the queue" {
+          notes '''
+            - Nothing starts again until someone sends
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view work_turns_queue_manage {
+    variant sequence
+    title "Workflows/Work/Turns/RunControl/Edit, reorder, cancel or promote queued messages"
+    description "W-TRN-06 (T-TRN-09, T-TRN-10, T-TRN-12), W-TRN-07 (T-TRN-11). Edit, reorder or cancel stay in the queue; promote steers the active turn."
+
+    include personA, signalbox, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.harness
+
+    personA -> signalbox.web "open queue"
+    alt "change" {
+      when "edit" {
+        signalbox.web -> signalbox.operations "queue.edit"
+        signalbox.operations -> signalbox.thread.threadActor "edit message"
+      }
+      when "reorder" {
+        signalbox.web -> signalbox.operations "queue.reorder"
+        signalbox.operations -> signalbox.thread.threadActor "move message" {
+          notes '''
+            - The Thread's order, shared by A and B
+          '''
+        }
+      }
+      when "cancel" {
+        signalbox.web -> signalbox.operations "queue.cancel"
+        signalbox.operations -> signalbox.thread.threadActor "drop message"
+      }
+      else "promote" {
+        signalbox.web -> signalbox.operations "queue.promote"
+        signalbox.operations -> signalbox.thread.threadActor "promote to steer"
+        signalbox.thread.threadActor -> signalbox.harness "control(Steer)" {
+          notes '''
+            - Only with `capabilities.steer`; otherwise it stays first in line
+          '''
+        }
+      }
+    }
+    signalbox.web <- signalbox.thread.threadActor "queue view" {
+      navigateTo work_turns_send_while_busy
+    }
+  }
+
+  dynamic view work_turns_send_while_busy {
+    variant sequence
+    title "Workflows/Work/Turns/RunControl/Send while a turn runs"
+    description "W-TRN-05 (T-TRN-03, T-TRN-14), W-TRN-08 (T-TRN-04, T-TRN-05), W-TRN-10 (T-TRN-06), W-TRN-12. whenBusy: queue, steer (queues without steer), restart, or reject → Busy."
+
+    include personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.harness
+
+    personA -> signalbox.web "send message" {
+      notes '''
+        - B's turn is running in the shared thread in folder Team
+      '''
+    }
+    signalbox.web -> signalbox.operations "send(whenBusy)"
+    signalbox.operations -> signalbox.thread.threadActor "thread input"
+    alt "whenBusy" {
+      when "queue" {
+        signalbox.thread.threadActor -> signalbox.thread.threadActor "append to queue" {
+          navigateTo work_turns_queue_manage
+          notes '''
+            - A's and B's turns queue in the one Thread actor
+          '''
+        }
+      }
+      when "steer" {
+        signalbox.thread.threadActor -> signalbox.harness "control(Steer)" {
+          notes '''
+            - Only with `capabilities.steer`; otherwise it queues
+          '''
+        }
+      }
+      when "restart" {
+        signalbox.thread.threadActor -> signalbox.harness "interrupt and rerun" {
+          notes '''
+            - RestartContinuation carries the interrupted turn's context over
+          '''
+        }
+      }
+      else "reject" {
+        signalbox.web <- signalbox.thread.threadActor "Busy" {
+          notes '''
+            - Mostly agents that must not pile up work
+          '''
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.web "live update" {
+      navigateTo work_threads_multiplayer_live
+      notes '''
+        - A and B both see the queued or steering message at once
+      '''
+    }
+    signalbox.web -> personB "sees A's message"
+  }
+
+  // ───────────────────────────── Turns / Viewing ─────────────────────────────
+
+  dynamic view work_turns_activity_log {
+    variant sequence
+    title "Workflows/Work/Turns/Viewing/Expand the activity log of tool calls"
+    description "W-TRN-30 (T-TRN-39). A collapsed run of tool calls expands; open a command's output or a file's diff."
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.drive
+
+    personA -> signalbox.web "expand tool run" {
+      notes '''
+        - "Ran 12 commands, edited 4 files" is one row until expanded
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor "read turn items"
+    signalbox.web <- signalbox.thread.threadActor "items"
+    alt "drill into" {
+      when "a command" {
+        personA -> signalbox.web "open output" {
+          navigateTo work_turns_command_output
+        }
+      }
+      else "a file" {
+        personA -> signalbox.web "open diff"
+        signalbox.web -> signalbox.drive "diff at revision" {
+          navigateTo work_checkpoints_diff
+        }
+      }
+    }
+  }
+
+  dynamic view work_turns_command_output {
+    variant sequence
+    title "Workflows/Work/Turns/Viewing/Command output with bounded replay"
+    description "W-TRN-26. attach(id, tail | full | seq) for running or finished commands."
+
+    include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.computer
+
+    personA -> signalbox.web "open command"
+    signalbox.web -> signalbox.thread.threadActor "attach(id, mode)"
+    signalbox.thread.threadActor -> signalbox.computer "attach output" {
+      navigateTo work_computer_background_service
+      notes '''
+        - tail for a live command, full for a finished one, seq to resume after reconnect
+        - Bounded replay: never an unbounded backlog
+      '''
+    }
+    signalbox.web <- signalbox.thread.threadActor "output"
+    loop "while it runs" {
+      signalbox.computer -> signalbox.thread.threadActor "new output"
+      signalbox.thread.threadActor -> signalbox.web "delta"
+    }
+  }
+
+  dynamic view work_turns_open_live {
+    variant sequence
+    title "Workflows/Work/Turns/Viewing/Watch a thread live on every device"
+    description "W-TRN-25 (T-TRN-40), W-TRN-27 (T-ENV-09, T-MOB-15, T-THR-43). watch(after seq) → snapshot + deltas; seq gap → resnapshot; scrolling back pages history; agents read the same items through ToolGateway."
+
+    include personA, mcpClient, signalbox, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.gateway, signalbox.thread.threadActor
+
+    par {
+      signalbox.desktop -> signalbox.funnel "watch(after seq)" {
+        navigateTo work_threads_multiplayer_live
+        notes '''
+          - A on laptop and phone; B's clients subscribe to the same Thread the same way
+        '''
+      }
+      signalbox.mobile -> signalbox.funnel "watch(after seq)"
+    }
+    signalbox.funnel -> signalbox.thread.threadActor "Thread.watch"
+    signalbox.funnel <- signalbox.thread.threadActor "snapshot + deltas"
+    opt "seq gap" {
+      signalbox.mobile <- signalbox.funnel "resnapshot" {
+        notes '''
+          - The phone slept: a fresh snapshot, no backlog replay
+        '''
+      }
+    }
+    personA -> signalbox.desktop "scroll back"
+    signalbox.desktop -> signalbox.funnel "read(page)"
+    signalbox.funnel -> signalbox.thread.threadActor "bounded page" {
+      navigateTo work_turns_activity_log
+    }
+    mcpClient -> signalbox.gateway "read thread items" {
+      notes '''
+        - An agent over MCP; Funnel serves no MCP
+      '''
+    }
+    signalbox.gateway -> signalbox.thread.threadActor "Thread.read" {
+      notes '''
+        - Same items and the same access check as a person's client
+      '''
+    }
+  }
+
+  dynamic view work_turns_stream_budget {
+    variant sequence
+    title "Workflows/Work/Turns/Viewing/Budget and coalesce live streams"
+    description "T-SYS-10. Funnel budgets seq/snapshot streams per socket; Tree coalesces catalog events so a busy folder sends one update per tick."
+
+    include signalbox, signalbox.web, signalbox.funnel, signalbox.thread.threadActor, signalbox.tree
+
+    signalbox.thread.threadActor -> signalbox.funnel "thread events"
+    signalbox.funnel -> signalbox.funnel "budget per socket" {
+      notes '''
+        - Caps in-flight deltas and snapshot size; over budget → resnapshot
+      '''
+    }
+    signalbox.funnel -> signalbox.web "deltas or snapshot" {
+      navigateTo work_turns_open_live
+    }
+    signalbox.thread.threadActor -> signalbox.tree "catalog rows"
+    signalbox.tree -> signalbox.tree "coalesce ≈1 s" {
+      notes '''
+        - Latest-state rows only; a busy folder sends one update per tick
+      '''
+    }
+    signalbox.tree -> signalbox.funnel "catalog view"
+    signalbox.funnel -> signalbox.web "folder update"
+  }
+
+  dynamic view work_turns_transcript_shows {
+    variant sequence
+    title "Workflows/Work/Turns/Viewing/What the transcript shows"
+    description "W-TRN-29, W-TRN-31 (T-TRN-44), W-TRN-32. Plans, todos, and author + startedBy + harness + model per answer; placement only on the details card."
+
+    include personA, personB, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness
+
+    signalbox.harness -> signalbox.thread.threadActor "plans and todos" {
+      notes '''
+        - A plan card and a live todo list
+      '''
+    }
+    signalbox.harness -> signalbox.thread.threadActor "assistant message"
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "stamp answer metadata" {
+      notes '''
+        - author, startedBy (A or B), harness, model
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "placement → details card" {
+      navigateTo work_harness_switch
+      notes '''
+        - Moves, retries and VM escalation never appear as "machine" text in the transcript
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.web "transcript" {
+      navigateTo work_turns_activity_log
+    }
+    par {
+      signalbox.web -> personA "reads"
+      signalbox.web -> personB "reads" {
+        notes '''
+          - Same transcript; each answer says whose turn it was
+        '''
+      }
+    }
+  }
+}

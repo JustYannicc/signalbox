@@ -1,0 +1,1825 @@
+// Shard 01: person home. The top layer (Now, Glance, scratchpad, avatar), Focus, and the daily
+// and onboarding journeys around them. Every person-owned thing here (assistant, pipeline lanes,
+// Focus, drafts, private notes, devices) is per person: B and C each have their own copy.
+// Journeys and sequences play in order (variant sequence); flows read top to bottom.
+// Container groups (Signalbox, its modules, the example tree, externals) are muted lanes.
+views {
+
+  // ───────────────────────────── Journeys / Daily ─────────────────────────────
+
+  dynamic view journey_daily_answer_ask {
+    variant sequence
+    title 'Journeys/Daily/Answer an ask from a round, the thread, a push or the phone'
+    description 'P-PIP-05, P-PIP-06, P-PIP-07, P-PIP-08. One ask in the Shared work thread (folder Team); A or B answers from any surface; the first receipt wins.'
+
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.attention, hier.company.team.sharedThread, telemetry.apns
+    include signalbox, hier, telemetry
+
+    hier.company.team.sharedThread -> signalbox.attention 'ask raised' {
+      navigateTo person_asks_record
+      notes """
+        - The Shared work thread (folder Team, one Thread actor) commits `ask.raised`, deciders A and B
+        - Attention projects it into A's and B's own lanes
+      """
+    }
+
+    alt 'where the answer comes from' {
+      when 'A, in a round' {
+        personA -> signalbox.web 'answers in round' {
+          notes """
+            - The ask kit shows question, why and the recommendation
+            - A takes the recommendation in one click or answers in their own words
+          """
+        }
+        signalbox.web -> signalbox.funnel -> hier.company.team.sharedThread 'Thread.send(Answer)' {
+          notes """
+            - The answer reaches the agent as a normal message
+          """
+        }
+      }
+      when 'B, inline in the thread' {
+        personB -> signalbox.web 'answers inline' {
+          notes """
+            - The ask renders inside the thread B is watching
+            - Same record, same answer path; nothing is answered through Attention
+          """
+        }
+        signalbox.web -> signalbox.funnel -> hier.company.team.sharedThread 'Thread.send(Answer)' {
+          notes """
+            - Same verb as every other surface
+          """
+        }
+      }
+      when 'A, from a push' {
+        signalbox.attention -> telemetry.apns 'push' {
+          notes """
+            - APNs on iOS, FCM on Android
+            - Only A's devices whose home covers the ask's level, after Focus and delivery rules
+          """
+        }
+        telemetry.apns -> signalbox.mobile 'notification' {
+          notes """
+            - Lock-screen notification with the question
+          """
+        }
+        personA -> signalbox.mobile 'taps it' {
+          navigateTo journey_daily_tap_push
+          notes """
+            - The tap opens the ask directly
+          """
+        }
+        signalbox.mobile -> signalbox.funnel -> hier.company.team.sharedThread 'Thread.send(Answer)' {
+          notes """
+            - Same verb from the phone
+          """
+        }
+      }
+      else 'A, on the phone' {
+        personA -> signalbox.mobile 'approves on phone' {
+          notes """
+            - Needs-you items and approvals work on mobile the same as on web
+          """
+        }
+        signalbox.mobile -> signalbox.funnel -> hier.company.team.sharedThread 'Thread.send(Answer)' {
+          notes """
+            - Same verb from the phone
+          """
+        }
+      }
+    }
+
+    hier.company.team.sharedThread -> hier.company.team.sharedThread 'first receipt wins' {
+      navigateTo state_ask
+      notes """
+        - The first answer resolves the ask and resumes the parked turn
+        - A later answer from the other decider lands as an ordinary message
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.attention 'ask resolved' {
+      notes """
+        - Outbox event to Attention
+      """
+    }
+    signalbox.attention -> signalbox.funnel 'lanes update' {
+      notes """
+        - The item leaves A's and B's lanes at once
+      """
+    }
+
+    style signalbox, hier, telemetry {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_assistant_days {
+    variant sequence
+    title 'Journeys/Daily/A new assistant day and earlier days'
+    description 'P-AST-36, P-AST-37, P-AST-38. The assistant rolls over to a new day; earlier days stay browsable and searchable.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.search, hier.asstA
+    include signalbox, hier
+
+    personA -> signalbox.web 'opens the app' {
+      notes """
+        - First open after 4:00, or after a long idle stretch
+      """
+    }
+    signalbox.web -> signalbox.funnel -> hier.asstA 'Thread.watch' {
+      notes """
+        - The assistant is the agent thread of A's top level
+      """
+    }
+
+    alt 'day boundary' {
+      when 'passed' {
+        hier.asstA -> hier.asstA 'new day' {
+          notes """
+            - A fresh chat starts; open items are carried over
+            - Open: one history with day markers vs a copy per day (MASTER §4 F2)
+          """
+        }
+        signalbox.web <- hier.asstA 'fresh-start screen' {
+          navigateTo person_toplayer_open_now
+          notes """
+            - A sees a clean Now with the carried-over items
+          """
+        }
+      }
+      else 'same day' {
+        signalbox.web <- hier.asstA 'scrolled to now' {
+          notes """
+            - The daily chat, scrolled to the present
+          """
+        }
+      }
+    }
+
+    opt 'browse earlier days' {
+      personA -> signalbox.web 'opens History' {
+        notes """
+          - History menu or breadcrumb; an old day shows a closed footer 'Back to today'
+        """
+      }
+      signalbox.web -> signalbox.funnel -> hier.asstA 'Thread.read(day)' {
+        notes """
+          - Read-only view of that day
+        """
+      }
+    }
+
+    opt 'search past days' {
+      personA -> signalbox.web 'searches' {
+        notes """
+          - Search scoped to the assistant thread
+        """
+      }
+      signalbox.web -> signalbox.funnel -> signalbox.search 'Search.query' {
+        notes """
+          - One index; hits are re-checked against visibility
+        """
+      }
+      signalbox.web <- signalbox.funnel 'matching days' {
+        notes """
+          - Each hit opens that day at the message
+        """
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_enter_pipeline {
+    variant sequence
+    title 'Journeys/Daily/Enter the pipeline from Now'
+    description 'P-TOP-06. "Let\'s go" on Now is the only door into the pipeline.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.attention
+    include signalbox
+
+    personA -> signalbox.web 'reads Now' {
+      notes """
+        - The headline says something is blocked on A, as time ('about 6 minutes'), never a count
+      """
+    }
+    personA -> signalbox.web "clicks Let's go" {
+      notes """
+        - The only way in: no Pipeline rail or sidebar button (corr. 9)
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.attention 'Attention.queue(A)' {
+      notes """
+        - Subscribes to A's pipeline stream
+      """
+    }
+    signalbox.web <- signalbox.funnel 'first round' {
+      navigateTo journey_daily_pipeline_rounds
+      notes """
+        - One folder, its asks together
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_focus_peek {
+    variant sequence
+    title 'Journeys/Daily/Peek at hidden work'
+    description 'P-FOC-05. The "Work hidden" chip lets A peek without changing Focus, then tuck it away again.'
+
+    include personA, signalbox.web, signalbox.funnel
+    include signalbox
+
+    personA -> signalbox.web 'sees Work hidden' {
+      navigateTo person_focus_set
+      notes """
+        - Laptop Focus is Personal; one calm chip says other work exists, no counts
+      """
+    }
+    personA -> signalbox.web 'clicks the chip' {
+      notes """
+        - A wants a look without switching Focus
+      """
+    }
+    signalbox.web -> signalbox.funnel 'unfiltered view' {
+      notes """
+        - Assumption: the peek asks for one view without the Focus filter
+        - Focus on the server is unchanged; pushes stay filtered
+      """
+    }
+    signalbox.web -> personA 'hidden folders shown' {
+      notes """
+        - Hidden folders appear in place, marked as outside Focus
+      """
+    }
+    personA -> signalbox.web 'tucks it away' {
+      notes """
+        - One click hides them again
+      """
+    }
+    signalbox.web -> signalbox.web 'back to Focus' {
+      notes """
+        - Client state only
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_folder_page {
+    #v1
+    variant sequence
+    title 'Journeys/Daily/Open a folder page'
+    description 'R-TRE-15 (aliases T-PRJ-07, T-PRJ-19). v1 partial: Pool, Connections, Members. Folder Company\'s page is the one home of everything placed there, resolved by position for A, B and C alike.'
+
+    include personA, personB, personC, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.models, signalbox.connections, signalbox.capture
+    include signalbox
+
+    personA -> signalbox.web 'opens Company' {
+      notes """
+        - Company is one Level (owner: organization), mounted under A's, B's and C's Work
+      """
+    }
+    signalbox.web -> signalbox.funnel 'open folder page' {
+      notes """
+        - One query; Funnel fans out to the modules that own each section
+      """
+    }
+    parallel {
+      signalbox.funnel -> signalbox.tree 'Tree.view' {
+        notes """
+          - Placements, access and people; inherited rows show as 'from <level>'
+          - Sections: Pool, Connections, Sources, Secrets, Skills, AGENTS.md, Automations, Base, Members, Policy, Newcomers, Notes
+        """
+      }
+      signalbox.funnel -> signalbox.models 'pool section' {
+        notes """
+          - Member-safe view for members, admin view for admins (v1)
+        """
+      }
+      signalbox.funnel -> signalbox.connections 'connection rows' {
+        notes """
+          - Each row lists where it is placed and lent (v1)
+        """
+      }
+      signalbox.funnel -> signalbox.capture 'Capture.view(notes)' {
+        notes """
+          - Shared notes plus the viewer's own private notes for this folder
+        """
+      }
+    }
+    signalbox.web <- signalbox.funnel 'sections' {
+      notes """
+        - One page; every placed thing has its home here
+      """
+    }
+
+    alt 'who is looking' {
+      when 'A (Member)' {
+        personA -> signalbox.web 'reads sections' {
+          notes """
+            - Pool shows members' remaining usage, not admin accounts
+            - Notes: shared ones plus A's private ones
+          """
+        }
+      }
+      when 'B (Member)' {
+        personB -> signalbox.web 'same rows' {
+          notes """
+            - Same pool and connections as A: resolution is by position, never by who looks
+            - Private notes are B's own
+          """
+        }
+      }
+      else 'C (Admin)' {
+        personC -> signalbox.web 'edits admin areas' {
+          notes """
+            - Admin-only by default: Base, Policy, Newcomers, Members, pool accounts and activity
+          """
+        }
+      }
+    }
+
+    opt 'next' {
+      personC -> signalbox.web 'Add subscription' {
+        navigateTo folders_pools_add_account
+        notes """
+          - Adds an account to Company's pool
+        """
+      }
+      personA -> signalbox.web 'Share' {
+        navigateTo journey_sharing_share_dialog
+        notes """
+          - Folder members via roles; pools are placed or lent, never shared
+        """
+      }
+      personC -> signalbox.web 'who has access' {
+        navigateTo journey_admin_access_lens
+        notes """
+          - The access lens over Company
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_glance {
+    variant sequence
+    title 'Journeys/Daily/Open Glance'
+    description 'P-TOP-08. Glance is an optional dashboard of responsibilities, never chats; each row opens its trace.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.tree
+    include signalbox
+
+    personA -> signalbox.web 'opens Glance' {
+      notes """
+        - Optional: Now stays the open screen
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'Tree.view(costs, catalog)' {
+      notes """
+        - Level aggregates and status lines for every level A reaches, incl. the mounted Company
+        - Costs are projections of the Pool ledger
+      """
+    }
+    signalbox.web <- signalbox.funnel 'responsibility rows' {
+      notes """
+        - Rows are responsibilities, never chats
+      """
+    }
+    personA -> signalbox.web 'opens a row' {
+      notes """
+        - The row opens its trace: the thread or run behind it
+      """
+    }
+    opt 'customize' {
+      personA -> signalbox.web 'edits layout' {
+        navigateTo person_toplayer_glance_layout
+        notes """
+          - Widgets and layout, kept per person
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_pipeline_rounds {
+    variant sequence
+    title 'Journeys/Daily/Work through the pipeline in rounds'
+    description 'P-PIP-03, P-PIP-04, P-PIP-09, P-PIP-13. One folder per round; sending a round hands it back to that folder\'s agent and loads the next.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.attention, hier.company.team.sharedThread, hier.company.agentCo
+    include signalbox, hier
+
+    personA -> signalbox.web "Let's go on Now" {
+      navigateTo person_toplayer_now_headline
+      notes """
+        - Entry is from the top layer only, never a rail or sidebar button (P-PIP-09)
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.attention 'Attention.queue(A)' {
+      navigateTo person_pipeline_queue_order
+      notes """
+        - Order: deadline, unblocked, waiting cost, age; deterministic
+      """
+    }
+    signalbox.web <- signalbox.funnel 'round: Company' {
+      notes """
+        - One folder at a time, its asks together, shown as time
+      """
+    }
+
+    loop 'each ask' {
+      personA -> signalbox.web 'answers' {
+        navigateTo journey_daily_answer_ask
+        notes """
+          - Recommendation or own words
+        """
+      }
+      signalbox.web -> signalbox.funnel -> hier.company.team.sharedThread 'Thread.send(Answer)' {
+        notes """
+          - Into the thread that raised the ask
+        """
+      }
+    }
+
+    opt 'new ask mid-round' {
+      hier.company.team.sharedThread -> signalbox.attention 'ask raised' {
+        notes """
+          - Queued for a later round; a new ask never replaces the round A is in
+        """
+      }
+    }
+
+    opt 'free comment' {
+      personA -> signalbox.web 'comments on round' {
+        notes """
+          - Something outside the items (P-PIP-13)
+        """
+      }
+      signalbox.web -> signalbox.funnel -> hier.company.agentCo 'Thread.send(message)' {
+        notes """
+          - Goes to Company's agent thread
+        """
+      }
+    }
+
+    personA -> signalbox.web 'sends the round' {
+      notes """
+        - Hands the round back
+      """
+    }
+    signalbox.funnel -> hier.company.agentCo 'anything else here?' {
+      notes """
+        - The round ends with one open question to the folder's agent (P-PIP-04)
+      """
+    }
+    signalbox.web <- signalbox.funnel 'next round' {
+      notes """
+        - The next folder loads, or Now if the queue is empty
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_ready_decide {
+    variant sequence
+    title 'Journeys/Daily/Decide a Ready or Considering item'
+    description 'P-CON-06, P-RDY-06, P-RDY-07, P-RDY-08. Approve, decline or defer a Ready or Considering item, including a spend card.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.attention
+    include signalbox
+
+    signalbox.attention -> signalbox.funnel 'Ready item' {
+      navigateTo person_pipeline_ready_placement
+      notes """
+        - Ready: the agent proceeds once A says so
+        - Considering: waits on an exit condition; decided the same way
+      """
+    }
+    signalbox.funnel -> signalbox.web 'item card' {
+      notes """
+        - Question, why, recommendation
+      """
+    }
+    personA -> signalbox.web 'decides' {
+      notes """
+        - Approve, decline, not now, or a spend card
+      """
+    }
+
+    alt 'decision' {
+      when 'approve' {
+        signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.send(approve)' {
+          notes """
+            - The agent proceeds (P-RDY-06)
+          """
+        }
+      }
+      when 'decline' {
+        signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.send(decline)' {
+          notes """
+            - The agent learns no, and why if A said
+          """
+        }
+      }
+      when 'not now' {
+        signalbox.web -> signalbox.funnel -> signalbox.attention 'Attention.defer' {
+          navigateTo state_ask
+          notes """
+            - Per-person snooze: only A's entry is deferred
+          """
+        }
+      }
+      else 'spend card (gate: pay)' {
+        signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.send(spend)' {
+          notes """
+            - Approve or decline the spend
+            - Gate asks are never auto-answered unless A delegated that kind
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_ready_line {
+    variant sequence
+    title 'Journeys/Daily/Take or skip the Ready line on Now'
+    description 'P-TOP-07. When nothing is blocked, Now shows one Ready line; its popover offers "Let\'s do it" or "Not now".'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.attention
+    include signalbox
+
+    signalbox.attention -> signalbox.funnel 'nothing blocked' {
+      notes """
+        - Blocker and costly-Ready lanes are empty, so one Ready line may show
+      """
+    }
+    signalbox.funnel -> signalbox.web 'ready line' {
+      notes """
+        - 'X is ready whenever you are'
+      """
+    }
+    personA -> signalbox.web 'opens popover' {
+      navigateTo journey_daily_ready_decide
+      notes """
+        - Details and two buttons
+      """
+    }
+
+    alt 'answer' {
+      when "Let's do it" {
+        signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.send(go)' {
+          notes """
+            - The agent proceeds
+          """
+        }
+      }
+      else 'Not now' {
+        signalbox.web -> signalbox.funnel -> signalbox.attention 'Attention.defer' {
+          notes """
+            - The line goes away; nothing replaces it with a count
+          """
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_resume_note {
+    variant sequence
+    title 'Journeys/Daily/Leave and read a resume note'
+    description 'P-TOP-19. Leave a note on where you were and what is next when switching away from deep work; it shows on return.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.capture
+    include signalbox
+
+    personA -> signalbox.web 'switches away' {
+      notes """
+        - Trigger undecided; assumption: leaving a thread after a stretch of active work
+      """
+    }
+    signalbox.web -> personA 'resume note?' {
+      notes """
+        - 'Where were you, what is next?'
+      """
+    }
+    personA -> signalbox.web 'writes it' {
+      notes """
+        - One or two lines
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.capture 'Capture.note(private)' {
+      notes """
+        - Private row on A's Person actor, linked to the thread
+        - Never a needs-you, never in the pipeline
+      """
+    }
+    personA -> signalbox.web 'comes back' {
+      notes """
+        - Opens the thread again
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.watch' {
+      navigateTo work_turns_status_line
+      notes """
+        - Status line shows what happened meanwhile
+      """
+    }
+    signalbox.web <- signalbox.funnel 'note on top' {
+      notes """
+        - The resume note shows above the thread until dismissed
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_tap_push {
+    variant sequence
+    title 'Journeys/Daily/Tap a push to open the thread or ask'
+    description 'P-NOT-06 (alias T-MOB-26). A tap on a push deep-links into the thread or into the ask in the Blocker lane.'
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.thread, signalbox.attention, telemetry.apns
+    include signalbox, telemetry
+
+    signalbox.attention -> telemetry.apns 'push' {
+      navigateTo person_notifications_turn_pushes
+      notes """
+        - APNs on iOS, FCM on Android, Web Push on web; same deep link in each
+      """
+    }
+    telemetry.apns -> signalbox.mobile 'notification' {
+      notes """
+        - Shown by the OS
+      """
+    }
+    personA -> signalbox.mobile 'taps it' {
+      notes """
+        - Opens the app at the deep link
+      """
+    }
+
+    alt 'push about' {
+      when 'a turn' {
+        signalbox.mobile -> signalbox.funnel -> signalbox.thread 'Thread.watch' {
+          notes """
+            - Lands in the thread, scrolled to the turn that finished or failed
+          """
+        }
+      }
+      else 'an ask' {
+        signalbox.mobile -> signalbox.funnel -> signalbox.attention 'Attention.queue(A)' {
+          navigateTo person_pipeline_blocker_approval
+          notes """
+            - Lands on the ask in the Blocker lane, ready to answer
+          """
+        }
+      }
+    }
+    signalbox.mobile <- signalbox.funnel 'opened' {
+      notes """
+        - No hunting through screens
+      """
+    }
+
+    style signalbox, telemetry {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_wants_shelf {
+    variant sequence
+    title 'Journeys/Daily/Pick from the wants shelf'
+    description 'P-RDY-11. At a free moment, the wants shelf offers one prepared option at a time.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.attention
+    include signalbox
+
+    personA -> signalbox.web 'opens the shelf' {
+      notes """
+        - A free moment; wants are never pushed or counted
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.attention 'Attention.queue(shelf)' {
+      notes """
+        - Ready items with no waiting cost
+      """
+    }
+    signalbox.web <- signalbox.funnel 'one option' {
+      navigateTo person_pipeline_ready_wants_upkeep
+      notes """
+        - One prepared option at a time; a stale one shows a warning
+      """
+    }
+
+    loop 'until a pick' {
+      alt 'answer' {
+        when "Let's do it" {
+          signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.send(go)' {
+            navigateTo person_pipeline_ready_placement
+            notes """
+              - Hands it back to its agent
+            """
+          }
+        }
+        else 'Not now' {
+          signalbox.web -> signalbox.funnel -> signalbox.attention 'Attention.defer' {
+            notes """
+              - Moves on to the next option
+            """
+          }
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_daily_workspace {
+    variant sequence
+    title 'Journeys/Daily/Reveal the workspace and get back to Now'
+    description 'P-TOP-12, P-TOP-13. Client only: reveal the rail and sidebar from the top layer; the assistant face returns to Now from anywhere.'
+
+    include personA, signalbox.web
+    include signalbox
+
+    personA -> signalbox.web 'looks for workspace' {
+      notes """
+        - The top layer hides the rail and sidebar by default
+      """
+    }
+    signalbox.web -> signalbox.web 'reveal rail, sidebar' {
+      notes """
+        - Client state only (workspaceVisibility); nothing goes to the server
+      """
+    }
+    personA -> signalbox.web 'works in a thread' {
+      notes """
+        - Normal work in the tree
+      """
+    }
+    personA -> signalbox.web 'clicks assistant face' {
+      notes """
+        - In the titlebar on every screen
+      """
+    }
+    signalbox.web -> signalbox.web 'back to Now' {
+      navigateTo person_toplayer_open_now
+      notes """
+        - Leaving the top layer hid the workspace again for next time
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Journeys / Onboarding ─────────────────────────────
+
+  dynamic view journey_onboarding_install_client {
+    variant sequence
+    title 'Journeys/Onboarding/Install the app and sign in'
+    description 'P-ONB-19. Install desktop or mobile (TestFlight or Play internal) and sign in through the cloud origin callback.'
+
+    include personA, signalbox.mobile, signalbox.desktop, signalbox.funnel, signalbox.ingress, signalbox.identity, platform.workos
+    include signalbox, platform
+
+    alt 'client' {
+      when 'mobile' {
+        personA -> signalbox.mobile 'installs, opens' {
+          navigateTo pgap_onboarding_agent_setup
+          notes """
+            - Private distribution: TestFlight internal or Play internal testing
+          """
+        }
+        signalbox.mobile -> signalbox.funnel -> signalbox.identity 'Identity.signIn' {
+          notes """
+            - Starts AuthKit
+          """
+        }
+      }
+      else 'desktop' {
+        personA -> signalbox.desktop 'installs, opens' {
+          notes """
+            - A thin gateway to the same cloud
+          """
+        }
+        signalbox.desktop -> signalbox.funnel -> signalbox.identity 'Identity.signIn' {
+          notes """
+            - Starts AuthKit
+          """
+        }
+      }
+    }
+    signalbox.identity -> platform.workos 'AuthKit' {
+      notes """
+        - No account or organization picker, ever
+      """
+    }
+    personA -> platform.workos 'signs in' {
+      notes """
+        - In the system browser
+      """
+    }
+    platform.workos -> signalbox.ingress 'origin callback' {
+      notes """
+        - Returns to the cloud origin, then deep-links back into the app
+      """
+    }
+    signalbox.ingress -> signalbox.identity 'Identity.complete' {
+      notes """
+        - Session minted for this device
+      """
+    }
+    signalbox.mobile <- signalbox.ingress 'deep link, session' {
+      notes """
+        - Same tree and threads as every other client; no work lives on the device
+      """
+    }
+    signalbox.mobile -> signalbox.funnel 'register device' {
+      navigateTo person_devices_register
+      notes """
+        - Attention.device(Register) with a home level
+      """
+    }
+    opt 'signed in elsewhere' {
+      personA -> signalbox.mobile 'scans QR' {
+        navigateTo journey_devices_qr_sign_in
+        notes """
+          - Sign in from an already signed-in device instead
+        """
+      }
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view journey_onboarding_name_assistant {
+    variant sequence
+    title 'Journeys/Onboarding/Name and design your assistant'
+    description 'P-ONB-05. On first run A names and designs their assistant from per-person templates; no fixed mascot.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.tree, hier.asstA
+    include signalbox, hier
+
+    personA -> signalbox.web 'meets the assistant' {
+      notes """
+        - First run, right after sign-up created A's top level with Personal and Work
+      """
+    }
+    signalbox.web -> personA 'templates' {
+      notes """
+        - Per-person templates, no fixed mascot
+      """
+    }
+    personA -> signalbox.web 'names and designs' {
+      notes """
+        - Name, avatar, personality; a draft until Save
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'save profile' {
+      notes """
+        - Storage open: Person preferences or files at the top level (MASTER #49)
+      """
+    }
+    signalbox.tree -> hier.asstA 'profile applies' {
+      notes """
+        - The assistant is the agent thread of A's top level; B and C design their own
+      """
+    }
+    opt 'next steps' {
+      personA -> signalbox.web 'first pool' {
+        navigateTo folders_pools_first_pool
+        notes """
+          - Add a subscription or API key on a level
+        """
+      }
+      personA -> signalbox.web 'first connection' {
+        navigateTo folders_connections_first_connection
+        notes """
+          - One click, e.g. Google
+        """
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Workflows / Person / Focus ─────────────────────────────
+
+  dynamic view person_focus_auto_switch {
+    variant sequence
+    title 'Workflows/Person/Focus/Switch Focus by automation'
+    description 'P-FOC-08. A Focus automation switches a device\'s Focus on time, Wi-Fi, NFC or location.'
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.automations, signalbox.attention
+    include signalbox
+
+    alt 'trigger' {
+      when 'device signal' {
+        personA -> signalbox.mobile 'arrives home' {
+          notes """
+            - Wi-Fi, NFC tag or location changes on the phone
+          """
+        }
+        signalbox.mobile -> signalbox.funnel -> signalbox.automations 'device signal' {
+          navigateTo person_devices_signals
+          notes """
+            - An app event the automation listens to
+          """
+        }
+      }
+      else 'time' {
+        signalbox.automations -> signalbox.automations 'tick' {
+          notes """
+            - A schedule, e.g. 18:00 on weekdays
+          """
+        }
+      }
+    }
+    signalbox.automations -> signalbox.automations 'match automation' {
+      navigateTo work_automations_define
+      notes """
+        - An ordinary automation A can read and edit; no special-case code
+      """
+    }
+    signalbox.automations -> signalbox.attention 'Attention.focus' {
+      notes """
+        - focus(phone, Personal)
+      """
+    }
+    signalbox.attention -> signalbox.attention 'keep per device' {
+      notes """
+        - Only the phone changes; the laptop keeps its own Focus
+      """
+    }
+    signalbox.attention -> signalbox.funnel 'views refilter' {
+      notes """
+        - Server-side, before delivery
+      """
+    }
+    signalbox.mobile <- signalbox.funnel 'out of sight' {
+      navigateTo person_focus_set
+      notes """
+        - Work disappears from the phone
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_focus_breakthrough {
+    variant sequence
+    title 'Workflows/Person/Focus/Let urgent asks through Focus'
+    description 'P-FOC-06. A breakthrough rule lets approvals, questions or failures through to named devices; without one, a hidden folder shows one calm row.'
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.attention, signalbox.tree, hier.company.team.sharedThread, telemetry.apns
+    include signalbox, hier, telemetry
+
+    hier.company.team.sharedThread -> signalbox.attention 'ask in hidden folder' {
+      notes """
+        - e.g. a failure in the Shared work thread (folder Team, under Company)
+        - A's laptop Focus is Personal, so Company is hidden for A
+      """
+    }
+    signalbox.attention -> signalbox.tree 'resolve deliveryRule' {
+      navigateTo person_focus_breakthrough_rule
+      notes """
+        - Rules are placements on A's chain to the ask's level; nearest wins, deterministic
+      """
+    }
+
+    alt 'rule' {
+      when 'matches' {
+        signalbox.attention -> telemetry.apns 'push named device' {
+          navigateTo person_notifications_set_rule
+          notes """
+            - Only the kinds the rule names, only to the devices it names
+          """
+        }
+        telemetry.apns -> signalbox.mobile 'rings' {
+          notes """
+            - A's phone rings despite Focus
+          """
+        }
+      }
+      else 'no rule' {
+        signalbox.attention -> signalbox.attention 'hold, no push' {
+          notes """
+            - The ask waits in A's lanes until Focus covers it
+          """
+        }
+      }
+    }
+    signalbox.attention -> signalbox.web 'one calm row' {
+      notes """
+        - One row for the hidden folder, never a count or the ask's content
+      """
+    }
+    signalbox.web -> personA 'sees the row' {
+      notes """
+        - A decides whether to look
+      """
+    }
+
+    style signalbox, hier, telemetry {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_focus_breakthrough_rule {
+    variant sequence
+    title 'Workflows/Person/Focus/Create, edit or remove a breakthrough rule'
+    description 'P-FOC-07. A breakthrough rule is a deliveryRule placement, changed from Settings › Notifications or shipped by the default automation.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.automations
+    include signalbox
+
+    alt 'entry' {
+      when 'Settings' {
+        personA -> signalbox.web 'opens rules' {
+          notes """
+            - Settings › Notifications
+          """
+        }
+      }
+      else 'default automation' {
+        signalbox.automations -> signalbox.operations 'default rule' {
+          notes """
+            - Ships as an editable default placement, not special-case code
+          """
+        }
+      }
+    }
+
+    alt 'change' {
+      when 'create' {
+        signalbox.web -> signalbox.funnel -> signalbox.operations 'Place deliveryRule' {
+          notes """
+            - Tree.change(Place): which kinds reach which named devices, at a level
+          """
+        }
+        signalbox.operations -> signalbox.tree 'place' {
+          navigateTo folders_placement_place
+          notes """
+            - Committed on that Level
+          """
+        }
+      }
+      when 'edit' {
+        signalbox.web -> signalbox.funnel -> signalbox.operations 'Place deliveryRule' {
+          notes """
+            - Same verb; replaces the row in place
+          """
+        }
+        signalbox.operations -> signalbox.tree 'replace' {
+          notes """
+            - New version of the placement row
+          """
+        }
+      }
+      else 'remove' {
+        signalbox.web -> signalbox.funnel -> signalbox.operations 'Unplace deliveryRule' {
+          notes """
+            - Tree.change(Unplace)
+          """
+        }
+        signalbox.operations -> signalbox.tree 'unplace' {
+          navigateTo folders_placement_unplace
+          notes """
+            - The level inherits its parent's rule again
+          """
+        }
+      }
+    }
+    signalbox.operations <- signalbox.tree 'receipt' {
+      notes """
+        - Tree.can checked; the kind registry decides who may place a deliveryRule
+      """
+    }
+    signalbox.web <- signalbox.funnel 'rule row' {
+      navigateTo person_focus_breakthrough
+      notes """
+        - The next matching ask uses it
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_focus_out_of_sight {
+    title 'Workflows/Person/Focus/Hide everything outside Focus'
+    description 'P-FOC-03, P-FOC-04, P-FOC-10. Focus filters server-side before delivery; hidden work keeps running; Company asks reached through a mount count as work.'
+
+    hier.company.team.sharedThread -> hier.company.team.sharedThread 'keeps running' {
+      navigateTo person_focus_breakthrough
+      notes """
+        - Hidden work keeps running: agents and resolution never read Focus (P-FOC-04)
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.attention 'ask for A, B' {
+      notes """
+        - Raised in the Shared work thread in folder Team
+      """
+    }
+    signalbox.attention -> signalbox.tree 'chain per recipient' {
+      navigateTo person_toplayer_ask_card
+      notes """
+        - A and B each reach Company through their own mount under Work, so area = work (P-FOC-10)
+      """
+    }
+    parallel {
+      signalbox.attention -> signalbox.web 'A: nothing' {
+        navigateTo person_notifications_route_ping
+        notes """
+          - A's laptop Focus is Personal: no row, count, chip, computer, cost or push (P-FOC-03)
+          - The ask still waits in A's lanes
+        """
+      }
+      signalbox.attention -> signalbox.mobile 'B: delivered' {
+        notes """
+          - B's phone Focus is Work, which covers the ask
+        """
+      }
+    }
+    signalbox.web -> personA 'sees Personal only' {
+      notes """
+        - Nothing from Company leaks into the Personal view
+      """
+    }
+    signalbox.mobile -> personB 'sees the ask' {
+      notes """
+        - Answers it from the phone
+      """
+    }
+
+    include signalbox, hier
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view person_focus_search_scope {
+    variant sequence
+    title 'Workflows/Person/Focus/Search under Focus'
+    description 'P-FOC-11. Focus only narrows the default search scope; an explicit search may find hidden things.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.search
+    include signalbox
+
+    personA -> signalbox.web 'searches' {
+      notes """
+        - From the palette or search field
+      """
+    }
+    alt 'scope' {
+      when 'default' {
+        signalbox.web -> signalbox.funnel -> signalbox.search 'query(Focus level)' {
+          navigateTo work_search_scope
+          notes """
+            - The client passes its device's Focus as the default scope
+          """
+        }
+      }
+      else 'explicit: everywhere' {
+        signalbox.web -> signalbox.funnel -> signalbox.search 'query(top level)' {
+          notes """
+            - A asked on purpose, so hidden things may show
+          """
+        }
+      }
+    }
+    signalbox.search -> signalbox.search 'visibility re-check' {
+      navigateTo work_search_visibility
+      notes """
+        - Every hit is re-checked against what A may see; Focus is not a permission
+      """
+    }
+    signalbox.web <- signalbox.funnel 'results' {
+      notes """
+        - Hidden-folder hits are marked as outside Focus
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_focus_set {
+    variant sequence
+    title 'Workflows/Person/Focus/Set, widen or clear Focus on a device'
+    description 'P-FOC-01, P-FOC-02, P-FOC-09. Focus is per device and defaults to the device\'s home; phone and laptop can hold different Focus at once.'
+
+    include personA, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.attention
+    include signalbox
+
+    personA -> signalbox.desktop 'Focus: Work' {
+      navigateTo journey_devices_manage
+      notes """
+        - Until A picks one, Focus is the device's home level
+      """
+    }
+    signalbox.desktop -> signalbox.funnel -> signalbox.attention 'Attention.focus' {
+      notes """
+        - focus(laptop, Work); view-only, agents never read it
+      """
+    }
+    signalbox.attention -> signalbox.attention 'laptop: Work' {
+      notes """
+        - Kept per device for A, behind Attention's interface
+      """
+    }
+    personA -> signalbox.mobile 'Focus: Personal' {
+      notes """
+        - On the phone, at the same time
+      """
+    }
+    signalbox.mobile -> signalbox.funnel -> signalbox.attention 'Attention.focus' {
+      notes """
+        - focus(phone, Personal)
+      """
+    }
+    signalbox.attention -> signalbox.attention 'phone: Personal' {
+      notes """
+        - Both hold at once (P-FOC-09)
+      """
+    }
+    alt 'later' {
+      when 'widen' {
+        signalbox.desktop -> signalbox.funnel -> signalbox.attention 'focus(parent)' {
+          notes """
+            - Widen to a parent level
+          """
+        }
+      }
+      else 'clear' {
+        signalbox.desktop -> signalbox.funnel -> signalbox.attention 'focus(null)' {
+          notes """
+            - Clear means the top level (All)
+          """
+        }
+      }
+    }
+    signalbox.desktop <- signalbox.funnel 'views refilter' {
+      navigateTo person_focus_out_of_sight
+      notes """
+        - Applied server-side before anything is sent
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Workflows / Person / TopLayer ─────────────────────────────
+
+  dynamic view person_toplayer_ask_card {
+    title 'Workflows/Person/TopLayer/Project an ask onto each recipient\'s top layer'
+    description 'P-TOP-14, P-TOP-15. Each recipient gets their own area (work or personal), computed on their own chain, and one card kind: spend, approval or decision.'
+
+    hier.company.team.sharedThread -> signalbox.attention 'ask raised' {
+      navigateTo person_pipeline_project_ask
+      notes """
+        - Raised in the Shared work thread (folder Team); route: A, B and Company's admin C
+      """
+    }
+    signalbox.attention -> signalbox.tree 'chain per recipient' {
+      navigateTo state_ask
+      notes """
+        - chain(ask level, via the recipient's own mount of Company)
+        - area = that recipient's top-level child on the chain; no mount means work
+      """
+    }
+    parallel {
+      signalbox.attention -> hier.lanesA 'A: work card' {
+        notes """
+          - Through A's mount under Work
+        """
+      }
+      signalbox.attention -> hier.lanesB 'B: work card' {
+        notes """
+          - Through B's mount under Work
+        """
+      }
+      signalbox.attention -> hier.lanesC 'C: work card' {
+        navigateTo person_focus_out_of_sight
+        notes """
+          - Through C's own mount of Company under Work, even though A filed the thread
+          - D, the outside collaborator on Team, would get work too, through D's 'Shared with me' mount (D's lanes not drawn)
+        """
+      }
+    }
+    hier.lanesA -> personA 'card on top layer' {
+      notes """
+        - Card kind: gate pay → spend; Blocker with approval surface → approval; else decision (P-TOP-15)
+      """
+    }
+    hier.lanesB -> personB 'card on top layer' {
+      notes """
+        - Same kind for every recipient
+      """
+    }
+    hier.lanesC -> personC 'card on top layer' {
+      notes """
+        - Same kind for every recipient
+      """
+    }
+
+    include signalbox, hier
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view person_toplayer_avatar {
+    title 'Workflows/Person/TopLayer/Avatar acts out live work'
+    description 'P-TOP-03. The avatar acts out live work from status lines and the attention projection, with no repainting loop.'
+
+    hier.company.team.sharedThread -> signalbox.tree 'status line' {
+      notes """
+        - Catalog row on the home Level, coalesced per Level tick
+      """
+    }
+    signalbox.tree -> signalbox.funnel 'replicate' {
+      notes """
+        - Lunora view replication
+      """
+    }
+    signalbox.attention -> signalbox.funnel 'waiting on A?' {
+      notes """
+        - From A's attention projection
+      """
+    }
+    signalbox.funnel -> signalbox.web 'state change' {
+      notes """
+        - One event per change, never a stream of frames
+      """
+    }
+    signalbox.web -> signalbox.web 'pick a pose' {
+      navigateTo person_asks_status_line
+      notes """
+        - Laptop, book, notepad or phone for live work; '!' when waiting on A; z's when resting
+        - No continuously repainting animation
+      """
+    }
+    signalbox.web -> personA 'avatar acts it out' {
+      notes """
+        - A sees what is going on without opening anything
+      """
+    }
+
+    include signalbox, hier
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view person_toplayer_glance_layout {
+    variant sequence
+    title 'Workflows/Person/TopLayer/Change the Glance layout'
+    description 'P-TOP-09, P-TOP-10. A or the assistant changes the Glance layout, kept per person; the assistant\'s change shows with Undo.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.operations, hier.asstA
+    include signalbox, hier
+
+    alt 'who changes it' {
+      when 'A' {
+        personA -> signalbox.web 'edits widgets' {
+          navigateTo journey_daily_glance
+          notes """
+            - Adds, removes or moves widgets
+          """
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.operations 'set layout' {
+          notes """
+            - A person operation
+          """
+        }
+        signalbox.operations -> signalbox.tree 'preferences' {
+          notes """
+            - Kept per person, on every device
+          """
+        }
+      }
+      else 'the assistant' {
+        hier.asstA -> signalbox.operations 'set layout' {
+          notes """
+            - An agent operation with A's rights; same verb as A's
+          """
+        }
+        signalbox.operations -> signalbox.tree 'preferences' {
+          notes """
+            - The previous layout is kept for Undo
+          """
+        }
+        signalbox.tree -> signalbox.funnel 'layout changed' {
+          notes """
+            - Pushed to A's open clients
+          """
+        }
+        signalbox.funnel -> signalbox.web 'change with Undo' {
+          notes """
+            - The change is visible, never silent
+          """
+        }
+        opt 'A undoes' {
+          personA -> signalbox.web 'Undo' {
+            notes """
+              - One click
+            """
+          }
+          signalbox.web -> signalbox.funnel -> signalbox.operations 'restore layout' {
+            notes """
+              - Back to the previous layout
+            """
+          }
+        }
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_toplayer_intent {
+    variant sequence
+    title 'Workflows/Person/TopLayer/Set today\'s intent'
+    description 'P-TOP-04, P-TOP-05. A tells the assistant today\'s intent; the queue filters folders, but a deadline item outside the intent still passes and says why.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.attention, hier.asstA
+    include signalbox, hier
+
+    personA -> signalbox.web 'personal only today' {
+      notes """
+        - Typed in the assistant composer
+      """
+    }
+    signalbox.web -> signalbox.funnel -> hier.asstA 'Thread.send' {
+      navigateTo person_assistant_talk
+      notes """
+        - An ordinary message to the assistant
+      """
+    }
+    hier.asstA -> signalbox.operations 'set intent' {
+      notes """
+        - The assistant turns it into a queue intent: Personal
+      """
+    }
+    signalbox.operations -> signalbox.attention 'intent: Personal' {
+      notes """
+        - Attention.queue reads it for today
+      """
+    }
+    signalbox.attention -> signalbox.attention 'keep intent' {
+      notes """
+        - Per person, until the day rolls over
+      """
+    }
+    signalbox.attention -> signalbox.attention 'filter rounds' {
+      navigateTo person_pipeline_queue_order
+      notes """
+        - Only Personal folders' rounds come up
+      """
+    }
+    opt 'deadline outside intent' {
+      signalbox.attention -> signalbox.funnel 'passes with reason' {
+        notes """
+          - e.g. 'due tomorrow, so it is here anyway' (P-TOP-05)
+        """
+      }
+    }
+    signalbox.funnel -> signalbox.web 'filtered queue' {
+      notes """
+        - A sees the narrower pipeline
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_toplayer_keep_answers {
+    variant sequence
+    title 'Workflows/Person/TopLayer/Keep half-written answers'
+    description 'P-TOP-17. Leaving a round or the top layer mid-answer keeps half-written answers.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.capture
+    include signalbox
+
+    personA -> signalbox.web 'half-writes answer' {
+      notes """
+        - Mid-round
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.capture 'Capture.draft(round)' {
+      notes """
+        - A private draft per person, debounced while typing, so it follows A to every device
+      """
+    }
+    personA -> signalbox.web 'leaves mid-round' {
+      notes """
+        - Opens a thread, or leaves the top layer
+      """
+    }
+    personA -> signalbox.web 'comes back' {
+      navigateTo journey_daily_pipeline_rounds
+      notes """
+        - Same or another device
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.capture 'Capture.view(round)' {
+      notes """
+        - Loads the round as A left it
+      """
+    }
+    signalbox.web <- signalbox.funnel 'answers restored' {
+      notes """
+        - Assumption: if another decider resolved an ask meanwhile, its kept text shows as no longer needed
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_toplayer_now_headline {
+    variant sequence
+    title 'Workflows/Person/TopLayer/Pick the Now headline'
+    description 'P-TOP-02, P-TOP-16. Now says one sentence with at most one action; an empty queue is a calm success line, never a count.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.attention
+    include signalbox
+
+    signalbox.attention -> signalbox.attention 'queue state' {
+      navigateTo person_pipeline_queue_order
+      notes """
+        - Blocker and Ready lanes plus the shelf, across every level A reaches
+      """
+    }
+    alt 'what Now says' {
+      when 'blocked on A' {
+        signalbox.attention -> signalbox.funnel 'minutes blocked' {
+          notes """
+            - Time, never a count
+          """
+        }
+        signalbox.funnel -> signalbox.web "Let's go" {
+          navigateTo journey_daily_enter_pipeline
+          notes """
+            - The one action: enter the pipeline
+          """
+        }
+      }
+      when 'something ready' {
+        signalbox.attention -> signalbox.funnel 'one Ready option' {
+          notes """
+            - Nothing is blocked
+          """
+        }
+        signalbox.funnel -> signalbox.web 'what do you want?' {
+          navigateTo journey_daily_ready_line
+          notes """
+            - Plus one Ready option
+          """
+        }
+      }
+      else 'nothing due' {
+        signalbox.attention -> signalbox.funnel 'empty' {
+          notes """
+            - Nothing due from A
+          """
+        }
+        signalbox.funnel -> signalbox.web 'calm success line' {
+          notes """
+            - A success signal: never a count, badge or bell (P-TOP-16)
+          """
+        }
+      }
+    }
+    signalbox.web -> personA 'one sentence' {
+      notes """
+        - At most one action
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_toplayer_open_now {
+    variant sequence
+    title 'Workflows/Person/TopLayer/Open the app on Now'
+    description 'P-TOP-01, P-TOP-18 (alias T-MOB-10). Opening any client lands on Now: the assistant\'s daily chat scrolled to the present, the pipeline beside it.'
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.tree, signalbox.attention, signalbox.capture, hier.asstA
+    include signalbox, hier
+
+    alt 'client' {
+      when 'web or desktop' {
+        personA -> signalbox.web 'opens the app' {
+          notes """
+            - Any client; nothing is stored on it
+          """
+        }
+        signalbox.web -> signalbox.funnel 'subscribe' {
+          notes """
+            - One socket for the four streams below
+          """
+        }
+      }
+      else 'mobile' {
+        personA -> signalbox.mobile 'opens the app' {
+          notes """
+            - The phone's open screen is the same top layer (MASTER §4 G1 open)
+          """
+        }
+        signalbox.mobile -> signalbox.funnel 'subscribe' {
+          notes """
+            - Same four streams as web
+          """
+        }
+      }
+    }
+    parallel {
+      signalbox.funnel -> signalbox.attention 'Attention.queue(A)' {
+        notes """
+          - The pipeline from A's attention projection
+        """
+      }
+      signalbox.funnel -> signalbox.tree 'Tree.view(aggregates)' {
+        notes """
+          - Replicated via Lunora
+        """
+      }
+      signalbox.funnel -> signalbox.capture 'Capture.view(notes)' {
+        notes """
+          - The top-layer scratchpad
+        """
+      }
+      signalbox.funnel -> hier.asstA 'Thread.watch' {
+        navigateTo person_assistant_talk
+        notes """
+          - The assistant's daily chat
+        """
+      }
+    }
+    signalbox.funnel -> signalbox.web 'Now' {
+      navigateTo person_toplayer_now_headline
+      notes """
+        - Daily chat scrolled to the present, the headline and the pad
+      """
+    }
+    opt "Let's go" {
+      personA -> signalbox.web 'enters pipeline' {
+        navigateTo journey_daily_pipeline_rounds
+        notes """
+          - Only if something is blocked
+        """
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view person_toplayer_scratchpad {
+    variant sequence
+    title 'Workflows/Person/TopLayer/Turn a scratchpad note into work'
+    description 'P-TOP-11. A types a note on the top-layer pad; the assistant offers an interpretation; OK turns it into work and takes it off the pad.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.capture, signalbox.judge, hier.asstA
+    include signalbox, hier
+
+    personA -> signalbox.web 'types on pad' {
+      notes """
+        - A quick thought on the top layer
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.capture 'Capture.note' {
+      navigateTo person_notes_overlay
+      notes """
+        - Private row on A's Person actor at the top level; never a needs-you
+      """
+    }
+    signalbox.capture -> signalbox.judge 'intent or thought?' {
+      notes """
+        - Insufficient evidence means it stays a note
+      """
+    }
+    signalbox.capture -> hier.asstA 'looks like work' {
+      notes """
+        - The assistant tends A's pad
+      """
+    }
+    hier.asstA -> signalbox.funnel 'offer overlay' {
+      notes """
+        - One gentle overlay; never interrupts
+      """
+    }
+    signalbox.funnel -> signalbox.web 'make it a task?' {
+      notes """
+        - The assistant's interpretation
+      """
+    }
+    alt 'A decides' {
+      when 'OK' {
+        signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.send(NewThread)' {
+          navigateTo person_pipeline_ready_from_capture
+          notes """
+            - The note becomes work in a new thread
+          """
+        }
+        signalbox.funnel -> signalbox.capture 'Capture.change(Link)' {
+          notes """
+            - The note leaves the pad and stays linked to the work
+          """
+        }
+      }
+      else 'ignore' {
+        personA -> signalbox.web 'ignores it' {
+          notes """
+            - It stays a note on the pad
+          """
+        }
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+}

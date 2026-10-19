@@ -1,0 +1,109 @@
+model {
+  extend signalbox {
+    connections = module 'Connections' {
+      #deep #v1 #publishable
+      icon bootstrap:plug
+      description 'connect · complete · change · toolbox · call · fill'
+      technology 'Executor absorbed: sdk · catalog · mcp · mcp-auth · fumadb-effect · forge APIs (git itself is Drive)'
+      metadata {
+        interface '6'
+        deletion 'credentials and tool search smear into UI routes and Gateway'
+      }
+
+      api = iface 'Connections · interface' {
+        description '6 verbs: connect · complete · change · toolbox · call · fill (secret values at egress only)'
+        technology 'Deletion test: without it, credentials and tool search smear into UI routes and Gateway'
+      }
+
+      providers = part 'ToolProvider seam · 6 adapters' {
+        description 'servers sorted by kind; every connector goes through Executor'
+        metadata { adapters '6' }
+        catalogRest = adapter 'Catalog OAuth / REST' {
+          #v1
+          icon tech:oauth
+          technology 'Executor sdk + catalog · Nango catalog data · OpenAPI / GraphQL import'
+        }
+        remoteMcp = adapter 'Remote MCP' {
+          icon bootstrap:plugin
+          technology '@modelcontextprotocol/sdk'
+        }
+        browserTools = adapter 'Browser tools' {
+          icon tech:chrome
+        }
+        stdioKernel = adapter 'Network-only stdio' {
+          icon tech:webassembly
+          description 'runs as a kernel program'
+        }
+        stdioVm = adapter 'Native or Python stdio' {
+          icon tech:python
+          description "runs on the thread's VM"
+        }
+        deviceMcp = adapter 'Device-only server' {
+          icon bootstrap:laptop
+          description 'via the device gateway; offline = needs you'
+        }
+      }
+
+      exposure = part 'Tool exposure' {
+        #decided
+        icon bootstrap:eye
+        description 'search (default) · direct; nearest wins'
+        technology 'placement on a folder, resolved by the thread place'
+      }
+
+      oauth = part 'Hosted OAuth' {
+        #v1
+        icon tech:oauth
+        description 'one click · unlimited accounts'
+        technology 'Executor mcp-auth'
+      }
+      toolSearch = part 'Tool search' {
+        #v1
+        icon bootstrap:search
+        description 'over union(connection)'
+      }
+      vault = part 'Vault worker' {
+        icon bootstrap:key-fill
+        description 'isolated; keyed by server URL or destination'
+        technology '@1password/sdk'
+      }
+      health = part 'Health & repair' {
+        icon bootstrap:heart-pulse
+      }
+
+      toolSearch -> providers.catalogRest 'call'
+      toolSearch -> providers.remoteMcp 'call'
+      toolSearch -> providers.browserTools 'call'
+      toolSearch -> providers.stdioKernel 'call'
+      toolSearch -> providers.stdioVm 'call'
+      toolSearch -> providers.deviceMcp 'call'
+      toolSearch -> exposure 'search or direct?'
+      oauth -> providers.catalogRest 'tokens'
+      health -> oauth 'reauth'
+    }
+
+    connections.providers.catalogRest -[tool]-> services.google 'API'
+    connections.providers.catalogRest -[tool]-> services.atlassian 'API'
+    connections.providers.catalogRest -[tool]-> services.microsoft365 'API'
+    connections.providers.catalogRest -[tool]-> services.slack 'API'
+    connections.providers.catalogRest -[tool]-> services.notion 'API'
+    connections.providers.catalogRest -[tool]-> services.todoist 'API'
+    connections.providers.catalogRest -[tool]-> services.trello 'API'
+    connections.providers.catalogRest -[tool]-> telemetry.sentry 'API'
+    connections.providers.catalogRest -[tool]-> services.github 'PR · issues API'
+    connections.vault -> services.onepassword 'secret refs'
+    connections.providers.browserTools -[tool]-> signalbox.browser.api 'session'
+    connections.providers.stdioKernel -> signalbox.computer.api 'exec (kernel program)'
+    connections.providers.stdioVm -> signalbox.computer.api 'exec (VM)'
+    connections.providers.deviceMcp -[tool]-> signalbox.desktop.deviceGateway 'reach'
+    connections.exposure -> signalbox.tree.api 'resolve exposure'
+    connections.health -> signalbox.thread.api 'access required'
+    connections.oauth -> signalbox.tree.api 'unplace (disconnect saga)'
+
+    // Interface → hidden parts (the only way in)
+    connections.api -> connections.oauth 'connect · complete'
+    connections.api -> connections.connectionActor 'change'
+    connections.api -> connections.toolSearch 'toolbox · call'
+    connections.api -> connections.vault 'secret refs'
+  }
+}

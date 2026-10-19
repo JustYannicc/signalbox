@@ -1,0 +1,1275 @@
+// Shard 02: the personal assistant. The assistant is the agent thread of a person's top level
+// (hier.asstA for Person A): coordinator profile, top layer beside the pipeline. It coordinates
+// through Operations and never executes. One question per view; 4-8 participants in container lanes:
+// people › Signalbox (clients, door, actors, modules) › Tree (example) (assistants, agent threads) › externals.
+// People: A and B are members of folder Company (owner: organization) and share a thread in folder
+// Team; C is admin of folder Company.
+views {
+  style signalbox, hier, services, platform, modelProviders {
+    color muted
+    opacity 8%
+  }
+
+  // ───────────────────────────── Overview: the assistant as an owner example ─────────────────────────────
+
+  dynamic view person_assistant_overview {
+    variant sequence
+    title 'Workflows/Person/Assistant/Overview: who it works for, every way in, what it hands off'
+    description """
+      Owner example: the assistant represents one person (A) and nobody else. Steps 1-6 are every way work reaches it;
+      steps 7-10 are everything it does with that work. It coordinates and never executes (step 11).
+      B and C each have their own assistant doing the same for them. Not v1. Click a step to drill into its flow.
+    """
+
+    include personA, hier.asstB, hier.company.team.sharedThread, hier.asstA, hier.company.agentCo, signalbox.attention, signalbox.automations, signalbox.gateway
+    include hier, signalbox
+    style hier.asstA {
+      color green
+    }
+
+    personA -> hier.asstA 'chat or Now composer' {
+      navigateTo person_assistant_talk
+      notes """
+        - Typed on Now or the pinned /assistant page: the same thread on every device
+        - Captures and drafts sent to it land here too
+      """
+    }
+    personA -> hier.asstA 'voice call' {
+      navigateTo person_assistant_voice_call
+      notes '- Quiet until A says the trigger word, then back to waiting (#1196)'
+    }
+    hier.company.team.sharedThread -> hier.asstA '@mention by A' {
+      navigateTo person_assistant_mention
+      notes """
+        - Only A can mention A's assistant; B gets B's own
+        - It speaks for A, sharing only what A's policy allows
+      """
+    }
+    hier.asstB -> hier.asstA 'room question' {
+      navigateTo person_assistant_room
+      notes "- B's assistant asks A's in a room thread; both people watch and can step in"
+    }
+    signalbox.attention -> hier.asstA 'ask routed to A' {
+      navigateTo person_assistant_answer_on_behalf
+      notes """
+        - Asks for A reach A's assistant first
+        - It answers only kinds A delegated; otherwise A gets a Blocker
+      """
+    }
+    signalbox.automations -> hier.asstA 'handoff or digest' {
+      navigateTo person_assistant_cross_owner_handoff
+      notes """
+        - Another owner's automation hands off a declared result only
+        - The weekly digest of its on-behalf answers lands here too
+      """
+    }
+    hier.asstA -> hier.company.agentCo 'delegate or consult' {
+      navigateTo person_assistant_delegate
+      notes """
+        - Work that belongs to folder Company goes to Company's agent
+        - That agent uses Company's pool and connections; the assistant gets the outcome, not the transcript
+      """
+    }
+    hier.asstA -> hier.company.team.sharedThread 'start or steer' {
+      navigateTo person_assistant_start_steer
+      notes "- New threads land where the work lives (Team), never in the assistant's own chat"
+    }
+    hier.asstA -> signalbox.gateway 'read-only lookups' {
+      navigateTo person_assistant_lookup
+      notes "- Catalogs, status, search, A's mail and calendar: only what A can see"
+    }
+    hier.asstA -> signalbox.attention 'ask A' {
+      navigateTo person_assistant_park_resume
+      notes '- When only A can decide, it parks and A gets one pipeline item'
+    }
+    hier.asstA -> signalbox.gateway 'exec refused' {
+      navigateTo person_assistant_guardrails
+      notes """
+        - Coordinator profile: no exec, no secrets, no write tools, scratch-only files
+        - Destructive ops pass the decision gate as a Ready ask to A
+        - So the trail stays readable: every hand-off is a card anyone can open
+      """
+    }
+  }
+
+  // ───────────────────────────── Journeys/Assistant ─────────────────────────────
+
+  dynamic view journey_assistant_customize {
+    variant sequence
+    title 'Journeys/Assistant/Customize the assistant'
+    description 'P-AST-39 · not v1 · where SOUL.md and USER.md live is open (MASTER #49)'
+
+    include personA, signalbox.web, signalbox.operations, signalbox.tree.personActor, signalbox.tree.levelActor
+    include signalbox
+
+    personA -> signalbox.web 'opens Customize' {
+      notes """
+        - Assistant page › Customize
+        - Sees name, avatar, SOUL.md (how it behaves), USER.md (what it knows about A)
+      """
+    }
+    personA -> signalbox.web 'edits' {
+      notes """
+        - Everything stays a **draft** in the dialog until Save
+        - Closing keeps the draft; nothing reaches the assistant yet
+      """
+    }
+    signalbox.web -> signalbox.operations 'Save' {
+      notes '- Through the Funnel like every client command'
+    }
+    alt 'where the files live (open)' {
+      when 'Person rows' {
+        signalbox.operations -> signalbox.tree.personActor 'upsert customization' {
+          notes """
+            - Private to A, like drafts and private notes
+            - Never visible in a shared folder
+          """
+        }
+      }
+      else 'placed at the top level' {
+        signalbox.operations -> signalbox.tree.levelActor 'place both files' {
+          notes """
+            - Placements on A's top level, cascading like AGENTS.md
+            - B and C never get them: A's top level is above none of their threads
+          """
+        }
+      }
+    }
+    signalbox.web <- signalbox.operations 'saved'
+    signalbox.web -> personA 'new name, avatar' {
+      notes '- The next assistant turn reads the files; a running turn keeps its frozen Scope'
+    }
+    personA -> signalbox.web 'opens Instructions' {
+      navigateTo person_assistant_agents_md
+      notes '- AGENTS.md for the assistant is its own placement: see the instructions flow'
+    }
+  }
+
+  dynamic view journey_assistant_trace {
+    variant sequence
+    title 'Journeys/Assistant/See what the assistant handed off'
+    description 'P-AST-18, P-AST-19 · not v1 · principle 4: anyone can dig in'
+
+    include personA, signalbox.web, signalbox.operations, signalbox.thread.threadActor, signalbox.attention, signalbox.observability
+    include signalbox
+
+    signalbox.thread.threadActor -> signalbox.web 'delegation card' {
+      navigateTo person_assistant_delegate
+      notes """
+        - One collapsed line in the assistant chat: what went to whom, its pipeline status
+        - Streamed over the thread subscription; no badge, no count
+      """
+    }
+    opt 'an approval is waiting' {
+      signalbox.attention -> signalbox.web 'approval stays visible' {
+        notes '- A waiting approval never collapses away until answered'
+      }
+    }
+    personA -> signalbox.web 'expands the card' {
+      notes '- One click down: the route and the exact message the receiver got'
+    }
+    personA -> signalbox.web 'opens Trace' {
+      navigateTo work_recovery_one_trace
+    }
+    signalbox.web -> signalbox.operations 'trace query'
+    parallel {
+      signalbox.operations -> signalbox.thread.threadActor 'lineage' {
+        notes '- Every hand-off: delegate, consult, room, ask-up'
+      }
+      signalbox.operations -> signalbox.attention 'delivery records' {
+        notes '- Who got pinged, who was suppressed, and why'
+      }
+      signalbox.operations -> signalbox.observability 'trace ids' {
+        notes '- Ids only, never content'
+      }
+    }
+    signalbox.web <- signalbox.operations 'trees per origin'
+    signalbox.web -> personA 'reads each hop' {
+      notes """
+        - One tree per origin (a message, a tick, an ask)
+        - Each hop: who received it, what they saw, the notification decisions
+      """
+    }
+  }
+
+  // ───────────────────────── Workflows/Person/Assistant/Coordinate ─────────────────────────
+
+  dynamic view person_assistant_change_automations {
+    variant sequence
+    title 'Workflows/Person/Assistant/Coordinate/Change automations with the assistant'
+    description 'P-AST-23 · not v1'
+
+    include personA, hier.asstA, signalbox.web, signalbox.tree.levelActor, signalbox.operations, signalbox.automations
+    include hier, signalbox
+
+    personA -> signalbox.web 'Change with agent' {
+      notes """
+        - From the Automations list at A's top level
+        - Opens the assistant with that automation in context
+      """
+    }
+    signalbox.web -> hier.asstA 'describes the change' {
+      navigateTo person_assistant_talk
+      notes '- Same path as any message to the assistant'
+    }
+    hier.asstA -> signalbox.operations 'change automation' {
+      notes "- Coordination goes through Operations; Tree.can checks A's rights"
+    }
+    alt 'where it is placed' {
+      when "at A's top level" {
+        signalbox.operations -> signalbox.automations 'new version' {
+          navigateTo work_automations_define
+          notes """
+            - Compiled as a new version; running runs stay pinned to theirs
+            - Trigger and placement stay at A's top level
+          """
+        }
+        signalbox.automations -> signalbox.tree.levelActor 'placement version' {
+          navigateTo state_automation
+        }
+        signalbox.operations -> hier.asstA 'changed'
+      }
+      else 'in a folder below' {
+        signalbox.operations -> hier.asstA 'Denied: not its level' {
+          notes """
+            - The assistant edits automations at its own level only
+            - It offers to ask that folder's agent; Company's stay Company's (admin C)
+          """
+        }
+      }
+    }
+    opt 'it deletes or disables' {
+      hier.asstA -> signalbox.operations 'NeedsDecision' {
+        navigateTo person_assistant_guardrails
+        notes '- Destructive changes pass the decision gate as a Ready ask to A'
+      }
+    }
+    hier.asstA -> signalbox.web 'shows the diff' {
+      notes '- A sees what changed before anything new runs'
+    }
+  }
+
+  dynamic view person_assistant_delegate {
+    variant sequence
+    title 'Workflows/Person/Assistant/Coordinate/Delegate to a level agent and get the result'
+    description 'P-AST-13, P-AST-17 · not v1'
+
+    include personA, hier.asstA, hier.company.agentCo, signalbox.thread.threadActor, signalbox.tree
+    include hier, signalbox
+
+    personA -> hier.asstA 'asks for work' {
+      notes '- e.g. "get the Company launch numbers": the work belongs to folder Company'
+    }
+    hier.asstA -> signalbox.thread.threadActor 'Delegate or consult' {
+      navigateTo work_threads_delegate_subagent
+      notes """
+        - Delegate saga in the assistant's Thread actor
+        - The child's Place is that level (Company)
+      """
+    }
+    signalbox.thread.threadActor -> hier.company.agentCo 'task arrives' {
+      notes "- Company's agent thread: worker profile, Company's pool and connections"
+    }
+    hier.company.agentCo -> signalbox.tree 'resolves own chain' {
+      notes """
+        - Company chain only, no via: nothing of A's top level reaches it
+        - Same answer whether A, B or C asked
+      """
+    }
+    alt 'delegate or consult' {
+      when 'delegate' {
+        hier.company.agentCo -> hier.company.agentCo 'does the task'
+      }
+      else 'consult' {
+        hier.company.agentCo -> hier.company.agentCo 'answers from level'
+      }
+    }
+    hier.company.agentCo -[async]-> signalbox.thread.threadActor 'task completed' {
+      notes '- `delegated_task.completed` leaves the child outbox: at least once, idempotent'
+    }
+    signalbox.thread.threadActor -> hier.asstA 'outcome, not transcript' {
+      navigateTo work_levelagents_assistant_coordinates
+      notes """
+        - The assistant sees the result, never the child's transcript
+        - The delegation card links down to the child for anyone with access
+      """
+    }
+    hier.asstA -> personA 'reports back'
+  }
+
+  dynamic view person_assistant_guardrails {
+    variant sequence
+    title "Workflows/Person/Assistant/Coordinate/What the assistant won't do itself"
+    description 'P-AST-24, P-AST-25 · not v1 · it coordinates, never executes'
+
+    include personA, hier.asstA, hier.company.agentCo, signalbox.thread.threadActor, signalbox.operations, signalbox.gateway, signalbox.attention
+    include hier, signalbox
+
+    alt 'what it tries' {
+      when 'a destructive op' {
+        hier.asstA -> signalbox.operations 'invoke Unplace' {
+          notes '- Agent-initiated deletes and unplaces always pass the decision gate'
+        }
+        signalbox.operations -> signalbox.thread.threadActor 'NeedsDecision' {
+          navigateTo person_pipeline_ready_gate
+          notes """
+            - A Ready ask, gate destructive, decider A
+            - The assistant's turn parks while it waits
+          """
+        }
+        signalbox.thread.threadActor -[async]-> signalbox.attention 'ask'
+        signalbox.attention -> personA 'Ready lane'
+        personA -> signalbox.thread.threadActor 'approves' {
+          notes '- Thread.send(answer) from any surface'
+        }
+        signalbox.thread.threadActor -> hier.asstA 'resumes'
+        hier.asstA -> signalbox.operations 'invoke, approved'
+      }
+      else 'exec, secret or write tool' {
+        hier.asstA -> signalbox.gateway 'tool call' {
+          navigateTo work_harness_turn_inputs
+        }
+        signalbox.gateway -> hier.asstA 'not in profile' {
+          notes """
+            - Coordinator profile: no exec, scratch-only files, no secret refs, no write tools
+            - Native coordination (delegate, steer, ask) stays allowed
+          """
+        }
+        hier.asstA -> signalbox.thread.threadActor 'Delegate instead' {
+          navigateTo work_levelagents_assistant_coordinates
+        }
+        signalbox.thread.threadActor -> hier.company.agentCo 'worker executes' {
+          notes "- The level agent runs with its own level's grants; the assistant gets the outcome"
+        }
+      }
+    }
+  }
+
+  dynamic view person_assistant_lookup {
+    variant sequence
+    title 'Workflows/Person/Assistant/Coordinate/Look things up for the person'
+    description 'P-AST-14, P-AST-26 · not v1'
+
+    include personA, hier.asstA, signalbox.tree.levelActor, signalbox.gateway, signalbox.operations, signalbox.search, signalbox.connections, services.google
+    include hier, signalbox, services
+
+    personA -> hier.asstA "what's up in Team?"
+    alt 'what it needs' {
+      when 'catalogs, status, search' {
+        hier.asstA -> signalbox.gateway 'query op'
+        signalbox.gateway -> signalbox.operations 'query as A' {
+          notes """
+            - Tree.can on every op: only what A can see in Team
+            - B's private draft spec in Team never shows up for A
+          """
+        }
+        parallel {
+          signalbox.operations -> signalbox.tree.levelActor 'catalog, status'
+          signalbox.operations -> signalbox.search 'search' {
+            navigateTo work_search_catalog
+            notes '- Search re-checks visibility before any snippet'
+          }
+        }
+        signalbox.gateway <- signalbox.operations 'visible rows'
+      }
+      else 'mail or calendar' {
+        hier.asstA -> signalbox.gateway 'read-only tool' {
+          navigateTo folders_connections_tool_search_call
+          notes '- Only read tools are in the coordinator profile'
+        }
+        signalbox.gateway -> signalbox.connections 'call'
+        signalbox.connections -> services.google 'read mail' {
+          notes "- A's own Google, placed at A's top level, reaches the assistant thread"
+        }
+        signalbox.gateway <- signalbox.connections 'result'
+      }
+    }
+    hier.asstA <- signalbox.gateway 'data'
+    hier.asstA -> personA 'summary'
+  }
+
+  dynamic view person_assistant_start_steer {
+    variant sequence
+    title 'Workflows/Person/Assistant/Coordinate/Start or steer a thread for the person'
+    description 'P-AST-15, P-AST-16 · not v1'
+
+    include personA, personB, hier.asstA, signalbox.thread.threadActor, signalbox.operations, signalbox.tree
+    include hier, signalbox
+
+    personA -> hier.asstA 'start a review'
+    alt 'new or existing' {
+      when 'new thread' {
+        hier.asstA -> signalbox.operations 'NewThread at Team' {
+          notes "- Place = Team, via A's own mount of Company"
+        }
+        signalbox.operations -> signalbox.tree 'via check' {
+          notes """
+            - S1: the via must be a mount in the creator's tree; for the assistant, A's mounts
+            - A Place naming B's mount is Invalid, never rewritten
+          """
+        }
+        signalbox.operations -> signalbox.thread.threadActor 'Thread.send' {
+          navigateTo state_thread
+        }
+        signalbox.thread.threadActor -[async]-> signalbox.tree 'catalog row' {
+          notes "- Shows in Team for A and B; resolves Team › Company › A's Work › A's top level"
+        }
+      }
+      else 'existing thread' {
+        hier.asstA -> signalbox.operations 'send to thread'
+        signalbox.operations -> signalbox.thread.threadActor 'Thread.send(whenBusy)' {
+          navigateTo work_turns_send_while_busy
+          notes "- Tree.can first: A's rights on the shared thread"
+        }
+        alt 'thread state' {
+          when 'idle' {
+            signalbox.thread.threadActor -> signalbox.thread.threadActor 'starts turn'
+          }
+          when 'busy, steer' {
+            signalbox.thread.threadActor -> signalbox.thread.threadActor 'steers live turn'
+          }
+          else 'busy, queue' {
+            signalbox.thread.threadActor -> signalbox.thread.threadActor 'queues behind' {
+              notes "- B's turns and the assistant's queue in the one Thread actor"
+            }
+          }
+        }
+      }
+    }
+    signalbox.thread.threadActor -> personB 'live update' {
+      notes '- B is subscribed to the same thread'
+    }
+    hier.asstA -> personA 'link to thread'
+  }
+
+  // ───────────────────────── Workflows/Person/Assistant/Learner ─────────────────────────
+
+  dynamic view person_assistant_learner_levels {
+    title 'Workflows/Person/Assistant/Learner/Learner per level'
+    description 'P-AST-44, P-AST-49 · not v1 · one Learner instance per level'
+
+    include personA, personB, personC, signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.attention, signalbox.learner
+    include signalbox
+
+    parallel {
+      personA -> signalbox.thread.threadActor 'answers an ask' {
+        notes '- Decision events: answers, overturns, settle reasons, exceptions'
+      }
+      personB -> signalbox.thread.threadActor 'overturns an answer'
+      personC -> signalbox.thread.threadActor 'settles early'
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.learner 'observe at level' {
+      notes """
+        - Each event goes to the learner of the thread's level (Team, Company, A's Personal)
+        - A's personal learner sees only A's own top-level decisions
+      """
+    }
+    signalbox.attention -[async]-> signalbox.learner 'route outcomes'
+    signalbox.learner -> signalbox.tree.levelActor 'Team lens projection' {
+      notes '- Text plus stats, published up; never raw person events'
+    }
+    signalbox.tree.levelActor -> signalbox.learner 'Company reads below' {
+      navigateTo work_levelagents_learner
+      notes """
+        - Company's learner reads Team's projections, never a person's events
+        - A personal learner never stands in for Company authority
+      """
+    }
+    signalbox.learner -> signalbox.attention 'route authority'
+    autoLayout TopBottom
+  }
+
+  dynamic view person_assistant_memory_sources {
+    variant sequence
+    title 'Workflows/Person/Assistant/Learner/Memories keep their source home'
+    description 'P-AST-41, P-AST-42, P-AST-43, P-AST-48 · not v1 · every memory carries the folder it came from, so leaving or deleting a folder takes exactly its memories along · memory store home undecided (MASTER §4 F1), drawn as Learner'
+
+    include personA, personC, hier.asstA, platform.workos, signalbox.identity, signalbox.tree, signalbox.learner
+    include hier, signalbox, platform
+
+    alt 'what happens' {
+      when 'assistant learns a fact' {
+        hier.asstA -> signalbox.learner 'memory with source' {
+          notes """
+            - Every memory records its source home: the folder and its owner (organization for Company and Team, A for Personal)
+            - Kept in Learner's Memories store; where that store lives is still undecided
+          """
+        }
+      }
+      when 'A links a work account' {
+        personA -> platform.workos 'work sign-in'
+        platform.workos -> signalbox.identity 'callback'
+        signalbox.identity -> signalbox.tree 'link: same person' {
+          navigateTo identity_identity_link_work_account
+          notes '- Same person, same top level: identity and every memory survive; nothing is re-keyed'
+        }
+      }
+      when 'A unlinks or leaves' {
+        platform.workos -[async]-> signalbox.identity 'membership removed' {
+          navigateTo identity_identity_unlink
+        }
+        signalbox.identity -> signalbox.learner 'purge Company-sourced' {
+          navigateTo identity_identity_unlink_work_account
+          notes """
+            - Every memory sourced in the organization's folders is deleted
+            - Company and Team learners drop what they learned from A
+            - A's Personal memories stay
+          """
+        }
+      }
+      else 'C deletes folder Team' {
+        personC -> signalbox.tree 'delete Team' {
+          notes '- C is admin of folder Company'
+        }
+        signalbox.tree -[async]-> signalbox.learner 'folder deleted' {
+          notes """
+            - Team's learner instance goes with the folder
+            - Team-sourced memories go too, in A's and B's assistants alike
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view person_assistant_settle_reason {
+    variant sequence
+    title 'Workflows/Person/Assistant/Learner/Record why a task settled early'
+    description 'P-AST-21, P-AST-22 · not v1'
+
+    include personA, hier.asstA, signalbox.thread.threadActor, signalbox.attention, signalbox.learner
+    include hier, signalbox
+
+    personA -> signalbox.thread.threadActor 'settles early' {
+      navigateTo person_pipeline_ready_settle
+      notes '- Done-condition not met; one click offers "dropped" or "done enough"'
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'settled' {
+      navigateTo state_thread
+    }
+    alt 'reason' {
+      when 'A picked one' {
+        signalbox.thread.threadActor -[async]-> signalbox.learner 'observe reason'
+      }
+      else 'no reason' {
+        signalbox.thread.threadActor -[async]-> signalbox.learner 'observe unexplained'
+        opt 'rarely worth asking' {
+          hier.asstA -> signalbox.attention 'why settle this?' {
+            notes """
+              - Raised in the assistant's thread as a pipeline item, never pushed
+              - Rare by design: attention is the scarce resource
+            """
+          }
+          signalbox.attention -> personA 'pipeline item'
+          personA -> hier.asstA 'answers'
+          hier.asstA -> signalbox.learner 'observe reason'
+        }
+      }
+    }
+  }
+
+  dynamic view person_assistant_supervisor_metrics {
+    title 'Workflows/Person/Assistant/Learner/Supervisor-tax metrics per person'
+    description 'P-AST-50 · not v1'
+
+    include personA, signalbox.web, signalbox.attention, signalbox.observability
+    include signalbox
+
+    signalbox.attention -> signalbox.attention 'ask records' {
+      notes '- Per ask: raised, routed hops, who answered, answer time, overturned'
+    }
+    signalbox.attention -> signalbox.observability 'metric events' {
+      notes """
+        - Questions per task, share reaching a person, time to answer, overturn rate
+        - Per person as percentiles; ids only, never content
+      """
+    }
+    signalbox.observability -> signalbox.web 'dev-mode panel' {
+      navigateTo operations_ops_obs_dev_mode
+    }
+    signalbox.web -> personA 'own supervisor tax' {
+      notes '- Is the assistant taking work off A, or adding questions?'
+    }
+    autoLayout TopBottom
+  }
+
+  dynamic view person_assistant_teach {
+    variant sequence
+    title 'Workflows/Person/Assistant/Learner/Teach the assistant a rule'
+    description 'P-AST-45, P-AST-46, P-AST-47 · not v1'
+
+    include personA, hier.asstA, signalbox.web, signalbox.thread.threadActor, signalbox.automations, signalbox.learner
+    include hier, signalbox
+
+    alt 'how A teaches' {
+      when 'overturn an answer' {
+        personA -> signalbox.web 'opens the digest' {
+          navigateTo person_assistant_weekly_digest
+          notes '- Or the Trace of that ask'
+        }
+        signalbox.web -> signalbox.thread.threadActor 'sends overturn' {
+          notes '- A new answer into the asking thread, like any answer'
+        }
+        signalbox.thread.threadActor -[async]-> signalbox.learner 'observe overturn' {
+          notes '- Lowers the authority of the lens that answered'
+        }
+      }
+      when 'state a rule' {
+        personA -> hier.asstA 'states a rule' {
+          notes '- e.g. "always decline Friday meetings"'
+        }
+        hier.asstA -> signalbox.learner 'owner statement' {
+          notes '- A stronger prior than anything learned from decisions'
+        }
+      }
+      else 'an exception proposes one' {
+        signalbox.automations -[async]-> signalbox.learner 'run needed A' {
+          navigateTo operations_ops_self_healing
+          notes '- Feeds the needed-no-one rate'
+        }
+        signalbox.learner -> hier.asstA 'proposed rule' {
+          notes '- The rule that would have avoided this exception'
+        }
+        hier.asstA -> signalbox.web 'proposal card'
+        personA -> signalbox.web 'accepts'
+        signalbox.web -> hier.asstA 'accepted'
+        hier.asstA -> signalbox.learner 'owner statement'
+      }
+    }
+  }
+
+  dynamic view person_assistant_weekly_digest {
+    variant sequence
+    title 'Workflows/Person/Assistant/Learner/Weekly digest of on-behalf answers'
+    description 'P-AST-28 · not v1 · a sequence because order matters'
+
+    include personA, hier.asstA, signalbox.thread.threadActor, signalbox.automations, signalbox.learner
+    include hier, signalbox
+
+    signalbox.automations -> signalbox.automations 'weekly tick' {
+      notes "- A default automation placed at A's top level; A can read and edit it"
+    }
+    signalbox.automations -> signalbox.learner 'on-behalf answers'
+    signalbox.automations <- signalbox.learner 'answers and rules'
+    signalbox.automations -> hier.asstA 'digest'
+    hier.asstA -> signalbox.thread.threadActor 'one chat entry' {
+      notes '- Quiet: lands in the assistant chat, never pushed, no badge'
+    }
+    personA -> hier.asstA 'reads it later' {
+      navigateTo person_assistant_teach
+      notes '- Each line can be overturned, which teaches the learner'
+    }
+  }
+
+  // ───────────────────────── Workflows/Person/Assistant/Reach ─────────────────────────
+
+  dynamic view person_assistant_from_capture {
+    variant sequence
+    title 'Workflows/Person/Assistant/Reach/Hand a capture or draft to the assistant'
+    description 'P-AST-05, P-AST-06 · not v1'
+
+    include personA, hier.asstA, signalbox.web, signalbox.thread.threadActor, signalbox.capture, signalbox.automations
+    include hier, signalbox
+
+    alt 'entry' {
+      when 'capture, assistant chip' {
+        personA -> signalbox.web 'hotkey capture' {
+          notes '- Capture opens from hotkey or palette with the assistant chip preselected'
+        }
+        signalbox.web -> signalbox.capture 'capture to assistant' {
+          notes '- A capture never interrupts anyone'
+        }
+        signalbox.capture -[async]-> signalbox.automations 'capture event' {
+          navigateTo person_capture_routing
+          notes '- Capture routing (a default automation) honours the chip; Judge runs only without one'
+        }
+        signalbox.automations -> signalbox.thread.threadActor 'send to assistant'
+      }
+      else 'top-level draft' {
+        personA -> signalbox.web 'opens a draft' {
+          navigateTo journey_capture_resume_draft
+        }
+        signalbox.web -> signalbox.capture 'view drafts'
+        signalbox.web <- signalbox.capture 'draft text'
+        signalbox.web -> signalbox.web 'composer prefilled' {
+          notes '- The assistant opens with the draft text in its composer, still private'
+        }
+        personA -> signalbox.web 'sends'
+        signalbox.web -> signalbox.capture 'Send' {
+          navigateTo state_draft
+          notes '- requestId from the draft id: a retried send returns the same result'
+        }
+        signalbox.capture -> signalbox.thread.threadActor 'send to assistant'
+      }
+    }
+    signalbox.thread.threadActor -> hier.asstA 'new turn'
+  }
+
+  dynamic view person_assistant_mention {
+    variant sequence
+    title 'Workflows/Person/Assistant/Reach/Mention the assistant from any thread'
+    description 'P-AST-04 · not v1 · only agents on the chain'
+
+    include personA, personB, hier.asstA, hier.asstB, signalbox.web, signalbox.mobile, signalbox.thread.threadActor, signalbox.tree
+    include hier, signalbox
+
+    personA -> signalbox.web "types '@'" {
+      notes "- In the shared thread in Team, under Company, mounted in A's and B's Work"
+    }
+    signalbox.web -> signalbox.tree 'chain agents for A' {
+      navigateTo journey_agents_mention_chain
+      notes """
+        - Offered: Team's and Company's agents, plus A's own assistant
+        - Never B's assistant: each person mentions only the one representing them
+      """
+    }
+    signalbox.web -> signalbox.thread.threadActor 'send mention'
+    signalbox.thread.threadActor -> hier.asstA 'mentioned' {
+      navigateTo work_threads_multiplayer_mention
+    }
+    hier.asstA -> signalbox.thread.threadActor 'replies' {
+      notes "- Speaks for A; shares only what A's policy allows"
+    }
+    personB -> signalbox.mobile "types '@'"
+    signalbox.mobile -> signalbox.tree 'chain agents for B'
+    signalbox.mobile <- signalbox.tree "B's assistant only"
+    signalbox.mobile -> signalbox.thread.threadActor 'send mention'
+    signalbox.thread.threadActor -> hier.asstB 'mentioned'
+  }
+
+  dynamic view person_assistant_room {
+    variant sequence
+    title "Workflows/Person/Assistant/Reach/Ask another person's assistant in a room"
+    description 'P-AST-11, P-AST-12 · not v1 · room protocol still open (MASTER §4 E7, E13)'
+
+    include personA, personB, hier.asstA, hier.asstB, signalbox.web, signalbox.thread.threadActor, signalbox.attention
+    include hier, signalbox
+
+    personA -> signalbox.web "Ask B's assistant" {
+      navigateTo pgap_rooms_widen_fork
+      notes "- From B's profile card"
+    }
+    alt 'what opens' {
+      when 'a room' {
+        signalbox.web -> signalbox.thread.threadActor 'open room' {
+          navigateTo work_threads_multiplayer_rooms
+          notes """
+            - A thread of kind room: one home, participants A, B and both assistants
+            - Each participant row carries its assistant's mayShare / neverShares policy
+          """
+        }
+        signalbox.thread.threadActor -> hier.asstA "A's question"
+        hier.asstA -> hier.asstB 'asks within mayShare' {
+          notes '- In the room thread; A and B both watch live and can step in'
+        }
+        hier.asstB -> hier.asstB 'checks neverShares'
+        opt 'sharing needs consent' {
+          hier.asstB -> signalbox.attention 'ask B to share'
+          signalbox.attention -> personB 'Ready lane'
+          personB -> signalbox.thread.threadActor 'allows'
+          signalbox.thread.threadActor -> hier.asstB 'consent'
+        }
+        hier.asstB -> hier.asstA 'answer'
+        hier.asstA -> personA 'answer'
+      }
+      else 'a needs-you for B' {
+        signalbox.web -> signalbox.thread.threadActor 'ask for B' {
+          navigateTo journey_sharing_message_person
+        }
+        signalbox.thread.threadActor -[async]-> signalbox.attention 'ask'
+        signalbox.attention -> personB "in B's lanes"
+      }
+    }
+  }
+
+  dynamic view person_assistant_talk {
+    variant sequence
+    title 'Workflows/Person/Assistant/Reach/Talk to the assistant'
+    description 'P-AST-01, P-AST-02 · not v1 · the canonical path of an assistant turn'
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.operations, signalbox.tree, signalbox.gateway, signalbox.harness, signalbox.models
+    include signalbox
+
+    alt 'entry' {
+      when 'Now composer' {
+        personA -> signalbox.web 'types on Now' {
+          navigateTo person_toplayer_open_now
+        }
+      }
+      else 'pinned /assistant page' {
+        personA -> signalbox.web 'opens /assistant' {
+          notes '- Pinned above every view; the same thread as the Now composer'
+        }
+      }
+    }
+    signalbox.web -> signalbox.operations 'Thread.send' {
+      notes '- Through the Funnel, the one typed door'
+    }
+    signalbox.operations -> signalbox.thread.threadActor 'send to assistant' {
+      notes "- Place = A's top level; the assistant is its agent thread"
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'resolve as coordinator' {
+      navigateTo work_levelagents_assistant_coordinates
+      notes """
+        - Scope = A's top level: preferred pool, A's Google, AGENTS.md
+        - Coordinator profile filters tools after resolution; Gateway mints the grant
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'turn input'
+    signalbox.harness -> signalbox.gateway 'model call'
+    signalbox.gateway -> signalbox.models 'preferred pool' {
+      notes "- A's pool marked preferred at A's top level"
+    }
+    signalbox.harness -[async]-> signalbox.thread.threadActor 'events'
+    signalbox.thread.threadActor -> signalbox.web 'streams reply' {
+      notes '- Over the thread subscription; every device of A sees the same chat'
+    }
+  }
+
+  dynamic view person_assistant_voice_call {
+    variant sequence
+    title 'Workflows/Person/Assistant/Reach/Call the assistant by voice'
+    description 'P-AST-03 · not v1 · #1196 decided: on a call the assistant stays quiet until the trigger word, answers, then waits for it again · realtime voice adapter inside Harness undecided'
+
+    include personA, signalbox.mobile, signalbox.funnel, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway, signalbox.models, modelProviders.openai
+    include signalbox, modelProviders
+
+    personA -> signalbox.mobile "taps 'Call'" {
+      notes '- From the assistant on any device; the trigger word is a setting A can change (#1196)'
+    }
+    signalbox.mobile -> signalbox.funnel 'voice session'
+    signalbox.funnel -> signalbox.harness 'open voice turn' {
+      notes """
+        - Same assistant thread, Scope and pool as a typed turn
+        - Opens in waiting mode: nothing is answered yet
+      """
+    }
+    loop 'while the call is open' {
+      personA -> signalbox.mobile 'speaks'
+      signalbox.mobile -> signalbox.harness 'audio frames' {
+        notes '- Through the Funnel socket'
+      }
+      alt 'trigger word said?' {
+        when 'no' {
+          signalbox.harness -> signalbox.harness 'stays quiet' {
+            notes """
+              - #1196: always-listening jumps in too eagerly, so it waits
+              - Nothing heard before the trigger word becomes a turn
+            """
+          }
+        }
+        else 'yes' {
+          signalbox.harness -> signalbox.gateway 'realtime model call' {
+            notes '- The one Gateway and A\'s preferred pool, like every model call'
+          }
+          signalbox.gateway -> signalbox.models 'pool route'
+          signalbox.models -> modelProviders.openai 'realtime audio'
+          signalbox.harness -> signalbox.mobile 'voice reply' {
+            notes """
+              - It coordinates here too: work is delegated, never executed on the call
+              - Then it goes back to waiting for the trigger word (#1196)
+            """
+          }
+        }
+      }
+    }
+    personA -> signalbox.mobile 'hangs up'
+    signalbox.harness -[async]-> signalbox.thread.threadActor 'entry and transcript' {
+      notes '- One entry in the assistant chat; the transcript sits behind it'
+    }
+    signalbox.thread.threadActor -> signalbox.mobile 'shows the entry' {
+      navigateTo person_assistant_talk
+    }
+  }
+
+  // ───────────────────────── Workflows/Person/Assistant/Routing ─────────────────────────
+
+  dynamic view person_assistant_answer_on_behalf {
+    variant sequence
+    title "Workflows/Person/Assistant/Routing/Answer an ask on the person's behalf"
+    description 'P-AST-08, P-AST-09, P-AST-20 · not v1'
+
+    include personA, hier.asstA, hier.asstB, hier.asstC, signalbox.thread.threadActor, signalbox.attention, signalbox.learner
+    include hier, signalbox
+
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'ask raised' {
+      navigateTo person_pipeline_route
+      notes """
+        - From the shared thread in Team; Team's agent could not answer
+        - Route: up the chain to the responsible people, each person's assistant first
+      """
+    }
+    parallel {
+      signalbox.attention -> hier.asstA "A's assistant"
+      signalbox.attention -> hier.asstB "B's assistant" {
+        notes "- B's and C's assistants run the same steps with their own lenses, each for its own person"
+      }
+      signalbox.attention -> hier.asstC "C's assistant"
+    }
+    hier.asstA -> signalbox.learner 'lenses for Team' {
+      notes '- RouteAuthority: did A delegate this kind, and is the evidence enough?'
+    }
+    alt 'authority' {
+      when 'A delegated this kind' {
+        alt 'answer or defer' {
+          when 'answer' {
+            hier.asstA -> signalbox.thread.threadActor 'answers as A' {
+              navigateTo folders_gates_assistant_answers
+              notes """
+                - Logged with the rule used; never pushed
+                - Shows up in the weekly digest
+              """
+            }
+          }
+          else 'defer' {
+            hier.asstA -> signalbox.attention 'defers' {
+              navigateTo person_pipeline_ready_delegate_kind
+            }
+          }
+        }
+      }
+      else 'no authority' {
+        hier.asstA -> signalbox.thread.threadActor 'no authority here' {
+          notes '- Records `no-authority-at-this-level`; also on thin evidence'
+        }
+        signalbox.attention -> personA 'Blocker for A' {
+          navigateTo state_ask
+        }
+      }
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'resolved' {
+      notes "- First receipt wins; the ask leaves B's and C's lanes too"
+    }
+  }
+
+  dynamic view person_assistant_ask_up {
+    variant sequence
+    title 'Workflows/Person/Assistant/Routing/Ask up to the lowest level covering both'
+    description 'P-AST-30, P-AST-31 · not v1 · answers, not access'
+
+    include personA, personB, hier.company.team.sharedThread, hier.company.agentCo, hier.asstA, signalbox.thread.threadActor, signalbox.tree
+    include hier, signalbox
+
+    hier.company.team.sharedThread -> signalbox.tree 'lowest covering level' {
+      notes """
+        - The Team thread (filed via A's mount) needs something beside its chain
+        - Computed on the thread's Place, never on who sent
+      """
+    }
+    alt 'covering level' {
+      when 'a folder (Company)' {
+        hier.company.team.sharedThread -> hier.company.agentCo 'asks up' {
+          navigateTo work_levelagents_out_of_reach
+        }
+        hier.company.agentCo -> signalbox.tree 'resolves own chain'
+        hier.company.team.sharedThread <- hier.company.agentCo 'result only' {
+          notes '- Answers, not access: no placement, tool or credential moves down'
+        }
+      }
+      else "A's top level" {
+        hier.company.team.sharedThread -> hier.asstA 'asks up' {
+          notes """
+            - e.g. Team needs something in A's Personal: A's top level covers both, so A's assistant answers
+            - Filed via B's mount, it would be B's assistant
+          """
+        }
+        hier.asstA -> signalbox.tree 'resolves own chain'
+        hier.company.team.sharedThread <- hier.asstA 'result only' {
+          notes "- Only what A's assistant shares for A"
+        }
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.thread.threadActor 'what-crossed card' {
+      notes '- Records the question, who answered and the result'
+    }
+    parallel {
+      signalbox.thread.threadActor -> personA 'sees card'
+      signalbox.thread.threadActor -> personB 'sees card'
+    }
+    opt 'real access needed' {
+      hier.company.team.sharedThread -> signalbox.thread.threadActor 'Place or Lend' {
+        navigateTo folders_lending_access_request
+        notes '- An ordinary Blocker whose only answers are Place or Lend'
+      }
+    }
+  }
+
+  dynamic view person_assistant_cross_owner_handoff {
+    variant sequence
+    title "Workflows/Person/Assistant/Routing/Receive another owner's automation handoff"
+    description 'P-AST-10 · not v1'
+
+    include personC, personA, hier.asstA, signalbox.thread.threadActor, signalbox.automations, signalbox.attention
+    include hier, signalbox
+
+    personC -> signalbox.automations 'owns automation' {
+      notes "- C's automation (another owner) has a handoff step addressed to A"
+    }
+    signalbox.automations -> signalbox.automations 'reaches handoff' {
+      navigateTo work_automations_cross_owner_handoff
+    }
+    signalbox.automations -> hier.asstA 'declared result' {
+      notes """
+        - Only the declared result crosses the owner boundary
+        - None of C's context, tools or credentials come with it
+      """
+    }
+    hier.asstA -> signalbox.thread.threadActor 'chat entry'
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'needs-you'
+    signalbox.attention -> personA "in A's lanes" {
+      notes '- A needs-you by default'
+    }
+    alt "A's answer" {
+      when 'takes it' {
+        personA -> hier.asstA 'take it on'
+      }
+      else 'declines' {
+        personA -> signalbox.thread.threadActor 'declines'
+        signalbox.thread.threadActor -[async]-> signalbox.automations 'declined'
+      }
+    }
+  }
+
+  dynamic view person_assistant_interrupt_policy {
+    variant sequence
+    title "Workflows/Person/Assistant/Routing/Decide what's worth interrupting"
+    description 'P-AST-27 · not v1 · a sequence because order matters'
+
+    include personA, hier.asstA, signalbox.web, signalbox.attention, signalbox.judge
+    include hier, signalbox
+
+    personA -> hier.asstA 'only important, please'
+    hier.asstA -> signalbox.attention 'Only important rule' {
+      navigateTo person_notifications_set_rule
+      notes "- A deliveryRule placement at A's top level; A can read and change it"
+    }
+    signalbox.attention -> signalbox.attention 'candidate ping' {
+      notes '- Rules run server-side, before any delivery'
+    }
+    opt 'rule needs judgment' {
+      signalbox.attention -> signalbox.judge 'important?'
+      signalbox.attention <- signalbox.judge 'value or Insufficient' {
+        notes '- Insufficient evidence counts as important: never silently dropped'
+      }
+    }
+    alt 'outcome' {
+      when 'important' {
+        signalbox.attention -> signalbox.web 'push' {
+          navigateTo person_notifications_route_ping
+        }
+      }
+      else 'not important' {
+        signalbox.attention -> signalbox.web 'stays quiet' {
+          notes '- Suppressed pings stay visible in the lanes, with why they were quiet'
+        }
+      }
+    }
+    signalbox.web -> personA 'sees it or why'
+  }
+
+  dynamic view person_assistant_lend_request {
+    variant sequence
+    title "Workflows/Person/Assistant/Routing/A lower agent asks for a person's resource"
+    description 'P-AST-07 · not v1 · B drives the shared thread, A owns the resource'
+
+    include personA, personB, hier.company.team.sharedThread, hier.asstA, signalbox.thread.threadActor, signalbox.connections, signalbox.attention, signalbox.tree
+    include hier, signalbox
+
+    personB -> hier.company.team.sharedThread 'invite via A' {
+      notes '- B asks the shared Team thread to send an invite from A\'s calendar'
+    }
+    hier.company.team.sharedThread -> signalbox.connections "calls A's Google"
+    hier.company.team.sharedThread <- signalbox.connections 'AccessRequired' {
+      notes """
+        - A's Google is placed at A's top level, not above Team, so it doesn't reach
+        - B sending never changes that
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.thread.threadActor 'ask, turn parks'
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'route to A' {
+      navigateTo folders_lending_access_request
+    }
+    signalbox.attention -> hier.asstA "A's assistant first"
+    alt "A's assistant" {
+      when 'prepare a loan' {
+        hier.asstA -> signalbox.attention 'loan proposal' {
+          notes """
+            - Using A's Google below A's top level always takes a loan into Team: no one-off use without placement
+            - Loan consent is human-only; the assistant only prepares it
+          """
+        }
+        signalbox.attention -> personA 'consent'
+        personA -> signalbox.tree 'Lend to Team' {
+          navigateTo folders_lending_lend
+        }
+        signalbox.tree -[async]-> signalbox.thread.threadActor 'placement event' {
+          navigateTo state_loan
+        }
+      }
+      else 'no authority' {
+        hier.asstA -> signalbox.attention 'no authority'
+        signalbox.attention -> personA 'Blocker' {
+          navigateTo person_pipeline_blocker_access
+        }
+        personA -> signalbox.thread.threadActor 'Place or Lend'
+      }
+    }
+    signalbox.thread.threadActor -> hier.company.team.sharedThread 'turn resumes'
+    hier.company.team.sharedThread -> personB 'invite sent'
+  }
+
+  dynamic view person_assistant_park_resume {
+    variant sequence
+    title 'Workflows/Person/Assistant/Routing/Assistant waits on the person and resumes'
+    description 'P-AST-29 · not v1 · S10: a human wait parks, a model wait never does'
+
+    include personA, hier.asstA, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.attention
+    include hier, signalbox
+
+    hier.asstA -> signalbox.thread.threadActor 'raises an ask' {
+      navigateTo person_pipeline_blocker_raise
+      notes '- e.g. a native AskUserQuestion, mirrored as a Blocker'
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'mirror session'
+    signalbox.thread.threadActor <- signalbox.harness 'mirrored'
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'parks' {
+      notes """
+        - Keep-alive cleared, session facet evicts
+        - Zero resident time while A thinks
+      """
+    }
+    signalbox.thread.threadActor -[async]-> signalbox.attention 'ask'
+    signalbox.attention -> personA 'Blocker'
+    personA -> signalbox.web 'answers'
+    signalbox.web -> signalbox.thread.threadActor 'Thread.send(answer)'
+    signalbox.thread.threadActor -> signalbox.harness 'resume from mirror' {
+      notes '- The answer arrives as the pending tool result'
+    }
+    signalbox.harness -> hier.asstA 'turn continues'
+  }
+
+  // ───────────────────────── Workflows/Person/Assistant/Setup ─────────────────────────
+
+  dynamic view person_assistant_agents_md {
+    variant sequence
+    title 'Workflows/Person/Assistant/Setup/Assistant instructions at the top level'
+    description 'P-AST-40 · not v1'
+
+    include personA, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.harness
+    include signalbox
+
+    personA -> signalbox.web 'edits Instructions' {
+      notes "- Plugins › Instructions at A's top level"
+    }
+    signalbox.web -> signalbox.tree 'place AGENTS.md' {
+      notes "- Through Funnel and Operations; a placement row on A's top level"
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'resolve at turn' {
+      navigateTo folders_placement_kind_instructions
+    }
+    alt "A's top level on the chain?" {
+      when "A's tree or A's mount" {
+        signalbox.thread.threadActor <- signalbox.tree 'cascaded file' {
+          notes """
+            - Cascades by heading down every chain under A's top level
+            - The assistant, A's Personal threads, and Team threads filed via A's mount
+          """
+        }
+      }
+      else "B's mount or Company agent" {
+        signalbox.thread.threadActor <- signalbox.tree "without A's file" {
+          notes "- Position decides, not the sender: A sending into a thread filed via B's mount gets B's file"
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'turn inputs' {
+      navigateTo work_harness_turn_inputs
+    }
+  }
+
+  dynamic view person_assistant_org_pool_loan {
+    variant sequence
+    title "Workflows/Person/Assistant/Setup/Company lends its pool to members' assistants"
+    description 'P-AST-34 · not v1'
+
+    include personC, personA, personB, hier.asstA, signalbox.web, signalbox.tree, signalbox.models
+    include hier, signalbox
+
+    personC -> signalbox.web 'lend to assistants' {
+      navigateTo folders_lending_company_pool
+      notes "- C is admin of Company; pool P2 is owned by the organization"
+    }
+    signalbox.web -> signalbox.tree 'Lend P2' {
+      navigateTo folders_lending_lend
+      notes "- One loan into A's top level and one into B's"
+    }
+    alt 'consent' {
+      when 'Enterprise forces it' {
+        signalbox.tree -> signalbox.tree 'forced loan' {
+          notes '- An Enterprise Company places the loans without asking'
+        }
+      }
+      else 'members consent' {
+        parallel {
+          personA -> signalbox.tree 'accepts' {
+            navigateTo state_loan
+            notes '- Loan consent is human-only'
+          }
+          personB -> signalbox.tree 'accepts'
+        }
+      }
+    }
+    signalbox.tree -[async]-> hier.asstA 'P2 available' {
+      notes "- Lent at A's top level; B's assistant gets the same"
+    }
+    hier.asstA -> signalbox.models 'turn on P2' {
+      navigateTo person_assistant_pool
+      notes '- Only if A marks P2 preferred'
+    }
+    signalbox.models -[async]-> signalbox.tree 'usage, obscured' {
+      notes """
+        - Company sees spend totals, never A's or B's assistant content
+        - Revoking the loan sends both assistants back to their own pools
+      """
+    }
+  }
+
+  dynamic view person_assistant_pool {
+    variant sequence
+    title 'Workflows/Person/Assistant/Setup/Which pool the assistant uses'
+    description 'P-AST-32, P-AST-33, P-AST-35 · not v1'
+
+    include personA, hier.asstA, signalbox.web, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.attention
+    include hier, signalbox
+
+    opt 'A picks the pool' {
+      personA -> signalbox.web 'Use for assistant' {
+        navigateTo folders_pools_pick_assistant_pool
+        notes "- On a pool row at A's top level"
+      }
+      signalbox.web -> signalbox.tree 'mark preferred' {
+        notes """
+          - The pick is the preferred flag on that pool's top-level placement row
+          - Nothing about it lives in the Person actor
+        """
+      }
+    }
+    hier.asstA -> signalbox.thread.threadActor 'turn starts'
+    signalbox.thread.threadActor -> signalbox.tree 'resolve top level' {
+      notes "- Among pools placed or lent at A's top level (P1, a lent P2), the preferred one"
+    }
+    alt 'result' {
+      when 'preferred pool' {
+        signalbox.thread.threadActor <- signalbox.tree 'pool P1'
+        signalbox.thread.threadActor -> signalbox.models 'turn on P1'
+      }
+      else 'no pool' {
+        signalbox.thread.threadActor <- signalbox.tree 'NeedsPool'
+        signalbox.thread.threadActor -[async]-> signalbox.attention 'Add pool here' {
+          navigateTo folders_pools_needs_pool
+          notes '- Never a fallback to some other pool'
+        }
+        signalbox.attention -> personA 'Add pool here'
+      }
+    }
+  }
+}

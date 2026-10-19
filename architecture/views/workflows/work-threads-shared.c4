@@ -1,0 +1,1299 @@
+// Shard 08: shared threads. Delegation, fork, merge-back and multiplayer in one thread.
+// Two-thread views: the existing thread (parent/source) is the shared Team thread
+// (hier.company.team.sharedThread, drawn inside folder Team); the new thread
+// (child/fork/variant) is a fresh Thread actor (signalbox.thread.threadActor); rooms use hier.company.team.roomAB.
+// Containers are included as muted lanes, like LikeC4's homepage example.
+views {
+
+  // ───────────────────────── Delegation ─────────────────────────
+
+  dynamic view work_threads_delegate_subagent {
+    variant sequence
+    title 'Workflows/Work/Threads/Delegation/Delegate a subagent and get its result'
+    description "W-LIN-05 · W-LIN-06 · W-LIN-09 · W-LIN-18. Signalbox delegation is a child thread: parent Place, own computer, own session. The harness's own Task subagents are different: they stay in-process in the parent's session (heap under parallel subagents: #1244)."
+
+    include
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Parent thread' },
+      signalbox,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Child thread' },
+      signalbox.computer,
+      signalbox.drive,
+      signalbox.harness
+
+    signalbox.harness -> hier.company.team.sharedThread 'delegate_task' {
+      notes '''
+        - The parent agent calls `delegate_task{task, harness?, model?}` mid-turn
+        - The tool call id keys the child, so a retry never makes a second one
+        - Not the harness's own Task tool: those subagents stay in-process (#1244 measures heap)
+      '''
+    }
+    hier.company.team.sharedThread -> signalbox.computer 'save first' {
+      notes '''
+        - `Computer.save("turn")` before anything else (M6)
+        - The child forks what the parent has now, not the last turn boundary
+      '''
+    }
+    signalbox.computer -> signalbox.drive 'commit revision'
+    hier.company.team.sharedThread -> signalbox.thread.threadActor 'create child' {
+      notes '''
+        - `delegated_task.created` commits in the parent, then outbox delivery
+        - Keyed `(parentThreadId, toolCallId)`; inherits the parent Place and `via` (S1)
+        - So the child sits in Team too: same pool P2 and Company connections for A, B and D
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'fork working ref' {
+      notes '- Own working ref at the revision just saved'
+    }
+    signalbox.thread.threadActor -> signalbox.computer 'open own computer' {
+      notes '- One computer per thread; a VM fork only if it escalates'
+    }
+    alt 'child harness kind' {
+      when 'same kind' {
+        signalbox.thread.threadActor -> signalbox.harness 'open session' {
+          notes '- Own session facet, fresh grant from the same pools'
+        }
+      }
+      else 'cross-harness (Codex)' {
+        signalbox.thread.threadActor -> signalbox.harness 'open Codex session' {
+          notes '- `delegate_task{harness: codex}`; pins are per `(thread, provider)`'
+        }
+      }
+    }
+    opt 'child needs an answer' {
+      signalbox.thread.threadActor -> hier.company.team.sharedThread 'question' {
+        navigateTo work_threads_child_question
+        notes '- The parent is the first hop of the child ask route'
+      }
+    }
+    opt 'someone cancels' {
+      hier.company.team.sharedThread -> signalbox.thread.threadActor 'cancel' {
+        navigateTo work_threads_cancel_child
+      }
+    }
+    alt 'child outcome' {
+      when 'completed' {
+        signalbox.thread.threadActor -> hier.company.team.sharedThread 'result + ref' {
+          navigateTo work_threads_accept_or_discard_child
+          notes '''
+            - `delegated_task.completed` with the child working ref
+            - Files reach the parent only when it accepts them
+          '''
+        }
+      }
+      else 'failed' {
+        signalbox.thread.threadActor -> hier.company.team.sharedThread 'failed + cause' {
+          notes '- `TurnFailed` cause; the parent retries, re-delegates or asks'
+        }
+      }
+    }
+    alt 'parent state' {
+      when 'turn running' {
+        hier.company.team.sharedThread -> signalbox.harness 'steer result in'
+      }
+      else 'idle' {
+        hier.company.team.sharedThread -> signalbox.harness 'queue wake-up turn' {
+          notes '- The parent reacts without anyone watching'
+        }
+      }
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_cancel_child {
+    variant sequence
+    title 'Workflows/Work/Threads/Delegation/Cancel a child thread'
+    description 'W-LIN-08 · W-LIN-16. A stop covers the whole subtree, and the parent is always told.'
+
+    include
+      personA,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Parent thread' },
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.harness with { title 'Harness (parent agent)' },
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Child thread' }
+
+    alt 'who stops it' {
+      when 'a person (A or B)' {
+        personA -> signalbox.web 'Stop subagent' {
+          notes '''
+          - On the child row in the parent thread details
+          - Any member who can send in the parent: A and B alike, not just whoever delegated
+        '''
+        }
+        signalbox.web -> signalbox.funnel 'stop child'
+        signalbox.funnel -> hier.company.team.sharedThread 'cancel child' {
+          notes '- A command into the parent: it owns its children'
+        }
+      }
+      else 'parent agent' {
+        signalbox.harness -> hier.company.team.sharedThread 'task_cancel' {
+          notes '- Same command as the button; also drops the result delivery'
+        }
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.thread.threadActor 'cancel' {
+      navigateTo work_turns_interrupt_stop
+      notes '''
+        - Running turn interrupted, queued turns held
+        - Idempotent by requestId
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'cancel grandchildren' {
+      notes '- Propagates down; each thread releases its own machine'
+    }
+    signalbox.thread.threadActor -> hier.company.team.sharedThread 'cancelled' {
+      navigateTo work_threads_delegate_subagent
+      notes '- Propagates up: the parent never waits on a dead child'
+    }
+    hier.company.team.sharedThread -> signalbox.funnel 'child row update'
+    signalbox.funnel -> signalbox.web 'shows Cancelled' {
+      notes '- Every watcher of the parent (A and B) sees the same Cancelled row'
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_child_status {
+    variant sequence
+    title "Workflows/Work/Threads/Delegation/See a child's status"
+    description 'W-LIN-07 · W-LIN-19. One lineage projection serves the agent tool and the details card.'
+
+    include
+      personA,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Parent thread' },
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.harness with { title 'Harness (parent agent)' },
+      signalbox.gateway,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Child thread' }
+
+    signalbox.thread.threadActor -> hier.company.team.sharedThread 'status events' {
+      navigateTo work_threads_delegate_subagent
+      notes '''
+        - The child outbox feeds the parent lineage projection
+        - working · waiting_for_children · result_available
+      '''
+    }
+    alt 'who looks' {
+      when 'parent agent' {
+        signalbox.harness -> signalbox.gateway 'task_status' {
+          notes '- MCP tool on the parent grant; only its own children'
+        }
+        signalbox.gateway -> hier.company.team.sharedThread 'read lineage'
+        signalbox.gateway <- hier.company.team.sharedThread 'status + summary'
+        signalbox.harness <- signalbox.gateway 'child status' {
+          notes '- Reading a finished result acknowledges its delivery'
+        }
+      }
+      else 'Person A' {
+        personA -> signalbox.web 'open details'
+        signalbox.web -> signalbox.funnel 'Thread.watch'
+        signalbox.funnel -> hier.company.team.sharedThread 'watch'
+        signalbox.funnel <- hier.company.team.sharedThread 'children + status'
+        signalbox.web <- signalbox.funnel 'Subagents list' {
+          notes '''
+            - The same rows the agent reads, never a second source
+            - B or D opening the parent get the identical list
+          '''
+        }
+      }
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_child_question {
+    variant sequence
+    title "Workflows/Work/Threads/Delegation/A child's question reaches the parent or a person"
+    description 'W-LIN-10. The ask belongs to the child; the parent is only the first hop of its route.'
+
+    include
+      personA,
+      personB,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Parent thread' },
+      signalbox,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Child thread' },
+      signalbox.attention,
+      signalbox.tree,
+      signalbox.tree.personActor with { title 'Person (A, B)' }
+
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'ask raised' {
+      notes '''
+        - Native question tool or ask tool; `ask.raised{route}` in the child
+        - The child turn parks: mirror saved, keep-alive cleared
+      '''
+    }
+    signalbox.thread.threadActor -> hier.company.team.sharedThread 'first hop' {
+      notes '- The parent agent sees it first'
+    }
+    alt 'who answers' {
+      when 'parent can' {
+        hier.company.team.sharedThread -> signalbox.thread.threadActor 'agent answer' {
+          notes '- Logged as an agent answer; nobody is pinged'
+        }
+      }
+      else 'needs a person' {
+        signalbox.thread.threadActor -> signalbox.attention 'Blocker' {
+          navigateTo person_pipeline_route
+          notes '- Deciders: the Team people, here A and B'
+        }
+        parallel {
+          signalbox.attention -> signalbox.tree.personActor 'A projection' {
+            navigateTo work_threads_multiplayer_ask_routing
+            notes '- area from A own mount of Company'
+          }
+          signalbox.attention -> signalbox.tree.personActor 'B projection' {
+            notes '- area from B own mount'
+          }
+        }
+        signalbox.tree.personActor -> personA 'Blocker lane'
+        signalbox.tree.personActor -> personB 'Blocker lane'
+        personA -> signalbox.thread.threadActor 'answer' {
+          navigateTo work_approvals_native_question
+          notes '''
+            - Into the child, the thread that raised it
+            - First receipt wins; B gets AlreadyAnswered
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.tree.personActor 'ask resolved'
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'resume' {
+      notes '- From the mirror, with the answer as the pending tool result'
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread, signalbox.tree { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_variants {
+    variant sequence
+    title 'Workflows/Work/Threads/Delegation/Build every option, pick one'
+    description 'W-LIN-13. Reversible choices are built, not argued: N children, one Ready ask, first pick wins.'
+
+    include
+      personA,
+      personB,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Parent thread' },
+      signalbox,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Variant threads' },
+      signalbox.attention,
+      signalbox.drive
+
+    hier.company.team.sharedThread -> hier.company.team.sharedThread 'reversible choice' {
+      notes '- Cheap to undo (#630), so build every option instead of asking'
+    }
+    parallel 'one child per option' {
+      hier.company.team.sharedThread -> signalbox.thread.threadActor 'build option 1' {
+        navigateTo work_threads_delegate_subagent
+        notes '- Each variant is a delegated child with its own computer and ref'
+      }
+      hier.company.team.sharedThread -> signalbox.thread.threadActor 'build option 2'
+      hier.company.team.sharedThread -> signalbox.thread.threadActor 'build option N'
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'own working refs'
+    signalbox.thread.threadActor -> hier.company.team.sharedThread 'variants ready'
+    hier.company.team.sharedThread -> signalbox.attention 'Ready ask' {
+      navigateTo person_pipeline_variants_pick
+      notes '- `variants` on the ask; deciders A and B'
+    }
+    signalbox.attention -> personA 'pick one'
+    signalbox.attention -> personB 'pick one'
+    alt 'first pick' {
+      when 'A picks' {
+        personA -> hier.company.team.sharedThread 'option 2' {
+          notes '- Via client and Funnel; the first receipt wins'
+        }
+      }
+      else 'B picks' {
+        personB -> hier.company.team.sharedThread 'option 1' {
+          notes '- The other person then gets AlreadyAnswered'
+        }
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.drive 'accept winner' {
+      navigateTo work_threads_accept_or_discard_child
+    }
+    hier.company.team.sharedThread -> signalbox.drive 'discard the rest' {
+      notes '- Losing threads stay readable in lineage'
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  // ───────────────────────── Fork ─────────────────────────
+
+  dynamic view work_threads_fork_at_point {
+    variant sequence
+    title 'Workflows/Work/Threads/Fork/Fork a thread from an earlier point'
+    description 'W-LIN-01 · W-LIN-02 · W-LIN-03. A fork is a new thread with a lineage, hidden until it is ready.'
+
+    include
+      personA,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Source thread' },
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Fork' },
+      signalbox.drive,
+      signalbox.harness,
+      signalbox.tree
+
+    alt 'source point' {
+      when 'turn N' {
+        personA -> signalbox.web 'Fork from here'
+      }
+      when 'checkpoint' {
+        personA -> signalbox.web 'Fork from checkpoint' {
+          notes '- Latest stable or a checkpoint; agents use `t3_thread_fork`'
+        }
+      }
+      else 'old revision' {
+        personA -> signalbox.web 'Continue from version' {
+          notes '- From file history: the fork starts at that commit'
+        }
+      }
+    }
+    signalbox.web -> signalbox.funnel 'Fork{at}'
+    signalbox.funnel -> hier.company.team.sharedThread 'fork requested' {
+      notes '- `fork.requested` commits in the source with its outbox row'
+    }
+    hier.company.team.sharedThread -> signalbox.thread.threadActor 'seed fork' {
+      navigateTo state_thread
+      notes '''
+        - `seeded{parent, atTurn, place}`: starts Pending, events up to N
+        - Same Place, `via` included (S1)
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'fork @ revision' {
+      navigateTo work_drive_thread_fork
+      notes '- Drive.fork + CAS to the revision at N; kept-local ref forked too'
+    }
+    alt 'session' {
+      when 'native fork' {
+        signalbox.thread.threadActor -> signalbox.harness 'fork session' {
+          navigateTo work_harness_open_session
+        }
+      }
+      else 'no native fork' {
+        signalbox.thread.threadActor -> signalbox.harness 'mirror copy to N' {
+          notes '- Mirror truncated to turn N, or a portable seed'
+        }
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.tree 'catalog row' {
+      notes '''
+        - Only after `ready`; filed in Team like its source
+        - So B and D see it in Team and it resolves pool P2 for everyone; a private fork is hidden from them
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.funnel 'fork ready'
+    signalbox.funnel -> signalbox.web 'open fork' {
+      navigateTo work_threads_multiplayer_make_private
+      notes '- A private fork of a shared thread works the same way'
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  // ───────────────────────── Merge back ─────────────────────────
+
+  dynamic view work_threads_accept_or_discard_child {
+    variant sequence
+    title "Workflows/Work/Threads/MergeBack/Accept or discard a child's files"
+    description 'W-LIN-11 · W-LIN-17. The parent is the single writer of its working ref, so child merges skip the Repo queue (M6).'
+
+    include
+      personA,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Parent thread' },
+      signalbox,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Child or fork' },
+      signalbox.drive
+
+    signalbox.thread.threadActor -> hier.company.team.sharedThread 'result + ref' {
+      navigateTo work_threads_delegate_subagent
+    }
+    opt 'a person decides' {
+      personA -> hier.company.team.sharedThread 'Accept or Discard' {
+        notes '''
+          - From thread details; otherwise the parent agent decides
+          - Here A; B could do it the same way, first command wins
+        '''
+      }
+    }
+    alt 'decision' {
+      when 'accept' {
+        try {
+          hier.company.team.sharedThread -> signalbox.drive 'accept into parent' {
+            navigateTo work_drive_accept
+            notes '''
+              - `accept(childRef, into: parentRef)`, run by the parent Thread
+              - `main` untouched until the parent itself is accepted
+            '''
+          }
+          hier.company.team.sharedThread <- signalbox.drive 'merged'
+        } catch 'conflict' {
+          hier.company.team.sharedThread -> hier.company.team.sharedThread 'resolve or ask' {
+            notes '- The agent fixes it, or raises a Blocker to A'
+          }
+        }
+      }
+      else 'discard' {
+        hier.company.team.sharedThread -> signalbox.drive 'discard ref' {
+          navigateTo work_threads_variants
+          notes '- Never merged; the child thread stays readable'
+        }
+      }
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_merge_back_context {
+    variant sequence
+    title "Workflows/Work/Threads/MergeBack/Merge a fork's context back"
+    description 'W-LIN-12 · T-HND-04. What the fork learned returns to its source as a context delta; files follow accept.'
+
+    include
+      personA,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Source thread' },
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Fork' },
+      signalbox.harness,
+      signalbox.drive
+
+    personA -> signalbox.web 'Merge back' {
+      navigateTo work_threads_fork_at_point
+      notes '- Related threads › Merge back; agents call `t3_thread_merge_back`'
+    }
+    signalbox.web -> signalbox.funnel 'merge_back'
+    signalbox.funnel -> signalbox.thread.threadActor 'merge back'
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'build delta' {
+      notes '- Requests, outcomes and decisions since the fork point'
+    }
+    signalbox.thread.threadActor -> hier.company.team.sharedThread 'transfer requested' {
+      notes '- Outbox delivery, idempotent by requestId'
+    }
+    hier.company.team.sharedThread -> signalbox.harness 'delta as input' {
+      navigateTo work_harness_switch
+      notes '''
+        - Same seed shape as a harness switch; queued behind a running turn
+        - Lands in the shared source, so B sees the delta as an event from A
+      '''
+    }
+    opt 'fork changed files' {
+      hier.company.team.sharedThread -> signalbox.drive 'accept fork ref' {
+        navigateTo work_threads_accept_or_discard_child
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.thread.threadActor 'transfer completed'
+    opt 'agent checks status' {
+      signalbox.harness -> hier.company.team.sharedThread 't3_thread_transfers'
+      signalbox.harness <- hier.company.team.sharedThread 'transfer status' {
+        notes '- pending · completed · failed'
+      }
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  // ───────────────────────── Multiplayer ─────────────────────────
+
+  dynamic view work_threads_multiplayer_live {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Two people work in one thread live'
+    description 'W-MPL-01 · W-MPL-02 · W-MPL-03. One Thread actor, two clients, one run queue; every event names its sender.'
+
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.mobile,
+      signalbox.funnel,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Shared thread (Team)' },
+      signalbox.harness
+
+    personA -> signalbox.web 'open thread'
+    signalbox.web -> signalbox.funnel 'watch (A)'
+    personB -> signalbox.mobile 'open thread'
+    signalbox.mobile -> signalbox.funnel 'watch (B)'
+    signalbox.funnel -> signalbox.thread.threadActor 'two subscriptions' {
+      navigateTo person_people_live
+      notes '''
+        - Access checked per socket: both Members of Company, inherited into Team
+        - Presence shows A and B; observing never publishes
+      '''
+    }
+    personA -> signalbox.web 'send message'
+    signalbox.web -> signalbox.funnel 'Thread.send'
+    signalbox.funnel -> signalbox.thread.threadActor 'message (A)'
+    signalbox.thread.threadActor -> signalbox.harness 'turn for A' {
+      notes '- Scope from the thread Place, never from A'
+    }
+    personB -> signalbox.mobile 'send message'
+    signalbox.mobile -> signalbox.funnel 'send, whenBusy queue'
+    signalbox.funnel -> signalbox.thread.threadActor 'message (B) queued' {
+      navigateTo work_turns_send_while_busy
+      notes '- One turn at a time; B can steer or cancel it'
+    }
+    signalbox.thread.threadActor -> signalbox.funnel 'events + sender' {
+      notes '- Messages and system events (switch, share) name who did it'
+    }
+    parallel 'fan-out' {
+      signalbox.funnel -> signalbox.web 'live to A'
+      signalbox.funnel -> signalbox.mobile 'live to B'
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'turn for B' {
+      notes '- After A turn ends; the agent answers B by name'
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_reply_modes {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Reply modes and wait-for'
+    description 'W-MPL-17. People in one thread choose whether the agent answers each or all, and when.'
+
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Shared thread (Team)' },
+      signalbox.harness
+
+    personA -> signalbox.web 'set reply mode' {
+      navigateTo work_threads_multiplayer_live
+      notes '- A thread setting everyone in it sees'
+    }
+    signalbox.web -> signalbox.funnel 'Thread.send'
+    signalbox.funnel -> signalbox.thread.threadActor 'reply mode' {
+      notes '- A system event with A as sender'
+    }
+    opt 'wait for B' {
+      personA -> signalbox.web 'wait for B'
+      signalbox.web -> signalbox.funnel 'waitFor B'
+      signalbox.funnel -> signalbox.thread.threadActor 'hold next turn' {
+        notes '- Status line says who it waits for'
+      }
+      personB -> signalbox.web 'reply'
+      signalbox.web -> signalbox.funnel 'Thread.send'
+      signalbox.funnel -> signalbox.thread.threadActor 'release'
+    }
+    alt 'reply mode' {
+      when 'each' {
+        signalbox.thread.threadActor -> signalbox.harness 'reply per person' {
+          notes '- A and B answered separately, by name'
+        }
+      }
+      else 'everyone' {
+        signalbox.thread.threadActor -> signalbox.harness 'one reply to all' {
+          notes '- Pending messages go in as one turn'
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_same_resolution {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Same resolution for every sender'
+    description 'W-MPL-04. Resolution reads the thread Place only (corr. 6): A, B and D sending into the Team thread get the same pool, the same connections and the same cost rollup.'
+
+    include
+      personA,
+      personB,
+      personD,
+      hier.company,
+      hier.company.poolCo with { title 'Pool P2 (Company)' },
+      hier.company.confluence,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Shared thread' },
+      hier.company.team.costsTeam,
+      hier.company.costsCo,
+      signalbox,
+      signalbox.tree,
+      signalbox.models
+
+    personA -> hier.company.team.sharedThread 'turn (A)' {
+      notes '''
+        - Via A client; the event records A as sender
+        - The thread Place is `{Team, via A mount of Company}`
+      '''
+    }
+    hier.company.team.sharedThread -> signalbox.tree 'resolve Place' {
+      navigateTo work_turns_end_to_end
+      notes '''
+        - Chain: Team › Company › A Work › A top level
+        - Who sent the turn is not an input
+      '''
+    }
+    signalbox.tree -> hier.company.poolCo 'nearest pool' {
+      notes '- P2 on Company is nearer than A pool P1 on A top level: nearest wins'
+    }
+    signalbox.tree -> hier.company.confluence 'connections' {
+      navigateTo work_threads_multiplayer_lend
+      notes '- Company connections reach down; anything not above Team needs a loan'
+    }
+    hier.company.team.sharedThread -> signalbox.models 'tokens on P2'
+    signalbox.models -> hier.company.team.costsTeam 'usage (A turn)' {
+      navigateTo person_people_shared_costs
+    }
+    parallel 'B and D send next' {
+      personB -> hier.company.team.sharedThread 'turn (B)' {
+        notes '- Member of Company, mounted under B Work'
+      }
+      personD -> hier.company.team.sharedThread 'turn (D)' {
+        notes '- Outside collaborator; mounts only Team, never sees Company'
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.tree 'same Place' {
+      notes '''
+        - Same Place, so the same Scope: P2 and Company connections
+        - B pool P3 and D own things never enter; they would need a loan
+      '''
+    }
+    hier.company.team.sharedThread -> signalbox.models 'tokens on P2'
+    signalbox.models -> hier.company.team.costsTeam 'usage (B, D turns)'
+    hier.company.team.costsTeam -> hier.company.costsCo 'rolls up' {
+      notes '- Team › Company, never to A, B or D personally'
+    }
+
+    style hier.company { color muted; opacity 15% }
+    style hier.company.team { color secondary; opacity 20% }
+    style signalbox { color muted; opacity 15% }
+  }
+
+  dynamic view work_threads_multiplayer_lend {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Lend a personal pool or connection into a shared thread'
+    description 'W-MPL-05. The only way to use what is not above you: an explicit, revocable loan a person consents to.'
+
+    include
+      personA,
+      personB,
+      personC,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.tree,
+      signalbox.models,
+      signalbox.models with { title 'Models (P1 of A)' },
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Shared thread (Team)' }
+
+    personC -> signalbox.web 'accepted kinds' {
+      notes '- Admin of Company sets which loan kinds Team accepts'
+    }
+    signalbox.web -> signalbox.tree 'policy on Team' {
+      notes '- Via Funnel: `Tree.change(AcceptKinds)`'
+    }
+    personA -> signalbox.web 'Lend P1 here' {
+      navigateTo folders_lending_lend
+      notes '- Into folder Team or this thread; human consent only'
+    }
+    signalbox.web -> signalbox.funnel 'Tree.change(Lend)'
+    signalbox.funnel -> signalbox.tree 'lend'
+    alt 'kind accepted?' {
+      when 'yes' {
+        signalbox.tree -> signalbox.models 'index the loan' {
+          navigateTo state_loan
+          notes '''
+            - Placement row "lent by A", revocable, can expire
+            - A ends it from the pool own row, even without access to Team
+          '''
+        }
+      }
+      else 'no' {
+        signalbox.funnel <- signalbox.tree 'Denied'
+      }
+    }
+    personB -> signalbox.funnel 'send turn' {
+      notes '- Via client'
+    }
+    signalbox.funnel -> signalbox.thread.threadActor 'message (B)'
+    signalbox.thread.threadActor -> signalbox.tree 'resolve Place'
+    signalbox.thread.threadActor <- signalbox.tree 'Scope + loan' {
+      notes '''
+        - The loan sits on Team, nearer than P2 on Company, so P1 wins
+        - Same for A, B and D: by position, not by who sends; never narrated
+      '''
+    }
+    opt 'A ends the loan' {
+      personA -> signalbox.funnel 'End loan'
+      signalbox.funnel -> signalbox.tree 'endLoan' {
+        navigateTo folders_lending_end_loan
+        notes '- Grant refresh denies it; the next turn no longer sees P1'
+      }
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_share {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Share a thread wider'
+    description 'W-MPL-06 · W-MPL-09 · W-MPL-23. Sharing changes who sees the thread, never what it resolves.'
+
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Thread (Team)' },
+      signalbox.tree
+
+    personA -> signalbox.web 'Share or +' {
+      navigateTo journey_sharing_share_thread
+      notes '''
+        - Header "+" adds one person; Share widens to folder members
+        - Starts as A private thread filed in Team
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Visibility, Participants'
+    signalbox.funnel -> signalbox.thread.threadActor 'widen'
+    signalbox.thread.threadActor -> signalbox.tree 'can A share'
+    opt 'read restricted sources' {
+      signalbox.thread.threadActor -> signalbox.tree 'per-viewer check' {
+        notes '''
+          - Could each new viewer read what the thread read? (#483)
+          - Personal connector output (Google · A) is listed
+        '''
+      }
+      signalbox.web <- signalbox.thread.threadActor 'confirm list'
+      personA -> signalbox.web 'Confirm'
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'access epoch bump'
+    signalbox.thread.threadActor -> signalbox.tree 'catalog row' {
+      navigateTo folders_access_thread_share
+      notes '- B can now see it; pools and connections are never shared'
+    }
+    personB -> signalbox.web 'opens it' {
+      notes '- Appears in Team; B joins live'
+    }
+    opt 'A removes B' {
+      personA -> signalbox.funnel 'remove B'
+      signalbox.funnel -> signalbox.thread.threadActor 'Participants remove' {
+        navigateTo work_threads_multiplayer_make_private
+        notes '- Epoch bump: B sockets drop'
+      }
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_make_private {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Take a shared thread private'
+    description 'W-MPL-07 · W-MPL-08. Two ways back to private: unshare it, or continue in a private fork.'
+
+    include
+      personA,
+      personB,
+      personC,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Shared thread (Team)' },
+      signalbox.tree
+
+    alt 'who' {
+      when 'C (Admin)' {
+        personC -> signalbox.web 'Make private' {
+          navigateTo work_threads_multiplayer_share
+          notes '- Admin of Company, inherited into Team'
+        }
+      }
+      when 'A (sole author)' {
+        personA -> signalbox.web 'Make private' {
+          notes '- Only while A wrote every message'
+        }
+      }
+      else 'B forks privately' {
+        personB -> signalbox.web 'Fork privately'
+        signalbox.web -> signalbox.funnel 'Fork{private}'
+        signalbox.funnel -> signalbox.thread.threadActor 'fork' {
+          navigateTo work_threads_fork_at_point
+          notes '''
+            - New "<title> (copy)", private to B
+            - Same Place, so same pool and connections; the original stays shared
+          '''
+        }
+      }
+    }
+    opt 'unshare' {
+      signalbox.web -> signalbox.funnel 'Visibility private'
+      signalbox.funnel -> signalbox.thread.threadActor 'unshare'
+      signalbox.thread.threadActor -> signalbox.tree 'can unshare'
+      signalbox.thread.threadActor -> signalbox.thread.threadActor 'access epoch bump' {
+        navigateTo folders_access_thread_unshare
+      }
+      signalbox.thread.threadActor -> signalbox.funnel 'drop B sockets' {
+        notes '- B view closes; the row leaves B catalog'
+      }
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_viewer {
+    variant sequence
+    title "Workflows/Work/Threads/Multiplayer/Viewer reads but can't send"
+    description 'W-MPL-10. Roles only add; a Viewer reads, and the server says why the composer is off.'
+
+    include
+      personD with { title 'Person D (Viewer on Team)' },
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.tree,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Shared thread (Team)' }
+
+    personD -> signalbox.web 'open thread' {
+      navigateTo journey_sharing_viewer
+      notes '''
+        - Outside collaborator with Viewer on folder Team only (mounted as "Shared with me")
+        - A and B, Members via Company, can send in the same thread
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'Thread.watch'
+    signalbox.funnel -> signalbox.thread.threadActor 'watch'
+    signalbox.thread.threadActor -> signalbox.tree 'can D read'
+    signalbox.web <- signalbox.thread.threadActor 'snapshot + live'
+    signalbox.funnel -> signalbox.tree 'can D send'
+    signalbox.funnel <- signalbox.tree 'Denied: Viewer' {
+      navigateTo folders_access_roles
+    }
+    signalbox.web <- signalbox.funnel 'composer off' {
+      notes '- With the reason: "You can view this thread"'
+    }
+    opt 'D sends anyway' {
+      signalbox.funnel -> signalbox.thread.threadActor 'send (API, MCP)'
+      signalbox.funnel <- signalbox.thread.threadActor 'Denied' {
+        notes '- The server is authoritative; the UI is only a hint'
+      }
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_per_person_state {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Snooze, mark unread and pin a shared thread'
+    description 'W-LIF-13 · W-LIF-14 · W-MPL-11 · T-THR-28. Attention state is per person; pin belongs to the thread.'
+
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.attention,
+      signalbox.tree,
+      signalbox.tree.personActor with { title 'Person (A)' },
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Shared thread (Team)' }
+
+    opt 'A opens it' {
+      personA -> signalbox.web 'open thread'
+      signalbox.web -> signalbox.funnel 'visit'
+      signalbox.funnel -> signalbox.tree.personActor 'record visit' {
+        notes '- Drives A unread only; B has its own'
+      }
+    }
+    alt 'what A does' {
+      when 'snooze' {
+        personA -> signalbox.web 'Snooze until 9:00' {
+          navigateTo person_people_snooze
+        }
+        signalbox.web -> signalbox.funnel 'defer'
+        signalbox.funnel -> signalbox.attention 'defer A' {
+          notes '- "snoozed until …" for A only; unsnooze is `defer(null)`'
+        }
+        signalbox.attention -> signalbox.tree.personActor 'A snooze row'
+        opt 'waiting cost jumps' {
+          signalbox.attention -> signalbox.tree.personActor 'wake early' {
+            notes '- A new Blocker or a near deadline brings it back'
+          }
+        }
+      }
+      when 'unread or reorder' {
+        personA -> signalbox.web 'Mark unread'
+        signalbox.web -> signalbox.funnel 'per-person state'
+        signalbox.funnel -> signalbox.tree.personActor 'unread, order' {
+          notes '- Never counted or badged'
+        }
+      }
+      else 'pin' {
+        personA -> signalbox.web 'Pin'
+        signalbox.web -> signalbox.funnel 'Thread.send(Pin)'
+        signalbox.funnel -> signalbox.thread.threadActor 'pin' {
+          navigateTo state_thread
+          notes '- Global: B sees it pinned too; Unpin reverses it'
+        }
+      }
+    }
+    personB -> signalbox.web 'B list unchanged' {
+      notes '- Except a pin, nothing A did reaches B'
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread, signalbox.tree { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_private_invisible {
+    variant sequence
+    title "Workflows/Work/Threads/Multiplayer/Others' private threads stay invisible"
+    description 'W-MPL-12. Private threads are invisible to others, titles included; they count only in level totals.'
+
+    include
+      personA,
+      personB,
+      personC,
+      signalbox,
+      signalbox.funnel,
+      signalbox.tree,
+      signalbox.tree.levelActor with { title 'Level (Team)' },
+      signalbox.search
+
+    personA -> signalbox.funnel 'private chat in Team' {
+      notes '- Filed in the shared folder, visibility private'
+    }
+    signalbox.funnel -> signalbox.tree.levelActor 'opaque catalog row'
+    personB -> signalbox.funnel 'browse Team'
+    signalbox.funnel -> signalbox.tree.levelActor 'catalog'
+    signalbox.funnel <- signalbox.tree.levelActor 'minus A private' {
+      navigateTo folders_tree_catalog
+      notes '''
+        - Withheld server-side before replication; B never learns it exists
+        - Same for D on its Team mount
+      '''
+    }
+    personB -> signalbox.funnel 'search Team'
+    signalbox.funnel -> signalbox.search 'query'
+    signalbox.funnel <- signalbox.search 'hits re-checked' {
+      navigateTo work_search_visibility
+      notes '- Every snippet re-checked against visibility at query time'
+    }
+    personC -> signalbox.funnel 'Team usage'
+    signalbox.funnel <- signalbox.tree.levelActor 'totals only' {
+      notes '- A private chat adds to the total without a row, even for Admin C'
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.tree { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_ask_routing {
+    variant sequence
+    title "Workflows/Work/Threads/Multiplayer/Ask from a shared thread reaches each person's lanes"
+    description 'W-MPL-16. One ask in the shared thread, one projection per person: it lands in A, B and C own Pipeline lanes, each on that person own mount, and the first answer clears all three.'
+
+    include
+      personA,
+      personB,
+      personC,
+      hier.lanesA,
+      hier.lanesB,
+      hier.lanesC,
+      signalbox,
+      signalbox.attention,
+      hier.company.team,
+      hier.company.team.sharedThread with { title 'Shared thread' }
+
+    hier.company.team.sharedThread -> signalbox.attention 'ask raised' {
+      navigateTo person_pipeline_blocker_automation_ask
+      notes '''
+        - One Blocker (e.g. NeedsPool), `ask.raised{route}` in the thread
+        - Route: A and B (Team), C (Admin of Company)
+      '''
+    }
+    parallel 'one projection each' {
+      signalbox.attention -> hier.lanesA 'Blocker (A)' {
+        notes '- Area Work, from A own mount of Company'
+      }
+      signalbox.attention -> hier.lanesB 'Blocker (B)' {
+        notes '- Area Work, from B own mount, though A filed the thread'
+      }
+      signalbox.attention -> hier.lanesC 'Blocker (C)' {
+        notes '- Area Work, from C own mount'
+      }
+    }
+    hier.lanesA -> personA 'push to phone' {
+      navigateTo person_notifications_route_ping
+      notes '- A phone is homed on A chain to Team, so it rings (after Focus)'
+    }
+    hier.lanesB -> personB 'push to phone' {
+      notes '- Same rule on B own chain'
+    }
+    hier.lanesC -> personC 'lane, no push' {
+      notes '- C phone is homed at Personal, so it stays quiet; the lane still shows it'
+    }
+    personA -> hier.company.team.sharedThread 'answer' {
+      navigateTo state_ask
+      notes '- Into the thread that raised it; first receipt wins'
+    }
+    hier.company.team.sharedThread -> signalbox.attention 'ask resolved'
+    signalbox.attention -> hier.lanesB 'clear B entry' {
+      notes '- B and C entries drop; a late answer gets AlreadyAnswered'
+    }
+    signalbox.attention -> hier.lanesC 'clear C entry'
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+  }
+
+  dynamic view work_threads_multiplayer_mention {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/@mention a person or agent'
+    description 'W-MPL-18. A mention is a needs-you only while it is unanswered.'
+
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Shared thread (Team)' },
+      signalbox.attention,
+      hier.company.team,
+      hier.company.team.agentTeam
+
+    personA -> signalbox.web '@ in composer' {
+      notes '''
+        - Picker: agents on the thread chain and people in the thread
+        - Other people assistants are not mentionable
+      '''
+    }
+    alt 'who' {
+      when '@B' {
+        signalbox.web -> signalbox.funnel 'message @B'
+        signalbox.funnel -> signalbox.thread.threadActor 'mention B'
+        signalbox.thread.threadActor -> signalbox.attention 'unanswered mention' {
+          navigateTo person_people_mention
+          notes '- Becomes a needs-you in B pipeline'
+        }
+        signalbox.attention -> personB 'needs-you'
+        personB -> signalbox.thread.threadActor 'reply' {
+          notes '- Via client; clears the needs-you'
+        }
+      }
+      else '@Team agent' {
+        signalbox.web -> signalbox.funnel 'message @agent'
+        signalbox.funnel -> signalbox.thread.threadActor 'mention agent'
+        signalbox.thread.threadActor -> hier.company.team.agentTeam 'consult' {
+          navigateTo journey_agents_mention_chain
+          notes '- The level agent represents its folder; answers in this thread'
+        }
+        signalbox.thread.threadActor <- hier.company.team.agentTeam 'answer'
+      }
+    }
+
+    style signalbox, hier.company.team { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_rooms {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Rooms between assistants'
+    description 'W-MPL-19. A room is a thread whose participants are assistants, each with its own person share policy.'
+
+    include
+      personA,
+      personB,
+      hier,
+      hier.asstA,
+      hier.asstB,
+      hier.company.team.roomAB
+
+    personA -> hier.asstA 'sort it with B' {
+      notes '- A asks its own assistant; B is not interrupted'
+    }
+    hier.asstA -> hier.company.team.roomAB 'open room' {
+      navigateTo pgap_rooms_widen_fork
+      notes '''
+        - `NewThread{kind: room}`: one home, a participant list
+        - Each participant row carries `mayShare / neverShares`
+      '''
+    }
+    hier.company.team.roomAB -> hier.asstB 'joins' {
+      navigateTo work_levelagents_route_up
+    }
+    loop 'until agreed' {
+      hier.asstA -> hier.company.team.roomAB 'proposal' {
+        notes '- Filtered by A policy: free slots yes, contents never'
+      }
+      hier.company.team.roomAB -> hier.asstB 'proposal'
+      hier.asstB -> hier.company.team.roomAB 'counter' {
+        notes '- Filtered by B policy'
+      }
+      hier.company.team.roomAB -> hier.asstA 'counter'
+    }
+    opt 'beyond delegated kinds' {
+      hier.asstB -> personB 'Considering ask' {
+        notes '- B decides; the assistant never commits B beyond what B delegated'
+      }
+    }
+    hier.asstA -> personA 'outcome'
+
+    style hier { color muted; opacity 15% }
+  }
+
+  dynamic view work_threads_multiplayer_leaver {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Leave, rejoin, and sealed chats'
+    description 'W-MPL-13 · W-MPL-14 · W-MPL-15. Leaving removes a mount, not the work: threads keep resolving on the Company chain.'
+
+    include
+      personB,
+      personC,
+      platform,
+      platform.workos,
+      signalbox,
+      signalbox.identity,
+      signalbox.tree,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Thread (Team)' },
+      signalbox.attention
+
+    alt 'membership' {
+      when 'B leaves' {
+        personB -> platform.workos 'leaves'
+        platform.workos -> signalbox.identity 'member removed' {
+          navigateTo organization_identity_leave
+          notes '- Webhook via Ingress, at least once, ordered by event time'
+        }
+        signalbox.identity -> signalbox.tree 'drop role, unmount' {
+          navigateTo person_leaving_leave_org
+          notes '- Company roles lose B; B MountRef kept inactive'
+        }
+        signalbox.thread.threadActor -> signalbox.tree 'resolve'
+        signalbox.thread.threadActor <- signalbox.tree 'Company chain only' {
+          notes '- Threads filed via B mount lose `via`; nothing from B tree reaches them'
+        }
+        opt 'nothing on Company' {
+          signalbox.thread.threadActor -> signalbox.attention 'NeedsPool'
+          signalbox.attention -> personC 'place a pool'
+        }
+        signalbox.thread.threadActor -> signalbox.thread.threadActor 'seal B chats' {
+          notes '- B private chats in Company folders: kept, read by nobody'
+        }
+      }
+      else 'B rejoins' {
+        personC -> platform.workos 'reinvite B'
+        platform.workos -> signalbox.identity 'member restored'
+        signalbox.identity -> signalbox.tree 'same MountRef' {
+          notes '- One id per (person, Company), reactivated (M5)'
+        }
+        signalbox.thread.threadActor -> signalbox.tree 'resolve'
+        signalbox.thread.threadActor <- signalbox.tree 'via returns'
+        signalbox.thread.threadActor -> signalbox.thread.threadActor 'unseal' {
+          notes '- B sees its private chats again, unchanged'
+        }
+      }
+    }
+    opt 'C deletes a sealed chat' {
+      personC -> signalbox.thread.threadActor 'Trash' {
+        navigateTo work_threads_lifecycle_trash
+        notes '- Admin of Company, via client; 30-day trash, then purge'
+      }
+    }
+
+    style signalbox, platform { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+
+  dynamic view work_threads_multiplayer_admin_visible {
+    variant sequence
+    title 'Workflows/Work/Threads/Multiplayer/Enterprise opts in to Admin-visible chats'
+    description 'W-MPL-22. Enterprise only, and members are told before anything changes.'
+
+    include
+      personA,
+      personB,
+      personC,
+      signalbox,
+      signalbox.web,
+      signalbox.tree,
+      signalbox.attention,
+      signalbox.thread,
+      signalbox.thread.threadActor with { title 'Private chat (Team)' }
+
+    personC -> signalbox.web 'Admin-visible chats' {
+      navigateTo folders_access_admin_visible
+      notes '- Company folder policy; C is Admin'
+    }
+    signalbox.web -> signalbox.tree 'set policy' {
+      navigateTo folders_access_enterprise_flag
+      notes '- Via Funnel: `Tree.change(Policy)` on Company'
+    }
+    alt 'Enterprise flag' {
+      when 'not set' {
+        signalbox.web <- signalbox.tree 'Unsupported'
+      }
+      else 'set' {
+        signalbox.tree -> signalbox.attention 'notice first' {
+          notes '- Every member of Company, before the rule applies'
+        }
+        parallel 'members told' {
+          signalbox.attention -> personA 'notice'
+          signalbox.attention -> personB 'notice'
+        }
+        signalbox.tree -> signalbox.thread.threadActor 'Admins can read' {
+          navigateTo folders_access_admin_visible_chats
+          notes '- Only who can read changes; resolution and resources do not'
+        }
+        personC -> signalbox.thread.threadActor 'read member chat' {
+          notes '- Via client; `Tree.can` allows it under the policy'
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 15% }
+    style signalbox.thread { color secondary; opacity 20% }
+  }
+}

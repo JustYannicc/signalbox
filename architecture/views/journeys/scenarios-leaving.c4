@@ -1,0 +1,1654 @@
+// Scenario journeys, shard 04: leaving (SCN-068 to SCN-093).
+// One dynamic view per scenario. Person A/B/C as in MULTIPLAYER.md: A and B are members sharing
+// folder Company (owner: organization) and its folder Team; C is admin of folder Company.
+// Notes mark each answer `#decided` (with the issue) or `#assumption` (with the reason).
+views {
+
+  // ───────────────────────── Scenarios/Leaving/Leftovers ─────────────────────────
+
+  dynamic view scn_068_removed_before_linking {
+    #v1 #decided #assumption
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Removed Before Linking"
+    description "What happens to my own folders if the company removes me before I link a personal sign-in? Decided: #270 (2026-10-16), own folders aren't the organization's work and stay held. Assumption: the hold has no clock and ends only by linking or B's own delete (pending #878 B9). SCN-068 · R-IDN-17 · P-ONB-18 · R-ACC-16 · P-OUT-07 · v1 partial"
+
+    include personB, personC, platform, platform.workos, signalbox, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.drive
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.identity "Signs up via Company" {
+      navigateTo identity_identity_link_work_account
+      notes """
+        - Start: B's tree holds folder Company (mounted under Work) plus B's own folders.
+        - Work-first sign-up; no personal sign-in linked yet.
+      """
+    }
+    personB -> signalbox.tree.personActor "Makes folder Personal" {
+      notes """
+        - Under B's own top level, owned by B, not by the organization.
+      """
+    }
+    personC -> platform.workos "Removes B" {
+      notes """
+        - C is admin of folder Company.
+      """
+    }
+    platform.workos -> signalbox.identity "Membership deleted" {
+      navigateTo organization_identity_leave
+      notes """
+        - The membership webhook is the one source of truth.
+      """
+    }
+    signalbox.identity -> signalbox.tree.personActor "Unmount Company" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - B's next request no longer sees folder Company; the mount id is kept inactive.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.drive "Company work stays" {
+      notes """
+        - Threads, files and branches stay in folder Company, owned by the organization.
+      """
+    }
+    signalbox.tree.personActor -> signalbox.tree.personActor "Hold own folders" {
+      notes """
+        - `#decided` #270 (2026-10-16): own personal folders aren't the organization's work; the hold-until-linked rule stays.
+        - `#assumption` (pending #878 B9): the hold never expires; nothing is deleted on a clock.
+      """
+    }
+    alt "how the hold ends" {
+      when "B comes back" {
+        personB -> signalbox.identity "Signs in again" {
+          navigateTo identity_identity_add_personal
+          notes """
+            - Same WorkOS user, or a personal sign-in linked to it; B finds the folders.
+            - End: adding a personal sign-in moves them with the account.
+          """
+        }
+      }
+      else "B deletes them" {
+        personB -> signalbox.tree.personActor "Deletes by name" {
+          notes """
+            - End: only B's own named delete sends them to the 30-day trash (#474).
+          """
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/Removal ─────────────────────────
+
+  dynamic view scn_069_removed_mid_turn {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/Removal/Removed Mid Turn"
+    description "What happens to a turn that is running when the person is removed? Decided: #237, #240, #256 (2026-10-15), the running turn finishes; the next request is refused on every device. SCN-069 · P-OUT-04 · R-IDN-05 · R-MGW-03 · R-MGW-04 · R-PLC-02 · not v1 (beyond sign-in, pool, connections)"
+
+    include personB, personC, signalbox, signalbox.web, signalbox.identity, signalbox.thread, signalbox.thread.threadActor, signalbox.harness, signalbox.gateway
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.web "Sends a turn" {
+      notes """
+        - Start: B is a Member of folder Team; the turn runs in Team.
+      """
+    }
+    signalbox.web -> signalbox.thread.threadActor "Start turn" {
+      notes """
+        - Scope frozen: home and pool route resolved at turn start.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.harness "Run turn" {
+      notes """
+        - Harness loop in the isolate tier; placement is invisible.
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - C (admin of folder Company) removes B's membership; the WorkOS webhook lands in Identity.
+        - Nothing touches the running turn yet.
+      """
+    }
+    signalbox.harness -> signalbox.gateway "Model calls continue" {
+      navigateTo folders_gateway_grant
+      notes """
+        - The running turn keeps its authorized home and pool route until it ends.
+        - Grant refresh denies only removals the turn actually uses.
+      """
+    }
+    signalbox.thread.threadActor <- signalbox.harness "Turn finishes" {
+      notes """
+        - `#decided` #240 AC "a turn already running finishes"; #256 (2026-10-15).
+      """
+    }
+    personB -> signalbox.web "Sends again" {
+      notes """
+        - Any send, read or socket re-check.
+      """
+    }
+    signalbox.web -> signalbox.identity "Re-check access" {
+      navigateTo identity_identity_authenticate
+      notes """
+        - `#decided` #237: removal takes effect on the next request on every device.
+      """
+    }
+    signalbox.web <- signalbox.identity "Refused" {
+      notes """
+        - End: refused here; B's other devices drop on their next request.
+      """
+    }
+  }
+
+  dynamic view scn_070_member_leaves_company {
+    #v1 #decided
+    variant sequence
+    title "Scenarios/Leaving/Removal/Member Leaves"
+    description "What happens when a member leaves or is removed from the company? Decided: #270 (2026-10-16), the work stays and keeps moving; the leaver keeps account, assistant, personal folders and pools. SCN-070 · R-ACC-15 · R-ACC-16 · R-IDN-11 · P-OUT-03 · P-OUT-07 · v1 partial"
+
+    include personB, personC, platform, platform.workos, signalbox, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.thread, signalbox.thread.threadActor, hier, hier.asstB
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    alt "how membership ends" {
+      when "C removes B" {
+        personC -> platform.workos "Removes B" {
+          notes """
+            - Start: B reaches folder Company through B's mount under Work.
+          """
+        }
+      }
+      else "B leaves" {
+        personB -> signalbox.identity "Picks Leave" {
+          notes """
+            - Same path from here on.
+          """
+        }
+      }
+    }
+    platform.workos -> signalbox.identity "Membership deleted" {
+      navigateTo organization_identity_leave
+      notes """
+        - Webhook or next sync.
+      """
+    }
+    signalbox.identity -> signalbox.tree.personActor "Unmount Company" {
+      notes """
+        - The mount id is kept inactive so a rejoin restores it (A44).
+      """
+    }
+    personB -> signalbox.identity "Next request" {
+      notes """
+        - Every session of B loses folder Company on its next request.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.thread.threadActor "Work stays" {
+      notes """
+        - Files, branches, PRs and shared threads stay in folder Company.
+        - `#decided` #270: "The person can be replaced, and the work keeps moving".
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree.levelActor "Resolve without via" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Places filed through B's mount lose `via`; they resolve on folder Company's chain only.
+      """
+    }
+    personB -> hier.asstB "Keeps own tree" {
+      notes """
+        - End: account, assistant, folder Personal and own pools untouched.
+        - Nothing is deleted on a clock.
+      """
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/PrivateChats ─────────────────────────
+
+  dynamic view scn_071_leaver_private_chats_sealed {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/PrivateChats/Sealed On Leave"
+    description "What happens to a leaver's private chats in folder Company? Decided: #270 (2026-10-16), sealed: kept, unreadable by everyone (admins included), deletable to the 30-day trash, unsealed on rejoin; move-out dropped in #271/#272 (2026-10-17). SCN-071 · P-OUT-05 · R-ACC-17 · W-MPL-13 · W-MPL-15 · P-SRCH-05 · v1 no"
+
+    include personC, personB, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.tree.levelActor, signalbox.thread, signalbox.thread.threadActor, signalbox.search, signalbox.search.shard
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+    style signalbox.search {
+      color muted
+      opacity 20%
+    }
+
+    personC -> signalbox.identity "Removes B" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Start: B has private chats in folder Team, under folder Company.
+      """
+    }
+    signalbox.identity -> signalbox.tree.levelActor "Role: none" {
+      notes """
+        - B loses access on the next request.
+      """
+    }
+    alt "Company's privacy policy" {
+      when "default" {
+        signalbox.tree.levelActor -> signalbox.thread.threadActor "Seal private chats" {
+          navigateTo state_thread
+          notes """
+            - `#decided` #270: kept, unreadable by everyone, admins included.
+            - Shared threads, files and branches stay with Company.
+          """
+        }
+      }
+      else "Enterprise opt-in" {
+        signalbox.tree.levelActor -> signalbox.thread.threadActor "Admin-visible instead" {
+          notes """
+            - Every member was told up front when they joined.
+          """
+        }
+      }
+    }
+    personC -> signalbox.web "Opens folder Team" {
+      notes """
+        - C browses or searches Team.
+      """
+    }
+    signalbox.web -> signalbox.search.shard "List and search" {
+      navigateTo work_search_visibility
+      notes """
+        - Visibility re-check on every hit.
+      """
+    }
+    signalbox.web <- signalbox.search.shard "Sealed row only" {
+      notes """
+        - C sees a sealed row: no open, no search hits, no snippets.
+      """
+    }
+    personC -> signalbox.thread.threadActor "Deletes a sealed chat" {
+      navigateTo work_threads_multiplayer_leaver
+      notes """
+        - The only thing C can do; it goes to the 30-day trash.
+      """
+    }
+    opt "B rejoins" {
+      signalbox.identity -> signalbox.thread.threadActor "Unseal the rest" {
+        notes """
+          - End: nothing else was deleted on a clock; the rest unseal for B.
+        """
+      }
+    }
+  }
+
+  dynamic view scn_072_copy_out_before_leaving {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/Removal/Copy Out Before Leaving"
+    description "Can a leaver copy things out before leaving? Decided: #270 (2026-10-16), nothing restricts copying while the person still has access; access ends on the next request after removal. SCN-072 · R-ACC-15 · P-OUT-04 · W-DRV-16 · not v1 (beyond sign-in, pool, connections)"
+
+    include personB, personC, signalbox, signalbox.web, signalbox.operations, signalbox.drive, signalbox.identity, signalbox.tree, signalbox.tree.levelActor
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.web "Copies files out" {
+      notes """
+        - Start: B knows they're leaving and still holds a role in folder Team.
+      """
+    }
+    signalbox.web -> signalbox.operations "Download" {
+      notes """
+        - Files from Drive, text from threads.
+      """
+    }
+    signalbox.operations -> signalbox.drive "Read files" {
+      navigateTo work_drive_mount
+      notes """
+        - Same read as any day; or B mounts the drive on a laptop.
+      """
+    }
+    signalbox.web <- signalbox.operations "Files, no flag" {
+      notes """
+        - `#decided` #270: "nothing restricts copying while the person still has access".
+        - Locking it down makes it feel like a phone, not a computer.
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo organization_identity_leave
+      notes """
+        - C is admin of folder Company.
+      """
+    }
+    signalbox.identity -> signalbox.tree.levelActor "Role: none" {
+      notes """
+        - Effective on B's next request.
+      """
+    }
+    personB -> signalbox.web "Tries again" {
+      notes """
+        - Any read in folder Company.
+      """
+    }
+    signalbox.web -> signalbox.operations "Read Team" {
+      notes """
+        - `can` fails: no role anymore.
+      """
+    }
+    signalbox.web <- signalbox.operations "Refused" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - End: nothing in folder Company is readable for B.
+      """
+    }
+  }
+
+  dynamic view scn_073_sealed_chat_trash_rejoin {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/PrivateChats/Trashed Then Rejoin"
+    description "What if an admin trashes a sealed chat and the leaver rejoins later? Assumption: the admin can restore it still sealed; B, once rejoined within 30 days, sees it unsealed and can restore it as author; after the purge it is gone for good. Why: #270 sealing plus #474 only delete removes anything, 30-day trash with exact restore. SCN-073 · W-MPL-15 · W-LIF-16 · W-LIF-17 · R-ACC-17 · R-IDN-12 · v1 no"
+
+    include personC, personB, signalbox, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.thread, signalbox.thread.threadActor, signalbox.drive, signalbox.search, signalbox.search.shard
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+    style signalbox.search {
+      color muted
+      opacity 20%
+    }
+
+    personC -> signalbox.thread.threadActor "Deletes sealed chat" {
+      navigateTo work_threads_lifecycle_trash
+      notes """
+        - Start: B left; B's private chat in folder Team is sealed.
+        - A tombstone stops its effects.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree.levelActor "Into 30-day trash" {
+      notes """
+        - Still sealed while in the trash.
+      """
+    }
+    opt "C changes their mind" {
+      personC -> signalbox.tree.levelActor "Restores" {
+        notes """
+          - `#assumption`: whoever could delete it can restore it; it comes back still sealed.
+        """
+      }
+    }
+    alt "when B rejoins" {
+      when "within 30 days" {
+        personC -> signalbox.identity "Re-adds B" {
+          navigateTo organization_identity_leave
+          notes """
+            - Re-invite in WorkOS.
+          """
+        }
+        signalbox.identity -> signalbox.tree.personActor "Reactivate mount" {
+          notes """
+            - Same mount id (A44).
+          """
+        }
+        signalbox.tree.personActor -> signalbox.thread.threadActor "Unseal" {
+          navigateTo work_threads_multiplayer_leaver
+          notes """
+            - `#decided` #270: unsealed if the person rejoins, also in the trash.
+          """
+        }
+        personB -> signalbox.tree.levelActor "Restores as author" {
+          navigateTo state_thread
+          notes """
+            - End: B finds it in folder Company's trash and restores it.
+          """
+        }
+      }
+      else "after 30 days" {
+        parallel "per-store purge" {
+          signalbox.tree.levelActor -> signalbox.drive "Purge R2 record" {
+            notes """
+              - Purge workers remove it from every store.
+            """
+          }
+          signalbox.tree.levelActor -> signalbox.search.shard "Purge rows" {
+            notes """
+              - End: gone for good; a later rejoin doesn't bring it back.
+            """
+          }
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/Rejoin ─────────────────────────
+
+  dynamic view scn_074_leaver_rejoins {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/Rejoin/Leaver Rejoins"
+    description "What comes back when a leaver rejoins the company? Decided: #270 (2026-10-16) unsealed on rejoin; #246 rejoining brings it back; #858 a rejoin permits new evidence without restoring deleted history. Mount reuse is design A44; lends stay withdrawn (#232). SCN-074 · R-IDN-12 · P-OUT-06 · W-MPL-14 · P-SRCH-11 · P-AST-48 · not v1 (beyond sign-in, pool, connections)"
+
+    include personC, personB, signalbox, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.thread, signalbox.thread.threadActor, signalbox.search, signalbox.search.shard, signalbox.learner, signalbox.models
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+    style signalbox.search {
+      color muted
+      opacity 20%
+    }
+
+    personC -> signalbox.identity "Re-invites B" {
+      navigateTo organization_identity_leave
+      notes """
+        - Start: B's mount of folder Company inactive, private chats sealed.
+        - Re-invite in WorkOS; the webhook drives the rest.
+      """
+    }
+    signalbox.identity -> signalbox.tree.personActor "Reactivate mount" {
+      navigateTo person_leaving_rejoin
+      notes """
+        - The same `MountRef` per (person, Company) under B's folder Work.
+      """
+    }
+    signalbox.tree.personActor -> signalbox.thread.threadActor "Via returns" {
+      notes """
+        - Threads B filed through that mount get `via` back at the next resolve.
+      """
+    }
+    parallel "B's private work" {
+      signalbox.tree.personActor -> signalbox.thread.threadActor "Unseal chats" {
+        navigateTo work_threads_multiplayer_leaver
+        notes """
+          - `#decided` #270: "unsealed if the person rejoins".
+        """
+      }
+      signalbox.thread.threadActor -> signalbox.search.shard "Visibility re-check" {
+        navigateTo work_search_access_change
+        notes """
+          - Hits come back without a reindex.
+        """
+      }
+    }
+    personB -> signalbox.learner "Fresh evidence" {
+      navigateTo person_assistant_memory_sources
+      notes """
+        - `#decided` #858: Company memory and learner evidence deleted at leave stay gone.
+        - New evidence starts from zero.
+      """
+    }
+    opt "if B wants" {
+      personB -> signalbox.models "Re-lends a pool" {
+        notes """
+          - End: old lends are not restored; they were withdrawn at leave (#232).
+        """
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/Leftovers ─────────────────────────
+
+  dynamic view scn_075_leaver_pool_threads_need_pool {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Threads Lose Leaver Pool"
+    description "What happens to shared threads that ran on the leaver's own top-level pool? Assumption: they resolve on folder Company's chain only and show NeedsPool to Company's admins until one places a pool; past usage stays on the leaver's pool. Why: design §2.3 Membership, nearest wins (R5), A21 usage never reattributed. SCN-075 · R-IDN-11 · P-BLK-07 · R-PLC-07 · R-POL-02 · not v1 (beyond sign-in, pool, connections)"
+
+    include personB, personA, personC, signalbox, signalbox.tree, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.thread, signalbox.thread.threadActor, signalbox.models, signalbox.attention
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    signalbox.thread.threadActor -> signalbox.tree.levelActor "Resolve via B" {
+      notes """
+        - Start: folder Company placed no pool; threads B filed in Team resolved B's top-level pool through B's mount.
+      """
+    }
+    personB -> signalbox.tree.personActor "Leaves Company" {
+      navigateTo organization_identity_leave
+      notes """
+        - B's mount goes inactive; those Places lose `via`.
+      """
+    }
+    personA -> signalbox.thread.threadActor "Sends a turn" {
+      notes """
+        - A is still a Member and drives a shared Team thread.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree.levelActor "Resolve Team, Company" {
+      navigateTo folders_placement_resolve_org_chain
+      notes """
+        - Only Team › Company now; no pool there.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.attention "NeedsPool" {
+      navigateTo person_pipeline_blocker_needs_pool
+      notes """
+        - `#assumption`: a Blocker ask to folder Company's admins (design §2.3).
+      """
+    }
+    personC -> signalbox.tree.levelActor "Places a pool" {
+      navigateTo folders_pools_needs_pool
+      notes """
+        - C places a pool on folder Company.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.thread.threadActor "Turn resumes" {
+      notes """
+        - On the re-resolved Scope.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.models "Usage to new pool" {
+      notes """
+        - End: past usage rows stay on B's pool; nothing is reattributed (A21).
+      """
+    }
+  }
+
+  dynamic view scn_076_leaver_loans_withdrawn {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Leaver Loans"
+    description "What happens to the leaver's loans into folder Company? Decided: #232 (confirmed 2026-10-16) lent resources withdrawn at once; #256 (2026-10-15) revoke semantics; #270 (2026-10-16) the leaver keeps own pools. SCN-076 · R-LND-05 · R-LND-06 · R-MGW-03 · P-BLK-07 · P-OUT-07 · v1 no"
+
+    include personB, personC, signalbox, signalbox.identity, signalbox.tree, signalbox.tree.levelActor, signalbox.models, signalbox.connections, signalbox.gateway, signalbox.attention
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.tree.levelActor "Lends into Team" {
+      notes """
+        - Start: B lent a pool and a connection into folder Team; they show "lent by B".
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      notes """
+        - Through WorkOS; the webhook drives the rest.
+      """
+    }
+    signalbox.identity -> signalbox.tree.levelActor "B loses Member+" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Lending needs Member+ at the destination.
+      """
+    }
+    parallel "withdrawn at once" {
+      signalbox.tree.levelActor -> signalbox.models "End pool loan" {
+        navigateTo folders_lending_end_loan
+        notes """
+          - `#decided` #232: "lent resources withdrawn at once".
+        """
+      }
+      signalbox.tree.levelActor -> signalbox.connections "End connection loan" {
+        navigateTo state_loan
+        notes """
+          - Each custody's outbound-placements index drops it.
+        """
+      }
+    }
+    signalbox.gateway -> signalbox.tree.levelActor "Grant refresh" {
+      navigateTo folders_gateway_grant
+      notes """
+        - Running turns finish on their frozen Scope; the refresh denies the removed loan afterwards (#256).
+      """
+    }
+    alt "next turn in Team" {
+      when "another pool reaches" {
+        signalbox.tree.levelActor -> signalbox.models "Next pool" {
+          notes """
+            - Nearest wins; round-robin among remaining lends.
+          """
+        }
+      }
+      else "nothing left" {
+        signalbox.tree.levelActor -> signalbox.attention "NeedsPool" {
+          navigateTo person_pipeline_blocker_needs_pool
+          notes """
+            - A Blocker ask to folder Company's admins.
+          """
+        }
+      }
+    }
+    personB -> signalbox.models "Keeps the pool" {
+      notes """
+        - End: B still owns and uses the pool everywhere else (#270).
+      """
+    }
+  }
+
+  dynamic view scn_077_leaver_shared_threads_continue {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Shared Threads Continue"
+    description "Do shared threads the leaver authored keep working? Decided: #232 shared threads stay; #270 (2026-10-16) access follows the person's current role, never the original author's membership. SCN-077 · W-MPL-13 · R-IDN-11 · R-PLC-07 · P-BLK-07 · not v1 (beyond sign-in, pool, connections)"
+
+    include personB, personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.thread, signalbox.thread.threadActor, signalbox.attention
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.thread.threadActor "Shares threads" {
+      notes """
+        - Start: B started and shared threads in folder Team.
+      """
+    }
+    personB -> signalbox.tree.personActor "Leaves Company" {
+      navigateTo organization_identity_leave
+      notes """
+        - B's mount deactivates; those Places lose `via`; B's lends are withdrawn.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.thread.threadActor "Threads stay" {
+      navigateTo work_threads_multiplayer_leaver
+      notes """
+        - Owner is the home level's owner: the organization.
+      """
+    }
+    personA -> signalbox.web "Sends a turn" {
+      notes """
+        - A keeps driving the shared thread.
+      """
+    }
+    signalbox.web -> signalbox.operations "Authorize" {
+      notes """
+        - `#decided` #270: A's current role decides, never B's membership.
+      """
+    }
+    signalbox.operations -> signalbox.thread.threadActor "Run turn" {
+      notes """
+        - Same thread, same Place in Team.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.tree.levelActor "Resolve Company chain" {
+      navigateTo folders_placement_resolve_org_chain
+      notes """
+        - No `via` now: Team › Company only (design §2.3).
+      """
+    }
+    opt "no pool on Company" {
+      signalbox.thread.threadActor -> signalbox.attention "NeedsPool" {
+        navigateTo person_pipeline_blocker_needs_pool
+        notes """
+          - End: a Blocker to Company's admins; otherwise the turn simply runs.
+        """
+      }
+    }
+  }
+
+  dynamic view scn_078_requester_leaves_door_thread {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Requester Leaves"
+    description "What happens to a thread started for a requester who then leaves? Assumption: it stays in folder Team as Company's work and keeps running; its asks and result go to Team's responsible people. Why: #225 §4 participation needs membership, #270 next-request loss of access, owner = home level's owner (design §1). SCN-078 · R-ACC-25 · P-PPL-10 · P-OUT-04 · P-BLK-13 · v1 no"
+
+    include personB, personC, signalbox, signalbox.identity, signalbox.tree, signalbox.tree.levelActor, signalbox.thread, signalbox.thread.threadActor, signalbox.harness, signalbox.attention
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.tree.levelActor "Asks Team for work" {
+      navigateTo folders_access_ask_folder
+      notes """
+        - Start: B asks folder Team through the door.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.thread.threadActor "Start thread for B" {
+      navigateTo person_people_door
+      notes """
+        - Filed in Team, on Team's pool and connections.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.harness "Agent works" {
+      notes """
+        - Team's agent runs the turns.
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - B leaves Company.
+      """
+    }
+    personB -> signalbox.identity "Opens the thread" {
+      notes """
+        - B's right to drive came from "started for" plus membership.
+      """
+    }
+    personB <- signalbox.identity "Refused" {
+      notes """
+        - `#assumption`: with membership gone, that right ends (#225 §4, #270).
+      """
+    }
+    signalbox.harness -> signalbox.thread.threadActor "Keeps working" {
+      notes """
+        - Place in Team and pool unchanged; it's Company's work.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.attention "Raises an ask" {
+      notes """
+        - Would have gone to B.
+      """
+    }
+    signalbox.attention -> personC "To responsible people" {
+      navigateTo person_pipeline_shared_asks
+      notes """
+        - End: asks and the result route to folder Team's responsible people (C here).
+      """
+    }
+  }
+
+  dynamic view scn_079_leaver_my_files {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Leaver My Files"
+    description "Who gets the leaver's \"My files\"? Decided: #270 (2026-10-16) corporate model, recorded as the answer to #878: work owned by the organization stays with it; \"My files\" is folder Company's root drive (A15), so nothing moves. SCN-079 · W-DRV-24 · R-ACC-15 · P-OUT-03 · v1 no"
+
+    include personB, personC, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.tree.levelActor, signalbox.drive, signalbox.thread, signalbox.thread.threadActor
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.drive "Saves to My files" {
+      notes """
+        - Start: B keeps working files in "My files" while in Company.
+        - "My files" is folder Company's root drive, owned by the organization (A15).
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo organization_identity_leave
+      notes """
+        - C is admin of folder Company.
+      """
+    }
+    signalbox.identity -> signalbox.tree.levelActor "Role: none" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - B's access ends on the next request.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.drive "Nothing moves" {
+      navigateTo work_drive_leaver_files
+      notes """
+        - `#decided` #270: work owned by the organization stays with it; nothing orphaned.
+      """
+    }
+    personC -> signalbox.web "Opens My files" {
+      notes """
+        - C and members with a role at folder Company.
+      """
+    }
+    signalbox.web -> signalbox.drive "Read and edit" {
+      notes """
+        - Per roles, as before B left.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor "Chats sealed, files not" {
+      notes """
+        - End: private chats are sealed, but files aren't private content and stay readable.
+      """
+    }
+  }
+
+  dynamic view scn_080_leaver_drafts {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Leaver Drafts"
+    description "What happens to unsent drafts the leaver started in folder Company? Assumption: sealed like private chats: kept in B's Person actor, shown to nobody, back on rejoin; never handed to admins. Why: #270 privacy on each piece of content (supersedes #119's reassign proposal), A22 drafts in the Person actor, #333 private until sent, A44 stable mount. SCN-080 · P-DRF-05 · P-DRF-10 · P-OUT-05 · P-OUT-06 · v1 no"
+
+    include personB, personC, signalbox, signalbox.web, signalbox.capture, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.search
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.capture "Drafts at Team" {
+      navigateTo person_drafts_save
+      notes """
+        - Start: unsent drafts at folder Team.
+        - Stored in B's Person actor, keyed by home level; invisible to others (A22, #333).
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Folder Company leaves B's tree.
+      """
+    }
+    signalbox.identity -> signalbox.tree.personActor "Unmount Company" {
+      notes """
+        - Mount id kept inactive.
+      """
+    }
+    personB -> signalbox.web "Opens Drafts" {
+      notes """
+        - B's Drafts list.
+      """
+    }
+    signalbox.web <- signalbox.capture "Team drafts hidden" {
+      navigateTo person_drafts_move
+      notes """
+        - `#assumption`: sealed with the level; they can't open or send there.
+      """
+    }
+    personC -> signalbox.search "Searches Team" {
+      notes """
+        - Drafts produce no catalog or search rows; C and Company's agent never see them.
+      """
+    }
+    opt "B rejoins" {
+      signalbox.identity -> signalbox.tree.personActor "Reactivate mount" {
+        navigateTo person_leaving_rejoin
+        notes """
+          - Same mount id (A44).
+        """
+      }
+      signalbox.tree.personActor -> signalbox.capture "Drafts reappear" {
+        notes """
+          - End: back at folder Team for B; never leaked to Company.
+        """
+      }
+    }
+  }
+
+  dynamic view scn_081_leaver_device_home {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Device Home Lost"
+    description "What happens to a device homed at folder Company when its person leaves? Assumption: an unreachable home falls back to the top level and comes back on rejoin. Why: #319 the default is the top level; A22 devices in the Person actor; A44 stable mount id reactivates on remount. SCN-081 · P-DEV-02 · P-FOC-01 · P-OUT-03 · R-IDN-12 · v1 no"
+
+    include personB, personC, signalbox, signalbox.desktop, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.attention
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.desktop "Work laptop" {
+      navigateTo journey_devices_manage
+      notes """
+        - Start: the laptop's home is folder Company; Focus and notifications start there.
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo organization_identity_leave
+      notes """
+        - C is admin of folder Company.
+      """
+    }
+    signalbox.identity -> signalbox.tree.personActor "Unmount Company" {
+      notes """
+        - Mount id kept inactive.
+      """
+    }
+    signalbox.desktop -> signalbox.tree.personActor "Next request" {
+      notes """
+        - The home no longer resolves.
+      """
+    }
+    signalbox.desktop <- signalbox.tree.personActor "Home: top level" {
+      notes """
+        - `#assumption`: falls back to the default home, B's top level (#319).
+        - The device record keeps the old home by mount id.
+      """
+    }
+    signalbox.tree.personActor -> signalbox.attention "Focus from top level" {
+      navigateTo person_focus_set
+      notes """
+        - Company asks no longer arrive.
+      """
+    }
+    opt "B rejoins" {
+      signalbox.identity -> signalbox.tree.personActor "Reactivate mount" {
+        navigateTo person_leaving_rejoin
+        notes """
+          - End: the laptop's home returns to folder Company.
+        """
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/Removal ─────────────────────────
+
+  dynamic view scn_082_leaver_local_key_mcp {
+    #v1 #assumption
+    variant sequence
+    title "Scenarios/Leaving/Removal/Local Key Stops"
+    description "What happens to the leaver's local pool key or MCP URL bound to a Company place? Assumption: both are refused with Denied on the next request; nothing to clean up by hand; keys for own folders keep working. Why: design §3.2 (LocalKeyActor carries a person and place; revoked membership bites on the next request), R-MGW-03 refresh denies on role loss, #454. SCN-082 · R-POL-29 · R-POL-27 · R-IDN-05 · R-MGW-03 · P-OUT-02 · v1 partial"
+
+    include personB, personC, laptopCli, mcpClient, signalbox, signalbox.gateway, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.models
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> laptopCli "Uses Team's pool" {
+      navigateTo folders_pools_local_key
+      notes """
+        - Start: "Use this pool from my laptop" on folder Team gave an `sbk_` key.
+        - B also copied Team's MCP URL into an MCP client.
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - B's mount goes inactive.
+      """
+    }
+    laptopCli -> signalbox.gateway "Model call" {
+      notes """
+        - ModelGateway checks `LocalKeyActor{person, place}`.
+      """
+    }
+    signalbox.gateway -> signalbox.identity "Membership check" {
+      navigateTo identity_identity_authenticate
+      notes """
+        - B no longer reaches folder Team.
+      """
+    }
+    laptopCli <- signalbox.gateway "Denied" {
+      navigateTo folders_pools_local_key_place_change
+      notes """
+        - `#assumption`: refused on this request; nothing to revoke by hand.
+      """
+    }
+    mcpClient -> signalbox.gateway "Tool call" {
+      navigateTo work_agenttools_outside_agent_connect
+      notes """
+        - ToolGateway runs the same check; a minted grant is denied at its next refresh.
+      """
+    }
+    mcpClient <- signalbox.gateway "Denied" {
+      navigateTo folders_gateway_grant
+      notes """
+        - Same answer for the MCP session.
+      """
+    }
+    laptopCli -> signalbox.models "Key at Personal" {
+      notes """
+        - End: keys B minted at folder Personal keep working.
+      """
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/Leftovers ─────────────────────────
+
+  dynamic view scn_083_leaver_automations_asks {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Automations And Asks"
+    description "What happens to the leaver's automations and the asks waiting on them? Assumption: Company's automations keep running on its chain with no via; B's lends withdraw; B's personal automation stops seeing Company; asks naming B fall to the folder's responsible people. Why: design A2, §3.12, §5 AppEvent scope; #232; #225 §4. SCN-083 · W-AUT-28 · P-ASK-07 · R-PLC-07 · P-BLK-04 · P-BLK-11 · v1 no"
+
+    include personB, personC, signalbox, signalbox.identity, signalbox.automations, signalbox.tree, signalbox.gateway, signalbox.attention
+    style signalbox.automations {
+      color primary
+    }
+
+    personB -> signalbox.automations "Writes automations" {
+      notes """
+        - Start: automations placed in folder Team belong to Company and run with no `via`.
+        - Plus one personal automation watching Company threads through B's mount.
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - B's mount goes inactive; B's lends are withdrawn.
+      """
+    }
+    signalbox.automations -> signalbox.tree "Run on Company chain" {
+      navigateTo work_automations_run
+      notes """
+        - `#assumption`: runs continue; Company's agent is responsible (A2, §3.12).
+      """
+    }
+    signalbox.automations -> signalbox.gateway "Step uses GitHub" {
+      notes """
+        - The connection B lent is gone.
+      """
+    }
+    signalbox.gateway -> signalbox.attention "AccessRequired" {
+      navigateTo person_pipeline_blocker_access
+      notes """
+        - A Blocker to Company's role holders.
+      """
+    }
+    signalbox.tree -> signalbox.automations "No Company events" {
+      notes """
+        - B's personal automation stops receiving Company AppEvents (§5 scope).
+      """
+    }
+    signalbox.attention -> personC "Asks re-routed" {
+      navigateTo person_pipeline_blocker_automation_ask
+      notes """
+        - End: asks routed to B drop from B's pipeline and go to the folder's responsible people (#225 §4).
+      """
+    }
+  }
+
+  dynamic view scn_084_assistant_forgets_company_memory {
+    #decided
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Assistant Forgets Company"
+    description "Does the assistant forget company memory when the person leaves? Decided: #282/#274 (2026-10-14) revocation deletes every memory sourced in that owner's tree; #668 same for the learner. The memory store itself is still open (#282). SCN-084 · P-AST-43 · P-OUT-08 · R-IDN-16 · P-AST-41 · v1 no"
+
+    include personA, personC, hier, hier.asstA, signalbox, signalbox.identity, signalbox.learner
+    style hier {
+      color muted
+      opacity 15%
+    }
+
+    hier.asstA -> signalbox.learner "Memory with source" {
+      navigateTo person_assistant_memory_sources
+      notes """
+        - Start: A's assistant holds memories sourced in folder Company's tree.
+        - Each memory records its source home: folder + owner.
+      """
+    }
+    alt "how the link ends" {
+      when "C revokes A" {
+        personC -> signalbox.identity "Revokes membership" {
+          navigateTo identity_identity_unlink
+          notes """
+            - Through WorkOS.
+          """
+        }
+      }
+      else "A unlinks" {
+        personA -> signalbox.identity "Unlinks work account" {
+          navigateTo identity_identity_unlink_work_account
+          notes """
+            - Same result.
+          """
+        }
+      }
+    }
+    parallel "revocation deletes" {
+      signalbox.identity -> signalbox.learner "Delete Company memories" {
+        notes """
+          - `#decided` #282/#274: every memory whose source is in that tree.
+        """
+      }
+      signalbox.identity -> signalbox.learner "Delete A's evidence" {
+        notes """
+          - `#decided` #668: A's learner contributions from that tree.
+        """
+      }
+    }
+    personA -> hier.asstA "Talks to assistant" {
+      notes """
+        - End: name, avatar, SOUL.md and Personal memory stay.
+        - A rejoin doesn't restore what was deleted.
+      """
+    }
+  }
+
+  dynamic view scn_085_company_learner_after_leave {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/Leftovers/Company Learner"
+    description "What does the company learner keep after a member leaves? Assumption: as designed in #858: delete B's events, statements and their dependents, deny stale reads, rejoin starts fresh; A's learning stays. Why: #858 body (design, company learning cut from current delivery), consistent with #282 revocation deletes. SCN-085 · P-AST-48 · P-AST-49 · P-AST-44 · v1 no"
+
+    include personB, personA, signalbox, signalbox.identity, signalbox.tree, signalbox.tree.levelActor, signalbox.learner
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.learner "Decisions feed lenses" {
+      navigateTo person_assistant_learner_levels
+      notes """
+        - Start: B's answers and overturns in folder Company fed Company's learner.
+      """
+    }
+    signalbox.identity -> signalbox.learner "B removed" {
+      navigateTo person_assistant_memory_sources
+      notes """
+        - Membership sync tells the learner before committing the local removal.
+      """
+    }
+    signalbox.learner -> signalbox.learner "Delete B's evidence" {
+      notes """
+        - `#assumption` (#858): events, statements, dependent precedents and scores.
+      """
+    }
+    signalbox.identity -> signalbox.tree.levelActor "Commit removal" {
+      notes """
+        - Only after the learner acknowledged.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.learner "Stale read" {
+      notes """
+        - Reads of deleted evidence are denied.
+      """
+    }
+    personA -> signalbox.learner "Keeps deciding" {
+      notes """
+        - A's independent evidence keeps feeding Company's lenses.
+      """
+    }
+    opt "B rejoins" {
+      personB -> signalbox.learner "New evidence" {
+        notes """
+          - End: starts from zero; nothing deleted comes back.
+        """
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/Removal ─────────────────────────
+
+  dynamic view scn_086_leave_friend_folder {
+    #decided #assumption
+    variant sequence
+    title "Scenarios/Leaving/Removal/Leave Friend Folder"
+    description "What happens when someone leaves a friend's folder voluntarily? Decided: #238 reverse states (the reference vanishes when access ends) and #232. Assumption: sealing covers folders a person owns too, since #270 (2026-10-16) puts privacy on each piece of content, not its container. SCN-086 · R-ACC-08 · R-LND-05 · R-ACC-17 · W-MPL-13 · v1 no"
+
+    include personB, personA, signalbox, signalbox.web, signalbox.tree, signalbox.tree.levelActor, signalbox.tree.personActor, signalbox.models, signalbox.thread, signalbox.thread.threadActor
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.web "Picks Leave" {
+      notes """
+        - Start: B is a Member of A's folder Friends (person-owned, under A's top level) and mounted it in B's tree.
+      """
+    }
+    signalbox.web -> signalbox.tree.levelActor "Drop B's role" {
+      navigateTo state_invitation
+      notes """
+        - Access ends on B's next request.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.tree.personActor "Remove B's mount" {
+      notes """
+        - `#decided` #238: B's mount of Friends vanishes when access ends.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.models "Withdraw B's lends" {
+      navigateTo folders_lending_end_loan
+      notes """
+        - `#decided` #232: lent pools and connections withdrawn at once.
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.thread.threadActor "Seal B's private chats" {
+      navigateTo work_threads_multiplayer_leaver
+      notes """
+        - `#assumption`: privacy is per piece of content, so a person-owned folder seals too.
+        - Shared threads (the trip plan) stay in folder Friends.
+      """
+    }
+    personA -> signalbox.thread.threadActor "Trash, not read" {
+      navigateTo state_thread
+      notes """
+        - A can send a sealed chat to the 30-day trash; A can't open it.
+      """
+    }
+    opt "A re-invites" {
+      personA -> signalbox.tree.levelActor "Invites B" {
+        notes """
+          - End: accepting mounts Friends again.
+        """
+      }
+    }
+  }
+
+  dynamic view scn_087_idp_deprovision {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/Removal/IdP Deprovision"
+    description "What happens when the company's identity provider deprovisions an employee? Assumption: revocation is WorkOS membership removal today; Directory Sync later feeds the same webhook, so nothing in Signalbox changes when it arrives (pending #312). Why: #312 Directory Sync is later; #270 revokes on membership removal. SCN-087 · R-IDN-11 · R-IDN-19 · R-ACC-16 · R-IDN-05 · v1 no"
+
+    include personC, personB, platform, platform.workos, signalbox, signalbox.ingress, signalbox.identity, signalbox.tree, signalbox.tree.personActor
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personC -> personC "Deprovisions B" {
+      notes """
+        - Start: B offboarded in the company's own IdP (outside Signalbox).
+      """
+    }
+    alt "how WorkOS learns" {
+      when "today" {
+        personC -> platform.workos "Removes membership" {
+          navigateTo organization_identity_company_sso
+          notes """
+            - In the Admin Portal; meanwhile SSO already refuses B's sign-in.
+          """
+        }
+      }
+      else "with Directory Sync" {
+        platform.workos -> platform.workos "Directory event" {
+          notes """
+            - `#assumption` (pending #312): WorkOS removes the membership itself.
+          """
+        }
+      }
+    }
+    platform.workos -> signalbox.ingress "Membership deleted" {
+      notes """
+        - Same webhook either way.
+      """
+    }
+    signalbox.ingress -> signalbox.identity "Membership loss" {
+      navigateTo organization_identity_leave
+      notes """
+        - One path for every removal.
+      """
+    }
+    signalbox.identity -> signalbox.tree.personActor "Unmount Company" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - End: B loses access on the next request; sealing, lend withdrawal and memory deletion follow as in any leave.
+      """
+    }
+    personB -> signalbox.identity "Next request" {
+      navigateTo identity_identity_authenticate
+      notes """
+        - Refused.
+      """
+    }
+  }
+
+  dynamic view scn_088_settings_revoked_company {
+    #v1 #decided #assumption
+    variant sequence
+    title "Scenarios/Leaving/Removal/Settings Revoked Company"
+    description "What does account settings show for a company that removed you? Decided: #272 sweep (2026-10-17) drop any deadline or days-left display, after #270 (2026-10-16). Assumption: the removed-state row and the sealed-chats line follow #270's rules. SCN-088 · R-IDN-14 · R-IDN-16 · P-OUT-08 · v1 partial"
+
+    include personA, signalbox, signalbox.web, signalbox.mobile, signalbox.identity, signalbox.tree, signalbox.tree.personActor
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personA -> signalbox.web "Opens Account" {
+      notes """
+        - Start: A was removed from Company.
+        - Same screen on mobile.
+      """
+    }
+    signalbox.web -> signalbox.identity "Sign-ins and companies" {
+      navigateTo identity_identity_link
+      notes """
+        - The personal sign-in, linked companies and a link button.
+      """
+    }
+    signalbox.web <- signalbox.identity "Company: removed" {
+      navigateTo identity_identity_unlink_work_account
+      notes """
+        - `#assumption`: shown as removed; the work identity alias stays on the account.
+      """
+    }
+    signalbox.web -> signalbox.tree.personActor "Sealed chats line" {
+      notes """
+        - "Your private chats there are sealed and return if you rejoin."
+      """
+    }
+    signalbox.web -> personA "No countdown" {
+      navigateTo identity_identity_unlink
+      notes """
+        - End: `#decided` #272: no deadline, days-left or "move chats out" action.
+      """
+    }
+    personA -> signalbox.mobile "Checks on phone" {
+      notes """
+        - Same rows, same copy.
+      """
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/LastAdmin ─────────────────────────
+
+  dynamic view scn_089_owner_leaves_own_folder {
+    #decided #assumption
+    variant sequence
+    title "Scenarios/Leaving/LastAdmin/Owner Leaves Own Folder"
+    description "Can the Owner just leave their own shared folder? Decided: #232 / #225 §7 (confirmed 2026-10-16) Owners can't just leave: transfer it or make it an organization. Assumption: account deletion with owned shared folders is held by a Blocker until transfer, no 30-day warning handover (that would be a clock; pending #232). SCN-089 · P-OUT-10 · P-OUT-11 · R-ACC-19 · R-TRE-14 · R-LND-10 · v1 no"
+
+    include personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.identity, signalbox.models, signalbox.attention
+
+    personA -> signalbox.web "Picks Leave" {
+      notes """
+        - Start: A owns a folder under Personal, shared with friends; B is a Member.
+      """
+    }
+    signalbox.web -> signalbox.operations "Leave folder" {
+      notes """
+        - Authority check on the Owner role.
+      """
+    }
+    signalbox.web <- signalbox.operations "Refused" {
+      notes """
+        - `#decided` #232: Owners can't just leave; the folder never ends up ownerless.
+      """
+    }
+    alt "A's way out" {
+      when "hand over" {
+        personA -> signalbox.tree "Owner role to B" {
+          navigateTo folders_access_owner_transfer
+          notes """
+            - B accepts; A becomes a Member.
+          """
+        }
+      }
+      else "make it an organization" {
+        personA -> signalbox.identity "Make organization" {
+          navigateTo folders_tree_make_org
+          notes """
+            - The subtree moves under a new organization root.
+          """
+        }
+        signalbox.tree -> signalbox.models "Auto-lend A's pool" {
+          navigateTo folders_lending_make_org
+          notes """
+            - The inherited pool keeps working, revocable.
+          """
+        }
+      }
+    }
+    personA -> signalbox.tree "Leaves as Member" {
+      notes """
+        - End: A leaves like anyone else.
+      """
+    }
+    opt "A deletes the account instead" {
+      signalbox.identity -> signalbox.attention "Deletion held" {
+        navigateTo folders_access_owner_handover
+        notes """
+          - `#assumption`: a Blocker lists the owned shared folders; no clock hands them over.
+        """
+      }
+    }
+  }
+
+  dynamic view scn_090_last_admin_leaves {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/LastAdmin/Last Admin Leaves"
+    description "What happens when the last Admin of folder Company leaves? Assumption: C can't leave in-app without a successor; if WorkOS removes C out of band, the work keeps moving and Company's IT restores an Admin in WorkOS. Why: mirrors #232 Owners can't just leave, #229 d8, #270 the work keeps moving, #225 §11 WorkOS owns management. SCN-090 · R-ACC-19 · P-OUT-11 · R-ACC-01 · P-BLK-07 · v1 no"
+
+    include personC, signalbox, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree, signalbox.attention, platform, platform.workos, hier, hier.organization
+    style hier {
+      color muted
+      opacity 15%
+    }
+
+    personC -> signalbox.web "Picks Leave" {
+      notes """
+        - Start: C is the only Admin of folder Company.
+      """
+    }
+    signalbox.web -> signalbox.operations "Leave folder" {
+      notes """
+        - Authority check: would leave Company with no Admin.
+      """
+    }
+    signalbox.web <- signalbox.operations "Refused" {
+      navigateTo folders_access_owner_handover
+      notes """
+        - `#assumption`: name another Admin or hand over Owner first.
+      """
+    }
+    alt "how it resolves" {
+      when "in the app" {
+        personC -> signalbox.tree "Grants B Admin" {
+          navigateTo folders_access_roles
+          notes """
+            - End: then C leaves like any Member.
+          """
+        }
+      }
+      else "removed out of band" {
+        platform.workos -> signalbox.identity "C removed" {
+          navigateTo organization_identity_leave
+          notes """
+            - Threads, pools and automations keep running (#270).
+          """
+        }
+        signalbox.tree -> signalbox.attention "No-admin Blocker" {
+          navigateTo person_pipeline_blocker_needs_pool
+          notes """
+            - Admin-only asks such as `NeedsPool` show "no admin" to Company's members, B included.
+          """
+        }
+        hier.organization -> platform.workos "IT restores Admin" {
+          navigateTo folders_access_owner_transfer
+          notes """
+            - End: Company's IT sets an Admin in the WorkOS Admin Portal (#225 §11).
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view scn_091_gate_decider_leaves {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/LastAdmin/Gate Decider Leaves"
+    description "What happens when a gate's named decider leaves the company? Assumption: deciders who lose access drop off the route and the gate falls to the folder's responsible people; B's work isn't stuck. Why: #225 §4 authority is not a role, responsible people are default deciders; #270 next-request loss of access; #675 delegation per kind is revocable. SCN-091 · P-RDY-01 · P-RDY-02 · P-RDY-09 · P-BLK-13 · v1 no"
+
+    include personB, personC, hier, hier.asstC, signalbox, signalbox.identity, signalbox.thread, signalbox.thread.threadActor, signalbox.operations, signalbox.attention
+    style hier {
+      color muted
+      opacity 15%
+    }
+    style signalbox.thread {
+      color muted
+      opacity 20%
+    }
+
+    signalbox.thread.threadActor -> signalbox.operations "Reaches merge gate" {
+      navigateTo person_pipeline_ready_merge_gate
+      notes """
+        - Start: B's thread has a PR waiting.
+      """
+    }
+    signalbox.operations -> signalbox.attention "Ready ask: C" {
+      navigateTo person_pipeline_ready_gate
+      notes """
+        - C is the named merge decider at folder Company.
+      """
+    }
+    personC -> signalbox.identity "Leaves Company" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - C's next request is refused.
+      """
+    }
+    signalbox.identity -> signalbox.attention "Drop C's projection" {
+      notes """
+        - The ask leaves C's pipeline.
+      """
+    }
+    signalbox.identity -> hier.asstC "Delegation void" {
+      notes """
+        - Any kind C delegated to C's assistant stops counting at Company (#675).
+      """
+    }
+    signalbox.attention -> personB "Re-route to responsible" {
+      navigateTo person_pipeline_route
+      notes """
+        - `#assumption`: the gate falls back to folder Team's responsible people (#225 §4).
+      """
+    }
+    personB -> signalbox.thread.threadActor "Answers" {
+      navigateTo person_pipeline_shared_asks
+      notes """
+        - B here as one of the responsible people; any of them can answer.
+      """
+    }
+    signalbox.thread.threadActor -> signalbox.operations "Gate proceeds" {
+      notes """
+        - End: B's work isn't stuck.
+      """
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/PrivateChats ─────────────────────────
+
+  dynamic view scn_092_leaver_private_notes {
+    #assumption
+    variant sequence
+    title "Scenarios/Leaving/PrivateChats/Leaver Private Notes"
+    description "What happens to the leaver's private notes in folder Company? Assumption: sealed like private chats: kept in B's Person actor, readable by nobody (C, Company's agent and B's assistant included), back on rejoin; shared notes stay with Team. Why: #270 privacy per piece of content; #636 private notes never deleted; A22; #282. SCN-092 · P-NOTE-17 · P-NOTE-03 · P-NOTE-13 · P-OUT-05 · v1 no"
+
+    include personB, personC, hier, hier.asstB, signalbox, signalbox.capture, signalbox.identity, signalbox.tree, signalbox.tree.personActor, signalbox.tree.levelActor
+    style hier {
+      color muted
+      opacity 15%
+    }
+    style signalbox.tree {
+      color muted
+      opacity 20%
+    }
+
+    personB -> signalbox.capture "Writes private notes" {
+      navigateTo person_notes_write
+      notes """
+        - Start: private notes on folder Team's pad.
+        - Stored in B's Person actor, keyed by home level (A22).
+      """
+    }
+    personC -> signalbox.identity "Removes B" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Team drops out of B's tree.
+      """
+    }
+    signalbox.identity -> signalbox.tree.personActor "Seal Team notes" {
+      notes """
+        - `#assumption`: hidden from everyone, C included; nothing deletes them on a clock (#636).
+      """
+    }
+    signalbox.tree.levelActor -> signalbox.tree.levelActor "Shared notes stay" {
+      navigateTo person_notes_read
+      notes """
+        - Team's shared notes stay on the pad for Company's agent.
+      """
+    }
+    hier.asstB -> signalbox.tree.personActor "Read notes" {
+      navigateTo person_notes_tend
+      notes """
+        - B's assistant may no longer read Company-sourced content (#282).
+      """
+    }
+    hier.asstB <- signalbox.tree.personActor "Team notes hidden" {
+      notes """
+        - Only B's own-tree notes come back.
+      """
+    }
+    opt "B rejoins" {
+      signalbox.identity -> signalbox.tree.personActor "Reactivate mount" {
+        navigateTo person_leaving_rejoin
+        notes """
+          - End: the private notes reappear on Team's pad.
+        """
+      }
+    }
+  }
+
+  // ───────────────────────── Scenarios/Leaving/Removal ─────────────────────────
+
+  dynamic view scn_093_drive_mount_then_removed {
+    #decided #assumption
+    variant sequence
+    title "Scenarios/Leaving/Removal/Drive Mount Revoked"
+    description "What happens to a mounted company drive on a laptop when its person is removed? Decided: #119 (2026-10-18) tokens are minted after a member check. Assumption: no new token after removal; the current one dies at its short TTL. Why: #270 access ends on the next request, and every remint is a request. SCN-093 · W-DRV-16 · R-IDN-05 · P-OUT-04 · v1 no"
+
+    include personA, personC, signalbox, signalbox.desktop, signalbox.drive, signalbox.identity
+
+    personA -> signalbox.desktop "Mounts Company drive" {
+      navigateTo work_drive_mount
+      notes """
+        - Start: ArtifactFS on A's laptop.
+      """
+    }
+    signalbox.desktop -> signalbox.drive "Mint token" {
+      notes """
+        - Short-lived and repo-scoped.
+      """
+    }
+    signalbox.drive -> signalbox.identity "Member check" {
+      navigateTo identity_identity_authenticate
+      notes """
+        - `#decided` #119: minted only after a member check.
+      """
+    }
+    personC -> signalbox.identity "Removes A" {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Access ends on A's next request.
+      """
+    }
+    signalbox.desktop -> signalbox.drive "Reads until TTL" {
+      notes """
+        - The current token works until its short TTL runs out.
+      """
+    }
+    signalbox.desktop -> signalbox.drive "Remint" {
+      notes """
+        - ArtifactFS asks for a new token.
+      """
+    }
+    signalbox.desktop <- signalbox.drive "Refused" {
+      notes """
+        - `#assumption`: the member check fails; every remint is a request (#270).
+      """
+    }
+    signalbox.desktop -> personA "Local copies stay" {
+      notes """
+        - End: files already on disk stay; copying wasn't restricted while A had access.
+      """
+    }
+  }
+}

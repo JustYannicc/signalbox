@@ -1,0 +1,1344 @@
+// Shard 06: person settings, client shell, and the workspace, settings and composer journeys.
+// Settings hold only what belongs to a person (preferences, identities, devices, Focus,
+// notifications). Pools, connections and providers live on folders, never here (corr. 1, §4.3).
+views {
+
+  // ─── Journeys / Composer ────────────────────────────────────────────────
+
+  dynamic view journey_composer_edit {
+    title 'Journeys/Composer/Write and edit in the composer'
+    description 'T-TRN-21, T-TRN-37 · not v1. Client-only editing: nothing reaches the cloud until send.'
+
+    autoLayout TopBottom
+    include personA, signalbox.web
+
+    personA -> signalbox.web 'types' {
+      notes """
+        - A writes markdown; headings, lists and code blocks render inline as A types
+        - The composer is the same on web, desktop and mobile (client-runtime)
+      """
+    }
+    personA -> signalbox.web 'expands' {
+      notes """
+        - A expands the composer to full height for a long prompt
+        - Collapsing keeps the text and the caret
+      """
+    }
+    signalbox.web -> signalbox.web 'checks length' {
+      notes """
+        - The client checks the prompt length before send is allowed
+        - Over the limit, the counter turns red and Send is disabled with the reason
+      """
+    }
+    personA -> signalbox.web 'copies chips' {
+      notes """
+        - A copies file, quote or mention chips from one draft
+        - Pasting into another draft keeps them as chips, not plain text
+      """
+    }
+    personA -> signalbox.web 'deletes a chip' {
+      notes """
+        - A removes a chip by backspace
+        - Undo restores the chip with its reference intact
+      """
+    }
+    signalbox.web -> personA 'ready to send' {
+      notes """
+        - A sees the final prompt with its chips
+        - Sending hands off to the thread (not drawn here)
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view journey_composer_quote {
+    title 'Journeys/Composer/Quote a message or a diff line into the composer'
+    description 'T-TRN-33, T-TRN-35 · not v1. Quote chips point back at their source; review chips point at a drive line.'
+
+    autoLayout TopBottom
+    include personA, signalbox.web, signalbox.funnel, signalbox.drive
+
+    personA -> signalbox.web 'selects text' {
+      notes """
+        - A selects part of an assistant message
+        - A small toolbar offers Cite
+      """
+    }
+    personA -> signalbox.web 'Cite' {
+      notes """
+        - The selection becomes a quote chip in the composer
+        - The chip remembers the message it came from
+      """
+    }
+    personA -> signalbox.web 'clicks chip' {
+      notes """
+        - The thread scrolls back to the quoted message and highlights it
+      """
+    }
+    personA -> signalbox.web 'opens the diff' {
+      navigateTo work_checkpoints_diff
+      notes """
+        - A opens the turn's diff or a file in the right panel
+        - Drill down for how the diff is built
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.drive 'Drive.open(revision)' {
+      notes """
+        - The client reads the lines from the drive at the turn's revision
+        - What A sees is what the agent saw
+      """
+    }
+    signalbox.web <- signalbox.funnel 'lines'
+    personA -> signalbox.web 'annotates a line' {
+      notes """
+        - A writes a comment on a diff or file line
+        - It lands in the composer as a review comment chip (file, line, revision)
+      """
+    }
+    signalbox.web -> personA 'chips in composer' {
+      notes """
+        - A sends the quote and review chips with the next message
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  // ─── Journeys / Settings ────────────────────────────────────────────────
+
+  dynamic view journey_settings_browse {
+    title 'Journeys/Settings/Browse and search Settings'
+    description 'T-SET-01, T-SET-14 · not v1. Settings is person-only: preferences, identities, devices, Focus, notifications.'
+
+    autoLayout TopBottom
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.tree
+
+    personA -> signalbox.web 'opens Settings' {
+      notes """
+        - A clicks Settings at the bottom of the rail, or types it in the palette
+        - Sections: General, Appearance, Keybindings, Accounts, Devices, Focus, Notifications, Archived
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'reads preferences' {
+      notes """
+        - Everything shown is A's own Person record
+        - No accounts, pools or providers appear here: those live on folders
+      """
+    }
+    personA -> signalbox.web 'searches' {
+      notes """
+        - Search filters across every section as A types
+        - Searching "pool" points to the folder page instead of a setting
+      """
+    }
+    personA -> signalbox.web 'changes a setting' {
+      navigateTo person_settings_change
+      notes """
+        - A flips a preference; it saves as A's committed revision
+        - Drill down for person vs work vs host keys
+      """
+    }
+    personA -> signalbox.web 'opens Accounts' {
+      navigateTo person_settings_linked_accounts
+      notes """
+        - A sees the personal identity and any linked work identities
+      """
+    }
+    opt 'licenses' {
+      personA -> signalbox.web 'opens licenses' {
+        notes """
+          - A static page listing open-source licenses bundled with the client
+        """
+      }
+    }
+    personB -> signalbox.web 'opens own Settings' {
+      notes """
+        - B sees only B's own preferences, never A's
+        - Sharing folder Company changes nothing here
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personB {
+      color green
+    }
+  }
+
+  dynamic view journey_settings_linked_identities {
+    title 'Journeys/Settings/See linked accounts in Settings'
+    description 'R-IDN-18 · not v1 (v1 link returns Unsupported). Same list on web and mobile.'
+
+    autoLayout TopBottom
+    include personA, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.identity
+
+    personA -> signalbox.web 'opens Accounts' {
+      notes """
+        - A opens Settings › Accounts on the web
+      """
+    }
+    signalbox.web -> signalbox.funnel 'query identities' {
+      notes """
+        - One typed query; Funnel decodes and calls
+      """
+    }
+    signalbox.funnel -> signalbox.identity 'linked identities' {
+      notes """
+        - Identity reads its alias map; WorkOS stays hidden behind it
+      """
+    }
+    signalbox.funnel <- signalbox.identity 'personal + work aliases'
+    signalbox.web <- signalbox.funnel 'list'
+    signalbox.web -> personA 'shows identities' {
+      notes """
+        - A sees the personal sign-in and each linked work identity with the folder it unlocks
+        - A linked work identity can't be used to sign in
+      """
+    }
+    alt {
+      when 'link another' {
+        personA -> signalbox.web 'Link work account' {
+          navigateTo identity_identity_link
+          notes """
+            - A proves the work identity (email code, OAuth, or SSO once)
+          """
+        }
+      }
+      else 'unlink' {
+        personA -> signalbox.web 'Unlink' {
+          navigateTo identity_identity_unlink
+          notes """
+            - Access through that identity ends at the next request
+          """
+        }
+      }
+    }
+    personA -> signalbox.mobile 'opens Accounts' {
+      notes """
+        - On the phone A sees the same list: it comes from the cloud, not the device
+      """
+    }
+    signalbox.mobile -> signalbox.funnel 'query identities'
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  // ─── Journeys / Workspace ───────────────────────────────────────────────
+
+  dynamic view journey_workspace_desktop_window {
+    title 'Journeys/Workspace/Windows, menus and paste as text'
+    description 'T-DSK-07 · not v1. Desktop is a thin gateway; these are shell behaviors only.'
+
+    autoLayout TopBottom
+    include personA, signalbox.desktop
+
+    personA -> signalbox.desktop 'opens a window' {
+      notes """
+        - A opens a second window on another thread
+        - Each window is its own view onto the same cloud state
+      """
+    }
+    personA -> signalbox.desktop 'uses the app menu' {
+      notes """
+        - Native app menu and context menu carry the same commands as the palette
+      """
+    }
+    personA -> signalbox.desktop 'pastes as text' {
+      notes """
+        - A pastes clipboard content without formatting into the composer
+      """
+    }
+    signalbox.desktop -> personA 'focuses on notify' {
+      notes """
+        - Clicking a notification brings the window to the foreground (Windows too)
+        - Trackpad scroll end and window state behave natively
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view journey_workspace_keyboard {
+    title 'Journeys/Workspace/Move around by keyboard'
+    description 'T-MOB-32, T-SET-12, T-SET-25, T-THR-13 · not v1. Same keymap on every client.'
+
+    autoLayout TopBottom
+    include personA, signalbox.web, signalbox.mobile
+
+    personA -> signalbox.web 'back / forward' {
+      notes """
+        - A moves through view history with the navigation keys
+      """
+    }
+    personA -> signalbox.web 'toggles sidebar' {
+      notes """
+        - Hides or shows the tree; the top layer stays reachable
+      """
+    }
+    personA -> signalbox.web 'next / previous thread' {
+      notes """
+        - A steps through threads in tree order, or jumps straight to 1 to 9
+      """
+    }
+    personA -> signalbox.web 'opens palette' {
+      navigateTo work_search_palette
+      notes """
+        - Focus stays in the palette while A types
+        - Number keys pick an entry directly
+      """
+    }
+    personA -> signalbox.mobile 'iPad keyboard' {
+      notes """
+        - On an iPad with a hardware keyboard the same commands work
+        - Holding Command lists them
+      """
+    }
+    personA -> signalbox.web 'rebinds a key' {
+      navigateTo clients_shell_appearance_keys
+      notes """
+        - Keybindings are A's own Person preference, synced to every device
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view journey_workspace_mobile_layout {
+    title 'Journeys/Workspace/Phone, tablet and foldable layout'
+    description 'T-MOB-14 · not v1. One layout model adapts to the screen.'
+
+    autoLayout TopBottom
+    include personA, signalbox.mobile
+
+    personA -> signalbox.mobile 'opens app' {
+      navigateTo person_toplayer_open_now
+      notes """
+        - A lands on the top layer: the assistant and the pipeline
+      """
+    }
+    personA -> signalbox.mobile 'opens a thread' {
+      notes """
+        - On a phone: the thread full screen with chat and PR tabs
+      """
+    }
+    alt {
+      when 'tablet' {
+        signalbox.mobile -> personA 'columns' {
+          notes """
+            - On an iPad the tree and the thread sit side by side
+          """
+        }
+      }
+      when 'Android' {
+        signalbox.mobile -> personA 'sidebar' {
+          notes """
+            - On Android the tree slides in as a sidebar
+          """
+        }
+      }
+      else 'foldable' {
+        signalbox.mobile -> personA 'reflows' {
+          notes """
+            - Unfolding switches to columns without losing the open thread or draft
+          """
+        }
+      }
+    }
+    personA -> signalbox.mobile 'works through the day' {
+      navigateTo journey_daily_workspace
+      notes """
+        - The rest of the day on the same layout
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view journey_workspace_right_panel {
+    title 'Journeys/Workspace/Use the right panel'
+    description 'T-BRW-03, T-CKP-12 · not v1. Panel layout and browser view controls are per person, never shared.'
+
+    autoLayout TopBottom
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.computer, signalbox.browser
+
+    personA -> signalbox.web 'toggles panel' {
+      notes """
+        - A opens the right panel beside the shared thread in folder Team; can maximize it
+      """
+    }
+    personA -> signalbox.web 'adds a surface' {
+      notes """
+        - Surfaces: diff, files, browser mirror, device, terminal, PR
+        - Tabs can be renamed, closed, and the last closed one reopened
+      """
+    }
+    personA -> signalbox.web 'opens files' {
+      navigateTo journey_files_browse
+      notes """
+        - The thread's files, the same ones the agent sees
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.computer 'terminal' {
+      navigateTo work_computer_terminal
+      notes """
+        - The terminal tab attaches to the thread's one computer
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.browser 'browser mirror' {
+      navigateTo work_browser_watch_takeover
+      notes """
+        - A watches the agent's browser and can take over
+      """
+    }
+    personA -> signalbox.web 'zoom, scheme, devtools' {
+      notes """
+        - The More menu: zoom, color scheme, clear cache, mute, devtools, hard reload
+        - These change only A's own view
+      """
+    }
+    personB -> signalbox.web 'own panel' {
+      notes """
+        - B, in the same thread, keeps B's own panel layout and zoom
+        - A's choices never move B's view
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personB {
+      color green
+    }
+  }
+
+  // ─── Workflows / Clients / Shell ────────────────────────────────────────
+
+  dynamic view clients_shell_appearance_keys {
+    variant sequence
+    title 'Workflows/Clients/Shell/Change appearance and keybindings'
+    description 'P-SET-04, P-SET-05, T-DSK-24, T-SET-06, T-SET-10 · not v1. Display state stays on the device; everything else is a Person key.'
+
+    include personA, signalbox.web, signalbox.desktop, signalbox.funnel, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.web 'Appearance' {
+      notes """
+        - A opens Settings › Appearance: theme, light/dark, motion
+      """
+    }
+    alt {
+      when 'device-local display state' {
+        signalbox.web -> signalbox.web 'store on device' {
+          notes """
+            - Follow-system light/dark and reduced motion depend on this screen
+            - They stay on the device and never sync
+          """
+        }
+      }
+      else 'synced Person key' {
+        signalbox.web -> signalbox.funnel 'settings.update' {
+          navigateTo person_settings_change
+          notes """
+            - Theme choice is A's preference and follows A to every device
+          """
+        }
+        signalbox.funnel -> signalbox.operations 'invoke'
+        signalbox.operations -> signalbox.tree 'commit revision' {
+          notes """
+            - One transaction on A's Person actor
+          """
+        }
+        signalbox.funnel <- signalbox.tree 'revision n'
+        signalbox.web <- signalbox.funnel 'view delta'
+      }
+    }
+    opt 'theme editor' {
+      personA -> signalbox.web 'edit theme' {
+        notes """
+          - Create, duplicate, import, export or publish a theme
+        """
+      }
+      personA -> signalbox.desktop 'native file picker' {
+        notes """
+          - On desktop, theme and icon files come from a native dialog
+        """
+      }
+    }
+    personA -> signalbox.web 'rebind capture key' {
+      navigateTo journey_capture_open
+      notes """
+        - Keybindings include the quick-capture shortcut
+        - Saved as a Person key like the theme
+      """
+    }
+    signalbox.web -> signalbox.funnel 'settings.update'
+    signalbox.funnel -> signalbox.operations 'invoke'
+    signalbox.operations -> signalbox.tree 'commit keybindings'
+    opt 'import / export rules' {
+      personA -> signalbox.web 'import rules' {
+        notes """
+          - A imports or exports keybinding rules as a file
+        """
+      }
+      signalbox.web -> personA 'invalid config toast' {
+        notes """
+          - Invalid rules are named in a warning toast
+          - The last valid keymap stays in force
+        """
+      }
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view clients_shell_copy_reference {
+    variant sequence
+    title "Workflows/Clients/Shell/Copy a thread's reference"
+    description 'T-THR-29 · not v1. Copying reads the already watched view; opening a copied reference resolves through Tree.can for whoever opens it.'
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.thread
+
+    personA -> signalbox.web 'thread menu' {
+      notes """
+        - A opens the menu on the Shared work thread in folder Team
+        - Thread id, reference, drive ref and PR number are already in the watched view; nothing goes to the server
+      """
+    }
+    alt 'what A copies' {
+      when 'drive or working ref' {
+        signalbox.web -> signalbox.web 'copy drive ref' {
+          notes """
+            - The path and branch of T3 Code become the drive and its working ref
+          """
+        }
+      }
+      when 'PR number' {
+        signalbox.web -> signalbox.web 'copy PR number' {
+          navigateTo work_git_pr_watch
+          notes """
+            - The PR linked to this thread's working ref
+          """
+        }
+      }
+      else 'thread reference' {
+        signalbox.web -> signalbox.web 'copy reference' {
+          notes """
+            - A link that opens this thread for anyone who can see it
+          """
+        }
+      }
+    }
+    signalbox.web -> personA 'copied' {
+      notes """
+        - A toast confirms what was copied
+      """
+    }
+    personB -> signalbox.web 'opens the reference' {
+      notes """
+        - A pasted the link to B
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'Tree.can(B, thread)' {
+      notes """
+        - Resolved by position: B reaches Team through B's own mount of Company
+        - Who copied the link never matters
+      """
+    }
+    alt 'can B see it' {
+      when 'yes' {
+        signalbox.web -> signalbox.funnel -> signalbox.thread 'Thread.watch' {
+          notes """
+            - B lands in the same thread; D, the outside collaborator on Team, would too
+          """
+        }
+      }
+      else 'no' {
+        signalbox.web <- signalbox.funnel 'request access' {
+          notes """
+            - Someone outside Team gets a request-access ask, never the content
+          """
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personB {
+      color green
+    }
+  }
+
+  dynamic view clients_shell_open_origin {
+    #v1
+    variant sequence
+    title 'Workflows/Clients/Shell/Open the app and connect to the origin'
+    description 'T-ENV-18, T-REM-27, T-REM-38 · v1 (T-REM-27, T-REM-38). One app origin, fixed capabilities, no other environments.'
+
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.identity
+
+    personA -> signalbox.web 'opens the app' {
+      notes """
+        - A opens the Signalbox app origin in a browser
+      """
+    }
+    signalbox.web -> signalbox.funnel 'GET /' {
+      notes """
+        - Funnel serves the web client as static assets from the same origin
+      """
+    }
+    signalbox.web <- signalbox.funnel 'web client'
+    signalbox.web -> signalbox.funnel 'connect (protocol version)' {
+      notes """
+        - The client opens one socket and states its protocol version
+      """
+    }
+    alt {
+      when 'version mismatch' {
+        signalbox.web <- signalbox.funnel 'refused: update client or cloud' {
+          notes """
+            - The connection is blocked, not degraded
+          """
+        }
+        signalbox.web -> personA 'update banner' {
+          notes """
+            - A sees which side is out of date and how to update it
+          """
+        }
+      }
+      else 'versions match' {
+        signalbox.funnel -> signalbox.identity 'authenticate' {
+          navigateTo identity_identity_session
+          notes """
+            - Cookie or bearer becomes an actor; fails closed
+          """
+        }
+        opt 'no session' {
+          signalbox.web <- signalbox.funnel 'sign in' {
+            navigateTo identity_identity_signin
+            notes """
+              - Unauthenticated: redirect to sign in, then back here
+            """
+          }
+        }
+        signalbox.web <- signalbox.funnel 'fixed capabilities' {
+          notes """
+            - The cloud advertises fixed capabilities: no environment picker, no pairing
+          """
+        }
+        signalbox.web -> signalbox.funnel 'subscribe views' {
+          notes """
+            - A's tree and top layer stream in
+          """
+        }
+      }
+    }
+    personB -> signalbox.mobile 'opens the app' {
+      notes """
+        - B's phone talks to the same origin; there is only one cloud
+      """
+    }
+    signalbox.mobile -> signalbox.funnel 'connect (protocol version)'
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personB {
+      color green
+    }
+  }
+
+  dynamic view clients_shell_reconnect {
+    variant sequence
+    title 'Workflows/Clients/Shell/Reconnect and show connection status'
+    description 'T-REM-24, T-SET-24 · not v1. Backoff against the one origin; status and toasts tell the truth.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations
+
+    signalbox.web -> personA 'status: reconnecting' {
+      notes """
+        - The socket dropped; the status dot turns amber and a banner shows after a moment
+      """
+    }
+    loop 'jittered backoff, cap 5 min' {
+      signalbox.web -> signalbox.funnel 'reconnect' {
+        notes """
+          - Delays grow with jitter, capped at 5 minutes, always to the one origin
+        """
+      }
+      alt {
+        when 'fails' {
+          signalbox.web -> signalbox.web 'wait' {
+            navigateTo clients_mobile_offline_send
+            notes """
+              - Sends made while offline wait in the client queue
+            """
+          }
+        }
+        else 'connected' {
+          signalbox.funnel -> signalbox.operations 'subscribe after seq' {
+            navigateTo work_recovery_new_rpc_after_deploy
+            notes """
+              - Views resume from the last seq; a gap means a fresh snapshot
+            """
+          }
+          signalbox.web <- signalbox.funnel 'deltas or snapshot'
+        }
+      }
+    }
+    signalbox.web -> personA 'status: connected' {
+      notes """
+        - The banner clears; the dot goes back to normal
+      """
+    }
+    opt 'slow request' {
+      signalbox.web -> personA 'slow-request toast' {
+        notes """
+          - A request that takes long shows a toast instead of a silent spinner
+        """
+      }
+    }
+    opt 'undo' {
+      personA -> signalbox.web 'archives a thread' {
+        notes """
+          - Reversible actions show an undo toast
+        """
+      }
+      personA -> signalbox.web 'Undo' {
+        notes """
+          - Undo sends the reverse command (unarchive)
+        """
+      }
+      signalbox.web -> signalbox.funnel 'reverse command'
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  // ─── Workflows / Person / Settings ──────────────────────────────────────
+
+  dynamic view person_settings_archived {
+    variant sequence
+    title 'Workflows/Person/Settings/List archived threads'
+    description 'P-SET-13 · not v1. Archived threads come from the Level catalogs A can reach. Thread states: see States / Thread.'
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.web 'Settings › Archived' {
+      notes """
+        - A opens the archived list
+      """
+    }
+    signalbox.web -> signalbox.funnel 'query archived'
+    signalbox.funnel -> signalbox.operations 'query'
+    signalbox.operations -> signalbox.tree 'catalog rows (archived)' {
+      navigateTo state_thread
+      notes """
+        - Tree.view over A's reachable levels: Personal, Company, Team
+        - Archive is a thread state, the same for everyone who can see it
+      """
+    }
+    signalbox.operations <- signalbox.tree 'rows'
+    signalbox.web <- signalbox.funnel 'list'
+    signalbox.web -> personA 'archived threads' {
+      navigateTo pgap_home_hide_for_me
+      notes """
+        - A sees own private archived threads and archived shared ones in Team
+        - B's private archived threads never appear for A
+      """
+    }
+    personA -> signalbox.web 'Unarchive' {
+      navigateTo work_threads_lifecycle_archive
+      notes """
+        - The thread goes back to Idle in its folder (see States / Thread)
+      """
+    }
+    personB -> signalbox.web 'Settings › Archived' {
+      notes """
+        - B sees the same archived Team thread, plus B's own private ones
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personB {
+      color green
+    }
+  }
+
+  dynamic view person_settings_change {
+    variant sequence
+    title 'Workflows/Person/Settings/Change a setting where it belongs'
+    description 'P-SET-01, P-SET-02, P-SET-06, T-SET-04, T-TRN-08, T-TRN-53 · not v1. Each key has one owner: Person, the level chain, or the host.'
+
+    include personA, personC, signalbox.desktop, signalbox.mobile, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree
+
+    opt 'first cloud load' {
+      signalbox.desktop -> signalbox.funnel 'device preferences' {
+        navigateTo person_settings_migrate
+        notes """
+          - Old per-device preferences move to the server once
+        """
+      }
+    }
+    personA -> signalbox.desktop 'changes a setting' {
+      notes """
+        - From Settings, the CLI or MCP: all three call the same operation
+      """
+    }
+    signalbox.desktop -> signalbox.funnel 'settings.update'
+    signalbox.funnel -> signalbox.operations 'invoke' {
+      notes """
+        - Operations finds the key's owner and runs the one authority check (Tree.can)
+      """
+    }
+    alt {
+      when 'person key' {
+        signalbox.operations -> signalbox.tree 'commit revision' {
+          notes """
+            - Follow-up default (Queue or Steer), return key, mic priority, model favorites
+            - Model favorites never change a folder's default model
+          """
+        }
+        signalbox.tree -> signalbox.funnel 'revision n' {
+          notes """
+            - The committed revision fans out to every device of A
+          """
+        }
+        parallel {
+          signalbox.funnel -> signalbox.desktop 'view delta'
+          signalbox.funnel -> signalbox.mobile 'view delta' {
+            notes """
+              - A's phone shows the new value without a reload
+            """
+          }
+        }
+      }
+      when 'work key on the chain' {
+        signalbox.desktop <- signalbox.operations 'Denied: needs Admin' {
+          notes """
+            - Default model and default visibility are placements on a folder, not Person keys
+            - A is only a member of Company, so A sees that C can change it
+          """
+        }
+      }
+      when 'host key' {
+        signalbox.desktop <- signalbox.operations 'refused: host key' {
+          notes """
+            - Host keys are fixed by the deployment and shown read-only
+          """
+        }
+      }
+      else 'restore defaults' {
+        signalbox.operations -> signalbox.tree 'reset person keys' {
+          notes """
+            - Restores only A's own person keys; folder keys are untouched
+          """
+        }
+      }
+    }
+    signalbox.desktop -> personA 'saved' {
+      notes """
+        - B's settings never change with A's
+      """
+    }
+    opt 'C, admin of Company' {
+      personC -> signalbox.web 'sets default model' {
+        notes """
+          - C holds Admin on folder Company
+        """
+      }
+      signalbox.web -> signalbox.funnel 'settings.update'
+      signalbox.funnel -> signalbox.operations 'invoke'
+      signalbox.operations -> signalbox.tree 'Place defaultModel' {
+        notes """
+          - One placement row on Company's Level
+          - It reaches A's and B's threads below alike; A's favorites stay A's
+        """
+      }
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personC {
+      color green
+    }
+  }
+
+  dynamic view person_settings_developer_mode {
+    variant sequence
+    title 'Workflows/Person/Settings/Developer mode trajectories'
+    description 'P-SET-12 · not v1. A sees trajectories of own threads; C sees rollups for folders C administers. Ids only, never content in rollups.'
+
+    include personA, personC, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.thread, signalbox.observability
+
+    personA -> signalbox.web 'turns on developer mode' {
+      notes """
+        - A Person preference; nothing changes for B or C
+      """
+    }
+    personA -> signalbox.web 'opens a trajectory' {
+      notes """
+        - On one of A's own threads
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'can(A, read thread)'
+    signalbox.funnel -> signalbox.thread 'Thread.read(events)' {
+      notes """
+        - Every turn, tool call and message, step by step
+      """
+    }
+    signalbox.funnel -> signalbox.observability 'spans by correlation id' {
+      notes """
+        - Timings and errors joined to the events by id
+      """
+    }
+    signalbox.web -> personA 'trajectory' {
+      notes """
+        - A traces what happened down to one message
+      """
+    }
+    personC -> signalbox.web 'opens Company rollup' {
+      notes """
+        - C turned developer mode on too
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'can(C, admin, Company)'
+    alt {
+      when 'C administers the folder' {
+        signalbox.funnel -> signalbox.observability 'rollup for Company' {
+          notes """
+            - Percentiles, failures and load per level below Company
+            - B's private thread counts in totals, never shown as content
+          """
+        }
+        signalbox.web -> personC 'rollup'
+      }
+      else 'not an admin' {
+        signalbox.web -> personC 'own threads only' {
+          notes """
+            - Without the role, developer mode shows only one's own threads
+          """
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personC {
+      color green
+    }
+  }
+
+  dynamic view person_settings_feedback {
+    variant sequence
+    title 'Workflows/Person/Settings/Send feedback'
+    description 'P-SET-11 · not v1. Feedback goes to Sentry, linked to the last trace by id.'
+
+    include personA, signalbox.web, telemetry.sentry
+
+    personA -> signalbox.web 'rail › Feedback' {
+      notes """
+        - A opens Feedback at the bottom of the rail
+      """
+    }
+    signalbox.web -> personA 'feedback form' {
+      notes """
+        - A message box and an optional screenshot
+      """
+    }
+    personA -> signalbox.web 'sends'
+    signalbox.web -> signalbox.web 'attach last trace id' {
+      notes """
+        - The id of the last unit of work A ran, so feedback lines up with traces
+      """
+    }
+    signalbox.web -> telemetry.sentry 'user feedback' {
+      notes """
+        - Sentry user feedback with A's message and the correlation id
+        - Only what A typed; no thread content is attached
+      """
+    }
+    try {
+      signalbox.web <- telemetry.sentry 'accepted'
+      signalbox.web -> personA 'thanks'
+    } catch 'Sentry unreachable' {
+      signalbox.web -> personA 'retry later' {
+        notes """
+          - The form keeps the text and says it wasn't sent
+        """
+      }
+    }
+
+    include signalbox, telemetry
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style telemetry {
+      color muted
+      opacity 12%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view person_settings_linked_accounts {
+    variant sequence
+    title 'Workflows/Person/Settings/View linked accounts'
+    description 'P-SET-08 · not v1. Identity owns the alias map; WorkOS holds it in user metadata.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.identity, platform.workos
+
+    personA -> signalbox.web 'Settings › Accounts' {
+      navigateTo identity_identity_signin
+      notes """
+        - A signed in with the personal identity; that's the account shown first
+      """
+    }
+    signalbox.web -> signalbox.funnel 'query identities'
+    signalbox.funnel -> signalbox.identity 'identities(A)' {
+      notes """
+        - Identity answers; Funnel only decodes and maps errors
+      """
+    }
+    signalbox.identity -> platform.workos 'user metadata' {
+      notes """
+        - The alias map lives in WorkOS user metadata
+      """
+    }
+    signalbox.identity <- platform.workos 'aliases'
+    signalbox.funnel <- signalbox.identity 'personal + linked'
+    signalbox.web <- signalbox.funnel 'list'
+    signalbox.web -> personA 'linked accounts' {
+      notes """
+        - Personal identity, each linked work identity, and the folder it unlocks
+        - No pools, connections or providers: those live on folders
+      """
+    }
+
+    include signalbox, platform
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style platform {
+      color muted
+      opacity 12%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view person_settings_migrate {
+    variant sequence
+    title 'Workflows/Person/Settings/Move device preferences to the server'
+    description 'P-SET-03 · not v1. Runs once per device on first cloud load.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree
+
+    personA -> signalbox.web 'first cloud load' {
+      notes """
+        - A opens the cloud app on a device that has old local preferences
+      """
+    }
+    signalbox.web -> signalbox.funnel 'settings.migrate(device prefs)' {
+      notes """
+        - Display-state keys stay on the device; the rest goes up
+      """
+    }
+    signalbox.funnel -> signalbox.operations 'invoke'
+    signalbox.operations -> signalbox.tree 'import once' {
+      notes """
+        - Keyed by device, so a retry is a no-op
+      """
+    }
+    alt {
+      when 'key already set on the server' {
+        signalbox.tree -> signalbox.tree 'keep server value' {
+          notes """
+            - Another device migrated first; its committed value wins
+          """
+        }
+      }
+      else 'key not set' {
+        signalbox.tree -> signalbox.tree 'commit revision'
+      }
+    }
+    signalbox.funnel <- signalbox.tree 'revision n'
+    signalbox.web <- signalbox.funnel 'view delta'
+    signalbox.web -> signalbox.web 'clear local copies' {
+      navigateTo person_settings_change
+      notes """
+        - From now on every change goes through settings.update
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view person_settings_plugins {
+    #v1
+    variant sequence
+    title 'Workflows/Person/Settings/See and edit my placements and loans'
+    description 'P-SET-09 · v1 partial (folder rows list "placed at"). Plugins = Tree.view(placements) plus outbound indexes of what the person manages.'
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.models, signalbox.connections
+
+    personA -> signalbox.web 'rail › Plugins' {
+      notes """
+        - A opens Plugins at the top of the rail
+      """
+    }
+    signalbox.web -> signalbox.funnel 'query placements'
+    signalbox.funnel -> signalbox.operations 'query'
+    signalbox.operations -> signalbox.tree 'view(A, placements)' {
+      notes """
+        - Placement rows on every level A can reach: top level, Personal, Work, Company, Team
+      """
+    }
+    parallel {
+      signalbox.operations -> signalbox.models 'outbound (pools)' {
+        notes """
+          - Where each pool A manages is placed or lent
+        """
+      }
+      signalbox.operations -> signalbox.connections 'outbound (connections)' {
+        notes """
+          - Where each connection A manages is placed or lent, e.g. Google · A lent to Team
+        """
+      }
+    }
+    signalbox.web <- signalbox.funnel 'rows'
+    signalbox.web -> personA 'placements' {
+      navigateTo journey_admin_folder_row_origins
+      notes """
+        - Each row is the placement itself, edited in place, with its home as a breadcrumb
+        - A loan into a level A can't reach still shows, with End loan
+      """
+    }
+    opt 'End loan' {
+      personA -> signalbox.web 'End loan' {
+        navigateTo folders_lending_end_loan
+        notes """
+          - A ends the loan of Google · A into Team
+        """
+      }
+      signalbox.web -> signalbox.funnel 'tree.change(EndLoan)'
+      signalbox.funnel -> signalbox.operations 'invoke'
+      signalbox.operations -> signalbox.tree 'change(EndLoan)' {
+        notes """
+          - Running turns finish on their frozen scope; the next resolve no longer sees it
+        """
+      }
+    }
+    personB -> signalbox.web 'rail › Plugins' {
+      navigateTo journey_admin_plugins_view
+      notes """
+        - B sees the same Company and Team rows; Google · A shows "lent by A"
+        - Only A can end that loan
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personB {
+      color green
+    }
+  }
+
+  dynamic view person_settings_timezone {
+    variant sequence
+    title 'Workflows/Person/Settings/Set the timezone for scheduled automations'
+    description "P-SET-07 · not v1. The person's timezone schedules only that person's automations."
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.automations
+
+    alt {
+      when 'set in Settings' {
+        personA -> signalbox.web 'picks a timezone' {
+          notes """
+            - A sets the timezone in Settings › General
+          """
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.operations 'settings.update(timezone)' {
+          notes """
+            - A Person key; it overrides the device report
+          """
+        }
+      }
+      else 'device report' {
+        signalbox.mobile -> signalbox.funnel -> signalbox.operations 'device timezone' {
+          navigateTo person_devices_signals
+          notes """
+            - With the setting on automatic, A's device reports its timezone
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.tree 'commit timezone' {
+      notes """
+        - A Person key on A's own record
+      """
+    }
+    signalbox.tree -> signalbox.automations 'timezone changed' {
+      navigateTo work_automations_triggers
+      notes """
+        - Outbox delivery to Automations
+        - A's scheduled automations get their next fire times recomputed
+      """
+    }
+    signalbox.automations -> signalbox.automations 'reschedule' {
+      notes """
+        - Automations placed on Company or Team keep their own schedule; A's timezone never shifts them for B
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA {
+      color green
+    }
+  }
+
+  dynamic view person_settings_usage {
+    variant sequence
+    title 'Workflows/Person/Settings/See costs rolled up by level'
+    description "P-SET-10 · not v1. Read-only projection of the Pool ledger; others' private chats only inside totals."
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.models
+
+    signalbox.models -> signalbox.tree 'usage aggregates' {
+      navigateTo folders_usage_rollup
+      notes """
+        - Background: the Pool ledger projects onto each level and rolls up within one owner
+        - Team rolls up into Company, never into A or B
+      """
+    }
+    personA -> signalbox.web 'rail › Usage' {
+      notes """
+        - A opens Usage at the bottom of the rail
+      """
+    }
+    signalbox.web -> signalbox.funnel 'query costs'
+    signalbox.funnel -> signalbox.operations 'query'
+    signalbox.operations -> signalbox.tree 'view(A, costs)' {
+      notes """
+        - Reads each level's aggregate; levels across owners (A's tree, Company) are composed at read time
+      """
+    }
+    signalbox.operations <- signalbox.tree 'costs'
+    signalbox.web <- signalbox.funnel 'costs by level'
+    signalbox.web -> personA 'usage' {
+      navigateTo folders_usage_cost_view
+      notes """
+        - A sees Personal, Work, Company and Team totals
+        - B's private draft in Team counts in Team's total, with no row
+        - Read-only: pools are managed on folders, not here
+      """
+    }
+    personB -> signalbox.web 'rail › Usage' {
+      notes """
+        - B sees the same Company and Team totals, plus a row for B's own private thread
+      """
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+    style personA, personB {
+      color green
+    }
+  }
+}

@@ -1,0 +1,191 @@
+// Modules as black boxes, one question per view. Internals live only in each module's drill-down (m-*).
+views {
+  view containers {
+    title 'Modules/All modules'
+    description '''
+      What modules exist and how deep is each? Every module is a black box grouped by job; its card lists its interface
+      verbs (fewer verbs over more hidden work = deeper). The bar under a card marks it: red passthrough, amber shallow.
+      Only the main call path is drawn; click a module for its interface, hidden parts and adapters.
+    '''
+    group 'Clients' {
+      color muted
+      opacity 10%
+      include signalbox.web, signalbox.desktop, signalbox.mobile, signalbox.cli, signalbox.browserExtension
+    }
+    group 'Front doors' {
+      color indigo
+      opacity 10%
+      include signalbox.funnel, signalbox.ingress, signalbox.operations, signalbox.identity
+    }
+    group 'Places' {
+      color sky
+      opacity 10%
+      include signalbox.tree, signalbox.capture, signalbox.attention, signalbox.search, signalbox.marketplace
+    }
+    group 'Work' {
+      color amber
+      opacity 10%
+      include signalbox.thread, signalbox.harness, signalbox.computer, signalbox.bases, signalbox.drive, signalbox.browser, signalbox.apps
+    }
+    group 'Reach outside' {
+      color red
+      opacity 10%
+      include signalbox.gateway, signalbox.models, signalbox.connections
+    }
+    group 'Background' {
+      color secondary
+      opacity 10%
+      include signalbox.automations, signalbox.judge, signalbox.learner, signalbox.actorhost, signalbox.observability
+    }
+    // The map answers "what exists"; the focused views answer "who talks to whom".
+    exclude * -> *
+    include signalbox.web -> signalbox.funnel, signalbox.mobile -> signalbox.funnel
+    include signalbox.funnel -> signalbox.operations, signalbox.operations -> signalbox.thread, signalbox.operations -> signalbox.tree
+    include signalbox.thread -> signalbox.harness, signalbox.harness -> signalbox.gateway, signalbox.harness -> signalbox.computer
+    include signalbox.gateway -> signalbox.models, signalbox.gateway -> signalbox.connections
+    include signalbox.computer -> signalbox.bases, signalbox.computer -> signalbox.drive
+    include signalbox.ingress -> signalbox.automations
+    global style depth
+    autoLayout TopBottom 80 50
+  }
+
+  view thread-uses {
+    title 'Overview/Runtime/What a thread uses'
+    description 'A thread asks Tree for its scope, runs a harness, and the harness works on one computer.'
+    include signalbox, signalbox.thread, signalbox.tree, signalbox.harness, signalbox.computer, signalbox.drive, signalbox.gateway
+    exclude * -> * where kind is async
+    exclude signalbox.gateway -> signalbox.tree, signalbox.drive -> signalbox.gateway, signalbox.drive -> signalbox.thread
+    exclude signalbox.computer -> signalbox.thread, signalbox.thread -> signalbox.drive, signalbox.computer -> signalbox.gateway
+    style signalbox { color muted; opacity 10% }
+    global style depth
+    autoLayout LeftRight
+  }
+
+  view model-call {
+    title 'Overview/Runtime/How a model call leaves Signalbox'
+    description 'Every model call goes through ModelGateway to the pool placed nearest the thread.'
+    include laptopCli, signalbox, signalbox.harness, signalbox.gateway, signalbox.models, signalbox.tree, modelProviders
+    exclude * -> * where kind is async
+    exclude * -> * where kind is tool
+    exclude signalbox.models -> signalbox.tree, signalbox.tree -> signalbox.models
+    style signalbox { color muted; opacity 10% }
+    style laptopCli { color secondary }
+    style modelProviders { color secondary }
+    global style depth
+    autoLayout LeftRight
+  }
+
+  view tool-call {
+    title 'Overview/Runtime/How a tool call leaves Signalbox'
+    description 'Every connector tool call goes through Executor (ToolGateway + Connections) to a connection placed above the thread; built-in tools go to Computer instead.'
+    include mcpClient, signalbox, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.tree, services
+    exclude * -> * where kind is async
+    exclude * -> * where kind is model
+    exclude signalbox.connections -> signalbox.tree, signalbox.tree -> signalbox.connections
+    style signalbox { color muted; opacity 10% }
+    style mcpClient { color secondary }
+    style services { color secondary }
+    global style depth
+    autoLayout LeftRight
+  }
+
+  view people-meet {
+    title 'Overview/Runtime/Where people meet: folders and threads'
+    description '''
+      Where do people meet? In one shared folder and one shared thread. A, B and C mount folder Company (owned by the
+      organization; C is its admin); outside collaborator D mounts only folder Team. A, B and D work live in the same
+      Thread in folder Team; C administers but does not have to work there.
+    '''
+    include personA, personB, personC, personD
+    include hier.topA, hier.topB, hier.topC, hier.topD, hier.company, hier.company.team, hier.company.team.sharedThread
+    exclude personB -> hier.topA, personA -> hier.company, personB -> hier.company, personD -> hier.company.team
+    exclude hier.topA -> hier.company.team, hier.topB -> hier.topA
+    include personA -> hier.company.team.sharedThread, personB -> hier.company.team.sharedThread, personD -> hier.company.team.sharedThread
+    style personA, personB, personC, personD { color green }
+    style hier { color muted; opacity 8% }
+    rank source { personA, personB, personC, personD }
+    autoLayout TopBottom
+  }
+
+  view runtime-control {
+    title 'Overview/Runtime/What runs without a turn'
+    description 'Webhooks, ticks and app events start automations; runs are threads, asks reach people.'
+    include signalbox, signalbox.ingress, signalbox.tree, signalbox.automations, signalbox.judge, signalbox.thread, signalbox.attention
+    exclude signalbox.thread -> signalbox.tree, signalbox.tree -> signalbox.thread, signalbox.attention -> *
+    exclude signalbox.automations -> signalbox.tree, signalbox.automations -> signalbox.attention
+    exclude signalbox.thread -> signalbox.judge, signalbox.judge -> signalbox.tree, signalbox.ingress -> signalbox.tree
+    style signalbox { color muted; opacity 10% }
+    global style depth
+    autoLayout LeftRight
+  }
+
+  dynamic view runtime-turn {
+    variant sequence
+    title 'Overview/Runtime/A turn in a shared thread'
+    description '''
+      What happens when A sends in the thread A and B share? The turn queues in the one Thread actor, Tree resolves the
+      pool from the thread's position (pool P2 on folder Company), the harness loop runs in an isolate, the one ModelGateway
+      pins an account, and both A and B see the reply live. Modules are black boxes; ModelGateway is Gateway's model port.
+    '''
+
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.tree, signalbox.harness,
+      signalbox.gateway.modelGateway, signalbox.models, modelProviders.anthropic
+    include signalbox, signalbox.gateway, modelProviders
+
+    personA -> signalbox.web 'sends a message' {
+      notes '- Person A types in the shared work thread in folder Team'
+    }
+    personB -> signalbox.mobile 'watches live' {
+      notes '- Person B already has the same thread open on their phone'
+    }
+    signalbox.web -> signalbox.thread 'send(turn)' {
+      technology 'Effect RPC over WS'
+      notes '''
+        - Funnel → Operations → the one Thread actor
+        - If B's turn is running, A's turn queues behind it
+      '''
+      navigateTo work_threads_multiplayer_live
+    }
+    signalbox.thread -> signalbox.tree 'resolve scope' {
+      notes '''
+        - Tree walks the chain Team → Company and freezes the scope for this turn
+        - Pool P2 and the connections come from position, never from who sent
+      '''
+      navigateTo work_threads_multiplayer_same_resolution
+    }
+    signalbox.thread -> signalbox.harness 'turn(scope, grant)' {
+      notes '- The harness loop runs in an isolate inside the Thread DO, never on a VM'
+    }
+    signalbox.harness -> signalbox.gateway.modelGateway 'model call' {
+      technology 'grant JWT'
+      notes '- The fetch shim is the only holder of the grant token'
+    }
+    signalbox.gateway.modelGateway -> signalbox.models 'pin account' {
+      notes '- Pool P2 on folder Company is the nearest pool above the thread'
+    }
+    signalbox.models -> modelProviders.anthropic 'stream request' {
+      technology 'CLIProxyAPI'
+      notes '- Bytes leave Signalbox only from the pool host'
+    }
+    signalbox.harness <- signalbox.gateway.modelGateway 'tokens' {
+      technology 'SSE'
+      notes '- Streamed back through the pool; usage stamped per call'
+    }
+    signalbox.harness -> signalbox.thread 'events' {
+      notes '- Usage rows roll up Team → Company, never to A or B'
+    }
+    parallel {
+      signalbox.thread -> signalbox.web 'live events (A)'
+      signalbox.thread -> signalbox.mobile 'live events (B)' {
+        notes '- Both clients subscribe to the same Thread actor'
+      }
+    }
+    signalbox.web -> personA 'renders the reply'
+    signalbox.mobile -> personB 'renders the reply'
+
+    style personA, personB { color green }
+    style signalbox { color muted; opacity 10% }
+    style signalbox.gateway { color secondary; opacity 15% }
+    style modelProviders { color muted; opacity 10% }
+  }
+}
