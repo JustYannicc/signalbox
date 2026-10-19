@@ -1,7 +1,7 @@
 // Shard 12: agent tools, outside agents, level agent pages, and the Browser module's workflows.
 // The calling agent is the Harness (the loop in the calling thread); a target thread is the Thread module (black box).
-// Browser tools reach the Browser through Connections' browser provider, behind ToolGateway (design §3.16).
-// Funnel hops are drawn where the view has room; elsewhere a client call goes "over Funnel".
+// Browser tools reach the Browser through Connections' browser provider, behind the tools gateway (design §3.16).
+// Client gateway hops are drawn where the view has room; elsewhere a client call goes "over the client gateway".
 views {
 
   // Container lanes: system boundaries muted, like LikeC4's homepage examples.
@@ -26,7 +26,7 @@ views {
       '''
     }
     signalbox.web -> signalbox.funnel 'Query agent page' {
-      notes "- One client rpc; Funnel decodes and calls Operations"
+      notes "- One client rpc; client gateway decodes and calls Operations"
     }
     signalbox.funnel -> signalbox.operations 'Check and query' {
       notes '''
@@ -130,7 +130,7 @@ views {
       '''
     }
     signalbox.harness -> signalbox.gateway.toolGateway 'List tools' {
-      notes "- Over the per-turn URL; ToolGateway is the only MCP endpoint"
+      notes "- Over the per-turn URL; tools gateway is the only MCP endpoint"
     }
     parallel {
       signalbox.gateway.toolGateway -> signalbox.connections 'Toolbox for Scope' {
@@ -170,7 +170,7 @@ views {
         signalbox.harness -> signalbox.gateway.toolGateway 'Execute program'
         signalbox.gateway.toolGateway -> signalbox.actorhost 'Load sandbox' {
           notes '''
-            - A Worker Loader Dynamic Worker with `globalOutbound: null`
+            - A child isolate with `globalOutbound: null`
             - Its only binding is `callTool`; it never runs in the isolate that caches tokens
           '''
         }
@@ -237,7 +237,7 @@ views {
       when 'human-only (W-MCP-05)' {
         signalbox.operations -> signalbox.operations 'HumanOnly' {
           notes '''
-            - Approvals, secret answers, sign-in grants, linking 1Password, loan consent, the final OAuth step
+            - Approvals, secret answers, sign-in grants, linking a vault, loan consent, the final OAuth step
             - Refused for every agent-class actor
           '''
         }
@@ -320,9 +320,9 @@ views {
       navigateTo work_agenttools_outside_agent_connect
     }
     opt 'no session yet' {
-      mcpClient -> platform.workos 'AuthKit sign-in' {
+      mcpClient -> platform.workos 'Hosted sign-in' {
         navigateTo folders_connections_mcp_url
-        notes "- AuthKit is the MCP authorization server; A signs in once"
+        notes "- The identity provider is the MCP authorization server; A signs in once"
       }
       mcpClient <- platform.workos 'Bearer'
     }
@@ -346,7 +346,7 @@ views {
             notes "- An in-app confirm where A acts as `PersonActor`"
           }
           signalbox.web -> signalbox.operations 'Confirm as A' {
-            notes "- Client rpc over Funnel"
+            notes "- Client rpc over the client gateway"
           }
         }
         mcpClient <- signalbox.gateway.toolGateway 'Results'
@@ -370,7 +370,7 @@ views {
     #v1
     variant sequence
     title 'Workflows/Work/AgentTools/Connect or remove an outside agent'
-    description 'v1 · P-ONB-08, P-OUT-02 · Copy a folder\'s MCP URL into an outside agent, sign in through AuthKit, get tool search at that Place; remove it by revoking its session or local key.'
+    description 'v1 · P-ONB-08, P-OUT-02 · Copy a folder\'s MCP URL into an outside agent, sign in through hosted sign-in, get tool search at that Place; remove it by revoking its session or local key.'
 
     include personA, signalbox.web, mcpClient, signalbox.gateway, signalbox.gateway.api, signalbox.gateway.toolGateway, signalbox.identity, signalbox.tree, platform, platform.workos
 
@@ -381,7 +381,7 @@ views {
     signalbox.web -> signalbox.gateway.api 'Mint placeId' {
       notes '''
         - Per person and per Place: this `placeId` is A's alone; B copying the same URL gets another
-        - Over Funnel to Gateway's interface, not through Operations: the surface table names Gateway as owner
+        - Over the client gateway to Gateway's interface, not through Operations: the surface table names Gateway as owner
       '''
     }
     personA -> mcpClient 'Paste URL' {
@@ -389,8 +389,8 @@ views {
     }
     mcpClient -> signalbox.gateway.toolGateway 'Connect'
     mcpClient <- signalbox.gateway.toolGateway '401, authz metadata'
-    mcpClient -> platform.workos 'OAuth via AuthKit' {
-      notes "- AuthKit is the MCP authorization server (CIMD/DCR, resource indicators)"
+    mcpClient -> platform.workos 'OAuth via hosted sign-in' {
+      notes "- The identity provider is the MCP authorization server (CIMD/DCR, resource indicators)"
       navigateTo identity_identity_mcp_signin
     }
     personA -> platform.workos 'Sign in, consent'
@@ -494,8 +494,8 @@ views {
         signalbox.web -> signalbox.funnel 'callTool'
         signalbox.funnel -> signalbox.gateway.toolGateway 'Call tool' {
           notes '''
-            - Assumption: re-homed through ToolGateway so the app sees the thread's resolved tools
-            - Smell: Funnel serves no MCP by design; this hop is unconfirmed
+            - Assumption: re-homed through the tools gateway so the app sees the thread's resolved tools
+            - Smell: Client gateway serves no MCP by design; this hop is unconfirmed
           '''
           navigateTo work_agenttools_tools_in_turn
         }
@@ -529,7 +529,7 @@ views {
   dynamic view work_browser_render {
     variant sequence
     title 'Workflows/Work/Browser/Render own content'
-    description 'W-BRW-11 (absorbs T-MCP-22, T-MCP-23) · html_render, previews, PDFs and screenshots go through Browser.render on Browser Run: one renderer for every thread, never a person\'s profile.'
+    description 'W-BRW-11 (absorbs T-MCP-22, T-MCP-23) · html_render, previews, PDFs and screenshots go through Browser.render on hosted render: one renderer for every thread, never a person\'s profile.'
 
     include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.harness, signalbox.browser
 
@@ -553,10 +553,10 @@ views {
         signalbox.harness -> signalbox.browser 'Render file'
       }
     }
-    signalbox.browser -> signalbox.browser 'Browser Run' {
+    signalbox.browser -> signalbox.browser 'Hosted render' {
       notes '''
-        - Cloudflare Browser Run, the same whether the thread has a machine or not
-        - Never A's Kernel profile: own content carries no sign-ins
+        - The hosted render, the same whether the thread has a machine or not
+        - Never A's browser profile: own content carries no sign-ins
       '''
     }
     signalbox.harness <- signalbox.browser 'PNG, PDF or snapshot'
@@ -666,13 +666,13 @@ views {
   dynamic view work_browser_real_web {
     variant sequence
     title 'Workflows/Work/Browser/Sessions/Agent browses the real web'
-    description 'W-BRW-01 (absorbs T-BRW-07, T-DSK-29), W-BRW-10 (absorbs T-BRW-13) · Real web only through Kernel on the profile placed at a person\'s top level; after 72 h standby the thread asks "redo it?".'
+    description 'W-BRW-01 (absorbs T-BRW-07, T-DSK-29), W-BRW-10 (absorbs T-BRW-13) · Real web only through the browser on the profile placed at a person\'s top level; after 72 h standby the thread asks "redo it?".'
 
     include personA, signalbox, signalbox.web, signalbox.thread, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.tree, platform, platform.kernel
 
     signalbox.thread -> signalbox.harness 'Live turn'
     signalbox.harness -> signalbox.connections 'Open public URL' {
-      notes "- A browser tool from Connections' browser provider, behind ToolGateway"
+      notes "- A browser tool from Connections' browser provider, behind the tools gateway"
     }
     signalbox.connections -> signalbox.browser 'Real-web session'
     signalbox.browser -> signalbox.tree 'Which profile?' {
@@ -722,7 +722,7 @@ views {
   dynamic view work_browser_watch_takeover {
     variant sequence
     title 'Workflows/Work/Browser/Sessions/Watch, take over and hand back a tab'
-    description 'W-BRW-08 (absorbs T-BRW-08), W-BRW-09 · The panel streams an rrweb mirror only while visible, never extending Kernel; A can take over and hand back with URL, scroll and form values.'
+    description 'W-BRW-08 (absorbs T-BRW-08), W-BRW-09 · The panel streams an rrweb mirror only while visible, never extending the hosted browser session; A can take over and hand back with URL, scroll and form values.'
 
     include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.harness, signalbox.browser, platform, platform.kernel
 
@@ -731,7 +731,7 @@ views {
     }
     signalbox.web -> signalbox.funnel 'Subscribe mirror'
     signalbox.browser -> platform.kernel 'Record DOM' {
-      notes "- rrweb record on the live tab; it adds no Kernel time"
+      notes "- rrweb record on the live tab; it adds no hosted browser time"
     }
     signalbox.browser -> signalbox.funnel 'Mirror stream'
     signalbox.funnel -> signalbox.web 'Replay'
@@ -768,7 +768,7 @@ views {
     }
     personA -> signalbox.web 'Close panel'
     signalbox.web -> signalbox.funnel 'Unsubscribe' {
-      notes "- The mirror stops; the Kernel session lives only as long as the turn"
+      notes "- The mirror stops; the browser session lives only as long as the turn"
       navigateTo work_browser_payment
     }
   }
@@ -805,7 +805,7 @@ views {
       when 'Done' {
         personA -> signalbox.web 'Done'
         signalbox.web -> signalbox.thread 'Answer' {
-          notes "- `Thread.send(answer)` over Funnel"
+          notes "- `Thread.send(answer)` over the client gateway"
         }
       }
       when 'Failed' {
@@ -845,7 +845,7 @@ views {
       }
       else 'agent tool' {
         signalbox.harness -> signalbox.connections 'Capture tool' {
-          notes "- `preview_screenshot`, `recording_start` / `stop`, behind ToolGateway"
+          notes "- `preview_screenshot`, `recording_start` / `stop`, behind the tools gateway"
         }
         signalbox.connections -> signalbox.browser 'Capture tab'
       }
@@ -873,7 +873,7 @@ views {
       notes "- From a thread's browser panel"
     }
     signalbox.web -> signalbox.operations 'Pin' {
-      notes "- Client rpc over Funnel"
+      notes "- Client rpc over the client gateway"
     }
     signalbox.operations -> signalbox.tree 'Can place?' {
       notes "- A is a Member of Company; roles add downward to Team"
@@ -912,7 +912,7 @@ views {
       navigateTo work_browser_watch_takeover
     }
     signalbox.harness -> signalbox.connections 'List tabs' {
-      notes "- T-BRW-14: the agent tidies its own tabs, behind ToolGateway"
+      notes "- T-BRW-14: the agent tidies its own tabs, behind the tools gateway"
     }
     signalbox.connections -> signalbox.browser 'Thread tabs'
     signalbox.connections <- signalbox.browser 'Tab list'
@@ -924,7 +924,7 @@ views {
   dynamic view work_browser_unload_tabs {
     variant sequence
     title 'Workflows/Work/Browser/Sessions/Only the open thread\'s tabs stay loaded'
-    description 'W-BRW-22 · Switching threads unloads the other threads\' tab views on the client; Kernel sessions of live turns keep running headless.'
+    description 'W-BRW-22 · Switching threads unloads the other threads\' tab views on the client; browser sessions of live turns keep running headless.'
 
     include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.browser, platform, platform.kernel
 
@@ -983,7 +983,7 @@ views {
   dynamic view work_browser_sign_in {
     variant sequence
     title 'Workflows/Work/Browser/SignIn/Agent signs in to a site'
-    description 'W-BRW-02 (absorbs T-BRW-05), W-BRW-03, W-BRW-04, W-BRW-06 · Managed Auth signs in with A\'s 1Password reference after A\'s human-only grant; codes come from a connection; the model sees status only.'
+    description 'W-BRW-02 (absorbs T-BRW-05), W-BRW-03, W-BRW-04, W-BRW-06 · managed sign-in signs in with A\'s vault reference after A\'s human-only grant; codes come from a connection; the model sees status only.'
 
     include personA, signalbox, signalbox.thread, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.browser.api, signalbox.browser.loginService, signalbox.browser.signInGrants, platform, platform.kernel, services, services.onepassword
 
@@ -995,18 +995,18 @@ views {
     alt 'entry' {
       when 'agent calls sign_in (W-BRW-02)' {
         signalbox.harness -> signalbox.connections 'sign_in site' {
-          notes "- A browser tool from Connections' browser provider, behind ToolGateway"
+          notes "- A browser tool from Connections' browser provider, behind the tools gateway"
         }
         signalbox.connections -> signalbox.browser.api 'session: sign in'
       }
-      else 'Kernel reports NEEDS_AUTH (W-BRW-06)' {
+      else 'Browser reports NEEDS_AUTH (W-BRW-06)' {
         platform.kernel -> signalbox.browser.api 'NEEDS_AUTH' {
           notes "- A saved sign-in on A's profile expired; nobody is watching, so it re-logs in unattended"
         }
       }
     }
     signalbox.browser.api -> signalbox.browser.loginService 'Start login' {
-      notes "- From here on it is Browser's own flow (the Browser box): the login service drives Kernel Managed Auth"
+      notes "- From here on it is Browser's own flow (the Browser box): the login service drives managed sign-in"
     }
     signalbox.browser.loginService -> signalbox.browser.signInGrants 'Grant for site?' {
       navigateTo state_signingrant
@@ -1016,7 +1016,7 @@ views {
       signalbox.browser.loginService -> signalbox.thread 'Blocker ask' {
         notes '''
           - "Let agents sign in to X? Once / Always", human-only, routed by Attention to A's Blocker lane
-          - Only A can grant use of A's 1Password; B in a shared thread cannot answer it
+          - Only A can grant use of A's vault; B in a shared thread cannot answer it
         '''
       }
       personA -> signalbox.thread 'Always' {
@@ -1025,7 +1025,7 @@ views {
       signalbox.browser.loginService <- signalbox.thread 'Answer: Always'
       signalbox.browser.loginService -> signalbox.browser.signInGrants 'Grant record'
     }
-    signalbox.browser.loginService -> platform.kernel 'Managed Auth' {
+    signalbox.browser.loginService -> platform.kernel 'Managed sign-in' {
       notes "- `save_credentials: false`; factors password > TOTP > email > SMS, never SSO"
       navigateTo work_browser_passkey
     }
@@ -1037,7 +1037,7 @@ views {
     opt 'site sends a code (W-BRW-03)' {
       signalbox.browser.loginService -> signalbox.connections 'Fetch code'
       signalbox.connections -> signalbox.connections 'Gmail or SMS gateway' {
-        notes "- Read from the connection placed on the chain; the code goes straight to Managed Auth, never to the model"
+        notes "- Read from the connection placed on the chain; the code goes straight to managed sign-in, never to the model"
       }
     }
     alt 'outcome' {
@@ -1059,7 +1059,7 @@ views {
   dynamic view work_browser_passkey {
     variant sequence
     title 'Workflows/Work/Browser/SignIn/Agent passkey per site'
-    description 'W-BRW-21 (absorbs T-BRW-06) · A CDP virtual authenticator makes one passkey per site, stored as an item in A\'s 1Password; deleting the item undoes it.'
+    description 'W-BRW-21 (absorbs T-BRW-06) · A CDP virtual authenticator makes one passkey per site, stored as an item in A\'s vault; deleting the item undoes it.'
 
     include personA, signalbox, signalbox.harness, signalbox.connections, signalbox.browser, signalbox.browser.api, signalbox.browser.loginService, platform, platform.kernel, services, services.onepassword
 
@@ -1124,7 +1124,7 @@ views {
       when 'clear sign-ins' {
         signalbox.operations -> signalbox.browser 'Clear'
         signalbox.browser -> platform.kernel 'Drop auth state' {
-          notes "- The next sign-in runs Managed Auth again; grants stay"
+          notes "- The next sign-in runs managed sign-in again; grants stay"
         }
       }
       else 'export' {

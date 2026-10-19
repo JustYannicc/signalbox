@@ -178,7 +178,7 @@ views {
       when 'Pin version' {
         personA -> signalbox.automations 'change(Pin)' {
           notes """
-            - New runs start on the pinned version (stable Dynamic Worker id per version)
+            - New runs start on the pinned version (stable isolate id per version)
             - Runs in flight keep the version they started with
           """
         }
@@ -710,7 +710,7 @@ views {
     signalbox.automations -> hier.company.runCo 'creates run thread' {
       notes """
         - Any trigger ends here: Thread{kind: run}, Place = {level: Company, via: none}
-        - A Dynamic Workflow instance on a stable Dynamic Worker id, pinned to one version
+        - A Dynamic Workflow instance on a stable isolate id, pinned to one version
       """
     }
     hier.company.runCo -> signalbox.tree 'place → scope'
@@ -873,7 +873,7 @@ views {
         notes 'The vendor forces polling, so the polling is a default automation on a Tick trigger'
       }
       signalbox.bases -> platform.boxd 'snapshot status' {
-        notes 'Only Bases talks to boxd; Automations never sees the vendor'
+        notes 'Only Bases talks to the machine provider; Automations never sees the vendor'
       }
       signalbox.automations <- signalbox.bases 'pending, ready, failed'
     }

@@ -35,7 +35,7 @@ views {
 
   view ext-upstreams of upstreams {
     title 'Overview/Outside Signalbox/Distribution and upstreams'
-    description 'Where builds ship (Cloudflare, EAS, stores, update feed) and which upstreams we follow (Alchemy, npm, skill and plugin registries).'
+    description 'Where builds ship (edge platform, EAS, stores, update feed) and which upstreams we follow (Alchemy, npm, skill and plugin registries).'
     include *
     include build.* -> upstreams.*, signalbox.* -> upstreams.*, upstreams.* -> signalbox.*
     style upstreams { color muted; opacity 10% }
@@ -44,7 +44,7 @@ views {
 
   view ext-providers of modelProviders {
     title 'Overview/Outside Signalbox/Model providers'
-    description 'Who talks to model providers? Only Models (the pool host, via CLIProxyAPI); everything else goes through the one ModelGateway.'
+    description 'Who talks to model providers? Only Models (the pool host, through the pool backend); everything else goes through the one model gateway.'
     include *
     include signalbox.models -> modelProviders.*
     style modelProviders { color muted; opacity 10% }

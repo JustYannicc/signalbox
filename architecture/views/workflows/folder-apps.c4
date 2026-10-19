@@ -1,5 +1,5 @@
 // Folder apps (owner addition, correction 18, issue #485). A small app placed in a folder like
-// anything else: here a dashboard homed at folder Team. Its server runs in a Dynamic Worker with
+// anything else: here a dashboard homed at folder Team. Its server runs in an isolate with
 // its own SQLite and no outbound network except granted bindings; its UI runs in a sandboxed
 // iframe that talks only to its own server; agents call the same server methods as the UI;
 // releases are immutable with atomic activation and rollback; it resolves and is visible by
@@ -91,7 +91,7 @@ views {
     signalbox.harness -> signalbox.apps 'bundle + preview' {
       navigateTo work_previews_worker_app
       notes """
-        - worker-bundler into a Dynamic Worker with a throwaway SQLite; no machine
+        - worker-bundler into an isolate with a throwaway SQLite; no machine
         - No outbound network even in preview
       """
     }
@@ -248,7 +248,7 @@ views {
     }
     signalbox.funnel -> signalbox.apps 'call app method' {
       notes """
-        - Dynamic Worker for the active release; env = its SQLite + granted bindings
+        - Isolate for the active release; env = its SQLite + granted bindings
         - globalOutbound null: no network of its own
       """
     }
@@ -531,7 +531,7 @@ views {
     }
     signalbox.tree -> signalbox.apps 'freeze app' {
       notes """
-        - Dynamic Worker unloaded; SQLite and releases kept 30 days
+        - Isolate unloaded; SQLite and releases kept 30 days
       """
     }
     alt 'later' {

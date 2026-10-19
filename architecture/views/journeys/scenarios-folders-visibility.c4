@@ -36,7 +36,7 @@ views {
     personA -> signalbox.web 'Anyone in Company'
     signalbox.web -> signalbox.operations 'share: folder' {
       navigateTo folders_access_thread_share
-      notes '- Through the Funnel; Operations owns the rule'
+      notes '- Through the client gateway; Operations owns the rule'
     }
     signalbox.operations -> signalbox.thread 'what becomes visible?'
     signalbox.operations <- signalbox.thread 'whole history' {
@@ -223,7 +223,7 @@ views {
     description '''
       How does A add one outside collaborator to a single thread?
       Decided: #225 §3 (2026-10-14) and #244. A chat shared with people runs on its home's chain; the confirm says what D will see.
-      Assumption for brand-new emails: a WorkOS invitation that resolves on first sign-in and lands as a reference in D's top level (pending #238). Why: #238 already specifies this for folder invites.
+      Assumption for brand-new emails: a identity invitation that resolves on first sign-in and lands as a reference in D's top level (pending #238). Why: #238 already specifies this for folder invites.
       SCN-035 · P-PPL-01 · R-ACC-10 · P-ONB-13 · R-IDN-10 · R-TRE-13
     '''
     include
@@ -258,7 +258,7 @@ views {
         signalbox.web -> signalbox.identity 'pending invitation' {
           navigateTo folders_access_invite_by_email
           notes '''
-            - WorkOS invitation; resolves on D's first sign-in
+            - Identity invitation; resolves on D's first sign-in
             - `#assumption` pending #238
           '''
         }

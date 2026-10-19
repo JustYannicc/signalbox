@@ -1,12 +1,12 @@
 // Shard 20: folders-pools. Pools are placed on folders (corr. 1): connecting accounts, routing,
-// the model gateway path, local keys, the CPA host, and the admin and member views.
+// the model gateway path, local keys, the pool host, and the admin and member views.
 // Generic tree: folder Company (owner: organization) with pool P2 placed on it, folder Team inside,
 // one shared thread in Team. A and B are members, C is admin of Company. A's own pool P1 sits on
-// A's top level. A view uses either the Models box or its actors (Pool custody, CPA host), never both.
+// A's top level. A view uses either the Models box or its actors (Pool custody, pool host), never both.
 // Black boxes: outside callers reach Models through `signalbox.models.api` (serve, catalog, change,
-// view) and Thread through `signalbox.thread`. ModelGateway counts as Gateway's model-wire port.
-// Views inside Models (custody, CPA host) are that module's own flows. The one genuine reach is
-// folders_gateway_usage_metering (#smell): ModelGateway writes into Models' actors directly.
+// view) and Thread through `signalbox.thread`. Model gateway counts as Gateway's model-wire port.
+// Views inside Models (custody, pool host) are that module's own flows. The one genuine reach is
+// folders_gateway_usage_metering (#smell): Model gateway writes into Models' actors directly.
 // v1 = sign in, a pool, connections: `#v1` only on pool and local-key views; thread, harness and
 // assistant paths are "v1 partial" or not v1.
 views {
@@ -190,7 +190,7 @@ views {
         }
         signalbox.models -> modelProviders.openai 'Poll device code' {
           notes """
-            - The CPA host carries the CPA#6715 patch for this
+            - The pool host carries the backend patch (upstream #6715) for this
           """
         }
       }
@@ -297,7 +297,7 @@ views {
       when 'API key' {
         signalbox.web -> signalbox.models 'connect(ApiKey, into)' {
           notes """
-            - Sealed in the pool's custody; served by `ApiKeyDirect` or through CPA
+            - Sealed in the pool's custody; served by `ApiKeyDirect` or through the pool backend
           """
         }
         signalbox.models -> modelProviders 'Check key' {
@@ -349,7 +349,7 @@ views {
     }
     signalbox.models -> modelProviders 'Sign out account' {
       notes """
-        - CPA deletes the auth file; the provider session is revoked
+        - The pool backend deletes the auth file; the provider session is revoked
       """
     }
     signalbox.web <- signalbox.models 'Removed' {
@@ -430,7 +430,7 @@ views {
     signalbox.models.custody -> signalbox.models.custody 'Token near expiry'
     signalbox.models.custody -> signalbox.models.cpaHost 'Refresh account' {
       notes """
-        - Only custody writes the token pair; CPA never persists its own copy
+        - Only custody writes the token pair; the pool backend never persists its own copy
       """
     }
     signalbox.models.cpaHost -> modelProviders 'Refresh token'
@@ -472,8 +472,9 @@ views {
 
     loop 'periodic and on use' {
       signalbox.models.custody -> signalbox.models.cpaHost 'Read quota' {
+        technology 'CLIProxyAPI v8 quota'
         notes """
-          - CLIProxyAPI v8 `quota`; for Codex a fallback read at most every 10 min
+          - The backend's `quota`; for Codex a fallback read at most every 10 min
         """
       }
       signalbox.models.cpaHost -> modelProviders 'Usage windows'
@@ -571,7 +572,7 @@ views {
     #v1
     variant sequence
     title 'Workflows/Folders/Pools/Manage/Configure pool routing'
-    description 'R-POL-14 · Round robin or fill-first, per-thread affinity, move-on-error; applied live through the CPA management API.'
+    description 'R-POL-14 · Round robin or fill-first, per-thread affinity, move-on-error; applied live through the pool backend management API.'
 
     include personC, signalbox, signalbox.web, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost
     style signalbox.models {
@@ -597,7 +598,7 @@ views {
     }
     signalbox.models.custody -> signalbox.models.cpaHost 'Apply live' {
       notes """
-        - CPA management API; no restart, no dropped streams
+        - Pool backend management API; no restart, no dropped streams
       """
     }
     signalbox.models.custody -> signalbox.models.custody 'Re-pin per affinity' {
@@ -685,7 +686,7 @@ views {
   dynamic view folders_pools_redeem_credits {
     variant sequence
     title 'Workflows/Folders/Pools/Manage/Redeem provider reset credits'
-    description 'not v1 · R-POL-20 (alias T-USG-06) · The admin redeems provider reset credits through a documented provider or CPA path.'
+    description 'not v1 · R-POL-20 (alias T-USG-06) · The admin redeems provider reset credits through a documented provider or pool backend path.'
 
     include personC, signalbox, signalbox.web, signalbox.models, modelProviders
 
@@ -698,7 +699,7 @@ views {
     signalbox.web -> signalbox.models 'Redeem'
     signalbox.models -> modelProviders 'Documented reset path' {
       notes """
-        - Only paths the provider or CPA documents; never a scraped endpoint
+        - Only paths the provider or the pool backend documents; never a scraped endpoint
       """
     }
     signalbox.web <- signalbox.models 'Window reset' {
@@ -1051,7 +1052,7 @@ views {
     dynamic view folders_gateway_model_call {
     variant sequence
     title 'Workflows/Folders/Pools/Gateway/Make a model call'
-    description 'v1 partial (the same path serves a local key) · R-MGW-02, R-MGW-07, R-MGW-08 · ModelGateway verifies the grant statelessly and hands the call to Models.serve; Models pins, stamps and streams from the provider.'
+    description 'v1 partial (the same path serves a local key) · R-MGW-02, R-MGW-07, R-MGW-08 · model gateway verifies the grant statelessly and hands the call to Models.serve; Models pins, stamps and streams from the provider.'
 
     include laptopCli, signalbox, signalbox.harness, signalbox.gateway.modelGateway, signalbox.models, modelProviders
 
@@ -1082,7 +1083,7 @@ views {
       navigateTo folders_pools_pins
       notes """
         - Models pins an account (cached per lease) and stamps `{requestId, subject, level, poolId}`
-        - Custody, CPA host and the stamp check stay inside Models
+        - Custody, pool host and the stamp check stay inside Models
       """
     }
     alt 'Models answers' {
@@ -1097,7 +1098,7 @@ views {
         signalbox.models -> modelProviders 'Upstream call' {
           navigateTo folders_pools_cpa_host_lifecycle
           notes """
-            - Through the pool's CPA host, from account X's own EU egress
+            - Through the pool's pool host, from account X's own EU egress
           """
         }
         signalbox.models <- modelProviders 'Bytes'
@@ -1119,7 +1120,7 @@ views {
     #v1 #smell
     variant sequence
     title 'Workflows/Folders/Pools/Gateway/Count every model call once'
-    description 'Smell: ModelGateway writes into two Models actors (CPA host, Pool custody) instead of Models.serve. R-MGW-09, R-MGW-10 · started events batched through a Queue; custody reconciles them against the CPA drain; a missing drained row raises an unmetered alert; aborts and isolate deaths count once.'
+    description 'Smell: Model gateway writes into two Models actors (pool host, Pool custody) instead of Models.serve. R-MGW-09, R-MGW-10 · started events batched through a Queue; custody reconciles them against the usage drain; a missing drained row raises an unmetered alert; aborts and isolate deaths count once.'
 
     include signalbox, signalbox.gateway.modelGateway, signalbox.models, signalbox.models.cpaHost, signalbox.models.custody, signalbox.tree, signalbox.observability
     style signalbox.models {
@@ -1130,8 +1131,8 @@ views {
     signalbox.gateway.modelGateway -> signalbox.models.cpaHost 'Request + stamp' {
       navigateTo folders_gateway_model_call
       notes """
-        - CPA carries the signed stamp into its own usage record
-        - **Smell:** Gateway reaches past Models' interface into its CPA host (design §3.11 deployment unit); `serve` should own this hop
+        - The pool backend carries the signed stamp into its own usage record
+        - **Smell:** Gateway reaches past Models' interface into its pool host (design §3.11 deployment unit); `serve` should own this hop
       """
     }
     signalbox.gateway.modelGateway -[async]-> signalbox.models.custody 'started (Queue)' {
@@ -1140,7 +1141,7 @@ views {
         - **Smell:** a second write into a Models actor from Gateway; fold into `serve` or make `started` a named Models input
       """
     }
-    signalbox.models.cpaHost -[async]-> signalbox.models.custody 'CPA drain row' {
+    signalbox.models.cpaHost -[async]-> signalbox.models.custody 'Usage drain row' {
       navigateTo folders_usage_record
       notes """
         - The only writer of token rows; each row describes itself
@@ -1268,7 +1269,7 @@ views {
         signalbox.gateway -> signalbox.operations 'invoke'
         mcpClient <- signalbox.gateway 'OutcomeUnknown' {
           notes """
-            - Same rule through ToolGateway, the only MCP endpoint
+            - Same rule through the tools gateway, the only MCP endpoint
           """
         }
       }
@@ -1371,7 +1372,7 @@ views {
     signalbox.cli -> laptopCli 'Write local config' {
       navigateTo work_agenttools_outside_agent_connect
       notes """
-        - Points the official CLIs at ModelGateway; the old config is kept
+        - Points the official CLIs at the model gateway; the old config is kept
       """
     }
     laptopCli -[model]-> signalbox.gateway 'Model calls' {
@@ -1494,8 +1495,8 @@ views {
   dynamic view folders_pools_cpa_host_lifecycle {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Host/CPA host wakes and sleeps'
-    description 'R-POL-30 (alias T-USG-07) · The CPA container wakes on demand and sleeps after 2 idle minutes; sharded by account group as needed.'
+    title 'Workflows/Folders/Pools/Host/Pool host wakes and sleeps'
+    description 'R-POL-30 (alias T-USG-07) · The pool backend wakes on demand and sleeps after 2 idle minutes; sharded by account group as needed.'
 
     include signalbox, signalbox.gateway, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost, signalbox.models.backend.cpaContainer
     style signalbox.models {
@@ -1509,19 +1510,20 @@ views {
     signalbox.models.api -> signalbox.models.custody 'Pin account'
     signalbox.models.custody -> signalbox.models.cpaHost 'Stream via host' {
       notes """
-        - One CPA host actor per `poolId#shard`, in the rarely-deployed pool-host script
+        - One pool host actor per `poolId#shard`, in the rarely-deployed pool-host script
       """
     }
-    opt 'container asleep' {
+    opt 'backend asleep' {
       signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'Wake' {
         notes """
-          - Cloudflare Containers cold start; the request waits, it is not dropped
+          - The backend cold-starts; the request waits, it is not dropped
         """
       }
     }
     signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'Pipe bytes' {
+      technology 'CLIProxyAPI v8'
       notes """
-        - CLIProxyAPI v8, pinned release; bytes pass untransformed
+        - Pinned release; bytes pass untransformed
       """
     }
     signalbox.models.api <- signalbox.models.cpaHost 'Byte stream'
@@ -1555,7 +1557,7 @@ views {
     }
     signalbox.models.backend.cpaContainer -> signalbox.models.euEgress 'Leave as account X' {
       notes """
-        - The container never dials a provider directly
+        - The backend never dials a provider directly
       """
     }
     parallel {

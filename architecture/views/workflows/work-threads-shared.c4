@@ -318,7 +318,7 @@ views {
     alt 'first pick' {
       when 'A picks' {
         personA -> hier.company.team.sharedThread 'option 2' {
-          notes '- Via client and Funnel; the first receipt wins'
+          notes '- Via client and the client gateway; the first receipt wins'
         }
       }
       else 'B picks' {
@@ -722,7 +722,7 @@ views {
       notes '- Admin of Company sets which loan kinds Team accepts'
     }
     signalbox.web -> signalbox.tree 'policy on Team' {
-      notes '- Via Funnel: `Tree.change(AcceptKinds)`'
+      notes '- Via the client gateway: `Tree.change(AcceptKinds)`'
     }
     personA -> signalbox.web 'Lend P1 here' {
       navigateTo folders_lending_lend
@@ -1269,7 +1269,7 @@ views {
     }
     signalbox.web -> signalbox.tree 'set policy' {
       navigateTo folders_access_enterprise_flag
-      notes '- Via Funnel: `Tree.change(Policy)` on Company'
+      notes '- Via the client gateway: `Tree.change(Policy)` on Company'
     }
     alt 'Enterprise flag' {
       when 'not set' {

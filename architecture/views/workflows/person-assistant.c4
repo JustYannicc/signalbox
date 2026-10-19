@@ -115,7 +115,7 @@ views {
       """
     }
     signalbox.web -> signalbox.operations 'Save' {
-      notes '- Through the Funnel like every client command'
+      notes '- Through the client gateway like every client command'
     }
     alt 'where the files live (open)' {
       when 'Person rows' {
@@ -802,7 +802,7 @@ views {
       }
     }
     signalbox.web -> signalbox.operations 'Thread.send' {
-      notes '- Through the Funnel, the one typed door'
+      notes '- Through the client gateway, the one typed door'
     }
     signalbox.operations -> signalbox.thread.threadActor 'send to assistant' {
       notes "- Place = A's top level; the assistant is its agent thread"
@@ -846,7 +846,7 @@ views {
     loop 'while the call is open' {
       personA -> signalbox.mobile 'speaks'
       signalbox.mobile -> signalbox.harness 'audio frames' {
-        notes '- Through the Funnel socket'
+        notes '- Through the client gateway socket'
       }
       alt 'trigger word said?' {
         when 'no' {
@@ -1161,7 +1161,7 @@ views {
       notes "- Plugins › Instructions at A's top level"
     }
     signalbox.web -> signalbox.tree 'place AGENTS.md' {
-      notes "- Through Funnel and Operations; a placement row on A's top level"
+      notes "- Through the client gateway and Operations; a placement row on A's top level"
     }
     signalbox.thread.threadActor -> signalbox.tree 'resolve at turn' {
       navigateTo folders_placement_kind_instructions

@@ -1,6 +1,6 @@
 // Scenario shard 12: attention. Asks, devices, Focus, drafts and the assistant's day, one
 // journey per scenario (SCN-242–SCN-264). Modules are black boxes; clients reach them through
-// the Funnel (drawn only where it matters). People: A and B are members of folder Company
+// the client gateway (drawn only where it matters). People: A and B are members of folder Company
 // (owner: organization), B works in folder Team under it; C is admin of folder Company.
 // The assistant is A's top-level agent thread (hier.asstA).
 global {
@@ -56,7 +56,7 @@ views {
     }
     signalbox.harness -> signalbox.computer 'Releases the VM' {
       notes '''
-        - The boxd VM is released. Nothing about the ask was on it.
+        - The machine is released. Nothing about the ask was on it.
       '''
     }
     personB -> signalbox.mobile 'Answers days later' {
@@ -993,7 +993,7 @@ views {
     signalbox.web -> signalbox.attention 'device(Unregister)' {
       navigateTo person_devices_sign_out_remove
       notes '''
-        - Through the Funnel, like every client command.
+        - Through the client gateway, like every client command.
       '''
     }
     parallel {

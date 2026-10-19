@@ -1,7 +1,7 @@
 // Thread and computer lifecycle: what runs and what is stored as a thread moves through time.
 // Binding (owner): the model thinks it is on one normal computer and never learns about VMs, isolates,
 // sync, eviction, conflicts or placement. The harness and the files stay in the Thread's session facet;
-// a boxd VM exists only while it is needed and every VM disk is a cache. Generic names only.
+// a machine exists only while it is needed and every VM disk is a cache. Generic names only.
 views {
 
   // ───────────────────────────── Overview ─────────────────────────────
@@ -147,7 +147,7 @@ views {
     }
     signalbox.computer.vmLifecycle -> platform.boxd 'hibernate' {
       notes '''
-        - Explicit: boxd\'s own idle clock only counts network
+        - Explicit: the machine provider\'s own idle clock only counts network
         - Billed for disk only; `deleteAfter` set to the H-hour horizon
       '''
     }
@@ -215,7 +215,7 @@ views {
     signalbox.computer.execDaemon -> signalbox.funnel.portGateway 'outbound tunnel' {
       navigateTo work_previews_port_url
       notes '''
-        - The daemon dials out; boxd\'s public URL points at a dead port
+        - The daemon dials out; the machine\'s public URL points at a dead port
       '''
     }
     signalbox.computer.backend.kernelFs -> signalbox.harness 'job started' {
@@ -395,7 +395,7 @@ views {
     opt 'fork evicted to R2' {
       signalbox.thread.threadActor -> signalbox.drive 'promote fork' {
         navigateTo work_drive_eviction
-        notes '- Rebuilt into Artifacts from the R2 bundle; reads are served from R2 meanwhile'
+        notes '- Rebuilt into the hot tier from the R2 bundle; reads are served from R2 meanwhile'
       }
     }
     signalbox.thread.threadActor -> signalbox.harness 'resume from mirror' {
@@ -652,7 +652,7 @@ views {
     signalbox.automations -> signalbox.drive 'idle-drive eviction' {
       navigateTo work_drive_eviction
       notes '''
-        - Moves the idle Artifacts repo to R2 once the R2 copy is confirmed
+        - Moves the idle hot repo to R2 once the R2 copy is confirmed
         - Opening or messaging the thread brings it back
       '''
     }
@@ -744,7 +744,7 @@ views {
       '''
     }
     signalbox.drive -> platform.artifacts 'push to fork' {
-      notes '- The thread\'s Artifacts fork: the hot tier'
+      notes '- The thread\'s fork: the hot tier'
     }
     signalbox.drive -> platform.r2 'write-through' {
       navigateTo work_drive_r2_record
@@ -763,9 +763,9 @@ views {
 
   dynamic view lifecycle_boxd_data {
     variant sequence
-    title 'Workflows/Lifecycle/What lives on boxd'
+    title 'Workflows/Lifecycle/What lives on machines'
     description '''
-      What do we keep on boxd, and what do archive and trash do to it? Nothing but cache: a VM's default
+      What do we keep on machines, and what do archive and trash do to it? Nothing but cache: a VM's default
       100 GB disk holds regenerable files, source comes back after every command and before every hibernate,
       and Bases are snapshots that belong to the drive. Archive deletes the VM at once; trash also drops the
       hot fork; restore needs no VM.
@@ -792,7 +792,7 @@ views {
     signalbox.computer.vmLifecycle -> platform.boxd 'lock down' {
       navigateTo work_computer_egress_vm
       notes '''
-        - `deleteAfter` on every VM, so boxd deletes it even if our DO dies
+        - `deleteAfter` on every VM, so the machine provider deletes it even if our DO dies
         - Egress allowlist; host-bound secrets for platform-wide credentials only
         - Default public URL at a dead port; previews use our port gateway
       '''
@@ -818,7 +818,7 @@ views {
           notes '''
             - Deletes the VM at once; nothing needs saving
             - Never merges; the fork stays until idle-drive eviction moves it to R2
-            - Unarchive restores nothing on boxd
+            - Unarchive restores nothing on a machine
           '''
         }
         signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'delete now'
@@ -845,10 +845,10 @@ views {
       notes '- 30-day trash: R2 and the thread record stay'
     }
     signalbox.thread.threadActor -> signalbox.drive 'purge hot copies' {
-      notes '- Purge workers remove the Artifacts fork and the kept-local ref'
+      notes '- Purge workers remove the fork and the kept-local ref'
     }
     signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'purge machine' {
-      notes '- The boxd machine by name, and its Base lease'
+      notes '- The machine by name, and its Base lease'
     }
     opt 'restore within 30 days' {
       personA -> signalbox.thread.threadActor 'restore'

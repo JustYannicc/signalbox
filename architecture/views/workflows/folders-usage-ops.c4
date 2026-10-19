@@ -204,7 +204,7 @@ views {
           navigateTo folders_gateway_usage_metering
           notes """
             - Subject A, level = where the key's pool resolved; same stamp
-            - MCP sessions record the same way through ToolGateway
+            - MCP sessions record the same way through the tools gateway
           """
         }
         signalbox.gateway.modelGateway -> signalbox.models 'Stamped request'
@@ -212,7 +212,7 @@ views {
       else 'compute and storage' {
         signalbox.computer -[async]-> signalbox.thread 'Measurements' {
           notes """
-            - boxd usage and storage bytes go to the owning thread's outbox
+            - Machine usage and storage bytes go to the owning thread's outbox
           """
         }
         signalbox.thread -[async]-> signalbox.models 'To paying pool' {
@@ -222,7 +222,7 @@ views {
     }
     signalbox.models -> signalbox.models 'Append ledger row' {
       notes """
-        - Token rows come only from the CPA drain; each row is self-describing, so no pending rows
+        - Token rows come only from the usage drain; each row is self-describing, so no pending rows
         - Append-only; Pool custody is the one writer
       """
     }
@@ -288,7 +288,7 @@ views {
   dynamic view folders_usage_vendor_costs {
     variant sequence
     title 'Workflows/Folders/Usage/Watch cross-vendor costs'
-    description 'R-USG-12. The operator sees month to date, forecast and caps across vendors (model providers, Cloudflare, boxd), plus a "forecast over X" automation.'
+    description 'R-USG-12. The operator sees month to date, forecast and caps across vendors (model providers, edge platform, machines), plus a "forecast over X" automation.'
 
     include operator
     include signalbox, signalbox.web, signalbox.funnel, signalbox.connections, signalbox.automations, signalbox.attention, modelProviders, modelProviders.anthropic, upstreams, upstreams.cloudflare, platform, platform.boxd
@@ -342,7 +342,7 @@ views {
     mcpClient -> signalbox.gateway.toolGateway 'tools/call'
     signalbox.gateway.toolGateway -> signalbox.connections 'call' {
       notes """
-        - The owning module meets the vendor: Connections here, Computer for boxd, Models for providers
+        - The owning module meets the vendor: Connections here, Computer for machines, Models for providers
       """
     }
     signalbox.connections -> services.google 'API call'
@@ -403,7 +403,7 @@ views {
 
   dynamic view operations_ops_alchemy_providers {
     title 'Workflows/Operations/Deploy/Add a missing Alchemy provider'
-    description 'R-OPS-10. Missing providers (boxd, Sentry, WorkOS, 1Password source, GitHub App) are written in-stack, then upstreamed.'
+    description 'R-OPS-10. Missing IaC providers (machines, Sentry, identity provider, vault source, GitHub App) are written in-stack, then upstreamed.'
     autoLayout TopBottom
 
     include operator
@@ -478,7 +478,7 @@ views {
 
   dynamic view operations_ops_deploy_domains {
     title 'Workflows/Operations/Deploy/Three deploy domains'
-    description 'R-OPS-07. The app script deploys often; pool host and thread host rarely; engine and harness code load by versioned Worker Loader id at turn boundaries.'
+    description 'R-OPS-07. The app script deploys often; pool host and thread host rarely; engine and harness code load by versioned isolate id at turn boundaries.'
     autoLayout TopBottom
 
     include operator
@@ -490,7 +490,7 @@ views {
         build.iac -> signalbox.funnel 'Deploy app' {
           navigateTo operations_ops_deploy_prod
           notes """
-            - Funnel, Ingress, modules and most actors; sockets reconnect
+            - Client gateway, Ingress, modules and most actors; sockets reconnect
           """
         }
       }
@@ -498,7 +498,7 @@ views {
         build.iac -> signalbox.models 'Deploy pool host' {
           navigateTo operations_ops_pool_deploy
           notes """
-            - The CPA host script in Models; drops only in-flight streams, a custody deploy drops none
+            - The pool host script in Models; drops only in-flight streams, a custody deploy drops none
           """
         }
       }
@@ -512,7 +512,7 @@ views {
       else 'engine or harness code' {
         build.iac -> signalbox.actorhost 'Upload version' {
           notes """
-            - A new Worker Loader id; nothing restarts
+            - A new isolate id; nothing restarts
           """
         }
         signalbox.thread -> signalbox.harness 'Load at turn boundary' {
@@ -528,7 +528,7 @@ views {
   dynamic view operations_ops_deploy_prod {
     variant sequence
     title 'Workflows/Operations/Deploy/Deploy production'
-    description 'R-OPS-01, R-OPS-02, R-OPS-06, R-OPS-09 (alias T-UPD-07). Alchemy v2, plan first, EU, secrets from 1Password, prod resources adopted in place; one version, fast revert.'
+    description 'R-OPS-01, R-OPS-02, R-OPS-06, R-OPS-09 (alias T-UPD-07). Alchemy v2, plan first, EU, secrets from the vault, prod resources adopted in place; one version, fast revert.'
 
     include operator
     include services, services.github, services.onepassword, build, build.iac, signalbox, telemetry, telemetry.sentry
@@ -563,7 +563,7 @@ views {
     }
     build.iac -> build.iac 'Plan' {
       notes """
-        - Alchemy v2, state in Cloudflare Secrets Store
+        - Alchemy v2, state in the platform secrets store
       """
     }
     alt 'plan' {
@@ -621,7 +621,7 @@ views {
       }
       operator -> services.onepassword 'Secret straight in' {
         notes """
-          - Browser → 1Password or the target service; never through chat or an agent
+          - Browser → vault or the target service; never through chat or an agent
         """
       }
     }
@@ -636,7 +636,7 @@ views {
     #smell
     variant sequence
     title 'Workflows/Operations/Deploy/Deploy pool scripts under live streams'
-    description 'R-OPS-08. A custody deploy drops zero streams; a pool host deploy or container restart drops only in-flight streams. Smell on purpose: it opens Models (custody vs CPA host) because which script deploys is the whole question.'
+    description 'R-OPS-08. A custody deploy drops zero streams; a pool host deploy or backend restart drops only in-flight streams. Smell on purpose: it opens Models (custody vs pool host) because which script deploys is the whole question.'
 
     include personA, personB, signalbox, signalbox.thread, signalbox.gateway, signalbox.gateway.modelGateway, signalbox.models, signalbox.models.custody, signalbox.models.cpaHost, build, build.iac, modelProviders, modelProviders.anthropic
     style signalbox.gateway, signalbox.models {
@@ -654,7 +654,7 @@ views {
     signalbox.gateway.modelGateway -> signalbox.models.cpaHost 'Bytes' {
       notes """
         - Bytes never pass custody; the pin is cached per lease
-        - Reach into Models' CPA host (smell): kept because this view is about which Models script deploys
+        - Reach into Models' pool host (smell): kept because this view is about which Models script deploys
       """
     }
     signalbox.models.cpaHost -> modelProviders.anthropic 'Messages'
@@ -667,7 +667,7 @@ views {
           """
         }
       }
-      else 'pool host or container restart' {
+      else 'pool host or backend restart' {
         build.iac -> signalbox.models.cpaHost 'Deploy pool host'
         signalbox.gateway.modelGateway <- signalbox.models.cpaHost 'In-flight dropped' {
           notes """
@@ -687,7 +687,7 @@ views {
 
   dynamic view operations_ops_cpa_release {
     variant sequence
-    title 'Workflows/Operations/Loops/Follow CLIProxyAPI releases'
+    title 'Workflows/Operations/Loops/Follow pool backend releases'
     description 'R-OPS-27, R-OPS-28, R-OPS-29. Detect, bump release.json, eval gate, auto-merge on green, rebuild with carry patches; roll back on an upstream regression.'
 
     include platform, platform.cpaUpstream, signalbox, signalbox.automations, signalbox.thread, signalbox.observability, signalbox.models, services, services.github, build, build.iac
@@ -703,7 +703,7 @@ views {
     alt 'result' {
       when 'green' {
         services.github -> build.iac 'Auto-merge'
-        build.iac -> signalbox.models 'Rebuild CPA image' {
+        build.iac -> signalbox.models 'Rebuild pool backend image' {
           notes """
             - Reapplies carry patches; fails loudly on drift
           """
@@ -817,7 +817,7 @@ views {
         signalbox.automations -> signalbox.actorhost 'Publish version' {
           navigateTo operations_ops_deploy_domains
           notes """
-            - A new Worker Loader id
+            - A new isolate id
           """
         }
         signalbox.thread -> signalbox.harness 'Next turn loads it'
@@ -836,7 +836,7 @@ views {
   dynamic view operations_ops_prod_checks {
     variant sequence
     title 'Workflows/Operations/Loops/Run checks with test identities'
-    description 'R-OPS-37. E2E on a WorkOS sandbox with fictional users; a production-safe test person, excluded from analytics, feeds a prod regression automation.'
+    description 'R-OPS-37. E2E on an identity provider sandbox with fictional users; a production-safe test person, excluded from analytics, feeds a prod regression automation.'
 
     include operator
     include signalbox, signalbox.automations, signalbox.thread, signalbox.identity, signalbox.observability, platform, platform.workos
@@ -847,7 +847,7 @@ views {
         signalbox.thread -> platform.workos 'Fictional users' {
           navigateTo identity_identity_test_identities
           notes """
-            - WorkOS sandbox; never real people
+            - Identity provider sandbox; never real people
           """
         }
       }
@@ -1165,8 +1165,8 @@ views {
         """
       }
     }
-    opt 'Cloudflare logs' {
-      operator -> signalbox.observability 'Workers Logs off' {
+    opt 'Platform logs' {
+      operator -> signalbox.observability 'Platform logs off' {
         notes """
           - Off before per-GB pricing, with a billing notification backstop
         """
@@ -1179,7 +1179,7 @@ views {
 
   dynamic view operations_ops_obs_wide_event {
     title 'Workflows/Operations/Observability/One wide event per unit of work'
-    description 'R-OPS-12 (alias T-PRV-34). One correlation id client → Worker → DO → facet → isolate → VM → tools → CPA; ids only.'
+    description 'R-OPS-12 (alias T-PRV-34). One correlation id client → Worker → DO → facet → isolate → VM → tools → pool backend; ids only.'
     autoLayout TopBottom
 
     include signalbox, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.harness, signalbox.computer, signalbox.gateway, signalbox.gateway.toolGateway, signalbox.gateway.modelGateway, signalbox.observability
@@ -1200,7 +1200,7 @@ views {
       signalbox.harness -> signalbox.gateway.toolGateway 'Tool call'
       signalbox.harness -> signalbox.gateway.modelGateway 'Model call' {
         notes """
-          - The id rides the signed stamp on to Models and the CPA host
+          - The id rides the signed stamp on to Models and the pool host
         """
       }
     }
@@ -1529,7 +1529,7 @@ views {
   dynamic view operations_ops_workos_outage {
     #v1
     variant sequence
-    title 'Workflows/Operations/Recovery/Ride out a WorkOS outage'
+    title 'Workflows/Operations/Recovery/Ride out an identity provider outage'
     description 'v1 yes · R-OPS-34. New sign-ins fail closed; Signalbox-issued sessions keep working; membership webhooks catch up on recovery.'
 
     include personA, personB, personC, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, platform, platform.workos
@@ -1538,7 +1538,7 @@ views {
       when 'C signs in fresh' {
         personC -> signalbox.web 'Sign in'
         signalbox.web -> signalbox.identity 'signIn'
-        signalbox.identity -> platform.workos 'AuthKit'
+        signalbox.identity -> platform.workos 'Hosted sign-in'
         signalbox.identity <- platform.workos 'Timeout'
         signalbox.web <- signalbox.identity 'Fails closed' {
           notes """
@@ -1554,7 +1554,7 @@ views {
         signalbox.web -> signalbox.identity 'verify' {
           navigateTo identity_identity_session
           notes """
-            - Signalbox-issued sessions verify locally; WorkOS isn't called
+            - Signalbox-issued sessions verify locally; the identity provider isn't called
           """
         }
       }
@@ -1567,7 +1567,7 @@ views {
     }
     signalbox.ingress -> signalbox.identity 'Catch up roles' {
       notes """
-        - Ordered by WorkOS event time
+        - Ordered by the identity provider event time
       """
     }
   }

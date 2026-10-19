@@ -34,7 +34,7 @@ views {
     personA -> signalbox.identity 'Sign in' {
       navigateTo v1_sign_in
       notes """
-        - WorkOS AuthKit, e.g. with Google; an own pool that starts empty
+        - Hosted sign-in, e.g. with Google; an own pool that starts empty
       """
     }
     personB -> signalbox.identity 'Sign in' {
@@ -111,7 +111,7 @@ views {
     variant sequence
     title 'Workflows/v1/1 · Sign in'
     description '''
-      What does a person have after signing in for the first time? WorkOS AuthKit, here with Google. Each
+      What does a person have after signing in for the first time? Hosted sign-in, here with Google. Each
       person gets a personal top level they never see and an own pool on it that starts empty. No
       organization, no picker, nothing to set up.
     '''
@@ -124,7 +124,7 @@ views {
     signalbox.web -> signalbox.identity 'signIn' {
       navigateTo identity_identity_signin
     }
-    signalbox.identity -> platform.workos 'AuthKit' {
+    signalbox.identity -> platform.workos 'Hosted sign-in' {
       notes """
         - Hosted sign-in; Google is one example provider
       """
@@ -168,8 +168,8 @@ views {
     title 'Workflows/v1/2 · Fill your pool'
     description '''
       How does A put model accounts into A's pool? One click each: a Claude subscription, a ChatGPT
-      subscription, or an API key. They sit in Models behind the one model gateway, with CLIProxyAPI pools
-      as the backend. Nobody ever sees another person's credentials.
+      subscription, or an API key. They sit in Models behind the one model gateway, with the pool backend
+      behind it. Nobody ever sees another person's credentials.
     '''
 
     include personA with { description 'owns this pool' }
@@ -200,9 +200,9 @@ views {
       }
       signalbox.web -> signalbox.models 'connect(API key)'
     }
-    signalbox.models -> signalbox.models 'Seal into CLIProxyAPI' {
+    signalbox.models -> signalbox.models 'Seal into the pool backend' {
       notes """
-        - Credentials live in the pool's CLIProxyAPI host, never on a client
+        - Credentials live in the pool host, never on a client
         - Nobody, A included, sees them again; members never see them at all
       """
     }
@@ -351,7 +351,7 @@ views {
     description '''
       How does each person bring their own Google and Confluence? One click each through hosted OAuth, no
       admin. A connection acts as the person who made it, sits on their top level and serves only their
-      requests; sharing a pool never shares tools. Executor (Gateway's ToolGateway plus Connections) exposes
+      requests; sharing a pool never shares tools. The tools gateway (Gateway plus Connections) exposes
       them through that person's MCP endpoint, with tool search by default.
     '''
 
@@ -547,7 +547,7 @@ views {
     }
     signalbox.gateway.modelGateway -[model]-> signalbox.models 'serve' {
       notes """
-        - CLIProxyAPI picks one of the pool's accounts
+        - The pool backend picks one of the pool's accounts
       """
     }
     signalbox.models -[model]-> modelProviders.anthropic 'Messages'
@@ -582,8 +582,8 @@ views {
     title 'Workflows/v1/8 · Local tool call'
     description '''
       Which tools does a local harness get? Only its own person's connections. B's local Codex calls the
-      `signalbox` MCP server, which is Executor (ToolGateway plus Connections). It finds Confluence by tool
-      search, runs it through execute, and Executor fills B's credentials from the vault at egress. B uses
+      `signalbox` MCP server, which is the tools gateway (Gateway plus Connections). It finds Confluence by tool
+      search, runs it through execute, and the tools gateway fills B's credentials from the vault at egress. B uses
       A's shared pool, but sharing a pool never shares tools: A's connections never resolve for B.
     '''
 

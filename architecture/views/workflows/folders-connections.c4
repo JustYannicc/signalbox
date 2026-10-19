@@ -174,7 +174,7 @@ views {
     signalbox.web -> signalbox.connections 'connect(Google, here)' {
       navigateTo folders_connections_oauth_connect
       notes """
-        - Through the Funnel; `here` is the level A is looking at
+        - Through the client gateway; `here` is the level A is looking at
       """
     }
     signalbox.web -> services.google 'Consent' {
@@ -233,7 +233,7 @@ views {
         build.secrets -> build.iac 'Hosted client secrets' {
           notes """
             - Google and Atlassian (v1); GitHub App, Microsoft 365, Slack, Notion, Todoist, Trello, Sentry later
-            - Client secrets live in 1Password and load into the deploy (Alchemy)
+            - Client secrets live in the vault and load into the deploy (Alchemy)
           """
         }
       }
@@ -284,7 +284,7 @@ views {
         }
         signalbox.web -> signalbox.connections 'connect(githubApp)' {
           notes """
-            - Through the Funnel
+            - Through the client gateway
           """
         }
         signalbox.connections -> services.github 'Install App' {
@@ -423,7 +423,7 @@ views {
     signalbox.web -> signalbox.connections 'connect(service, at)' {
       navigateTo folders_connections_catalog_clients
       notes """
-        - Through the Funnel; returns an authorize URL with `return_to`
+        - Through the client gateway; returns an authorize URL with `return_to`
       """
     }
     alt 'which service' {
@@ -498,7 +498,7 @@ views {
     }
     signalbox.web -> signalbox.connections 'connect(method)' {
       notes """
-        - Through the Funnel
+        - Through the client gateway
       """
     }
     alt 'method' {
@@ -721,7 +721,7 @@ views {
     signalbox.web -> signalbox.connections 'change(Relabel)' {
       navigateTo state_connection
       notes """
-        - Through the Funnel; only the label changes, not placements
+        - Through the client gateway; only the label changes, not placements
       """
     }
     signalbox.web <- signalbox.connections 'Row renamed'
@@ -891,7 +891,7 @@ views {
     }
     mcpClient -> signalbox.identity 'OAuth sign-in' {
       notes """
-        - AuthKit is the MCP authorization server
+        - The identity provider is the MCP authorization server
       """
     }
     mcpClient -> signalbox.gateway 'Connect' {
@@ -1062,7 +1062,7 @@ views {
     }
     signalbox.gateway -> signalbox.gateway 'Codemode execute' {
       notes """
-        - Agent code runs in a Dynamic Worker with no network, only `callTool`
+        - Agent code runs in an isolate with no network, only `callTool`
       """
     }
     signalbox.gateway -> signalbox.connections 'call($account)' {
@@ -1100,7 +1100,7 @@ views {
     variant sequence
     title 'Workflows/Folders/Connections/Tools/Expose a tool by search or by name'
     description '''
-      Decided 2026-10-19. Executor (ToolGateway + Connections) is the one gateway for every connector. Each tool has an
+      Decided 2026-10-19. The tools gateway (Gateway + Connections) is the one gateway for every connector. Each tool has an
       exposure, placed on a folder like any placement: `search` (default) is found through search and execute, `direct`
       shows under its normal name. Nearest wins, resolved by the thread's place, never by who sends.
     '''
@@ -1121,8 +1121,8 @@ views {
     }
     hier.company.team.sharedThread -> signalbox.harness 'MCP config' {
       notes """
-        - One `executor` entry (search + execute) and one `github` entry for its direct tools
-        - Every entry points at Executor; never `managed-mcp.json`
+        - One `signalbox` entry (search + execute) and one `github` entry for its direct tools
+        - Every entry points at the tools gateway; never `managed-mcp.json`
       """
     }
     signalbox.harness -> signalbox.gateway.toolGateway 'List tools' {
@@ -1239,7 +1239,7 @@ views {
     variant sequence
     title 'Workflows/Folders/Secrets/Agent signs in to a site with one call'
     description '''
-      R-SEC-09, R-SEC-11, R-SEC-12, R-SEC-13 (not v1). sign_in → Kernel Managed Auth answered from A's 1Password;
+      R-SEC-09, R-SEC-11, R-SEC-12, R-SEC-13 (not v1). sign_in → managed sign-in answered from A's vault;
       a standing grant first; codes fetched from their Gmail; unattended re-login when a session expires.
     '''
 
@@ -1254,7 +1254,7 @@ views {
           """
         }
       }
-      else 'Kernel NEEDS_AUTH' {
+      else 'Browser NEEDS_AUTH' {
         platform.kernel -> signalbox.browser 'NEEDS_AUTH' {
           notes """
             - A site session expired; an alarm on A's Person re-logs in unattended
@@ -1279,7 +1279,7 @@ views {
         """
       }
     }
-    signalbox.browser -> platform.kernel 'Managed Auth' {
+    signalbox.browser -> platform.kernel 'Managed sign-in' {
       navigateTo folders_secrets_browser_identity
       notes """
         - In A's own browser profile; `save_credentials: false`
@@ -1287,7 +1287,7 @@ views {
     }
     signalbox.browser -> signalbox.connections 'Login secrets' {
       notes """
-        - By 1Password reference only
+        - By vault reference only
       """
     }
     signalbox.connections -> services.onepassword 'Login item' {
@@ -1319,8 +1319,8 @@ views {
     variant sequence
     title "Workflows/Folders/Secrets/Keep a person's browser profile and passkeys"
     description '''
-      R-SEC-14, R-SEC-15 (aliases T-BRW-04, T-SET-16; not v1). One Kernel profile per person, placed at their top level;
-      agent-owned passkeys stored in their 1Password.
+      R-SEC-14, R-SEC-15 (aliases T-BRW-04, T-SET-16; not v1). One browser profile per person, placed at their top level;
+      agent-owned passkeys stored in their vault.
     '''
 
     include personA, signalbox, signalbox.web, signalbox.browser, signalbox.connections, platform, platform.kernel, services, services.onepassword
@@ -1336,7 +1336,7 @@ views {
         }
         signalbox.web -> signalbox.browser 'Clear or export' {
           notes """
-            - Through the Funnel
+            - Through the client gateway
           """
         }
         signalbox.browser -> platform.kernel 'Clear or export' {
@@ -1370,21 +1370,21 @@ views {
 
   dynamic view folders_secrets_onepassword_link {
     variant sequence
-    title 'Workflows/Folders/Secrets/Link or unlink your 1Password'
-    description 'R-SEC-01, R-SEC-02 (not v1) · A links their own 1Password as a device (human-only, isolated vault worker), or unlinks it. Enters Connections through its interface to show the vault worker.'
+    title 'Workflows/Folders/Secrets/Link or unlink your vault'
+    description 'R-SEC-01, R-SEC-02 (not v1) · A links their own vault as a device (human-only, isolated vault worker), or unlinks it. Enters Connections through its interface to show the vault worker.'
 
     include personA, signalbox, signalbox.web, signalbox.connections, signalbox.connections.api, signalbox.connections.vault, signalbox.connections.connectionActor, services, services.onepassword
 
     alt 'link or unlink' {
       when 'link' {
-        personA -> signalbox.web 'Settings › 1Password' {
+        personA -> signalbox.web 'Settings › Vault' {
           notes """
             - A sheet in Settings; human-only (agents are refused)
           """
         }
         signalbox.web -> signalbox.connections.api 'connect(onePasswordDevice)' {
           notes """
-            - Through the Funnel
+            - Through the client gateway
           """
         }
         signalbox.connections.api -> signalbox.connections.vault 'Link device'
@@ -1410,7 +1410,7 @@ views {
         signalbox.connections.connectionActor -> signalbox.connections.connectionActor 'Wipe material'
         signalbox.web <- signalbox.connections.api 'Deauthorize hint' {
           notes """
-            - Tells A to remove the device in 1Password too
+            - Tells A to remove the device in the vault too
           """
         }
       }
@@ -1480,7 +1480,7 @@ views {
     }
     signalbox.connections -> services.onepassword 'Resolve value' {
       notes """
-        - Vault worker; a value rotated in 1Password resolves fresh on the next fill
+        - Vault worker; a value rotated in the vault resolves fresh on the next fill
         - A stale substitution in flight is retried, never cached
       """
     }
@@ -1557,7 +1557,7 @@ views {
   dynamic view folders_secrets_secret_request {
     variant sequence
     title 'Workflows/Folders/Secrets/Agent asks a person for a secret'
-    description 'R-SEC-06 (not v1) · A separate secret card, never an ask or a form; answering is human-only and the value goes straight to 1Password.'
+    description 'R-SEC-06 (not v1) · A separate secret card, never an ask or a form; answering is human-only and the value goes straight to the vault.'
 
     include personA, signalbox, signalbox.web, signalbox.thread, signalbox.operations, signalbox.connections, services, services.onepassword
 
@@ -1605,22 +1605,22 @@ views {
 
   dynamic view folders_secrets_service_account {
     variant sequence
-    title 'Workflows/Folders/Secrets/Connect an organization 1Password service account'
+    title 'Workflows/Folders/Secrets/Connect an organization vault service account'
     description '''
-      R-SEC-03 (not v1). C connects folder Company's 1Password service account: one vault or Environment per folder,
+      R-SEC-03 (not v1). C connects folder Company's vault service account: one vault or Environment per folder,
       named "Signalbox · <folder path>", shown as one source on the folder.
     '''
 
     include personC, personA, signalbox, signalbox.web, signalbox.connections, signalbox.tree, services, services.onepassword
 
-    personC -> signalbox.web 'Connect 1Password' {
+    personC -> signalbox.web 'Connect vault' {
       notes """
         - On folder Company; C is its admin
       """
     }
     signalbox.web -> signalbox.connections 'connect(serviceAccount)' {
       notes """
-        - Through the Funnel
+        - Through the client gateway
       """
     }
     signalbox.connections -> services.onepassword 'Verify token'

@@ -6,10 +6,10 @@
 // only: placed at the thread's folder or above (reach below), nearest wins; anything else is a loan.
 model {
   hier = system 'Tree (example)' {
-    // Owner of folder Company (a WorkOS organization); never a level
+    // Owner of folder Company (an identity organization); never a level
     organization = external 'Organization' {
       icon bootstrap:buildings
-      description 'owner only · WorkOS'
+      description 'owner only · identity provider'
     }
 
     // Top layer, per person, above the whole tree

@@ -45,7 +45,7 @@ views {
     signalbox.thread.threadActor -> signalbox.browser 'Needs a page A has' {
       notes '''
         - An agent in A's Personal thread needs a page only A's browser can open (an intranet tab, a localhost app).
-        - The real web for agents stays Kernel; this is reach into A's tab, nothing more.
+        - The real web for agents stays in the hosted browser; this is reach into A's tab, nothing more.
       '''
     }
     signalbox.browser -> signalbox.desktop 'Ask through laptop' {
@@ -100,7 +100,7 @@ views {
     }
     signalbox.web -> signalbox.attention 'Lists devices' {
       notes '''
-        - Through Funnel and Operations. Device rows live in A's Person actor only.
+        - Through the client gateway and Operations. Device rows live in A's Person actor only.
         - B and admin C never see A's devices, even at Company.
       '''
     }
@@ -390,7 +390,7 @@ views {
 
     signalbox.desktop -> signalbox.identity 'Signs in' {
       notes '''
-        - AuthKit in the system browser; the callback lands back in the desktop app.
+        - Hosted sign-in in the system browser; the callback lands back in the desktop app.
       '''
     }
     signalbox.desktop <- signalbox.identity 'Session' {
@@ -971,7 +971,7 @@ views {
         signalbox.gateway <- signalbox.mobile 'Code'
         signalbox.gateway -> signalbox.browser 'Fills login' {
           notes '''
-            - Managed Auth factor order puts SMS last.
+            - Managed sign-in factor order puts SMS last.
           '''
         }
       }

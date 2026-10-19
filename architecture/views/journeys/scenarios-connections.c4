@@ -33,7 +33,7 @@ views {
     signalbox.web -> signalbox.connections 'connect(google, into)' {
       navigateTo folders_connections_oauth_connect
       notes """
-        - Through the Funnel; `into` is the folder A is looking at
+        - Through the client gateway; `into` is the folder A is looking at
       """
     }
     signalbox.connections -> services.google 'Hosted OAuth' {
@@ -876,9 +876,9 @@ views {
     title 'Scenarios/Connections/Tools/Direct MCP Server'
     description '''
       How does someone add their own MCP server next to managed connections?
-      Decided 2026-10-19: every server goes through Executor (ToolGateway + Connections), placed on a level and applied per turn,
-      never a machine install. Behind Executor, servers are sorted by kind; credentials are keyed by server URL from the vault.
-      Its tools default to `search` exposure; `direct` gives them a native-named entry, still pointing at Executor.
+      Decided 2026-10-19: every server goes through the tools gateway (Gateway + Connections), placed on a level and applied per turn,
+      never a machine install. Behind the tools gateway, servers are sorted by kind; credentials are keyed by server URL from the vault.
+      Its tools default to `search` exposure; `direct` gives them a native-named entry, still pointing at the tools gateway.
       SCN-135 · v1 no · R-PLC-21, R-CON-12, W-HAR-07, W-MCP-01
     '''
 
@@ -895,7 +895,7 @@ views {
     signalbox.web -> signalbox.connections 'Register server' {
       navigateTo folders_connections_tool_service
       notes """
-        - Executor owns it: auth, credentials (keyed by server URL) and routing
+        - The tools gateway owns it: auth, credentials (keyed by server URL) and routing
       """
     }
     signalbox.connections -> signalbox.tree 'Place on Team' {
@@ -906,8 +906,8 @@ views {
     signalbox.harness -> signalbox.connections 'Tool call' {
       navigateTo folders_connections_tool_exposure
       notes """
-        - Through the `executor` entry, or a native-named entry if a tool is `direct`
-        - Both point at Executor; never `managed-mcp.json`
+        - Through the `signalbox` entry, or a native-named entry if a tool is `direct`
+        - Both point at the tools gateway; never `managed-mcp.json`
       """
     }
     alt 'server kind' {
@@ -1051,7 +1051,7 @@ views {
         personC -> signalbox.tree 'Remember' {
           notes """
             - Keyed by folder + secret + destination; revoking it stops the next use
-            - Binding the same 1Password Environment elsewhere never carries it
+            - Binding the same vault environment elsewhere never carries it
           """
         }
         signalbox.computer <- signalbox.gateway.egress 'Filled, sent'
@@ -1253,9 +1253,9 @@ views {
   dynamic view scn_142_company_secrets_folder_binding {
     #decided
     variant sequence
-    title 'Scenarios/Connections/Secrets/Company 1Password'
+    title 'Scenarios/Connections/Secrets/Company vault'
     description '''
-      Whose 1Password does a teammate's turn use for Company secrets?
+      Whose vault does a teammate's turn use for Company secrets?
       Decided: #592 (2026-10-16) "The folder's owner resolves, never the turn's sender"; #697 (2026-10-18) a vault or Environment per folder.
       SCN-142 · v1 no · R-SEC-03, R-SEC-04, R-PLC-14, R-SEC-01
     '''
@@ -1266,14 +1266,14 @@ views {
     personC -> signalbox.connections 'Connect service account' {
       navigateTo folders_secrets_service_account
       notes """
-        - **Start:** C connects the company 1Password service account at folder Company
+        - **Start:** C connects the company vault service account at folder Company
       """
     }
     signalbox.connections -> signalbox.tree 'Bind per folder' {
       navigateTo folders_placement_kind_secret
       notes """
         - Each folder gets a vault or Environment `Signalbox · <folder path>`
-        - Shown as one "1Password" source
+        - Shown as one "Vault" source
       """
     }
     personB -> signalbox.harness 'Turn in Team'
@@ -1289,8 +1289,8 @@ views {
     signalbox.connections -> services.onepassword 'Read Company vault' {
       navigateTo folders_secrets_onepassword_link
       notes """
-        - C's personal 1Password device link is never consulted
-        - **End:** resolved through the folder's binding, not C's personal 1Password
+        - C's personal vault device link is never consulted
+        - **End:** resolved through the folder's binding, not C's personal vault
         - **#decided** #592 (2026-10-16), #697 (2026-10-18)
       """
     }

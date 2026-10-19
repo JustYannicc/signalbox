@@ -98,13 +98,13 @@ views {
       when 'in-app agent (assistant, worker, run)' {
         hier.asstA -> signalbox.operations 'human-only op' {
           notes """
-            - e.g. link 1Password or approve a permission, as `AgentActor`
+            - e.g. link vault or approve a permission, as `AgentActor`
             - Operations checks the actor class before any handler runs
           """
         }
         hier.asstA <- signalbox.operations 'HumanOnly' {
           notes """
-            - Refused: permissions, secrets, gate answers unless delegated, final OAuth, sign-in grants, linking 1Password, loan consent
+            - Refused: permissions, secrets, gate answers unless delegated, final OAuth, sign-in grants, linking a vault, loan consent
             - A destructive op from an in-app agent becomes a Ready ask instead
           """
           navigateTo person_pipeline_ready_gate
@@ -114,7 +114,7 @@ views {
         mcpClient -> signalbox.gateway 'calls gated op' {
           notes """
             - Signed in as Person A, but `McpSessionActor` / `LocalKeyActor` is agent-class
-            - ToolGateway is the only MCP endpoint
+            - Tools gateway is the only MCP endpoint
           """
         }
         signalbox.gateway -> signalbox.operations 'invoke' {
@@ -242,7 +242,7 @@ views {
     }
     parallel 'same rows, each person' {
       signalbox.tree -> signalbox.web 'Team view (A)' {
-        notes '- Replicated Level view via Funnel'
+        notes '- Replicated Level view via the client gateway'
       }
       signalbox.tree -> signalbox.mobile 'Team view (B)' {
         notes '- Same rows on B phone; private threads never show'
@@ -437,7 +437,7 @@ views {
       notes '- From the top layer beside the assistant; there is no rail or sidebar button'
     }
     signalbox.web -> signalbox.attention 'queue(A)' {
-      notes '- Subscribed through Funnel and Operations'
+      notes '- Subscribed through the client gateway and Operations'
     }
     signalbox.attention -> hier.lanesA 'read A lanes' {
       navigateTo person_pipeline_lanes
@@ -862,7 +862,7 @@ views {
   dynamic view person_pipeline_blocker_human_only {
     variant sequence
     title 'Workflows/Person/Pipeline/Blocker/Enter a secret or finish a sign-in'
-    description 'P-BLK-08, P-BLK-09 · human-only Blockers: a secret value goes to 1Password, never the transcript; a final OAuth step needs the person.'
+    description 'P-BLK-08, P-BLK-09 · human-only Blockers: a secret value goes to the vault, never the transcript; a final OAuth step needs the person.'
     include personA, signalbox.web, signalbox.thread, signalbox.attention, signalbox.operations, signalbox.connections, services.onepassword, services.google, signalbox, services
 
     alt 'what the agent needs' {
@@ -1016,7 +1016,7 @@ views {
     alt 'how the agent asks' {
       when 'ask tool' {
         signalbox.harness -> signalbox.gateway 'ask tool call' {
-          notes '- A native operation through ToolGateway'
+          notes '- A native operation through the tools gateway'
         }
         signalbox.gateway -> signalbox.thread 'raise ask'
       }

@@ -2,8 +2,8 @@ views {
   deployment view deployment {
     title 'Deployment/Production'
     description '''
-      Where does each part run in production? Everything is Cloudflare (EU) except command VMs on boxd. Each box is one
-      deploy unit; click into the thread host for where the harness lives. Containers run CLIProxyAPI only; boxd VMs only
+      Where does each part run in production? Everything runs on the edge platform (EU) except command machines. Each box is one
+      deploy unit; click into the thread host for where the harness lives. Containers run pool backends only; machines only
       run commands; Claude Code and Codex never run in a container or a VM.
     '''
     include prod.devices
@@ -22,9 +22,9 @@ views {
     title 'Deployment/Where a turn runs'
     description '''
       Where do the harness loop and its commands run? In the Thread DO: Claude Code and Codex run as isolates in the
-      session facet next to the kernel filesystem, programs in child Dynamic Workers. Model bytes go out through the one
-      ModelGateway to the pool host (CLIProxyAPI is the only container). Only a command that needs a real machine
-      escalates to a boxd VM forked from a warm Base; its egress goes through EgressProxy.
+      session facet next to the kernel filesystem, programs in child isolates. Model bytes go out through the one
+      Model gateway to the pool host (the pool backend is the only container). Only a command that needs a real machine
+      escalates to a machine forked from a warm Base; its egress goes through EgressProxy.
     '''
     include prod.cloudflare
     include prod.cloudflare.threadHost, prod.cloudflare.threadHost.threadDO, prod.cloudflare.threadHost.threadDO.*
@@ -39,7 +39,7 @@ views {
   deployment view deployment-app {
     title 'Deployment/App script'
     description '''
-      What runs in the app script? The stateless front doors (Funnel, Ingress, Operations, Identity) and the Durable
+      What runs in the app script? The stateless front doors (client gateway, Ingress, Operations, Identity) and the Durable
       Objects that own state: Level and Person (Tree), Repo (Drive), Pool custody (Models), Connection, Search shard.
       Outbox fan-out goes over Queues; automation runs over Workflows.
     '''
@@ -52,7 +52,7 @@ views {
   deployment view deployment-edges {
     title 'Deployment/Devices and SaaS'
     description '''
-      What sits outside Cloudflare and boxd? People's devices (gateways that hold no work) on top; the SaaS that
+      What sits outside the edge platform and the machines? People's devices (gateways that hold no work) on top; the SaaS that
       production calls directly at the bottom: sign-in, model providers, forges. The other services are in Overview/Outside Signalbox.
     '''
     include prod.cloudflare, prod.boxdZone

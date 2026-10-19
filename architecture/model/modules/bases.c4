@@ -42,9 +42,9 @@ model {
           icon bootstrap:slash-circle
           description 'cold create; ships with #1071'
         }
-        boxdSnapshots = adapter 'boxd snapshots' {
+        boxdSnapshots = adapter 'Machine snapshots' {
           icon bootstrap:camera
-          technology '@boxd-sh/sdk · b-{drive}-{recipe}-{sha12}'
+          technology 'boxd · @boxd-sh/sdk · b-{drive}-{recipe}-{sha12}'
         }
       }
 

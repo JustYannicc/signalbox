@@ -1,8 +1,8 @@
-// State machines for one thread's computer: the boxd VM that escalation attaches (smVm) and the computer
+// State machines for one thread's computer: the machine that escalation attaches (smVm) and the computer
 // as a whole over time (smComputer). The walk through smVm with people and modules is the dynamic view
 // state_computer; smComputer is drawn with smVm in lifecycle_overview (views/workflows/lifecycle.c4).
 model {
-  smVm = state 'VM lifecycle (boxd)' {
+  smVm = state 'Machine lifecycle' {
     none = state 'No VM' { description 'harness and files in the session facet · no machine' }
     creating = state 'Creating' { description 'forking the warm Base · idempotent by name' }
     configuring = state 'Configuring' { description 'isolated · egress allowlist · deleteAfter' }
@@ -23,7 +23,7 @@ model {
     active = state 'Active turn' { description 'runs: harness + kernel in the session facet, keep-alive on · VM warm per command · stores: live FS (authority) · fork · R2' }
     idle = state 'Idle' { description 'turn committed · runs: nothing resident · stores: live FS (cache) · fork · R2 · VM hibernates · a send wakes it' }
     settled = state 'Settled' { description 'runs: nothing · VM deleted · stores: live FS (cache) · fork · R2 · reopen wakes it' }
-    dormant = state 'Dormant' { description 'live FS: manifest only · no VM · stores: fork in Artifacts · R2 · a message wakes it, files hydrate on read' }
+    dormant = state 'Dormant' { description 'live FS: manifest only · no VM · stores: fork in the hot tier · R2 · a message wakes it, files hydrate on read' }
     cold = state 'Cold' { description 'live FS: manifest only · no VM · stores: R2 only · a message brings the fork back' }
 
     active -[transition]-> idle 'turn ends · commit'
@@ -40,7 +40,7 @@ model {
 views {
   view state-vm of smVm {
     title 'States/Computer/State machine'
-    description 'When does a thread get a boxd VM and when does it go away? The harness never lives here; a VM is warm only while a command or the agent\'s own process is active, and hibernates after 2 minutes without activity. Start: green. End: gray. Click the frame for the walk with people and modules (state_computer).'
+    description 'When does a thread get a machine and when does it go away? The harness never lives here; a VM is warm only while a command or the agent\'s own process is active, and hibernates after 2 minutes without activity. Start: green. End: gray. Click the frame for the walk with people and modules (state_computer).'
     include *
     include smVm with { navigateTo state_computer }
     style smVm.none { color green }

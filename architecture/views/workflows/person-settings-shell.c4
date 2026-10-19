@@ -197,12 +197,12 @@ views {
     }
     signalbox.web -> signalbox.funnel 'query identities' {
       notes """
-        - One typed query; Funnel decodes and calls
+        - One typed query; client gateway decodes and calls
       """
     }
     signalbox.funnel -> signalbox.identity 'linked identities' {
       notes """
-        - Identity reads its alias map; WorkOS stays hidden behind it
+        - Identity reads its alias map; the identity provider stays hidden behind it
       """
     }
     signalbox.funnel <- signalbox.identity 'personal + work aliases'
@@ -640,7 +640,7 @@ views {
     }
     signalbox.web -> signalbox.funnel 'GET /' {
       notes """
-        - Funnel serves the web client as static assets from the same origin
+        - Client gateway serves the web client as static assets from the same origin
       """
     }
     signalbox.web <- signalbox.funnel 'web client'
@@ -1061,7 +1061,7 @@ views {
   dynamic view person_settings_linked_accounts {
     variant sequence
     title 'Workflows/Person/Settings/View linked accounts'
-    description 'P-SET-08 · not v1. Identity owns the alias map; WorkOS holds it in user metadata.'
+    description 'P-SET-08 · not v1. Identity owns the alias map; the identity provider holds it in user metadata.'
 
     include personA, signalbox.web, signalbox.funnel, signalbox.identity, platform.workos
 
@@ -1074,12 +1074,12 @@ views {
     signalbox.web -> signalbox.funnel 'query identities'
     signalbox.funnel -> signalbox.identity 'identities(A)' {
       notes """
-        - Identity answers; Funnel only decodes and maps errors
+        - Identity answers; client gateway only decodes and maps errors
       """
     }
     signalbox.identity -> platform.workos 'user metadata' {
       notes """
-        - The alias map lives in WorkOS user metadata
+        - The alias map lives in identity user metadata
       """
     }
     signalbox.identity <- platform.workos 'aliases'

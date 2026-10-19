@@ -285,7 +285,7 @@ views {
     }
     signalbox.web -> signalbox.automations 'new version' {
       navigateTo work_automations_define
-      notes 'Version 2 loads as its own Dynamic Worker with a stable id'
+      notes 'Version 2 loads as its own isolate with a stable id'
     }
     opt 'platform deploy in between' {
       signalbox.automations -> signalbox.automations 'deploy' {

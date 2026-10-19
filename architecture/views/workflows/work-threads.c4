@@ -404,7 +404,7 @@ views {
         }
         signalbox.web -> signalbox.thread.threadActor 'Archive' {
           navigateTo state_thread
-          notes 'Through Funnel and Operations; Thread is the one home of archive'
+          notes 'Through the client gateway and Operations; Thread is the one home of archive'
         }
       }
       when 'chat idle N days (W-LIF-11)' {
@@ -719,7 +719,7 @@ views {
             notes 'Same owner root: no reindex, only the path column changes'
           }
           signalbox.thread.threadActor -> signalbox.drive 'rebase saga' {
-            notes 'Working ref pushed as a fresh fork of the destination drive (Artifacts)'
+            notes 'Working ref pushed as a fresh fork of the destination drive (hot tier)'
           }
           signalbox.thread.threadActor -> signalbox.bases 'release leases' {
             notes 'The old folder’s Base leases go; the next VM forks the destination’s Base'
@@ -831,7 +831,7 @@ views {
       signalbox.thread.threadActor -> signalbox.search 'drop history rows'
       signalbox.thread.threadActor -> signalbox.drive 'drop fork' {
         notes '''
-          - Artifacts fork and kept-local ref go
+          - Fork and kept-local ref go
           - The R2 record stays 30 days
         '''
       }
@@ -1288,7 +1288,7 @@ views {
     }
     signalbox.thread.threadActor -> signalbox.drive 'import commit' {
       navigateTo work_drive_placement
-      notes 'One import commit into the level’s drive (Artifacts)'
+      notes 'One import commit into the level’s drive (hot tier)'
     }
     signalbox.thread.threadActor -> signalbox.search 'backfill' {
       navigateTo work_search_indexing
@@ -1365,7 +1365,7 @@ views {
     }
     signalbox.web -> signalbox.capture 'Send' {
       navigateTo work_threads_start_pick_model
-      notes 'Through Funnel and Operations'
+      notes 'Through the client gateway and Operations'
     }
     signalbox.capture -> signalbox.thread.threadActor 'NewThread fromDraft' {
       notes '`requestId` derived from the draft id'

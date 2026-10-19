@@ -15,14 +15,14 @@ views {
     #decided
     variant sequence
     title 'Scenarios/Connections/OnePassword/Link Personal Vault'
-    description 'How does A link their own 1Password? Decided: #589 (2026-10-16) one Settings sheet, wrong password links nothing, relink replaces, never an agent or MCP tool; #344 (2026-10-16) Signalbox signs in to the person\'s 1Password as a device. SCN-152 · R-SEC-01, R-SEC-02, R-GAT-03, P-ASK-05 · not v1 (v1 connections are Google and Confluence).'
+    description 'How does A link their own vault? Decided: #589 (2026-10-16) one Settings sheet, wrong password links nothing, relink replaces, never an agent or MCP tool; #344 (2026-10-16) Signalbox signs in to the person\'s vault as a device. SCN-152 · R-SEC-01, R-SEC-02, R-GAT-03, P-ASK-05 · not v1 (v1 connections are Google and Confluence).'
 
     include personA, mcpClient, signalbox, signalbox.web, signalbox.operations, signalbox.connections, signalbox.tree, signalbox.observability, services, services.onepassword
 
-    personA -> signalbox.web 'Open 1Password sheet' {
+    personA -> signalbox.web 'Open vault sheet' {
       notes '''
-        - **Start:** no 1Password link anywhere in A's tree
-        - Settings › Connections › 1Password, on web, desktop or mobile
+        - **Start:** no vault link anywhere in A's tree
+        - Settings › Connections › Vault, on web, desktop or mobile
       '''
     }
     personA -> signalbox.web 'Enter account details' {
@@ -33,7 +33,7 @@ views {
     }
     signalbox.web -> signalbox.operations 'Link as device' {
       notes '''
-        - Over Funnel; the decision gate allows this op from a human session only
+        - Over the client gateway; the decision gate allows this op from a human session only
       '''
       navigateTo folders_gates_confirm_in_app
     }
@@ -44,7 +44,7 @@ views {
       '''
     }
     signalbox.connections -> services.onepassword 'Sign in as device' {
-      notes '- **Decided #344:** Signalbox is one more device on A\'s own 1Password account'
+      notes '- **Decided #344:** Signalbox is one more device on A\'s own vault account'
       navigateTo folders_secrets_onepassword_link
     }
     alt {
@@ -93,18 +93,18 @@ views {
     #decided #assumption
     variant sequence
     title 'Scenarios/Connections/OnePassword/Disconnect Mid Session'
-    description 'What happens to running agents when A disconnects 1Password? Decided: #344 acceptance and #589 (2026-10-16): disconnect revokes at once, including running sessions, and wipes the material; unbuilt. Assumption: sites already signed in keep their cookies in A\'s Kernel profile until A clears it, because the profile is its own placement (design §3.16, R-SEC-15). SCN-153 · R-SEC-02, R-SEC-11, R-SEC-13, R-SEC-15, W-BRW-19 · not v1.'
+    description 'What happens to running agents when A disconnects vault? Decided: #344 acceptance and #589 (2026-10-16): disconnect revokes at once, including running sessions, and wipes the material; unbuilt. Assumption: sites already signed in keep their cookies in A\'s browser profile until A clears it, because the profile is its own placement (design §3.16, R-SEC-15). SCN-153 · R-SEC-02, R-SEC-11, R-SEC-13, R-SEC-15, W-BRW-19 · not v1.'
 
     include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.browser, signalbox.connections, signalbox.tree, services, services.onepassword, platform, platform.kernel
 
     personA -> signalbox.web 'Hit Disconnect' {
       notes '''
-        - **Start:** 1Password linked; agent turns are live in A's Kernel browser
-        - Settings › Connections › 1Password › Disconnect
+        - **Start:** vault linked; agent turns are live in A's browser
+        - Settings › Connections › Vault › Disconnect
       '''
     }
     signalbox.web -> signalbox.connections 'Disconnect device' {
-      notes '- Over Funnel to the Connection actor that holds the device'
+      notes '- Over the client gateway to the Connection actor that holds the device'
       navigateTo folders_secrets_onepassword_link
     }
     parallel {
@@ -116,19 +116,19 @@ views {
       }
     }
     signalbox.web -> personA 'Remove-device hint' {
-      notes '- The sheet says: also remove the device in 1Password › Devices'
+      notes '- The sheet says: also remove the device in the vault › Devices'
     }
     signalbox.thread.threadActor -> signalbox.browser 'Next sign_in' {
       notes '- A running turn needs a login on a new site'
       navigateTo folders_secrets_agent_sign_in
     }
-    signalbox.browser -> signalbox.tree 'Resolve 1Password' {
+    signalbox.browser -> signalbox.tree 'Resolve vault' {
       notes '- Walks the thread\'s chain from its Place; nothing is placed any more'
     }
     signalbox.thread.threadActor <- signalbox.browser 'no_saved_login' {
       notes '''
         - The call returns `no_saved_login` or `failed`
-        - The thread shows "couldn't sign in to X: 1Password disconnected"
+        - The thread shows "couldn't sign in to X: vault disconnected"
       '''
     }
     opt 'site flips to NEEDS_AUTH' {
@@ -141,12 +141,12 @@ views {
       personA -> signalbox.web 'Clear browser profile' {
         notes '''
           - **Assumption:** sites already signed in keep cookies until this step
-          - Revocation covers 1Password, not past sessions (R-SEC-15)
+          - Revocation covers vault, not past sessions (R-SEC-15)
         '''
         navigateTo work_browser_profile
       }
       signalbox.browser -> platform.kernel 'Wipe profile' {
-        notes '- **End:** 1Password access gone at once, including running sessions; cookies gone after the clear'
+        notes '- **End:** vault access gone at once, including running sessions; cookies gone after the clear'
       }
     }
   }
@@ -163,12 +163,12 @@ views {
 
     personA -> signalbox.web 'Pick grant mode' {
       notes '''
-        - **Start:** 1Password linked, no grants
+        - **Start:** vault linked, no grants
         - Right after linking: Everywhere (`*`) or Ask per site
       '''
     }
     signalbox.web -> signalbox.tree 'Store choice' {
-      notes '- Grants live in A\'s Person actor, never in Kernel'
+      notes '- Grants live in A\'s Person actor, never in the hosted browser'
       navigateTo state_signingrant
     }
     alt {
@@ -213,13 +213,13 @@ views {
     #decided
     variant sequence
     title 'Scenarios/Connections/SignInGrants/Shared Thread Sign In'
-    description 'B\'s turn in a shared Company thread needs a site only A\'s 1Password can log into: does it sign in? Decided: owner override 2026-10-18 (design §0 item 6, "it does not matter who is asking because it\'s based on the hierarchy"); #245 (2026-10-16). Supersedes the requester-equals-owner check of #575/#576. SCN-155 · R-SEC-11, P-BLK-04, P-BLK-05, W-MPL-05, W-APR-13 · not v1.'
+    description 'B\'s turn in a shared Company thread needs a site only A\'s vault can log into: does it sign in? Decided: owner override 2026-10-18 (design §0 item 6, "it does not matter who is asking because it\'s based on the hierarchy"); #245 (2026-10-16). Supersedes the requester-equals-owner check of #575/#576. SCN-155 · R-SEC-11, P-BLK-04, P-BLK-05, W-MPL-05, W-APR-13 · not v1.'
 
     include personB, personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.browser, signalbox.tree, signalbox.attention
 
     personB -> signalbox.web 'Send turn' {
       notes '''
-        - **Start:** a thread in folder Company; the site has a login only in A's personal 1Password
+        - **Start:** a thread in folder Company; the site has a login only in A's personal vault
         - B sends the turn
       '''
     }
@@ -229,7 +229,7 @@ views {
       notes '- The thread\'s agent runs B\'s turn'
       navigateTo folders_secrets_agent_sign_in
     }
-    signalbox.browser -> signalbox.tree 'Resolve 1Password' {
+    signalbox.browser -> signalbox.tree 'Resolve vault' {
       notes '''
         - From the thread's Place `{folder Company, via}`
         - **Decided:** never by sender, starter or credential owner
@@ -237,17 +237,17 @@ views {
     }
     alt {
       when "filed through A's mount" {
-        signalbox.browser <- signalbox.tree "A's 1Password" {
+        signalbox.browser <- signalbox.tree "A's vault" {
           notes '''
             - Chain: Company › A's Work › A's top level
-            - A's 1Password and A's grants serve the turn whoever sent it
-            - Unless Company places its own 1Password: nearest wins
+            - A's vault and A's grants serve the turn whoever sent it
+            - Unless Company places its own vault: nearest wins
           '''
         }
       }
       else "filed through B's mount, or Company's agent" {
         signalbox.browser <- signalbox.tree 'Nothing above' {
-          notes '- A\'s 1Password isn\'t on this chain'
+          notes '- A\'s vault isn\'t on this chain'
         }
         signalbox.browser -> signalbox.attention 'AccessRequired Blocker' {
           notes '- Answered with Place or Lend'
@@ -257,7 +257,7 @@ views {
           notes '- A sees the ask in their Blocker lane'
           navigateTo work_approvals_access_place_lend
         }
-        personA -> signalbox.web 'Lend 1Password'
+        personA -> signalbox.web 'Lend vault'
         signalbox.web -> signalbox.tree 'Loan into thread' {
           notes '- Shows as "lent by A", revocable any time'
           navigateTo work_threads_multiplayer_lend
@@ -266,7 +266,7 @@ views {
       }
     }
     signalbox.harness <- signalbox.browser 'signed_in' {
-      notes '- **End:** signed in iff A\'s 1Password is above the thread, or lent into it'
+      notes '- **End:** signed in iff A\'s vault is above the thread, or lent into it'
     }
   }
 
@@ -274,14 +274,14 @@ views {
     #assumption
     variant sequence
     title 'Scenarios/Connections/SignInGrants/Folder Grant Reach'
-    description 'Does a sign-in grant on folder Company\'s 1Password cover a thread in folder Team below it? Assumption: yes; a grant belongs to its source and reaches wherever that source reaches, and only Owner/Admin of the folder (Person C) may grant, pending #616. Why: placed things reach below and nearest wins (design §1, §4.2); a second reach switch could disagree with the source\'s. SCN-156 · R-SEC-03, R-SEC-09, R-SEC-11, R-SEC-10 · not v1.'
+    description 'Does a sign-in grant on folder Company\'s vault cover a thread in folder Team below it? Assumption: yes; a grant belongs to its source and reaches wherever that source reaches, and only Owner/Admin of the folder (Person C) may grant, pending #616. Why: placed things reach below and nearest wins (design §1, §4.2); a second reach switch could disagree with the source\'s. SCN-156 · R-SEC-03, R-SEC-09, R-SEC-11, R-SEC-10 · not v1.'
 
     include personC, personB, signalbox, signalbox.web, signalbox.harness, signalbox.browser, signalbox.tree, signalbox.connections, services, services.onepassword
 
     personC -> signalbox.web 'Add service account' {
       notes '''
-        - **Start:** folder Company has no 1Password source
-        - C (admin of Company) adds the company's 1Password service account
+        - **Start:** folder Company has no vault source
+        - C (admin of Company) adds the company's vault service account
       '''
     }
     signalbox.web -> signalbox.connections 'Create source' {
@@ -302,7 +302,7 @@ views {
       notes '- B works in a thread in folder Team'
     }
     signalbox.harness -> signalbox.browser 'sign_in to X'
-    signalbox.browser -> signalbox.tree 'Nearest 1Password' {
+    signalbox.browser -> signalbox.tree 'Nearest vault' {
       notes '- Chain Team › Company; nearest source wins'
       navigateTo folders_secrets_agent_sign_in
     }
@@ -332,24 +332,24 @@ views {
     #decided
     variant sequence
     title 'Scenarios/Connections/SignInGrants/Overnight Relogin'
-    description 'A site session expires overnight before A\'s 06:00 automation: who logs in again? Decided: #576 (unattended re-login on NEEDS_AUTH, hard failures shown on the thread) and #344 (2026-10-16). Prod still reports "can\'t read 1Password logins yet" (#576, 2026-10-18, blocked on the vault worker). SCN-157 · R-SEC-13, W-BRW-06, R-SEC-11, W-BRW-10 · not v1.'
+    description 'A site session expires overnight before A\'s 06:00 automation: who logs in again? Decided: #576 (unattended re-login on NEEDS_AUTH, hard failures shown on the thread) and #344 (2026-10-16). Prod still reports "can\'t read vault logins yet" (#576, 2026-10-18, blocked on the vault worker). SCN-157 · R-SEC-13, W-BRW-06, R-SEC-11, W-BRW-10 · not v1.'
 
     include personA, signalbox, signalbox.automations, signalbox.thread.threadActor, signalbox.browser, signalbox.tree, signalbox.connections, services, services.onepassword, platform, platform.kernel
 
     platform.kernel -> signalbox.browser 'NEEDS_AUTH' {
       notes '''
-        - **Start:** A is asleep; Kernel's health check flips the site to `NEEDS_AUTH` (`no_credential`)
+        - **Start:** A is asleep; the hosted browser's health check flips the site to `NEEDS_AUTH` (`no_credential`)
         - Seen by LoginService polling from a Person alarm
       '''
       navigateTo work_browser_sign_in
     }
     try {
-      signalbox.browser -> signalbox.connections 'Login from 1Password' {
+      signalbox.browser -> signalbox.connections 'Login from the vault' {
         notes '- Under A\'s standing grant; never a handoff to A'
       }
       signalbox.connections -> services.onepassword 'Read item'
       signalbox.browser -> platform.kernel 'Log in again' {
-        notes '- `save_credentials:false`: Kernel never keeps the password'
+        notes '- `save_credentials:false`: the hosted browser never keeps the password'
       }
     } catch 'unanswerable field or repeated failure' {
       signalbox.browser -> signalbox.thread.threadActor "Couldn't sign in" {
@@ -361,7 +361,7 @@ views {
     }
     signalbox.thread.threadActor -> signalbox.tree 'Resolve chain' {
       notes '''
-        - Personal › A's top level: A's 1Password is on the chain
+        - Personal › A's top level: A's vault is on the chain
         - A company automation at folder Company has no `via`, so A's items never serve it
       '''
       navigateTo folders_secrets_agent_sign_in
@@ -384,7 +384,7 @@ views {
 
     platform.kernel -> signalbox.browser 'AWAITING_INPUT code' {
       notes '''
-        - **Start:** Managed Auth asks for a code
+        - **Start:** Managed sign-in asks for a code
         - Method order: password > TOTP > email > SMS, never SSO
       '''
       navigateTo work_browser_sign_in
@@ -484,13 +484,13 @@ views {
     #assumption
     variant sequence
     title 'Scenarios/Connections/DeviceSignIn/No Grant Own Device'
-    description 'A opens a site on their own device with no grant: what does it offer? Assumption: one quiet "Sign in from 1Password? Once · Always" bar in the panel, with an in-memory relay now and sealing to a device key later, pending #642. Why: one grant list for agents and devices; signing in anywhere silently would let a lost phone in (#642 rec, s4 C8; PR #645 built another option and closed unmerged). SCN-160 · W-BRW-04, R-SEC-09, W-BRW-14 · not v1.'
+    description 'A opens a site on their own device with no grant: what does it offer? Assumption: one quiet "Sign in from the vault? Once · Always" bar in the panel, with an in-memory relay now and sealing to a device key later, pending #642. Why: one grant list for agents and devices; signing in anywhere silently would let a lost phone in (#642 rec, s4 C8; PR #645 built another option and closed unmerged). SCN-160 · W-BRW-04, R-SEC-09, W-BRW-14 · not v1.'
 
     include personA, signalbox, signalbox.desktop, signalbox.tree, signalbox.connections, signalbox.observability, services, services.onepassword
 
     personA -> signalbox.desktop 'Focus tab' {
       notes '''
-        - **Start:** tab signed out; 1Password has a login for the site, A has no grant
+        - **Start:** tab signed out; vault has a login for the site, A has no grant
       '''
       navigateTo work_browser_record_sync
     }
@@ -542,12 +542,12 @@ views {
     #assumption
     variant sequence
     title 'Scenarios/Connections/Browser/Takeover After Turn'
-    description 'Can A take over the agent\'s browser after the turn ended? Assumption: no; take over only while the agent works, afterwards the trail plus a copy into A\'s own tab, pending #594. Why: restarting costs a browser session and still loses state not in the URL; Kernel sessions run on live turns only (design §3.16). SCN-161 · W-BRW-08, W-BRW-09, W-BRW-13, W-BRW-14 · not v1.'
+    description 'Can A take over the agent\'s browser after the turn ended? Assumption: no; take over only while the agent works, afterwards the trail plus a copy into A\'s own tab, pending #594. Why: restarting costs a browser session and still loses state not in the URL; browser sessions run on live turns only (design §3.16). SCN-161 · W-BRW-08, W-BRW-09, W-BRW-13, W-BRW-14 · not v1.'
 
     include personA, signalbox, signalbox.web, signalbox.thread.threadActor, signalbox.browser, signalbox.attention, platform, platform.kernel
 
     personA -> signalbox.web 'Open browser panel' {
-      notes '- **Start:** the turn ended and the agent\'s Kernel session closed'
+      notes '- **Start:** the turn ended and the agent\'s browser session closed'
     }
     signalbox.web -> signalbox.thread.threadActor 'Read trail'
     signalbox.web <- signalbox.thread.threadActor 'Every step' {
@@ -606,7 +606,7 @@ views {
       navigateTo person_pipeline_blocker_payment
     }
     signalbox.harness -> signalbox.thread.threadActor 'Park turn' {
-      notes '- Parks in the isolate tier; the Kernel session stays alive'
+      notes '- Parks in the isolate tier; the browser session stays alive'
     }
     signalbox.attention -> personA 'Payment card' {
       navigateTo person_toplayer_ask_card
@@ -652,7 +652,7 @@ views {
       notes '- The agent\'s tools hand it the thread\'s one preview URL, never `localhost`'
     }
     signalbox.harness -> signalbox.browser 'Open preview' {
-      notes '- The testing engine loads it without B\'s or anyone\'s Kernel profile'
+      notes '- The testing engine loads it without B\'s or anyone\'s browser profile'
       navigateTo work_previews_agent_tests
     }
     signalbox.browser -> signalbox.funnel.portGateway 'Thread token' {
@@ -673,11 +673,11 @@ views {
     }
     opt 'agent visits the real web next' {
       signalbox.browser -> platform.kernel 'Profile on chain' {
-        notes '- Real sites go through Kernel with the profile on the thread\'s chain'
+        notes '- Real sites go through the browser with the profile on the thread\'s chain'
       }
     }
     signalbox.harness -> signalbox.thread.threadActor 'Report result' {
-      notes '- **End:** preview tested without any person\'s Kernel profile'
+      notes '- **End:** preview tested without any person\'s browser profile'
     }
   }
 
@@ -780,7 +780,7 @@ views {
     }
     signalbox.web -> signalbox.browser 'Move to cloud'
     signalbox.browser -> platform.kernel "A's login session" {
-      notes '- The tab moves to A\'s cloud Kernel browser holding A\'s login'
+      notes '- The tab moves to A\'s cloud browser holding A\'s login'
     }
     personB -> signalbox.mobile 'Take over' {
       notes '- B is Member or above where it is lent'

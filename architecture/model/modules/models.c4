@@ -17,7 +17,7 @@ model {
 
       backend = part 'PoolBackend seam · 4 adapters' {
         metadata { adapters '4' }
-        cpaContainer = adapter 'CpaContainer' {
+        cpaContainer = adapter 'Container backend' {
           #v1
           icon tech:cloudflare-icon
           description 'prod'

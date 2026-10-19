@@ -35,7 +35,7 @@ views {
     signalbox.web -> signalbox.identity 'Complete sign-in' {
       navigateTo identity_identity_signin
       notes '''
-        - AuthKit completes into A's own invisible WorkOS organization.
+        - Hosted sign-in completes into A's own invisible identity organization.
       '''
     }
     signalbox.identity -> signalbox.tree 'Create top level' {
@@ -52,7 +52,7 @@ views {
     signalbox.web -> signalbox.identity 'Invite to Company' {
       navigateTo organization_identity_org_invite
       notes '''
-        - A WorkOS invitation into the company's organization.
+        - A identity invitation into the company's organization.
       '''
     }
     personA -> signalbox.web 'Links a@company' {
@@ -104,7 +104,7 @@ views {
         - **Start:** A only has the a@company identity.
       '''
     }
-    signalbox.web -> signalbox.identity 'WorkOS invitation' {
+    signalbox.web -> signalbox.identity 'Identity invitation' {
       navigateTo organization_identity_org_invite
       notes '''
         - Invitation into the company's organization.
@@ -223,7 +223,7 @@ views {
     title 'Scenarios/Accounts/SignUp/Google Workspace Join'
     description '''
       How does a colleague join by signing in with Google Workspace?
-      Decided: #452 (2026-10-15), Workspace through AuthKit, the verified domain adds them by JIT.
+      Decided: #452 (2026-10-15), Workspace through hosted sign-in, the verified domain adds them by JIT.
       Assumption: the Workspace sign-in is B's personal account, so nothing is linked; #547 option A always lands in the personal organization.
       SCN-004 · R-IDN-09, P-ONB-12, R-IDN-01, R-IDN-08, R-IDN-13 · v1 yes.
     '''
@@ -241,14 +241,14 @@ views {
         - b@company, one click.
       '''
     }
-    signalbox.web -> signalbox.identity 'AuthKit sign-in' {
+    signalbox.web -> signalbox.identity 'Hosted sign-in' {
       navigateTo identity_identity_signin
     }
-    signalbox.identity -> platform.workos 'Google via AuthKit'
+    signalbox.identity -> platform.workos 'Google via hosted sign-in'
     platform.workos -> services.google 'Workspace OAuth'
     signalbox.identity -> signalbox.tree 'Create top level' {
       notes '''
-        - Identity ensures B's personal WorkOS organization.
+        - Identity ensures B's personal identity organization.
         - Top level with Personal and Work. **Assumption:** this is B's personal account.
       '''
     }
@@ -275,7 +275,7 @@ views {
     variant sequence
     title 'Scenarios/Accounts/SignIn/Several Organizations No Picker'
     description '''
-      Does someone in several WorkOS organizations ever see an organization picker?
+      Does someone in several identity organizations ever see an organization picker?
       Decided: #547 option A (2026-10-17). Always sign into the personal organization, invisibly; a picker is a bug.
       SCN-006 · R-IDN-02, P-ONB-01, P-ONB-02, R-IDN-20 · v1 yes.
     '''
@@ -287,13 +287,13 @@ views {
         - **Start:** A is in a personal organization, the company's, and a guest in folder Game Night (owner: Person D).
       '''
     }
-    signalbox.web -> signalbox.identity 'AuthKit sign-in' {
+    signalbox.web -> signalbox.identity 'Hosted sign-in' {
       navigateTo identity_identity_signin
     }
     signalbox.identity -> platform.workos 'Authenticate'
     signalbox.identity <- platform.workos 'Selection required' {
       notes '''
-        - `organization_selection_required`, or WorkOS would show its picker.
+        - `organization_selection_required`, or the identity provider would show its picker.
       '''
     }
     signalbox.identity -> platform.workos 'Pick personal' {
@@ -319,7 +319,7 @@ views {
     title 'Scenarios/Accounts/SignIn/GitHub Email Code'
     description '''
       Why is someone who signs in with GitHub asked for an email code?
-      Decided: #35, #13 (2026-10-02). WorkOS does not trust GitHub emails and asks once per account; the code step needs the WorkOS API key.
+      Decided: #35, #13 (2026-10-02). The identity provider does not trust GitHub emails and asks once per account; the code step needs its API key.
       SCN-009 · R-IDN-01, P-ONB-01 · v1 yes.
     '''
 
@@ -330,14 +330,14 @@ views {
         - **Start:** A picks GitHub at sign-up.
       '''
     }
-    signalbox.web -> signalbox.identity 'AuthKit sign-in' {
+    signalbox.web -> signalbox.identity 'Hosted sign-in' {
       navigateTo identity_identity_signin
     }
     signalbox.identity -> platform.workos 'GitHub OAuth'
     platform.workos -> services.github 'Authorize'
     platform.workos -> personA 'Email code' {
       notes '''
-        - GitHub emails are not trusted, so WorkOS sends a one-time code.
+        - GitHub emails are not trusted, so the identity provider sends a one-time code.
         - Once per account.
       '''
     }
@@ -488,7 +488,7 @@ views {
     signalbox.web -> signalbox.identity 'Sign in' {
       navigateTo identity_identity_signin
     }
-    signalbox.identity -> platform.workos 'AuthKit'
+    signalbox.identity -> platform.workos 'Hosted sign-in'
     signalbox.identity <- platform.workos 'a@company user'
     signalbox.identity -> signalbox.identity 'Alias map first' {
       notes '''
@@ -521,7 +521,7 @@ views {
     title 'Scenarios/Accounts/SignIn/Repeat Signups'
     description '''
       What stops one email from signing up, deleting and signing up again over and over?
-      Assumption: WorkOS Radar runs in Log mode first, then Challenge, never Block (dead simple, observe-first is reversible; staging runs Log already, #926). Pending #312.
+      Assumption: the identity provider's bot detection runs in Log mode first, then Challenge, never Block (dead simple, observe-first is reversible; staging runs Log already, #926). Pending #312.
       SCN-019 · R-IDN-24, R-IDN-01 · v1 yes.
     '''
 
@@ -543,14 +543,14 @@ views {
     loop 'same email again' {
       personA -> signalbox.web 'Signs up again'
       signalbox.web -> signalbox.identity 'Sign up'
-      signalbox.identity -> platform.workos 'Radar check' {
+      signalbox.identity -> platform.workos 'Bot detection check' {
         notes '''
-          - Radar counts repeat sign-ups.
+          - Bot detection counts repeat sign-ups.
         '''
       }
       signalbox.identity -> signalbox.observability 'Log repeat'
     }
-    alt 'Radar verdict' {
+    alt 'Bot detection verdict' {
       when 'under threshold' {
         platform.workos -> signalbox.identity 'Allow'
       }
@@ -581,7 +581,7 @@ views {
 
     personA -> signalbox.web 'Links a@company' {
       notes '''
-        - **Start:** sign-in picks A's personal organization, so the company's WorkOS policies never run there.
+        - **Start:** sign-in picks A's personal organization, so the company's identity policies never run there.
       '''
     }
     signalbox.web -> signalbox.identity 'Start link' {
@@ -638,7 +638,7 @@ views {
     signalbox.web -> signalbox.identity 'Set re-check policy' {
       navigateTo organization_identity_company_sso
       notes '''
-        - Through the Admin Portal; off unless the Enterprise flag is on.
+        - Through the admin portal; off unless the Enterprise flag is on.
       '''
     }
     signalbox.web -> signalbox.funnel 'Refresh session' {
@@ -1015,7 +1015,7 @@ views {
     title 'Scenarios/Accounts/Organizations/Google To Okta'
     description '''
       What happens when a company moves from Google sign-in to Okta SSO?
-      Decided: #452 (2026-10-15), same organization via the Admin Portal link.
+      Decided: #452 (2026-10-15), same organization via the admin portal link.
       Assumption: SSO beyond Google needs the Enterprise flag on folder Company (#230 d9 gates SSO). Pending #454.
       SCN-005 · R-IDN-19, R-ACC-26, R-ACC-02 · not v1.
     '''
@@ -1029,7 +1029,7 @@ views {
         - **Assumption:** needs the Enterprise flag.
       '''
     }
-    signalbox.web -> signalbox.identity 'Admin Portal link' {
+    signalbox.web -> signalbox.identity 'Admin portal link' {
       navigateTo organization_identity_company_sso
     }
     signalbox.identity -> platform.workos 'Portal link'
@@ -1270,7 +1270,7 @@ views {
       personA -> signalbox.web 'Deletes old organization'
       signalbox.web -> signalbox.identity 'Delete organization' {
         notes '''
-          - The empty WorkOS organization stays until an Admin deletes it.
+          - The empty identity organization stays until an Admin deletes it.
           - **End:** Game Night back in A's tree, owned by A.
         '''
       }
@@ -1420,9 +1420,9 @@ views {
     #v1
     #decided
     variant sequence
-    title 'Scenarios/Accounts/Migrations/WorkOS Env Conversion'
+    title 'Scenarios/Accounts/Migrations/Identity Env Conversion'
     description '''
-      Does everyone keep their identity when the WorkOS environment becomes production?
+      Does everyone keep their identity when the identity environment becomes production?
       Decided: #35, #221 (2026-10-15): no staging/prod split, no user migration; confirm user ids survive first. Moot for data under the 2026-10-18 restart (zero users).
       SCN-020 · R-IDN-01, R-IDN-02 · v1 yes.
     '''
@@ -1431,12 +1431,12 @@ views {
 
     signalbox.identity -> platform.workos 'Own OAuth keys' {
       notes '''
-        - **Start:** the one WorkOS environment, named Staging.
+        - **Start:** the one identity environment, named Staging.
       '''
     }
     signalbox.identity -> platform.workos 'Request conversion' {
       notes '''
-        - A WorkOS support request by the operator.
+        - A support request to the identity provider by the operator.
       '''
     }
     platform.workos -> signalbox.identity 'User ids survive' {
@@ -1453,7 +1453,7 @@ views {
     signalbox.web -> signalbox.identity 'Same user ids' {
       navigateTo identity_identity_signin
       notes '''
-        - Person ids default to the first WorkOS user id and stay opaque.
+        - Person ids default to the first identity user id and stay opaque.
       '''
     }
     signalbox.identity -> signalbox.tree 'Same tree' {

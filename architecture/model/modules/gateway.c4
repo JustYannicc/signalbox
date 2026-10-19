@@ -15,27 +15,27 @@ model {
         technology 'Deletion test: without it, credentials spread into machines, facets and automations; MCP gets two homes'
       }
 
-      modelGateway = iface 'ModelGateway · model port' {
+      modelGateway = iface 'Model gateway · model port' {
         #v1 #funnel
         icon bootstrap:cpu
         description 'port: model wire · grant verify · pin · usage stamp'
         technology 'Worker'
       }
-      toolGateway = iface 'ToolGateway · MCP port' {
+      toolGateway = iface 'Tools gateway · MCP port' {
         #v1 #publishable #decided #funnel
         icon bootstrap:plugin
-        description 'port: Executor · every connector; per-tool exposure: search (default) or direct (normal name); built-ins go to Computer'
-        technology 'Worker · @modelcontextprotocol/sdk'
+        description 'port: every connector; per-tool exposure: search (default) or direct (normal name); built-ins go to Computer'
+        technology 'Executor · Worker · @modelcontextprotocol/sdk'
         metadata {
           exposure 'placement on a folder, nearest wins, resolved by the thread place: search (default, found via search + execute) or direct (normal name)'
-          mcpConfig 'one executor entry (search + execute) plus one native-named entry per server with direct tools; every entry points at Executor; never managed-mcp.json'
+          mcpConfig 'one signalbox entry (search + execute) plus one native-named entry per server with direct tools; every entry points at the tools gateway; never managed-mcp.json'
           decided '2026-10-19'
         }
       }
       codemode = part 'Codemode sandbox' {
         #v1
         icon tech:typescript-icon
-        description 'code mode: owned by Gateway (ToolGateway) · callTool only · ActorHost only hosts its Dynamic Worker'
+        description 'code mode: owned by Gateway (tools gateway) · callTool only · ActorHost only hosts its isolate'
         technology '@opencode-ai/codemode · Dynamic Worker (globalOutbound null)'
       }
       grants = part 'Grants' {
@@ -50,7 +50,7 @@ model {
         metadata {
           adapters '2'
           builtins 'working plan (#assumption): built-in tool traffic (curl, git push, npm, gh, WebFetch) from the isolate or a VM; fills from the Connections vault keyed by destination; git push and gh get a short-lived folder GitHub App token, own branch only'
-          funnel 'decided 2026-10-19 (#1191): with ToolGateway this is the connections gateway; it lives on Cloudflare and makes every call to an outside service, wherever the command runs, so endpoint, credentials and outbound identity never depend on placement'
+          funnel 'decided 2026-10-19 (#1191): with the MCP port this is the tools gateway; it lives on the edge platform and makes every call to an outside service, wherever the command runs, so endpoint, credentials and outbound identity never depend on placement'
         }
         inProcess = adapter 'In-process filter' {
           icon bootstrap:shield-check
@@ -63,7 +63,7 @@ model {
         }
         fill = part 'Fill · call · scrub' {
           icon tech:cloudflare-workers-icon
-          description 'every outside call, on Cloudflare'
+          description 'every outside call, on the edge platform'
           technology 'Worker · re-resolves the host, refuses private IPs'
         }
       }
@@ -95,7 +95,7 @@ model {
     gateway.grants -> signalbox.identity.api 'mint · verify'
     gateway.egress.fill -> signalbox.connections.api 'fill'
     gateway.egress.fill -> services.boundHost 'call · scrub response'
-    gateway.codemode -> signalbox.actorhost.api 'host my Dynamic Worker'
+    gateway.codemode -> signalbox.actorhost.api 'host my isolate'
 
     // Interface → hidden parts (the only way in)
     gateway.api -> gateway.grants 'grant'

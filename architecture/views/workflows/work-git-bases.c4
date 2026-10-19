@@ -1,7 +1,7 @@
 // Shard 14: Git hosts, PRs and Bases. Not v1 (none of these rows are in v1).
 // Lanes: run threads (CI, Base builds, PR watch, reviews) = hier.company.team.runThread;
 // the work thread people share = hier.company.team.sharedThread (folder Team). In busy PR views the
-// client's hop through the Funnel is collapsed (web → module) to stay under 8 participants.
+// client's hop through the client gateway is collapsed (web → module) to stay under 8 participants.
 // Forge traffic: git transport (push, fetch, ingest) is Drive's; PR API calls go through Connections.
 // Only work_git_forge_adapter opens Drive (its own drill-down); everything else treats Drive as a box.
 views {
@@ -23,7 +23,7 @@ views {
     smBase.building -> smBase.ready 'base.ready' {
       notes '''
         - The builder machine of a run thread finished: snapshot saved, chunks exported
-        - The Base status tick reads it from boxd and emits `base.ready`
+        - The Base status tick reads it from the machine provider and emits `base.ready`
       '''
       navigateTo work_bases_build
     }
@@ -165,7 +165,7 @@ views {
       }
     }
     signalbox.automations <- signalbox.bases 'base.ready or base.failed' {
-      notes 'Base status tick turns boxd status into events; promotion follows'
+      notes 'Base status tick turns snapshot status into events; promotion follows'
       navigateTo work_bases_promote
     }
   }
@@ -606,7 +606,7 @@ views {
     loop 'Tick while builds are pending' {
       signalbox.automations -> signalbox.bases 'status' {
         notes '''
-          - Base status is a default automation on a Tick: polling boxd forces on us
+          - Base status is a default automation on a Tick: polling the machine provider forces on us
           - No special-case alarms, no sleep loops
         '''
         navigateTo work_bases_build
@@ -1209,9 +1209,9 @@ views {
     signalbox.computer -> signalbox.drive 'open · history'
     alt 'object' {
       when 'Signalbox change' {
-        signalbox.drive -> signalbox.drive 'Artifacts or R2' {
+        signalbox.drive -> signalbox.drive 'Hot tier or R2' {
           notes '''
-            - Signalbox-origin objects: Artifacts hot tier, R2 full record
+            - Signalbox-origin objects: hot tier, R2 full record
             - R2 holds only Signalbox objects, as thin bundles
           '''
         }
@@ -1226,7 +1226,7 @@ views {
         signalbox.drive -> services.github 'partial-clone fetch' {
           notes '''
             - Promisor remote: blobs and history fetched only when read
-            - Cached in Artifacts as an evictable cache, never written to R2
+            - Cached in the hot tier as an evictable cache, never written to R2
           '''
         }
       }
