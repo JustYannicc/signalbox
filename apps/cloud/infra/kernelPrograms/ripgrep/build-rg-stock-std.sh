@@ -25,9 +25,9 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-for command in curl git make node patch rustup tar; do need "$command"; done
+for command in curl make node patch rustup tar; do need "$command"; done
 
-: "${WASI_SDK_ROOT:?Set WASI_SDK_ROOT to the pinned wasi-sdk 24 installation (clang 19.1.5).}"
+: "${WASI_SDK_ROOT:?Set WASI_SDK_ROOT to the pinned compiler installation (clang 19.1.5).}"
 WASI_SDK_ROOT="$(cd -- "$WASI_SDK_ROOT" && pwd -P)"
 CLANG="$WASI_SDK_ROOT/bin/clang"
 LLVM_AR="$WASI_SDK_ROOT/bin/llvm-ar"
@@ -116,9 +116,10 @@ tar -xzf "$RIPGREP_ARCHIVE" -C "$INPUTS"
 RIPGREP_SOURCE="$INPUTS/ripgrep-$RIPGREP_VERSION"
 
 WASI_LIBC_SOURCE="$INPUTS/wasi-libc"
-git clone --quiet --filter=blob:none --no-checkout https://github.com/WebAssembly/wasi-libc.git "$WASI_LIBC_SOURCE"
-git -C "$WASI_LIBC_SOURCE" checkout --quiet --detach "$WASI_LIBC_COMMIT"
-[[ "$(git -C "$WASI_LIBC_SOURCE" rev-parse HEAD)" == "$WASI_LIBC_COMMIT" ]] || fail "wasi-libc source revision changed"
+WASI_LIBC_ARCHIVE="$INPUTS/wasi-libc-$WASI_LIBC_COMMIT.tar.gz"
+download "https://codeload.github.com/WebAssembly/wasi-libc/tar.gz/$WASI_LIBC_COMMIT" "$WASI_LIBC_ARCHIVE" "$(pin rebuildRecipe wasiLibcArchiveSha256)"
+mkdir -p "$WASI_LIBC_SOURCE"
+tar -xzf "$WASI_LIBC_ARCHIVE" -C "$WASI_LIBC_SOURCE" --strip-components=1
 
 apply_agentos_patches() {
   local records="$1" patch_target="$2" relative expected patch_file
@@ -132,6 +133,14 @@ apply_agentos_patches() {
 
 apply_agentos_patches wasiLibc.appliedAgentOsPatches "$WASI_LIBC_SOURCE"
 apply_agentos_patches source.appliedAgentOsPatches "$RIPGREP_SOURCE"
+
+while IFS="$(printf '\t')" read -r relative expected; do
+  [[ "$relative" == patches/*.patch && "$relative" != *..* ]] || fail "invalid local patch path: $relative"
+  patch_file="$PATCHES/$(basename "$relative")"
+  cp "$SCRIPT_DIR/$relative" "$patch_file"
+  assert_sha256 "$patch_file" "$expected"
+  patch --batch --forward -d "$RIPGREP_SOURCE" -p1 < "$patch_file"
+done < <(patch_records rebuildRecipe.localSourcePatches)
 cp "$SCRIPT_DIR/Cargo.lock" "$RIPGREP_SOURCE/Cargo.lock"
 assert_sha256 "$RIPGREP_SOURCE/Cargo.lock" "$CARGO_LOCK_SHA"
 
@@ -164,7 +173,7 @@ done < <(artifact_records toolchain.rustlibArchives)
 
 # The pinned cwd patches add symbols absent from wasi-libc's upstream expected
 # symbol list, so build the required inputs without the stale check-symbols gate.
-if ! make -C "$WASI_LIBC_SOURCE" \
+if ! make -j2 -C "$WASI_LIBC_SOURCE" \
   "$WASI_LIBC_OBJ/copy-startup-files.stamp" \
   libc \
   "$SYSROOT/lib/wasm32-wasi/libm.a" \
@@ -204,9 +213,9 @@ export GIT_CONFIG_NOSYSTEM=1
 export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
 : > "$GIT_CONFIG_GLOBAL"
 
-if git -C "$RIPGREP_SOURCE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  fail "ripgrep source unexpectedly resolves to a Git worktree"
-fi
+# Git discovery must stop before the containing checkout, even without Git
+# installed during source preparation.
+[[ ! -e "$RIPGREP_SOURCE/.git" && ! -e "$INPUTS/.git" ]] || fail "ripgrep source unexpectedly contains Git metadata"
 
 if ! "$CARGO" build \
   --manifest-path "$RIPGREP_SOURCE/Cargo.toml" \
@@ -231,8 +240,8 @@ fi
 cp "$BUILT_ARTIFACT" "$ARTIFACT_OUTPUT"
 ARTIFACT_MANIFEST="${RIPGREP_ARTIFACT_MANIFEST:-$ARTIFACT_OUTPUT.manifest.json}"
 RECIPE_SHA="$(sha256 "$SCRIPT_DIR/build-rg-stock-std.sh")"
-node -e 'const fs = require("node:fs"); const path = require("node:path"); const [manifestPath, version, archiveSha256, cargoLockSha256, wasiLibcCommit, agentOsCommit, rustToolchain, rustcCommit, clang, llvmCommit, artifactPath, artifactBytes, artifactSha256, recipeSha256, mode] = process.argv.slice(1); const manifest = { schemaVersion: 1, program: "ripgrep", version, source: { archiveSha256, cargoLockSha256, wasiLibcCommit, agentOsCommit }, toolchain: { rustToolchain, rustcCommit, clang, llvmCommit }, build: { script: "build-rg-stock-std.sh", scriptSha256: recipeSha256, canonicalBuildRoot: "/signalbox/ripgrep-build", gitRevision: null, sourceDateEpoch: 0 }, artifact: { path: path.basename(artifactPath), bytes: Number(artifactBytes), sha256: artifactSha256 }, verificationMode: mode }; fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);' \
-  "$ARTIFACT_MANIFEST" "$RIPGREP_VERSION" "$RIPGREP_ARCHIVE_SHA" "$CARGO_LOCK_SHA" "$WASI_LIBC_COMMIT" "$AGENTOS_COMMIT" "$RUST_TOOLCHAIN" "$RUSTC_COMMIT" "$CLANG_RELEASE" "$LLVM_COMMIT" "$ARTIFACT_OUTPUT" "$BUILT_BYTES" "$BUILT_SHA" "$RECIPE_SHA" "$([[ "$DISCOVER_ARTIFACT" == true ]] && echo hash-discovery || echo pinned)"
+node -e 'const fs = require("node:fs"); const path = require("node:path"); const [manifestPath, version, archiveSha256, cargoLockSha256, wasiLibcCommit, agentOsCommit, rustToolchain, rustcCommit, clang, llvmCommit, artifactPath, artifactBytes, artifactSha256, recipeSha256, mode, provenancePath] = process.argv.slice(1); const provenance = JSON.parse(fs.readFileSync(provenancePath, "utf8")); const manifest = { schemaVersion: 1, program: "ripgrep", version, source: { archiveSha256, cargoLockSha256, wasiLibcCommit, wasiLibcArchiveSha256: provenance.rebuildRecipe.wasiLibcArchiveSha256, agentOsCommit, localPatches: provenance.rebuildRecipe.localSourcePatches }, toolchain: { rustToolchain, rustcCommit, clang, llvmCommit }, build: { script: "build-rg-stock-std.sh", scriptSha256: recipeSha256, canonicalBuildRoot: "/signalbox/ripgrep-build", gitRevision: null, sourceDateEpoch: 0 }, artifact: { path: path.basename(artifactPath), bytes: Number(artifactBytes), sha256: artifactSha256 }, verificationMode: mode }; fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);' \
+  "$ARTIFACT_MANIFEST" "$RIPGREP_VERSION" "$RIPGREP_ARCHIVE_SHA" "$CARGO_LOCK_SHA" "$WASI_LIBC_COMMIT" "$AGENTOS_COMMIT" "$RUST_TOOLCHAIN" "$RUSTC_COMMIT" "$CLANG_RELEASE" "$LLVM_COMMIT" "$ARTIFACT_OUTPUT" "$BUILT_BYTES" "$BUILT_SHA" "$RECIPE_SHA" "$([[ "$DISCOVER_ARTIFACT" == true ]] && echo hash-discovery || echo pinned)" "$PROVENANCE"
 echo "ripgrep $RIPGREP_VERSION rebuilt at $ARTIFACT_OUTPUT"
 echo "sha256: $BUILT_SHA"
 echo "manifest: $ARTIFACT_MANIFEST"
