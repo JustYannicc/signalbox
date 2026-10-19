@@ -2,8 +2,12 @@ import { AgentOsDescriptorHost } from "./AgentOsDescriptorHost.ts";
 import { AgentOsFileSystemHost } from "./AgentOsFileSystemHost.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
+import {
+  KERNEL_COREUTILS_SPARSE_POINTERS,
+  prepareKernelCoreutilsSparseImport,
+} from "./KernelCoreutilsSparseMemory.ts";
 import { mapErrno } from "./wasi/internal_wasi_calls.ts";
-import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
+import { asWasiMemory, WasiMemory } from "./wasi/internal_wasi_memory.ts";
 
 const EBADF = 8;
 const EFAULT = 21;
@@ -63,11 +67,12 @@ export interface KernelCoreutilsCredentials {
 }
 
 export interface KernelCoreutilsImportOptions {
-  readonly module: WebAssembly.Module;
-  readonly memory: () => WebAssembly.Memory;
+  readonly module?: WebAssembly.Module;
+  readonly memory: () => WebAssembly.Memory | WasiMemory;
   readonly fileSystem: KernelFileSystem;
   readonly wakes: KernelWakeRegistry;
   readonly asyncMode: boolean;
+  readonly currentSignal?: () => AbortSignal | undefined;
   /** Identity syscalls stay ENOSYS unless the owner supplies its real credentials. */
   readonly credentials?: KernelCoreutilsCredentials;
 }
@@ -80,6 +85,15 @@ export interface KernelCoreutilsImportOptions {
 export function createKernelCoreutilsImports(
   options: KernelCoreutilsImportOptions,
 ): WebAssembly.Imports {
+  if (options.module === undefined) {
+    return {
+      host_fs: hostFileSystemImports(options),
+      host_process: hostDescriptorImports(options),
+      host_net: unsupportedImports(HOST_NET_CALLS, HOST_NET_CALLS, ENOSYS, "host_net"),
+      host_user: hostUserImports(options, HOST_USER_CALLS),
+    };
+  }
+
   const requested = new Map<string, Set<string>>();
   for (const item of WebAssembly.Module.imports(options.module)) {
     if (item.kind !== "function") continue;
@@ -114,17 +128,47 @@ export function createKernelCoreutilsImports(
 
 function hostFileSystemImports(
   options: KernelCoreutilsImportOptions,
-  requested: ReadonlySet<string>,
+  requested?: ReadonlySet<string>,
 ): Record<string, WebAssembly.ImportValue> {
+  let scratch: WebAssembly.Memory | undefined;
   const host = new AgentOsFileSystemHost({
-    memory: options.memory,
+    memory: () => {
+      if (scratch !== undefined) return scratch;
+      const memory = options.memory();
+      if (!(memory instanceof WebAssembly.Memory)) {
+        throw new Error("Coreutils filesystem import requires its sparse memory adapter");
+      }
+      return memory;
+    },
     fileSystem: options.fileSystem,
     agentOsPreopens: true,
   });
   const imports = Object.create(null) as Record<string, WebAssembly.ImportValue>;
-  for (const name of requested) {
+  for (const name of requested ?? new Set(Object.keys(host.imports))) {
     const handler = host.imports[name as keyof typeof host.imports];
     if (handler !== undefined) {
+      const pointers = KERNEL_COREUTILS_SPARSE_POINTERS.host_fs[name];
+      if (pointers === undefined) {
+        throw new Error(`No pinned sparse pointer map for coreutils import: host_fs.${name}`);
+      }
+      if (pointers.length > 0) {
+        imports[name] = ((...args: (number | bigint)[]) => {
+          const memory = options.memory();
+          if (memory instanceof WebAssembly.Memory) {
+            return Reflect.apply(handler, undefined, args);
+          }
+          const call = prepareKernelCoreutilsSparseImport(memory, args, pointers);
+          scratch = call.memory;
+          try {
+            const result = Reflect.apply(handler, undefined, call.args);
+            if (result === 0) call.copyOutputs(memory);
+            return result;
+          } finally {
+            scratch = undefined;
+          }
+        }) as WebAssembly.ImportValue;
+        continue;
+      }
       imports[name] = handler as WebAssembly.ImportValue;
       continue;
     }
@@ -135,23 +179,24 @@ function hostFileSystemImports(
 
 function hostDescriptorImports(
   options: KernelCoreutilsImportOptions,
-  requested: ReadonlySet<string>,
+  requested?: ReadonlySet<string>,
 ): Record<string, WebAssembly.ImportValue> {
   const host = new AgentOsDescriptorHost({
     memory: options.memory,
     descriptors: options.fileSystem.descriptors,
     wakes: options.wakes,
     asyncMode: options.asyncMode,
+    ...(options.currentSignal === undefined ? {} : { currentSignal: options.currentSignal }),
   });
   const imports = Object.create(null) as Record<string, WebAssembly.ImportValue>;
-  for (const name of requested) {
+  const allNames = new Set([...Object.keys(host.imports), "proc_umask"]);
+  for (const name of requested ?? allNames) {
     if (name === "proc_umask") {
       imports[name] = (mask: number, previousPointer: number) => {
         const next = mask >>> 0;
         if ((next & ~0o777) !== 0) return EINVAL;
         try {
-          const memory = new WasiMemory();
-          memory.set(options.memory());
+          const memory = asWasiMemory(options.memory());
           const previous = memory.view(previousPointer, 4);
           const oldMask = options.fileSystem.setUmask(next);
           previous.setUint32(0, oldMask, true);
@@ -187,8 +232,7 @@ function hostUserImports(
     }
     if (name === "isatty") {
       imports[name] = (fd: number, resultPointer: number) => {
-        const memory = new WasiMemory();
-        memory.set(options.memory());
+        const memory = asWasiMemory(options.memory());
         try {
           options.fileSystem.descriptors.get(fd >>> 0);
           memory.u32(resultPointer, 0);
@@ -205,8 +249,7 @@ function hostUserImports(
       imports[name] = (resultPointer: number) => {
         if (value === undefined) return ENOSYS;
         try {
-          const memory = new WasiMemory();
-          memory.set(options.memory());
+          const memory = asWasiMemory(options.memory());
           memory.u32(resultPointer, value);
           return 0;
         } catch {
