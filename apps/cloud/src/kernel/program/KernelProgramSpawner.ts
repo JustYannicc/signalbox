@@ -84,6 +84,16 @@ export class KernelProgramSpawner {
     };
   }
 
+  spawn(
+    filesystem: KernelFileSystem,
+    parent: KernelHandle<"process">,
+    signal: AbortSignal,
+    home: string | undefined,
+    request: AgentOsSpawnRequest,
+  ): Promise<KernelResult<KernelHandle<"process">>> {
+    return this.#spawnNested(filesystem, parent, signal, home, request);
+  }
+
   #spawnPrepared(
     prepared: KernelPreparedProgram,
     binding: KernelProgramBinding,
