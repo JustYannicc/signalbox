@@ -12,7 +12,7 @@ import {
   type KernelAsyncProgramExecRequest,
 } from "../../kernel/KernelAsyncProgram.ts";
 import { createKernelBashHost } from "../../kernel/KernelBashHost.ts";
-import { sqliteFixture } from "../../kernel/tests/sqliteFixture.ts";
+import { sqliteFixture } from "./helpers/sqliteFixture.ts";
 
 export const bashCredentials = {
   uid: 1000,
