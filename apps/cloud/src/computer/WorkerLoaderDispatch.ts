@@ -75,18 +75,28 @@ export function createWorkerLoaderDispatch<Host extends object>(
         acknowledged = true;
         stopped.resolve();
       });
+      let submitted = false;
       try {
         const code = dispatchModules(input, limits);
         let exit: KernelCommandExit;
         if ("run" in loader) {
+          submitted = true;
           exit = await loader.run({ ...code, command: input.command }, invocation);
         } else {
-          const worker = loader.get(null, () => ({
+          for (const module of Object.values(code.modules)) {
+            if (typeof module !== "string" && "wasmReference" in module) {
+              throw new Error("Child WASM reference requires a compiled module registry");
+            }
+          }
+          const workerCode = {
             compatibilityDate: "2026-10-19",
             compatibilityFlags: ["nodejs_compat"],
             ...code,
             globalOutbound: null,
-          }));
+          };
+          submitted = true;
+          // Native Worker Loader supports compiled WASM inputs; installed types still require bytes.
+          const worker = loader.get(null, () => workerCode as WorkerLoaderWorkerCode);
           const entrypoint = worker.getEntrypoint(undefined, {
             limits,
           }) as unknown as ChildEntrypoint<Host>;
@@ -95,6 +105,7 @@ export function createWorkerLoaderDispatch<Host extends object>(
         await stopped.promise;
         return exit;
       } catch (cause) {
+        if (!submitted) invocation.stopped();
         // RPC failure and host capability closure cannot prove that the child stopped.
         throw new ChildWorkerDispatchError(
           cause,

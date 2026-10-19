@@ -266,6 +266,7 @@ describe("ChildWorkerProgram", () => {
       const wasm = new Uint8Array([0, 97, 115, 109]);
       const modules = { "entry.js": "original", "tool.wasm": { wasm: wasm.buffer } };
       const limits = { cpuMs: 777 };
+      const code = { mainModule: "entry.js", modules, entrypoint: "Program", limits };
       const host = { identity: context.identity };
       const close = vi.fn();
       const run = vi.fn(async (input: ChildWorkerInvocation, owner: typeof host) => {
@@ -277,24 +278,34 @@ describe("ChildWorkerProgram", () => {
           cwd: "/",
           env: context.env,
         });
+        expect(input.mainModule).toBe("entry.js");
+        expect(input.entrypoint).toBe("Program");
         expect(input.modules["entry.js"]).toBe("original");
         expect(input.limits).toEqual({ cpuMs: 777 });
         const module = input.modules["tool.wasm"];
-        if (!module || typeof module === "string" || !("wasm" in module))
+        if (
+          !module ||
+          typeof module === "string" ||
+          !("wasm" in module) ||
+          !(module.wasm instanceof ArrayBuffer)
+        ) {
           throw new Error("Wasm module missing");
+        }
+        expect(module.wasm).toBe(wasm.buffer);
         expect(new Uint8Array(module.wasm)).toEqual(Uint8Array.of(0, 97, 115, 109));
         return { exitCode: 17, signal: 0, coreDumped: false };
       });
       const program = createChildWorkerProgram({
         executable: "/bin/tool",
-        code: { mainModule: "entry.js", modules, limits },
+        code,
         capacity,
         dispatch: { run },
         createHost: () => ({ host, close }),
       });
       modules["entry.js"] = "changed";
+      code.mainModule = "changed.js";
+      code.entrypoint = "ChangedProgram";
       limits.cpuMs = 888;
-      wasm.fill(255);
       expect(await program.run(context)).toEqual({ exitCode: 17, signal: 0, coreDumped: false });
       expect(close).toHaveBeenCalledOnce();
       expect(capacity.active).toBe(0);

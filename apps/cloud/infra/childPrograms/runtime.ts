@@ -2,7 +2,6 @@ import {
   createChildProgramCatalog,
   type ChildProgramCatalogOptions,
 } from "../../src/computer/ChildProgramCatalog.ts";
-import { KernelOpenFlags, type KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
 import { KERNEL_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
 import { KERNEL_RIPGREP_ARTIFACT } from "../../src/kernel/KernelRipgrepProgram.ts";
@@ -21,74 +20,31 @@ export function createSeededChildProgramCatalog(options: SeededChildProgramCatal
   return createChildProgramCatalog({
     ...options,
     programs: {
-      bash: attachProgramBytes(
-        options.filesystem,
-        "/bin/bash",
-        options.programs.bash,
-        KERNEL_BASH_ARTIFACT.bytes,
-      ),
-      busyboxCat: attachProgramBytes(
-        options.filesystem,
-        "/bin/cat",
+      bash: attachProgramReference(options.programs.bash, KERNEL_BASH_ARTIFACT.sha256),
+      busyboxCat: attachProgramReference(
         options.programs.busyboxCat,
-        KERNEL_BUSYBOX_ARTIFACT.bytes,
+        KERNEL_BUSYBOX_ARTIFACT.sha256,
       ),
-      ripgrep: attachProgramBytes(
-        options.filesystem,
-        "/bin/rg",
-        options.programs.ripgrep,
-        KERNEL_RIPGREP_ARTIFACT.bytes,
-      ),
+      ripgrep: attachProgramReference(options.programs.ripgrep, KERNEL_RIPGREP_ARTIFACT.sha256),
     },
   });
 }
 
-function attachProgramBytes(
-  filesystem: KernelFileSystem,
-  path: "/bin/bash" | "/bin/cat" | "/bin/rg",
+export function attachProgramReference(
   code: ChildProgramSourceCode,
-  expectedBytes: number,
+  sha256: string,
 ): ChildWorkerCode {
   if (Object.hasOwn(code.modules, "program.wasm")) {
-    throw new Error(`Static child graph already contains program.wasm for ${path}`);
+    throw new Error("Static child graph already contains program.wasm");
   }
-  const wasm = readSeededExecutable(filesystem, path, expectedBytes);
+  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new TypeError("Invalid pinned child program hash");
+  const sources = Object.freeze({ ...code.modules });
   return Object.freeze({
     ...code,
-    modules: Object.freeze({
-      ...code.modules,
-      "program.wasm": Object.freeze({ wasm }),
-    }),
+    modules: () =>
+      Object.freeze({
+        ...sources,
+        "program.wasm": Object.freeze({ wasmReference: sha256 }),
+      }),
   });
-}
-
-function readSeededExecutable(
-  filesystem: KernelFileSystem,
-  path: "/bin/bash" | "/bin/cat" | "/bin/rg",
-  expectedBytes: number,
-): ArrayBuffer {
-  if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0) {
-    throw new RangeError(`Invalid expected executable size for ${path}`);
-  }
-  const descriptor = filesystem.open(path, KernelOpenFlags.O_RDONLY);
-  try {
-    const fileBytes = Number(filesystem.fstat(descriptor).size);
-    if (fileBytes !== expectedBytes) {
-      throw new Error(`Seeded executable size differs from the pinned ${path} artifact`);
-    }
-    const buffer = new ArrayBuffer(expectedBytes);
-    const bytes = new Uint8Array(buffer);
-    let offset = 0;
-    while (offset < expectedBytes) {
-      const read = filesystem.read(descriptor, bytes.subarray(offset), null);
-      if (read <= 0) break;
-      offset += read;
-    }
-    if (offset !== expectedBytes) {
-      throw new Error(`Seeded executable read was incomplete for ${path}`);
-    }
-    return buffer;
-  } finally {
-    filesystem.close(descriptor);
-  }
 }
