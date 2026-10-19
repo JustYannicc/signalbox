@@ -77,6 +77,58 @@ async function withHost<T>(
 }
 
 describe("createKernelSyscallHost", () => {
+  it("cancels a suspended poll and detaches descriptor readiness before close", async () => {
+    const subscribed = deferred<void>();
+    const detached = deferred<void>();
+    const controller = new AbortController();
+    const fixture = createTestFilesystem([
+      {
+        poll(_event, signal) {
+          subscribed.resolve();
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                detached.resolve();
+                reject(Object.assign(new Error("cancelled"), { code: "ECANCELED" }));
+              },
+              { once: true },
+            );
+          });
+        },
+      },
+      {},
+      {},
+    ]);
+    const host = createKernelSyscallHost({
+      filesystem: fixture.filesystem,
+      args: [],
+      env: {},
+      signal: controller.signal,
+    });
+    const subscription = new Uint8Array(48);
+    subscription[8] = 1;
+    try {
+      const pending = host.call({
+        name: "poll_oneoff",
+        args: [0, 64, 1, 96],
+        memorySize: 128,
+        regions: [
+          { pointer: 0, bytes: subscription },
+          { pointer: 64, bytes: new Uint8Array(32) },
+          { pointer: 96, bytes: new Uint8Array(4) },
+        ],
+      });
+      await subscribed.promise;
+      controller.abort();
+      expect(returned(await pending).value).toBe(11);
+      await detached.promise;
+      host.close();
+    } finally {
+      controller.abort();
+      fixture.close();
+    }
+  });
   it("shares the open file offset when fd_write follows filesystem I/O", () =>
     withHost(async (filesystem, host) => {
       const fd = filesystem.open("/offset", KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR);

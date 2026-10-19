@@ -35,7 +35,14 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
     args: [...options.args],
     env: { ...options.env },
   });
-  const system = new WasiHost(memory, validated.args, validated.env, true, filesystem.descriptors);
+  const system = new WasiHost(
+    memory,
+    validated.args,
+    validated.env,
+    true,
+    filesystem.descriptors,
+    options.signal,
+  );
   const imports = new Map(
     Object.entries({
       ...system.imports,
