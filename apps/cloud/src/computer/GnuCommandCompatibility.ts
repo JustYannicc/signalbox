@@ -73,7 +73,15 @@ function qualifyGrep(argv: readonly string[]): GnuCommandQualification {
     }
 
     if (patterns.length === 0) patterns.push(argument);
-    else fileCount++;
+    else {
+      if (argument === "-") {
+        return machine(
+          "unqualified-script",
+          "Grep stdin operands have not been qualified through the child stream",
+        );
+      }
+      fileCount++;
+    }
   }
 
   if (flags.fixed && flags.extended) {
@@ -240,7 +248,15 @@ function qualifySed(argv: readonly string[]): GnuCommandQualification {
     }
 
     if (scripts.length === 0) scripts.push(argument);
-    else fileCount++;
+    else {
+      if (argument === "-") {
+        return machine(
+          "unqualified-script",
+          "Sed stdin operands have not been qualified through the child stream",
+        );
+      }
+      fileCount++;
+    }
   }
 
   if (inPlace) {

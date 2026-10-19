@@ -164,6 +164,26 @@ function command(
 }
 
 describe("qualifyGnuCommand", () => {
+  it.each([
+    ["grep", ["needle", "-"]],
+    ["grep", ["needle", "-", "-"]],
+    ["grep", ["needle", "nested/input", "-"]],
+    ["sed", ["-n", "1p", "-"]],
+    ["sed", ["-n", "1p", "-", "-"]],
+    ["sed", ["-n", "1p", "nested/input", "-"]],
+  ] as const)("keeps explicit stdin operands unqualified for %s", (executable, args) => {
+    expect(qualifyGnuCommand(command(executable, args))).toMatchObject({
+      kind: "machine",
+      reason: "unqualified-script",
+    });
+  });
+
+  it("preserves a dash used as grep pattern data", () => {
+    expect(qualifyGnuCommand(command("grep", ["--", "-", "nested/input"]))).toEqual({
+      kind: "qualified-isolate",
+    });
+  });
+
   it.each(syntheticComparisonCases)("classifies synthetic comparison case $id", (input) => {
     const captured = command(input.executable, input.args);
     const result = qualifyGnuCommand(captured);
