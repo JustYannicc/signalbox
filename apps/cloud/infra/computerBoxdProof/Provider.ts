@@ -38,7 +38,7 @@ export async function openProofProvider(apiKey: string) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ api_key: apiKey }),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {

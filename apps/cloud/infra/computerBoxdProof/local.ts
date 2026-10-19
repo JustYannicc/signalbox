@@ -52,6 +52,10 @@ const writeReceipt = await createReceiptFile(options.output, receipt);
 const save = async () => {
   await writeReceipt(receipt);
 };
+// Wrangler creates temporary files in the checkout, so freeze inputs before starting it.
+const seed = options["recover-stage-file"]
+  ? undefined
+  : await prepareProofSeed(NodePath.resolve(options["program-dir"]!));
 const stateDir = NodePath.resolve(NodePath.dirname(stagePath), `${stage.record.stage}-local-state`);
 await NodeFSP.mkdir(stateDir, { recursive: true, mode: 0o700 });
 const config = NodePath.resolve(stateDir, "wrangler.json");
@@ -105,7 +109,7 @@ let cleanupConfirmed = false;
 let failed = false;
 try {
   if (!options["recover-stage-file"]) {
-    const seed = await prepareProofSeed(NodePath.resolve(options["program-dir"]!));
+    if (seed === undefined) throw new Error("Proof seed was not prepared");
     receipt = {
       ...receipt,
       inputs: {
