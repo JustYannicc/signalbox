@@ -23,7 +23,9 @@ const childSource = `import {WorkerEntrypoint} from "cloudflare:workers";
 import module from "./suspend.wasm";
 export class Child extends WorkerEntrypoint {
   async run(command, host) {
-    const value = await host.increment(40);
+    const response = await host.increment(40, {bytes:new Uint8Array([0,255,128]),offset:9007199254740993n});
+    if (!(response.bytes instanceof Uint8Array) || response.bytes[1] !== 255 || response.offset !== 9007199254740993n) throw new Error("RPC return bytes or bigint changed");
+    const value = response.value;
     const instance = new WebAssembly.Instance(module, {env:{suspend:n => n + 1}});
     const exitCode = instance.exports.run(value);
     let networkBlocked = false;
@@ -37,10 +39,11 @@ const source = `import {DurableObject,RpcTarget} from "cloudflare:workers";
 const child = ${JSON.stringify(childSource)};
 class Host extends RpcTarget {
   constructor(storage) { super(); this.storage = storage; }
-  increment(n) {
+  increment(n, payload) {
+    if (!(payload.bytes instanceof Uint8Array) || payload.bytes[1] !== 255 || payload.offset !== 9007199254740993n) throw new Error("RPC request bytes or bigint changed");
     this.storage.sql.exec("CREATE TABLE IF NOT EXISTS counts (n INTEGER)");
     this.storage.sql.exec("INSERT INTO counts VALUES (?)", n);
-    return n;
+    return {value:n,...payload};
   }
   observe(command, networkBlocked) { this.observed = {command,networkBlocked}; }
 }

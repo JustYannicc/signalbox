@@ -58,7 +58,7 @@
         },
         "overrides": [
           {
-            // Native infrastructure fixtures and artifact packagers run outside Effect.
+            // signalbox: native infrastructure fixtures and artifact packagers run outside Effect.
             "include": [
               "**/apps/cloud/infra/**/*.test.ts",
               "**/apps/cloud/infra/kernelPrograms/**/*.ts"
@@ -66,7 +66,7 @@
             "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
           },
           {
-            // These fixtures drive workerd over its native HTTP entry point.
+            // signalbox: these fixtures drive workerd over its native HTTP entry point.
             "include": ["**/apps/cloud/infra/**/*.test.ts"],
             "options": { "diagnosticSeverity": { "globalFetch": "off" } }
           },
