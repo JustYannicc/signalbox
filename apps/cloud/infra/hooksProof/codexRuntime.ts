@@ -8,6 +8,7 @@ import {
   CODEX_HOOK_PROGRAM_FACADE,
   CODEX_HOOK_REGISTRATIONS,
   CODEX_HOOK_REQUIREMENTS_PATH,
+  PRE_TOOL_USE_CAPTURE_PATH,
   codexHookRequirements,
 } from "./codexScenario.ts";
 import {
@@ -372,6 +373,7 @@ function seedCodexSettings(filesystem: KernelFileSystem): void {
     0o644,
   );
   writeFile(filesystem, CODEX_HOOK_EXECUTABLE, encoder.encode(CODEX_HOOK_PROGRAM_FACADE), 0o755);
+  writeFile(filesystem, PRE_TOOL_USE_CAPTURE_PATH, new Uint8Array(), 0o644);
 }
 
 function ensureDirectory(filesystem: KernelFileSystem, path: string): void {

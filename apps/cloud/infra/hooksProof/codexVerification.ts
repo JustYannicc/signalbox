@@ -309,8 +309,7 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
     executableFacade: hookFile,
     requirementsPath: CODEX_HOOK_REQUIREMENTS_PATH,
     engineProcessPid: parentInfo.status === "ok" ? parentInfo.value.pid : null,
-    runtimeBoundary:
-      "Interim: Bash runs through the in-facet program binding. The parent owns child Worker integration.",
+    runtimeBoundary: "child-dynamic-workers",
     timings: {
       clock: "performance.now()",
       note: "A null elapsedMs means the host clock was unavailable or did not advance during the call.",

@@ -2,11 +2,15 @@ import { parse } from "smol-toml";
 import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { createFacetSqliteStorage } from "../../src/kernel/FacetSqliteStorage.ts";
-import { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
+import { KernelFileSystem, KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createProofTestStorage } from "../claudeTurnProof/proofTestStorage.ts";
 import { createCodexHookRuntime } from "./codexRuntime.ts";
-import { CODEX_HOOK_REGISTRATIONS, codexHookRequirements } from "./codexScenario.ts";
+import {
+  CODEX_HOOK_REGISTRATIONS,
+  PRE_TOOL_USE_CAPTURE_PATH,
+  codexHookRequirements,
+} from "./codexScenario.ts";
 
 function fixture() {
   const database = createProofTestStorage();
@@ -51,6 +55,40 @@ function fixture() {
 }
 
 describe("Codex hook fixture setup", () => {
+  it("resets the previous run's hook capture while preserving workspace files", async () => {
+    const test = fixture();
+    const { filesystem } = test.input;
+    try {
+      const first = test.runtime.configure(test.input);
+      const bytes = new TextEncoder().encode("previous native hook input\n");
+      for (const path of [PRE_TOOL_USE_CAPTURE_PATH, "/workspace/keep.txt"]) {
+        const fd = filesystem.open(path, KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY);
+        try {
+          filesystem.write(fd, bytes, null);
+        } finally {
+          filesystem.close(fd);
+        }
+      }
+      await first.finish({ exit: 0, failure: undefined });
+      const second = test.runtime.configure(test.input);
+      try {
+        expect(filesystem.stat(PRE_TOOL_USE_CAPTURE_PATH).size).toBe(0n);
+        const fd = filesystem.open("/workspace/keep.txt", KernelOpenFlags.O_RDONLY);
+        try {
+          const actual = new Uint8Array(bytes.byteLength);
+          expect(filesystem.read(fd, actual, null)).toBe(bytes.byteLength);
+          expect(actual).toEqual(bytes);
+        } finally {
+          filesystem.close(fd);
+        }
+      } finally {
+        await second.finish({ exit: 0, failure: undefined });
+      }
+    } finally {
+      await test.close();
+    }
+  });
+
   it("composes a parseable managed policy containing every native hook event", () => {
     const policy = parse(codexHookRequirements());
     expect(policy.allow_managed_hooks_only).toBe(true);
