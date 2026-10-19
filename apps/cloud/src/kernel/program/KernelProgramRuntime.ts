@@ -116,6 +116,9 @@ export function createKernelWasiRuntime(
         memory: () => lifecycle.memory.memory,
         processes: options.processes,
         wakes: options.wakes,
+        // Inline programs have no admitted process identity. They must not
+        // mutate the root guest's mask through the shared table.
+        signalMaskSupported: options.asyncMode,
         ...(options.identity === undefined ? {} : { parent: options.identity.handle }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         spawn: options.spawn,

@@ -11,6 +11,11 @@ import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import { KernelProcessCleanup } from "./process/KernelProcessCleanup.ts";
 import { isKernelProcessCancelledError } from "./process/KernelProcessCancellation.ts";
 import {
+  KernelProcessSignals,
+  validSignalMask,
+  type KernelSignalMask,
+} from "./process/KernelProcessSignals.ts";
+import {
   KERNEL_WNOHANG,
   KernelProcessWaiters,
   type KernelExitStatus,
@@ -20,10 +25,12 @@ import {
 
 export { KERNEL_WNOHANG } from "./process/KernelProcessWaiters.ts";
 export type { KernelExitStatus, KernelWaitPidResult } from "./process/KernelProcessWaiters.ts";
+export type { KernelSignalMask } from "./process/KernelProcessSignals.ts";
 
 export interface KernelLaunchedChild {
   readonly completion: Promise<KernelExitStatus>;
   readonly signal: (signal: number) => KernelResult<void>;
+  readonly supportedSignals?: readonly number[];
 }
 
 export interface KernelProcessInfo {
@@ -59,6 +66,7 @@ type ProcessRecord = {
   settled: Promise<void> | undefined;
   readonly cleanup: () => Promise<void>;
   readonly listeners: Set<() => void>;
+  readonly signals: KernelProcessSignals;
   completionObserved: boolean;
   outcome: ProcessOutcome | undefined;
 };
@@ -73,6 +81,7 @@ export class KernelProcessTable {
   readonly #waiters: KernelProcessWaiters;
   readonly #processes = new Map<number, ProcessRecord>();
   readonly #reservedPids = new Set<number>();
+  readonly #rootSignals = new KernelProcessSignals();
   #nextPid = FIRST_CHILD_PID;
   #admissions = 0;
   #closed = false;
@@ -98,7 +107,7 @@ export class KernelProcessTable {
     parentHandle: KernelHandle<"process"> | undefined,
     launch: (identity: KernelProcessIdentity) => KernelLaunchedChild,
     release: () => void | Promise<void>,
-    options: { readonly processGroupId?: number } = {},
+    options: { readonly processGroupId?: number; readonly signalMask?: KernelSignalMask } = {},
   ): KernelResult<{ readonly handle: KernelHandle<"process">; readonly pid: number }> {
     const cleanupOnce = this.#cleanup.own(release);
     const reject = <T>(result: KernelResult<T>): KernelResult<T> => {
@@ -109,6 +118,11 @@ export class KernelProcessTable {
     if (this.#closed) return reject(kernelError("CANCELLED", "Process table is closed"));
     const parentInfo = this.info(parentHandle);
     if (parentInfo.status !== "ok") return reject(parentInfo);
+    const inheritedMask = this.signalMask(parentHandle, 3);
+    if (inheritedMask.status !== "ok") return reject(inheritedMask);
+    const signalMask = options.signalMask ?? inheritedMask.value;
+    if (!validSignalMask(signalMask))
+      return reject(kernelError("INVALID_ARGUMENT", "Invalid process signal mask"));
     if (parentHandle !== undefined) {
       const parent = this.#record(parentHandle);
       if (parent.status !== "ok") return reject(parent);
@@ -150,6 +164,7 @@ export class KernelProcessTable {
         settled: undefined,
         cleanup: cleanupOnce,
         listeners: new Set(),
+        signals: new KernelProcessSignals(signalMask),
         completionObserved: false,
         outcome: undefined,
       } satisfies Omit<ProcessRecord, "handle"> & { handle: KernelHandle<"process"> });
@@ -337,11 +352,39 @@ export class KernelProcessTable {
     }
     if (!record.value.child)
       return kernelError("ALREADY_WAITING", "Process launch is still in progress");
-    try {
-      return record.value.child.signal(signal);
-    } catch {
-      return kernelError("IO_ERROR", "Process signal failed");
+    if (
+      record.value.child.supportedSignals !== undefined &&
+      !record.value.child.supportedSignals.includes(signal)
+    ) {
+      return kernelError("UNSUPPORTED", "Process does not support this signal");
     }
+    return record.value.signals.send(signal, (number) => record.value.child!.signal(number));
+  }
+
+  /** AgentOS operations: block, unblock, replace, or query the previous mask. */
+  signalMask(
+    handle: KernelHandle<"process"> | undefined,
+    how: number,
+    mask: KernelSignalMask = { low: 0, high: 0 },
+  ): KernelResult<KernelSignalMask> {
+    if (!Number.isSafeInteger(how) || how < 0 || how > 3 || !validSignalMask(mask)) {
+      return kernelError("INVALID_ARGUMENT", "Invalid process signal mask operation");
+    }
+    if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
+    if (handle === undefined) return kernelOk(this.#rootSignals.change(how, mask));
+    const record = this.#record(handle);
+    if (record.status !== "ok") return record;
+    if (record.value.completionObserved || record.value.outcome) {
+      return kernelError("NOT_FOUND", "Process has already exited");
+    }
+    const previous = record.value.signals.change(how, mask);
+    if (how !== 3 && record.value.child) {
+      // Commit the mask before delivery, which can reenter the guest. A refused
+      // pending signal remains queued; querying the mask never delivers it.
+      const delivered = record.value.signals.flush((number) => record.value.child!.signal(number));
+      if (delivered.status !== "ok") return delivered;
+    }
+    return kernelOk(previous);
   }
 
   /** Signals matching live direct children, using waitpid selector semantics. */
