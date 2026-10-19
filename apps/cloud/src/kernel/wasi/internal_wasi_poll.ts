@@ -64,17 +64,20 @@ export class WasiPoller {
   readonly #asyncMode: boolean;
   readonly #descriptors: WasiDescriptorTable | undefined;
   readonly #clock: WasiClock;
+  readonly #signal: AbortSignal | undefined;
 
   constructor(
     memory: WasiMemory,
     asyncMode: boolean,
     descriptors: WasiDescriptorTable | undefined,
     clock: WasiClock,
+    signal?: AbortSignal,
   ) {
     this.#memory = memory;
     this.#asyncMode = asyncMode;
     this.#descriptors = descriptors;
     this.#clock = clock;
+    this.#signal = signal;
   }
 
   *pollOneoff(
@@ -98,9 +101,24 @@ export class WasiPoller {
     let events: PollEvent[];
     if (this.#asyncMode) {
       const controller = new AbortController();
+      const signal = this.#signal;
+      let onAbort: (() => void) | undefined;
       try {
-        events = yield* complete(this.#waitAsync(subscriptions, controller.signal));
+        if (signal?.aborted) throw new WasiError(11);
+        const cancelled =
+          signal === undefined
+            ? []
+            : [
+                new Promise<never>((_resolve, reject) => {
+                  onAbort = () => reject(new WasiError(11));
+                  signal.addEventListener("abort", onAbort, { once: true });
+                }),
+              ];
+        events = yield* complete(
+          Promise.race([this.#waitAsync(subscriptions, controller.signal), ...cancelled]),
+        );
       } finally {
+        if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
         controller.abort();
       }
     } else {
