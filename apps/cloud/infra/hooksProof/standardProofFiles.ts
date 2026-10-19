@@ -1,46 +1,74 @@
-import type { NodeFsModules } from "../../src/isolate/NodeFs.ts";
-import type { StandardProofAdapter } from "./standardProofAdapter.ts";
+import { createSecretFileByteView } from "../../src/connections/SecretFileBytes.ts";
+import type { FacetStorage } from "../../src/kernel/FacetSqliteStorage.ts";
+import type {
+  KernelFileByteSelection,
+  KernelFileByteView,
+} from "../../src/kernel/KernelFileBytes.ts";
+import type { Storage } from "../../src/kernel/storage.ts";
 
-const placeholders = /\{\{(?:secret:|op:\/\/)/;
-const decoder = new TextDecoder("utf-8", { fatal: true });
-
-/** Only whole UTF-8 workspace writes are covered by this test adapter. */
-export function installStandardProofFiles(fs: NodeFsModules, gateway: StandardProofAdapter) {
-  const promises = fs["fs/promises"];
-  const open = promises.open.bind(promises);
-  const writeFile = promises.writeFile.bind(promises);
-
-  const fill = async (
-    path: unknown,
-    data: Parameters<typeof writeFile>[1],
-    operation: (data: Parameters<typeof writeFile>[1]) => Promise<void>,
-  ) => {
-    if (typeof path !== "string" || !path.startsWith("/work/")) return operation(data);
-    let text: string;
-    try {
-      text = typeof data === "string" ? data : decoder.decode(data);
-    } catch {
-      return operation(data);
-    }
-    if (!placeholders.test(text)) return operation(data);
-    await gateway.write(text, (filled) => operation(filled));
+/** Public fixture bindings are resolved before this synchronous execution boundary is created. */
+export function createStandardProofFiles(input: {
+  readonly database: FacetStorage;
+  readonly storage: Storage;
+  readonly bindings: ReadonlyArray<{ readonly placeholder: string; readonly value: string }>;
+  readonly assertActive: () => void;
+}) {
+  const inner = createSecretFileByteView({
+    canonical: input.storage,
+    transactions: {
+      storage: input.storage,
+      run: (operation) =>
+        input.database.transactionSync(() => {
+          input.assertActive();
+          const result = operation(input.storage);
+          input.assertActive();
+          return result;
+        }),
+    },
+    bindings: input.bindings,
+  });
+  let reads = 0;
+  let bytesRead = 0;
+  let mutations = 0;
+  const view: KernelFileByteView = {
+    ...inner,
+    bind(inode) {
+      input.assertActive();
+      const access = inner.bind(inode);
+      return {
+        ...access,
+        readInto(offset, target) {
+          const count = access.readInto(offset, target);
+          reads++;
+          bytesRead += count;
+          return count;
+        },
+        write(offset, source) {
+          const count = access.write(offset, source);
+          if (count > 0) mutations++;
+          return count;
+        },
+        append(source) {
+          const result = access.append(source);
+          if (result.bytesWritten > 0) mutations++;
+          return result;
+        },
+        truncate(size) {
+          access.truncate(size);
+          mutations++;
+        },
+      };
+    },
   };
-
-  promises.open = async (...args) => {
-    const handle = await open(...args);
-    const write = handle.writeFile.bind(handle);
-    handle.writeFile = async (data, options) => {
-      // Official writes can arrive through a retained directory descriptor.
-      const path = await promises.realpath(`/proc/self/fd/${handle.fd}`);
-      return fill(path, data, (filled) => write(filled, options));
-    };
-    return handle;
-  };
-  promises.writeFile = (path, data, options) =>
-    fill(path, data, (filled) => writeFile(path, filled, options));
-
-  return () => {
-    promises.open = open;
-    promises.writeFile = writeFile;
+  const selection: KernelFileByteSelection = { kind: "view", view };
+  return {
+    selection,
+    inspect: () => ({
+      kind: "same-storage-synchronous-secret-byte-view",
+      envelope: { canonicalBytes: 1_048_576, rawBytes: 1_048_576, scratchBytes: 4_194_304 },
+      reads,
+      bytesRead,
+      mutations,
+    }),
   };
 }

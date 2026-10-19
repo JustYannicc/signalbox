@@ -7,11 +7,12 @@ import type { KernelHandle } from "../../src/kernel/KernelAbi.ts";
 import type { KernelCommandExit } from "../../src/kernel/KernelCommandForwarder.ts";
 import type { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import type { NodeGeneratedCodeInvokeInput } from "../../src/isolate/NodeGeneratedCode.ts";
-import { STANDARD_PROOF_NAMED_SECRET } from "./standardProofAdapter.ts";
+import { STANDARD_PROOF_NAMED_SECRET, STANDARD_PROOF_WRITE } from "./standardProofAdapter.ts";
+import { inspectStandardProofNativeFileRead, sameBytes } from "./standardProofEvidence.ts";
 import {
   CODEX_STANDARD_DISPATCH_IDS,
-  redactCodexProofText,
-  redactCodexProofValue,
+  CODEX_SECRET_FILE_PATH,
+  CODEX_SECRET_READ_COMMAND,
   verifyCodexHookPayloads,
   verifyCodexStandardHookPayloads,
   verifyCodexStandardHookResults,
@@ -36,8 +37,8 @@ const officialEventNames = Object.freeze({
   stop: "Stop",
 } as const);
 
-// The shared turn executes Bash and apply_patch, so each tool event fires twice.
-const expectedInvocations = { "session-start": 1, "pre-tool-use": 2, "post-tool-use": 2, stop: 1 };
+// The proof runs Bash, apply_patch, and Bash cat through every tool hook.
+const expectedInvocations = { "session-start": 1, "pre-tool-use": 3, "post-tool-use": 3, stop: 1 };
 export type CodexHookKind = (typeof CODEX_ALL_HOOK_REGISTRATIONS)[number]["kind"];
 
 export interface HookInvocationRecord {
@@ -102,6 +103,13 @@ export interface CodexHookVerificationInput {
     readonly executable: string;
     readonly argv: readonly string[];
   }[];
+  readonly nativeFileRead?:
+    | {
+        readonly executable: string;
+        readonly argv: readonly string[];
+        readonly stdout: Uint8Array;
+      }
+    | undefined;
   readonly standard: CodexStandardHookInspection;
 }
 
@@ -121,6 +129,17 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   const hookFile = inspectFile(input.filesystem, CODEX_HOOK_EXECUTABLE);
   const settingsFile = inspectFile(input.filesystem, CODEX_HOOK_REQUIREMENTS_PATH);
   const settingsText = settingsFile.text ?? "";
+  const canonicalFile = inspectCanonicalProofFile(input.filesystem);
+  if (!canonicalFile.matchesPlaceholderText)
+    failures.push("Native apply_patch did not leave the canonical proof file as placeholders");
+  const nativeFileRead = inspectStandardProofNativeFileRead(
+    input.nativeFileRead,
+    CODEX_SECRET_READ_COMMAND,
+  );
+  if (!nativeFileRead.commandMatched)
+    failures.push("Codex did not execute the expected native cat command");
+  if (!nativeFileRead.matchesFilledBytes)
+    failures.push("Codex native cat output did not match the filled file bytes");
   const expectedIds = CODEX_HOOK_REGISTRATIONS.map(({ id }) => id);
   const events = CODEX_HOOK_REGISTRATIONS.map(({ id, event, kind }) => {
     const records = originalInvocations.filter((invocation) => invocation.id === id);
@@ -138,9 +157,9 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
       elapsedMs: record?.elapsedMs ?? null,
       timingUnavailableReason: record?.timingUnavailableReason ?? null,
       exit: record?.exit ?? null,
-      stdout: record?.stdout === undefined ? null : redactCodexProofText(record.stdout),
-      stderr: record?.stderr === undefined ? null : redactCodexProofText(record.stderr),
-      error: record?.error === undefined ? null : redactCodexProofText(record.error),
+      stdout: record?.stdout ?? null,
+      stderr: record?.stderr ?? null,
+      error: record?.error ?? null,
     };
   });
 
@@ -259,8 +278,11 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
     .map(({ request }) => request.event)
     .filter((event) => event === "pre-tool-use" || event === "post-tool-use")
     .sort();
-  if (standardRpcEvents.join(",") !== "post-tool-use,post-tool-use,pre-tool-use,pre-tool-use")
-    failures.push("Standard RPC hooks did not receive both native tool events");
+  if (
+    standardRpcEvents.join(",") !==
+    "post-tool-use,post-tool-use,post-tool-use,pre-tool-use,pre-tool-use,pre-tool-use"
+  )
+    failures.push("Standard RPC hooks did not receive all three native tool events");
   if (
     input.signalboxCalls.some(
       ({ request }) => request.sessionId !== readRecord(request.payload)?.session_id,
@@ -339,10 +361,10 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
       })),
     invocations: input.invocations.map((record) => ({
       ...record,
-      input: redactCodexProofValue(record.input),
-      ...(record.stdout === undefined ? {} : { stdout: redactCodexProofText(record.stdout) }),
-      ...(record.stderr === undefined ? {} : { stderr: redactCodexProofText(record.stderr) }),
-      ...(record.error === undefined ? {} : { error: redactCodexProofText(record.error) }),
+      input: record.input,
+      ...(record.stdout === undefined ? {} : { stdout: record.stdout }),
+      ...(record.stderr === undefined ? {} : { stderr: record.stderr }),
+      ...(record.error === undefined ? {} : { error: record.error }),
     })),
     registrations: CODEX_HOOK_REGISTRATIONS.map(({ id, event, kind }) => ({
       id,
@@ -350,34 +372,42 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
       kind,
     })),
     standardRegistrations: CODEX_STANDARD_HOOK_REGISTRATIONS,
-    nativeFileFill: "unproved: this Codex fixture covers command-hook environment fill only",
+    nativeFileFill: {
+      kind: "official-apply-patch-then-bash-cat",
+      path: CODEX_SECRET_FILE_PATH,
+      command: CODEX_SECRET_READ_COMMAND,
+      commandMatched: nativeFileRead.commandMatched,
+      rawOutputBytes: nativeFileRead.outputBytes,
+      expectedFilledBytes: nativeFileRead.expectedBytes,
+      matchesFilledBytes: nativeFileRead.matchesFilledBytes,
+      canonicalPlaceholderBytes: canonicalFile.bytes,
+      canonicalMatchesPlaceholders: canonicalFile.matchesPlaceholderText,
+    },
     preservedInput: {
       preToolUse: capturedPreToolUse,
-      signalboxEvents: redactCodexProofValue(
-        input.signalboxCalls.map(({ request }) => ({
-          event: request.event,
-          payload: request.payload,
-        })),
-      ),
-      generatedPostToolUse: redactCodexProofValue(generatedCalls.map((call) => call.input)),
+      signalboxEvents: input.signalboxCalls.map(({ request }) => ({
+        event: request.event,
+        payload: request.payload,
+      })),
+      generatedPostToolUse: generatedCalls.map((call) => call.input),
     },
-    outputDecisions: redactCodexProofValue({
+    outputDecisions: {
       sessionStart,
       preToolUse,
       postToolUse,
       stop,
-    }),
-    isolateCalls: redactCodexProofValue(input.isolateCalls),
-    generatedCalls: redactCodexProofValue(input.generatedCalls),
-    signalboxCalls: redactCodexProofValue(input.signalboxCalls),
-    officialSpawnCalls: redactCodexProofValue(input.spawnCalls),
+    },
+    isolateCalls: input.isolateCalls,
+    generatedCalls: input.generatedCalls,
+    signalboxCalls: input.signalboxCalls,
+    officialSpawnCalls: input.spawnCalls,
     officialHookShell: {
       selectedBy: "Codex hook command runner using the proof SHELL path",
       expectedExecutable: expectedNativeShell,
       observedExecutables: officialHookSpawns.map(({ executable }) => executable),
-      calls: redactCodexProofValue(officialHookSpawns),
+      calls: officialHookSpawns,
     },
-    machineAttempts: redactCodexProofValue(input.machineAttempts),
+    machineAttempts: input.machineAttempts,
     executableFacade: hookFile,
     requirementsPath: CODEX_HOOK_REQUIREMENTS_PATH,
     engineProcessPid: parentInfo.status === "ok" ? parentInfo.value.pid : null,
@@ -410,6 +440,18 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
       })),
     },
   };
+}
+
+function inspectCanonicalProofFile(filesystem: KernelFileSystem) {
+  try {
+    const bytes = readFile(filesystem, CODEX_SECRET_FILE_PATH);
+    return {
+      bytes: bytes.byteLength,
+      matchesPlaceholderText: sameBytes(bytes, encoder.encode(STANDARD_PROOF_WRITE)),
+    };
+  } catch {
+    return { bytes: null, matchesPlaceholderText: false };
+  }
 }
 
 function isOfficialHookCommandSpawn(call: SpawnCallRecord): boolean {
