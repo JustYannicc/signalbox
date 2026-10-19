@@ -19,6 +19,7 @@ import {
 } from "./Deployment.ts";
 import { openLocalProofTunnel } from "./LocalTunnel.ts";
 import { prepareProofSeed } from "./Seed.ts";
+import { prepareProofWorker } from "./PrepareWorker.ts";
 
 const options = NodeUtil.parseArgs({
   options: {
@@ -69,6 +70,29 @@ const seed = options["recover-stage-file"]
       await stage.update("failed-before-deploy");
       throw new Error("Proof seed preparation failed");
     });
+const workerDirectory = NodePath.resolve(
+  NodePath.dirname(stagePath),
+  `${stage.record.stage}-worker`,
+);
+const entryPoint = NodePath.join(workerDirectory, "worker.js");
+if (seed !== undefined) {
+  try {
+    const prepared = await prepareProofWorker({ seed, outputDirectory: workerDirectory });
+    if (prepared.entryPoint !== entryPoint) throw new Error("Unexpected proof Worker entrypoint");
+    receipt = { ...receipt, checks: { ...receipt.checks, workerPreparation: "passed" } };
+    await save();
+  } catch {
+    receipt = {
+      ...receipt,
+      checks: { ...receipt.checks, workerPreparation: "failed", localProof: "failed" },
+    };
+    await save();
+    await stage.update("failed-before-deploy");
+    throw new Error("Proof Worker preparation failed");
+  }
+} else if (!(await NodeFSP.stat(entryPoint).catch(() => undefined))?.isFile()) {
+  throw new Error("The original generated proof Worker bundle is required for recovery");
+}
 const stateDir = NodePath.resolve(NodePath.dirname(stagePath), `${stage.record.stage}-local-state`);
 await NodeFSP.mkdir(stateDir, { recursive: true, mode: 0o700 });
 const config = NodePath.resolve(stateDir, "wrangler.json");
@@ -76,7 +100,8 @@ await NodeFSP.writeFile(
   config,
   JSON.stringify({
     name: proofOwner(stage.record.stage),
-    main: NodePath.resolve(import.meta.dirname, "worker.ts"),
+    main: entryPoint,
+    no_bundle: true,
     compatibility_date: "2026-06-04",
     compatibility_flags: ["nodejs_compat", "legacy_module_registry"],
     worker_loaders: [{ binding: "CHILD_WORKERS" }],
@@ -86,8 +111,9 @@ await NodeFSP.writeFile(
   { mode: 0o600 },
 );
 const token = deriveProofToken(apiKey, stage.record.stage);
-const worker = await unstable_dev(NodePath.resolve(import.meta.dirname, "worker.ts"), {
+const worker = await unstable_dev(entryPoint, {
   config,
+  bundle: false,
   ip: "127.0.0.1",
   port: 0,
   inspectorPort: 0,

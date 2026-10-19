@@ -27,6 +27,7 @@ import {
 } from "./NestedCommand.ts";
 import type { ProofRecoveryReceipt } from "./OwnerReplacement.ts";
 import { proofRecoveryReceipt } from "./Recovery.ts";
+import { createProofChildLoader } from "./ChildLoader.ts";
 
 const SOURCE_PHASE_CHECKS = {
   directoriesExec: "sourceDirectoriesExec",
@@ -86,7 +87,8 @@ export async function runComputerBoxdProof(input: {
 }) {
   const { ownership, seed, signal } = input;
   await ownership.check("kernelSetup", "pending");
-  const kernel = proofKernel(ownership.storage, input.loader, seed);
+  const loader = createProofChildLoader(input.loader);
+  const kernel = proofKernel(ownership.storage, loader, seed);
   const commandReporter: ProofCommandReporter = async (step, outcome, diagnostics) => {
     await ownership.check(COMMAND_PHASE_CHECKS[step], outcome);
     for (const diagnostic of diagnostics ?? []) {

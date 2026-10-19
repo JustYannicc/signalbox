@@ -27,7 +27,8 @@ export default Alchemy.Stack(
 
     const worker = yield* Cloudflare.Worker("ComputerBoxdProof", {
       name: proofOwner(stage),
-      main: `${import.meta.dirname}/computerBoxdProof/worker.ts`,
+      main: yield* Config.String("BOXD_PROOF_WORKER_ENTRY"),
+      bundle: false,
       compatibility: {
         date: "2026-06-04",
         flags: ["nodejs_compat", "legacy_module_registry"],

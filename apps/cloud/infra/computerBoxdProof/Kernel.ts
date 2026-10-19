@@ -15,11 +15,12 @@ import { createComputerProgramAdmission } from "../../src/computer/ComputerProgr
 import type { KernelCommandForwarder } from "../../src/kernel/KernelCommandForwarder.ts";
 import type { ForkCommit } from "../../src/kernel/FilePersistencePorts.ts";
 import { nestedProofEscalation } from "./NestedCommand.ts";
+import type { ChildWorkerLoaderPort } from "../../src/computer/WorkerLoaderDispatch.ts";
 
 /** One facet SQLite filesystem and durable one-file proof revision repository. */
 export function proofKernel(
   database: FacetStorage,
-  loader: WorkerLoader,
+  loader: WorkerLoader | ChildWorkerLoaderPort,
   seed: Awaited<ReturnType<typeof decodeProofSeed>>,
 ) {
   const state = openProofFilesystem(database);

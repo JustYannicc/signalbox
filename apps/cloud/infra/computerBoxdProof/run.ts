@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - the standalone CLI owns deployment deadlines and recovery polling.
 import { proofInputEvidence } from "./InputEvidence.ts";
 import * as NodePath from "node:path";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeUtil from "node:util";
 import type { ProofMode } from "./ProofProtocol.ts";
 
 import { runProcess } from "../isolateProbe/process.ts";
+import { prepareProofWorker } from "./PrepareWorker.ts";
 import {
   ProofLauncherFailure,
   createReceiptFile,
@@ -96,16 +98,29 @@ async function mergeStatus(context: Context, value: unknown) {
   return evidence;
 }
 
-function envFor(stage: string, apiKey: string) {
+function envFor(stage: string, apiKey: string, stageFilePath: string) {
   const env = { ...process.env };
   env.BOXD_API_KEY = apiKey;
   env.BOXD_PROOF_TOKEN = deriveProofToken(apiKey, stage);
   env.BOXD_PROOF_OWNER = proofOwner(stage);
+  env.BOXD_PROOF_WORKER_ENTRY = NodePath.resolve(
+    NodePath.dirname(stageFilePath),
+    `${stage}-worker`,
+    "worker.js",
+  );
   return env;
 }
 
 async function alchemy(action: "deploy" | "destroy", context: Context) {
   try {
+    if (
+      action === "deploy" &&
+      !(await NodeFSP.stat(context.env.BOXD_PROOF_WORKER_ENTRY!).catch(() => undefined))?.isFile()
+    ) {
+      throw new ProofLauncherFailure(
+        "The original generated proof Worker bundle is required for deployment or recovery.",
+      );
+    }
     const result = await runProcess({
       command: NodePath.join(cloudDir, "node_modules/.bin/alchemy"),
       args: [action, stack, "--stage", context.stageFile.record.stage, "--yes", "--no-input"],
@@ -318,7 +333,7 @@ async function runProof(options: RunOptions, signal: AbortSignal) {
     stageFile,
     receipt,
     writeReceipt,
-    env: apiKey ? envFor(stage, apiKey) : { ...process.env },
+    env: apiKey ? envFor(stage, apiKey, options.stageFile) : { ...process.env },
     token: apiKey ? deriveProofToken(apiKey, stage) : "",
     signal,
   };
@@ -341,6 +356,14 @@ async function runProof(options: RunOptions, signal: AbortSignal) {
       inputs: proofInputEvidence(seed),
     });
     await check(context, "seedPreparation", "passed");
+    activeCheck = "workerPreparation";
+    const prepared = await prepareProofWorker({
+      seed,
+      outputDirectory: NodePath.dirname(context.env.BOXD_PROOF_WORKER_ENTRY!),
+    });
+    if (prepared.entryPoint !== context.env.BOXD_PROOF_WORKER_ENTRY)
+      throw new ProofLauncherFailure("Proof Worker preparation returned an unexpected entrypoint.");
+    await check(context, "workerPreparation", "passed");
     activeCheck = "workerDeployment";
     await stageFile.update("deploying");
     deploymentAttempted = true;
@@ -440,7 +463,7 @@ async function recoverProof(options: RecoverOptions, signal: AbortSignal) {
     await check(context, "workerRemoval", "skipped");
     throw new ProofLauncherFailure("BOXD_API_KEY is required for recovery.");
   }
-  context.env = envFor(record.stage, apiKey);
+  context.env = envFor(record.stage, apiKey, options.recoverStageFile);
   context.token = deriveProofToken(apiKey, record.stage);
   if (record.phase === "cleanup-confirmed" || record.phase === "destroying") {
     await save(context, { ...context.receipt, cleanup: "confirmed_absent" });
