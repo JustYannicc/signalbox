@@ -3,16 +3,26 @@ import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandFo
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import type { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
+import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 
-export type ChildWorkerModule = string | { readonly js: string } | { readonly wasm: ArrayBuffer };
+export type ChildWorkerModule =
+  | string
+  | { readonly js: string }
+  | { readonly wasm: ArrayBuffer | WebAssembly.Module }
+  | { readonly wasmReference: string };
+
+export type ChildWorkerModules = Readonly<Record<string, ChildWorkerModule>>;
+export type ChildWorkerModulesFactory = () => ChildWorkerModules | Promise<ChildWorkerModules>;
 
 export interface ChildWorkerCode {
   readonly mainModule: string;
-  readonly modules: Readonly<Record<string, ChildWorkerModule>>;
+  readonly modules: ChildWorkerModules | ChildWorkerModulesFactory;
   readonly entrypoint?: string;
+  readonly limits?: ChildWorkerLimits;
 }
 
-export interface ChildWorkerInvocation extends ChildWorkerCode {
+export interface ChildWorkerInvocation extends Omit<ChildWorkerCode, "modules"> {
+  readonly modules: ChildWorkerModules;
   readonly command: KernelCommand;
 }
 
@@ -39,42 +49,42 @@ export interface ChildWorkerProgramOptions<Host extends object> {
 export function createChildWorkerProgram<Host extends object>(
   options: ChildWorkerProgramOptions<Host>,
 ): Extract<KernelProgramImplementation, { readonly kind: "async" }> {
-  const code: ChildWorkerCode = Object.freeze({
-    mainModule: options.code.mainModule,
-    modules: Object.freeze(
-      Object.fromEntries(
-        Object.entries(options.code.modules).map(([name, module]) => [
-          name,
-          typeof module === "string"
-            ? module
-            : "wasm" in module
-              ? Object.freeze({ wasm: module.wasm.slice(0) })
-              : Object.freeze({ js: module.js }),
-        ]),
-      ),
-    ),
-    ...(options.code.entrypoint === undefined ? {} : { entrypoint: options.code.entrypoint }),
+  const {
+    executable,
+    capacity,
+    dispatch,
+    createHost,
+    code: { mainModule, modules: moduleSource, entrypoint, limits },
+  } = options;
+  const code = Object.freeze({
+    mainModule,
+    ...(entrypoint === undefined ? {} : { entrypoint }),
+    limits: resolveChildWorkerLimits(limits),
   });
+  const loadModules = createModuleLoader(moduleSource);
   return Object.freeze({
     kind: "async" as const,
     async run(context: KernelAsyncProgramContext) {
       const result = Promise.withResolvers<KernelCommandExit>();
-      const lifetime = options.capacity.run(context.signal, async () => {
+      const lifetime = capacity.run(context.signal, async () => {
         context.signal.throwIfAborted();
-        const owner = options.createHost(context);
+        const modules = await loadModules();
+        context.signal.throwIfAborted();
+        const owner = createHost(context);
         if (owner.exited !== undefined) void owner.exited.then(result.resolve, result.reject);
         let failure: ChildWorkerDispatchError | undefined;
         try {
-          return await options.dispatch.run(
-            {
+          return await dispatch.run(
+            Object.freeze({
               ...code,
+              modules,
               command: {
-                executable: options.executable,
+                executable,
                 argv: [...context.args],
                 cwd: context.filesystem.cwd,
                 env: { ...context.env },
               },
-            },
+            }),
             owner.host,
           );
         } catch (error) {
@@ -103,4 +113,34 @@ export function createChildWorkerProgram<Host extends object>(
       return result.promise;
     },
   });
+}
+
+function createModuleLoader(source: ChildWorkerModules | ChildWorkerModulesFactory) {
+  if (typeof source === "function") return createFactoryModuleLoader(source);
+  return createStaticModuleLoader(captureModules(source));
+}
+
+function createFactoryModuleLoader(source: ChildWorkerModulesFactory) {
+  return async () => captureModules(await source());
+}
+
+function createStaticModuleLoader(modules: ChildWorkerModules) {
+  return async () => modules;
+}
+
+function captureModules(modules: ChildWorkerModules): ChildWorkerModules {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(modules).map(([name, module]) => [
+        name,
+        typeof module === "string"
+          ? module
+          : "wasmReference" in module
+            ? Object.freeze({ wasmReference: module.wasmReference })
+            : "wasm" in module
+              ? Object.freeze({ wasm: module.wasm })
+              : Object.freeze({ js: module.js }),
+      ]),
+    ),
+  );
 }

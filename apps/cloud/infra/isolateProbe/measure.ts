@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
 import { createTestHarness } from "wrangler";
 import { prepare } from "./prepare.ts";
+import { readChildProgramWasmInventory } from "./programWasmRegistryGeneration.ts";
 import { verificationErrors } from "./verify.ts";
 import { requestJson } from "./transport.ts";
 import {
@@ -129,12 +130,16 @@ const { values } = NodeUtil.parseArgs({
     fixture: { type: "string" },
     output: { type: "string" },
     "measure-only": { type: "boolean", default: false },
+    "program-wasm-inventory": { type: "string" },
   },
 });
 const deployedUrl = values.url ?? process.env.PROBE_URL;
 const token = deployedUrl ? process.env.PROBE_SECRET : "local-probe-only";
 if (!token) throw new Error("Set PROBE_SECRET for a deployed probe.");
-await prepare();
+const programWasmInventory = await readChildProgramWasmInventory(
+  values["program-wasm-inventory"] ?? process.env.ISOLATE_PROBE_PROGRAM_WASM_INVENTORY,
+);
+const preparedModules = await prepare({ programWasmArtifacts: programWasmInventory.artifacts });
 const harness = deployedUrl
   ? undefined
   : createTestHarness({
@@ -294,6 +299,8 @@ try {
     environment: deployedUrl ? "deployed" : "local-workerd",
     measuredAt: new Date().toISOString(),
     runId,
+    programWasmInventorySha256: programWasmInventory.inventorySha256,
+    preparedModules,
     rows,
     verificationErrors: verificationErrors(rows),
   };

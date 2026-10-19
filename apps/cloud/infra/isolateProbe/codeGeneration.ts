@@ -1,10 +1,16 @@
 import { type RpcTarget, WorkerEntrypoint, exports as hostExports } from "cloudflare:workers";
+import {
+  type ChildWorkerLimits,
+  type ResolvedChildWorkerLimits,
+  resolveChildWorkerLimits,
+} from "../../src/computer/ChildWorkerLimits.ts";
 import type { NodeGeneratedCodeInvocation } from "../../src/isolate/NodeGeneratedCode.ts";
 import { MANAGED_INVOCATION_VERSION, managedInvocationModules } from "./managedInvocation.ts";
 import { DEFAULT_MODULE_TRANSPORT_LIMITS } from "./moduleTransport.ts";
 
 interface Props {
   namespace: string;
+  limits?: ChildWorkerLimits;
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -61,20 +67,24 @@ async function invokeNative(
   namespace: string,
   input: ReturnType<typeof invocation>,
   signal: AbortSignal,
+  limits: ResolvedChildWorkerLimits,
 ) {
   const digest = await codeIdentity(input);
-  const worker = loader.get(JSON.stringify(["generated", namespace, digest]), () => ({
+  const worker = loader.get(JSON.stringify(["generated", namespace, digest, limits.cpuMs]), () => ({
     compatibilityDate: "2026-10-18",
     mainModule: input.mainModule,
     modules: input.modules,
     globalOutbound: null,
+    limits,
   }));
-  return await worker.getEntrypoint().fetch("https://generated.invalid/invoke", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input.input),
-    signal,
-  });
+  return await worker
+    .getEntrypoint(undefined, { limits })
+    .fetch("https://generated.invalid/invoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input.input),
+      signal,
+    });
 }
 
 interface ManagedEntrypoint extends WorkerEntrypoint {
@@ -83,21 +93,32 @@ interface ManagedEntrypoint extends WorkerEntrypoint {
 
 export class CodeGeneration extends WorkerEntrypoint<{ LOADER: WorkerLoader }, Props> {
   async open(envelope: string) {
+    const limits = resolveChildWorkerLimits(this.ctx.props.limits);
     const input = invocation(JSON.parse(envelope));
     const digest = await codeIdentity(input);
     const worker = this.env.LOADER.get(
-      JSON.stringify(["generated", this.ctx.props.namespace, MANAGED_INVOCATION_VERSION, digest]),
+      JSON.stringify([
+        "generated",
+        this.ctx.props.namespace,
+        MANAGED_INVOCATION_VERSION,
+        digest,
+        limits.cpuMs,
+      ]),
       () => ({
         compatibilityDate: "2026-10-18",
         ...managedInvocationModules(input.mainModule, input.modules),
         globalOutbound: null,
         env: {},
+        limits,
       }),
     );
-    return await worker.getEntrypoint<ManagedEntrypoint>("ManagedInvocation").open(input.input);
+    return await worker
+      .getEntrypoint<ManagedEntrypoint>("ManagedInvocation", { limits })
+      .open(input.input);
   }
 
   override async fetch(request: Request) {
+    const limits = resolveChildWorkerLimits(this.ctx.props.limits);
     if (new URL(request.url).pathname !== "/invoke") {
       return new Response("CODE_GENERATION: use /invoke", { status: 404 });
     }
@@ -118,7 +139,13 @@ export class CodeGeneration extends WorkerEntrypoint<{ LOADER: WorkerLoader }, P
       return new Response(`CODE_GENERATION: invalid invocation: ${String(error)}`, { status: 400 });
     }
     try {
-      return await invokeNative(this.env.LOADER, this.ctx.props.namespace, input, request.signal);
+      return await invokeNative(
+        this.env.LOADER,
+        this.ctx.props.namespace,
+        input,
+        request.signal,
+        limits,
+      );
     } catch (error) {
       if (request.signal.aborted) throw error;
       return new Response(`CODE_GENERATION: native execution failed: ${String(error)}`, {
@@ -128,9 +155,10 @@ export class CodeGeneration extends WorkerEntrypoint<{ LOADER: WorkerLoader }, P
   }
 }
 
-export function codeGenerationBinding(namespace: string) {
+export function codeGenerationBinding(namespace: string, limits?: ChildWorkerLimits) {
+  const resolved = resolveChildWorkerLimits(limits);
   // This is a native loopback Service Binding, serialized by WorkerLoader. Props stay in the host.
   // https://developers.cloudflare.com/dynamic-workers/usage/bindings/
   const entrypoints = hostExports as { CodeGeneration: LoopbackServiceStub<CodeGeneration> };
-  return entrypoints.CodeGeneration({ props: { namespace } });
+  return entrypoints.CodeGeneration({ props: { namespace, limits: resolved } });
 }
