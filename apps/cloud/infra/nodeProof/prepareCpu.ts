@@ -166,6 +166,7 @@ export class ProcessCpuFacet extends DurableObject {
       await this.checkInlineRejectionFailure(checks);
       await this.checkDescriptorWaits(checks);
       await this.checkDescriptorClockFailures(checks);
+      await this.checkFulfilledDescriptorFaults(checks);
       const final=release.read().value;
       checks.monotonic=final.user>=initial.value.user && final.system>=initial.value.system;
       const difference=release.read(initial.value).value;

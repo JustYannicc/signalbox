@@ -205,36 +205,41 @@ export class AgentOsDescriptorOperations {
     let fault: { error: unknown } | undefined;
     let pending: Promise<number> | undefined;
     try {
-      return await runCurrentKernelCpuAsyncSystemImport((runSystem) => {
-        pending = run(async (call) => {
-          try {
-            await runAsync(call, <V>(step: () => V) => {
+      return await runCurrentKernelCpuAsyncSystemImport(
+        (runSystem) => {
+          pending = run(async (call) => {
+            try {
+              await runAsync(call, <V>(step: () => V) => {
+                if (fault) throw fault.error;
+                let result!: { value: V } | { error: unknown };
+                try {
+                  runSystem(() => {
+                    // Operation exceptions cross errno mapping only after the meter leaves.
+                    try {
+                      result = { value: step() };
+                    } catch (error) {
+                      result = { error };
+                    }
+                  });
+                } catch (error) {
+                  fault = { error };
+                  throw error;
+                }
+                if ("error" in result) throw result.error;
+                return result.value;
+              });
+              return 0;
+            } catch (error) {
               if (fault) throw fault.error;
-              let result!: { value: V } | { error: unknown };
-              try {
-                runSystem(() => {
-                  // Operation exceptions cross errno mapping only after the meter leaves.
-                  try {
-                    result = { value: step() };
-                  } catch (error) {
-                    result = { error };
-                  }
-                });
-              } catch (error) {
-                fault = { error };
-                throw error;
-              }
-              if ("error" in result) throw result.error;
-              return result.value;
-            });
-            return 0;
-          } catch (error) {
-            if (fault) throw fault.error;
-            return toErrno(error);
-          }
-        });
-        return pending;
-      });
+              return toErrno(error);
+            }
+          });
+          return pending;
+        },
+        (error) => {
+          fault ??= { error };
+        },
+      );
     } catch (error) {
       fault ??= { error };
       // A wrapper leave can fail while a backend is pending. Stop its next step

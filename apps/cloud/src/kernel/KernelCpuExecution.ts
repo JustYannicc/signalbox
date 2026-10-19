@@ -226,34 +226,41 @@ export function runCurrentKernelCpuSystemImport<T>(run: () => T): T {
 /** Runs generator steps as system work while leaving each yielded Promise uncharged. */
 export async function runCurrentKernelCpuAsyncSystemImport<T>(
   run: (runSystem: <V>(step: () => V) => V) => T | PromiseLike<T>,
+  onFailure?: (error: unknown) => void,
 ): Promise<T> {
-  const state = executionContexts.getStore();
-  if (!state) return await run((step) => step());
-  const resume = pauseState(state);
   try {
-    let result: Promise<T>;
+    const state = executionContexts.getStore();
+    if (!state) return await run((step) => step());
+    const resume = pauseState(state);
     try {
-      const leaveSystem = enterScope(state, "system");
+      let result: Promise<T>;
       try {
-        result = Promise.resolve(run((step) => runCurrentKernelCpuSystem(step)));
-        // Leaving can throw after work has started; keep its rejection owned.
-        void result.catch(() => undefined);
-      } finally {
-        leaveSystem();
+        const leaveSystem = enterScope(state, "system");
+        try {
+          result = Promise.resolve(run((step) => runCurrentKernelCpuSystem(step)));
+          // Leaving can throw after work has started; keep its rejection owned.
+          void result.catch(() => undefined);
+        } finally {
+          leaveSystem();
+        }
+      } catch (error) {
+        resume(false);
+        throw error;
       }
-    } catch (error) {
-      resume(false);
-      throw error;
+      const value = await result;
+      try {
+        return state.process.runSystem(() => value);
+      } catch (error) {
+        resume(false);
+        throw error;
+      }
+    } finally {
+      resume();
     }
-    const value = await result;
-    try {
-      return state.process.runSystem(() => value);
-    } catch (error) {
-      resume(false);
-      throw error;
-    }
-  } finally {
-    resume();
+  } catch (error) {
+    // Notify owners before an already-fulfilled yielded continuation can advance.
+    onFailure?.(error);
+    throw error;
   }
 }
 

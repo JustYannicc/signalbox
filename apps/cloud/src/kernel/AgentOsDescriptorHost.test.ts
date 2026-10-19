@@ -246,6 +246,67 @@ describe("AgentOS host_process descriptor imports", () => {
     }
   });
 
+  it.each(["sync", "fulfilled"] as const)(
+    "unwinds an already %s close before a failed wrapper can publish dup2",
+    async (outcome) => {
+      let reads = 0;
+      let failAt = 0;
+      const expected = new Error("wrapper clock failure");
+      const execution = new KernelCpuExecution(
+        new KernelCpuAccounting(() => {
+          if (++reads === failAt) throw expected;
+          return 0n;
+        }),
+      );
+      const test = fixture(true);
+      let sourceCloses = 0;
+      let targetCloses = 0;
+      const spec = {
+        kind: "stdio",
+        offset: 0n,
+        rightsBase: 0n,
+        rightsInheriting: 0n,
+        flags: 0,
+      } as const;
+      const source = test.fileSystem.descriptors.allocate({
+        ...spec,
+        onLastClose: () => {
+          sourceCloses++;
+        },
+      });
+      const target = test.fileSystem.descriptors.allocate({
+        ...spec,
+        onLastClose: () => {
+          targetCloses++;
+          failAt = reads + 2;
+          return outcome === "fulfilled" ? Promise.resolve() : undefined;
+        },
+      });
+      try {
+        const result = await execution.root.run(async () => {
+          const leave = execution.root.enterUser();
+          try {
+            return await runCurrentKernelCpuAwaitableSystemImport(() =>
+              test.host.imports.fd_dup2(source, target),
+            );
+          } catch (error) {
+            return error;
+          } finally {
+            leave();
+          }
+        });
+        expect(result).toBe(expected);
+        expect(test.fileSystem.descriptors.has(target)).toBe(false);
+        expect(await test.host.imports.fd_dup2(source, target)).toBe(0);
+        expect(await test.host.imports.proc_closefrom(source)).toBe(0);
+        expect([sourceCloses, targetCloses]).toEqual([1, 1]);
+        execution.root.stop();
+      } finally {
+        test.dispose();
+      }
+    },
+  );
+
   it.each(
     (["fd_dup2", "proc_closefrom"] as const).flatMap((operation) =>
       [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].flatMap((boundary) =>

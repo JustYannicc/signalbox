@@ -12,6 +12,39 @@ export const cpuReturnReactor = new Uint8Array([
 ]);
 
 export const cpuWasmCheckMethods = `
+  async checkFulfilledDescriptorFaults(checks) {
+    for(const outcome of ['sync','fulfilled']) {
+      let reads=0,failAt=0,sourceCloses=0,targetCloses=0;
+      const expected=new Error('Fulfilled descriptor wrapper clock failed');
+      const accounting=new KernelCpuAccounting(()=>{
+        if(++reads===failAt)throw expected;
+        return readClock();
+      });
+      const owner=new KernelProgramHost({registry:new KernelProgramRegistry(),wakes:this.wakes,
+        cpuAccounting:accounting}).cpuExecution.root;
+      const filesystem=new KernelFileSystem({mounts:[]});
+      const spec={kind:'stdio',offset:0n,rightsBase:0n,rightsInheriting:0n,flags:0,stdio:{write:()=>0}};
+      const source=filesystem.descriptors.allocate({...spec,onLastClose:()=>{sourceCloses++;}});
+      const target=filesystem.descriptors.allocate({...spec,onLastClose:()=>{
+        targetCloses++;failAt=reads+2;return outcome==='fulfilled'?Promise.resolve():undefined;
+      }});
+      const memory=new WebAssembly.Memory({initial:1});
+      const host=new AgentOsDescriptorHost({memory:()=>memory,descriptors:filesystem.descriptors,
+        wakes:this.wakes,asyncMode:true});
+      try {
+        const result=await owner.run(async()=>{
+          const leave=owner.enterUser();
+          try {return await runCurrentKernelCpuAwaitableSystemImport(()=>host.imports.fd_dup2(source,target));}
+          catch(error){return error;}
+          finally {leave();}
+        });
+        checks[outcome+'DescriptorFaultBeforeCommit']=result===expected && !filesystem.descriptors.has(target);
+        const reused=await host.imports.fd_dup2(source,target);
+        const closed=await host.imports.proc_closefrom(source);
+        checks[outcome+'DescriptorFaultOwnershipReleased']=reused===0 && closed===0 && sourceCloses===1 && targetCloses===1;
+      } finally {owner.stop();filesystem.dispose();}
+    }
+  }
   async checkDescriptorClockFailures(checks) {
     for(const operation of ['fd_dup2','proc_closefrom']) {
       for(const outcome of ['resolve','reject']) {
