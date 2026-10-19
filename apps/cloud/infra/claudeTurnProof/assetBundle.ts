@@ -5,6 +5,8 @@ const maxHeaderBytes = 256 * 1024;
 const maxEntries = 512;
 const sha256Pattern = /^[0-9a-f]{64}$/;
 
+export const PROGRAM_BUNDLE_CONTENT_TYPE = "application/vnd.signalbox.claude-programs.v1";
+
 export type AssetBundleEntry = {
   path: string;
   bytes: Uint8Array;

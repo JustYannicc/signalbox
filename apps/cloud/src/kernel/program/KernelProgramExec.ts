@@ -38,7 +38,7 @@ export function runKernelAsyncProgram(
   const completeContext: KernelAsyncProgramContext = Object.freeze({
     ...context,
     exec: (request: KernelAsyncProgramExecRequest) =>
-      execKernelProgram(request, options, context.cpu),
+      execKernelProgram(request, options, context.cpu?.forProcess(request.identity.pid)),
   });
   const leaveUser = enterCurrentKernelCpuUser();
   let result: Promise<KernelExitStatus>;

@@ -251,6 +251,8 @@ export class WasiLifecycle {
     this.#active = true;
     let leaveUser: (() => void) | undefined;
     try {
+      // The caller must leave its synchronous CPU slice before this export owns an async slice.
+      await Promise.resolve();
       leaveUser = enterCurrentKernelCpuUser();
       return await getJSPI().promising(fn)(...args);
     } finally {

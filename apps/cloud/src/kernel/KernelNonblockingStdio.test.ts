@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { AgentOsDescriptorHost } from "./AgentOsDescriptorHost.ts";
 import { KernelFileSystem } from "./KernelFileSystem.ts";
 import { createKernelAsyncWasi } from "./KernelWasi.ts";
@@ -52,8 +52,10 @@ describe("WASI nonblocking stdio imports", () => {
       const poll = await wasiRunner(filesystem, wakes, "poll_oneoff", ["i32", "i32", "i32", "i32"]);
       wasiRunners.push(poll);
       writePollSubscription(poll.memory, readFd);
+      const pollRegistered = nextWakeRegistration(wakes);
       const pollWake = poll.run(0, 64, 1, 96);
       pending.push(pollWake);
+      await pollRegistered;
       expect(wakes.size).toBe(1);
       const wakeData = bytes("wake");
       writeIovec(write.memory, 64, 128, wakeData.byteLength, wakeData);
@@ -73,8 +75,10 @@ describe("WASI nonblocking stdio imports", () => {
       expect(await getFlags.run(readFd, 64)).toBe(0);
       expect(new DataView(getFlags.memory.buffer).getUint16(66, true)).toBe(0);
 
+      const readRegistered = nextWakeRegistration(wakes);
       const blockingRead = read.run(readFd, 64, 1, 80);
       pending.push(blockingRead);
+      await readRegistered;
       expect(wakes.size).toBe(1);
       expect(await setFlags.run(readAlias, NONBLOCK)).toBe(0);
       expect(() => filesystem.read(readFd, new Uint8Array(1), null)).toThrow(
@@ -94,8 +98,10 @@ describe("WASI nonblocking stdio imports", () => {
       const close = await wasiRunner(filesystem, wakes, "fd_close", ["i32"]);
       wasiRunners.push(close);
       writePollSubscription(poll.memory, readFd);
+      const eofRegistered = nextWakeRegistration(wakes);
       const pollEof = poll.run(0, 64, 1, 96);
       pending.push(pollEof);
+      await eofRegistered;
       expect(wakes.size).toBe(1);
       expect(await close.run(writeFd)).toBe(0);
       expect(await pollEof).toBe(0);
@@ -131,6 +137,17 @@ describe("WASI nonblocking stdio imports", () => {
     }
   });
 });
+
+function nextWakeRegistration(wakes: KernelWakeRegistry) {
+  const registered = Promise.withResolvers<void>();
+  const register = wakes.register.bind(wakes);
+  vi.spyOn(wakes, "register").mockImplementationOnce((subscribe) => {
+    const result = register(subscribe);
+    registered.resolve();
+    return result;
+  });
+  return registered.promise;
+}
 
 interface WasiImportRunner {
   readonly memory: WebAssembly.Memory;
