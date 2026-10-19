@@ -73,9 +73,8 @@ export function createProofFacet(engine, createHost, options = {}) {
         memoryMilestones = [];
       const mock = createMockResponses(options.mockResponses);
       const execution = { pending: false, enteredAt: null };
-      const model =
-        options.model?.({ mock, request, context: this.ctx, execution }) ??
-        createLocalProofModel({ mock, request });
+      const configuredModel = options.model?.({ mock, request, context: this.ctx, execution });
+      const model = configuredModel ?? createLocalProofModel({ mock, request });
       const stdoutDecoder = new TextDecoder(),
         stderrDecoder = new TextDecoder();
       let filesystem, binding, wakes, pipe, host, sessions, memory, driver, watchdog, composition;
@@ -171,12 +170,11 @@ export function createProofFacet(engine, createHost, options = {}) {
             }),
         });
         await composition?.prepare?.();
-        // HTTP gateway proofs supply only an HTTP port.
-        if (composition?.modelHttp && !options.model) {
-          model.supportsWebSockets = false;
-          model.baseUrl = "http://mock.invalid/v1";
-          model.maxRetries = 0;
-        }
+        const handleModelRequest = configureProofModelHttp(
+          model,
+          configuredModel,
+          composition?.modelHttp,
+        );
         binding = createKernelAsyncWasi({
           filesystem,
           wakes,
@@ -224,9 +222,7 @@ export function createProofFacet(engine, createHost, options = {}) {
           memory: () => memory,
           descriptors: binding.descriptors,
           mock,
-          ...((composition?.modelHttp ?? model.http) === undefined
-            ? {}
-            : { handleRequest: composition?.modelHttp ?? model.http }),
+          ...(handleModelRequest === undefined ? {} : { handleRequest: handleModelRequest }),
         });
         const imports = {
           ...binding.wasi.getImportObject(),
@@ -380,4 +376,14 @@ export function createProofFacet(engine, createHost, options = {}) {
       return Response.json(composition?.scrubRecord?.(result) ?? result);
     }
   };
+}
+
+export function configureProofModelHttp(model, configuredModel, modelHttp) {
+  // An observer can return undefined while the composed HTTP gateway still owns transport.
+  if (modelHttp && configuredModel === undefined) {
+    model.supportsWebSockets = false;
+    model.baseUrl = "http://mock.invalid/v1";
+    model.maxRetries = 0;
+  }
+  return modelHttp ?? model.http;
 }
