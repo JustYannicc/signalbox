@@ -13,6 +13,10 @@ import sys
 
 from binaryen import prepare_binaryen
 from dependencies.url_stage import prepare_url_dependency
+from emscripten import prepare_emscripten_toolchain
+from emscripten_crypto import prepare_emscripten_crypto
+from emscripten_deps import prepare_emscripten_dependencies
+from emscripten_http import prepare_emscripten_http
 from overlay import apply_overlay
 from sources import checkout, export_tree, read_pin, verify_checkout, verify_output_location
 from sqlite import prepare_sqlite_dependencies
@@ -22,14 +26,21 @@ from websocket import apply_websocket_overlay
 from workspace import patch_lock_updates, prepare_workspace, verify_engine_graph
 
 ROOT = Path(__file__).resolve().parent
-TARGETS = ("wasm32-wasip1",)
+TARGETS = ("wasm32-wasip1", "wasm32-unknown-emscripten")
 
 
-def engine_outputs(target_dir: Path):
-    module = target_dir / TARGETS[0] / "release" / "signalbox-codex-engine.wasm"
+def engine_outputs(target_dir: Path, target: str):
+    release = target_dir / target / "release"
+    binary = "signalbox-codex-engine"
+    emscripten = target == "wasm32-unknown-emscripten"
+    # Rust normalizes the Emscripten module name; emcc's JS keeps the bin name.
+    module = release / ((binary.replace("-", "_") if emscripten else binary) + ".wasm")
+    glue = release / (binary + ".js") if emscripten else None
     if not module.is_file():
         raise ValueError(f"Cargo succeeded without producing {module.name}")
-    return module
+    if glue is not None and not glue.is_file():
+        raise ValueError("Emscripten did not produce its JSPI factory")
+    return module, glue
 
 
 def command(args, *, cwd, env, capture=False):
@@ -61,11 +72,16 @@ def build(args):
         copied = output / "source"
         export_tree(source, copied, pin["commit"])
         report["overlay"] = apply_overlay(copied, args.target)
-        report["overlay"] += apply_websocket_overlay(copied, args.target)
-        patches = prepare_wasi_reactor(cache / "reactor", references,
-                                       prepare_dependencies(cache, references))
-        patches.update(prepare_url_dependency(cache, references))
-        patches = prepare_sqlite_dependencies(cache / "sqlite", references, patches)
+        if args.target == "wasm32-wasip1":
+            report["overlay"] += apply_websocket_overlay(copied, args.target)
+            patches = prepare_wasi_reactor(cache / "reactor", references,
+                                           prepare_dependencies(cache, references))
+            patches.update(prepare_url_dependency(cache, references))
+            patches = prepare_sqlite_dependencies(cache / "sqlite", references, patches)
+        else:
+            patches = {**prepare_emscripten_dependencies(cache, references),
+                       **prepare_emscripten_crypto(cache, references),
+                       **prepare_emscripten_http(cache, references)}
         workspace = prepare_workspace(copied, ROOT / "engine", patches, pin["version"])
         report["workspace"] = str(workspace.relative_to(output))
         if args.prepare_only:
@@ -73,6 +89,8 @@ def build(args):
             return
         environment = os.environ.copy()
         toolchain = prepare_wasi_toolchain(cache, references)
+        if args.target == "wasm32-unknown-emscripten":
+            toolchain = prepare_emscripten_toolchain(cache, toolchain)
         environment.update(toolchain)
         environment.update({"CARGO_TARGET_DIR": str(cache / "target" / pin["commit"] / args.target),
                             "CARGO_INCREMENTAL": "0", "CARGO_BUILD_JOBS": "2",
@@ -98,13 +116,17 @@ def build(args):
         if args.check:
             report["status"] = "checked"
             return
-        module = engine_outputs(Path(environment["CARGO_TARGET_DIR"]))
+        module, glue = engine_outputs(Path(environment["CARGO_TARGET_DIR"]), args.target)
         artifact = output / "artifact"
         artifact.mkdir()
         command([prepare_binaryen(cache), "--all-features", "-Oz", module, "-o", artifact / "engine.wasm"],
                 cwd=workspace, env=environment)
         shutil.copy2(workspace / "Cargo.lock", artifact / "Cargo.lock")
-        shutil.copy2(ROOT / "loader.mjs", artifact / "loader.mjs")
+        if glue is not None:
+            shutil.copy2(glue, artifact / "engine.mjs")
+            shutil.copy2(ROOT / "loader-emscripten.mjs", artifact / "loader.mjs")
+        else:
+            shutil.copy2(ROOT / "loader.mjs", artifact / "loader.mjs")
         inventory = json.loads(command(["node", ROOT / "inspect.mjs", artifact / "engine.wasm"],
                                        cwd=workspace, env=environment, capture=True))
         manifest = {**inventory, "abiVersion": 1, "version": pin["version"], "upstreamCommit": pin["commit"],

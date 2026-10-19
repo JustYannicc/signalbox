@@ -1,0 +1,510 @@
+--- a/nix/src/errno.rs
++++ b/nix/src/errno.rs
+@@ -32,7 +32,8 @@
+                         target_os = "redox",
+                         target_os = "dragonfly",
+                         target_os = "fuchsia",
+-                        target_os = "hurd"))] {
++                        target_os = "hurd",
++                        target_os = "emscripten"))] {
+         unsafe fn errno_location() -> *mut c_int {
+             unsafe { libc::__errno_location() }
+         }
+@@ -277,6 +278,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         ECHRNG => "Channel number out of range",
+@@ -285,6 +287,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         EL2NSYNC => "Level 2 not synchronized",
+@@ -293,6 +296,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         EL3HLT => "Level 3 halted",
+@@ -301,6 +305,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         EL3RST => "Level 3 reset",
+@@ -309,6 +314,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         ELNRNG => "Link number out of range",
+@@ -317,6 +323,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         EUNATCH => "Protocol driver not attached",
+@@ -325,6 +332,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         ENOCSI => "No CSI structure available",
+@@ -333,34 +341,36 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         EL2HLT => "Level 2 halted",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EBADE => "Invalid exchange",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EBADR => "Invalid request descriptor",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EXFULL => "Exchange full",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ENOANO => "No anode",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EBADRQC => "Invalid request code",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EBADSLT => "Invalid slot",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EBFONT => "Bad font file format",
+ 
+         #[cfg(any(
+             linux_android,
+             solarish,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "hurd"
+         ))]
+@@ -369,6 +379,7 @@
+         #[cfg(any(
+             linux_android,
+             solarish,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "hurd"
+         ))]
+@@ -377,6 +388,7 @@
+         #[cfg(any(
+             linux_android,
+             solarish,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "hurd"
+         ))]
+@@ -385,20 +397,22 @@
+         #[cfg(any(
+             linux_android,
+             solarish,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "hurd"
+         ))]
+         ENOSR => "Out of streams resources",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ENONET => "Machine is not on the network",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ENOPKG => "Package not installed",
+ 
+         #[cfg(any(
+             linux_android,
+             solarish,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "hurd"
+         ))]
+@@ -408,23 +422,25 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         ENOLINK => "Link has been severed",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EADV => "Advertise error",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ESRMNT => "Srmount error",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ECOMM => "Communication error on send",
+ 
+         #[cfg(any(
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia",
+         ))]
+         EPROTO => "Protocol error",
+@@ -433,14 +449,15 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         EMULTIHOP => "Multihop attempted",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EDOTDOT => "RFS specific error",
+ 
+-        #[cfg(any(linux_android, target_os = "aix", target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "aix", target_os = "fuchsia", target_os = "emscripten"))]
+         EBADMSG => "Not a data message",
+ 
+         #[cfg(solarish)]
+@@ -449,36 +466,38 @@
+         #[cfg(any(
+             linux_android,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "haiku",
+             target_os = "hurd"
+         ))]
+         EOVERFLOW => "Value too large for defined data type",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ENOTUNIQ => "Name not unique on network",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EBADFD => "File descriptor in bad state",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EREMCHG => "Remote address changed",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ELIBACC => "Can not access a needed shared library",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ELIBBAD => "Accessing a corrupted shared library",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ELIBSCN => ".lib section in a.out corrupted",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ELIBMAX => "Attempting to link in too many shared libraries",
+ 
+         #[cfg(any(
+             linux_android,
+             solarish,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "hurd"
+         ))]
+@@ -488,6 +507,7 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "openbsd"
+         ))]
+@@ -497,47 +517,50 @@
+             linux_android,
+             solarish,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         ERESTART => "Interrupted system call should be restarted",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         ESTRPIPE => "Streams pipe error",
+ 
+-        #[cfg(any(linux_android, solarish, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, solarish, target_os = "fuchsia", target_os = "emscripten"))]
+         EUSERS => "Too many users",
+ 
+         #[cfg(any(
+             linux_android,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "netbsd",
+             target_os = "redox"
+         ))]
+         EOPNOTSUPP => "Operation not supported on transport endpoint",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "hurd"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten", target_os = "hurd"))]
+         ESTALE => "Stale file handle",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EUCLEAN => "Structure needs cleaning",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         ENOTNAM => "Not a XENIX named type file",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         ENAVAIL => "No XENIX semaphores available",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EISNAM => "Is a named type file",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EREMOTEIO => "Remote I/O error",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EDQUOT => "Quota exceeded",
+ 
+         #[cfg(any(
+             linux_android,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "openbsd",
+             target_os = "dragonfly"
+@@ -546,6 +569,7 @@
+ 
+         #[cfg(any(
+             linux_android,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "openbsd"
+         ))]
+@@ -554,26 +578,28 @@
+         #[cfg(any(
+             linux_android,
+             solarish,
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "haiku"
+         ))]
+         ECANCELED => "Operation canceled",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         ENOKEY => "Required key not available",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EKEYEXPIRED => "Key has expired",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EKEYREVOKED => "Key has been revoked",
+ 
+-        #[cfg(any(linux_android, target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+         EKEYREJECTED => "Key was rejected by service",
+ 
+         #[cfg(any(
+             linux_android,
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "fuchsia",
+             target_os = "hurd"
+         ))]
+@@ -582,7 +608,7 @@
+         #[cfg(solarish)]
+         EOWNERDEAD => "Process died with lock",
+ 
+-        #[cfg(any(linux_android, target_os = "aix", target_os = "fuchsia"))]
++        #[cfg(any(linux_android, target_os = "aix", target_os = "fuchsia", target_os = "emscripten"))]
+         ENOTRECOVERABLE => "State not recoverable",
+ 
+         #[cfg(solarish)]
+@@ -590,12 +616,14 @@
+ 
+         #[cfg(any(
+             all(target_os = "linux", not(target_arch = "mips")),
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         ERFKILL => "Operation not possible due to RF-kill",
+ 
+         #[cfg(any(
+             all(target_os = "linux", not(target_arch = "mips")),
++            target_os = "emscripten",
+             target_os = "fuchsia"
+         ))]
+         EHWPOISON => "Memory page has hardware error",
+@@ -832,7 +860,7 @@
+     }
+ }
+ 
+-#[cfg(any(linux_android, target_os = "fuchsia"))]
++#[cfg(any(linux_android, target_os = "fuchsia", target_os = "emscripten"))]
+ mod consts {
+     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+     #[repr(i32)]
+--- a/nix/src/sys/signal.rs
++++ b/nix/src/sys/signal.rs
+@@ -572,14 +572,22 @@
+     /// signal mask becomes pending, and returns the accepted signal.
+     #[cfg(not(target_os = "redox"))] // RedoxFS does not yet support sigwait
+     pub fn wait(&self) -> Result<Signal> {
+-        use std::convert::TryFrom;
+-
+-        let mut signum = mem::MaybeUninit::uninit();
+-        let res = unsafe { libc::sigwait(&self.sigset as *const libc::sigset_t, signum.as_mut_ptr()) };
+-
+-        Errno::result(res).map(|_| unsafe {
+-            Signal::try_from(signum.assume_init()).unwrap()
+-        })
++        #[cfg(target_os = "emscripten")]
++        {
++            // SDK 4.0.10 sigwait only checks emulated pending signals; this carrier cannot wait for OS signals.
++            Err(Errno::ENOSYS)
++        }
++        #[cfg(not(target_os = "emscripten"))]
++        {
++            use std::convert::TryFrom;
++
++            let mut signum = mem::MaybeUninit::uninit();
++            let res = unsafe { libc::sigwait(&self.sigset as *const libc::sigset_t, signum.as_mut_ptr()) };
++
++            Errno::result(res).map(|_| unsafe {
++                Signal::try_from(signum.assume_init()).unwrap()
++            })
++        }
+     }
+ 
+     /// Wait for a signal
+@@ -977,16 +985,25 @@
+         return Ok(())
+     }
+ 
+-    let res = unsafe {
+-        // if set or oldset is None, pass in null pointers instead
+-        libc::pthread_sigmask(how as libc::c_int,
+-                             set.map_or_else(ptr::null::<libc::sigset_t>,
+-                                             |s| &s.sigset as *const libc::sigset_t),
+-                             oldset.unwrap_or(ptr::null_mut())
+-                             )
+-    };
+-
+-    Errno::result(res).map(drop)
++    #[cfg(target_os = "emscripten")]
++    {
++        // SDK 4.0.10 pthread_sigmask dereferences a null set for queries; this carrier has no OS thread masks.
++        let _ = how;
++        Err(Errno::ENOSYS)
++    }
++    #[cfg(not(target_os = "emscripten"))]
++    {
++        let res = unsafe {
++            // if set or oldset is None, pass in null pointers instead
++            libc::pthread_sigmask(how as libc::c_int,
++                                 set.map_or_else(ptr::null::<libc::sigset_t>,
++                                                 |s| &s.sigset as *const libc::sigset_t),
++                                 oldset.unwrap_or(ptr::null_mut())
++                                 )
++        };
++
++        Errno::result(res).map(drop)
++    }
+ }
+ 
+ /// Manages the signal mask (set of blocked signals) for the calling thread.
+--- a/nix/src/unistd.rs
++++ b/nix/src/unistd.rs
+@@ -1,6 +1,19 @@
+ //! Safe wrappers around functions found in libc "unistd.h" header
+ 
+ use crate::errno::Errno;
++
++#[cfg(all(feature = "fs", target_os = "emscripten"))]
++mod emscripten_compat {
++    extern "C" {
++        // SDK 4.0.10 unistd.h and libc.a define this ABI; Rust libc 0.2.186 omits it.
++        pub(super) fn faccessat(
++            dirfd: libc::c_int,
++            path: *const libc::c_char,
++            mode: libc::c_int,
++            flags: libc::c_int,
++        ) -> libc::c_int;
++    }
++}
+ 
+ #[cfg(any(
+     all(feature = "fs", not(target_os = "redox")),
+@@ -3099,12 +3112,24 @@
+     flags: AtFlags,
+ ) -> Result<()> {
+     let res = path.with_nix_path(|cstr| unsafe {
+-        libc::faccessat(
+-            at_rawfd(dirfd),
+-            cstr.as_ptr(),
+-            mode.bits(),
+-            flags.bits(),
+-        )
++        #[cfg(target_os = "emscripten")]
++        {
++            emscripten_compat::faccessat(
++                at_rawfd(dirfd),
++                cstr.as_ptr(),
++                mode.bits(),
++                flags.bits(),
++            )
++        }
++        #[cfg(not(target_os = "emscripten"))]
++        {
++            libc::faccessat(
++                at_rawfd(dirfd),
++                cstr.as_ptr(),
++                mode.bits(),
++                flags.bits(),
++            )
++        }
+     })?;
+     Errno::result(res).map(drop)
+ }

@@ -1,0 +1,243 @@
+--- a/tokio/Cargo.toml
++++ b/tokio/Cargo.toml
+@@ -897,7 +897,7 @@
+ [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dev-dependencies.backtrace]
+ version = "0.3.58"
+ 
+-[target.'cfg(any(not(target_family = "wasm"), all(target_os = "wasi", not(target_env = "p1"))))'.dependencies.socket2]
++[target.'cfg(any(not(target_family = "wasm"), target_os = "emscripten", all(target_os = "wasi", not(target_env = "p1"))))'.dependencies.socket2]
+ version = "0.6.3"
+ features = ["all"]
+ optional = true
+--- a/tokio/src/net/unix/ucred.rs
++++ b/tokio/src/net/unix/ucred.rs
+@@ -330,3 +330,10 @@
+         })
+     }
+ }
++
++#[cfg(target_os = "emscripten")]
++pub(crate) fn get_peer_cred(_sock: &crate::net::unix::UnixStream) -> std::io::Result<UCred> {
++    // There is no verified peer-credential operation in this host adapter.
++    Err(std::io::Error::new(std::io::ErrorKind::Unsupported,
++        "Emscripten host peer credentials are unavailable"))
++}
+--- a/tokio/src/runtime/blocking/pool.rs
++++ b/tokio/src/runtime/blocking/pool.rs
+@@ -390,6 +390,20 @@
+         (handle, spawned)
+     }
+ 
++    #[cfg(target_os = "emscripten")]
++    fn spawn_task(&self, task: Task, rt: &Handle) -> Result<(), SpawnError> {
++        // Like agentOS's single-thread port, synchronous work runs inline.
++        // Keep Tokio's task harness for JoinError, hooks and cancellation.
++        if self.inner.shared.lock().shutdown {
++            task.task.shutdown();
++            return Err(SpawnError::ShuttingDown);
++        }
++        let _enter = rt.enter();
++        task.task.run();
++        Ok(())
++    }
++
++    #[cfg(not(target_os = "emscripten"))]
+     fn spawn_task(&self, task: Task, rt: &Handle) -> Result<(), SpawnError> {
+         let mut shared = self.inner.shared.lock();
+ 
+--- a/tokio/src/runtime/builder.rs
++++ b/tokio/src/runtime/builder.rs
+@@ -1060,6 +1060,15 @@
+     /// # }
+     /// ```
+     pub fn build(&mut self) -> io::Result<Runtime> {
++        // The feature stays available for dependency compatibility. Creating
++        // worker threads requires pthreads, which this adapter does not use.
++        #[cfg(all(target_os = "emscripten", feature = "rt-multi-thread"))]
++        if matches!(self.kind, Kind::MultiThread) {
++            return Err(io::Error::new(io::ErrorKind::Unsupported,
++                "Emscripten adapter supports only a current-thread Tokio runtime"));
++        }
++        #[cfg(target_os = "emscripten")]
++        super::emscripten::require_host()?;
+         match &self.kind {
+             Kind::CurrentThread => self.build_current_thread_runtime(),
+             #[cfg(feature = "rt-multi-thread")]
+@@ -1092,6 +1101,8 @@
+     /// ```
+     #[allow(unused_variables, unreachable_patterns)]
+     pub fn build_local(&mut self, options: LocalOptions) -> io::Result<LocalRuntime> {
++        #[cfg(target_os = "emscripten")]
++        super::emscripten::require_host()?;
+         match &self.kind {
+             Kind::CurrentThread => self.build_current_thread_local_runtime(),
+             #[cfg(feature = "rt-multi-thread")]
+--- /dev/null
++++ b/tokio/src/runtime/emscripten.rs
+@@ -0,0 +1,65 @@
++//! Host requirements and parking for the wrapper's single-threaded JSPI runtime.
++
++use std::io;
++use std::time::Duration;
++
++#[link(wasm_import_module = "signalbox_emscripten")]
++unsafe extern "C" {
++    fn runtime_require(capabilities: u32) -> i32;
++    fn reactor_new(handle: *mut u32) -> i32;
++    fn reactor_drop(handle: u32) -> i32;
++    fn reactor_wake(handle: u32) -> i32;
++    fn reactor_poll(handle: u32, fds: *mut u8, count: u32,
++                    timeout_ms: i32, ready: *mut u32) -> i32;
++}
++
++fn checked(errno: i32) -> io::Result<()> {
++    match errno {
++        0 => Ok(()),
++        1.. => Err(io::Error::from_raw_os_error(errno)),
++        _ => Err(io::Error::new(io::ErrorKind::InvalidData, "invalid host reactor errno")),
++    }
++}
++
++pub(crate) fn require_host() -> io::Result<()> {
++    // Required capabilities follow activated Cargo features, not a reduced
++    // probe feature set. The host must reject libc stubs and missing bridges.
++    let required = 1
++        | if cfg!(any(feature = "fs", feature = "io-std")) { 2 } else { 0 }
++        | if cfg!(feature = "net") { 4 } else { 0 }
++        | if cfg!(feature = "process") { 8 } else { 0 }
++        | if cfg!(feature = "signal") { 16 } else { 0 };
++    checked(unsafe { runtime_require(required) })
++}
++
++#[derive(Debug)]
++pub(crate) struct Parker(u32);
++
++impl Parker {
++    pub(crate) fn new() -> Self {
++        let mut handle = 0;
++        checked(unsafe { reactor_new(&mut handle) }).expect("create Emscripten host parker");
++        Self(handle)
++    }
++
++    pub(crate) fn park(&self, timeout: Option<Duration>) {
++        let timeout_ms = timeout.map(|duration| {
++            let millis = duration.as_millis() + u128::from(duration.subsec_nanos() % 1_000_000 != 0);
++            millis.min(i32::MAX as u128) as i32
++        }).unwrap_or(-1);
++        let mut ready = 0;
++        checked(unsafe { reactor_poll(self.0, std::ptr::null_mut(), 0, timeout_ms, &mut ready) })
++            .expect("park Emscripten host runtime");
++        assert_eq!(ready, 0, "host parker returned fd events without fds");
++    }
++
++    pub(crate) fn unpark(&self) {
++        checked(unsafe { reactor_wake(self.0) }).expect("wake Emscripten host runtime");
++    }
++}
++
++impl Drop for Parker {
++    fn drop(&mut self) {
++        let _ = unsafe { reactor_drop(self.0) };
++    }
++}
+--- a/tokio/src/runtime/mod.rs
++++ b/tokio/src/runtime/mod.rs
+@@ -556,6 +556,9 @@
+ 
+     mod config;
+     use config::Config;
++
++    #[cfg(target_os = "emscripten")]
++    mod emscripten;
+ 
+     mod blocking;
+     #[cfg_attr(target_os = "wasi", allow(unused_imports))]
+--- a/tokio/src/runtime/park.rs
++++ b/tokio/src/runtime/park.rs
+@@ -1,8 +1,12 @@
+ #![cfg_attr(not(feature = "full"), allow(dead_code))]
+ 
++#[cfg(not(target_os = "emscripten"))]
+ use crate::loom::sync::atomic::AtomicUsize;
+-use crate::loom::sync::{Arc, Condvar, Mutex};
+-
++use crate::loom::sync::Arc;
++#[cfg(not(target_os = "emscripten"))]
++use crate::loom::sync::{Condvar, Mutex};
++
++#[cfg(not(target_os = "emscripten"))]
+ use std::sync::atomic::Ordering::SeqCst;
+ use std::time::Duration;
+ 
+@@ -18,14 +22,18 @@
+ }
+ 
+ #[derive(Debug)]
++#[cfg(not(target_os = "emscripten"))]
+ struct Inner {
+     state: AtomicUsize,
+     mutex: Mutex<()>,
+     condvar: Condvar,
+ }
+ 
++#[cfg(not(target_os = "emscripten"))]
+ const EMPTY: usize = 0;
++#[cfg(not(target_os = "emscripten"))]
+ const PARKED: usize = 1;
++#[cfg(not(target_os = "emscripten"))]
+ const NOTIFIED: usize = 2;
+ 
+ tokio_thread_local! {
+@@ -43,11 +51,14 @@
+ impl ParkThread {
+     pub(crate) fn new() -> Self {
+         Self {
++            #[cfg(not(target_os = "emscripten"))]
+             inner: Arc::new(Inner {
+                 state: AtomicUsize::new(EMPTY),
+                 mutex: Mutex::new(()),
+                 condvar: Condvar::new(),
+             }),
++            #[cfg(target_os = "emscripten")]
++            inner: Arc::new(Inner(super::emscripten::Parker::new())),
+         }
+     }
+ 
+@@ -75,6 +86,7 @@
+ 
+ // ==== impl Inner ====
+ 
++#[cfg(not(target_os = "emscripten"))]
+ impl Inner {
+     fn park(&self) {
+         // If we were previously notified then we consume this notification and
+@@ -208,6 +220,29 @@
+     }
+ }
+ 
++#[cfg(target_os = "emscripten")]
++#[derive(Debug)]
++struct Inner(super::emscripten::Parker);
++
++#[cfg(target_os = "emscripten")]
++impl Inner {
++    fn park(&self) {
++        self.0.park(None);
++    }
++
++    fn park_timeout(&self, duration: Duration) {
++        self.0.park(Some(duration));
++    }
++
++    fn unpark(&self) {
++        self.0.unpark();
++    }
++
++    fn shutdown(&self) {
++        self.0.unpark();
++    }
++}
++
+ impl Default for ParkThread {
+     fn default() -> Self {
+         Self::new()

@@ -33,6 +33,7 @@ jobs:
         with:
           sparse-checkout: |
             native/codex-wasm
+            apps/cloud/src/kernel
           persist-credentials: false
 
       - uses: actions/setup-python@v6
@@ -52,6 +53,10 @@ jobs:
         working-directory: native/codex-wasm
         run: node --experimental-wasm-jspi --test loader.test.mjs
 
+      - name: Emscripten kernel readiness tests
+        working-directory: native/codex-wasm
+        run: node --test emscripten/host.test.mjs
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -59,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [wasm32-wasip1]
+        target: [wasm32-wasip1, wasm32-unknown-emscripten]
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -103,7 +108,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: native/codex-wasm/.cache/downloads
-          key: codex-wasm-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('native/codex-wasm/upstream.json', 'native/codex-wasm/binaryen.py', 'native/codex-wasm/toolchain.py', 'native/codex-wasm/dependencies/**') }}
+          key: codex-wasm-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('native/codex-wasm/upstream.json', 'native/codex-wasm/binaryen.py', 'native/codex-wasm/emscripten*.py', 'native/codex-wasm/emscripten/**', 'native/codex-wasm/toolchain.py', 'native/codex-wasm/dependencies/**') }}
 
       # build.py installs pinned Binaryen and inspects the real module with Node.
       - name: Build real engine
@@ -147,14 +152,14 @@ jobs:
           retention-days: 7
 
   local-proof:
-    name: Local workerd ${{ matrix.target }}
+    name: Local version proof ${{ matrix.target }}
     needs: build
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        target: [wasm32-wasip1]
+        target: [wasm32-wasip1, wasm32-unknown-emscripten]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -190,7 +195,7 @@ jobs:
             "$RUNNER_TEMP/codex-artifact" "$RUNNER_TEMP/codex-fixture"
 
       # The shared runner verifies the real module and exits nonzero on failure.
-      - name: Run actual engine in workerd
+      - name: Run engine version in workerd
         run: |
           node apps/cloud/infra/isolateProbe/measure.ts \
             --fixture "$RUNNER_TEMP/codex-fixture" \

@@ -44,10 +44,33 @@ class ProbeFixtureTests(unittest.TestCase):
         source = (output / "main.js").read_text()
         self.assertIn('import module from "./engine.wasm"', source)
 
+    def test_emscripten_map_includes_the_static_factory(self):
+        (self.artifact / "engine.mjs").write_text("export default function factory() {}")
+        self.manifest("wasm32-unknown-emscripten")
+        output = self.root / "fixture"
+        prepare(self.artifact, output)
+        fixture = json.loads((output / "manifest.json").read_text())
+        self.assertEqual(set(fixture["modules"]),
+                         {"main.js", "loader.mjs", "engine-info.mjs", "engine.wasm", "engine.mjs"})
+        for name, entry in fixture["modules"].items():
+            self.assertEqual(name, entry["path"])
+            self.assertTrue((output / entry["path"]).is_file())
+        self.assertEqual((output / "engine.mjs").read_bytes(), (self.artifact / "engine.mjs").read_bytes())
+        self.assertIn('import module from "./engine.wasm"', (output / "main.js").read_text())
+
+    def test_changed_factory_is_rejected_before_output_exists(self):
+        (self.artifact / "engine.mjs").write_text("original factory")
+        self.manifest("wasm32-unknown-emscripten")
+        (self.artifact / "engine.mjs").write_text("changed factory")
+        output = self.root / "rejected"
+        with self.assertRaisesRegex(ValueError, "differs from its manifest"):
+            prepare(self.artifact, output)
+        self.assertFalse(output.exists())
+
     def test_unsupported_target_is_rejected_before_output_exists(self):
         self.manifest("unsupported-target")
         output = self.root / "rejected"
-        with self.assertRaisesRegex(ValueError, "Only wasm32-wasip1"):
+        with self.assertRaisesRegex(ValueError, "Only wasm32-wasip1 and wasm32-unknown-emscripten"):
             prepare(self.artifact, output)
         self.assertFalse(output.exists())
 

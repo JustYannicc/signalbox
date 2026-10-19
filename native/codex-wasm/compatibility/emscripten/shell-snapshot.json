@@ -1,0 +1,30 @@
+{
+  "rules": [
+    {
+      "path": "codex-rs/exec-server/src/shell_snapshot_process.rs",
+      "rule": "shell-snapshot-spawn-unsupported",
+      "before": ["pub(super) fn spawn(command: &mut Command) -> io::Result<Self> {"],
+      "after": [
+        "#[cfg(target_os = \"emscripten\")]",
+        "pub(super) fn spawn(_command: &mut Command) -> io::Result<Self> {",
+        "    Err(io::Error::new(io::ErrorKind::Unsupported, \"shell snapshot process capture requires native process groups\"))",
+        "}",
+        "#[cfg(not(target_os = \"emscripten\"))]",
+        "pub(super) fn spawn(command: &mut Command) -> io::Result<Self> {"
+      ]
+    },
+    {
+      "path": "codex-rs/exec-server/src/shell_snapshot_process.rs",
+      "rule": "shell-snapshot-wait-unsupported",
+      "before": ["pub(super) async fn wait_for_exit(&mut self) -> io::Result<ExitStatus> {"],
+      "after": [
+        "#[cfg(target_os = \"emscripten\")]",
+        "pub(super) async fn wait_for_exit(&mut self) -> io::Result<ExitStatus> {",
+        "    Err(io::Error::new(io::ErrorKind::Unsupported, \"shell snapshot process capture requires native process groups\"))",
+        "}",
+        "#[cfg(not(target_os = \"emscripten\"))]",
+        "pub(super) async fn wait_for_exit(&mut self) -> io::Result<ExitStatus> {"
+      ]
+    }
+  ]
+}

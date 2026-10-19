@@ -13,7 +13,8 @@ from unittest.mock import patch
 import build
 
 TARGET = "wasm32-wasip1"
-UNSUPPORTED_TARGETS = ("wasm32-unknown-emscripten", "wasm32-wasip1-threads",
+EMS_TARGET = "wasm32-unknown-emscripten"
+UNSUPPORTED_TARGETS = ("wasm32-wasip1-threads",
                        "wasm32-wasip2", "wasm32-unknown-unknown", "x86_64-unknown-linux-gnu")
 
 
@@ -24,24 +25,41 @@ class EngineOutputTests(unittest.TestCase):
             module = root / TARGET / "release/signalbox-codex-engine.wasm"
             module.parent.mkdir(parents=True)
             module.write_bytes(b"\0asm\x01\0\0\0")
-            self.assertEqual(build.engine_outputs(root), module)
+            self.assertEqual(build.engine_outputs(root, TARGET), (module, None))
+
+    def test_emscripten_requires_normalized_module_and_factory_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release = root / EMS_TARGET / "release"
+            release.mkdir(parents=True)
+            module = release / "signalbox_codex_engine.wasm"
+            module.write_bytes(b"\0asm\x01\0\0\0")
+            with self.assertRaisesRegex(ValueError, "JSPI factory"):
+                build.engine_outputs(root, EMS_TARGET)
+            glue = release / "signalbox-codex-engine.js"
+            glue.mkdir()
+            with self.assertRaisesRegex(ValueError, "JSPI factory"):
+                build.engine_outputs(root, EMS_TARGET)
+            glue.rmdir()
+            glue.write_text("export default function factory() {}")
+            self.assertEqual(build.engine_outputs(root, EMS_TARGET), (module, glue))
 
     def test_missing_module_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ValueError, "without producing signalbox-codex-engine.wasm"):
-                build.engine_outputs(Path(temporary))
+                build.engine_outputs(Path(temporary), TARGET)
 
     def test_directory_is_not_an_engine_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / TARGET / "release/signalbox-codex-engine.wasm").mkdir(parents=True)
             with self.assertRaisesRegex(ValueError, "without producing"):
-                build.engine_outputs(root)
+                build.engine_outputs(root, TARGET)
 
 
 class TargetTests(unittest.TestCase):
-    def test_release_pin_supports_only_wasip1(self):
-        self.assertEqual(build.read_pin(build.ROOT / "upstream.json")["targets"], [TARGET])
+    def test_release_pin_supports_exactly_both_targets(self):
+        self.assertEqual(build.read_pin(build.ROOT / "upstream.json")["targets"], [TARGET, EMS_TARGET])
 
     def test_unsupported_targets_are_rejected_before_reading_inputs(self):
         with patch.object(build, "read_pin") as read_pin, patch.object(build, "checkout") as checkout:
@@ -76,6 +94,12 @@ class TargetTests(unittest.TestCase):
 
 class ArtifactTests(unittest.TestCase):
     def test_wasi_packaging_preserves_static_loader_and_integrity_manifest(self):
+        self.check_packaging(TARGET)
+
+    def test_emscripten_packages_factory_loader_and_integrity_manifest(self):
+        self.check_packaging(EMS_TARGET)
+
+    def check_packaging(self, target):
         pin = build.read_pin(build.ROOT / "upstream.json")
         module = b"\0asm\x01\0\0\0"
         metadata = {"packages": [{"id": "engine", "name": "signalbox-codex-engine"},
@@ -86,10 +110,10 @@ class ArtifactTests(unittest.TestCase):
         inventory = {"imports": [], "exports": []}
         with tempfile.TemporaryDirectory() as temporary, ExitStack() as mocks:
             root = Path(temporary).resolve()
-            args = argparse.Namespace(target=TARGET, pin=build.ROOT / "upstream.json",
+            args = argparse.Namespace(target=target, pin=build.ROOT / "upstream.json",
                                       cache=root / "cache", output=root / "output",
                                       prepare_only=False, check=False)
-            output = args.output / f"{pin['version']}-{pin['commit'][:12]}" / TARGET
+            output = args.output / f"{pin['version']}-{pin['commit'][:12]}" / target
             workspace = output / "source/codex-rs"
 
             def prepare_workspace(*_):
@@ -101,9 +125,12 @@ class ArtifactTests(unittest.TestCase):
                 if argv[0] == "cargo":
                     if argv[1] == "metadata":
                         return json.dumps(metadata)
-                    binary = Path(env["CARGO_TARGET_DIR"]) / TARGET / "release/signalbox-codex-engine.wasm"
+                    binary = Path(env["CARGO_TARGET_DIR"]) / target / "release" / (
+                        "signalbox_codex_engine.wasm" if target == EMS_TARGET else "signalbox-codex-engine.wasm")
                     binary.parent.mkdir(parents=True)
                     binary.write_bytes(module)
+                    if target == EMS_TARGET:
+                        (binary.parent / "signalbox-codex-engine.js").write_text("export default function factory() {}")
                 elif argv[0] == "wasm-opt":
                     Path(argv[-1]).write_bytes(Path(argv[-3]).read_bytes())
                 elif argv[0] == "node":
@@ -111,6 +138,10 @@ class ArtifactTests(unittest.TestCase):
                 else:
                     self.fail(f"unexpected external command: {argv}")
                 return ""
+
+            def ems_toolchain(cache, base):
+                self.assertEqual(base["RUSTUP_TOOLCHAIN"], pin["rust"])
+                return {**base, "EM_CONFIG": str(cache / "fixture-config")}
 
             replacements = {
                 "checkout": lambda cache, name, spec: root / "inputs" / name,
@@ -122,6 +153,10 @@ class ArtifactTests(unittest.TestCase):
                 "prepare_wasi_reactor": lambda cache, references, patches: patches,
                 "prepare_url_dependency": lambda *_: {},
                 "prepare_sqlite_dependencies": lambda cache, references, patches: patches,
+                "prepare_emscripten_dependencies": lambda *_: {},
+                "prepare_emscripten_crypto": lambda *_: {},
+                "prepare_emscripten_http": lambda *_: {},
+                "prepare_emscripten_toolchain": ems_toolchain,
                 "prepare_workspace": prepare_workspace,
                 "prepare_wasi_toolchain": lambda *_: {"CARGO": "cargo", "RUSTUP_TOOLCHAIN": pin["rust"]},
                 "prepare_binaryen": lambda *_: "wasm-opt",
@@ -131,11 +166,15 @@ class ArtifactTests(unittest.TestCase):
                 mocks.enter_context(patch.object(build, name, side_effect=replacement))
             build.build(args)
             artifact = output / "artifact"
-            self.assertEqual({path.name for path in artifact.iterdir()},
-                             {"engine.wasm", "loader.mjs", "Cargo.lock", "manifest.json"})
-            self.assertEqual((artifact / "loader.mjs").read_bytes(), (build.ROOT / "loader.mjs").read_bytes())
+            expected_files = {"engine.wasm", "loader.mjs", "Cargo.lock", "manifest.json"}
+            if target == EMS_TARGET:
+                expected_files.add("engine.mjs")
+                self.assertEqual((artifact / "engine.mjs").read_text(), "export default function factory() {}")
+            self.assertEqual({path.name for path in artifact.iterdir()}, expected_files)
+            loader = "loader-emscripten.mjs" if target == EMS_TARGET else "loader.mjs"
+            self.assertEqual((artifact / "loader.mjs").read_bytes(), (build.ROOT / loader).read_bytes())
             manifest = json.loads((artifact / "manifest.json").read_text())
-            self.assertEqual(manifest["target"], TARGET)
+            self.assertEqual(manifest["target"], target)
             self.assertEqual(manifest["moduleSha256"], hashlib.sha256(module).hexdigest())
             self.assertEqual(manifest["moduleBytes"], len(module))
             self.assertEqual(manifest["moduleBudgetBytes"], 60_000_000)

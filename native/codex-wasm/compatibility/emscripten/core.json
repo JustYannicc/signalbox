@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "path": "codex-rs/core/src/lib.rs",
+      "rule": "core-recursion-limit",
+      "before": ["#![deny(clippy::print_stdout, clippy::print_stderr)]"],
+      "after": [
+        "#![deny(clippy::print_stdout, clippy::print_stderr)]",
+        "#![cfg_attr(target_os = \"emscripten\", recursion_limit = \"256\")]"
+      ]
+    }
+  ]
+}
