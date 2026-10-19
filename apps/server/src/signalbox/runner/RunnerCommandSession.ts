@@ -24,10 +24,10 @@ export interface RunnerCommandSessionInput {
   readonly workspace: RunnerExecWorkspaceAttestation;
 }
 
-const protocolError = (message: string) => new RunnerConnectionError({ message });
-
 const rejectConnection = (connection: RunnerConnection, reason: string) =>
-  connection.send({ type: "end", reason }).pipe(Effect.andThen(Effect.fail(protocolError(reason))));
+  connection
+    .send({ type: "end", reason })
+    .pipe(Effect.andThen(Effect.fail(new RunnerConnectionError({ message: reason }))));
 
 /** One command-only session. A lost socket ends this session; commands are never replayed. */
 export const runRunnerCommandSession = Effect.fn("runRunnerCommandSession")(function* (

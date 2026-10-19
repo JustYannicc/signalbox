@@ -24,10 +24,12 @@ const command = {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function socketFixture() {
@@ -44,7 +46,7 @@ function socketFixture() {
   return { socket, sent };
 }
 
-function fixture() {
+function fixture(launchFinished = Promise.resolve()) {
   const launched = deferred<RunnerCommandConfig>();
   const quiesce = vi.fn(async () => ({ ...owner, closed: true as const }));
   const adapter = new RunnerMachineSockets({
@@ -54,6 +56,7 @@ function fixture() {
     cgroupPath: () => "/sys/fs/cgroup/signalbox-command/owned-proof",
     launch: async (config) => {
       launched.resolve(config);
+      await launchFinished;
     },
     quiesce,
   });
@@ -236,6 +239,71 @@ describe("RunnerMachineSockets", () => {
     expect(f.socketHost.connected).not.toHaveBeenCalled();
     expect(f.quiesce).not.toHaveBeenCalled();
     await f.adapter.quiesce(f.input);
+  });
+
+  it.each([false, true])(
+    "returns on abort while launch is pending (hello accepted: %s)",
+    async (accepted) => {
+      const launch = deferred<void>();
+      const f = fixture(launch.promise);
+      const controller = new AbortController();
+      const pending = f.adapter.connect({ ...f.input, signal: controller.signal });
+      const rejected = expect(pending).rejects.toThrow("cancelled");
+      const config = await f.launched.promise;
+      if (accepted) {
+        const early = socketFixture();
+        f.adapter.accept(early.socket);
+        f.adapter.message(early.socket, f.hello(config));
+      }
+      controller.abort();
+      await rejected;
+      await expect(f.adapter.connect(f.input)).rejects.toThrow("already registered");
+      const late = socketFixture();
+      f.adapter.accept(late.socket);
+      f.adapter.message(late.socket, f.hello(config));
+      expect(late.socket.close).toHaveBeenCalledWith(1008, "Command Runner frame rejected");
+      expect(f.socketHost.connected).toHaveBeenCalledTimes(accepted ? 1 : 0);
+      expect(f.socketHost.generationEnded).not.toHaveBeenCalled();
+      launch.reject(new Error("Late provider failure"));
+      f.quiesce.mockRejectedValueOnce(new Error("Native closure is unknown"));
+      await expect(f.adapter.quiesce(f.input)).rejects.toThrow("unknown");
+      await expect(f.adapter.connect(f.input)).rejects.toThrow("already registered");
+      await f.adapter.quiesce(f.input);
+      expect(f.quiesce).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("reclaims idle hello slots without closing an authenticated connection", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture();
+      const pending = f.adapter.connect(f.input);
+      const config = await f.launched.promise;
+      const sockets = Array.from({ length: 32 }, socketFixture);
+      for (const { socket } of sockets) f.adapter.accept(socket);
+      const overflow = socketFixture();
+      f.adapter.accept(overflow.socket);
+      expect(overflow.socket.close).toHaveBeenCalledWith(
+        1008,
+        "Command Runner socket capacity reached",
+      );
+      const live = sockets[0]!;
+      f.adapter.message(live.socket, f.hello(config));
+      const connection = await pending;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(live.socket.close).not.toHaveBeenCalled();
+      for (const { socket } of sockets.slice(1)) {
+        expect(socket.close).toHaveBeenCalledWith(1008, "Command Runner hello timed out");
+      }
+      const next = socketFixture();
+      f.adapter.accept(next.socket);
+      expect(next.socket.accept).toHaveBeenCalledTimes(1);
+      f.adapter.closed(next.socket);
+      await f.adapter.quiesce(f.input);
+      await connection.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects agent capabilities and stale process reports without granting native closure", async () => {

@@ -23,11 +23,9 @@ const CONFIG_PRIVATE_MODE = 0o077;
 
 const noFollowFlag = () => {
   const flag = NodeFS.constants.O_NOFOLLOW;
-  if (typeof flag !== "number") throw bootstrapError("No-follow file access is unavailable.");
+  if (typeof flag !== "number") throw new Error("No-follow file access is unavailable.");
   return flag;
 };
-
-const bootstrapError = (message: string) => new Error(message);
 
 interface WorkspacePathSystem {
   readonly realpath: (path: string) => string;
@@ -44,10 +42,10 @@ const currentWorkspaceRoot = (system: WorkspacePathSystem) => {
   try {
     root = system.realpath(WORKSPACE_ROOT);
   } catch {
-    throw bootstrapError("The command Runner workspace is unavailable.");
+    throw new Error("The command Runner workspace is unavailable.");
   }
   if (root !== WORKSPACE_ROOT || !system.isDirectory(root)) {
-    throw bootstrapError("The command Runner workspace mount is not canonical.");
+    throw new Error("The command Runner workspace mount is not canonical.");
   }
   return root;
 };
@@ -59,7 +57,7 @@ const isWithin = (root: string, candidate: string) => {
 
 const assertOutsideWorkspace = (canonicalFilePath: string) => {
   if (isWithin(WORKSPACE_ROOT, canonicalFilePath)) {
-    throw bootstrapError("Command Runner config and receipt files must live outside /workspace.");
+    throw new Error("Command Runner config and receipt files must live outside /workspace.");
   }
 };
 
@@ -74,11 +72,11 @@ const readRegularFile = (
   try {
     before = NodeFS.lstatSync(absolutePath);
     if (before.isSymbolicLink() || !before.isFile()) {
-      throw bootstrapError("Command Runner config and receipt files must be regular files.");
+      throw new Error("Command Runner config and receipt files must be regular files.");
     }
     descriptor = NodeFS.openSync(absolutePath, NodeFS.constants.O_RDONLY | noFollowFlag());
   } catch {
-    throw bootstrapError("Command Runner config or receipt could not be opened safely.");
+    throw new Error("Command Runner config or receipt could not be opened safely.");
   }
 
   try {
@@ -94,13 +92,13 @@ const readRegularFile = (
       after.ino !== opened.ino ||
       (options.privateFile && (opened.mode & CONFIG_PRIVATE_MODE) !== 0)
     ) {
-      throw bootstrapError("Command Runner config or receipt file permissions are invalid.");
+      throw new Error("Command Runner config or receipt file permissions are invalid.");
     }
     const contents = NodeFS.readFileSync(descriptor, "utf8");
     const canonicalPath = canonicalize(absolutePath);
     return { contents, canonicalPath };
   } catch {
-    throw bootstrapError("Command Runner config or receipt file could not be validated.");
+    throw new Error("Command Runner config or receipt file could not be validated.");
   } finally {
     NodeFS.closeSync(descriptor);
   }
@@ -113,7 +111,7 @@ const decodeConfigFile = (configPath: string, workspaceSystem: WorkspacePathSyst
   try {
     return RunnerCommandConfigJson.decode(file.contents);
   } catch {
-    throw bootstrapError("Command Runner config is invalid.");
+    throw new Error("Command Runner config is invalid.");
   }
 };
 
@@ -129,7 +127,7 @@ const decodeReceiptFile = (receiptPath: string, workspaceSystem: WorkspacePathSy
   try {
     return RunnerCommandReceiptJson.decode(file.contents);
   } catch {
-    throw bootstrapError("Command Runner workspace receipt is invalid.");
+    throw new Error("Command Runner workspace receipt is invalid.");
   }
 };
 
@@ -201,14 +199,14 @@ export const verifyRunnerCommandWorkspace = (
 ): RunnerExecWorkspaceAttestation => {
   const configOnDisk = decodeConfigFile(input.configPath, workspaceSystem);
   if (!sameConfig(configOnDisk, input.config)) {
-    throw bootstrapError("Command Runner config changed during bootstrap.");
+    throw new Error("Command Runner config changed during bootstrap.");
   }
   const receipt = readRunnerCommandReceipt(input.config.workspaceReceipt, workspaceSystem);
   if (
     !sameReceipt(receipt, input.expectedReceipt) ||
     !sameReceipt(receipt, receiptFor(input.config))
   ) {
-    throw bootstrapError("Command Runner workspace receipt does not match this launch.");
+    throw new Error("Command Runner workspace receipt does not match this launch.");
   }
   currentWorkspaceRoot(workspaceSystem);
   return {

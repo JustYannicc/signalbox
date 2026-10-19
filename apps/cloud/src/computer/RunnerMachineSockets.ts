@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - this Worker WebSocket boundary owns and clears pre-authentication deadlines.
 // @effect-diagnostics cryptoRandomUUID:off - this Worker socket adapter creates private launch tokens outside an Effect runtime.
 import {
   COMMAND_RUNNER_CONNECT_PATH,
@@ -28,9 +29,9 @@ import {
 export interface RunnerMachineSocketsOptions {
   readonly endpoint: string;
   readonly threadId: ThreadId;
-  /** Writes the hydration owner's receipt before starting the command-only artifact. */
+  /** Writes the hydration receipt, then launches. Quiesce must fence any pending launch. */
   readonly launch: (config: RunnerCommandConfig, signal: AbortSignal) => Promise<void>;
-  /** Runs outside the command cgroup and verifies native descendants cannot write again. */
+  /** Fences pending launch, then verifies outside the cgroup that descendants cannot write again. */
   readonly quiesce: (
     owner: MachineRunnerOwner,
     signal: AbortSignal,
@@ -58,6 +59,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
   readonly #registrations = new Map<string, Registration>();
   readonly #tokens = new Map<string, Registration>();
   readonly #sockets = new Map<WebSocket, Registration | null>();
+  readonly #helloTimeouts = new Map<WebSocket, ReturnType<typeof setTimeout>>();
 
   constructor(options: RunnerMachineSocketsOptions) {
     const timeout = options.handshakeTimeoutMs ?? 30_000;
@@ -83,12 +85,14 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
     if (this.#registrations.has(key)) throw new Error("Command Runner is already registered");
     let resolve!: () => void;
     let reject!: (error: Error) => void;
-    const ready = new Promise<void>((done, fail) => {
+    const ready = new Promise<void>((done) => {
       resolve = done;
+    });
+    const stopped = new Promise<never>((_, fail) => {
       reject = fail;
     });
-    // A launch can fail before connect starts awaiting the matching hello.
-    void ready.catch(() => undefined);
+    // Cancellation may arrive while config is being built, before the bootstrap race exists.
+    void stopped.catch(() => undefined);
     const registration: Registration = {
       owner,
       token: crypto.randomUUID() + crypto.randomUUID(),
@@ -109,8 +113,8 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
     const aborted = () => {
       registration.admissionClosed = true;
       this.#tokens.delete(registration.token);
-      this.#disconnect(registration);
       registration.reject(new Error("Command Runner connection cancelled"));
+      this.#disconnect(registration);
     };
     deadline.addEventListener("abort", aborted, { once: true });
     try {
@@ -126,9 +130,10 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
           ...(cgroupPath === undefined ? {} : { cgroupPath }),
         }),
       );
-      await this.#options.launch(config, deadline);
       deadline.throwIfAborted();
-      await ready;
+      // Abort must still win after hello if the provider launch has not settled.
+      // The race consumes late launch rejection without granting native closure.
+      await Promise.race([Promise.all([this.#options.launch(config, deadline), ready]), stopped]);
       deadline.throwIfAborted();
       if (registration.admissionClosed || !registration.socket)
         throw new Error("Command Runner closed during bootstrap");
@@ -183,6 +188,16 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
       return;
     }
     this.#sockets.set(socket, null);
+    this.#helloTimeouts.set(
+      socket,
+      setTimeout(() => {
+        try {
+          socket.close(1008, "Command Runner hello timed out");
+        } finally {
+          this.closed(socket);
+        }
+      }, this.#options.handshakeTimeoutMs ?? 30_000),
+    );
     socket.accept();
     socket.addEventListener("message", (event) => this.message(socket, event.data));
     socket.addEventListener("close", () => this.closed(socket));
@@ -206,6 +221,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
         if (!registration || registration.socket || registration.admissionClosed)
           throw new Error("Command Runner is not registered");
         assertCommandRunnerHello(message, this.#options.threadId, registration.owner);
+        this.#clearHelloTimeout(socket);
         this.#tokens.delete(registration.token);
         registration.socket = socket;
         this.#sockets.set(socket, registration);
@@ -252,6 +268,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
   }
 
   closed(socket: WebSocket) {
+    this.#clearHelloTimeout(socket);
     const registration = this.#sockets.get(socket);
     this.#sockets.delete(socket);
     if (!registration || registration.socket !== socket) return;
@@ -259,6 +276,13 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
     registration.socket = null;
     registration.reject(new Error("Command Runner socket closed"));
     registration.socketHost.disconnected(socket, registration.owner.generation, 1);
+  }
+
+  #clearHelloTimeout(socket: WebSocket) {
+    const timeout = this.#helloTimeouts.get(socket);
+    if (timeout === undefined) return;
+    clearTimeout(timeout);
+    this.#helloTimeouts.delete(socket);
   }
 
   #connection(registration: Registration): MachineRunnerConnection {
