@@ -12,6 +12,7 @@ import type {
   KernelCommandForwarder,
 } from "./KernelCommandForwarder.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
+import type { KernelFileByteSelection } from "./KernelFileBytes.ts";
 import type { KernelProgramHost } from "./KernelProgramHost.ts";
 
 export interface KernelCommandExecutorOptions {
@@ -21,6 +22,8 @@ export interface KernelCommandExecutorOptions {
   readonly parent?: KernelHandle<"process">;
   /** Canonical guest home. It is used only when the complete command env already carries it. */
   readonly home?: string;
+  /** Trusted command binding; guest arguments cannot choose the file representation. */
+  readonly fileBytes?: KernelFileByteSelection;
 }
 
 /** Runs registered programs in the kernel and sends only unknown executables to the runner. */
@@ -30,6 +33,7 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
   readonly #forwarder: KernelCommandForwarder;
   readonly #parent: KernelHandle<"process"> | undefined;
   readonly #home: string | undefined;
+  readonly #fileBytes: KernelFileByteSelection | undefined;
 
   constructor(options: KernelCommandExecutorOptions) {
     this.#host = options.host;
@@ -37,6 +41,7 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
     this.#forwarder = options.forwarder;
     this.#parent = options.parent;
     this.#home = options.home;
+    this.#fileBytes = options.fileBytes;
   }
 
   readonly spawn = async (
@@ -62,7 +67,10 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
         // is already part of the caller's complete environment.
         ...(preparedHome ? { home: this.#home } : {}),
       },
-      { cwd: command.cwd },
+      {
+        cwd: command.cwd,
+        ...(this.#fileBytes === undefined ? {} : { fileBytes: this.#fileBytes }),
+      },
     );
 
     try {
