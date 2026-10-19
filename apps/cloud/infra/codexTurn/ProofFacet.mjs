@@ -51,7 +51,7 @@ function bootstrap() {
   };
 }
 
-export function createProofFacet(engine, createHost) {
+export function createProofFacet(engine, createHost, options = {}) {
   return class extends DurableObject {
     async fetch(request) {
       const path = new URL(request.url).pathname;
@@ -66,7 +66,7 @@ export function createProofFacet(engine, createHost) {
       const mock = createMockResponses();
       const stdoutDecoder = new TextDecoder(),
         stderrDecoder = new TextDecoder();
-      let filesystem, binding, wakes, pipe, host, sessions, memory, driver, watchdog;
+      let filesystem, binding, wakes, pipe, host, sessions, memory, driver, watchdog, composition;
       let peak = 0,
         ready = false,
         stdout = "",
@@ -74,7 +74,8 @@ export function createProofFacet(engine, createHost) {
         exit,
         failure,
         turnResult,
-        proofContent;
+        proofContent,
+        compositionResult;
       const sample = () => {
         if (memory) peak = Math.max(peak, memory.buffer.byteLength);
       };
@@ -135,15 +136,23 @@ export function createProofFacet(engine, createHost) {
           ],
         });
         initializeProofDirectories(filesystem);
+        host = createHost
+          ? createHost(wakes, { filesystem, storage, env: this.env, context: this.ctx })
+          : new KernelProgramHost({ registry: new KernelProgramRegistry(), wakes });
+        composition = options.configure?.({
+          filesystem,
+          storage,
+          facetStorage: this.ctx.storage,
+          host,
+          wakes,
+          env: this.env,
+        });
         binding = createKernelAsyncWasi({
           filesystem,
           wakes,
           agentOsPreopens: true,
           options: { version: "preview1", args: ["/bin/codex"], env: proofEnvironment },
         });
-        host = createHost
-          ? createHost(wakes)
-          : new KernelProgramHost({ registry: new KernelProgramRegistry(), wakes });
         sessions = createProofExec({ filesystem, host, transcript: execTranscript, cleanupErrors });
         const fsHost = new AgentOsFileSystemHost({
           memory: () => memory,
@@ -160,8 +169,12 @@ export function createProofFacet(engine, createHost) {
           memory: () => memory,
           processes: host.processes,
           wakes,
-          spawn: async () =>
-            kernelError("UNSUPPORTED", "Direct guest spawning is outside the exec-server proof"),
+          ...(composition?.parent === undefined ? {} : { parent: composition.parent }),
+          ...(composition?.signal === undefined ? {} : { signal: composition.signal }),
+          spawn:
+            composition?.spawn ??
+            (async () =>
+              kernelError("UNSUPPORTED", "Direct guest spawning is outside the exec-server proof")),
         });
         const ws = createProofWebSocket({
           memory: () => memory,
@@ -206,8 +219,9 @@ export function createProofFacet(engine, createHost) {
             };
         }
         const initial = bootstrap();
-        driver.transcript.push({ direction: "to-engine", message: initial });
-        const bytes = new TextEncoder().encode(JSON.stringify(initial) + "\n");
+        const configuredInitial = composition?.bootstrap?.(initial) ?? initial;
+        driver.transcript.push({ direction: "to-engine", message: configuredInitial });
+        const bytes = new TextEncoder().encode(JSON.stringify(configuredInitial) + "\n");
         if (pipe.tryWrite(bytes) !== bytes.length)
           throw new Error("Bootstrap exceeds pipe capacity");
         const driven = turnMode
@@ -240,6 +254,7 @@ export function createProofFacet(engine, createHost) {
             throw new Error("Mock Responses sequence did not complete");
           proofContent = verifyPatchResult(filesystem);
         }
+        compositionResult = await composition?.verify?.({ filesystem, turnResult, mock, driver });
       } catch (error) {
         failure = `${error}\n${error.stack ?? ""}`;
         driver?.fail(error);
@@ -247,6 +262,7 @@ export function createProofFacet(engine, createHost) {
         if (watchdog) clearTimeout(watchdog);
         sample();
         closeInput();
+        await cleanup("proof-composition", () => composition?.finish?.({ exit, failure }));
         await cleanup("exec-sessions", () => sessions?.dispose());
         await cleanup("process-table", async () => {
           if (!host) return;
@@ -262,7 +278,12 @@ export function createProofFacet(engine, createHost) {
       stderr += stderrDecoder.decode();
       return Response.json({
         ok:
-          ready && exit === 0 && !failure && !cleanupErrors.length && (!turnMode || !!proofContent),
+          ready &&
+          exit === 0 &&
+          !failure &&
+          !cleanupErrors.length &&
+          (!turnMode || !!proofContent) &&
+          (compositionResult?.ok ?? true),
         scope: turnMode ? "real-engine-turn" : "real-engine-startup",
         ready,
         exit,
@@ -280,6 +301,7 @@ export function createProofFacet(engine, createHost) {
         mockPhase: mock.phase,
         modelRequests: mock.requests,
         proofContent,
+        ...(compositionResult === undefined ? {} : { compositionResult }),
       });
     }
   };
