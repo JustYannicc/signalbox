@@ -6,7 +6,7 @@ import { KernelForwardingUnavailable } from "../../src/kernel/KernelCommandForwa
 import { KernelWebSocketHost } from "../../src/kernel/KernelWebSocketHost.ts";
 import { proofEnvironment } from "./ProofWorkspace.mjs";
 
-export function createProofExec({ filesystem, host, transcript, cleanupErrors }) {
+export function createProofExec({ filesystem, host, transcript, cleanupErrors, wrapCommands }) {
   const executor = new KernelCommandExecutor({
     host,
     filesystem,
@@ -21,6 +21,7 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors })
       },
     },
   });
+  const commands = wrapCommands?.({ exec: executor.spawn }) ?? { exec: executor.spawn };
   return new CodexExecSessions({
     environmentInfo: {
       shell: { name: "bash", path: "/bin/bash" },
@@ -34,7 +35,7 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors })
     createSession(context) {
       const handler = new CodexExecHandler({
         filesystem,
-        spawn: executor.spawn,
+        spawn: commands.exec,
         notify: (message) => {
           transcript.push({ direction: "from-exec", message });
           return context.notify(message);
