@@ -1,0 +1,1575 @@
+// Shard 20: folders-pools. Pools are placed on folders (corr. 1): connecting accounts, routing,
+// the model gateway path, local keys, the CPA host, and the admin and member views.
+// Generic tree: folder Company (owner: organization) with pool P2 placed on it, folder Team inside,
+// one shared thread in Team. A and B are members, C is admin of Company. A's own pool P1 sits on
+// A's top level. A view uses either the Models box or its actors (Pool custody, CPA host), never both.
+// Black boxes: outside callers reach Models through `signalbox.models.api` (serve, catalog, change,
+// view) and Thread through `signalbox.thread`. ModelGateway counts as Gateway's model-wire port.
+// Views inside Models (custody, CPA host) are that module's own flows. The one genuine reach is
+// folders_gateway_usage_metering (#smell): ModelGateway writes into Models' actors directly.
+// v1 = sign in, a pool, connections: `#v1` only on pool and local-key views; thread, harness and
+// assistant paths are "v1 partial" or not v1.
+views {
+
+  style signalbox, modelProviders, platform, hier {
+    color muted
+    opacity 10%
+  }
+
+  // ───────────────────────────── Pools ─────────────────────────────
+
+  dynamic view folders_pools_first_pool {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Connect a first pool at a level'
+    description 'P-ONB-06 (v1; alias T-ENV-25), P-ONB-22 (not v1) · A puts a first pool on a level from its Pool section, or from the NeedsPool card a first send raises.'
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.tree, signalbox.models
+
+    opt 'entry: first send without a pool (not v1)' {
+      personA -> signalbox.web 'Send first turn' {
+        notes """
+          - A writes in a new thread in folder Personal on A's top level
+          - Not v1 (no threads in v1); in v1 A starts at the Pool section below
+        """
+      }
+      signalbox.web -> signalbox.thread 'Start turn'
+      signalbox.thread -> signalbox.tree 'Resolve pool' {
+        notes """
+          - Nothing placed on the chain Personal → top level, so `NeedsPool`, never a fallback
+        """
+      }
+      signalbox.web <- signalbox.thread 'NeedsPool' {
+        navigateTo folders_pools_needs_pool
+        notes """
+          - The card offers **Add pool here** and opens the Pool section of the level that can hold it
+        """
+      }
+    }
+    personA -> signalbox.web 'Pool section' {
+      notes """
+        - On the folder page (or the top level's page): **Add subscription** or **Paste API key**
+        - There is no Accounts, Providers or Pools page anywhere else
+      """
+    }
+    alt 'what A adds' {
+      when 'Add subscription' {
+        signalbox.web -> signalbox.models 'connect(subscription)' {
+          navigateTo folders_pools_signin_subscription
+          notes """
+            - `into: { new: { placeAt: A's top level } }`, explicit; A is the owner there
+          """
+        }
+      }
+      else 'Paste API key' {
+        signalbox.web -> signalbox.models 'connect(ApiKey)' {
+          navigateTo folders_pools_paste_credentials
+          notes """
+            - Same explicit `into`; the key is sealed, never shown again
+          """
+        }
+      }
+    }
+    signalbox.models -> signalbox.tree 'Place pool P1' {
+      navigateTo folders_pools_add_account
+      notes """
+        - Create-then-place: custody first (with `requestId`), then the placement row on the level
+      """
+    }
+    signalbox.web <- signalbox.models 'Pool live' {
+      notes """
+        - The level shows P1; every thread at or below it now resolves P1
+      """
+    }
+    opt 'came from a first send' {
+      signalbox.thread -> signalbox.models 'Retry turn on P1' {
+        notes """
+          - The parked turn resumes; A does not resend
+        """
+      }
+    }
+  }
+
+  // ───────────────────────────── Pools/Accounts ─────────────────────────────
+
+  dynamic view folders_pools_add_account {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Accounts/Add an account into a new or existing pool'
+    description 'R-POL-01, R-POL-08 (aliases T-PRV-02, T-PRV-04), R-POL-09 · `into` is always explicit; a new pool is created then placed; a failed connect leaves nothing behind.'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.models, signalbox.tree, signalbox.automations
+
+    alt 'who adds' {
+      when 'A at A top level' {
+        personA -> signalbox.web 'Add subscription' {
+          notes """
+            - A owns A's top level, so A may place a pool there
+            - In folder Company A is only a member: the choice there is **lend into** or A's own top-level pool
+          """
+        }
+      }
+      else 'C at folder Company' {
+        personC -> signalbox.web 'Add subscription' {
+          notes """
+            - C is admin of Company (owner: organization); the pool is owned by the organization
+          """
+        }
+      }
+    }
+    signalbox.web -> signalbox.models 'connect(into)' {
+      navigateTo folders_pools_signin_subscription
+      notes """
+        - UI default `into` = the nearest pool the actor manages
+        - Never a silently shadowing pool
+      """
+    }
+    alt 'into' {
+      when 'new pool here' {
+        signalbox.models -> signalbox.models 'Create custody (requestId)' {
+          navigateTo folders_placement_create_then_place
+          notes """
+            - `new.placeAt` needs Admin+ at that level (A at A's top level, C at Company)
+          """
+        }
+        signalbox.models -> signalbox.tree 'Place pool' {
+          navigateTo folders_placement_kind_pool_connection
+          notes """
+            - `Tree.change(Place{pool})` writes the placement row on the Level actor
+            - Custody records it in its outbound-placements index
+          """
+        }
+      }
+      else 'existing pool' {
+        signalbox.models -> signalbox.models 'Add account to pool' {
+          notes """
+            - P2 on Company gets another account; an account sits in exactly one pool
+          """
+        }
+      }
+    }
+    signalbox.web <- signalbox.models 'Account live'
+    opt 'connect fails or is cancelled' {
+      signalbox.web <- signalbox.models 'ConnectFailed' {
+        notes """
+          - Provider error, or the person closes the sign-in
+        """
+      }
+      signalbox.automations -> signalbox.models 'Delete unplaced custody' {
+        notes """
+          - The Custody sweeper removes custody that stays unplaced past its TTL
+          - Nothing half-made is left on any level
+        """
+      }
+    }
+  }
+
+  dynamic view folders_pools_signin_subscription {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Accounts/Sign in a subscription into a pool'
+    description 'R-POL-03 (v1; aliases T-PRV-08, T-PRV-11), R-POL-04 (not v1; alias T-DSK-14), R-POL-05 (v1; alias T-PRV-41), T-PRV-09 · ChatGPT by device code on any client; Claude by localhost catch on desktop or a pasted code on web and mobile.'
+
+    include personA, signalbox, signalbox.web, signalbox.desktop, signalbox.mobile, signalbox.models, modelProviders, modelProviders.openai, modelProviders.anthropic
+
+    personA -> signalbox.web 'Add subscription' {
+      navigateTo folders_pools_add_account
+      notes """
+        - From the Pool section of a level; `into` already chosen
+        - C does the same at Company
+      """
+    }
+    alt 'provider and client' {
+      when 'ChatGPT, any client' {
+        signalbox.web -> signalbox.models 'connect(DeviceCode)'
+        signalbox.web <- signalbox.models 'Code and link'
+        personA -> modelProviders.openai 'Enter code' {
+          notes """
+            - Works the same on web, desktop and mobile
+          """
+        }
+        signalbox.models -> modelProviders.openai 'Poll device code' {
+          notes """
+            - The CPA host carries the CPA#6715 patch for this
+          """
+        }
+      }
+      when 'Claude on desktop' {
+        signalbox.desktop -> signalbox.models 'connect(DesktopLocalhost)'
+        personA -> modelProviders.anthropic 'Approve in browser'
+        signalbox.desktop <- modelProviders.anthropic 'Localhost catch' {
+          notes """
+            - One click: the desktop shell catches the redirect, no copy-paste
+          """
+        }
+        signalbox.desktop -> signalbox.models 'complete(callback)'
+      }
+      else 'Claude on web or mobile' {
+        signalbox.mobile -> signalbox.models 'connect(PasteCode)'
+        personA -> modelProviders.anthropic 'Approve in browser'
+        personA -> signalbox.mobile 'Paste code once' {
+          notes """
+            - Anthropic's `flow=manual` page shows the code; it is pasted back once
+          """
+        }
+        signalbox.mobile -> signalbox.models 'complete(code)' {
+          navigateTo folders_pools_human_only_signin
+          notes """
+            - This final step is human-only: agents get `HumanOnly`
+          """
+        }
+      }
+    }
+    signalbox.web <- signalbox.models 'ConnectStep stream' {
+      notes """
+        - Progress (`ConnectStep`) streams live to the card on every client
+        - Ends with the account sealed in the pool's custody
+      """
+    }
+  }
+
+  dynamic view folders_pools_human_only_signin {
+    #v1
+    variant sequence
+    title "Workflows/Folders/Pools/Accounts/Agents can't finish a pool sign-in"
+    description 'R-POL-10 · The final provider OAuth step is human-only; agent-class callers get HumanOnly, external sessions also get a confirm URL.'
+
+    include personA, hier, hier.asstA, mcpClient, signalbox, signalbox.operations, signalbox.models
+
+    alt 'which agent tries' {
+      when "A's assistant" {
+        hier.asstA -> signalbox.operations 'complete(sign-in)' {
+          notes """
+            - The assistant can start a connect and prepare it, never finish it
+          """
+        }
+        hier.asstA <- signalbox.operations 'HumanOnly' {
+          notes """
+            - The card lands in A's Blocker lane for A to finish
+          """
+        }
+      }
+      else 'outside agent (MCP)' {
+        mcpClient -> signalbox.operations 'complete(sign-in)'
+        mcpClient <- signalbox.operations 'HumanOnly{confirmUrl}' {
+          navigateTo folders_gates_confirm_in_app
+          notes """
+            - MCP sessions are agent-class and get a confirm URL instead of an ask
+          """
+        }
+      }
+    }
+    personA -> signalbox.operations 'Finish sign-in' {
+      notes """
+        - In the app, from the card or the confirm URL
+        - A acts as a person, so the human-only check passes
+      """
+    }
+    signalbox.operations -> signalbox.models 'complete(step)' {
+      navigateTo folders_pools_signin_subscription
+      notes """
+        - Same `Models.complete` the normal sign-in uses
+      """
+    }
+  }
+
+  dynamic view folders_pools_paste_credentials {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Accounts/Paste an API key or credentials into a pool'
+    description 'R-POL-06 (v1; aliases T-PRV-05, T-PRV-13), R-POL-07 (not v1) · API keys for Anthropic, OpenAI, xAI, Gemini, OpenRouter or any OpenAI-compatible endpoint; Cursor and OpenCode credentials later.'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.models, modelProviders
+
+    alt 'who pastes' {
+      when 'A at A top level' {
+        personA -> signalbox.web 'Paste API key'
+      }
+      else 'C at folder Company' {
+        personC -> signalbox.web 'Paste API key' {
+          notes """
+            - Lands in P2, owned by the organization; members never see the key
+          """
+        }
+      }
+    }
+    alt 'what is pasted' {
+      when 'API key' {
+        signalbox.web -> signalbox.models 'connect(ApiKey, into)' {
+          notes """
+            - Sealed in the pool's custody; served by `ApiKeyDirect` or through CPA
+          """
+        }
+        signalbox.models -> modelProviders 'Check key' {
+          notes """
+            - A cheap call proves the key before it becomes routable
+          """
+        }
+      }
+      else 'Cursor or OpenCode (later)' {
+        signalbox.web -> signalbox.models 'connect(credentials)' {
+          notes """
+            - Not v1: added through Add subscription → Cursor / OpenCode
+          """
+        }
+      }
+    }
+    signalbox.web <- signalbox.models 'Account live' {
+      navigateTo folders_pools_add_account
+      notes """
+        - Same `into` rules as any account add
+      """
+    }
+  }
+
+  dynamic view folders_pools_remove_account {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Accounts/Remove an account from a pool'
+    description 'R-POL-11 (alias T-PRV-10) · The admin removes one account; the provider sign-out runs and pins move to the remaining accounts.'
+
+    include personC, signalbox, signalbox.web, signalbox.models, modelProviders
+
+    personC -> signalbox.web 'Open admin pool view' {
+      navigateTo folders_pools_open_view
+      notes """
+        - Pool section of folder Company, admin view of P2
+      """
+    }
+    personC -> signalbox.web 'Remove account'
+    signalbox.web -> signalbox.models 'change(RemoveAccount)' {
+      notes """
+        - Only who manages P2 (role on Company + owner) may remove
+      """
+    }
+    signalbox.models -> signalbox.models 'Stop routing · move pins' {
+      notes """
+        - Live threads of A and B move to another account at their next call
+      """
+    }
+    signalbox.models -> modelProviders 'Sign out account' {
+      notes """
+        - CPA deletes the auth file; the provider session is revoked
+      """
+    }
+    signalbox.web <- signalbox.models 'Removed' {
+      notes """
+        - The removal shows in P2's activity log
+      """
+    }
+  }
+
+  dynamic view folders_pools_move_account {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Accounts/Move an account between pools'
+    description 'R-POL-12, R-POL-13 · Account-move saga keyed by requestId: source moving{to} and drain, idempotent import, ack, source deletes. Cancel returns it; a crash resumes from the sweeper; never routable from two pools.'
+
+    include personC, signalbox, signalbox.web, signalbox.operations, signalbox.automations, hier, hier.topC.poolC, hier.company.poolCo
+
+    personC -> signalbox.web 'Move to pool P2' {
+      navigateTo folders_pools_open_view
+      notes """
+        - C manages both: P4 on C's top level and P2 on Company
+      """
+    }
+    signalbox.web -> signalbox.operations 'change(MoveAccount)'
+    signalbox.operations -> hier.topC.poolC 'moving{to: P2}' {
+      notes """
+        - Source custody stops pinning new work to the account
+      """
+    }
+    hier.topC.poolC -> hier.topC.poolC 'Drain live leases' {
+      notes """
+        - Running turns finish on it; nothing new starts
+      """
+    }
+    hier.topC.poolC -> hier.company.poolCo 'Import (requestId, accountId)' {
+      notes """
+        - Idempotent: a repeated import is a no-op
+      """
+    }
+    alt 'outcome' {
+      when 'target acks' {
+        hier.topC.poolC <- hier.company.poolCo 'Ack'
+        hier.topC.poolC -> hier.topC.poolC 'Delete sealed blob' {
+          notes """
+            - Only now does P4 forget it; at no step do two pools route it
+          """
+        }
+      }
+      else 'C cancels before the ack' {
+        signalbox.operations -> hier.topC.poolC 'Cancel → live' {
+          notes """
+            - The account returns to P4
+          """
+        }
+      }
+    }
+    opt 'crash mid-saga' {
+      signalbox.automations -> hier.topC.poolC 'Resume saga' {
+        notes """
+          - The Custody sweeper picks up the stalled step by `requestId`
+        """
+      }
+    }
+  }
+
+  dynamic view folders_pools_token_refresh {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Accounts/Refresh rotating tokens'
+    description 'R-POL-24 (alias T-PRV-12) · Custody is the single writer of rotating refresh tokens; a failed refresh marks the account unhealthy for the admin to re-add.'
+
+    include personC, signalbox, signalbox.models, signalbox.models.custody, signalbox.models.cpaHost, signalbox.attention, modelProviders
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.models.custody -> signalbox.models.custody 'Token near expiry'
+    signalbox.models.custody -> signalbox.models.cpaHost 'Refresh account' {
+      notes """
+        - Only custody writes the token pair; CPA never persists its own copy
+      """
+    }
+    signalbox.models.cpaHost -> modelProviders 'Refresh token'
+    try {
+      signalbox.models.cpaHost <- modelProviders 'New token pair'
+      signalbox.models.custody <- signalbox.models.cpaHost 'Rotated pair' {
+        notes """
+          - Sealed in one write, so two refreshes can never race
+        """
+      }
+    } catch 'refresh fails' {
+      signalbox.models.custody -> signalbox.models.custody 'Mark unhealthy' {
+        notes """
+          - The account stops taking pins; the pool keeps serving on the rest
+        """
+      }
+      signalbox.models.custody -> signalbox.attention 'Re-add account' {
+        notes """
+          - A card for C, who manages P2
+        """
+      }
+      signalbox.attention -> personC 'Re-add account' {
+        navigateTo folders_pools_add_account
+      }
+    }
+  }
+
+  dynamic view folders_pools_account_health {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Accounts/Track account health, quota and cooldowns'
+    description 'R-POL-15 (aliases T-APR-16, T-PRV-21, T-PRV-22, T-USG-08), R-POL-16 · Periodic quota reads; a 429 triggers a provider check at most every 30 s and an audited cooldown reset.'
+
+    include personC, signalbox, signalbox.web, signalbox.models, signalbox.models.custody, signalbox.models.cpaHost, modelProviders
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    loop 'periodic and on use' {
+      signalbox.models.custody -> signalbox.models.cpaHost 'Read quota' {
+        notes """
+          - CLIProxyAPI v8 `quota`; for Codex a fallback read at most every 10 min
+        """
+      }
+      signalbox.models.cpaHost -> modelProviders 'Usage windows'
+      signalbox.models.custody <- signalbox.models.cpaHost 'Windows · health' {
+        notes """
+          - Custody keeps health windows per account and feeds the pool views
+        """
+      }
+    }
+    opt 'a 429 comes back' {
+      signalbox.models.cpaHost -> signalbox.models.custody 'Rate limited' {
+        notes """
+          - The account goes cooling; pins move to the others
+        """
+      }
+      signalbox.models.custody -> signalbox.models.cpaHost 'Provider check' {
+        notes """
+          - At most every 30 s per account, so a stale 429 never parks an account for hours
+        """
+      }
+      signalbox.models.custody -> signalbox.models.custody 'Reset cooldown (audited)'
+    }
+    personC -> signalbox.web 'Sees activity' {
+      navigateTo folders_pools_open_view
+      notes """
+        - Cooldown clears show in P2's admin activity log
+      """
+    }
+  }
+
+  // ───────────────────────────── Pools/Manage ─────────────────────────────
+
+  dynamic view folders_pools_open_view {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Manage/Open a pool: member and admin views'
+    description 'R-POL-17 (v1; alias T-USG-05), R-POL-18 (v1; alias T-SET-17), T-USG-09, T-USG-11 (not v1) · One Models.view, shaped by role: members get remaining usage only, the admin gets accounts and activity.'
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.mobile, signalbox.models
+
+    alt 'who opens P2' {
+      when 'member A on web' {
+        personA -> signalbox.web 'Pool row or /usage-limits' {
+          notes """
+            - The Pool row on Company, or `/usage-limits` in the composer for the resolved pool
+          """
+        }
+        signalbox.web -> signalbox.models 'view(A, Place)'
+        signalbox.web <- signalbox.models 'Remaining · reset · who lends' {
+          navigateTo folders_pools_model_catalog
+          notes """
+            - Member-safe: no accounts, emails or plans on the wire
+            - No pool switcher
+          """
+        }
+      }
+      when 'member B on mobile' {
+        personB -> signalbox.mobile 'Usage screen or widget' {
+          notes """
+            - Not v1; widgets unconfirmed
+          """
+        }
+        signalbox.mobile -> signalbox.models 'view(B, Place)'
+        signalbox.mobile <- signalbox.models 'Same member-safe view' {
+          notes """
+            - B sees exactly what A sees: it depends on the Place, not the person
+          """
+        }
+      }
+      else 'admin C' {
+        personC -> signalbox.web 'Pool section on Company' {
+          navigateTo pgap_pools_share_people
+        }
+        signalbox.web -> signalbox.models 'view(C, Place)'
+        signalbox.web <- signalbox.models 'Accounts · health · activity' {
+          navigateTo journey_admin_folder_row_origins
+          notes """
+            - Plans, health, advice, activity (cooldown clears, routing changes)
+            - The pool row lists "placed at / lent to …" with End loan
+          """
+        }
+      }
+    }
+    opt 'C acts' {
+      personC -> signalbox.web 'Routing or advice' {
+        navigateTo folders_pools_configure_routing
+        notes """
+          - Routing, remove or move an account, redeem credits, delete the pool
+        """
+      }
+    }
+  }
+
+  dynamic view folders_pools_configure_routing {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Manage/Configure pool routing'
+    description 'R-POL-14 · Round robin or fill-first, per-thread affinity, move-on-error; applied live through the CPA management API.'
+
+    include personC, signalbox, signalbox.web, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    personC -> signalbox.web 'Routing: fill-first' {
+      navigateTo folders_pools_open_view
+      notes """
+        - Admin view of P2: round robin or fill-first, affinity, move-on-error
+      """
+    }
+    signalbox.web -> signalbox.models.api 'change(Configure)' {
+      notes """
+        - `Models.change(Configure{pool, cfg})`: the only way in
+      """
+    }
+    signalbox.models.api -> signalbox.models.custody 'Store config' {
+      notes """
+        - P2's custody keeps the routing config
+      """
+    }
+    signalbox.models.custody -> signalbox.models.cpaHost 'Apply live' {
+      notes """
+        - CPA management API; no restart, no dropped streams
+      """
+    }
+    signalbox.models.custody -> signalbox.models.custody 'Re-pin per affinity' {
+      navigateTo folders_pools_pins
+      notes """
+        - Existing pins stay sticky; the new rule applies to new pins
+      """
+    }
+    signalbox.web <- signalbox.models.api 'Applied' {
+      notes """
+        - Logged in P2's activity; A and B only notice spread usage
+      """
+    }
+  }
+
+  dynamic view folders_pools_advice {
+    variant sequence
+    title 'Workflows/Folders/Pools/Manage/Pool advice from usage history'
+    description 'not v1 · R-POL-19 · From the usage ledger: a plan bigger than you use, and how many accounts each provider needs.'
+
+    include personC, signalbox, signalbox.web, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.tree
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.models.custody -> signalbox.models.custody 'Usage history' {
+      notes """
+        - The one usage ledger: rows per account, window and plan
+      """
+    }
+    signalbox.models.custody -> signalbox.tree 'Usage aggregates' {
+      navigateTo folders_usage_rollup
+      notes """
+        - Rolled up Team → Company for the Usage rail (read-only)
+      """
+    }
+    signalbox.models.custody -> signalbox.models.custody 'Compute advice' {
+      notes """
+        - "Plan bigger than you use", "add one Claude account", "this account idles"
+      """
+    }
+    personC -> signalbox.web 'Open admin view' {
+      navigateTo folders_pools_open_view
+    }
+    signalbox.web -> signalbox.models.api 'view(C, Place)'
+    signalbox.models.api -> signalbox.models.custody 'Admin view'
+    signalbox.web <- signalbox.models.api 'Advice' {
+      notes """
+        - Advice only; nothing changes until C acts
+      """
+    }
+  }
+
+  dynamic view folders_pools_pick_assistant_pool {
+    variant sequence
+    title "Workflows/Folders/Pools/Manage/Pick the assistant's pool"
+    description "not v1 · R-POL-21 · A preferred flag on the top level's pool placement row, among pools placed or lent there."
+
+    include personA, hier, hier.asstA, signalbox, signalbox.web, signalbox.models, signalbox.tree
+
+    personA -> signalbox.web 'Use for assistant' {
+      navigateTo folders_lending_company_pool
+      notes """
+        - On a pool row at A's top level: P1 (A's own) or a pool lent in
+      """
+    }
+    signalbox.web -> signalbox.models 'change(Pick)'
+    signalbox.models -> signalbox.tree 'Set preferred on row' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - The pick is the `preferred` flag on that placement row
+        - Nothing about it lives in the Person actor
+      """
+    }
+    signalbox.web <- signalbox.models 'Picked'
+    hier.asstA -> signalbox.tree 'Next turn resolves' {
+      navigateTo person_assistant_pool
+      notes """
+        - The assistant's turns run on the preferred pool; folder threads still use their own chain
+      """
+    }
+  }
+
+  dynamic view folders_pools_redeem_credits {
+    variant sequence
+    title 'Workflows/Folders/Pools/Manage/Redeem provider reset credits'
+    description 'not v1 · R-POL-20 (alias T-USG-06) · The admin redeems provider reset credits through a documented provider or CPA path.'
+
+    include personC, signalbox, signalbox.web, signalbox.models, modelProviders
+
+    personC -> signalbox.web 'Redeem reset credit' {
+      navigateTo folders_pools_open_view
+      notes """
+        - On a cooling account in P2's admin view
+      """
+    }
+    signalbox.web -> signalbox.models 'Redeem'
+    signalbox.models -> modelProviders 'Documented reset path' {
+      notes """
+        - Only paths the provider or CPA documents; never a scraped endpoint
+      """
+    }
+    signalbox.web <- signalbox.models 'Window reset' {
+      notes """
+        - The account is live again; logged in activity
+      """
+    }
+  }
+
+  dynamic view folders_pools_delete_pool {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Manage/Delete a pool'
+    description 'R-POL-22, R-POL-23 · Agents pass the decision gate; delete saga: retiring, unplace every indexed placement and loan, delete sealed credentials; a sweeper resumes it.'
+
+    include personC, hier, hier.asstC, signalbox, signalbox.operations, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.tree, signalbox.automations
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    alt 'who deletes' {
+      when 'C directly' {
+        personC -> signalbox.operations 'DeletePool' {
+          notes """
+            - From P2's row on Company in the app
+            - C holds the role on Company, so no gate
+          """
+        }
+      }
+      else "C's assistant" {
+        hier.asstC -> signalbox.operations 'DeletePool'
+        hier.asstC <- signalbox.operations 'NeedsDecision' {
+          navigateTo folders_gates_destructive
+          notes """
+            - Destructive ops from any agent-class actor stop at the decision gate
+          """
+        }
+        personC -> signalbox.operations 'Approve' {
+          notes """
+            - From the Ready lane of C's pipeline
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.models.api 'change(DeletePool)'
+    signalbox.models.api -> signalbox.models.custody 'Retiring' {
+      notes """
+        - Serve refuses from here on; resolution sees `NeedsPool`, never a dead ref
+      """
+    }
+    loop 'each indexed placement and loan' {
+      signalbox.models.custody -> signalbox.tree 'Unplace' {
+        navigateTo folders_pools_needs_pool
+        notes """
+          - From the outbound-placements index, loans into other owners' levels included
+          - Threads in Team now resolve to `NeedsPool`
+        """
+      }
+    }
+    signalbox.models.custody -> signalbox.models.custody 'Delete sealed credentials'
+    opt 'crash mid-delete' {
+      signalbox.automations -> signalbox.models.api 'Resume saga' {
+        notes """
+          - The Custody sweeper (a default automation) re-invokes `change(DeletePool)` with the same `requestId`; idempotent
+        """
+      }
+    }
+  }
+
+  // ───────────────────────────── Pools/Routing ─────────────────────────────
+
+  dynamic view folders_pools_needs_pool {
+    variant sequence
+    title 'Workflows/Folders/Pools/Routing/NeedsPool with Add pool here'
+    description 'v1 partial · R-POL-02 (aliases T-APR-17, T-PRV-23) · Nothing placed on the chain: NeedsPool with Add pool here, in the model picker, for a local key and on the folder page.'
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.models, signalbox.tree
+
+    personA -> signalbox.web 'Open model picker' {
+      notes """
+        - In the shared thread in Team, after P2 was removed from Company
+        - A local key or the folder page hit the same answer
+      """
+    }
+    signalbox.web -> signalbox.models 'catalog(scope)'
+    signalbox.models -> signalbox.tree 'Resolve pool' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Chain of the thread's Place: Team → Company; nearest wins, nothing placed
+      """
+    }
+    signalbox.models <- signalbox.tree 'Nothing on chain'
+    signalbox.web <- signalbox.models 'NeedsPool' {
+      navigateTo person_pipeline_blocker_needs_pool
+      notes """
+        - Never a fallback to A's own P1: that would depend on who sends
+      """
+    }
+    personB -> signalbox.web 'Opens same thread' {
+      notes """
+        - B sees the same NeedsPool: the shared thread has one Place, so one chain
+      """
+    }
+    alt 'who can fix it' {
+      when 'C, admin of Company' {
+        personC -> signalbox.web 'Add pool here' {
+          navigateTo folders_pools_add_account
+          notes """
+            - Places a pool on Company or Team
+          """
+        }
+      }
+      else 'A or B, members' {
+        personA -> signalbox.web 'Lend a pool' {
+          navigateTo folders_lending_lend
+          notes """
+            - A member can only lend (e.g. A's P1 into Team), or ask C
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view folders_pools_model_catalog {
+    variant sequence
+    title 'Workflows/Folders/Pools/Routing/List models for the resolved pool'
+    description "v1 partial (a local key lists the same models) · R-POL-31 (alias T-PRV-24) · The resolved pool's /v1/models plus router-for-me/models; limited models still listed with reset times."
+
+    include personA, personB, signalbox, signalbox.web, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    personA -> signalbox.web 'Open model picker' {
+      navigateTo folders_placement_kind_setting
+      notes """
+        - In the shared thread in Team; it resolves P2 on Company
+      """
+    }
+    signalbox.web -> signalbox.models.api 'catalog(scope)' {
+      notes """
+        - `Models.catalog(scope)`: only the resolved pool set's models
+      """
+    }
+    signalbox.models.api -> signalbox.models.custody 'Resolved pool P2'
+    signalbox.models.custody -> signalbox.models.cpaHost '/v1/models'
+    signalbox.models.custody -> signalbox.models.custody 'Merge model metadata' {
+      notes """
+        - Names, limits and capabilities from `router-for-me/models`
+      """
+    }
+    alt 'result' {
+      when 'pool resolves' {
+        signalbox.web <- signalbox.models.api 'Models + reset times' {
+          notes """
+            - A model whose accounts are cooling stays listed, with its reset time
+          """
+        }
+      }
+      else 'nothing placed' {
+        signalbox.web <- signalbox.models.api 'NeedsPool' {
+          navigateTo folders_pools_needs_pool
+        }
+      }
+    }
+    personB -> signalbox.web 'Same picker, same list' {
+      notes """
+        - B in the same thread gets the same list: it depends on the Place only
+      """
+    }
+  }
+
+  dynamic view folders_pools_pins {
+    variant sequence
+    title 'Workflows/Folders/Pools/Routing/Pin an account per thread or subject'
+    description 'v1 partial · R-POL-25 · A sticky account per (thread or subject, provider); a pin move is audited with a thread notice.'
+
+    include personA, personB, signalbox, signalbox.thread, signalbox.gateway, signalbox.models, signalbox.models.api, signalbox.models.custody
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    alt 'who sends' {
+      when 'A' {
+        personA -> signalbox.thread 'Send turn'
+      }
+      else 'B' {
+        personB -> signalbox.thread 'Send turn' {
+          notes """
+            - Same shared thread, so the same pin: one pin per thread, not per sender
+          """
+        }
+      }
+    }
+    signalbox.thread -> signalbox.gateway 'Model call' {
+      navigateTo folders_gateway_model_call
+      notes """
+        - Made by the harness with the turn's grant
+      """
+    }
+    signalbox.gateway -> signalbox.models.api 'serve(lease)' {
+      notes """
+        - The lease carries (thread, provider), never the sender
+      """
+    }
+    signalbox.models.api -> signalbox.models.custody 'Pin (thread, provider)' {
+      notes """
+        - First call: custody picks an account by the pool's routing
+        - Later calls in the lease reuse it
+      """
+    }
+    signalbox.models.api <- signalbox.models.custody 'Account X'
+    signalbox.gateway <- signalbox.models.api 'Stream on X'
+    opt 'pin moves' {
+      signalbox.models.custody -> signalbox.models.custody 'Move pin (audited)' {
+        navigateTo folders_pools_configure_routing
+        notes """
+          - Account cooled, removed, or routing changed
+        """
+      }
+      signalbox.models.custody -[async]-> signalbox.thread 'Thread notice' {
+        notes """
+          - A and B see one quiet notice in the thread, not a push
+        """
+      }
+    }
+  }
+
+  dynamic view folders_pools_failover {
+    variant sequence
+    title 'Workflows/Folders/Pools/Routing/Fail over when a pool is exhausted'
+    description 'v1 partial · R-POL-26 (alias T-APR-13) · Failover across the resolved set; the thread hands off to another provider or pool; A and B are told only when nothing is left.'
+
+    include personA, personB, signalbox, signalbox.thread, signalbox.gateway, signalbox.models, signalbox.attention
+
+    signalbox.gateway -> signalbox.models 'serve(lease)'
+    signalbox.gateway <- signalbox.models 'PoolExhausted' {
+      navigateTo work_turns_pool_exhausted
+      notes """
+        - Or `UpstreamError` on a provider outage
+      """
+    }
+    alt 'what is left' {
+      when 'another account in the set' {
+        signalbox.models -> signalbox.models 'Fail over' {
+          navigateTo state_loan
+          notes """
+            - Across `nearestSet`: every pool at the nearest level (own + lent)
+          """
+        }
+        signalbox.gateway <- signalbox.models 'Stream continues'
+      }
+      when 'another pool or provider on the chain' {
+        signalbox.gateway -> signalbox.thread 'PoolExhausted'
+        signalbox.thread -> signalbox.thread 'SwitchHarness' {
+          notes """
+            - Hands off to what resolves on Team's chain, or is lent into it
+            - Recorded in the thread, nobody is pinged
+          """
+        }
+      }
+      else 'nothing left' {
+        signalbox.thread -> signalbox.attention 'Blocker: needs pool' {
+          navigateTo folders_pools_needs_pool
+        }
+        parallel {
+          signalbox.attention -> personA 'Needs pool'
+          signalbox.attention -> personB 'Needs pool' {
+            notes """
+              - Both work in the thread; C as admin of Company gets the place-or-lend card
+            """
+          }
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────── Pools/Gateway ─────────────────────────────
+
+  dynamic view folders_gateway_grant {
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Issue and refresh a model grant'
+    description 'v1 partial (a local key grant is v1; turns are not) · R-MGW-01, R-MGW-03, R-MGW-04 · A signed grant per subject (turn, run step, local key, MCP session); refresh denies only on removals; expired or revoked → Denied → re-grant.'
+
+    include personA, personB, signalbox, signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.tree, signalbox.identity, signalbox.connections
+
+    alt 'who sends' {
+      when 'A' {
+        personA -> signalbox.thread 'Send turn'
+      }
+      else 'B' {
+        personB -> signalbox.thread 'Send turn' {
+          notes """
+            - Same Place, same Scope, same pools: the sender never changes the grant
+          """
+        }
+      }
+    }
+    signalbox.thread -> signalbox.gateway 'grant(TurnSubject)' {
+      navigateTo folders_gateway_model_call
+      notes """
+        - Run steps, local keys and MCP sessions use the same call with their subject
+      """
+    }
+    signalbox.gateway -> signalbox.tree 'scope(Place)'
+    signalbox.gateway -> signalbox.identity 'Mint JWT' {
+      notes """
+        - `{subject, leaseEpoch, poolId[], scopeVersion, exp}`, TTL minutes
+      """
+    }
+    signalbox.thread -> signalbox.harness 'Grant (fetch shim)' {
+      notes """
+        - Token only in the harness's fetch shim; model base URLs and MCP URL alongside
+      """
+    }
+    loop 'before expiry' {
+      signalbox.harness -> signalbox.gateway 'Refresh'
+      parallel {
+        signalbox.gateway -> signalbox.tree 'Removals on chain?' {
+          navigateTo folders_placement_change_to_turns
+        }
+        signalbox.gateway -> signalbox.connections 'Epoch bumped?'
+      }
+      alt 'result' {
+        when 'nothing removed' {
+          signalbox.harness <- signalbox.gateway 'Refreshed' {
+            notes """
+              - Additions elsewhere never deny; the next turn picks them up
+            """
+          }
+        }
+        else 'removed, expired or revoked' {
+          signalbox.harness <- signalbox.gateway 'Denied' {
+            navigateTo work_turns_grant_refresh
+            notes """
+              - Role loss, loan end, unplace of something used, connection epoch bump
+            """
+          }
+          signalbox.harness -> signalbox.thread 'Re-grant' {
+            navigateTo folders_placement_unplace
+          }
+        }
+      }
+    }
+  }
+
+    dynamic view folders_gateway_model_call {
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Make a model call'
+    description 'v1 partial (the same path serves a local key) · R-MGW-02, R-MGW-07, R-MGW-08 · ModelGateway verifies the grant statelessly and hands the call to Models.serve; Models pins, stamps and streams from the provider.'
+
+    include laptopCli, signalbox, signalbox.harness, signalbox.gateway.modelGateway, signalbox.models, modelProviders
+
+    alt 'who calls' {
+      when 'a turn in the shared thread' {
+        signalbox.harness -> signalbox.gateway.modelGateway 'Request + grant' {
+          navigateTo folders_gateway_grant
+          notes """
+            - A turn of A or B in the thread in Team; the grant came from the Thread, not the sender
+          """
+        }
+      }
+      else 'a local key (v1)' {
+        laptopCli -> signalbox.gateway.modelGateway 'Request + sbk_ key' {
+          navigateTo folders_pools_local_key
+          notes """
+            - Local Claude Code or Codex; the key is bound to a Place
+          """
+        }
+      }
+    }
+    signalbox.gateway.modelGateway -> signalbox.gateway.modelGateway 'Verify grant' {
+      notes """
+        - Stateless JWT check with a 15 s epoch cache; no Durable Object hop
+      """
+    }
+    signalbox.gateway.modelGateway -> signalbox.models 'serve(lease, req)' {
+      navigateTo folders_pools_pins
+      notes """
+        - Models pins an account (cached per lease) and stamps `{requestId, subject, level, poolId}`
+        - Custody, CPA host and the stamp check stay inside Models
+      """
+    }
+    alt 'Models answers' {
+      when 'model not in pool' {
+        signalbox.gateway.modelGateway <- signalbox.models 'ModelNotInPool' {
+          notes """
+            - Also for Anthropic models outside Claude Code
+          """
+        }
+      }
+      else 'account X' {
+        signalbox.models -> modelProviders 'Upstream call' {
+          navigateTo folders_pools_cpa_host_lifecycle
+          notes """
+            - Through the pool's CPA host, from account X's own EU egress
+          """
+        }
+        signalbox.models <- modelProviders 'Bytes'
+        signalbox.gateway.modelGateway <- signalbox.models 'Byte stream' {
+          navigateTo folders_pools_failover
+          notes """
+            - Exhaustion fails over inside the resolved set
+            - Usage is counted once, by Models
+          """
+        }
+      }
+    }
+    signalbox.harness <- signalbox.gateway.modelGateway 'Stream' {
+      navigateTo folders_gateway_usage_metering
+    }
+  }
+
+  dynamic view folders_gateway_usage_metering {
+    #v1 #smell
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Count every model call once'
+    description 'Smell: ModelGateway writes into two Models actors (CPA host, Pool custody) instead of Models.serve. R-MGW-09, R-MGW-10 · started events batched through a Queue; custody reconciles them against the CPA drain; a missing drained row raises an unmetered alert; aborts and isolate deaths count once.'
+
+    include signalbox, signalbox.gateway.modelGateway, signalbox.models, signalbox.models.cpaHost, signalbox.models.custody, signalbox.tree, signalbox.observability
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.gateway.modelGateway -> signalbox.models.cpaHost 'Request + stamp' {
+      navigateTo folders_gateway_model_call
+      notes """
+        - CPA carries the signed stamp into its own usage record
+        - **Smell:** Gateway reaches past Models' interface into its CPA host (design §3.11 deployment unit); `serve` should own this hop
+      """
+    }
+    signalbox.gateway.modelGateway -[async]-> signalbox.models.custody 'started (Queue)' {
+      notes """
+        - One per request, batched through a Queue; off the request path
+        - **Smell:** a second write into a Models actor from Gateway; fold into `serve` or make `started` a named Models input
+      """
+    }
+    signalbox.models.cpaHost -[async]-> signalbox.models.custody 'CPA drain row' {
+      navigateTo folders_usage_record
+      notes """
+        - The only writer of token rows; each row describes itself
+        - An abort or a killed gateway isolate still drains exactly one row
+      """
+    }
+    signalbox.models.custody -> signalbox.models.custody 'Reconcile' {
+      notes """
+        - Row and drain cursor commit in one transaction
+      """
+    }
+    alt 'started without a drained row' {
+      when 'row arrives' {
+        signalbox.models.custody -[async]-> signalbox.tree 'Usage aggregates' {
+          navigateTo folders_usage_rollup
+          notes """
+            - Coalesced; rolls up Team → Company, never to A or B
+          """
+        }
+      }
+      else 'after the window' {
+        signalbox.models.custody -> signalbox.observability 'Unmetered alert'
+      }
+    }
+  }
+
+  dynamic view folders_gateway_egress_filter {
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Scrub secrets and PII from model requests'
+    description 'v1 partial · R-MGW-06, R-MGW-12 (not v1) · A deterministic scrubber on every model request (all encodings, streaming holdback); optional PII redaction per folder, off by default.'
+
+    include signalbox, signalbox.harness, signalbox.gateway.modelGateway, signalbox.gateway.egress, signalbox.tree, signalbox.models
+
+    signalbox.harness -> signalbox.gateway.modelGateway 'Model request'
+    signalbox.gateway.modelGateway -> signalbox.gateway.egress 'Scrub request' {
+      notes """
+        - Deterministic: plain, base64, URL and JSON-escaped forms of every known secret
+      """
+    }
+    opt 'folder enables PII redaction' {
+      signalbox.gateway.egress -> signalbox.tree 'Read policy' {
+        notes """
+          - A policy placement on Team or Company; off by default
+        """
+      }
+      signalbox.gateway.egress -> signalbox.gateway.egress 'Redact PII'
+    }
+    signalbox.gateway.modelGateway -> signalbox.models 'serve(clean request)' {
+      navigateTo folders_gateway_model_call
+      notes """
+        - Only scrubbed bytes reach Models and the provider
+      """
+    }
+    signalbox.gateway.modelGateway <- signalbox.models 'Response stream'
+    signalbox.gateway.modelGateway -> signalbox.gateway.egress 'Scrub stream' {
+      notes """
+        - Holds back a tail so a secret split across chunks is still caught
+      """
+    }
+    signalbox.harness <- signalbox.gateway.modelGateway 'Clean stream'
+  }
+
+  dynamic view folders_gateway_routing_env_guard {
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Refuse repointing the model routes'
+    description 'not v1 · R-MGW-05 · Attempts to repoint model base URLs are refused, and so are folder secrets with routing or telemetry prefixes.'
+
+    include personC, signalbox, signalbox.web, signalbox.harness, signalbox.gateway, signalbox.tree
+
+    alt 'what tries to repoint' {
+      when 'harness env override' {
+        signalbox.harness -> signalbox.gateway 'Call repointed base URL' {
+          notes """
+            - An agent sets `ANTHROPIC_BASE_URL` or similar inside its session
+          """
+        }
+        signalbox.harness <- signalbox.gateway 'Refused' {
+          navigateTo folders_gateway_grant
+          notes """
+            - Model routes come only from the grant; the fetch shim ignores the env
+          """
+        }
+      }
+      else 'folder secret' {
+        personC -> signalbox.web 'Add secret to Company' {
+          notes """
+            - e.g. a `*_BASE_URL` or telemetry endpoint as a folder secret
+          """
+        }
+        signalbox.web -> signalbox.tree 'Place secretRef' {
+          navigateTo folders_placement_kind_secret
+        }
+        signalbox.web <- signalbox.tree 'Refused: routing prefix' {
+          notes """
+            - Placement validation rejects routing and telemetry prefixes for every kind of actor
+          """
+        }
+      }
+    }
+  }
+
+    dynamic view folders_gateway_outcome_unknown {
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Never blindly retry an unknown outcome'
+    description 'Applies to every mutation, v1 ones included · R-MGW-11 · A transport loss mid-mutation returns OutcomeUnknown; the caller checks the receipt by requestId instead of retrying.'
+
+    include personA, mcpClient, signalbox, signalbox.web, signalbox.funnel, signalbox.gateway, signalbox.operations
+
+    alt 'who mutates' {
+      when 'A in the app' {
+        signalbox.web -> signalbox.funnel 'Mutation (requestId)' {
+          notes """
+            - e.g. A adds an account to a pool
+          """
+        }
+        signalbox.funnel -> signalbox.operations 'invoke'
+        signalbox.web <- signalbox.funnel 'OutcomeUnknown' {
+          notes """
+            - The connection dropped after the send: it may or may not have committed
+          """
+        }
+      }
+      else 'an outside agent (MCP)' {
+        mcpClient -> signalbox.gateway 'Tool call (requestId)'
+        signalbox.gateway -> signalbox.operations 'invoke'
+        mcpClient <- signalbox.gateway 'OutcomeUnknown' {
+          notes """
+            - Same rule through ToolGateway, the only MCP endpoint
+          """
+        }
+      }
+    }
+    signalbox.web -> signalbox.operations 'Receipt for requestId?' {
+      navigateTo work_turns_crash_resume
+      notes """
+        - Command receipts commit with the change, so this answer is exact
+        - The MCP client asks the same way
+      """
+    }
+    alt 'receipt' {
+      when 'found' {
+        signalbox.web <- signalbox.operations 'Committed result'
+      }
+      else 'none' {
+        signalbox.web <- signalbox.operations 'Not applied'
+        signalbox.web -> personA 'Retry?' {
+          notes """
+            - A decides; the same `requestId` keeps a retry idempotent
+          """
+        }
+      }
+    }
+  }
+
+    dynamic view folders_gateway_automation_calls {
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Automation model steps call the gateway'
+    description "not v1 · R-MGW-13 · Automation model steps and w.judge are direct gateway calls billed to the pool resolved at the automation's folder."
+
+    include signalbox, signalbox.automations, signalbox.judge, signalbox.gateway, signalbox.models
+
+    alt 'which step' {
+      when 'model step' {
+        signalbox.automations -> signalbox.gateway 'Model call (run grant)' {
+          navigateTo work_automations_steps_call
+          notes """
+            - A run of an automation placed on Team: grant as `RunSubject`
+          """
+        }
+      }
+      else 'w.judge' {
+        signalbox.automations -> signalbox.judge 'judge(question)' {
+          navigateTo work_automations_step_ask
+        }
+        signalbox.judge -> signalbox.gateway 'Direct model call' {
+          notes """
+            - Judge's direct-call adapter, still under the run's grant
+          """
+        }
+      }
+    }
+    signalbox.gateway -> signalbox.models 'serve (Team chain)' {
+      navigateTo folders_gateway_model_call
+      notes """
+        - The pool resolved at the automation's folder: P2, never the author's own pool
+      """
+    }
+    signalbox.models -> signalbox.models 'Usage row (run)' {
+      navigateTo folders_usage_payer
+      notes """
+        - Billed to P2 with the run as subject; rolls up Team → Company
+      """
+    }
+  }
+
+  dynamic view folders_modelgateway_laptop_pool {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Gateway/Use a pool from my laptop'
+    description 'P-ONB-09, P-ONB-10 · One command gives local Claude Code or Codex an sbk_ key bound to a Place; device-code login first if needed; --undo reverts.'
+
+    include personA, laptopCli, signalbox, signalbox.cli, signalbox.identity, signalbox.gateway, platform, platform.workos
+
+    opt 'not signed in yet' {
+      personA -> signalbox.cli 'signalbox login'
+      signalbox.cli -> signalbox.identity 'Device code' {
+        navigateTo identity_identity_device_code
+      }
+      personA -> platform.workos 'Approve code' {
+        notes """
+          - In the browser A is already signed in on
+        """
+      }
+      signalbox.cli <- signalbox.identity 'Session'
+    }
+    personA -> signalbox.cli 'Use pool at Company' {
+      notes """
+        - Or copied from a folder page's "Use this pool from my laptop"
+      """
+    }
+    signalbox.cli -> signalbox.gateway 'Mint local key' {
+      navigateTo folders_pools_local_key
+      notes """
+        - `LocalKeySubject` at that Place, minted for A only
+      """
+    }
+    signalbox.cli <- signalbox.gateway 'sbk_ key'
+    signalbox.cli -> laptopCli 'Write local config' {
+      navigateTo work_agenttools_outside_agent_connect
+      notes """
+        - Points the official CLIs at ModelGateway; the old config is kept
+      """
+    }
+    laptopCli -[model]-> signalbox.gateway 'Model calls' {
+      notes """
+        - Served from P2, the pool resolved at Company
+      """
+    }
+    opt '--undo' {
+      signalbox.cli -> laptopCli 'Restore config'
+    }
+  }
+
+  // ───────────────────────────── Pools/LocalKeys ─────────────────────────────
+
+  dynamic view folders_pools_local_key {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/LocalKeys/Use this pool from my laptop'
+    description 'R-POL-27 (aliases T-DSK-15, T-REM-10), R-POL-28 · A and B each mint their own sbk_ key at folder Company; revoke or rotate makes the next call Denied.'
+
+    include personA, personB, laptopCli, signalbox, signalbox.web, signalbox.gateway, signalbox.identity, signalbox.tree
+
+    parallel {
+      personA -> signalbox.web 'Use this pool from my laptop'
+      personB -> signalbox.web 'Use this pool from my laptop' {
+        notes """
+          - Each on the Company folder page; two keys, one per person
+        """
+      }
+    }
+    signalbox.web -> signalbox.gateway 'Mint LocalKey(Place)'
+    signalbox.gateway -> signalbox.identity 'Mint sbk_ (placeId)' {
+      navigateTo folders_placement_authority
+      notes """
+        - `placeId` minted per person: B presenting A's key gets `Denied`
+      """
+    }
+    signalbox.web <- signalbox.gateway 'One-command config'
+    laptopCli -[model]-> signalbox.gateway 'Model call (sbk_)' {
+      navigateTo folders_usage_record
+      notes """
+        - Local Claude Code or Codex, official and unmodified
+      """
+    }
+    signalbox.gateway -> signalbox.tree 'Resolve Place' {
+      navigateTo folders_pools_local_key_place_change
+      notes """
+        - Company's chain: P2; usage rows carry the local key as subject
+      """
+    }
+    opt 'A revokes or rotates' {
+      personA -> signalbox.web 'Revoke key'
+      signalbox.web -> signalbox.gateway 'Revoke'
+      laptopCli -[model]-> signalbox.gateway 'Next call'
+      laptopCli <- signalbox.gateway 'Denied' {
+        notes """
+          - B's key is untouched
+        """
+      }
+    }
+  }
+
+  dynamic view folders_pools_local_key_place_change {
+    variant sequence
+    title "Workflows/Folders/Pools/LocalKeys/A local key's folder changes under it"
+    description "v1 partial (the key is v1; moving or trashing folders is not) · R-POL-29 · The folder moves, the mount is removed or the folder is trashed: the next grant resolves the new chain or fails Invalid or NeedsPool."
+
+    include personA, laptopCli, signalbox, signalbox.gateway, signalbox.tree
+
+    alt 'what changed' {
+      when 'folder moved' {
+        signalbox.tree -> signalbox.tree 'Move Team' {
+          navigateTo folders_pools_local_key
+          notes """
+            - The key's Place is the folder, not its old path
+          """
+        }
+      }
+      when 'mount removed' {
+        personA -> signalbox.tree 'Leaves Company' {
+          navigateTo organization_identity_leave
+          notes """
+            - The Person actor drops the mount; Places `via` it lose their `via`
+          """
+        }
+      }
+      else 'folder trashed' {
+        signalbox.tree -> signalbox.tree 'Trash folder'
+      }
+    }
+    laptopCli -[model]-> signalbox.gateway 'Next call' {
+      notes """
+        - Nothing was pushed to the key; the change shows at the next grant
+      """
+    }
+    signalbox.gateway -> signalbox.tree 'Resolve Place' {
+      navigateTo folders_placement_change_to_turns
+    }
+    alt 'result' {
+      when 'chain resolves' {
+        laptopCli <- signalbox.gateway 'Served on new chain' {
+          notes """
+            - Whatever pool is nearest from the new position
+          """
+        }
+      }
+      else 'no longer resolves' {
+        laptopCli <- signalbox.gateway 'Invalid or NeedsPool' {
+          navigateTo folders_pools_needs_pool
+          notes """
+            - Trashed or out of A's tree: `Invalid`; no pool on the chain: `NeedsPool`
+          """
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────── Pools/Host ─────────────────────────────
+
+  dynamic view folders_pools_cpa_host_lifecycle {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Host/CPA host wakes and sleeps'
+    description 'R-POL-30 (alias T-USG-07) · The CPA container wakes on demand and sleeps after 2 idle minutes; sharded by account group as needed.'
+
+    include signalbox, signalbox.gateway, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost, signalbox.models.backend.cpaContainer
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.gateway -> signalbox.models.api 'serve(lease, req)' {
+      navigateTo folders_gateway_model_call
+    }
+    signalbox.models.api -> signalbox.models.custody 'Pin account'
+    signalbox.models.custody -> signalbox.models.cpaHost 'Stream via host' {
+      notes """
+        - One CPA host actor per `poolId#shard`, in the rarely-deployed pool-host script
+      """
+    }
+    opt 'container asleep' {
+      signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'Wake' {
+        notes """
+          - Cloudflare Containers cold start; the request waits, it is not dropped
+        """
+      }
+    }
+    signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'Pipe bytes' {
+      notes """
+        - CLIProxyAPI v8, pinned release; bytes pass untransformed
+      """
+    }
+    signalbox.models.api <- signalbox.models.cpaHost 'Byte stream'
+    signalbox.gateway <- signalbox.models.api 'Stream'
+    opt 'idle for 2 minutes' {
+      signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'Sleep'
+    }
+    opt 'account group too large' {
+      signalbox.models.cpaHost -> signalbox.models.cpaHost 'Shard poolId#n' {
+        notes """
+          - Custody's shard map routes each account group to its own host
+        """
+      }
+    }
+  }
+
+  dynamic view folders_pools_account_egress {
+    #v1
+    variant sequence
+    title 'Workflows/Folders/Pools/Host/Stable EU egress per account'
+    description 'R-POL-32 · Each pooled account always leaves through its own stable EU proxy identity.'
+
+    include signalbox, signalbox.models, signalbox.models.cpaHost, signalbox.models.backend.cpaContainer, signalbox.models.euEgress, modelProviders, modelProviders.openai, modelProviders.anthropic
+    style signalbox.models {
+      color muted
+      opacity 10%
+    }
+
+    signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'Request for account X' {
+      navigateTo folders_gateway_model_call
+    }
+    signalbox.models.backend.cpaContainer -> signalbox.models.euEgress 'Leave as account X' {
+      notes """
+        - The container never dials a provider directly
+      """
+    }
+    parallel {
+      signalbox.models.euEgress -> modelProviders.openai 'From X\'s EU IP' {
+        notes """
+          - One EU proxy identity per pooled account, the same on every call
+          - Providers see one steady location per subscription
+        """
+      }
+      signalbox.models.euEgress -> modelProviders.anthropic 'From Y\'s EU IP' {
+        notes """
+          - Another account never shares that identity
+        """
+      }
+    }
+  }
+}

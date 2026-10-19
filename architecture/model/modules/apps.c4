@@ -1,0 +1,53 @@
+model {
+  extend signalbox {
+    apps = module 'Apps' {
+      #deep
+      icon bootstrap:window-stack
+      description 'build · release · activate · rollback · open · call'
+      technology 'folder apps: Dynamic Worker server + sandboxed UI'
+      metadata {
+        interface '6'
+        deletion 'apps become one-off previews with no releases or folder accounts'
+      }
+
+      api = iface 'Apps · interface' {
+        description '6 verbs: build · release · activate · rollback · open · call'
+        technology 'Deletion test: without it, apps become one-off previews with no releases or folder accounts'
+      }
+
+      appActor = actor 'App' {
+        icon bootstrap:window-stack
+        description 'own SQLite · active-release pointer · binding epochs'
+        technology 'Durable Object · one per app'
+      }
+      releases = store 'Releases' {
+        icon bootstrap:archive
+        description 'immutable · content hash'
+      }
+      runner = part 'App runner' {
+        icon bootstrap:play-btn
+        description 'Dynamic Worker per release · no outbound network'
+        technology 'Worker Loader · globalOutbound null'
+      }
+      frameBridge = part 'Frame bridge' {
+        icon bootstrap:arrow-left-right
+        description 'capability + postMessage RPC'
+      }
+
+      appActor -> releases 'active release'
+      appActor -> runner 'load release'
+      frameBridge -> appActor 'calls'
+    }
+
+    apps.runner -[tool]-> signalbox.gateway.toolGateway 'tool calls with folder bindings'
+    apps.appActor -> signalbox.actorhost.api 'hosted'
+    signalbox.web.appFrame -> apps.api 'open · call (postMessage RPC)'
+    signalbox.mobile.appFrame -> apps.api 'open · call (postMessage RPC)'
+    signalbox.tree -> apps.api 'app placements'
+
+    // Interface → hidden parts (the only way in)
+    apps.api -> apps.releases 'build · release'
+    apps.api -> apps.appActor 'activate · rollback · call'
+    apps.api -> apps.frameBridge 'open'
+  }
+}

@@ -1,0 +1,184 @@
+// Walks through the state machines that had only an element view (turn, trash, pool account).
+// Each plays one entity's transitions with the people and modules that cause them.
+// Steps target modules (black boxes), never another module's internal actor.
+views {
+
+  dynamic view state_turn {
+    variant sequence
+    title 'States/Turn/Walk through'
+    description 'How does one turn in the shared thread of folder Team go from queued to completed, interrupted or failed, with Person A and Person B both working in it? State machine: state-turn.'
+
+    include personA, personB, signalbox.web, signalbox.thread, signalbox.tree, signalbox.gateway, signalbox.harness
+    include signalbox
+
+    style signalbox {
+      color muted
+      opacity 8%
+    }
+
+    personA -> signalbox.web 'sends' {
+      notes '''
+        - **queued**: B's turn is running, so A's waits in the same thread
+        - turns from A and B queue in one place
+      '''
+    }
+    signalbox.web -> signalbox.thread 'turn queued'
+    signalbox.thread -> signalbox.tree 'resolve Scope' {
+      notes '''
+        - **queued → starting** when the run slot frees
+        - pool, connections and skills resolve from folder Team's place in the tree, never from who sent the turn
+        - Scope is frozen for the turn
+      '''
+    }
+    alt 'pool found?' {
+      when 'no pool reaches Team' {
+        signalbox.thread -> signalbox.thread 'NeedsPool' {
+          navigateTo state_ask
+          notes '- **starting → failed**; an ask goes to whoever may place a pool on Team or above'
+        }
+      }
+      else 'pool resolved' {
+        signalbox.thread -> signalbox.gateway 'grant' {
+          notes '- the one model gateway grants against the pool placed on Team or Company'
+        }
+        signalbox.thread -> signalbox.harness 'open harness' {
+          notes '''
+            - **starting → active**: Claude Code or Codex runs in its isolate; the model wait sits in a Durable Object
+            - a boxd VM is forked only when a command needs a real machine
+          '''
+        }
+      }
+    }
+    opt 'needs a human' {
+      signalbox.harness -> signalbox.thread 'ask raised' {
+        navigateTo state_ask
+        notes '- **active → parked**: zero resident time while it waits'
+      }
+      personB -> signalbox.thread 'answers' {
+        notes '- B answers from any client; **parked → resuming** from the session mirror, then **active**'
+      }
+    }
+    alt 'how it ends' {
+      when 'settles' {
+        signalbox.harness -> signalbox.thread 'settle' {
+          notes '- **completed**: drive and session revision recorded'
+        }
+      }
+      when 'someone stops it' {
+        personA -> signalbox.thread 'interrupt' {
+          notes '- **interrupted**; restart queues a new turn'
+        }
+      }
+      else 'error' {
+        signalbox.harness -> signalbox.thread 'TurnFailed' {
+          notes '- **failed** with its cause; RuntimeLost resumes instead'
+        }
+      }
+    }
+    signalbox.thread -> signalbox.web 'status to A and B' {
+      notes '- both clients subscribe to the same thread and see the same state'
+    }
+  }
+
+  dynamic view state_trash {
+    variant sequence
+    title 'States/Trash/Walk through'
+    description 'How does an item in folder Team get archived (Person A, member), trashed and restored (Person C, admin of folder Company), or purged after 30 days? State machine: state-trash.'
+
+    include personA, personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.search, signalbox.drive, signalbox.computer
+    include signalbox
+
+    style signalbox {
+      color muted
+      opacity 8%
+    }
+
+    personA -> signalbox.web 'Archive' {
+      notes '- **live → archived**: hidden, read-only, never merges'
+    }
+    signalbox.web -> signalbox.operations 'archive'
+    signalbox.operations -> signalbox.tree 'archived'
+    personC -> signalbox.web 'Trash' {
+      notes '''
+        - **archived → trashed**: a tombstone; effects stop at once
+        - C may do this as admin of Company, which sits above Team
+      '''
+    }
+    signalbox.web -> signalbox.operations 'trash'
+    signalbox.operations -> signalbox.tree 'tombstone'
+    alt 'within 30 days?' {
+      when 'restored' {
+        personC -> signalbox.web 'Restore' {
+          notes '- **trashed → live**; everything comes back as it was'
+        }
+        signalbox.web -> signalbox.operations 'restore'
+        signalbox.operations -> signalbox.tree 'live again'
+      }
+      else 'window passes' {
+        signalbox.tree -> signalbox.tree '30-day alarm' {
+          notes '- **trashed → purging**'
+        }
+        parallel {
+          signalbox.tree -[async]-> signalbox.search 'purge rows'
+          signalbox.tree -[async]-> signalbox.drive 'purge forks'
+          signalbox.tree -[async]-> signalbox.computer 'drop VMs, leases'
+        }
+        signalbox.tree -> signalbox.tree 'purged' {
+          notes '- **purging → purged** once every store acknowledges; no way back'
+        }
+      }
+    }
+  }
+
+  dynamic view state_pool_account {
+    #v1
+    variant sequence
+    title 'States/Pool account/Walk through'
+    description 'How does one subscription account in pool P2 (placed on folder Company by Person C, admin) get connected, serve turns in Team, cool at quota, and move or leave? State machine: state-pool-account.'
+
+    include personC, signalbox.web, signalbox.models, signalbox.gateway, modelProviders.anthropic
+    include signalbox, modelProviders
+
+    style signalbox, modelProviders {
+      color muted
+      opacity 8%
+    }
+
+    personC -> signalbox.web 'Add account' {
+      notes '- **connecting**: device code, pasted code or API key'
+    }
+    signalbox.web -> signalbox.models 'connect'
+    signalbox.models -> modelProviders.anthropic 'sign in'
+    signalbox.models -> signalbox.models 'sealed in P2' {
+      notes '- **connecting → live**: routable in exactly one pool'
+    }
+    signalbox.gateway -> signalbox.models 'pin request' {
+      notes '''
+        - A's and B's turns in Team pin to it the same way: P2 sits on Company, above Team
+        - resolution by the hierarchy, never by who sends
+      '''
+    }
+    opt 'quota hit' {
+      signalbox.models -> signalbox.models 'cooling' {
+        notes '- **live → cooling** until the window resets; the router fails over'
+      }
+      signalbox.models -> signalbox.models 'window resets' {
+        notes '- **cooling → live**'
+      }
+    }
+    alt 'what C does' {
+      when 'moves it' {
+        personC -> signalbox.web 'Move account' {
+          notes '- **live → moving**: leases drain, then **moved** once the target pool acks'
+        }
+        signalbox.web -> signalbox.models 'move'
+      }
+      else 'removes it' {
+        personC -> signalbox.web 'Remove account' {
+          notes '- **live → removed** (also when the pool is deleted)'
+        }
+        signalbox.web -> signalbox.models 'remove'
+      }
+    }
+  }
+}

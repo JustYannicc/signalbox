@@ -1,0 +1,868 @@
+// Scenario journeys, shard 10: Data (Trash, Archive, Records, AccountDeletion). SCN-203 to SCN-219.
+// One dynamic view per scenario. The description starts with the plain question, then the answer.
+views {
+
+  // ---------------------------------------------------------------- Trash
+
+  dynamic view scn_203_thread_delete_restore {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Trash/Mistaken Delete'
+    description 'Person A deletes a thread by mistake: can they get it back? Decided: #119, #439, #474 (2026-10-15). 30-day trash, restore is exact; only delete removes work. Open: cloud threads.delete adapter and durable receipt (#806). SCN-203 · W-LIF-15, W-LIF-16, W-SRH-06, W-CMP-09 · v1: no.'
+
+    include personA, signalbox.web, signalbox.operations, signalbox.thread, signalbox.search, signalbox.drive, signalbox.computer, signalbox.tree
+
+    personA -> signalbox.web 'Delete thread' {
+      notes '''
+        - **Start:** live thread in Work › folder Company
+        - A clicks Delete by mistake
+      '''
+    }
+    signalbox.web -> signalbox.operations 'thread.delete' {
+      notes 'Funnel decodes; Operations checks A’s right at execution'
+    }
+    signalbox.operations -> signalbox.thread 'Tombstone' {
+      navigateTo work_threads_lifecycle_trash
+      notes '''
+        - Goes to the 30-day trash; nothing is purged yet
+        - Gone from every list
+      '''
+    }
+    signalbox.thread -> signalbox.search 'Hide from search' {
+      navigateTo work_search_tiers
+      notes 'Trash is excluded from search results'
+    }
+    signalbox.thread -> signalbox.drive 'Confirm fork saved' {
+      notes 'Artifacts fork has caught up with the VM; R2 holds the record'
+    }
+    signalbox.thread -> signalbox.computer 'Free VM' {
+      navigateTo state_computer
+      notes 'Only after Drive confirmed; the VM was never the durable copy'
+    }
+    personA -> signalbox.web 'Trash › Restore' {
+      notes 'Within 30 days, from the trash list of folder Company'
+    }
+    signalbox.web -> signalbox.thread 'Restore exactly' {
+      notes '''
+        - Conversation and session come back; Harness resumes the session on the next turn
+        - Files come back from the Artifacts fork (rebuilt from R2 if evicted)
+      '''
+    }
+    signalbox.thread -> signalbox.tree 'Re-apply Place' {
+      notes '''
+        - **End:** restored exactly: files, session, conversation, folder bindings
+        - The chain resolves as before
+        - **Decided** #119 (2026-10-15) 30-day trash · #439 only delete removes · #474 restore is exact
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_204_trash_purge_shared_history {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Trash/Purge After Window'
+    description 'What does the 30-day purge remove when history is shared? Decided: #474 (2026-10-15). Purge after 30 days removes the thread; objects another thread still uses survive until unreferenced. Pending: purge ships disabled until rollout incl. VM and ref GC is approved (#806, #849). SCN-204 · W-LIF-17, R-TRE-10, W-ATT-08 · v1: no.'
+
+    include personA, personB, signalbox.web, signalbox.automations, signalbox.thread, signalbox.drive, signalbox.observability
+
+    personA -> signalbox.web 'Leaves it in trash' {
+      notes '''
+        - **Start:** A’s thread sat in trash for 30 days
+        - B has a private fork that shares drive objects with it
+      '''
+    }
+    signalbox.automations -> signalbox.thread 'Purge Workflow fires' {
+      navigateTo work_threads_lifecycle_trash
+      notes 'A durable Workflow, started when the window ends'
+    }
+    signalbox.thread -> signalbox.thread 'Drop thread data' {
+      navigateTo state_attachment
+      notes 'Refs, session rows, attachments, previews and automation runs go'
+    }
+    signalbox.thread -> signalbox.drive 'Release objects' {
+      navigateTo folders_tree_purge
+      notes 'Drive keeps every object still referenced by another thread'
+    }
+    personB -> signalbox.web 'Opens own fork' {
+      notes 'B’s fork reads the shared objects as before; nothing changed for B'
+    }
+    signalbox.drive -> signalbox.drive 'GC after grace' {
+      notes 'Only unreferenced objects, in Artifacts and R2, after a grace period'
+    }
+    signalbox.thread -> signalbox.observability 'Log what went' {
+      notes '''
+        - **End:** purged, with a record of what was removed; B’s objects survive
+        - **Decided** #474 (2026-10-15) · pending rollout #806/#849 (`purgeEnabled` false)
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_205_empty_trash_early {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Trash/Empty Early'
+    description 'Person A empties the trash early: what happens? Assumption: Empty Trash runs the normal purge now, only for the chosen ids, person-only, no second clock; until the purge rollout is approved the button says it is unavailable (pending #806, #849). Why: only delete removes work (#474), the R2 record is deleted only by the user (#119), destructive actions stay human-only (#335). SCN-205 · W-LIF-17, W-LIF-15, R-GAT-01 · v1: no.'
+
+    include personA, signalbox.web, signalbox.harness, signalbox.operations, signalbox.automations, signalbox.thread, signalbox.drive, signalbox.observability
+
+    opt 'an agent tries first' {
+      signalbox.harness -> signalbox.operations 'Empty trash' {
+        navigateTo folders_gates_destructive
+        notes 'Agent-class call to a human-only destructive action'
+      }
+      signalbox.harness <- signalbox.operations 'Refused or confirm URL'
+    }
+    personA -> signalbox.web 'Empty or select' {
+      notes '''
+        - **Start:** items in A’s trash
+        - A empties all, or selects some
+      '''
+    }
+    signalbox.web -> signalbox.operations 'empty({ids?})' {
+      notes 'Person-only; checked at execution'
+    }
+    alt 'purge rollout' {
+      when 'approved' {
+        signalbox.operations -> signalbox.automations 'Purge these ids' {
+          navigateTo work_threads_lifecycle_trash
+          notes 'The same purge Workflow as the 30-day timer, started now'
+        }
+        signalbox.automations -> signalbox.thread 'Purge thread'
+        signalbox.thread -> signalbox.drive 'Release objects' {
+          notes 'Objects other threads use stay; the rest are GC’d after grace'
+        }
+        signalbox.thread -> signalbox.observability 'Record purge' {
+          notes '''
+            - **End:** chosen items purged now; everything else in trash untouched
+            - **Assumption:** no extra copy, no second clock (#474, #119, #335)
+          '''
+        }
+      }
+      else 'not yet (#806, #849)' {
+        personA <- signalbox.web 'Shows unavailable' {
+          notes 'Said plainly instead of failing with an error'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_206_folder_team_trash {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Trash/Folder Delete'
+    description 'Person B deletes folder Team while threads and settings live inside it: what happens? Decided: #474 (2026-10-15) folder delete follows the same trash; #849 (merged 2026-10-18) trashed work is refused, never falls back to parent instructions or pools, and keeps instructions, pool/drive bindings and notes for restore. Supersedes "dissolve into parent" (#878 finding 4). SCN-206 · R-TRE-08, R-TRE-09, W-LIF-18, R-TRE-10, R-GAT-01 · v1: no.'
+
+    include personB, personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.search, signalbox.models
+
+    personB -> signalbox.web 'Delete folder Team' {
+      notes '''
+        - **Start:** Team live with threads, AGENTS.md, notes, pool and drive bindings
+        - B is Admin of Team
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Check role' {
+      navigateTo folders_gates_destructive
+      notes 'Admin on Team needed; an agent attempt raises a destructive decision gate instead'
+    }
+    signalbox.operations -> signalbox.tree 'Tombstone subtree' {
+      navigateTo folders_tree_trash
+      notes '''
+        - The whole subtree goes to the 30-day trash
+        - Nothing dissolves into folder Company; every binding is kept
+      '''
+    }
+    parallel 'hide everywhere' {
+      signalbox.tree -> signalbox.thread 'Tombstone threads' {
+        navigateTo work_threads_lifecycle_folder_trash
+      }
+      signalbox.tree -> signalbox.search 'Hide rows'
+    }
+    signalbox.thread -> signalbox.tree 'Turn asks chain'
+    signalbox.thread <- signalbox.tree 'Refused: trashed' {
+      notes 'No fallback to Company’s pool or instructions (#849)'
+    }
+    personC -> signalbox.web 'Trash › Restore' {
+      notes 'B, or C as Admin of folder Company (an ancestor)'
+    }
+    signalbox.web -> signalbox.tree 'Restore subtree' {
+      navigateTo state_level
+      notes 'AGENTS.md, notes and the drive placement return with Team'
+    }
+    signalbox.tree -> signalbox.models 'Pool binding back' {
+      notes '''
+        - **End:** restored exactly with every binding and home
+        - Threads resolve on their old chain from the next turn
+        - **Decided** #474 · #849
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_207_stale_delete_retry {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Trash/Stale Retry'
+    description 'A delayed delete retry lands after the restore: does it delete again? Decided as a contract: #806, #849 (2026-10-17), a delayed retry cannot delete the thread again. Open: durable receipt in the cloud adapter (#806). SCN-207 · W-LIF-15, W-LIF-16, T-SYS-01 · v1: no.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.thread
+
+    personA -> signalbox.web 'Delete' {
+      notes '**Start:** A’s live thread; the Client is on a flaky connection'
+    }
+    signalbox.web -> signalbox.funnel 'thread.delete cmd-1'
+    signalbox.funnel -> signalbox.operations 'Execute'
+    signalbox.operations -> signalbox.thread 'Tombstone + receipt' {
+      navigateTo work_recovery_command_commit
+      notes 'The receipt binds cmd-1 to this trash entry'
+    }
+    personA -> signalbox.web 'Restore'
+    signalbox.web -> signalbox.thread 'Restore' {
+      navigateTo work_threads_lifecycle_trash
+    }
+    signalbox.web -> signalbox.funnel 'Late retry cmd-1' {
+      notes 'The Client replays the original command after the restore'
+    }
+    signalbox.funnel -> signalbox.operations 'Execute'
+    signalbox.operations -> signalbox.thread 'Check receipt'
+    signalbox.operations <- signalbox.thread 'Already done: no-op' {
+      notes '''
+        - cmd-1 is bound to the earlier trash entry, so nothing happens
+        - **End:** thread stays restored
+      '''
+    }
+    opt 'cmd-1 reused elsewhere' {
+      signalbox.funnel -> signalbox.operations 'cmd-1 on thread 2'
+      signalbox.funnel <- signalbox.operations 'Refused' {
+        notes '**Decided** #806/#849 (2026-10-17) · durable receipt still open (#806)'
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_208_agent_delete_attempt {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Trash/Agent Delete'
+    description 'An agent, or a local agent using the CLI, tries to delete: what happens? Decided for MCP: #335 (2026-10-15) destructive actions go through a decision gate, agent deletes are refused meanwhile; #806 keeps the human/destructive policy. Assumption for the CLI: with no TTY it refuses and returns the in-app confirm URL; scripts get scoped tokens that cannot carry human-only operations (pending #441 option 2). Why: local keys and MCP sessions are agent-class (design A40); a login alone is not consent. SCN-208 · R-GAT-01, R-GAT-03, P-ASK-04, W-MCP-05, W-LIF-15 · v1: no.'
+
+    include personA, mcpClient, laptopCli, signalbox.cli, signalbox.harness, signalbox.operations, signalbox.attention, signalbox.thread
+
+    alt 'who asks to delete' {
+      when 'A’s agent in Signalbox' {
+        signalbox.harness -> signalbox.operations 'threads.delete' {
+          navigateTo work_agenttools_app_ops
+          notes '''
+            - **Start:** an agent asks to delete a thread or folder
+            - Agent-class: `403 people_only` until the decision gate ships
+          '''
+        }
+        signalbox.operations -> signalbox.attention 'Raise Ready ask' {
+          navigateTo person_asks_gated_op
+          notes 'Once the gate ships: to the folder’s responsible people'
+        }
+      }
+      when 'external MCP session' {
+        mcpClient -> signalbox.operations 'threads.delete' {
+          navigateTo folders_gates_destructive
+        }
+        mcpClient <- signalbox.operations 'NeedsDecision{confirmUrl}'
+      }
+      else 'local agent via CLI' {
+        laptopCli -> signalbox.cli 'signalbox threads delete' {
+          notes 'Runs with A’s login, but there is no TTY'
+        }
+        laptopCli <- signalbox.cli 'Refused + confirm URL' {
+          notes '**Assumption:** human-only calls need a TTY confirm; no agent detection needed (#441)'
+        }
+      }
+    }
+    personA -> signalbox.operations 'Confirm in app' {
+      navigateTo folders_gates_confirm_in_app
+      notes '''
+        - A opens the confirm in the Web client and decides as the Person actor
+        - Only A can confirm
+      '''
+    }
+    signalbox.operations -> signalbox.thread 'Trash' {
+      navigateTo work_threads_lifecycle_trash
+      notes '''
+        - **End:** the normal trash path, or refused if A declines
+        - **Decided** #335 (2026-10-15) · #806
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_209_delete_mid_turn {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Trash/Delete Mid Turn'
+    description 'Person A deletes a thread mid-turn: what happens to the running work? Decided: #806, #474 (2026-10-17) delete interrupts active work, keeps queued work for restore, and confirms the saved drain before purge. Assumption for a lost disk: the trash entry keeps the last pushed checkpoint and the thread says plainly which edits were lost. Why: every file-changing turn is committed and pushed (#1129); the provider disk is never the durable copy (#915, #478). SCN-209 · W-LIF-15, T-SYS-06, P-BLK-17, W-LIF-16 · v1: no.'
+
+    include personA, signalbox.web, signalbox.thread, signalbox.harness, signalbox.attention, signalbox.computer, signalbox.drive
+
+    personA -> signalbox.web 'Delete mid-turn' {
+      notes '**Start:** a turn is running; edits on the VM are not saved yet'
+    }
+    signalbox.web -> signalbox.thread 'Tombstone' {
+      navigateTo work_threads_lifecycle_trash
+    }
+    signalbox.thread -> signalbox.harness 'Interrupt turn' {
+      navigateTo work_recovery_effect_cancel
+      notes 'An effect racing the delete is cancelled'
+    }
+    signalbox.thread -> signalbox.thread 'Keep queued messages' {
+      notes 'Stored with the trash entry for restore'
+    }
+    signalbox.thread -> signalbox.attention 'Withdraw asks' {
+      navigateTo person_pipeline_blocker_withdrawn
+      notes 'Open blockers and asks leave everyone’s lanes'
+    }
+    signalbox.thread -> signalbox.computer 'Drain VM'
+    alt 'disk' {
+      when 'VM still there' {
+        signalbox.computer -> signalbox.drive 'Commit changes' {
+          notes 'Fork commit plus the private `machine/<thread>` ref'
+        }
+        signalbox.computer <- signalbox.drive 'Drain confirmed'
+        signalbox.computer -> signalbox.computer 'Free VM' {
+          notes '''
+            - **End:** in trash with every edit kept; active work interrupted, queued work kept
+            - **Decided** #806/#474 (2026-10-17)
+          '''
+        }
+      }
+      else 'disk lost first' {
+        signalbox.thread -> signalbox.drive 'Keep last checkpoint' {
+          notes '**Assumption:** the last pushed checkpoint is what restores (#1129)'
+        }
+        signalbox.thread -> signalbox.web 'States lost edits' {
+          notes 'Says plainly which edits after that turn were lost'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_218_delete_shared_thread {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Trash/Shared Thread Delete'
+    description 'Person A deletes a thread shared with Person B: what happens for each? Decided: #474 on #119 (2026-10-15), #806, #849 (merged 2026-10-18). Assumption on who may delete: the author plus Admin+ on the thread’s folder or an ancestor; a participant like B can only hide or leave it; agents go through the decision gate. Why: the gate’s default deciders are the folder’s responsible people (#335) and roles inherit down the hierarchy. SCN-218 · W-LIF-15, W-LIF-16, R-GAT-01, P-PPL-03, W-SRH-06 · v1: no.'
+
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.search, signalbox.drive, signalbox.computer
+
+    personA -> signalbox.web 'Delete shared thread' {
+      notes '**Start:** A authored the thread in folder Company; B works in it too'
+    }
+    signalbox.web -> signalbox.operations 'Check right' {
+      navigateTo folders_gates_destructive
+      notes '**Assumption:** author or Admin+ on the chain; B could only hide or leave'
+    }
+    signalbox.operations -> signalbox.thread 'Tombstone' {
+      navigateTo work_threads_lifecycle_trash
+      notes 'Interrupts active work, keeps queued work'
+    }
+    parallel 'hide for everyone' {
+      signalbox.thread -> signalbox.search 'Drop from search' {
+        navigateTo work_search_tiers
+      }
+      signalbox.thread -> signalbox.web 'Live: moved to trash' {
+        navigateTo person_people_live
+        notes 'Every participant’s list drops it'
+      }
+    }
+    personB <- signalbox.web 'Sees it moved' {
+      notes 'B’s open view shows the thread went to trash'
+    }
+    signalbox.thread -> signalbox.drive 'Confirm fork saved'
+    signalbox.thread -> signalbox.computer 'Free VM'
+    personA -> signalbox.web 'Restore' {
+      notes 'A, or a folder Admin, within 30 days'
+    }
+    signalbox.web -> signalbox.thread 'Restore exactly' {
+      notes '''
+        - **End:** files, session, conversation and folder bindings return for everyone
+        - **Decided** #474 · #806 · #849
+      '''
+    }
+    signalbox.web -> signalbox.thread 'Late retry: no-op' {
+      navigateTo scn_207_stale_delete_retry
+      notes 'A delayed retry of the same delete does nothing'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_219_restore_thread_folder_gone {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Trash/Restore Without Home'
+    description 'Person A restores a thread after its folder was trashed: where does it go? Assumption: Restore offers "restore Team too" or a Move into a live folder, never silently landing on a parent’s chain; purging a folder takes every thread still homed there, so a restore never points at a purged home (pending #806). Why: restore is exact incl. bindings (#806), a move switches chains only with roles on both ends (R-TRE-05), trashed work never falls back to parent pools or instructions (#849). SCN-219 · W-LIF-16, R-TRE-09, R-TRE-10, R-TRE-05 · v1: no.'
+
+    include personA, personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.automations
+
+    personA -> signalbox.web 'Trash thread in Team' {
+      notes '**Start:** the thread’s own 30-day window starts'
+    }
+    signalbox.web -> signalbox.thread 'Tombstone' {
+      navigateTo work_threads_lifecycle_trash
+    }
+    personC -> signalbox.web 'Trash folder Team' {
+      notes 'Later, C (Admin of folder Company) trashes Team'
+    }
+    signalbox.web -> signalbox.tree 'Tombstone Team' {
+      navigateTo state_level
+    }
+    personA -> signalbox.web 'Restore thread'
+    signalbox.web -> signalbox.tree 'Home live?'
+    signalbox.web <- signalbox.tree 'Team is in trash'
+    alt 'A’s role on Team' {
+      when 'Admin on Team' {
+        signalbox.web -> signalbox.tree 'Restore Team too'
+        signalbox.web -> signalbox.thread 'Restore into Team' {
+          notes '**End:** thread and Team back together, on the old chain'
+        }
+      }
+      else 'otherwise' {
+        personA -> signalbox.web 'Pick live folder' {
+          notes 'Default: the nearest live ancestor; the new chain is shown'
+        }
+        signalbox.web -> signalbox.operations 'Run as Move' {
+          navigateTo folders_tree_move
+          notes 'Needs Member+ at the destination; never widens access silently'
+        }
+        signalbox.operations -> signalbox.thread 'Restore there' {
+          notes '**End:** restored into a live folder A chose'
+        }
+      }
+    }
+    opt 'Team purged first' {
+      signalbox.automations -> signalbox.tree 'Purge Team' {
+        navigateTo folders_tree_purge
+      }
+      signalbox.tree -> signalbox.thread 'Purge homed threads' {
+        notes '**Assumption:** the cascade means a restore never points at a purged home'
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ---------------------------------------------------------------- Archive
+
+  dynamic view scn_210_reopen_old_archive {
+    #decided
+    variant sequence
+    title 'Scenarios/Data/Archive/Reopen Old Thread'
+    description 'Person A opens or messages a thread archived years ago: does it carry on? Decided: #119 (2026-10-15) it opens and carries on where it left off; #119 (2026-10-18) only delete removes anything; #439 a new message brings it back exactly; #492 (2026-10-16) it resumes on the current Base with its changes on top. SCN-210 · W-LIF-10, W-LIF-20, W-DRV-13, W-DRV-05, P-SRCH-06 · v1: no.'
+
+    include personA, signalbox.web, signalbox.search, signalbox.thread, signalbox.drive, signalbox.tree, signalbox.computer, signalbox.harness
+
+    personA -> signalbox.web 'Search old thread' {
+      notes '**Start:** archived years ago; its drive was evicted from the hot tier'
+    }
+    signalbox.web -> signalbox.search 'Find archived' {
+      navigateTo work_search_tiers
+      notes 'Thread metadata stays hot; archived threads stay searchable'
+    }
+    personA -> signalbox.web 'Send message'
+    signalbox.web -> signalbox.thread 'Unarchive' {
+      navigateTo work_threads_lifecycle_archive
+      notes 'A new message unarchives it implicitly'
+    }
+    signalbox.thread -> signalbox.drive 'Promote from R2' {
+      navigateTo work_drive_eviction
+      notes 'Back into Artifacts from the R2 bundle; reads served from R2 meanwhile'
+    }
+    signalbox.thread -> signalbox.tree 'Resolve chain' {
+      notes 'The turn runs on the thread’s current chain'
+    }
+    signalbox.thread -> signalbox.computer 'Start VM' {
+      notes 'Only if commands run: current Base with the thread’s changes on top'
+    }
+    signalbox.thread -> signalbox.harness 'Resume session' {
+      navigateTo work_threads_lifecycle_history_tier
+      notes '''
+        - **End:** active again with the same files, conversation and session
+        - **Decided** #119 · #439 · #492
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_211_archive_unaccepted_fork {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Archive/Unaccepted Fork'
+    description 'Person A archives a thread whose fork was never accepted: is the work kept? Decided: #119, #1129 (2026-10-18) archiving never merges; eviction is an editable default automation once the R2 copy is confirmed. Assumption: N idle days and fork billing come from spike #1128; the fork’s storage is billed to the pool that pays the thread’s tokens. Why: compute and storage follow the thread’s pool. SCN-211 · W-LIF-09, W-DRV-11, W-DRV-13, W-DRV-06 · v1: no.'
+
+    include personA, signalbox.web, signalbox.thread, signalbox.computer, signalbox.automations, signalbox.drive
+
+    personA -> signalbox.web 'Archive thread' {
+      notes '**Start:** open fork with changes never accepted into main'
+    }
+    signalbox.web -> signalbox.thread 'Archive, no merge' {
+      navigateTo work_threads_lifecycle_archive
+      notes 'Flagged archived; nothing merges into main'
+    }
+    signalbox.thread -> signalbox.drive 'Confirm fork saved'
+    signalbox.thread -> signalbox.computer 'Free VM'
+    signalbox.automations -> signalbox.drive 'Evict after N days' {
+      navigateTo work_drive_eviction
+      notes '''
+        - Default eviction automation; drops the Artifacts fork only once the R2 copy is confirmed
+        - **Assumption:** N from spike #1128; storage billed to the thread’s pool
+      '''
+    }
+    personA -> signalbox.web 'Reopen later'
+    signalbox.web -> signalbox.thread 'Unarchive'
+    signalbox.thread -> signalbox.drive 'Promote from R2' {
+      notes 'The fork is rebuilt, still unmerged'
+    }
+    opt 'A accepts it' {
+      personA -> signalbox.web 'Accept'
+      signalbox.web -> signalbox.drive 'Accept fork' {
+        navigateTo work_drive_accept
+        notes '''
+          - **End:** archived fork kept, evicted, rebuilt, and still acceptable
+          - **Decided** #119 · #1129
+        '''
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ---------------------------------------------------------------- Records
+
+  dynamic view scn_212_rebuild_thread_from_r2 {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Records/Rebuild From R2'
+    description 'The thread’s Durable Object storage is lost: can it be rebuilt from R2? Decided for drives: #119 (2026-10-18) R2 alone can rebuild any drive. Assumption for conversation and session: R2 keeps an append-only full record of the thread’s items as backup only; rebuild replays it into the normal row-per-item tables and FTS index (pending #508). Why: history is searchable rows, never blobs (owner 2026-10-17). SCN-212 · W-DRV-05, W-TRN-28, T-SYS-01, W-REC-03 · v1: no.'
+
+    include personA, signalbox.web, signalbox.observability, signalbox.thread, signalbox.drive, signalbox.search, signalbox.harness
+
+    signalbox.observability -> signalbox.thread 'Start recovery' {
+      navigateTo work_turns_do_vm_recovery
+      notes '**Start:** the thread’s Durable Object storage is wiped; Observability flags it'
+    }
+    signalbox.thread -> signalbox.drive 'Rebuild drive, fork' {
+      navigateTo work_drive_r2_record
+      notes 'From the R2 bundles; **Decided** #119 (2026-10-18)'
+    }
+    signalbox.thread -> signalbox.drive 'Read item record' {
+      notes '**Assumption:** append-only R2 record incl. subagent transcripts, backup only (#508)'
+    }
+    signalbox.thread -> signalbox.thread 'Replay into rows' {
+      navigateTo work_recovery_command_commit
+      notes 'One row per item, never a blob'
+    }
+    signalbox.thread -> signalbox.search 'Re-index rows'
+    personA -> signalbox.web 'Next turn' {
+      notes 'A notices nothing, at most a slower first turn'
+    }
+    signalbox.web -> signalbox.thread 'Send'
+    signalbox.thread -> signalbox.harness 'Resume session' {
+      notes '''
+        - **End:** same conversation and files; the session resumes as usual
+        - Placement and recovery stay invisible to A and to the model
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_213_gitignored_state_survives {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Data/Records/Gitignored State'
+    description 'Do gitignored notes and .env survive a merge, cleanup or a lost machine? Decided: #119 (2026-10-15) the notes stay reachable years later and .env is encrypted at rest; #489, #490 (2026-10-16) keep only what changed and cannot be redownloaded. Assumption: machine/<thread> is a private ref in the thread’s Artifacts fork, mirrored to its R2 bundle, never merged or pushed to a forge (pending re-homing under #1129). Why: Artifacts is the hot tier and R2 alone rebuilds any drive. SCN-213 · W-DRV-05, W-CMP-09, W-LIF-10, W-DRV-13 · v1: no.'
+
+    include personA, signalbox.web, signalbox.harness, signalbox.thread, signalbox.computer, signalbox.bases, signalbox.drive
+
+    signalbox.harness -> signalbox.computer 'Write notes/, .env' {
+      notes '**Start:** A’s agent writes gitignored `notes/` and a `.env` on the VM'
+    }
+    signalbox.computer -> signalbox.drive 'Final save' {
+      navigateTo work_drive_r2_record
+      notes '''
+        - Untracked and ignored changes go to the private `machine/<thread>` ref
+        - `.env` encrypted at rest; **Assumption:** ref lives in the Artifacts fork + R2
+      '''
+    }
+    signalbox.thread -> signalbox.computer 'PR merged: free VM' {
+      navigateTo state_computer
+      notes 'Cleanup frees only the VM, and only after the final save'
+    }
+    signalbox.drive -> signalbox.drive 'Evict to R2' {
+      navigateTo work_drive_eviction
+      notes 'Idle years later the fork lives in R2 only'
+    }
+    personA -> signalbox.web 'Resume years later'
+    signalbox.web -> signalbox.thread 'Send'
+    signalbox.thread -> signalbox.computer 'Start VM'
+    signalbox.computer -> signalbox.bases 'Current Base' {
+      notes 'Starts on today’s Base, not the old image'
+    }
+    signalbox.computer -> signalbox.drive 'Restore notes, .env' {
+      notes '''
+        - **End:** both still there; `.env` decrypted onto the new VM
+        - **Decided** #119 · #489/#490
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_214_env_in_team_drive {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/Records/Env In Shared Drive'
+    description 'Person B’s agent commits a .env in folder Team that others can browse: who sees what? Assumption: .env* files get a secret privacy level: versioned and restorable, never exported, contents readable only by Member+ on the file’s folder chain (Viewers see the name only), values reach agents only through Gateway fill (pending #568). Why: privacy sits on each piece of content (#270), roles inherit down the hierarchy, secret values never enter the transcript (P-BLK-08). SCN-214 · W-DRV-19, R-PLC-14, W-GIT-02, R-ACC-01, R-MGW-06 · v1: no.'
+
+    include personB, personA, personD, signalbox.web, signalbox.harness, signalbox.drive, signalbox.tree, signalbox.gateway
+
+    personB -> signalbox.web 'Set up the app' {
+      notes '**Start:** B works in a thread in folder Team'
+    }
+    signalbox.web -> signalbox.harness 'Turn in Team'
+    signalbox.harness -> signalbox.drive 'Commit .env' {
+      navigateTo folders_placement_kind_secret
+      notes 'Versioned like any file, encrypted at rest, secret privacy level'
+    }
+    signalbox.drive -> signalbox.drive 'Skip in GitHub sync' {
+      navigateTo work_git_sync_lead
+      notes 'Never exported, as if it were ignored'
+    }
+    alt 'who opens .env' {
+      when 'D: outside Viewer of Team' {
+        personD -> signalbox.web 'Browse Team files' {
+          navigateTo journey_files_browse
+        }
+        signalbox.web -> signalbox.tree 'Check role'
+        personD <- signalbox.web 'Name only' {
+          notes 'Viewer on Team only: sees the file name, never the values'
+        }
+      }
+      else 'A: Member of folder Company' {
+        personA -> signalbox.web 'Open .env'
+        signalbox.web -> signalbox.tree 'Check role' {
+          navigateTo folders_access_roles
+          notes 'Member+ at Team or an ancestor reads contents'
+        }
+        personA <- signalbox.web 'Contents shown'
+      }
+    }
+    signalbox.harness -> signalbox.gateway 'Run with fill' {
+      navigateTo folders_gateway_egress_filter
+      notes 'Values filled into commands and scrubbed; never shown in a transcript'
+    }
+    personB -> signalbox.web 'Restore old revision'
+    signalbox.web -> signalbox.drive 'Restore revision' {
+      notes '''
+        - **End:** `.env` restorable like any file, never on GitHub, contents only within its scope
+        - **Assumption** pending #568
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ---------------------------------------------------------------- Account deletion
+
+  dynamic view scn_215_owner_deletes_account {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/AccountDeletion/Owner Deletes'
+    description 'Person A deletes their account while owning a shared folder: what happens to it? Assumption: deletion is blocked until every folder others use has a new Owner or is trashed; ownership never passes "after 30 days of warnings" (pending #232). Why: an Owner cannot leave without handing over the role (#225 §7, P-OUT-10), and nothing is deleted on a clock (#270). SCN-215 · P-OUT-10, P-OUT-11, R-ACC-19, R-IDN-20, R-POL-22 · v1: no.'
+
+    include personA, personB, personD, signalbox.web, signalbox.identity, signalbox.tree, signalbox.models, signalbox.attention
+
+    personA -> signalbox.web 'Delete account' {
+      notes '**Start:** A owns Personal › folder Friends, shared with B and D as guests'
+    }
+    signalbox.web -> signalbox.identity 'Start deletion'
+    signalbox.identity -> signalbox.tree 'List shared folders' {
+      notes 'Every folder A owns that others use'
+    }
+    personA <- signalbox.web 'Hand over first' {
+      notes '**Assumption:** blocked until each one has a new Owner or is trashed (#232)'
+    }
+    alt 'for folder Friends' {
+      when 'hand over' {
+        personA -> signalbox.web 'Make B Owner' {
+          navigateTo folders_access_owner_handover
+          notes 'An Admin is suggested first, else the longest-standing member'
+        }
+        signalbox.web -> signalbox.tree 'Transfer ownership' {
+          navigateTo folders_access_owner_transfer
+          notes 'Friends keeps its drive id, threads and placements'
+        }
+        signalbox.tree -> signalbox.models 'Withdraw A’s pools' {
+          navigateTo folders_pools_delete_pool
+        }
+        signalbox.tree -> signalbox.attention 'NeedsPool ask' {
+          notes 'Only if no pool is left on the chain; goes to B as the new Owner'
+        }
+        personB <- signalbox.attention 'You own Friends'
+      }
+      else 'trash it' {
+        personA -> signalbox.web 'Trash Friends' {
+          navigateTo folders_tree_trash
+        }
+      }
+    }
+    personD -> signalbox.web 'Keeps using Friends' {
+      navigateTo journey_sharing_friend_group
+      notes 'Nothing changes for D as a guest'
+    }
+    signalbox.web -> signalbox.identity 'Nothing shared left' {
+      notes '''
+        - **End:** Friends has a new Owner and keeps its threads and files
+        - A’s account goes to the 30-day trash, then purge
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_216_member_deletes_account {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/AccountDeletion/Member Deletes'
+    description 'Person B deletes their account while a member of folder Company: what stays and what goes? Assumption: account deletion = leave every organization (#270 corporate model), then trash everything B personally owns for 30 days; sealed chats stay sealed and restoring the account within the window unseals them like a rejoin; work aliases are released at purge; usage rows are never reattributed. Why: work owned by the organization belongs to it and nothing is deleted on a clock (#270, 2026-10-16), delete is the only removal path (#474), design A21 and A44. SCN-216 · R-ACC-15, P-OUT-05, R-ACC-17, W-DRV-24, P-OUT-08 · v1: no.'
+
+    include personB, personC, signalbox.web, signalbox.identity, signalbox.tree, signalbox.thread, signalbox.models, signalbox.observability
+
+    personB -> signalbox.web 'Delete account' {
+      notes '**Start:** B is a member of folder Company (mounted under Work)'
+    }
+    signalbox.web -> signalbox.identity 'Leave every organization' {
+      navigateTo organization_identity_leave
+      notes 'The normal leave path runs first, for every organization'
+    }
+    signalbox.identity -> signalbox.tree 'Deactivate mount' {
+      navigateTo person_leaving_leave_org
+      notes '`via` drops at the next resolve; access ends on the next request'
+    }
+    signalbox.identity -> signalbox.thread 'Seal private chats' {
+      navigateTo work_drive_leaver_files
+      notes '''
+        - Files, PRs and shared threads stay with folder Company
+        - B’s private chats there are sealed; C cannot read them
+      '''
+    }
+    opt 'C cleans up' {
+      personC -> signalbox.web 'Trash sealed chat' {
+        navigateTo state_thread
+        notes 'Only C (Admin) can trash it, unread, to the 30-day trash'
+      }
+    }
+    parallel 'trash what B owns' {
+      signalbox.identity -> signalbox.tree 'Trash top level' {
+        notes 'Top level, Personal folders, assistant memory, learned decisions'
+      }
+      signalbox.identity -> signalbox.models 'Trash pools, loans'
+    }
+    signalbox.identity -> signalbox.observability 'Opaque usage id' {
+      navigateTo identity_identity_unlink_work_account
+      notes '''
+        - **End:** at purge the alias map entries are released; usage rows keep an opaque id
+        - Restore within 30 days unseals chats like a rejoin
+      '''
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_217_organization_closes {
+    #assumption
+    variant sequence
+    title 'Scenarios/Data/AccountDeletion/Organization Closes'
+    description 'What happens when the organization is deleted or the company closes? Assumption: folder Company is never deleted by that. It is frozen with its last Admins kept, and only an Admin’s explicit move or trash changes it; unpaid service only hits plan limits (no issue yet; reverse door of #246, #252). Why: nothing is deleted on a clock (#270), only delete removes work (#474), a one-way door is a bug (design A44). SCN-217 · R-IDN-11, P-OUT-03, R-ACC-17, R-TRE-06, R-TRE-08 · v1: no.'
+
+    include personA, personB, personC, platform.workos, signalbox.web, signalbox.identity, signalbox.tree
+
+    platform.workos -> signalbox.identity 'WorkOS org deleted' {
+      navigateTo organization_identity_leave
+      notes '**Start:** organization deletion or membership-loss webhooks arrive'
+    }
+    signalbox.identity -> signalbox.tree 'Deactivate mounts' {
+      navigateTo person_leaving_leave_org
+      notes 'A’s and B’s mounts of folder Company; their private chats are sealed'
+    }
+    personA -> signalbox.web 'Open folder Company'
+    personA <- signalbox.web 'Access ended' {
+      notes 'Same for B, on the next request'
+    }
+    signalbox.identity -> signalbox.tree 'Freeze folder Company' {
+      navigateTo state_level
+      notes '''
+        - Kept: no new turns, its pool stops routing (`NeedsPool`)
+        - C keeps the last mirrored Admin role
+      '''
+    }
+    alt 'C decides' {
+      when 'move' {
+        personC -> signalbox.web 'Move under own top level'
+        signalbox.web -> signalbox.tree 'Move folder' {
+          navigateTo folders_tree_move_across
+        }
+      }
+      when 'export' {
+        personC -> signalbox.web 'Export folder'
+      }
+      else 'trash' {
+        personC -> signalbox.web 'Trash folder Company'
+        signalbox.web -> signalbox.tree 'Trash' {
+          navigateTo folders_tree_trash
+          notes '30-day trash, then purge'
+        }
+      }
+    }
+    opt 'organization comes back' {
+      platform.workos -> signalbox.identity 'WorkOS org restored'
+      signalbox.identity -> signalbox.tree 'Reactivate mounts' {
+        notes 'Mount ids are stable, so `via` returns (A44)'
+      }
+      personB -> signalbox.web 'Back in Company' {
+        notes '''
+          - **End:** folder Company kept; its Admin decided its fate
+          - Sealed chats unseal on return
+        '''
+      }
+    }
+
+    include signalbox, platform
+    style signalbox, platform { color muted; opacity 10% }
+  }
+}

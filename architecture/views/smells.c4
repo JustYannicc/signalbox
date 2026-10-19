@@ -1,0 +1,57 @@
+views {
+  view smells {
+    title 'Overview/Decisions/Smells'
+    description '''
+      Which modules fail the deep-module test, and what would we do about each? Passthrough: thin interface over little
+      logic (merge or keep only if deleting it smears work across callers). Shallow: interface nearly as big as what it
+      hides (deepen or merge). One-adapter seams: a seam with a single real adapter is hypothetical (inline it until a
+      second adapter exists). Each card says what the deletion test found. Click a module for its drill-down.
+    '''
+    group 'Passthrough · keep only if deletion smears' {
+      color red
+      opacity 6%
+      include signalbox.funnel with {
+        description 'decode · call · map errors. Delete it and clients reach handlers directly: keep, it is the one typed funnel.'
+        navigateTo m-funnel
+      }
+      include signalbox.ingress with {
+        description 'one route for webhooks and callbacks. Delete it and each module grows its own webhook route: keep.'
+      }
+      include signalbox.browser with {
+        description 'session · render over two vendors, each behind a one-adapter seam (Kernel, Browser Run). Inline both until a second adapter is real.'
+        navigateTo m-browser
+      }
+      include signalbox.judge with {
+        description 'decide → typed value or Insufficient. Delete it and each feature parses model output its own way: keep, but thin.'
+        navigateTo m-judge
+      }
+    }
+    group 'Shallow · deepen or merge' {
+      color amber
+      opacity 6%
+      include signalbox.capture with {
+        description '4 verbs over rows stored through Tree. Candidate to merge into Tree or deepen (quick capture, note share saga).'
+        navigateTo m-capture
+      }
+      include signalbox.learner with {
+        description '2 verbs, one-adapter routing seam, memories undecided. Candidate to fold into Attention routing until a second consumer appears.'
+        navigateTo m-learner
+      }
+      include signalbox.bases with {
+        description '6 verbs over a thin lease and pointer layer. Its Snapshot seam is real now (None for cold create, boxd snapshots), but lifecycle could still live in Computer.'
+        navigateTo m-bases
+      }
+    }
+    group 'One-adapter seams · hypothetical' {
+      color red
+      opacity 6%
+      include signalbox.computer.machines with {
+        title 'Computer · Machine seam'
+        description 'boxd only. VMs exist only while commands run; inline boxd until a second VM provider is real.'
+        navigateTo m-computer
+      }
+    }
+    exclude * -> *
+    autoLayout LeftRight 60 40
+  }
+}

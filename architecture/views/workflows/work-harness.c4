@@ -1,0 +1,1028 @@
+// Shard 10: work-harness. The agent loop (Harness: Claude Code and Codex always in the isolate tier,
+// a Thread DO facet plus Dynamic Workers; a boxd VM only ever runs commands), checkpoints on the
+// Drive, and attachments. Every module, Thread included, is a black box here.
+// The Drive lane owns attachment state and revisions (Artifacts and R2 behind it stay inside the Drive);
+// signed uploads, whose point is bytes landing in R2, go to platform.r2 directly.
+views {
+
+  // ── States ─────────────────────────────────────────────────────────────
+
+  dynamic view state_attachment {
+    title 'States/Attachment/Walk through'
+    description 'W-ATT-02, W-ATT-04, W-ATT-08. Lifecycle of one attachment: pending upload, owned by a draft, claimed by a message; exits are discard, rollback and purge. The bare state machine is the view state-attachment.'
+    autoLayout TopBottom
+
+    include signalbox
+    include personA, signalbox.web, signalbox.capture, signalbox.thread, signalbox.drive
+
+    personA -> signalbox.web 'picks a file' {
+      notes '''
+        - A pastes or picks a file in the composer of the shared thread in Team
+      '''
+    }
+    signalbox.web -> signalbox.drive 'upload: pending' {
+      notes '''
+        - State **pending**: bytes in R2 under an upload id, owned by nobody yet
+        - Invisible to everyone else, B included, until a message claims it
+      '''
+    }
+    alt 'what happens next' {
+      when 'A keeps typing later' {
+        signalbox.web -> signalbox.capture 'draft holds it' {
+          navigateTo person_drafts_attachments
+          notes '''
+            - State **owned by draft**: Capture keeps it with A's private draft
+            - Survives restarts and devices; still invisible to B
+          '''
+        }
+        signalbox.capture -> signalbox.thread 'send claims it' {
+          notes '- Draft sent: state **claimed by message**, draft dropped'
+        }
+      }
+      when 'A sends now' {
+        signalbox.web -> signalbox.thread 'message claims it' {
+          navigateTo work_attachments_attach
+          notes '''
+            - State **claimed by message**: now part of the thread record
+            - A and B both see it in the shared thread
+          '''
+        }
+      }
+      else 'A or an agent discards' {
+        signalbox.web -> signalbox.drive 'discard pending' {
+          notes '''
+            - Exit **discarded** (W-ATT-04): only pending or draft-owned uploads
+            - A claimed attachment is never removed by discard
+          '''
+        }
+      }
+    }
+    opt 'later, after it was claimed' {
+      alt 'which exit' {
+        when 'turns rolled back' {
+          signalbox.thread -> signalbox.drive 'drop rolled-back files' {
+            navigateTo work_checkpoints_undo_turn
+            notes '- Exit **removed**: attachments of discarded answers go with them (W-ATT-08)'
+          }
+        }
+        else 'thread purged from trash' {
+          signalbox.thread -> signalbox.drive 'purge worker deletes' {
+            navigateTo work_threads_lifecycle_trash
+            notes '''
+              - Exit **purged** after the 30-day trash
+              - The tombstone stops effects first, then purge workers clean stores
+            '''
+          }
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ── Attachments ────────────────────────────────────────────────────────
+
+  dynamic view work_attachments_attach {
+    variant sequence
+    title 'Workflows/Work/Attachments/Attach files to a message'
+    description 'W-ATT-01, W-ATT-03, W-ATT-09, T-THR-31, T-TRN-20. How a file gets into a message, from A, from an agent or from an old client, and reaches B and the harness.'
+
+    include signalbox, platform
+    include personA, signalbox.web, signalbox.operations, signalbox.gateway, signalbox.thread, signalbox.harness, signalbox.drive, platform.r2, personB
+
+    alt 'how the file enters' {
+      when 'A uses the composer' {
+        personA -> signalbox.web 'picks or pastes' {
+          navigateTo person_drafts_attachments
+          notes '''
+            - Desktop: dropping OS files on a thread row opens it with them attached (T-THR-31)
+            - A paste of 32 KiB or more becomes a text attachment; mod+shift+V keeps it inline (T-TRN-20)
+          '''
+        }
+        signalbox.web -> platform.r2 'upload bytes' {
+          navigateTo state_attachment
+          notes '- Signed upload to R2; the attachment is **pending** until a message claims it'
+        }
+        signalbox.web -> signalbox.operations 'send with ids' {
+          notes '- Over Funnel; Operations checks A can write in Team'
+        }
+      }
+      when 'an agent sends files' {
+        signalbox.harness -> signalbox.gateway 'prepare upload' {
+          notes '''
+            - The agent calls the attachment tools (W-ATT-03)
+            - The Gateway (ToolGateway) hands back a signed upload; the agent never holds a credential
+          '''
+        }
+        signalbox.gateway -> platform.r2 'upload bytes'
+        signalbox.gateway -> signalbox.operations 'send with ids' {
+          notes '- Same operation as the person path, as an agent-class actor'
+        }
+      }
+      else 'an old client' {
+        signalbox.web -> signalbox.drive 'legacy image persistence' {
+          notes '''
+            - Old clients still call image persistence (W-ATT-09)
+            - Kept so their messages carry the same R2 asset ids
+          '''
+        }
+        signalbox.web -> signalbox.operations 'send with ids'
+      }
+    }
+    signalbox.operations -> signalbox.thread 'Thread.send(message)' {
+      notes '- One input to the one Thread actor, keyed by requestId'
+    }
+    signalbox.thread -> signalbox.drive 'claim attachments' {
+      notes '''
+        - pending → **claimed by message**; ids from another thread or person are refused
+        - A claimed attachment can no longer be discarded
+      '''
+    }
+    signalbox.thread -> signalbox.harness 'turn with paths' {
+      notes '''
+        - Files land on the thread's computer; the harness sees file paths, never URLs
+      '''
+    }
+    signalbox.thread -> signalbox.web 'live event' {
+      notes '- Every subscriber of the thread gets it, not only the sender'
+    }
+    signalbox.web -> personB 'B sees files' {
+      notes '''
+        - B works in the same shared thread in Team, so B sees A's files at once
+        - A's draft attachments before sending were never visible to B
+      '''
+    }
+    opt 'harness asks with images' {
+      signalbox.harness -> signalbox.thread 'question with images' {
+        navigateTo work_approvals_native_question
+        notes '- A native question carrying attachments becomes a Blocker ask'
+      }
+    }
+
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_attachments_agent_images {
+    title 'Workflows/Work/Attachments/Agent images render in the thread'
+    description 'W-ATT-05, W-ATT-06. Images an agent produces become Drive assets, never machine paths, so they render for A and B on every client.'
+    autoLayout TopBottom
+
+    include signalbox
+    include signalbox.harness, signalbox.thread, signalbox.drive, signalbox.web, personA, personB
+
+    alt 'how the image arrives' {
+      when 'image by file path' {
+        signalbox.harness -> signalbox.thread 'embeds a path' {
+          notes '''
+            - The agent writes markdown like `![](/work/shot.png)` (W-ATT-05)
+            - A machine path would break: the VM may be gone, and clients have no disk
+          '''
+        }
+        signalbox.thread -> signalbox.drive 'path to asset' {
+          navigateTo work_attachments_attach
+          notes '- The file at that revision becomes an R2 asset id in the message'
+        }
+      }
+      else 'tool returns bytes' {
+        signalbox.harness -> signalbox.thread 'tool image bytes' {
+          notes '- A tool result carries image bytes (W-ATT-06)'
+        }
+        signalbox.thread -> signalbox.drive 'store bytes' {
+          notes '- Stored once in R2; the event keeps only the asset id'
+        }
+      }
+    }
+    signalbox.thread -> signalbox.web 'asset event' {
+      navigateTo journey_files_browse
+      notes '- The same asset URL for every client and every person'
+    }
+    parallel {
+      signalbox.web -> personA 'renders image'
+      signalbox.web -> personB 'renders image' {
+        notes '- B sees the screenshot in the shared thread exactly as A does'
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ── Checkpoints ────────────────────────────────────────────────────────
+
+  dynamic view work_checkpoints_commit {
+    variant sequence
+    title "Workflows/Work/Checkpoints/Commit the thread's work"
+    description "W-CKP-01, W-CKP-02, W-CKP-09. When and how the thread's files become a Drive revision; the record is written before the thread event."
+
+    include signalbox
+    include signalbox.thread, signalbox.harness, signalbox.computer, signalbox.drive
+
+    alt 'what triggers the save' {
+      when 'turn settles' {
+        signalbox.thread -> signalbox.computer 'save("turn")' {
+          navigateTo work_turns_settle
+          notes '''
+            - A file-changing turn settled (W-CKP-01)
+            - Turns that changed nothing commit nothing
+          '''
+        }
+      }
+      else 'mid-turn checkpoint' {
+        signalbox.harness -> signalbox.computer 'save("autosave")' {
+          notes '''
+            - Autosave timer or the agent asks for a checkpoint (W-CKP-02)
+            - Long turns never risk more than one autosave window
+          '''
+        }
+      }
+    }
+    signalbox.computer -> signalbox.drive 'commit(working ref)' {
+      notes '''
+        - meta = {thread, turn, class: source | keptLocal}
+        - **Never prompt text** in commit messages (W-CKP-09)
+      '''
+    }
+    signalbox.drive -> signalbox.drive 'store, then record' {
+      navigateTo work_drive_r2_record
+      notes '- Artifacts push (hot tier), R2 keeps the full record'
+    }
+    signalbox.computer <- signalbox.drive 'revision sha' {
+      notes '- Durable when save returns'
+    }
+    signalbox.thread <- signalbox.computer 'revision'
+    signalbox.thread -> signalbox.thread 'event with sha' {
+      navigateTo work_checkpoints_diff
+      notes '''
+        - Store first, then the thread event carrying the sha
+        - A crash in between leaves a revision with no event, never an event with no revision
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_checkpoints_diff {
+    variant sequence
+    title "Workflows/Work/Checkpoints/Review a turn's or the thread's diff"
+    description "W-CKP-03, W-CKP-04, W-CKP-08, T-CKP-07, T-CKP-08. Diffs come from Drive revisions, so the agent's own commits show too; A and B see the same diff."
+
+    include signalbox
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.drive
+
+    personA -> signalbox.web 'opens changes' {
+      notes '- A opens "changes" on a turn of the shared thread'
+    }
+    signalbox.web -> signalbox.operations 'diff query' {
+      notes '- Over Funnel; Operations checks A can read in Team'
+    }
+    signalbox.operations -> signalbox.thread 'turn to revisions' {
+      notes '- The thread maps turns to revision shas'
+    }
+    alt 'what to compare' {
+      when 'one turn' {
+        signalbox.operations -> signalbox.drive 'diff turn revisions' {
+          navigateTo work_checkpoints_commit
+          notes '''
+            - Before the turn vs at its settle (W-CKP-03)
+            - Revision-based, so commits the agent made inside the turn show (W-CKP-08)
+          '''
+        }
+      }
+      when 'whole thread' {
+        signalbox.operations -> signalbox.drive 'diff since fork' {
+          notes '- Fork point vs head of the working ref (W-CKP-04)'
+        }
+      }
+      else 'against main' {
+        signalbox.operations -> signalbox.drive 'history vs main' {
+          notes '- Branch compare against the drive main (W-CKP-04)'
+        }
+      }
+    }
+    signalbox.operations <- signalbox.drive 'patch and files'
+    signalbox.web <- signalbox.operations 'diff view' {
+      notes '''
+        - Split or stacked, whitespace, changed-files tree, find in diff (T-CKP-07)
+        - All client-side; nothing goes back to the server
+      '''
+    }
+    opt 'A opens a file' {
+      signalbox.web -> signalbox.operations 'file at revision' {
+        navigateTo journey_files_browse
+        notes '- Diff preview and full contents read from the Drive (T-CKP-08)'
+      }
+    }
+    personB -> signalbox.web 'opens same changes' {
+      notes '''
+        - B (member of Company, in Team) gets the same revisions and the same diff
+        - Access comes from the folder, never from who ran the turn
+      '''
+    }
+    personA -> signalbox.web 'restore a version' {
+      navigateTo work_checkpoints_restore
+      notes '- Continue in Restore files to a revision'
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_checkpoints_restore {
+    variant sequence
+    title 'Workflows/Work/Checkpoints/Restore files to a revision'
+    description 'W-CKP-05, W-CKP-07, T-HND-08. Restore adds a new commit and removes nothing; it is refused while a run is live.'
+
+    include signalbox
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.computer, signalbox.drive
+
+    personA -> signalbox.web 'restore this version' {
+      navigateTo work_checkpoints_diff
+      notes '- From the diff or the files view of the shared thread'
+    }
+    signalbox.web -> signalbox.operations 'Restore(rev)'
+    signalbox.operations -> signalbox.thread 'restore input' {
+      notes '- Operations checks A can write in Team first'
+    }
+    alt 'is a run live?' {
+      when "B's turn is running" {
+        signalbox.thread -> signalbox.thread 'restore-safety check' {
+          notes '''
+            - A run is active, so the restore is refused (W-CKP-07)
+            - Files under a live turn never change underneath the agent
+          '''
+        }
+        signalbox.operations <- signalbox.thread 'refused: run active'
+        signalbox.web <- signalbox.operations 'wait or stop' {
+          notes '- A sees why, and can stop the turn or wait'
+        }
+      }
+      else 'thread idle' {
+        signalbox.thread -> signalbox.drive 'restore(ref, rev)' {
+          notes '''
+            - A **new commit** with the old files; history keeps every version (W-CKP-05)
+            - Nothing is removed
+          '''
+        }
+        signalbox.thread <- signalbox.drive 'new revision'
+        signalbox.thread -> signalbox.computer 'reload files' {
+          notes '- The live files move to the new revision'
+        }
+        signalbox.thread -> signalbox.thread 'supersede handoffs' {
+          navigateTo work_checkpoints_undo_turn
+          notes '''
+            - Pending handoff seeds are superseded by the restore (T-HND-08)
+            - A revert the harness cannot follow is refused
+          '''
+        }
+        signalbox.thread -> signalbox.web 'restore event'
+        signalbox.web -> personB 'B sees restore' {
+          navigateTo journey_files_browse
+          notes '- A system event in the shared thread; B sees who restored and to what'
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_checkpoints_undo_turn {
+    variant sequence
+    title 'Workflows/Work/Checkpoints/Undo turns'
+    description 'W-CKP-06, T-CKP-03. Roll back the last N turns: files restored, session rewound, answers and their attachments dropped; a provider failure is recorded.'
+
+    include signalbox
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.harness, signalbox.computer, signalbox.drive
+
+    personA -> signalbox.web 'undo last turns' {
+      notes '- A rolls back the last N turns of the shared thread'
+    }
+    signalbox.web -> signalbox.operations 'Rollback(n)'
+    signalbox.operations -> signalbox.thread 'rollback input' {
+      navigateTo work_checkpoints_restore
+      notes '- Same restore-safety check as restore: refused while a run is live'
+    }
+    signalbox.thread -> signalbox.drive 'restore pre-turn rev' {
+      notes '- A new commit with the files from before turn N; nothing removed'
+    }
+    signalbox.thread -> signalbox.computer 'reload files'
+    try {
+      signalbox.thread -> signalbox.harness 'rewind session' {
+        notes '- The harness rewinds its native session to before turn N'
+      }
+    } catch 'provider rollback fails' {
+      signalbox.thread <- signalbox.harness 'rollback failed' {
+        notes '- e.g. the provider cannot rewind this session (T-CKP-03)'
+      }
+      signalbox.thread -> signalbox.thread 'record failure' {
+        notes '''
+          - The failure is an event on the thread, visible to A and B
+          - Files stay restored; the next turn opens from a handoff seed
+        '''
+      }
+    }
+    signalbox.thread -> signalbox.drive 'drop answer attachments' {
+      navigateTo state_attachment
+      notes '- Attachments of the discarded answers are removed (W-ATT-08)'
+    }
+    signalbox.thread -> signalbox.web 'turns removed'
+    signalbox.web -> personB 'B sees rollback' {
+      notes '- B sees the same shortened thread and a system event naming A'
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ── Harness ────────────────────────────────────────────────────────────
+
+  dynamic view work_harness_open_session {
+    variant sequence
+    title 'Workflows/Work/Harness/Open or resume the session facet'
+    description 'W-HAR-01, W-HAR-14, T-TRN-16. How a thread gets a running harness: grant, computer, session facet, then a fresh or resumed session. Claude Code and Codex always run in the isolate tier (Thread DO facet + Dynamic Workers); no VM or container is ever their home.'
+
+    include signalbox
+    include personA, signalbox.web, signalbox.operations, signalbox.thread, signalbox.gateway, signalbox.computer, signalbox.actorhost, signalbox.harness
+
+    opt 'A restarts the session' {
+      personA -> signalbox.web 'restart agent session' {
+        notes '- From the command palette (T-TRN-16)'
+      }
+      signalbox.web -> signalbox.operations 'RestartSession'
+      signalbox.operations -> signalbox.thread 'close session' {
+        navigateTo work_approvals_turn_parks
+        notes '''
+          - The session facet closes
+          - The next turn opens fresh with re-resolved placements: skills, plugins, MCP config
+        '''
+      }
+    }
+    signalbox.thread -> signalbox.gateway 'grant(turn, scope)' {
+      notes '''
+        - Scope is resolved and frozen at turn start
+        - Same Scope whether A or B sent the turn
+      '''
+    }
+    signalbox.thread <- signalbox.gateway 'endpoints and token'
+    signalbox.thread -> signalbox.computer 'open(thread)' {
+      navigateTo work_computer_escalate
+      notes '''
+        - Idempotent, one computer per thread: the kernel live FS, **no VM**
+        - A boxd VM (forked from the warm Base) appears later only if a command needs a real machine
+      '''
+    }
+    signalbox.thread -> signalbox.actorhost 'facet(thread)' {
+      notes '''
+        - Worker Loader isolate with its own SQLite, a facet of the Thread DO (W-HAR-01)
+        - This is where Claude Code or Codex runs; programs it starts go to child Dynamic Workers
+      '''
+    }
+    signalbox.thread <- signalbox.actorhost 'session facet'
+    signalbox.thread -> signalbox.actorhost 'seed facet' {
+      notes '''
+        - Each seed step leaves a durable receipt
+        - A facet reincarnated between seeding and boot resumes from the receipts
+      '''
+    }
+    alt 'fresh or resume' {
+      when 'first turn or restarted' {
+        signalbox.thread -> signalbox.harness 'open(kind, model)' {
+          navigateTo work_harness_turn_inputs
+          notes '''
+            - The official CLI build loads into the session facet (isolate tier): Claude Code 2.1.302, Codex 0.162.1 proven
+            - With grant endpoints, instructions, tool profile and an MCP config whose entries all point at Executor
+          '''
+        }
+      }
+      else 'evicted, answered or unarchived' {
+        signalbox.thread -> signalbox.harness 'open(resume)' {
+          navigateTo work_turns_crash_resume
+          notes '''
+            - Resume from the session rows in the mirror (W-HAR-14)
+            - Also after a parked turn gets its answer, see work_approvals_turn_parks
+          '''
+        }
+      }
+    }
+    signalbox.thread <- signalbox.harness 'session ready'
+    signalbox.harness -> signalbox.thread 'mirror session rows' {
+      navigateTo work_turns_keepalive_mirror
+      notes '- Every 5 s and at settle, so any wake can resume'
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_turn_inputs {
+    title 'Workflows/Work/Harness/What the tree hands the harness at turn start'
+    description "W-HAR-06, W-HAR-07, W-HAR-08. Instructions, skills, plugins and the tool profile come from the thread's chain, never from who sends."
+    autoLayout TopBottom
+
+    include signalbox
+    include personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.harness, signalbox.computer
+
+    personC -> signalbox.web 'edits AGENTS.md' {
+      notes '- C, admin of folder Company, edits the AGENTS.md placed on Company'
+    }
+    signalbox.web -> signalbox.operations 'place instructions'
+    signalbox.operations -> signalbox.tree 'change(Company)' {
+      notes '- The Company Level bumps its version; it reaches Team and every thread below'
+    }
+    signalbox.thread -> signalbox.tree 'resolve Scope' {
+      navigateTo work_turns_end_to_end
+      notes '''
+        - At each turn start, on the thread chain: Team, Company, then the filer mount
+        - Identical for A and B turns in the shared thread
+      '''
+    }
+    signalbox.thread <- signalbox.tree 'instructions, skills, profile' {
+      notes '''
+        - `cascade("instructions")`: top first, nearest per heading, per-harness blocks (W-HAR-06)
+        - `union(skill, harnessPlugin)` by name (W-HAR-07)
+      '''
+    }
+    alt 'which purpose profile' {
+      when 'worker thread' {
+        signalbox.thread -> signalbox.harness 'open: full tools' {
+          navigateTo work_harness_open_session
+        }
+        signalbox.thread -> signalbox.computer 'open: exec allowed' {
+          notes '- Exec runs in the kernel; only commands that need a real machine escalate to a boxd VM'
+        }
+      }
+      else 'assistant or folder agent' {
+        signalbox.thread -> signalbox.harness 'open: no shell/edit' {
+          notes '- Coordinator profile: built-in shell and edit tools disabled (W-HAR-08)'
+        }
+        signalbox.thread -> signalbox.computer 'open: scratch only' {
+          notes '- Scratch-only files, no exec'
+        }
+      }
+    }
+    signalbox.harness -> signalbox.harness 'tools by profile' {
+      navigateTo work_agenttools_tools_in_turn
+      notes '- MCP tools are filtered by Scope and profile at the Gateway'
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_credential_guards {
+    variant sequence
+    title 'Workflows/Work/Harness/Harness never holds the token or reroutes models'
+    description 'W-HAR-12, W-HAR-13. The grant token lives only in the fetch shim; exec sees placeholders; a base-URL override is refused.'
+
+    include signalbox
+    include signalbox.thread, signalbox.harness, signalbox.computer, signalbox.gateway
+
+    signalbox.thread -> signalbox.harness 'open with grant' {
+      navigateTo work_harness_open_session
+      notes '''
+        - Endpoints go into CLI config; the token goes into the fetch shim only
+        - The harness env holds a constant dummy for provider auth vars
+      '''
+    }
+    signalbox.harness -> signalbox.gateway 'model call' {
+      navigateTo work_turns_grant_refresh
+      notes '- The fetch shim swaps the dummy for the grant token on the way out (W-HAR-13)'
+    }
+    signalbox.harness -> signalbox.computer 'exec(argv)' {
+      navigateTo work_computer_builtin_egress
+      notes '''
+        - Any Bash call the agent makes, from the isolate-tier harness
+        - Runs in the kernel, or on an escalated boxd VM; same env rules on both
+      '''
+    }
+    signalbox.computer -> signalbox.computer 'env from placeholders' {
+      notes '''
+        - Exec env is built only from PlaceholderEnv; provider auth vars are stripped
+        - `echo $ANTHROPIC_API_KEY` shows the dummy
+      '''
+    }
+    opt 'harness repoints base URL' {
+      signalbox.harness -> signalbox.gateway 'overridden routing' {
+        notes '- Config or env tries another base URL or provider (W-HAR-12)'
+      }
+      signalbox.gateway -> signalbox.gateway 'routing-env guard' {
+        navigateTo folders_gateway_routing_env_guard
+        notes '- Requests not on the grant endpoints are rejected (#600)'
+      }
+      signalbox.harness <- signalbox.gateway 'refused' {
+        notes '- Models are reached only through the pool on the chain'
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_switch {
+    variant sequence
+    title 'Workflows/Work/Harness/Switch harness or model mid-thread'
+    description 'W-HAR-02, W-HAR-03, W-HAR-04, W-LIN-04, T-PRV-28. Change model or traits, hand the thread to another harness on the same computer, or get refused.'
+
+    include signalbox
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.gateway, signalbox.harness
+
+    personA -> signalbox.web 'picks harness or model' {
+      notes '- The picker shows only what the pools on the chain supply'
+    }
+    signalbox.web -> signalbox.operations 'change selection'
+    signalbox.operations -> signalbox.thread 'SwitchHarness or select' {
+      navigateTo work_harness_failover
+      notes '- A blocked thread enters this same path by itself'
+    }
+    alt 'what changed' {
+      when 'model, effort or traits' {
+        signalbox.thread -> signalbox.thread 'selection transition' {
+          notes '''
+            - Applies from the next run; same session (W-HAR-04)
+            - Effort, thinking, fast and context traits the same way (T-PRV-28)
+          '''
+        }
+      }
+      when 'another harness kind' {
+        signalbox.thread -> signalbox.harness 'export seed' {
+          notes '''
+            - HandoffSeed from the old session (W-HAR-02)
+            - No native resume: ContextHandoff seed of recent requests, original request, outcomes (W-LIN-04)
+          '''
+        }
+        signalbox.thread -> signalbox.harness 'close old session'
+        signalbox.thread -> signalbox.gateway 'fresh grant' {
+          notes '- Same pool set; pins kept per (thread, provider)'
+        }
+        signalbox.thread -> signalbox.harness 'open(new, seed)' {
+          navigateTo work_harness_open_session
+          notes '''
+            - New session facet in the isolate tier, on the **same** computer
+            - Files and processes unchanged
+          '''
+        }
+      }
+      else 'kind has no handoff' {
+        signalbox.operations <- signalbox.thread 'HandoffUnsupported' {
+          navigateTo work_threads_fork_at_point
+          notes '- Refused (W-HAR-03); A can fork instead'
+        }
+      }
+    }
+    signalbox.thread -> signalbox.web 'system event'
+    signalbox.web -> personB 'B sees switch' {
+      notes '''
+        - The selection belongs to the thread, not to a person
+        - B next turn in the shared thread runs on the new harness
+      '''
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_failover {
+    variant sequence
+    title 'Workflows/Work/Harness/Blocked thread hands itself to another provider or pool'
+    description 'W-HAR-05. A blocked turn fails over inside its pool, switches harness to a provider the chain still supplies, or asks the folder admins.'
+
+    include signalbox
+    include signalbox.harness, signalbox.thread, signalbox.gateway, signalbox.models, signalbox.tree, signalbox.attention, personC
+
+    signalbox.harness -> signalbox.gateway 'model call'
+    signalbox.gateway -> signalbox.models 'pin account'
+    alt 'why it is blocked' {
+      when 'one account down' {
+        signalbox.models -> signalbox.models 'next healthy account' {
+          navigateTo folders_pools_failover
+          notes '- Round-robin sticky failover inside the same pool; the turn never notices'
+        }
+        signalbox.harness <- signalbox.gateway 'stream continues'
+      }
+      when 'provider down' {
+        signalbox.thread <- signalbox.harness 'turn blocked' {
+          notes '- Every account for this provider is failing'
+        }
+        signalbox.thread -> signalbox.tree 'other providers?' {
+          notes '- Nearest pools on the chain; same answer whether A or B sent the turn'
+        }
+        signalbox.thread -> signalbox.thread 'SwitchHarness' {
+          navigateTo work_harness_switch
+          notes '- Same handoff as a manual switch, shown as a system event'
+        }
+      }
+      else 'every pool empty' {
+        signalbox.thread <- signalbox.tree 'NeedsPool' {
+          navigateTo work_turns_pool_exhausted
+        }
+        signalbox.thread -> signalbox.attention 'Blocker ask'
+        signalbox.attention -> personC 'place or lend' {
+          notes '''
+            - Routed to the admins of folder Company, here C
+            - Never to whoever sent the turn
+          '''
+        }
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_compact {
+    variant sequence
+    title 'Workflows/Work/Harness/Compact the context'
+    description 'T-TRN-32. Manual /compact or auto-compact at the threshold; the summary call goes through the pool like any model call.'
+
+    include signalbox
+    include personA, signalbox.web, signalbox.operations, signalbox.thread, signalbox.harness, signalbox.gateway
+
+    alt 'who triggers it' {
+      when 'A types /compact' {
+        personA -> signalbox.web '/compact'
+        signalbox.web -> signalbox.operations 'Compact'
+        signalbox.operations -> signalbox.thread 'compact input'
+        signalbox.thread -> signalbox.harness 'control: compact' {
+          navigateTo work_turns_end_to_end
+        }
+      }
+      else 'meter crosses threshold' {
+        signalbox.harness -> signalbox.harness 'auto-compact' {
+          notes '- Threshold from the setting; checked by the harness itself'
+        }
+      }
+    }
+    signalbox.harness -> signalbox.gateway 'summarize context' {
+      notes '- Billed to the thread pool like any call'
+    }
+    signalbox.harness -> signalbox.thread 'compaction event' {
+      navigateTo work_harness_open_session
+      notes '- New context size; the session mirror picks it up'
+    }
+    signalbox.thread -> signalbox.web 'meter updates' {
+      notes '- A and B both see the smaller context in the shared thread'
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_claude_workflows {
+    variant sequence
+    title 'Workflows/Work/Harness/Read or stop a Claude workflow'
+    description 'T-HND-16. Read the script of a running Claude workflow, or stop it, from the UI or as an agent tool.'
+
+    include signalbox
+    include personA, signalbox.web, signalbox.operations, signalbox.gateway, signalbox.thread, signalbox.harness
+
+    alt 'who acts' {
+      when 'A in the UI' {
+        personA -> signalbox.web 'open workflow'
+        signalbox.web -> signalbox.operations 'read or stop' {
+          notes '- Reading the script is a query; stopping is a command'
+        }
+      }
+      else 'an agent' {
+        signalbox.harness -> signalbox.gateway 'workflow stop tool' {
+          notes '- Same operation as the UI, as an agent-class actor'
+        }
+        signalbox.gateway -> signalbox.operations 'StopWorkflow'
+      }
+    }
+    signalbox.operations -> signalbox.thread 'workflow input'
+    signalbox.thread -> signalbox.harness 'control: stop' {
+      navigateTo work_turns_interrupt_stop
+      notes '''
+        - Stops the whole workflow, its phases and agents
+        - Not the parent thread, not other workflows
+      '''
+    }
+    signalbox.harness -> signalbox.thread 'workflow stopped' {
+      navigateTo work_harness_open_session
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_hooks {
+    variant sequence
+    title 'Workflows/Work/Harness/Harness hooks run in the isolate tier'
+    description '''
+      W-HAR-09, #1066. Hooks run in the isolate tier. Command hooks go through Computer.exec. The standard set is status,
+      secrets and done. Function-hook plugins (#1238) are blocked on runtime support (#1237, #1239) proposed upstream to
+      workerd: no fallback, no waiver.
+    '''
+
+    include signalbox
+    include signalbox.harness, signalbox.thread, signalbox.computer, signalbox.gateway, signalbox.automations
+
+    signalbox.harness -> signalbox.harness 'hook fires' {
+      navigateTo work_harness_open_session
+      notes '''
+        - In the isolate tier, never on a VM
+        - Hooks came with the session from plugins placed on the chain
+      '''
+    }
+    alt 'which hook' {
+      when 'command hook' {
+        signalbox.harness -> signalbox.computer 'Computer.exec' {
+          navigateTo work_computer_kernel_exec
+          notes '- Routed like any command: kernel, or the VM if it must'
+        }
+        signalbox.harness <- signalbox.computer 'exit + output'
+      }
+      when 'status' {
+        signalbox.harness -> signalbox.thread 'ensure status note' {
+          notes '- Thread ensures the turn has its status note'
+        }
+      }
+      when 'secrets' {
+        signalbox.harness -> signalbox.gateway 'real I/O' {
+          navigateTo folders_secrets_placeholder_fill
+          notes '''
+            - Gateway fills placeholders at real I/O, for any value length (#1242), and scrubs output
+            - Never a pre-hook; the wire scrubber stays authoritative
+          '''
+        }
+      }
+      else 'done' {
+        signalbox.harness -> signalbox.thread 'turn settled'
+        signalbox.thread -[async]-> signalbox.automations 'turn settled' {
+          navigateTo work_automations_triggers
+          notes '- Only a turn-settled event, never task completion'
+        }
+      }
+    }
+    opt '#1238' {
+      signalbox.harness -> signalbox.harness 'function hook: blocked' {
+        notes '''
+          - Waits on #1237 (node:vm contexts + late compile) and #1239 (shared cells + generation interruption)
+          - Proposed upstream to workerd; no fallback, no waiver
+        '''
+      }
+    }
+    signalbox.harness -> signalbox.harness 'turn continues'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_adapter_specifics {
+    title 'Workflows/Work/Harness/Harness-specific turn handling'
+    description 'T-TRN-49. Codex goal-continuation grace and the Claude background-task output tail stay inside the harness adapter; the Thread sees one event shape.'
+    autoLayout TopBottom
+
+    include signalbox, modelProviders
+    include signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.models, modelProviders.openai, modelProviders.anthropic
+
+    signalbox.thread -> signalbox.harness 'turn(input)' {
+      navigateTo work_turns_end_to_end
+      notes '- Both official CLIs run in the isolate tier; their differences stay in the Kind seam'
+    }
+    signalbox.harness -> signalbox.gateway 'model wire'
+    signalbox.gateway -> signalbox.models 'pool account'
+    alt 'which kind' {
+      when 'Codex' {
+        signalbox.models -> modelProviders.openai 'responses'
+        signalbox.harness -> signalbox.harness 'goal grace window' {
+          notes '- Codex may keep working toward its goal; the adapter holds the turn open briefly before settle'
+        }
+      }
+      else 'Claude Code' {
+        signalbox.models -> modelProviders.anthropic 'messages'
+        signalbox.harness -> signalbox.harness 'tail background tasks' {
+          notes '- Background task output keeps streaming into turn events'
+        }
+      }
+    }
+    signalbox.harness -> signalbox.thread 'normalized events' {
+      navigateTo work_harness_open_session
+      notes '- The Thread never learns CLI protocol differences'
+    }
+
+    style signalbox, modelProviders {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_feedback {
+    variant sequence
+    title 'Workflows/Work/Harness/Send provider feedback'
+    description 'W-HAR-15. A sends feedback about a harness; it leaves through the gateway like every model-side call.'
+
+    include signalbox
+    include personA, signalbox.web, signalbox.operations, signalbox.thread, signalbox.harness, signalbox.gateway, modelProviders
+
+    personA -> signalbox.web 'send feedback' {
+      notes '- From the thread, about the harness that ran it'
+    }
+    signalbox.web -> signalbox.operations 'SendFeedback'
+    signalbox.operations -> signalbox.thread 'feedback input'
+    signalbox.thread -> signalbox.harness 'feedback upload' {
+      notes '- The active harness feedback path, with session ids'
+    }
+    signalbox.harness -> signalbox.gateway 'via fetch shim' {
+      notes '- No credential in the harness, same as model calls'
+    }
+    signalbox.gateway -> modelProviders 'provider feedback'
+    signalbox.web <- signalbox.operations 'sent'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_harness_ship_releases {
+    variant sequence
+    title 'Workflows/Work/Harness/Ship harness releases and new kinds'
+    description 'W-HAR-10, W-HAR-11, T-PRV-14, T-PRV-15, T-PRV-16, T-PRV-17. How a new CLI release or a new harness kind reaches threads.'
+
+    include signalbox, services
+    include services.github, signalbox.automations, signalbox.harness, signalbox.gateway, signalbox.models, signalbox.thread, signalbox.web
+
+    alt 'what ships' {
+      when 'new CLI release' {
+        services.github -> signalbox.automations 'release published' {
+          notes '- Claude Code or Codex release; the release watcher is a default automation (W-HAR-10)'
+        }
+        signalbox.automations -> signalbox.harness 'build and test' {
+          notes '''
+            - The build and test commands run on a boxd VM forked from the warm Base
+            - The output is an isolate build (Dynamic Worker code) plus a green parity suite, never a VM image
+          '''
+        }
+        alt 'CI result' {
+          when 'green' {
+            signalbox.automations -> signalbox.harness 'publish version' {
+              notes '- New session facets load it; running sessions finish on their version'
+            }
+          }
+          else 'red' {
+            signalbox.automations -> signalbox.thread 'pin last green' {
+              navigateTo work_harness_open_session
+              notes '- Threads keep opening the last green version'
+            }
+          }
+        }
+      }
+      else 'new harness kind' {
+        signalbox.harness -> signalbox.harness 'kind adapter' {
+          notes '''
+            - Planned: OpenCode, Cursor, Grok, Antigravity, Pi, Muse (T-PRV-14..17)
+            - Must fit the isolate tier; no external server option
+          '''
+        }
+        signalbox.harness -> signalbox.gateway 'new wire route' {
+          notes '- Only when the kind speaks a new model wire (W-HAR-11)'
+        }
+        signalbox.gateway -> signalbox.models 'serve from pools' {
+          notes '- Accounts always come from pools, never per-kind settings'
+        }
+        signalbox.models -> signalbox.web 'picker lists it' {
+          notes '- Only where the resolved pool supplies its models'
+        }
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+}

@@ -1,0 +1,96 @@
+// Durable Object actors: where state lives. Each sits inside the module that owns it,
+// so it shows only in that module's drill-down. Cross-actor work is outbox delivery (async).
+model {
+  extend signalbox.tree {
+    levelActor = actor 'Level' {
+      #v1 #port
+      icon bootstrap:folder-fill
+      description 'Tree port: one per level · placements · roles · catalog · shared notes · aggregates'
+      technology 'Durable Object · one per level'
+    }
+    personActor = actor 'Person' {
+      #v1 #port
+      icon bootstrap:person-fill
+      description 'Tree port: identity · mounts · person placements (thin: drafts, notes, Focus and devices live in Capture and Attention)'
+      technology 'Durable Object · one per person'
+    }
+  }
+  extend signalbox.thread {
+    threadActor = actor 'Thread' {
+      #port
+      icon bootstrap:chat-dots-fill
+      description 'Thread port: send · watch · read land here · event log · asks · sessions · leases · sockets'
+      technology 'Durable Object · thread host script'
+    }
+  }
+  extend signalbox.drive {
+    repoActor = actor 'Repo' {
+      #port
+      icon tech:git
+      description 'Drive port: accept and sync land here · merge queue · sync mode · Base records'
+      technology 'Durable Object · one per drive'
+    }
+  }
+  extend signalbox.models {
+    custody = actor 'Pool custody' {
+      #v1
+      icon bootstrap:safe-fill
+      description 'accounts · pins · health · usage ledger'
+      technology 'Durable Object · one per pool'
+    }
+    cpaHost = actor 'CPA host' {
+      #v1
+      icon tech:go
+      description 'pipes model bytes'
+      technology 'Durable Object · pool host script'
+    }
+  }
+  extend signalbox.connections {
+    connectionActor = actor 'Connection' {
+      #v1
+      icon bootstrap:plug-fill
+      description 'one credential · manifest · epoch'
+      technology 'Durable Object · one per credential'
+    }
+  }
+  extend signalbox.search {
+    shard = actor 'Search shard' {
+      icon bootstrap:search
+      description 'FTS5 rows per owner root'
+      technology 'Durable Object · ownerRootId#n'
+    }
+  }
+
+  // Inside modules (internal wiring)
+  signalbox.tree.resolver -> signalbox.tree.levelActor 'placements'
+  signalbox.tree.viaCheck -> signalbox.tree.personActor 'mounts'
+  signalbox.tree.lenses -> signalbox.tree.levelActor 'read'
+  signalbox.thread.engine -> signalbox.thread.threadActor 'events · outbox'
+  signalbox.thread.parking -> signalbox.thread.threadActor 'parked{ask}'
+  signalbox.drive.repoActor -> signalbox.drive.mergeExec 'dequeue accept'
+  signalbox.drive.repoActor -> signalbox.drive.syncMode 'lead · follow'
+  signalbox.models.router -> signalbox.models.custody 'pin'
+  signalbox.models.signIns -> signalbox.models.custody 'sealed accounts'
+  signalbox.models.custody -> signalbox.models.cpaHost 'stream'
+  signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'pipe bytes'
+  signalbox.models.cpaHost -[async]-> signalbox.models.custody 'cpa drain'
+  signalbox.connections.toolSearch -> signalbox.connections.connectionActor 'manifest'
+  signalbox.connections.oauth -> signalbox.connections.connectionActor 'tokens'
+  signalbox.search.index.doFts -> signalbox.search.shard 'rows'
+
+  // Outbox flows between modules
+  signalbox.thread.threadActor -[async]-> signalbox.tree 'catalog rows'
+  signalbox.thread.threadActor -[async]-> signalbox.search 'history rows'
+  signalbox.thread.threadActor -[async]-> signalbox.attention 'asks'
+  signalbox.thread.threadActor -[async]-> signalbox.models 'measurements'
+  signalbox.thread.threadActor -[async]-> signalbox.automations 'app events'
+  signalbox.thread.threadActor -[async]-> signalbox.learner 'decisions'
+  signalbox.tree.levelActor -[async]-> signalbox.models 'placement events'
+  signalbox.tree.levelActor -[async]-> signalbox.connections 'placement events'
+  signalbox.tree.levelActor -[async]-> signalbox.automations 'ticks · definitions'
+  signalbox.tree.levelActor -[async]-> signalbox.search 'note rows'
+  signalbox.models.custody -[async]-> signalbox.tree 'usage aggregates'
+  signalbox.drive.repoActor -[async]-> signalbox.automations 'main advanced'
+  signalbox.bases.builder -[async]-> signalbox.automations 'base events'
+  signalbox.attention.topLayer -> signalbox.actorhost 'hosted per person (own rows)'
+}

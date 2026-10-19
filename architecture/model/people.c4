@@ -1,0 +1,30 @@
+// Three people share folder Company, its folder Team and one Thread (multiplayer is the point).
+model {
+  personA = person 'Person A' {
+    description 'Member · folder Company'
+  }
+  personB = person 'Person B' {
+    description 'Member · folder Company'
+  }
+  personC = person 'Person C' {
+    description 'Admin · folder Company'
+  }
+  personD = person 'Person D' {
+    description 'Outside collaborator · folder Team only'
+  }
+  operator = person 'Operator' {
+    icon bootstrap:tools
+    description 'runs a Signalbox server · deploys, billing, alerts'
+  }
+
+  personA -> signalbox.web 'uses'
+  personA -> signalbox.desktop 'uses'
+  personA -> laptopCli 'runs locally'
+  personB -> signalbox.mobile 'uses'
+  personB -> signalbox.web 'uses'
+  personC -> signalbox.web 'administers Company'
+  personC -> mcpClient 'connects'
+  personD -> signalbox.web 'uses'
+  operator -> build 'deploys · operates'
+  operator -> telemetry 'alerts · traces'
+}

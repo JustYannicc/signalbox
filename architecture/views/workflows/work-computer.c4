@@ -1,0 +1,1603 @@
+// Shard 11: work-computer. The thread's computer (kernel, escalation, VM lifecycle, paths,
+// egress, terminals, devices) and previews. None of this is v1 (corr. 4).
+//
+// Binding (corr. 2, 7): Claude Code and Codex always run in the isolate tier (Thread DO + Dynamic
+// Workers). A boxd VM, forked from a warm Base, only executes commands; it is never the agent's home.
+// Views that open Computer's internals say so in their description ("Computer's own internal flow")
+// and enter through `signalbox.computer.api`; other modules stay black boxes.
+views {
+
+  // ───────────────────────────── States/Computer ─────────────────────────────
+
+  dynamic view state_computer {
+    title 'States/Computer/Walk through'
+    description '''
+      W-CMP-09 (aliases T-THR-19, T-TRM-09). VM hibernate, wake, delete.
+      The computer itself (kernel live FS) always exists while the thread does; this walks only the
+      VM that escalation attaches. The VM runs commands only: Claude Code and Codex stay in the
+      isolate tier (Thread DO + Dynamic Workers) through every state here. Click the frame for the
+      full machine (state-vm).
+    '''
+
+    include smVm with {
+      navigateTo state-vm
+    }
+
+    smVm.none -> smVm.creating 'escalate or pre-fork' {
+      navigateTo work_computer_escalate
+      notes '''
+        - A VM program (unknown binary, apt, docker, native toolchain), a replay after nothing ran, or the recipe predicts escalation
+        - `createKey` is committed in the Thread before boxd is called
+      '''
+    }
+    smVm.creating -> smVm.configuring 'forked from Base' {
+      navigateTo work_bases_lease
+      notes '''
+        - Forked from the warm Base under a Base lease (`expiresAt = deleteAfter`)
+        - Timeout → retry → ALREADY_EXISTS → adopt; never a second machine
+      '''
+    }
+    smVm.configuring -> smVm.attached 'confirmed' {
+      notes '''
+        - `isolated`, egress allowlist, dead-port public proxy, `deleteAfter`, egress token
+        - Until confirmed, exec returns `Busy` (same error as the kernel path)
+      '''
+    }
+    smVm.attached -> smVm.hibernated '2-min idle' {
+      notes '''
+        - Computer hibernates explicitly: boxd's own idle clock only sees network
+        - `deleteAfter` is set to the horizon H while hibernated
+      '''
+    }
+    smVm.hibernated -> smVm.attached 'next escalation' {
+      notes '''
+        - Wakes for the next command burst; the tool result shape never changes
+      '''
+    }
+
+    alt 'what ends the VM' {
+      when 'thread settles' {
+        smVm.hibernated -> smVm.deleted 'settle' {
+          navigateTo state_thread
+          notes '''
+            - Settle deletes the VM; only regenerable state is lost
+            - Source and kept-local files already live in the Drive
+          '''
+        }
+      }
+      when 'thread archived' {
+        smVm.hibernated -> smVm.deleted 'archive' {
+          navigateTo work_threads_lifecycle_archive
+          notes '''
+            - Archive deletes the VM; unarchive starts with No VM and forks again on demand
+          '''
+        }
+      }
+      when 'H hours hibernated' {
+        smVm.hibernated -> smVm.deleted 'deleteAfter fires' {
+          notes '''
+            - boxd's `deleteAfter` fires even if our Durable Object is gone (backstop)
+          '''
+        }
+      }
+      when 'reconcile finds no record' {
+        smVm.attached -> smVm.deleted 'reconcile' {
+          navigateTo work_computer_vm_reconcile
+          notes '''
+            - Hourly Machine reconcile (a default automation) deletes machines with no record
+          '''
+        }
+      }
+    }
+    autoLayout TopBottom
+  }
+
+  // ───────────────────────────── Workflows/Work/Computer ─────────────────────────────
+
+  dynamic view work_computer_open {
+    variant sequence
+    title "Workflows/Work/Computer/Open the thread's computer"
+    description 'W-CMP-01 (aliases T-PRJ-12, T-THR-11). Thread opens its one computer from a Drive revision.'
+
+    include signalbox.thread, signalbox.computer, signalbox.drive
+
+    signalbox.thread -> signalbox.computer 'Computers.open' {
+      navigateTo pgap_computer_watch
+      notes '''
+        - A turn needs files or exec: `open(thread, { from: revision, scope, profile })`
+        - Idempotent and generation-fenced: one computer per thread
+      '''
+    }
+    alt 'generation' {
+      when 'already open, same generation' {
+        signalbox.computer -> signalbox.thread 'same Computer' {
+          notes '- Repeat opens return the live computer; nothing is re-hydrated'
+        }
+      }
+      when 'stale generation calls' {
+        signalbox.computer -> signalbox.thread 'fenced' {
+          notes '- An older generation (e.g. a crashed turn) cannot touch the new computer'
+        }
+      }
+      else 'new or newer generation' {
+        signalbox.computer -> signalbox.drive 'open revision' {
+          navigateTo work_drive_live_fs_read
+          notes '''
+            - The thread's working ref at the revision or turn it starts from
+            - Content arrives lazily on first read; the Drive is the record
+          '''
+        }
+        signalbox.drive -> signalbox.computer 'tree + lazy content'
+        signalbox.computer -> signalbox.computer 'mount live FS' {
+          navigateTo state_computer
+          notes '''
+            - Live FS in the session facet; `/work` and `/sources/*` in one namespace
+            - No VM yet: escalation attaches one only when a command needs it
+          '''
+        }
+      }
+    }
+    opt 'coordinator profile' {
+      signalbox.computer -> signalbox.computer 'scratch only, no exec' {
+        notes '- The assistant coordinates and never executes, so it gets no exec'
+      }
+    }
+    signalbox.computer -> signalbox.thread 'Computer handle' {
+      navigateTo work_computer_kernel_exec
+      notes '- Harness calls `exec` and `files` on this handle'
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_kernel_exec {
+    variant sequence
+    title 'Workflows/Work/Computer/Run a program in the kernel'
+    description '''
+      W-CMP-02, W-CMP-03 (alias T-TRM-12), W-CMP-07, W-CMP-29. Computer's own internal flow:
+      exec enters through the interface → kernel → child Dynamic Worker → files over RPC. No VM.
+    '''
+
+    include
+      signalbox.harness,
+      signalbox.computer.api,
+      signalbox.computer.backend.kernelFs,
+      signalbox.computer.escalation,
+      signalbox.computer.childIsolates,
+      signalbox.actorhost
+
+    signalbox.harness -> signalbox.computer.api 'exec(argv)' {
+      navigateTo work_harness_hooks
+      notes '''
+        - Claude Code or Codex, running in the isolate tier, calls Computer's one `exec` verb
+        - Computer must already be open
+      '''
+    }
+    signalbox.computer.api -> signalbox.computer.backend.kernelFs 'exec' {
+      notes '- A registered kernel program: GNU Bash (WASI), coreutils, ripgrep or Git'
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.computer.escalation 'needs a machine?' {
+      navigateTo work_computer_escalate
+      notes '''
+        - Routing per program at kernel exec (#1071)
+        - Here: one of the small isolate set (file edits, cat, ls, grep/rg), so it stays in the isolate
+      '''
+    }
+    loop 'child isolates full (≤10 in flight)' {
+      signalbox.computer.backend.kernelFs -> signalbox.computer.backend.kernelFs 'queue quietly' {
+        notes '''
+          - Capacity never fails a turn (W-CMP-29); the kernel queues
+          - Same rule for VM capacity on the escalated path (no machine classes)
+        '''
+      }
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.computer.childIsolates 'run program'
+    signalbox.computer.childIsolates -> signalbox.actorhost 'load Dynamic Worker' {
+      notes '- One child isolate per program; the host DO and session facet stay separate'
+    }
+    signalbox.computer.childIsolates -> signalbox.computer.backend.kernelFs 'files over RPC' {
+      notes '- The program reads and writes the facet live FS; no copy of the tree'
+    }
+    alt 'outcome' {
+      when 'program exits' {
+        signalbox.computer.childIsolates -> signalbox.computer.backend.kernelFs 'exit code + output'
+        signalbox.computer.api -> signalbox.harness 'Process' {
+          notes '- Same result shape as the VM path'
+        }
+      }
+      when 'child isolate out of memory' {
+        signalbox.computer.childIsolates -> signalbox.computer.backend.kernelFs 'isolate OOM' {
+          notes '''
+            - Only that program fails (W-CMP-03)
+            - Host DO and session facet are unaffected
+          '''
+        }
+        signalbox.computer.api -> signalbox.harness 'ExecError for that program'
+      }
+      else 'not ready yet' {
+        signalbox.computer.api -> signalbox.harness 'Busy' {
+          notes '''
+            - Egress unconfirmed, file not hydrated, isolates full (W-CMP-07)
+            - The one transient error, identical on kernel and VM paths, so placement never leaks
+          '''
+        }
+      }
+    }
+
+    include signalbox, signalbox.computer
+    style signalbox, signalbox.computer {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_identity {
+    title 'Workflows/Work/Computer/Same exec identity on both paths'
+    description "W-CMP-20. Computer's own internal flow: kernel and VM exec daemon report the same t-{threadId} identity, so the agent cannot tell where a command ran."
+
+    include
+      signalbox.harness,
+      signalbox.computer.api,
+      signalbox.computer.backend.kernelFs,
+      signalbox.computer.execDaemon,
+      platform.boxd
+
+    signalbox.harness -> signalbox.computer.api 'probe machine identity' {
+      navigateTo work_computer_kernel_exec
+      notes '''
+        - The agent (in the isolate tier) runs `hostname`, `nproc`, `env`; the answer must not depend on placement
+        - Env is built only from `PlaceholderEnv`; provider auth vars stripped
+      '''
+    }
+    signalbox.computer.api -> signalbox.computer.backend.kernelFs 'exec'
+    alt 'where the command runs' {
+      when 'kernel' {
+        signalbox.computer.backend.kernelFs -> signalbox.computer.backend.kernelFs 'answer as t-{threadId}' {
+          notes '- Pinned hostname, fixed nproc, env incl. `HTTPS_PROXY` / `NO_PROXY`'
+        }
+      }
+      else 'escalated' {
+        signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'run on VM' {
+          navigateTo work_computer_escalate
+        }
+        signalbox.computer.execDaemon -> platform.boxd 'guest hostname t-{threadId}' {
+          notes '''
+            - Pinned per thread, never the per-generation machine name `t-{threadId}-g{gen}`
+            - Same env construction as the kernel; no grant token readable
+          '''
+        }
+        signalbox.computer.execDaemon -> signalbox.computer.backend.kernelFs 'same output'
+      }
+    }
+    signalbox.computer.api -> signalbox.harness 'identical result' {
+      navigateTo work_turns_transcript_shows
+      notes '- The transcript reads the same on both placements (parity is the test)'
+    }
+    autoLayout TopBottom
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_lsp {
+    variant sequence
+    title 'Workflows/Work/Computer/Language servers in the cloud'
+    description 'W-CMP-26. LSP runs on the thread computer, for the editor or the agent.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.harness, signalbox.computer
+
+    alt 'who needs the language server' {
+      when 'Person A in the editor' {
+        personA -> signalbox.web 'opens a file' {
+          notes '- Editor asks for diagnostics and completions; nothing runs on the client'
+        }
+        signalbox.web -> signalbox.funnel 'LSP session'
+        signalbox.funnel -> signalbox.computer 'exec language server'
+      }
+      else 'agent' {
+        signalbox.harness -> signalbox.computer 'exec language server' {
+          notes '- Same exec as any program; the agent gets the same diagnostics A sees'
+        }
+      }
+    }
+    alt 'escalation table' {
+      when 'WASI build in the kernel registry' {
+        signalbox.computer -> signalbox.computer 'run as kernel program' {
+          navigateTo work_computer_kernel_exec
+        }
+      }
+      else 'native server or over the memory budget' {
+        signalbox.computer -> signalbox.computer 'escalate to a VM' {
+          navigateTo work_computer_escalate
+          notes '- Invisible to A and the agent; one computer either way'
+        }
+      }
+    }
+    signalbox.computer -> signalbox.funnel 'diagnostics' {
+      notes '- Streamed over the exec attach; editor and agent read the same files'
+    }
+    signalbox.funnel -> signalbox.web 'shows inline'
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_status {
+    title 'Workflows/Work/Computer/Computer shown as running or not'
+    description 'W-CMP-30. Status lives only on the Thread details card.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.thread, signalbox.computer
+
+    signalbox.computer -> signalbox.thread 'lease state' {
+      navigateTo state_computer
+      notes '''
+        - Computer reports running / asleep through the owning thread
+        - Never "VM" or "kernel": placement is invisible to people and models
+      '''
+    }
+    personA -> signalbox.web 'opens Thread details' {
+      notes '- Only there; no chat-level badge (attention is scarce)'
+    }
+    signalbox.web -> signalbox.funnel 'subscribe details'
+    signalbox.funnel -> signalbox.thread 'read'
+    signalbox.thread -> signalbox.funnel 'running or asleep'
+    signalbox.funnel -> signalbox.web 'details card row' {
+      notes '- B in the same shared thread sees the same row; C only if C can see the thread'
+    }
+    autoLayout TopBottom
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_usage_metering {
+    variant sequence
+    title 'Workflows/Work/Computer/Compute usage metering'
+    description 'W-CMP-24. Compute is paid by the pool that pays the thread tokens; shared → Company pool.'
+
+    include
+      signalbox.computer,
+      signalbox.thread,
+      signalbox.tree,
+      signalbox.models,
+      hier.topA.poolA,
+      hier.company.poolCo,
+      hier.company.team.costsTeam,
+      hier.company.costsCo
+
+    signalbox.computer -[async]-> signalbox.thread 'measurements' {
+      notes '''
+        - VM seconds and class, written to the owning thread outbox
+        - Computer never decides who pays
+      '''
+    }
+    signalbox.thread -> signalbox.tree 'resolve paying pool' {
+      navigateTo folders_usage_payer
+      notes '- The same nearest pool on the thread chain that pays its tokens'
+    }
+    alt 'which thread' {
+      when 'shared thread in Team' {
+        signalbox.tree -> hier.company.poolCo 'Pool P2 (Company)' {
+          notes '''
+            - A and B both send turns; neither pays. Resolution is by position, never by sender
+            - C sees the cost as admin of Company
+          '''
+        }
+      }
+      else 'A private thread in Personal' {
+        signalbox.tree -> hier.topA.poolA 'Pool P1 (A)'
+      }
+    }
+    signalbox.thread -[async]-> signalbox.models 'usage row (compute)' {
+      navigateTo folders_usage_record
+      notes '- One ledger with token usage; idempotent by (sourceKey, seq)'
+    }
+    signalbox.models -[async]-> hier.company.team.costsTeam 'usage aggregate' {
+      navigateTo work_turns_usage_metering
+    }
+    hier.company.team.costsTeam -[async]-> hier.company.costsCo 'rolls up' {
+      notes '- Team → Company, never to A or B'
+    }
+
+    include signalbox, hier.company, hier.topA
+    style signalbox, hier.company, hier.topA {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Escalation ─────────────────────────────
+
+  dynamic view work_computer_escalate {
+    variant sequence
+    title 'Workflows/Work/Computer/Escalation/Escalate a command to a VM'
+    description '''
+      W-CMP-04, W-CMP-05, W-CMP-13, W-CMP-14, W-CMP-21. Computer's own internal flow:
+      one command goes to a VM forked from the warm Base, inside a push/run/pull bracket.
+    '''
+
+    include
+      signalbox.harness,
+      signalbox.computer.api,
+      signalbox.computer.backend.kernelFs,
+      signalbox.computer.escalation,
+      signalbox.computer.vmLifecycle,
+      signalbox.computer.execDaemon,
+      signalbox.bases,
+      platform.boxd
+
+    opt 'recipe predicts escalation (W-CMP-05)' {
+      signalbox.computer.vmLifecycle -> platform.boxd 'pre-fork' {
+        notes '''
+          - Fork starts during model think time, so warm-Base latency hides
+          - Same create path as below, just earlier
+        '''
+      }
+    }
+    signalbox.harness -> signalbox.computer.api 'exec(argv)' {
+      notes '''
+        - Claude Code or Codex calls exec from the isolate tier (Thread DO + Dynamic Workers)
+        - Only this command moves to a VM; the agent loop and the model wait never leave the isolate
+      '''
+    }
+    signalbox.computer.api -> signalbox.computer.backend.kernelFs 'exec'
+    signalbox.computer.backend.kernelFs -> signalbox.computer.escalation 'needs a machine?'
+    alt 'why it escalates (#1071)' {
+      when 'routing table: a VM program' {
+        signalbox.computer.escalation -> signalbox.computer.vmLifecycle 'escalate argv' {
+          notes '''
+            - Unknown binary, apt, docker or a native toolchain; known kernel programs never get here
+            - A long-lived process behind `port` stays on the VM for its whole lifetime
+          '''
+        }
+      }
+      else 'kernel failed (W-CMP-21)' {
+        signalbox.computer.backend.kernelFs -> signalbox.computer.escalation 'did anything run?' {
+          notes '''
+            - Replay on the VM only if the failure proves nothing ran: missing program, or ENOSYS before any side effect
+            - Any other failure is surfaced to the agent, never retried blindly
+          '''
+        }
+        signalbox.computer.escalation -> signalbox.computer.vmLifecycle 'replay argv'
+      }
+    }
+    opt 'no VM attached' {
+      signalbox.computer.vmLifecycle -> signalbox.bases 'acquire Base lease' {
+        navigateTo work_bases_lease
+        notes '''
+          - Intent persisted first, then `acquire(drive, recipeHash, operationId)`: idempotent on operationId
+          - Lease expires at the VM's `deleteAfter`, so no hold is orphaned; #1071 ships a None adapter (cold create)
+        '''
+      }
+      signalbox.computer.vmLifecycle -> platform.boxd 'fork from warm Base' {
+        navigateTo state_computer
+        notes '- `createKey` committed in the Thread first; name `t-{threadId}-g{gen}`'
+      }
+      signalbox.computer.vmLifecycle -> platform.boxd 'lock down' {
+        navigateTo work_computer_egress_vm
+        notes '''
+          - `isolated`, egress allowlist, dead-port public proxy, `deleteAfter`, egress token
+          - Exec is `Busy` until confirmed
+        '''
+      }
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'push delta' {
+      notes '''
+        - Source and kept-local changes since the last sync, incl. a synced `.git`
+        - The daemon dialed out to the Thread; it holds no agent, model token or grant
+      '''
+    }
+    opt 'lockfile differs from Base sha (W-CMP-13)' {
+      signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'recipe prepare' {
+        notes '- Lockfile-diff install before the command'
+      }
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'run argv'
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'exit + output'
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'pull changes' {
+      notes '''
+        - Source + kept-local changes and a regenerable manifest delta
+        - VM-side git writes (hooks, `git commit`) come back as source changes (W-CMP-14)
+      '''
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply to live FS'
+    signalbox.computer.api -> signalbox.harness 'Process' {
+      navigateTo work_computer_kernel_exec
+      notes '''
+        - Same tool result shape as a kernel program; escalation is invisible
+        - The VM idles into hibernation (2 min) and is deleted on settle
+        - No machine classes, and the thread never moves
+      '''
+    }
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Paths ─────────────────────────────
+
+  dynamic view work_computer_paths_kept_local {
+    variant sequence
+    title 'Workflows/Work/Computer/Paths/Kept-local files persist'
+    description "W-CMP-12. Computer's own internal flow: untracked, non-regenerable files persist on the thread machine ref, never only on a VM."
+
+    include signalbox.computer.pathClasses, signalbox.computer.backend.kernelFs, signalbox.drive
+
+    signalbox.computer.pathClasses -> signalbox.computer.backend.kernelFs 'classify kept-local' {
+      notes '''
+        - `.env*`, `notes.local.md`, scratch outputs: untracked and not declared regenerable
+        - Authority is the kernel live FS, on both placements
+      '''
+    }
+    opt '.env* files' {
+      signalbox.computer.backend.kernelFs -> signalbox.computer.backend.kernelFs 'encrypt .env files' {
+        notes '''
+          - Shared thread in Team: the drive owner is the organization, so A and B read it
+            in that thread, and it never lands in A's or B's own drives
+        '''
+      }
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.drive 'save to machine/<thread>' {
+      navigateTo work_drive_r2_record
+      notes '''
+        - The thread private ref; never merged by accept, never pushed to a forge
+        - Survives VM deletion: no user data lives only on a VM
+      '''
+    }
+    opt 'next escalation' {
+      signalbox.computer.backend.kernelFs -> signalbox.computer.backend.kernelFs 'pushed with the bracket' {
+        navigateTo work_computer_escalate
+      }
+    }
+
+    include signalbox, signalbox.computer
+    style signalbox, signalbox.computer {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_paths_regenerable {
+    variant sequence
+    title 'Workflows/Work/Computer/Paths/Read a regenerable path without a VM'
+    description "W-CMP-11. Computer's own internal flow: stat/readdir from the manifest; content hydrates lazily; a read never forks a VM."
+
+    include
+      signalbox.harness,
+      signalbox.computer.api,
+      signalbox.computer.backend.kernelFs,
+      signalbox.computer.execDaemon,
+      platform.r2
+
+    signalbox.harness -> signalbox.computer.api 'files: read node_modules/…' {
+      notes '''
+        - `stat` and `readdir` are answered from the local regenerable manifest, so always correct
+        - Synchronous reads must be local to the session facet (never-block kernel ABI)
+      '''
+    }
+    signalbox.computer.api -> signalbox.computer.backend.kernelFs 'read'
+    alt 'where content comes from' {
+      when 'a VM is attached' {
+        signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'hydrate chunk' {
+          navigateTo work_drive_live_fs_read
+          notes '- Same lazy path as first reads from the Drive'
+        }
+      }
+      else 'no VM' {
+        signalbox.computer.backend.kernelFs -> platform.r2 'fetch chunk (R2)' {
+          notes '''
+            - Base chunk export, content-addressed, written once by the builder
+            - Read straight from R2; the Bases module is not on the read path
+          '''
+        }
+      }
+    }
+    signalbox.computer.api -> signalbox.harness 'content' {
+      notes '- Never forks a VM; `Busy` while a chunk is still hydrating'
+    }
+    opt 'after each pull' {
+      signalbox.computer.backend.kernelFs -> signalbox.computer.backend.kernelFs 'prefetch small files' {
+        navigateTo work_computer_escalate
+        notes '''
+          - Small files (`package.json`, `*.d.ts`, `README*`) within a byte budget
+          - Kernel writes to regenerable paths go to an overlay pushed before the next escalation
+        '''
+      }
+    }
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_paths_sources_vm {
+    variant sequence
+    title 'Workflows/Work/Computer/Paths/Sources visible on the VM'
+    description "W-CMP-15. Computer's own internal flow: /sources/* on the VM, backed by Gateway reads through its EgressProxy. Assumption: the VM-side mount mechanism isn't built or chosen yet."
+
+    include
+      signalbox.computer.execDaemon,
+      signalbox.gateway,
+      signalbox.drive
+
+    signalbox.computer.execDaemon -> signalbox.computer.execDaemon 'script reads sources' {
+      navigateTo work_computer_escalate
+      notes '- A read-only mount on the VM showing the same paths the kernel shows (mechanism not chosen yet)'
+    }
+    signalbox.computer.execDaemon -> signalbox.gateway 'read via EgressProxy' {
+      notes '''
+        - Machine-bound egress token; the VM holds no source credential
+        - Gateway verifies the token itself (black box: `serve`)
+      '''
+    }
+    signalbox.gateway -> signalbox.drive 'source read (serve)' {
+      navigateTo work_sources_read
+      notes '''
+        - Source resolved on the thread chain: in the shared Team thread, a Confluence source
+          placed on Company reads the same for A and B
+      '''
+    }
+    signalbox.gateway <- signalbox.drive 'bytes'
+    signalbox.computer.execDaemon <- signalbox.gateway 'file content' {
+      notes '- Read-only mount; same files as the kernel, one computer'
+    }
+
+    include signalbox, signalbox.computer
+    style signalbox, signalbox.computer {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Egress ─────────────────────────────
+
+  dynamic view work_computer_egress_kernel {
+    variant sequence
+    title 'Workflows/Work/Computer/Egress/Kernel egress with placeholders'
+    description "W-CMP-17. A kernel program's outbound request: Gateway's in-process EgressFilter guards, fills and scrubs; the secret resolves by the thread's position."
+
+    include
+      signalbox.computer.childIsolates,
+      signalbox.gateway,
+      signalbox.thread,
+      signalbox.connections,
+      services.onepassword,
+      services.boundHost
+
+    signalbox.computer.childIsolates -> signalbox.gateway 'fetch with placeholder' {
+      navigateTo work_computer_egress_vm
+      notes '''
+        - The program only ever holds a placeholder from `PlaceholderEnv`
+        - Gateway's in-process EgressFilter (same `fill` verb as the VM path)
+      '''
+    }
+    opt 'new destination for this secret' {
+      signalbox.gateway -> signalbox.thread 'ask once' {
+        navigateTo work_approvals_secret_destination
+        notes '- Guard: a secret goes to a new host only after a person says yes'
+      }
+    }
+    signalbox.gateway -> signalbox.connections 'fill(placeholder, host)' {
+      navigateTo folders_secrets_placeholder_fill
+      notes '''
+        - Secret reference resolved by the thread position (nearest wins), never by sender:
+          placed on Team, it fills the same for A's and B's turns
+      '''
+    }
+    signalbox.connections -> services.onepassword 'resolve reference'
+    signalbox.gateway <- signalbox.connections 'value'
+    signalbox.gateway -> services.boundHost 'forward' {
+      notes '- The real value exists only inside the filter, never in the program'
+    }
+    signalbox.gateway <- services.boundHost 'response'
+    signalbox.gateway -> signalbox.gateway 'scrub' {
+      notes '- Echoed secrets are removed before the program sees the body'
+    }
+    signalbox.computer.childIsolates <- signalbox.gateway 'scrubbed response'
+
+    include signalbox, signalbox.computer, services
+    style signalbox, signalbox.computer, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_egress_vm {
+    variant sequence
+    title 'Workflows/Work/Computer/Egress/VM egress with tenant secrets'
+    description '''
+      W-CMP-16, W-CMP-18, W-CMP-19. A command on the VM calls out: boxd's allowlist is the floor,
+      Gateway (its EgressProxy) fills tenant secrets against a machine-bound egress token, and a
+      tool that skips the proxy fails closed.
+    '''
+
+    include
+      signalbox.computer.execDaemon,
+      signalbox.gateway,
+      signalbox.connections,
+      platform.boxd,
+      services.onepassword,
+      services.github,
+      services.boundHost
+
+    alt 'does the tool honor HTTPS_PROXY' {
+      when 'yes' {
+        signalbox.computer.execDaemon -> platform.boxd 'CONNECT via proxy' {
+          navigateTo folders_placement_kind_setting
+          notes '''
+            - Allowlist: recipe destinations, the folder `egress` placements, relay, EgressProxy
+            - Set from outside, root cannot change it, fails closed
+          '''
+        }
+        platform.boxd -> signalbox.gateway 'CONNECT host:443'
+        alt 'is the host bound to a tenant placeholder' {
+          when 'unbound host' {
+            signalbox.gateway -> services.github 'splice' {
+              notes '- TLS untouched; the proxy never sees the bytes'
+            }
+          }
+          else 'bound host' {
+            signalbox.gateway -> signalbox.gateway 'terminate TLS' {
+              notes '''
+                - Gateway's EgressProxy adapter; Signalbox CA is baked into the Base
+                - Re-resolve the host, refuse private IPs
+              '''
+            }
+            signalbox.gateway -> signalbox.gateway 'verify egress token' {
+              notes '- `{aud: egress, machine, gen, thread}`, valid for `fill` only, rotated with `deleteAfter`'
+            }
+            alt 'where the token comes from' {
+              when 'its own machine' {
+                signalbox.gateway -> signalbox.connections 'fill(placeholder, host)' {
+                  navigateTo folders_secrets_placeholder_fill
+                  notes '- Per request; the proxy holds no long-lived secret'
+                }
+                signalbox.connections -> services.onepassword 'resolve reference'
+                signalbox.gateway <- signalbox.connections 'value'
+                signalbox.gateway -> services.boundHost 'forward'
+                signalbox.gateway <- services.boundHost 'response'
+                signalbox.computer.execDaemon <- signalbox.gateway 'scrubbed response' {
+                  navigateTo work_approvals_secret_destination
+                  notes '- A new destination asks once, as in the kernel path'
+                }
+              }
+              else 'replayed from another machine (W-CMP-19)' {
+                signalbox.computer.execDaemon <- signalbox.gateway 'Denied' {
+                  notes '- Token is bound to the machine address on the shared network'
+                }
+              }
+            }
+          }
+        }
+      }
+      else 'tool bypasses the proxy (W-CMP-18)' {
+        signalbox.computer.execDaemon -> platform.boxd 'direct to bound host' {
+          navigateTo work_computer_egress_kernel
+        }
+        signalbox.computer.execDaemon <- platform.boxd 'blocked' {
+          notes '- Bound hosts are never on the allowlist, so bypassing fails closed'
+        }
+      }
+    }
+
+    include signalbox, signalbox.computer, platform, services
+    style signalbox, signalbox.computer, platform, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_builtin_egress {
+    #assumption
+    variant sequence
+    title 'Workflows/Work/Computer/Egress/Built-in tools reach the network'
+    description '''
+      Working plan (#assumption, 2026-10-19). Built-in tools (Bash, Read, Write, Edit, Grep, Glob) run Harness → Computer,
+      never through Executor. Their outbound traffic, from the isolate or a VM, leaves through Gateway's egress filter:
+      scrub, allowlist, and credentials from the same vault Executor uses, keyed by destination.
+    '''
+
+    include signalbox.harness, signalbox.computer, signalbox.gateway, signalbox.connections, signalbox.models, services.boundHost, services.github
+
+    signalbox.harness -> signalbox.computer 'Bash · Read · Edit' {
+      navigateTo work_computer_kernel_exec
+      notes '''
+        - A's turn in folder Team; built-ins never touch Executor
+        - Runs in the kernel, or on the VM if it escalates
+      '''
+    }
+    alt 'what goes out' {
+      when 'curl · npm in Bash' {
+        signalbox.computer -> signalbox.gateway 'Egress' {
+          navigateTo work_computer_egress_vm
+          notes '- In-process filter from the isolate, EgressProxy from a VM'
+        }
+        signalbox.gateway -> signalbox.connections 'fill(destination)' {
+          navigateTo folders_secrets_placeholder_fill
+          notes '- Same vault as Executor, keyed by destination; scrub and allowlist first'
+        }
+        signalbox.gateway -> services.boundHost 'Forward'
+      }
+      when 'git push · gh' {
+        signalbox.computer -> signalbox.gateway 'Push' {
+          notes '- Refused unless it targets the thread\'s own branch'
+        }
+        signalbox.gateway -> signalbox.connections 'GitHub App token' {
+          notes '- Short-lived, from the folder\'s GitHub App; the program never holds it'
+        }
+        signalbox.gateway -> services.github 'Push'
+      }
+      when 'WebFetch' {
+        signalbox.harness -> signalbox.gateway 'Fetch' {
+          navigateTo work_computer_egress_kernel
+          notes '- From the isolate, through the same filter'
+        }
+        signalbox.gateway -> services.boundHost 'Fetch'
+      }
+      else 'provider web search' {
+        signalbox.harness -> signalbox.gateway 'Model call' {
+          notes '- Provider-side search rides the model wire, never the egress filter'
+        }
+        signalbox.gateway -> signalbox.models 'Pool on chain'
+      }
+    }
+    signalbox.harness <- signalbox.gateway 'Scrubbed result' {
+      notes '''
+        - Echoed secrets removed before the agent sees them (Bash output returns via Computer)
+        - GitHub as tools (issues, PRs) is a connector: the GitHub MCP server goes through Executor
+      '''
+    }
+
+    include signalbox, services
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Terminals ─────────────────────────────
+
+  dynamic view work_computer_terminal {
+    variant sequence
+    title 'Workflows/Work/Computer/Terminals/Open and attach a terminal'
+    description 'W-CMP-22 (aliases T-TRM-01, T-TRM-03, T-TRM-04), T-TRM-06, T-TRM-10.'
+
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.mobile,
+      signalbox.funnel,
+      signalbox.computer
+
+    alt 'which client' {
+      when 'web or desktop' {
+        personA -> signalbox.web 'opens terminal'
+        signalbox.web -> signalbox.funnel 'open terminal'
+      }
+      else 'mobile native terminal (T-TRM-10)' {
+        personA -> signalbox.mobile 'opens thread terminal' {
+          notes '- Native terminal with paste and buffer replay'
+        }
+        signalbox.mobile -> signalbox.funnel 'open terminal'
+      }
+    }
+    signalbox.funnel -> signalbox.computer 'exec shell with PTY'
+    alt 'where the PTY lives' {
+      when 'kernel' {
+        signalbox.computer -> signalbox.computer 'kernel PTY handle'
+      }
+      else 'escalated' {
+        signalbox.computer -> signalbox.computer 'node-pty in exec daemon' {
+          navigateTo state_computer
+          notes '- Same session from the client side; placement is hidden'
+        }
+      }
+    }
+    opt 'events and metadata (T-TRM-06)' {
+      signalbox.web -> signalbox.funnel 'subscribe events' {
+        notes '- Title, cwd, running process, exit'
+      }
+    }
+    loop 'typing' {
+      signalbox.web -> signalbox.funnel 'input'
+      signalbox.funnel -> signalbox.computer 'stdin'
+      signalbox.funnel <- signalbox.computer 'output'
+      signalbox.web <- signalbox.funnel 'output'
+    }
+    opt 'B attaches in the shared thread' {
+      personB -> signalbox.web 'opens the same terminal'
+      signalbox.web -> signalbox.funnel 'attach(id, from)' {
+        navigateTo work_turns_command_output
+        notes '''
+          - `from`: tail, full or a seq; replay is bounded
+          - A reattaching after a reload uses the same call
+        '''
+      }
+      signalbox.funnel <- signalbox.computer 'replay + live output'
+    }
+    signalbox.web -> signalbox.funnel 'close'
+    signalbox.funnel -> signalbox.computer 'end PTY' {
+      navigateTo work_computer_background_service
+      notes '- A detached service keeps running under the thread lease'
+    }
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_terminal_panes {
+    variant sequence
+    title 'Workflows/Work/Computer/Terminals/Split, close and use terminal panes'
+    description 'T-TRM-02, T-TRM-08.'
+
+    include personA, signalbox.web, signalbox.funnel, signalbox.computer
+
+    personA -> signalbox.web 'splits a pane' {
+      notes '- Pane layout is client state; each pane is its own exec'
+    }
+    signalbox.web -> signalbox.funnel 'open terminal'
+    signalbox.funnel -> signalbox.computer 'exec shell (new ExecId)' {
+      navigateTo work_computer_terminal
+    }
+    opt 'context menu (T-TRM-08)' {
+      personA -> signalbox.web 'right-click' {
+        notes '- Copy, paste, select all, jump to latest, add to chat'
+      }
+      alt 'action' {
+        when 'paste' {
+          signalbox.web -> signalbox.funnel 'input'
+          signalbox.funnel -> signalbox.computer 'stdin'
+        }
+        when 'add to chat' {
+          signalbox.web -> signalbox.web 'excerpt into composer' {
+            notes '- Selected output becomes a composer attachment'
+          }
+        }
+        else 'copy or select' {
+          signalbox.web -> signalbox.web 'client only'
+        }
+      }
+    }
+    personA -> signalbox.web 'close pane'
+    signalbox.web -> signalbox.funnel 'close'
+    signalbox.funnel -> signalbox.computer 'end PTY'
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_terminal_history {
+    title 'Workflows/Work/Computer/Terminals/Persist terminal history'
+    description 'T-TRM-05. Debounced history; where it lives is unconfirmed.'
+
+    include signalbox.computer, signalbox.thread, signalbox.drive
+
+    signalbox.computer -[async]-> signalbox.thread 'output chunks' {
+      notes '- Debounced; bounded per exec'
+    }
+    alt 'where history lives (unconfirmed)' {
+      when 'thread record' {
+        signalbox.thread -> signalbox.thread 'append history rows' {
+          navigateTo work_turns_command_output
+          notes '- One row per item, searchable, bounded replay'
+        }
+      }
+      else 'with the computer' {
+        signalbox.computer -> signalbox.drive 'save with the revision' {
+          navigateTo work_computer_terminal
+          notes '- Would survive VM deletion; never on a VM only'
+        }
+      }
+    }
+    autoLayout TopBottom
+
+    include signalbox
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_background_service {
+    variant sequence
+    title 'Workflows/Work/Computer/Terminals/Background service outlives a turn'
+    description 'W-CMP-23. Lease held → keep-alive past turn end → stop on settle.'
+
+    include
+      personA,
+      signalbox.thread,
+      signalbox.harness,
+      signalbox.computer,
+      platform.boxd
+
+    personA -> signalbox.thread 'turn: run the dev server'
+    signalbox.thread -> signalbox.harness 'turn'
+    signalbox.harness -> signalbox.computer 'exec dev server (background)' {
+      notes '- The agent stays in the isolate tier; only the dev server process runs on the VM'
+    }
+    signalbox.computer -> platform.boxd 'escalate' {
+      navigateTo state_computer
+      notes '''
+        - Dev servers match the recipe `machine` patterns
+        - A long-lived process behind `port` stays on this VM for its whole lifetime (#1071)
+      '''
+    }
+    signalbox.thread <- signalbox.computer 'lease held'
+    signalbox.thread <- signalbox.harness 'turn ends' {
+      notes '- The turn is done; the service is not'
+    }
+    loop 'while the lease is held' {
+      signalbox.thread -> signalbox.thread 'keep-alive job' {
+        navigateTo work_turns_keepalive_mirror
+        notes '''
+          - Keeps the thread host alive only during active work
+          - A or B can open the preview meanwhile
+        '''
+      }
+      signalbox.computer -> platform.boxd 'refresh deleteAfter'
+    }
+    signalbox.thread -> signalbox.computer 'thread settles: stop' {
+      navigateTo state_thread
+    }
+    signalbox.computer -> platform.boxd 'hibernate, then delete' {
+      notes '- Only regenerable state is lost'
+    }
+
+    include signalbox, platform
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── VM ─────────────────────────────
+
+  dynamic view work_computer_vm_failures {
+    variant sequence
+    title 'Workflows/Work/Computer/VM/VM create timeout or loss mid-command'
+    description 'W-CMP-06, W-CMP-08. Adopt on timeout; Lost on death; never replayed.'
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.harness,
+      signalbox.thread,
+      signalbox.computer,
+      platform.boxd
+
+    signalbox.harness -> signalbox.computer 'exec(argv) escalates' {
+      navigateTo work_computer_escalate
+    }
+    signalbox.computer -> signalbox.thread 'commit createKey' {
+      navigateTo work_turns_crash_resume
+      notes '''
+          - `t-{threadId}-g{gen}` recorded before boxd is called
+          - Survives a Thread crash, so a resumed turn adopts instead of creating
+        '''
+    }
+    signalbox.computer -> platform.boxd 'create(name)'
+    alt 'what goes wrong' {
+      when 'create times out (W-CMP-06)' {
+        loop 'retry' {
+          signalbox.computer -> platform.boxd 'create(name)'
+          signalbox.computer <- platform.boxd 'ALREADY_EXISTS'
+        }
+        signalbox.computer -> platform.boxd 'inspect'
+        signalbox.computer -> signalbox.computer 'adopt' {
+          notes '- Never a second machine'
+        }
+      }
+      else 'VM dies mid-exec (W-CMP-08)' {
+        signalbox.computer <- platform.boxd 'connection lost'
+        signalbox.harness <- signalbox.computer 'ExecError(Lost)' {
+          navigateTo work_turns_do_vm_recovery
+          notes '''
+            - Not exit 127; never replayed (a command may have side effects)
+            - The agent decides whether to run it again
+          '''
+        }
+        signalbox.harness -> signalbox.thread 'tool result: Lost'
+        signalbox.thread -> signalbox.web 'error in the turn'
+        signalbox.web -> personA 'sees the error' {
+          notes '- B sees the same in a shared thread'
+        }
+      }
+    }
+
+    include signalbox, platform
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_vm_parity {
+    title 'Workflows/Work/Computer/VM/Every command on a VM (parity mode)'
+    description 'W-CMP-25. computer.escalate = always sends every command (not the agent) to a Base-forked VM; the parity suite compares transcripts across placements. Claude Code and Codex stay in the isolate tier either way.'
+
+    include signalbox.harness, signalbox.computer, signalbox.bases, platform.boxd
+
+    signalbox.harness -> signalbox.computer 'exec any argv' {
+      notes '''
+        - Deployment config `computer.escalate = always` (operator only, for the parity suite)
+        - The harness still runs in the Thread DO + Dynamic Workers; only commands move
+      '''
+    }
+    signalbox.computer -> signalbox.bases 'acquire lease'
+    signalbox.computer -> platform.boxd 'run on Base-forked VM' {
+      navigateTo work_computer_escalate
+      notes '- Every command takes the push · run · pull bracket; the VM never hosts the agent'
+    }
+    signalbox.harness <- signalbox.computer 'same tool result'
+    signalbox.harness -> signalbox.harness 'compare transcripts' {
+      navigateTo work_turns_transcript_shows
+      notes '- Parity suite: kernel and VM runs must read the same'
+    }
+    autoLayout TopBottom
+
+    include signalbox, platform
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_vm_reconcile {
+    title 'Workflows/Work/Computer/VM/Machine reconcile'
+    description 'W-CMP-10. Hourly default automation sweeps boxd and releases stale Base leases.'
+
+    include signalbox.automations, signalbox.computer, signalbox.bases, platform.boxd
+
+    signalbox.automations -> signalbox.computer 'hourly: Machine reconcile' {
+      navigateTo work_automations_defaults
+      notes '- A default automation people can read and edit, not special-case code'
+    }
+    signalbox.computer -> platform.boxd 'list t-* machines'
+    parallel {
+      signalbox.computer -> platform.boxd 'hibernate unleased' {
+        navigateTo state_computer
+      }
+      signalbox.computer -> platform.boxd 'delete unrecorded' {
+        notes '- No record in any Thread'
+      }
+      signalbox.computer -> signalbox.bases 'release leases' {
+        navigateTo work_bases_lease
+        notes '''
+          - Machine NOT_FOUND (deleteAfter or a crash never sent an outbox release)
+          - Or `expiresAt` passed
+        '''
+      }
+    }
+    autoLayout TopBottom
+
+    include signalbox, platform
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Devices ─────────────────────────────
+
+  dynamic view work_computer_device_panel {
+    variant sequence
+    title 'Workflows/Work/Computer/Devices/Watch and control a leased device'
+    description 'T-DEV-03, T-DEV-04, T-DEV-08. Device panel streams the device leased by the thread.'
+
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.mobile,
+      signalbox.funnel,
+      signalbox.computer,
+      platform.deviceHost
+
+    parallel {
+      personA -> signalbox.web 'opens Device tab'
+      personB -> signalbox.mobile 'opens Device tab' {
+        notes '''
+          - B is in the same shared thread in Team, on the phone
+          - C (admin of Company) or D (collaborator on Team) only if they can see the thread
+        '''
+      }
+    }
+    signalbox.web -> signalbox.funnel 'subscribeDeviceState' {
+      notes '- T-DEV-08: state changes push through the Funnel; B\'s mobile subscribes the same way'
+    }
+    signalbox.funnel -> signalbox.computer 'device lease' {
+      navigateTo state_computer
+      notes '- The device is leased by the thread, like its machine'
+    }
+    signalbox.computer -> platform.deviceHost 'lease + stream' {
+      navigateTo work_computer_mobile_devices
+    }
+    signalbox.funnel <- platform.deviceHost 'video stream'
+    signalbox.web <- signalbox.funnel 'stream to A'
+    signalbox.mobile <- signalbox.funnel 'stream to B' {
+      notes '- One device, one lease, every watcher of the thread sees it'
+    }
+    opt 'controls and tools (T-DEV-04)' {
+      personA -> signalbox.web 'uses device controls' {
+        notes '- Rotate, text size, location, permissions, push'
+      }
+      signalbox.web -> signalbox.funnel 'device control'
+      signalbox.funnel -> signalbox.computer 'control'
+      signalbox.computer -> platform.deviceHost 'apply'
+    }
+    signalbox.funnel <- platform.deviceHost 'device state changed' {
+      notes '- Every watcher, A and B, sees the new state'
+    }
+
+    include signalbox, platform
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_mobile_devices {
+    variant sequence
+    title 'Workflows/Work/Computer/Devices/Agents drive simulators and emulators'
+    description 'W-CMP-27 (aliases T-DEV-01, T-DEV-02, T-DEV-05).'
+
+    include signalbox.harness, signalbox.gateway, signalbox.computer, platform.deviceHost
+
+    signalbox.harness -> signalbox.gateway 'device_open' {
+      notes '- Device tools are MCP tools through the Tool Gateway'
+    }
+    signalbox.gateway -> signalbox.computer 'lease for this thread'
+    signalbox.computer -> platform.deviceHost 'lease simulator or emulator' {
+      notes '- Cloud device host; nothing runs on the person laptop (see the laptop gateway)'
+    }
+    loop 'test the app' {
+      signalbox.harness -> signalbox.gateway 'tap · type · screenshot'
+      signalbox.gateway -> signalbox.computer 'device command'
+      signalbox.computer -> platform.deviceHost 'agent-device command'
+      signalbox.harness <- signalbox.gateway 'result'
+    }
+    signalbox.harness -> signalbox.gateway 'device_close' {
+      navigateTo work_computer_laptop_gateway
+      notes '- For the person own laptop apps, the device gateway is the other path'
+    }
+
+    include signalbox, platform
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_devicehost_lifecycle {
+    title 'Workflows/Work/Computer/Devices/DeviceHost keeps device tooling up to date'
+    description 'T-DEV-07. Replaced by the DeviceHost provider lifecycle.'
+
+    include signalbox.computer, platform.deviceHost
+
+    signalbox.computer -> platform.deviceHost 'device open' {
+      navigateTo work_computer_mobile_devices
+    }
+    platform.deviceHost -> platform.deviceHost 'check toolchain version' {
+      notes '- Xcode, Android SDK, device tooling'
+    }
+    opt 'version changed' {
+      platform.deviceHost -> platform.deviceHost 'update tooling' {
+        notes '- The provider owns this; Signalbox no longer manages simulator tooling (T3 behavior replaced)'
+      }
+    }
+    signalbox.computer <- platform.deviceHost 'device ready'
+    autoLayout TopBottom
+
+    include signalbox, platform
+    style signalbox, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_computer_laptop_gateway {
+    variant sequence
+    title "Workflows/Work/Computer/Devices/Use the laptop's apps through its gateway"
+    description 'W-CMP-28. Reach, not execution; a device connector goes through Executor (Gateway) like every connector and reaches only threads under the level its device is placed at. Offline returns "device offline" as a needs-you state.'
+
+    include
+      personA,
+      signalbox.desktop.deviceGateway,
+      signalbox.harness,
+      signalbox.gateway,
+      signalbox.tree
+
+    personA -> signalbox.desktop.deviceGateway 'registers laptop' {
+      navigateTo person_devices_register
+      notes '- Home level: Personal'
+    }
+    signalbox.desktop.deviceGateway -> signalbox.tree 'device placed at home level' {
+      navigateTo folders_placement_kind_device
+    }
+    signalbox.harness -> signalbox.gateway 'tool: use a laptop app' {
+      navigateTo folders_connections_tool_exposure
+      notes '- A device tool, served by Executor like any connector (search or direct)'
+    }
+    signalbox.gateway -> signalbox.tree 'resolve on the thread chain'
+    alt 'which thread asks' {
+      when 'Personal, laptop offline' {
+        signalbox.gateway <- signalbox.tree 'device reaches'
+        signalbox.harness <- signalbox.gateway '"device offline"' {
+          notes '''
+            - A needs-you state, not a failure: A is asked to bring the laptop online
+            - The work never moves to the laptop or anywhere else
+          '''
+        }
+      }
+      when 'A private thread in Personal' {
+        signalbox.gateway <- signalbox.tree 'device reaches'
+        signalbox.gateway -> signalbox.desktop.deviceGateway 'reach request' {
+          navigateTo person_devices_device_only_resources
+          notes '''
+            - Reach, not execution: the laptop answers for its own apps and files
+            - The work still runs in the cloud
+          '''
+        }
+        signalbox.gateway <- signalbox.desktop.deviceGateway 'result'
+        signalbox.harness <- signalbox.gateway 'tool result'
+      }
+      else 'shared thread in Team' {
+        signalbox.gateway <- signalbox.tree 'not placed above'
+        signalbox.harness <- signalbox.gateway 'Denied' {
+          notes '''
+            - Whoever sends (A or B) changes nothing
+            - A can lend the device to Team (an explicit, revocable loan)
+          '''
+        }
+      }
+    }
+
+    include signalbox, signalbox.desktop
+    style signalbox, signalbox.desktop {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Workflows/Work/Previews ─────────────────────────────
+
+  dynamic view work_previews_port_url {
+    variant sequence
+    title 'Workflows/Work/Previews/Port becomes one preview URL'
+    description 'W-PRV-01 (alias T-BRW-11), W-PRV-06. One authenticated URL per thread and port.'
+
+    include signalbox.harness, signalbox.computer, signalbox.funnel.portGateway, platform.boxd
+
+    signalbox.computer -> platform.boxd 'dead-port public proxy' {
+      notes '''
+        - On every VM create (W-PRV-06): boxd URLs are public and land in CT logs
+        - So boxd public URL serves nothing
+      '''
+    }
+    signalbox.harness -> signalbox.computer 'port(5173)'
+    alt 'what serves the port' {
+      when 'kernel program' {
+        signalbox.computer -> signalbox.computer 'serve through the facet'
+      }
+      else 'VM service' {
+        platform.boxd -> signalbox.funnel.portGateway 'outbound tunnel' {
+          notes '- Exec daemon dials out to our port gateway; nothing listens publicly'
+        }
+      }
+    }
+    signalbox.computer -> signalbox.funnel.portGateway 'register thread + port' {
+      navigateTo work_previews_open
+    }
+    signalbox.harness <- signalbox.computer 'URL' {
+      navigateTo work_previews_agent_tests
+      notes '- The same URL for the person, the agent and the renderer'
+    }
+
+    include signalbox, signalbox.funnel, platform
+    style signalbox, signalbox.funnel, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_previews_open {
+    variant sequence
+    title 'Workflows/Work/Previews/Open a preview'
+    description 'W-PRV-02 (alias T-BRW-01), W-PRV-03, W-PRV-05, T-BRW-12, T-TRM-07. Anyone who can see the thread opens its dev server at one gateway URL; an asleep machine wakes first.'
+
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.funnel.portGateway,
+      signalbox.thread,
+      signalbox.computer,
+      platform.boxd
+
+    alt 'entry' {
+      when 'A opens it from the thread' {
+        personA -> signalbox.web 'Open preview' {
+          notes '''
+            - Also from a `localhost:5173` link in the terminal (T-TRM-07): rewritten to the gateway URL
+            - Desktop "Open in browser" (T-BRW-12) opens the same gateway URL in the system browser
+          '''
+        }
+      }
+      when 'B opens it too' {
+        personB -> signalbox.web 'Open preview' {
+          notes '- Same URL, own token, same dev server'
+        }
+      }
+      else 'saved link on the app origin (W-PRV-03)' {
+        personA -> signalbox.web 'opens saved link'
+        signalbox.web -> signalbox.funnel.portGateway 'app-origin link'
+        signalbox.web <- signalbox.funnel.portGateway 'redirect + per-port token' {
+          notes '- Isolated origin; short-lived per-port token; revocable'
+        }
+      }
+    }
+    signalbox.web -> signalbox.funnel.portGateway 'GET preview'
+    signalbox.funnel.portGateway -> signalbox.funnel.portGateway 'access check' {
+      notes '''
+        - Shared thread in Team: A and B (members of Company) pass; C passes as admin of Company;
+          D passes as outside collaborator on Team. Same rule: can this person see the thread
+      '''
+    }
+    alt 'access' {
+      when 'sees the thread' {
+        signalbox.funnel.portGateway -> signalbox.thread 'resolve computer'
+      }
+      else 'cannot see it' {
+        signalbox.web <- signalbox.funnel.portGateway '404' {
+          notes '- A on B private draft in Team, or a forwarded link: no hint it exists'
+        }
+      }
+    }
+    opt 'machine asleep' {
+      signalbox.thread -> signalbox.computer 'open + restore'
+      signalbox.computer -> platform.boxd 'wake or fork VM' {
+        navigateTo state_computer
+      }
+      signalbox.computer -> signalbox.computer 'start declared dev server'
+      signalbox.web <- signalbox.funnel.portGateway 'Starting preview…'
+    }
+    signalbox.funnel.portGateway -> signalbox.computer 'proxy to port' {
+      navigateTo work_previews_port_url
+    }
+    signalbox.web <- signalbox.funnel.portGateway 'page'
+    opt 'HMR WebSocket (W-PRV-05)' {
+      signalbox.web -> signalbox.funnel.portGateway 'WS upgrade'
+      signalbox.funnel.portGateway -> signalbox.computer 'WS proxy'
+    }
+
+    include signalbox, signalbox.funnel, platform
+    style signalbox, signalbox.funnel, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_previews_agent_tests {
+    variant sequence
+    title 'Workflows/Work/Previews/Agent tests its work on the preview URL'
+    description 'W-BRW-12 (alias T-MCP-11), W-BRW-20, W-PRV-04.'
+
+    include
+      signalbox.harness,
+      signalbox.browser,
+      signalbox.funnel.portGateway,
+      signalbox.computer
+
+    signalbox.harness -> signalbox.computer 'port(5173)' {
+      navigateTo work_previews_port_url
+    }
+    signalbox.harness <- signalbox.computer 'preview URL'
+    signalbox.harness -> signalbox.browser 'preview_* tools' {
+      notes '- Testing engine; #1110 picks the backend'
+    }
+    signalbox.browser -> signalbox.browser 'route by whose content' {
+      notes '- Own content never loads a person Kernel profile (W-BRW-20)'
+    }
+    signalbox.browser -> signalbox.funnel.portGateway 'load preview URL' {
+      notes '- Never localhost: the same URL a person opens'
+    }
+    signalbox.funnel.portGateway -> signalbox.computer 'proxy to port'
+    loop 'test steps' {
+      signalbox.harness -> signalbox.browser 'click · type · snapshot'
+    }
+    signalbox.harness -> signalbox.browser 'render(port URL)' {
+      navigateTo work_browser_render
+      notes '- Browser Run renders the same URL (W-PRV-04)'
+    }
+    signalbox.browser -> signalbox.funnel.portGateway 'same URL'
+
+    include signalbox, signalbox.funnel
+    style signalbox, signalbox.funnel {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view work_previews_worker_app {
+    variant sequence
+    title 'Workflows/Work/Previews/Run a worker-shaped app without a machine'
+    description '''
+      W-PRV-07, W-PRV-08. When an agent builds something worker-shaped, it runs as a Dynamic Worker,
+      never on a VM: a throwaway preview from a thread commit, or a folder app with releases.
+    '''
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.harness,
+      signalbox.drive,
+      signalbox.funnel.portGateway,
+      signalbox.actorhost,
+      signalbox.apps
+
+    alt 'what the agent builds' {
+      when 'preview of this thread (W-PRV-07)' {
+        signalbox.harness -> signalbox.drive 'commit' {
+          navigateTo work_drive_thread_fork
+          notes '- On the thread working ref; nothing leaves the thread'
+        }
+        signalbox.harness -> signalbox.actorhost 'load as Dynamic Worker' {
+          notes '''
+            - worker-bundler output, no machine and no Base
+            - Assumption: Computer owns this verb (`port` on a worker build); recorded, not asked
+          '''
+        }
+        personA -> signalbox.web 'opens preview'
+        signalbox.web -> signalbox.funnel.portGateway 'GET preview' {
+          navigateTo work_previews_open
+          notes '- Same access check as any preview: whoever can see the thread'
+        }
+        signalbox.funnel.portGateway -> signalbox.actorhost 'invoke worker'
+      }
+      else 'app for the folder (W-PRV-08)' {
+        signalbox.harness -> signalbox.apps 'build + release' {
+          navigateTo apps_build
+          notes '''
+            - The app is placed in the folder (e.g. Team), not the thread
+            - Immutable release; server in its own Dynamic Worker with SQLite
+          '''
+        }
+        personA -> signalbox.web 'opens the app' {
+          navigateTo apps_open
+          notes '- A, B, C (admin of Company) and D (collaborator on Team) reach it by position'
+        }
+      }
+    }
+
+    include signalbox, signalbox.funnel
+    style signalbox, signalbox.funnel {
+      color muted
+      opacity 10%
+    }
+  }
+}

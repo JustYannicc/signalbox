@@ -1,0 +1,949 @@
+// Scenario shard 03: folders and access (SCN-055 to SCN-067).
+// Person A and B are members of folder Company (owner: organization), C is its admin,
+// D is the outside collaborator on folder Team only. Folders "Payments" and "Friends"
+// stand on the generic Level actor; their names live in the notes.
+views {
+
+  // ───────────────────────────── Invites ─────────────────────────────
+
+  dynamic view scn_055_outside_collaborator_invited_to_team {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Invites/Outside Collaborator Into Team'
+    description '''
+      Can someone outside the organization get folder Team without seeing the rest of folder Company?
+
+      Decided: #238, #225 §3, #237, #226 (2026-10-14). Invite by email with a role; no account means a WorkOS invitation as `guest`; a Member on a subfolder doesn't see the parent's other contents.
+      Assumption (pool): no mount means no `via`, so the chain stops at Company's root and nothing above Company ever pays (design §1, A2, A36).
+
+      SCN-055 · v1: no · Person D is the outside collaborator; B is Admin on Team; C is Company's admin.
+    '''
+    include signalbox, signalbox.tree
+    include personB, personD, personC, signalbox.web, signalbox.identity, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.attention
+
+    personB -> signalbox.web 'invite D as Member' {
+      navigateTo folders_access_invite_by_email
+      notes '''
+        - **Start:** D has no access to folder Company, maybe no account
+        - B is Admin on folder Team and invites D's email with role Member on Team only
+      '''
+    }
+    signalbox.web -> signalbox.identity 'invite as guest' {
+      notes '''
+        - No account yet: a WorkOS invitation into the owning organization
+        - Role `guest` has zero permissions anywhere (#226)
+      '''
+    }
+    signalbox.identity -> personD 'invitation email' {
+      navigateTo state_invitation
+      notes '''
+        - Sent by WorkOS; resolved on D's first sign-in
+      '''
+    }
+    personD -> signalbox.web 'accepts, picks spot' {
+      notes '''
+        - Accepting asks where to file Team; default is D's top level ("Shared with me")
+      '''
+    }
+    signalbox.web -> signalbox.tree.levelActor 'Member role at Team' {
+      navigateTo folders_access_outside_collaborator
+      notes '''
+        - One role row at Team; none at Company
+        - Organization-wide "everyone can view" never reaches a guest
+      '''
+    }
+    signalbox.web -> signalbox.tree.personActor 'write reference' {
+      navigateTo folders_access_folder_invite
+      notes '''
+        - A reference in D's tree is display only; it grants nothing and is not a mount
+      '''
+    }
+    personD -> signalbox.web 'starts a thread'
+    signalbox.web -> signalbox.tree.levelActor 'resolve Team › Company' {
+      notes '''
+        - No mount of Company, so no `via`: the chain is Team › Company and stops
+        - D's own pool never applies; who sends never matters
+      '''
+    }
+    alt 'pool on the chain?' {
+      when 'placed at Team or Company' {
+        signalbox.web <- signalbox.tree.levelActor 'runs on that pool' {
+          notes '''
+            - **End:** D works in Team, sees Team and below, nothing else of Company
+            - A and B in the same Team run on the same pool: same position, same answer
+          '''
+        }
+      }
+      else 'nothing placed' {
+        signalbox.tree.levelActor -> signalbox.attention 'NeedsPool Blocker' {
+          navigateTo person_pipeline_blocker_needs_pool
+        }
+        signalbox.attention -> personC 'Blocker for admin' {
+          notes '''
+            - Lands in the Blocker lane of Company's admin C, not D's
+          '''
+        }
+        opt 'Team accepts lent pools' {
+          personD -> signalbox.web 'lend own pool' {
+            navigateTo folders_lending_lend
+            notes '''
+              - Explicit, revocable loan into Team, shown as "lent by D"
+              - **End:** D is Member on Team only, running on Team's chain
+            '''
+          }
+        }
+      }
+    }
+
+    style signalbox, signalbox.tree { color muted; opacity 10% }
+  }
+
+  dynamic view scn_058_invite_reverse_doors {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Invites/Invite Reverse Doors'
+    description '''
+      How does every invite or membership get undone without leaving a stale accept or an orphan reference?
+
+      Decided: #238, #225 §3 (2026-10-14): cancel, decline, remove and leave; a cancelled invite can't be accepted; a removed member loses the reference on the next request; inviting an existing member changes the role. Sealing on removal: #232, #270 (2026-10-16).
+
+      SCN-058 · v1: no · C is Company's admin, D the invitee from outside, B a member of Team.
+    '''
+    include signalbox, signalbox.tree
+    include personC, personD, personB, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.tree.levelActor, signalbox.tree.personActor, signalbox.thread.threadActor
+
+    alt 'which door' {
+      when 'C cancels a pending invite' {
+        personC -> signalbox.web 'cancel invite' {
+          notes '''
+            - **Start:** C's pending invite of D to folder Team
+          '''
+        }
+        signalbox.web -> signalbox.identity 'revoke invitation' {
+          navigateTo state_invitation
+          notes '''
+            - The WorkOS invitation is revoked; a later accept link fails
+          '''
+        }
+      }
+      when 'D declines' {
+        personD -> signalbox.web 'decline'
+        signalbox.web -> signalbox.identity 'mark declined' {
+          notes '''
+            - Nothing is filed; no reference is written
+          '''
+        }
+      }
+      when 'C re-invites a member' {
+        personC -> signalbox.web 'invite B again'
+        signalbox.web -> signalbox.tree.levelActor 'change role' {
+          navigateTo folders_access_roles
+          notes '''
+            - B already has a role on Team: it changes, no second membership
+          '''
+        }
+      }
+      when 'C removes B' {
+        personC -> signalbox.web 'remove B from Team'
+        signalbox.web -> signalbox.tree.levelActor 'drop role'
+        signalbox.tree.levelActor -> signalbox.thread.threadActor 'seal B private chats' {
+          navigateTo state_thread
+          notes '''
+            - Admins can't read them; B's shared work stays with the folder
+            - Unsealed if B rejoins; nothing is deleted on a clock
+          '''
+        }
+        personB -> signalbox.funnel 'next request'
+        signalbox.funnel -> signalbox.tree.personActor 'drop reference' {
+          notes '''
+            - `can` fails at Team, so the reference vanishes on B's next request
+          '''
+        }
+      }
+      else 'B leaves' {
+        personB -> signalbox.web 'leave Team' {
+          notes '''
+            - An Owner can't leave until someone else holds Owner
+          '''
+        }
+        signalbox.web -> signalbox.tree.levelActor 'drop role'
+        signalbox.web -> signalbox.tree.personActor 'drop reference'
+      }
+    }
+    signalbox.tree.levelActor -> signalbox.web 'access epoch bumped' {
+      navigateTo folders_access_ui_availability
+      notes '''
+        - Every change bumps the access epoch
+      '''
+    }
+    signalbox.web -> personB 'permission changed' {
+      notes '''
+        - **End:** cancelled, declined, role changed, removed or left; no stale accept, no orphan reference
+      '''
+    }
+
+    style signalbox, signalbox.tree { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Chains ─────────────────────────────
+
+  dynamic view scn_056_outside_collaborator_thread_chain {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Chains/Outside Collaborator Chain'
+    description '''
+      When an outside collaborator starts a thread in folder Team, which chain does it run on?
+
+      Assumption: Team › Company only. A reference to a subfolder is never a mount, so D's threads carry no `via`; the fix is a placement at Company or Team, or D's explicit loan. Why: design §1 Mount (the only edge across owners), references grant nothing (#331, 2026-10-14), A2, A36.
+
+      SCN-056 · v1: partial (which pool pays) · Person D is the outside collaborator; C is Company's admin; A is a Company member for contrast.
+    '''
+    include signalbox, signalbox.tree, signalbox.thread, signalbox.models
+    include personD, personC, personA, signalbox.web, signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.attention, signalbox.harness, signalbox.models.custody
+
+    personD -> signalbox.web 'sends first turn' {
+      notes '''
+        - **Start:** D opens Team from the reference in D's own tree
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor 'new thread in Team'
+    signalbox.thread.threadActor -> signalbox.tree.levelActor 'Place {Team, no via}' {
+      notes '''
+        - Mount check: D has no mount of Company's root
+        - A reference is not a mount
+      '''
+    }
+    signalbox.tree.levelActor -> signalbox.tree.levelActor 'walk Team › Company' {
+      navigateTo folders_placement_resolve_org_chain
+      notes '''
+        - The walk stops at Company's root; D's top-level pool never applies
+      '''
+    }
+    signalbox.tree.levelActor -> signalbox.attention 'NeedsPool' {
+      navigateTo person_pipeline_blocker_needs_pool
+      notes '''
+        - Nothing placed on the chain: the turn parks
+      '''
+    }
+    signalbox.attention -> personC 'Blocker for admin' {
+      notes '''
+        - In C's Blocker lane, because C is Company's admin; D sees "waiting for a pool"
+      '''
+    }
+    alt 'who fixes it' {
+      when 'C places a pool' {
+        personC -> signalbox.web 'pool at Team' {
+          navigateTo folders_pools_first_pool
+        }
+        signalbox.web -> signalbox.tree.levelActor 'Place pool'
+      }
+      else 'D lends a pool' {
+        personD -> signalbox.web 'lend pool into Team' {
+          navigateTo folders_lending_lend
+          notes '''
+            - Explicit, revocable loan with D's consent; shows "lent by D"
+          '''
+        }
+        signalbox.web -> signalbox.tree.levelActor 'Place loan'
+      }
+    }
+    signalbox.tree.levelActor -> signalbox.thread.threadActor 'placement event'
+    signalbox.thread.threadActor -> signalbox.harness 'resume turn'
+    signalbox.harness -> signalbox.models.custody 'tokens' {
+      notes '''
+        - **End:** the turn runs on the re-resolved Scope of Team › Company
+      '''
+    }
+    opt 'contrast: A in the same Team' {
+      personA -> signalbox.web 'turn in Team'
+      signalbox.web -> signalbox.tree.levelActor 'Place {Team, via A}' {
+        notes '''
+          - A's mount continues the chain: Team › Company › Work › A's top level
+          - Nearest wins, so A's own pool pays only where Company placed none
+        '''
+      }
+    }
+
+    style signalbox, signalbox.tree, signalbox.thread, signalbox.models { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── References ─────────────────────────────
+
+  dynamic view scn_057_refile_mount_or_reference {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/References/Refile Mount Or Reference'
+    description '''
+      What changes when someone refiles folder Company, or another organization's shared folder, elsewhere in their tree?
+
+      Decided for references: #238, #225 §3, #331 (2026-10-14): moving a reference changes only its display; #364: a shared folder filed elsewhere runs on its home's chain.
+      Assumption for the mount: moving it changes the chain for that person's threads through it, since the chain continues at the mount's parent; Company's own placements still win (nearest wins). Why: one tree per person (ledger 0.1 #3), design §1, A2, A44.
+
+      SCN-057 · v1: partial (which pool pays) · The second organization only shares its folder; it isn't drawn.
+    '''
+    include signalbox, signalbox.tree, signalbox.thread, signalbox.models
+    include personA, signalbox.web, signalbox.tree.personActor, signalbox.tree.levelActor, signalbox.thread.threadActor, signalbox.harness, signalbox.attention, signalbox.models.custody
+
+    alt 'what A refiles' {
+      when "Company's mount" {
+        personA -> signalbox.web 'drag to Personal' {
+          notes '''
+            - **Start:** Company's mount sits under Work
+          '''
+        }
+        signalbox.web -> signalbox.tree.levelActor 'what sits above?' {
+          navigateTo folders_placement_resolve
+          notes '''
+            - The confirm lists Personal's placements where Company and its folders placed nothing
+          '''
+        }
+        personA -> signalbox.web 'confirms move'
+        signalbox.web -> signalbox.tree.personActor 'Mount under Personal' {
+          navigateTo state_mount
+          notes '''
+            - Same `MountRef`; only `under` changes
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.harness 'next turn re-resolves' {
+          notes '''
+            - A's threads through this mount: Company › Personal › top level
+            - Running turns finish on their frozen Scope; B and C are unaffected
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.attention 'asks follow new chain' {
+          notes '''
+            - Ask `area` changes for A only (A41)
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.models.custody 'new usage rows' {
+          notes '''
+            - Rows already written stay where they were (A21)
+          '''
+        }
+      }
+      else "another organization's folder" {
+        personA -> signalbox.web 'file under Company' {
+          notes '''
+            - **Start:** A is Viewer on a folder a second organization shared
+          '''
+        }
+        signalbox.web -> signalbox.tree.personActor 'move reference' {
+          navigateTo folders_tree_reference
+          notes '''
+            - Display only (#238, #331)
+          '''
+        }
+        signalbox.web -> signalbox.tree.levelActor 'resolve its home' {
+          navigateTo folders_placement_resolve_shared
+          notes '''
+            - It runs only on its home's chain
+            - Company's pool and AGENTS.md never reach it (#364)
+          '''
+        }
+      }
+    }
+    signalbox.web -> personA 'tree shows new spot' {
+      navigateTo work_sources_home
+      notes '''
+        - **End:** the mount under Personal, the reference under Company, each on its right chain
+      '''
+    }
+
+    style signalbox, signalbox.tree, signalbox.thread, signalbox.models { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Requests ─────────────────────────────
+
+  dynamic view scn_059_door_model_ask_folder {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Requests/Ask A Folder For Work'
+    description '''
+      What happens when an organization member with no role on folder Payments asks it for work?
+
+      Decided: #225 §4 (2026-10-14) door model; #229 d7 (2026-10-14): asking a folder starts a thread there; #254: the person it was started for can drive it.
+      Assumption: gates go to Payments' responsible people, admin C by default (#335, 2026-10-15).
+
+      SCN-059 · v1: no · Folder Payments sits inside folder Company.
+    '''
+    include signalbox.tree, signalbox.thread
+    include personB, personC, hier.asstB, signalbox.web, signalbox.tree.levelActor, signalbox.thread.threadActor, signalbox.harness, signalbox.attention
+
+    alt 'where B asks' {
+      when 'on the folder page' {
+        personB -> signalbox.web 'ask Payments' {
+          navigateTo folders_access_ask_folder
+          notes '''
+            - **Start:** B is in the organization but has no role on Payments
+          '''
+        }
+        signalbox.web -> signalbox.tree.levelActor 'start thread for B'
+      }
+      else 'through the assistant' {
+        personB -> hier.asstB 'get Payments to…' {
+          navigateTo person_assistant_start_steer
+        }
+        hier.asstB -> signalbox.tree.levelActor 'start thread for B'
+      }
+    }
+    signalbox.tree.levelActor -> signalbox.thread.threadActor 'thread in Payments' {
+      navigateTo work_threads_start_door
+      notes '''
+        - Filed in Payments, "started for B", with B's own mount as `via`
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'runs on Payments chain' {
+      notes '''
+        - Payments › Company placements pay and serve; B's role never matters
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention 'gate to deciders'
+    signalbox.attention -> personC 'Ready ask' {
+      notes '''
+        - C decides by default as Company's admin
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.web 'status for B'
+    signalbox.web -> personB 'status, can drive' {
+      navigateTo person_people_door
+      notes '''
+        - **End:** B sees status, never a refusal, and drives only this thread
+        - Other Payments threads stay invisible to B
+      '''
+    }
+
+    style signalbox.tree, signalbox.thread { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Roles ─────────────────────────────
+
+  dynamic view scn_060_admin_restricts_area {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Roles/Admin Restricts An Area'
+    description '''
+      Can an admin make the Connections area of folder Company admin-only?
+
+      Assumption: yes, as an opt-in `Policy{area, adminOnly}` placement, open by default, reaching below, and "pull back your own additions" always allowed; pending #322. Why: it is one more placed kind on the one resolver (design §6.1, R-ACC-21), and opt-in keeps default freedom.
+
+      SCN-060 · v1: no
+    '''
+    include signalbox, signalbox.tree, signalbox.connections
+    include personC, personB, signalbox.web, signalbox.gateway, signalbox.operations, signalbox.tree.levelActor, signalbox.connections.connectionActor
+
+    personC -> signalbox.web 'Connections: Admins' {
+      notes '''
+        - **Start:** Connections are open to members (the default)
+        - C sets it in Company's "who can change what" table
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Place Policy' {
+      navigateTo folders_access_folder_policy
+    }
+    signalbox.operations -> signalbox.tree.levelActor 'Policy at Company' {
+      notes '''
+        - Reaches Company and every folder below; nearest wins
+        - A lower folder loosens it only if an Admin there changes it
+      '''
+    }
+    personB -> signalbox.web 'opens Team Connections'
+    signalbox.web -> signalbox.tree.levelActor 'can(B, connections)' {
+      navigateTo folders_access_ui_availability
+      notes '''
+        - One "Managed by Company admins" note; only B's allowed actions show
+      '''
+    }
+    personB -> signalbox.web 'removes own connection'
+    signalbox.web -> signalbox.operations 'Unplace'
+    signalbox.operations -> signalbox.connections.connectionActor 'unplaced' {
+      navigateTo folders_placement_kind_pool_connection
+      notes '''
+        - Pulling back what B added stays allowed
+      '''
+    }
+    alt 'who tries to add one' {
+      when 'B in the app' {
+        signalbox.web -> signalbox.operations 'Place connection'
+        signalbox.web <- signalbox.operations 'refused'
+      }
+      else 'an agent over MCP' {
+        signalbox.gateway -> signalbox.operations 'Place connection'
+        signalbox.gateway <- signalbox.operations 'refused, ask up' {
+          notes '''
+            - Same service method, same refusal; the agent can ask up
+          '''
+        }
+      }
+    }
+    personC -> signalbox.web 'lift policy'
+    signalbox.web -> signalbox.operations 'Unplace Policy' {
+      notes '''
+        - **End:** members can add connections again
+      '''
+    }
+
+    style signalbox, signalbox.tree, signalbox.connections { color muted; opacity 10% }
+  }
+
+  dynamic view scn_067_promoted_or_demoted {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Roles/Promoted Or Demoted'
+    description '''
+      What happens when someone is made Admin, demoted, or loses an extra folder grant?
+
+      Decided: #246 (2026-10-14): Admin in WorkOS means Admin on the next request; #237 (2026-10-14): roles inherit down and only add; removing a grant falls back to the inherited role, never lower.
+      Assumption: WorkOS RBAC holds organization-level roles only (Admin, Member, `guest`); pending #312.
+
+      SCN-067 · v1: partial
+    '''
+    include signalbox, signalbox.tree, platform
+    include personC, personB, platform.workos, signalbox.identity, signalbox.web, signalbox.funnel, signalbox.tree.levelActor
+
+    alt 'what changes' {
+      when 'B promoted in WorkOS' {
+        personC -> platform.workos 'make B Admin' {
+          notes '''
+            - **Start:** B is Member of folder Company
+          '''
+        }
+        platform.workos -> signalbox.identity 'membership webhook' {
+          navigateTo organization_identity_membership_webhook
+        }
+        signalbox.identity -> signalbox.tree.levelActor 'Admin at Company' {
+          navigateTo folders_access_roles
+          notes '''
+            - Mirrored onto Company's root; inherits to every folder below
+          '''
+        }
+      }
+      when "B's Team grant removed" {
+        personC -> signalbox.web 'remove Team grant'
+        signalbox.web -> signalbox.tree.levelActor 'drop grant' {
+          notes '''
+            - B falls back to the role inherited from Company, never below it
+          '''
+        }
+      }
+      else 'B demoted in WorkOS' {
+        personC -> platform.workos 'demote B'
+        platform.workos -> signalbox.identity 'membership webhook'
+        signalbox.identity -> signalbox.tree.levelActor 'Member at Company' {
+          notes '''
+            - Running turns finish; B's placements stay where they are
+          '''
+        }
+      }
+    }
+    signalbox.web -> signalbox.funnel "B's next request"
+    signalbox.funnel -> signalbox.tree.levelActor 'can(B, …)' {
+      navigateTo folders_access_authorize
+      notes '''
+        - The new role applies here, on the next request; no session refresh needed
+      '''
+    }
+    signalbox.tree.levelActor -> signalbox.web 'permission changed' {
+      navigateTo folders_access_ui_availability
+    }
+    signalbox.web -> personB 'actions updated' {
+      notes '''
+        - **End:** Admin actions appear or disappear; nothing drops below the inherited role
+      '''
+    }
+
+    style signalbox, signalbox.tree, platform { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Forks ─────────────────────────────
+
+  dynamic view scn_061_start_folder_from_existing {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Forks/Start Folder From Here'
+    description '''
+      Where does a new folder started from folder Team land, and what does it share?
+
+      Decided: #631 (2026-10-16), #678 shipped via #751 (2026-10-17): same organization's tree, under the creator, shared history, visible origin, nothing forced.
+      Assumption (outside collaborator): it lands under the highest folder where D is Member+ (Team), owned by the organization, never in D's own tree. Why: work owned by the organization belongs to it (#232, #270), creating needs Member+ at the parent (#237).
+
+      SCN-061 · v1: no · Person D is the outside collaborator on Team.
+    '''
+    include signalbox, signalbox.tree, signalbox.drive
+    include personB, personD, signalbox.web, signalbox.operations, signalbox.tree.levelActor, signalbox.tree.personActor, signalbox.drive.repoActor
+
+    alt 'who starts it' {
+      when 'B, Member+ on Company' {
+        personB -> signalbox.web 'Start a folder here' {
+          notes '''
+            - **Start:** folder Team exists inside folder Company
+            - An agent calls the same operation over MCP
+          '''
+        }
+        signalbox.web -> signalbox.operations 'StartFolderFrom(Team)'
+        signalbox.operations -> signalbox.tree.levelActor 'new folder under B' {
+          navigateTo folders_tree_create_rename
+          notes '''
+            - Same organization's tree, under B's position, owned by the organization
+          '''
+        }
+      }
+      else 'D, Member on Team only' {
+        personD -> signalbox.web 'Start a folder here'
+        signalbox.web -> signalbox.operations 'StartFolderFrom(Team)'
+        signalbox.operations -> signalbox.tree.levelActor 'new folder in Team' {
+          notes '''
+            - Highest folder where D is Member+; still owned by the organization
+            - D is its Admin
+          '''
+        }
+        signalbox.operations -> signalbox.tree.personActor 'beside Team in D tree' {
+          navigateTo folders_access_folder_invite
+        }
+      }
+    }
+    signalbox.operations -> signalbox.drive.repoActor 'own refs, shared history' {
+      navigateTo work_drive_thread_fork
+      notes '''
+        - Its own refs over Team's history up to now; nothing is copied
+      '''
+    }
+    signalbox.web <- signalbox.operations 'folder with origin' {
+      navigateTo work_threads_fork_at_point
+      notes '''
+        - **End:** the new folder shows its origin; Team is unchanged; no propose-back forced
+      '''
+    }
+
+    style signalbox, signalbox.tree, signalbox.drive { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Sharing ─────────────────────────────
+
+  dynamic view scn_062_share_big_old_folder {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Sharing/Share A Big Old Folder'
+    description '''
+      Can a huge folder with years of history be shared without anything failing on size?
+
+      Decided: #519 (2026-10-15) and #225 §2–3 (2026-10-14): sharing grants access to the one piece of work, never a copy; #491, #524: a user-facing cap is a bug.
+
+      SCN-062 · v1: no
+    '''
+    include signalbox, signalbox.tree, signalbox.drive
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.tree.levelActor, signalbox.tree.personActor, signalbox.drive.repoActor, signalbox.computer
+
+    personA -> signalbox.web 'share as Member' {
+      navigateTo journey_sharing_share_dialog
+      notes '''
+        - **Start:** A's private folder under Personal, more than 5,000 commits
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Role{B, Member}'
+    signalbox.operations -> signalbox.tree.levelActor 'role row only' {
+      navigateTo folders_access_folder_invite
+      notes '''
+        - The drive and its history stay where they are; nothing copied
+      '''
+    }
+    personB -> signalbox.web 'accepts, files it'
+    signalbox.web -> signalbox.tree.personActor 'write reference'
+    personB -> signalbox.web 'opens a thread'
+    signalbox.web -> signalbox.drive.repoActor 'fork at pinned base' {
+      navigateTo work_drive_thread_fork
+      notes '''
+        - The thread gets its own refs; no clone of the history
+      '''
+    }
+    signalbox.computer -> signalbox.drive.repoActor 'lazy reads' {
+      navigateTo work_drive_live_fs_read
+      notes '''
+        - The live FS fetches only what the work touches
+      '''
+    }
+    opt 'idle' {
+      signalbox.computer -> signalbox.drive.repoActor 'evict, promote' {
+        navigateTo work_drive_eviction
+        notes '''
+          - Invisible to A and B
+        '''
+      }
+    }
+    signalbox.web -> personB 'thread ready' {
+      notes '''
+        - **End:** B works in the same folder; no "too big" or "too much history" error anywhere
+      '''
+    }
+
+    style signalbox, signalbox.tree, signalbox.drive { color muted; opacity 10% }
+  }
+
+  dynamic view scn_066_friend_group_personal_folder {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Sharing/Friend Group Folder'
+    description '''
+      How do friends work in a personal folder, and who pays?
+
+      Decided: #225 §10 (2026-10-14); #226 (2026-10-14): friends join a personal organization as `guest`; #228; #230 d10 (2026-10-14): lending is revocable and the owner can withhold the home pool.
+
+      SCN-066 · v1: no · The folder is "Friends" at A's top level (owner: person A); B and C join as A's friends, outside any shared organization.
+    '''
+    include signalbox, signalbox.tree, signalbox.models
+    include personA, personB, personC, signalbox.web, signalbox.identity, signalbox.tree.personActor, signalbox.tree.levelActor with { title 'Level (Friends)' }, signalbox.models.custody
+
+    personA -> signalbox.web 'invite B and C' {
+      navigateTo folders_access_invite_by_email
+      notes '''
+        - **Start:** folder Friends is private to A
+        - Invite by email, role Member on Friends
+      '''
+    }
+    signalbox.web -> signalbox.identity 'guests in A\'s WorkOS org' {
+      navigateTo journey_sharing_friend_group
+      notes '''
+        - Zero-permission `guest` in A's personal organization
+      '''
+    }
+    par {
+      personB -> signalbox.web 'accepts, files it'
+      personC -> signalbox.web 'accepts, files it'
+    }
+    signalbox.web -> signalbox.tree.personActor 'write references'
+    personB -> signalbox.web 'starts a thread'
+    signalbox.web -> signalbox.tree.levelActor 'resolve chain' {
+      notes '''
+        - Friends › A's top level, whoever sends: the position decides, not B
+      '''
+    }
+    signalbox.tree.levelActor -> signalbox.models.custody "A's pool pays"
+    personA -> signalbox.web 'withhold, accept loans' {
+      navigateTo folders_lending_accept_kinds
+      notes '''
+        - A stops the inherited pool at Friends and accepts lent pools
+      '''
+    }
+    personB -> signalbox.web 'lend my pool' {
+      navigateTo folders_lending_lend
+    }
+    signalbox.web -> signalbox.tree.levelActor 'Loan into Friends' {
+      notes '''
+        - Shown as "lent by B", revocable
+      '''
+    }
+    personB -> signalbox.web 'end loan' {
+      navigateTo folders_lending_end_loan
+    }
+    signalbox.web -> signalbox.tree.levelActor 'EndLoan' {
+      notes '''
+        - Running turns finish; new turns fall to the next pool or "needs a pool"
+        - **End:** B and C work in Friends on A's chain; costs roll up to A's top level, never to B or C
+      '''
+    }
+
+    style signalbox, signalbox.tree, signalbox.models { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── People ─────────────────────────────
+
+  dynamic view scn_063_message_from_profile_card {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/People/Message From Profile Card'
+    description '''
+      What does "Message B" on a profile card create, and where?
+
+      Assumption: the card shows B's effective role on the current folder (organization roles mirrored onto Company's root included), and "Message B" opens a draft in the current folder shared with B, sent through the normal confirm; pending #308. Why: roles are per level and inherited (#237, R-ACC-02); drafts and shares already have one path (#333).
+
+      SCN-063 · v1: no
+    '''
+    include signalbox, signalbox.tree, signalbox.thread
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.gateway, signalbox.capture, signalbox.tree.levelActor, signalbox.thread.threadActor
+
+    personA -> signalbox.web "clicks B's avatar" {
+      notes '''
+        - **Start:** A is in folder Team and sees B in a thread or member list
+      '''
+    }
+    signalbox.web -> signalbox.tree.levelActor "B's role here" {
+      notes '''
+        - Effective role on the current folder, inherited roles included
+      '''
+    }
+    personA -> signalbox.web 'Message B'
+    signalbox.web -> signalbox.capture 'draft, pre-shared' {
+      navigateTo person_capture_grammar
+      notes '''
+        - A draft in the current folder, shared with B only
+      '''
+    }
+    personA -> signalbox.web 'writes, sends'
+    signalbox.web -> signalbox.capture 'send' {
+      navigateTo person_drafts_send
+    }
+    signalbox.capture -> signalbox.tree.levelActor 'share confirm' {
+      navigateTo journey_sharing_message_person
+      notes '''
+        - Includes the readability check if B can't read something the chat cites
+      '''
+    }
+    signalbox.capture -> signalbox.thread.threadActor 'thread in folder' {
+      navigateTo work_threads_multiplayer_share
+      notes '''
+        - Filed with A's mount as `via`; runs on the folder's chain, not A's or B's
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.mobile 'new shared chat'
+    signalbox.mobile -> personB 'chat from A' {
+      notes '''
+        - **End:** a chat in the current folder shared with only B
+      '''
+    }
+    opt 'an agent does it' {
+      signalbox.gateway -> signalbox.capture 'same method, MCP'
+    }
+
+    style signalbox, signalbox.tree, signalbox.thread { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Assistants ─────────────────────────────
+
+  dynamic view scn_064_room_between_assistants {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Assistants/Room Between Assistants'
+    description '''
+      How does A's assistant get something from B's assistant without B losing control?
+
+      Assumption: a room is an ordinary thread with one home; a "may share" policy counts as B delegating that kind to B's assistant, so only those kinds go without asking and everything else is a needs-you; tokens come from the nearest pool above the room's home; pending #42. Why: delegated-kind rule for gates (#245, 2026-10-16), every room is a thread (design §1), hierarchy-only resolution.
+
+      SCN-064 · v1: no
+    '''
+    include hier, hier.company, hier.company.team, signalbox, signalbox.models
+    include personA, personB, hier.asstA, hier.asstB, hier.company.team.roomAB, signalbox.web, signalbox.attention, signalbox.models.custody
+
+    personA -> signalbox.web "Ask B's assistant" {
+      navigateTo person_assistant_room
+      notes '''
+        - **Start:** A needs something from B; from the profile card or `@`
+      '''
+    }
+    signalbox.web -> hier.company.team.roomAB 'open room' {
+      navigateTo work_threads_multiplayer_rooms
+      notes '''
+        - A thread with one home (here folder Team), private to A and B whatever the folder's default
+      '''
+    }
+    hier.company.team.roomAB -> hier.asstA "A's question"
+    hier.asstA -> hier.asstB 'asks within policy' {
+      notes '''
+        - Each assistant works under its owner's "may share" and "never shares"
+      '''
+    }
+    alt 'kind B delegated?' {
+      when 'yes' {
+        hier.asstB -> hier.asstA 'answers'
+      }
+      else 'no' {
+        hier.asstB -> signalbox.attention 'needs-you for B' {
+          navigateTo person_pipeline_ready_delegate_kind
+        }
+        signalbox.attention -> personB 'Ready ask'
+        personB -> hier.company.team.roomAB 'allows or steps in' {
+          notes '''
+            - B can also write in the room as B
+          '''
+        }
+      }
+    }
+    hier.company.team.roomAB -> signalbox.models.custody 'tokens' {
+      notes '''
+        - The nearest pool placed at or above Team pays (Team › Company), the same whichever assistant speaks
+      '''
+    }
+    hier.asstA -> personA 'Outcome card' {
+      navigateTo work_threads_multiplayer_make_private
+      notes '''
+        - **End:** archive, restore, or fork into a private copy
+        - Widening the room to more people asks B first
+      '''
+    }
+
+    style signalbox, signalbox.models, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view scn_065_ask_up_for_out_of_reach {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Assistants/Ask Up Out Of Reach'
+    description '''
+      What does an agent in folder Team do when what it needs isn't placed on its chain?
+
+      Decided: #315, #225 §5 (2026-10-14): answers cross, access doesn't; a card records asked, handed back, kept and why; no agent-to-agent lending. #245 (2026-10-16): a person's own resource goes to their assistant first.
+      Assumption: each ask starts a consult thread at the answering level; withholding is judged by that level's agent against its chain's AGENTS.md; the card lives on the asking thread; pending #315.
+
+      SCN-065 · v1: no
+    '''
+    include signalbox, hier, hier.company, hier.company.team
+    include personB, hier.company.team.sharedThread, hier.company.agentCo, hier.asstA, signalbox.attention, signalbox.observability
+
+    personB -> hier.company.team.sharedThread 'asks for work' {
+      notes '''
+        - **Start:** B's thread in Team needs a connection placed only on a sibling folder
+      '''
+    }
+    hier.company.team.sharedThread -> hier.company.team.sharedThread 'tool call misses' {
+      navigateTo work_levelagents_out_of_reach
+      notes '''
+        - Tree resolve: not placed at Team or above, so out of reach
+        - Who sent the turn never matters
+      '''
+    }
+    alt 'what is missing' {
+      when "a folder's resource" {
+        hier.company.team.sharedThread -> hier.company.agentCo 'asks up' {
+          navigateTo person_assistant_ask_up
+          notes '''
+            - Company is the lowest level covering both
+            - A consult thread at Company, no `via`, on Company's chain
+          '''
+        }
+        hier.company.agentCo -> hier.company.agentCo 'withholds what stays' {
+          notes '''
+            - Judged against Company's AGENTS.md and admin C's rules
+          '''
+        }
+        hier.company.team.sharedThread <- hier.company.agentCo 'answer only'
+      }
+      else "a person's connection" {
+        hier.company.team.sharedThread -> hier.asstA 'access request' {
+          navigateTo person_assistant_lend_request
+          notes '''
+            - Here A's own Google account; only A's assistant can act on it
+          '''
+        }
+        hier.asstA -> signalbox.attention 'loan consent or Blocker' {
+          notes '''
+            - Or the assistant approves one step itself
+            - No agent ever lends to another agent
+          '''
+        }
+      }
+    }
+    hier.company.team.sharedThread -> signalbox.observability 'what-crossed card' {
+      navigateTo journey_assistant_trace
+      notes '''
+        - Asked, handed back, kept, and why; also in the trace
+      '''
+    }
+    hier.company.team.sharedThread -> personB 'card on the thread' {
+      notes '''
+        - **End:** the answer crossed, the access didn't
+      '''
+    }
+
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+}

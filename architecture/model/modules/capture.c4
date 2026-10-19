@@ -1,0 +1,51 @@
+model {
+  extend signalbox {
+    capture = module 'Capture' {
+      #shallow
+      icon bootstrap:journal-plus
+      description 'note · draft · change · view'
+      technology 'own per-person rows · shared notes stored through Tree'
+      metadata {
+        interface '4'
+        deletion 'the pad and quick capture lose their backing record'
+      }
+
+      api = iface 'Capture · interface' {
+        description '4 verbs: note · draft · change · view'
+        technology 'Deletion test: without it, the pad and quick capture lose their backing record'
+      }
+
+      quickCapture = part 'Quick capture' {
+        icon bootstrap:lightning
+        description 'never interrupts'
+      }
+      noteShare = part 'Note share saga' {
+        icon bootstrap:share
+        description 'upsert dest, then delete source'
+      }
+      send = part 'Send' {
+        icon bootstrap:send
+        description 'draft → thread, requestId from draft id'
+      }
+
+      personRows = store 'Private notes and drafts' {
+        icon bootstrap:journal-text
+        description 'per person · private'
+      }
+
+      quickCapture -> personRows 'note'
+      send -> personRows 'read draft'
+      quickCapture -> send 'intent'
+      quickCapture -> noteShare 'thought'
+    }
+
+    capture.send -> signalbox.thread.api 'new thread'
+    capture.quickCapture -> signalbox.actorhost.api 'actor calls'
+    capture.noteShare -> signalbox.tree.api 'shared note into folder'
+
+    // Interface → hidden parts (the only way in)
+    capture.api -> capture.quickCapture 'note'
+    capture.api -> capture.send 'draft → send'
+    capture.api -> capture.noteShare 'change'
+  }
+}

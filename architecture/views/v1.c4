@@ -1,0 +1,33 @@
+views {
+  view v1 {
+    title 'Overview/Decisions/v1'
+    description '''
+      What exactly ships in v1? Three things, nothing more: sign in, a pool, and connections usable as tools (Executor
+      absorbed into Connections). Green = sign in, red = a pool, indigo = connections. Pools and connections are
+      placed on folders, so Tree ships too, and both wires pass the one Gateway. No threads, harness,
+      computer, drive, assistant or automations: local Claude Code and Codex use the pool, any MCP client uses the tools.
+      Final interfaces, subset live.
+    '''
+    include personA, personB, personC
+    // Colour = which of the three v1 things an element serves: green sign in, red pool, indigo connections.
+    include signalbox.web, signalbox.funnel, signalbox.identity, platform.workos
+    include laptopCli, signalbox.models, modelProviders.anthropic, modelProviders.openai
+    include mcpClient, signalbox.connections, services.google, services.atlassian
+    include signalbox.gateway, signalbox.tree
+    // Only the wiring that tells the v1 story; everything else is in Modules/All modules.
+    exclude * -> *
+    include personA -> signalbox.web, personB -> signalbox.web, personC -> signalbox.web
+    include personA -> laptopCli, personC -> mcpClient
+    include signalbox.web -> signalbox.funnel, signalbox.funnel -> signalbox.identity, signalbox.identity -> platform.workos
+    include laptopCli -> signalbox.gateway, signalbox.gateway -> signalbox.models, signalbox.models -> modelProviders.anthropic, signalbox.models -> modelProviders.openai
+    include mcpClient -> signalbox.gateway, signalbox.gateway -> signalbox.connections, signalbox.connections -> services.google, signalbox.connections -> services.atlassian
+    include signalbox.tree -> signalbox.models, signalbox.tree -> signalbox.connections
+    style personA, personB, personC { color green }
+    style signalbox.web, signalbox.funnel, signalbox.identity, platform.workos { color green }
+    style laptopCli, signalbox.models, modelProviders.anthropic, modelProviders.openai { color red }
+    style mcpClient, signalbox.connections, services.google, services.atlassian { color indigo }
+    style signalbox.gateway, signalbox.tree { color primary }
+    rank source { personA, personB, personC }
+    autoLayout TopBottom 80 60
+  }
+}

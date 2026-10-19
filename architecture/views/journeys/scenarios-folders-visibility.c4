@@ -1,0 +1,1331 @@
+// Scenario shard 02: folders and visibility (SCN-032 to SCN-054).
+// One journey per scenario. Person A and B are Members of folder Company, Person C its Admin
+// (or an outside collaborator on folder Team where a scenario says so). A thread is one Thread
+// actor; Tree, Search and Models stay black boxes. Containers are muted lanes, like LikeC4's
+// homepage example. First step notes the start state, last step the end state and the answer.
+views {
+
+  // ───────────────────────────── Widening ─────────────────────────────
+
+  dynamic view scn_032_share_private_chat_with_folder {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Widening/Share With Folder'
+    description '''
+      What happens when A shares a private chat with everyone in folder Company?
+      Decided: #225 §3 and #242 (2026-10-14). The whole history moves, the confirm names what becomes visible, resources never change.
+      SCN-032 · R-ACC-10 · P-PPL-01 · W-MPL-06 · R-PLC-05
+    '''
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.mobile,
+      signalbox.operations,
+      signalbox.thread with { title 'Thread (A private chat)' },
+      signalbox.tree
+
+    personA -> signalbox.web 'opens Share' {
+      navigateTo journey_sharing_share_thread
+      notes '''
+        - **Start:** A's private chat in folder Company
+        - Same dialog from the header "+", Thread details, the sidebar menu or the palette
+      '''
+    }
+    personA -> signalbox.web 'Anyone in Company'
+    signalbox.web -> signalbox.operations 'share: folder' {
+      navigateTo folders_access_thread_share
+      notes '- Through the Funnel; Operations owns the rule'
+    }
+    signalbox.operations -> signalbox.thread 'what becomes visible?'
+    signalbox.operations <- signalbox.thread 'whole history' {
+      notes '''
+        - Every earlier turn and file
+        - Including output from A's personal connectors
+      '''
+    }
+    personA <- signalbox.web 'confirm names it' {
+      notes '- The confirm lists what becomes visible before anything changes'
+    }
+    personA -> signalbox.web 'confirms'
+    signalbox.web -> signalbox.operations 'commit share'
+    signalbox.operations -> signalbox.thread 'visibility: folder' {
+      navigateTo work_threads_multiplayer_share
+    }
+    signalbox.thread -> signalbox.tree 'catalog row' {
+      notes '''
+        - The Level actor adds the row for Company's members
+        - Search shards index it for the new audience
+      '''
+    }
+    signalbox.tree -> signalbox.mobile 'row appears live' {
+      notes '- B sees it on web and mobile without a reload'
+    }
+    personB -> signalbox.mobile 'opens it'
+    signalbox.thread -> signalbox.tree 'next turn resolves' {
+      navigateTo folders_placement_resolve_shared
+      notes '''
+        - **End:** visible to everyone in Company, whole history included
+        - Same chain as before: Company via A's mount. Visibility never changes resources
+        - `#decided` #225 §3, #242 (2026-10-14)
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_033_share_confirm_names_unreadable_sources {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Widening/Share Read Check'
+    description '''
+      Does the share confirm say who can't open what the thread read?
+      Assumption: yes. The confirm (decided #242) adds per-viewer failures for sources outside the folder's own chain; A shares anyway, shares with the rest, or forks privately. Never a silent leak, never a blanket block (pending #483). Why: #242 already makes the confirm name personal-connector output, and this is the narrowest check that keeps "visibility never changes resources" (#225 §3).
+      SCN-033 · R-ACC-10 · P-PPL-01 · W-MPL-06 · W-LIN-01
+    '''
+    include
+      personA,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.thread with { title 'Thread (A private chat)' },
+      signalbox.gateway,
+      signalbox.tree,
+      signalbox.connections
+
+    signalbox.gateway -> signalbox.thread 'records each read' {
+      notes '''
+        - **Start:** private thread that read A's personal Drive doc
+        - Every tool read keeps the source id on the thread
+      '''
+    }
+    personA -> signalbox.web 'widens visibility' {
+      navigateTo journey_sharing_share_thread
+      notes '- Adds folder members or D, an outside collaborator'
+    }
+    signalbox.web -> signalbox.operations 'share request' {
+      navigateTo folders_access_thread_share
+    }
+    signalbox.operations -> signalbox.tree 'which are placed?' {
+      notes '- Sources placed on the folder chain pass silently'
+    }
+    signalbox.operations -> signalbox.connections 'check viewer x source' {
+      notes '''
+        - Each new viewer against each other source, with that viewer's own access
+        - A check that can't run counts as "can't read"
+      '''
+    }
+    signalbox.operations <- signalbox.connections 'D fails one'
+    personA <- signalbox.web 'names failures only' {
+      notes '''
+        - "D can't open Q4 board deck"
+      '''
+    }
+    alt 'what A picks' {
+      when 'share anyway' {
+        signalbox.web -> signalbox.thread 'visibility: all'
+      }
+      when 'share with the rest' {
+        signalbox.web -> signalbox.thread 'visibility: minus D'
+      }
+      else 'fork privately' {
+        signalbox.web -> signalbox.thread 'fork without turns' {
+          navigateTo work_threads_fork_at_point
+          notes '''
+            - **End:** an explicit decision about who may see that output
+            - `#assumption` per-viewer check in the confirm (pending #483)
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_034_shared_thread_reads_unviewable_source {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Widening/Later Unreadable Read'
+    description '''
+      What happens when an already-shared thread later needs something a viewer can't open?
+      Assumption: a personal source enters only through an explicit loan, and the loan confirm is the per-viewer check; on reopen, unreadable turns are withheld from that viewer, who is not removed (pending #483). Why: use outside the chain is a revocable loan with lender consent; dropping viewers would narrow a shared thread, which only Admins or a sole author may do (#242).
+      SCN-034 · W-MPL-05 · R-CON-18 · P-BLK-04 · P-BLK-05
+    '''
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.thread with { title 'Thread (shared, Company)' },
+      signalbox.gateway,
+      signalbox.tree,
+      signalbox.connections,
+      signalbox.attention
+
+    personA -> signalbox.web 'asks in thread' {
+      notes '''
+        - **Start:** folder-visible thread in Company; B is a viewer
+        - The task needs a file in A's personal Drive
+      '''
+    }
+    signalbox.web -> signalbox.thread 'send turn'
+    signalbox.thread -> signalbox.gateway 'Drive read' {
+      notes '- The agent tool call, made by the Harness'
+    }
+    signalbox.gateway -> signalbox.tree 'resolve connection' {
+      navigateTo folders_connections_access_required
+    }
+    signalbox.gateway <- signalbox.tree 'not on chain' {
+      notes "- A's Drive sits only on A's own chain, not at Company"
+    }
+    signalbox.thread <- signalbox.gateway 'AccessRequired'
+    signalbox.thread -> signalbox.attention 'Blocker: lend?' {
+      navigateTo person_pipeline_blocker_access
+    }
+    signalbox.attention -> personA 'lend or skip'
+    personA -> signalbox.web 'Lend'
+    personA <- signalbox.web "B can't open it" {
+      notes '- The loan confirm names current viewers who fail the read check'
+    }
+    alt 'what A picks' {
+      when 'lend anyway' {
+        signalbox.web -> signalbox.tree 'place loan' {
+          navigateTo work_threads_multiplayer_lend
+          notes "- Revocable placement into the thread, with A's consent"
+        }
+      }
+      else 'fork privately first' {
+        signalbox.web -> signalbox.thread 'fork, then lend' {
+          navigateTo work_threads_fork_at_point
+        }
+      }
+    }
+    personB -> signalbox.web 'reopens later'
+    signalbox.thread -> signalbox.connections 'can B read it?' {
+      notes '- Read-through check re-runs on open'
+    }
+    signalbox.thread <- signalbox.connections "no, or can't check"
+    signalbox.thread -> signalbox.web 'turn withheld' {
+      notes '''
+        - **End:** B sees "content you can't open", not the bytes; B stays a viewer
+        - `#assumption` pending #483
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_035_add_outside_collaborator_to_thread {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Folders/Widening/Add One Person'
+    description '''
+      How does A add one outside collaborator to a single thread?
+      Decided: #225 §3 (2026-10-14) and #244. A chat shared with people runs on its home's chain; the confirm says what D will see.
+      Assumption for brand-new emails: a WorkOS invitation that resolves on first sign-in and lands as a reference in D's top level (pending #238). Why: #238 already specifies this for folder invites.
+      SCN-035 · P-PPL-01 · R-ACC-10 · P-ONB-13 · R-IDN-10 · R-TRE-13
+    '''
+    include
+      personA,
+      personD,
+      signalbox,
+      signalbox.web,
+      signalbox.thread with { title 'Thread (A, Company)' },
+      signalbox.identity,
+      signalbox.tree,
+      signalbox.models,
+      signalbox.attention
+
+    personA -> signalbox.web 'adds D' {
+      navigateTo journey_sharing_share_thread
+      notes '''
+        - **Start:** A's private thread in folder Company
+        - By name or email in the share dialog
+      '''
+    }
+    personA <- signalbox.web 'confirm: full history' {
+      notes '''- "D will see the full history, including your agents' turns, and can reply"'''
+    }
+    personA -> signalbox.web 'confirms'
+    alt 'is D known?' {
+      when 'has an account' {
+        signalbox.web -> signalbox.thread 'participants +D' {
+          navigateTo folders_access_thread_share
+        }
+      }
+      else 'unknown email' {
+        signalbox.web -> signalbox.identity 'pending invitation' {
+          navigateTo folders_access_invite_by_email
+          notes '''
+            - WorkOS invitation; resolves on D's first sign-in
+            - `#assumption` pending #238
+          '''
+        }
+      }
+    }
+    signalbox.thread -> signalbox.attention 'tell D'
+    signalbox.attention -> personD 'invited to thread'
+    personD -> signalbox.web 'accepts'
+    signalbox.web -> signalbox.tree 'file reference' {
+      navigateTo folders_tree_reference
+      notes "- A reference in D's own top level; it grants nothing by itself"
+    }
+    personD -> signalbox.web 'replies'
+    signalbox.web -> signalbox.thread 'turn'
+    signalbox.thread -> signalbox.tree 'resolve chain' {
+      notes "- Company via A's mount, never D's pools or connections"
+    }
+    signalbox.thread -> signalbox.models 'Company pool' {
+      notes '''
+        - **End:** visibility "specific people", D included, on Company's chain
+        - `#decided` #225 §3 (2026-10-14), #244
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_038_admin_changes_default_visibility {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Folders/Widening/Default Visibility'
+    description '''
+      What changes when a folder Admin sets new chats to be shared with members?
+      Decided: #310 and #229 d5 (2026-10-14). Per-folder default, private by default, inherited down, Admin-only, never retroactive, applied from every entry point.
+      Assumption: a folder owned by an organization also starts private until its Admin changes it (pending #878). Why: one default for every folder keeps "private by default" (#225 §3).
+      SCN-038 · R-ACC-13 · W-MPL-21 · W-THR-12 · P-DRF-11
+    '''
+    include
+      personC,
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.capture,
+      signalbox.thread with { title 'Thread (new, Team)' }
+
+    personC -> signalbox.web 'new chats: members' {
+      navigateTo folders_access_folder_policy
+      notes '- **Start:** folder Company defaults to private'
+    }
+    signalbox.web -> signalbox.operations 'set default'
+    signalbox.operations -> signalbox.tree 'place defaultVisibility' {
+      notes '''
+        - Admin-only; Team inherits unless it sets its own
+      '''
+    }
+    personA -> signalbox.web 'opens draft in Team'
+    signalbox.web -> signalbox.capture 'new draft'
+    signalbox.capture -> signalbox.tree 'resolve default'
+    personA <- signalbox.web '"Team can read along"' {
+      navigateTo person_drafts_send
+      notes '- Said before the first send, not after'
+    }
+    personA -> signalbox.web 'sends'
+    signalbox.web -> signalbox.thread 'create: members' {
+      navigateTo work_threads_start_default_visibility
+      notes '''
+        - Agents and automations creating threads in Team get the same default server-side
+        - A's older private chats stay private
+      '''
+    }
+    personB -> signalbox.web 'opens the setting'
+    signalbox.web -> signalbox.operations 'may B edit?'
+    signalbox.web <- signalbox.operations 'read only' {
+      notes '''
+        - **End:** new chats in Company and Team start shared; existing ones unchanged
+        - B isn't Admin. `#decided` #310, #229 d5; `#assumption` folders owned by the organization start private (pending #878)
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Roles ─────────────────────────────
+
+  dynamic view scn_036_viewer_tries_to_send {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Roles/Viewer Cannot Send'
+    description '''
+      Can a Viewer send in a shared thread?
+      Decided: #241 and #244 (2026-10-14). The composer is disabled with the reason, and the server refuses the send on every surface.
+      SCN-036 · W-MPL-10 · P-PPL-09 · T-REM-17 · R-ACC-01
+    '''
+    include
+      personD with { description 'Outside collaborator · Viewer on folder Team' },
+      mcpClient,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.operations,
+      signalbox.tree
+
+    personD -> signalbox.web "opens B's thread" {
+      navigateTo journey_sharing_viewer
+      notes "- **Start:** D reads B's folder-visible thread in Team"
+    }
+    signalbox.web -> signalbox.tree 'can D send?' {
+      navigateTo folders_access_roles
+    }
+    signalbox.web <- signalbox.tree 'Viewer: read only'
+    personD <- signalbox.web 'composer off + why' {
+      navigateTo folders_access_ui_availability
+      notes '''- "You're a Viewer in Team", never a silent grey box'''
+    }
+    alt 'tries anyway' {
+      when "D's agent over MCP" {
+        mcpClient -> signalbox.funnel 'send message'
+      }
+      else 'raw client call' {
+        signalbox.web -> signalbox.funnel 'send'
+      }
+    }
+    signalbox.funnel -> signalbox.operations 'invoke send'
+    signalbox.operations -> signalbox.tree 'role on chain'
+    signalbox.operations <- signalbox.tree 'Viewer'
+    signalbox.funnel <- signalbox.operations 'refused' {
+      navigateTo work_threads_multiplayer_viewer
+      notes '''
+        - **End:** D reads, never sends; nothing reaches the Thread actor
+        - `#decided` #241, #244 (2026-10-14)
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_037_viewer_drives_own_capture {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Roles/Viewer Drives Own Thread'
+    description '''
+      Can a Viewer drive the thread that was started for them?
+      Decided: #225 §4 (2026-10-14), #241. The author or the person a thread was started for drives it regardless of role, and nothing else.
+      SCN-037 · W-THR-04 · W-MPL-10 · R-ACC-01 · T-REM-17
+    '''
+    include
+      personD with { description 'Outside collaborator · Viewer on folder Team' },
+      signalbox,
+      signalbox.web,
+      signalbox.capture,
+      signalbox.operations,
+      signalbox.thread with { title 'Thread (for D, Team)' },
+      signalbox.tree,
+      hier.company.team.sharedThread with { title "B's thread (Team)" }
+
+    personD -> signalbox.web 'captures #Team' {
+      navigateTo work_threads_start_capture_tokens
+      notes '- **Start:** D is a Viewer on Team and quick-captures into it'
+    }
+    signalbox.web -> signalbox.capture 'quick capture'
+    signalbox.capture -> signalbox.thread 'create in Team' {
+      notes '- Started for: D'
+    }
+    personD -> signalbox.web 'sends follow-up'
+    signalbox.web -> signalbox.operations 'send'
+    signalbox.operations -> signalbox.tree 'role + started-for' {
+      navigateTo folders_access_roles
+    }
+    signalbox.operations -> signalbox.thread 'allowed' {
+      notes "- D is the person it was started for; the role doesn't matter here"
+    }
+    signalbox.thread -> signalbox.tree 'resolve Team chain' {
+      notes "- Team's pool and connections, not D's own"
+    }
+    personD -> signalbox.web "opens B's thread"
+    signalbox.web -> hier.company.team.sharedThread 'watch'
+    signalbox.web <- hier.company.team.sharedThread 'read only' {
+      navigateTo work_threads_multiplayer_viewer
+      notes '''
+        - **End:** D drives that one thread and only that one
+        - `#decided` #225 §4 (2026-10-14), #241
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_046_lower_grant_cannot_remove {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Roles/Lower Grant'
+    description '''
+      Can an Admin take away someone's inherited access by granting a lower role below?
+      Decided: #225 §4 (2026-10-14), #237. A grant below adds access; it never removes inherited access.
+      SCN-046 · R-ACC-01 · R-ACC-06 · R-ACC-04 · T-REM-17
+    '''
+    include
+      personC,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree
+
+    personC -> signalbox.web 'B: Viewer on Team' {
+      navigateTo journey_sharing_share_dialog
+      notes '- **Start:** B is Member on folder Company; C wants B read-only on Team'
+    }
+    signalbox.web -> signalbox.operations 'grant'
+    signalbox.operations -> signalbox.tree 'add Team grant'
+    signalbox.tree -> signalbox.tree 'highest on chain' {
+      navigateTo folders_access_roles
+      notes '- Effective role = the highest across the chain: Member from Company'
+    }
+    signalbox.web <- signalbox.tree 'still Member'
+    personC <- signalbox.web 'inherited role shown' {
+      notes "- The dialog shows B's inherited Member next to the new grant"
+    }
+    personB -> signalbox.web 'sends in Team' {
+      navigateTo folders_access_ui_availability
+      notes '- Still allowed: B is Member there'
+    }
+    alt 'to restrict B' {
+      when 'narrow Team' {
+        personC -> signalbox.web 'general access off' {
+          navigateTo scn_045_admin_narrows_team_folder
+        }
+      }
+      else 'change Company role' {
+        personC -> signalbox.web 'B: Viewer on Company' {
+          notes '''
+            - **End:** B stays Member on Team until C narrows Team or changes B's role above
+            - Removing the Team grant falls back to the inherited role, never lower
+            - `#decided` #225 §4, #237
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Mentions ─────────────────────────────
+
+  dynamic view scn_039_mention_person_without_access {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Mentions/Mention Without Access'
+    description '''
+      What happens when B mentions someone who can't see the thread?
+      Assumption: the prototype behaviour ships: share-and-notify in one click, or send without notifying; nobody without access is ever notified (pending #40). Why: one click (principle 1), and sharing moves the whole history only on a confirm, which the banner is (#225 §3).
+      SCN-039 · W-MPL-18 · P-PPL-05 · P-PPL-01 · P-NOT-01
+    '''
+    include
+      personB,
+      personD with { description 'Outside collaborator · no access to this thread' },
+      signalbox,
+      signalbox.web,
+      signalbox.tree,
+      signalbox.thread with { title 'Thread (Team)' },
+      signalbox.attention
+
+    personB -> signalbox.web 'types @D' {
+      navigateTo person_people_mention
+      notes "- **Start:** B writes in a Team thread D can't see"
+    }
+    signalbox.web -> signalbox.tree 'can D read?'
+    signalbox.web <- signalbox.tree 'no access'
+    personB <- signalbox.web 'banner: share?' {
+      navigateTo work_threads_multiplayer_mention
+      notes '''- "D doesn't have access. Share this with them, history included, and notify them?"'''
+    }
+    alt 'what B picks' {
+      when 'Share and notify' {
+        personB -> signalbox.web 'share and notify'
+        signalbox.web -> signalbox.thread 'add D, send' {
+          navigateTo journey_sharing_share_thread
+          notes '- One step; the banner was the confirm, so no second one'
+        }
+        signalbox.thread -> signalbox.attention 'mention D'
+        signalbox.attention -> personD 'notified' {
+          navigateTo person_notifications_route_ping
+          notes '- The timeline logs "Notified D"'
+        }
+      }
+      else 'Send anyway' {
+        personB -> signalbox.web 'send without D' {
+          notes '''- "They can't see this, so they won't be notified."'''
+        }
+        signalbox.web -> signalbox.thread 'send, no ping' {
+          notes '''
+            - **End:** D gets access plus a notification, or nothing at all
+            - `#assumption` pending #40
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_040_mention_teammate_in_private_chat {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Mentions/Mention In Private Chat'
+    description '''
+      What happens when A mentions a teammate inside a private chat?
+      Assumption: the same as any thread the mentioned person can't see: offer to share, never auto-share, never notify without access (pending #40). Why: one rule for every mention beats a private-chat exception, and the confirm keeps private by default (#225 §3).
+      SCN-040 · W-MPL-18 · P-PPL-05 · P-PPL-01 · R-ACC-10
+    '''
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.tree,
+      signalbox.thread with { title 'Thread (A private chat)' },
+      signalbox.attention
+
+    personA -> signalbox.web 'types @B' {
+      navigateTo person_people_mention
+      notes "- **Start:** A's private chat in folder Company; B is a Member there"
+    }
+    signalbox.web -> signalbox.tree 'can B read?'
+    signalbox.web <- signalbox.tree 'no: private' {
+      notes "- Membership of Company doesn't open a private chat"
+    }
+    personA <- signalbox.web 'Share with B?' {
+      navigateTo work_threads_multiplayer_mention
+      notes '- The same banner as any thread: "Share with B and notify" or "Not now"'
+    }
+    alt 'what A picks' {
+      when 'Share with B' {
+        personA -> signalbox.web 'share and notify'
+        signalbox.web -> signalbox.thread 'people: A, B' {
+          navigateTo folders_access_thread_share
+          notes '- Whole-history confirm; visibility becomes "specific people"'
+        }
+        signalbox.thread -> signalbox.attention 'mention B'
+        signalbox.attention -> personB 'notified'
+      }
+      else 'Not now' {
+        personA -> signalbox.web 'not now' {
+          notes '''
+            - **End:** the mention stays text; Attention sends nothing
+            - Never shared or notified silently. `#assumption` pending #40
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Narrowing ─────────────────────────────
+
+  dynamic view scn_041_author_unshares_alone {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Narrowing/Unshare Alone'
+    description '''
+      Can the author make a shared thread private again while nobody else has written?
+      Decided: #225 §3 and #242 (2026-10-14). Yes, only while nobody else has written; people who saw it keep what they saw.
+      SCN-041 · R-ACC-11 · W-MPL-07 · P-PPL-02 · T-REM-39
+    '''
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.mobile,
+      signalbox.operations,
+      signalbox.thread with { title 'Thread (A, Company)' },
+      signalbox.tree,
+      signalbox.search
+
+    personA -> signalbox.web 'Only people added' {
+      navigateTo person_people_make_private
+      notes '- **Start:** folder-visible thread; only A has written'
+    }
+    signalbox.web -> signalbox.operations 'unshare'
+    signalbox.operations -> signalbox.thread 'who wrote?'
+    signalbox.operations <- signalbox.thread 'only A'
+    signalbox.operations -> signalbox.thread 'narrow visibility' {
+      navigateTo folders_access_thread_unshare
+    }
+    parallel {
+      signalbox.thread -> signalbox.tree 'drop catalog row'
+      signalbox.thread -> signalbox.search 'drop for B'
+    }
+    signalbox.tree -> signalbox.mobile 'row gone' {
+      notes '- Every device updates live'
+    }
+    personB -> signalbox.mobile 'next request'
+    signalbox.mobile -> signalbox.operations 'open thread'
+    signalbox.mobile <- signalbox.operations 'no access' {
+      navigateTo work_threads_multiplayer_make_private
+      notes '''
+        - **End:** private again; B keeps what B already saw locally
+        - `#decided` #225 §3, #242 (2026-10-14)
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_042_author_unshare_refused {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/Narrowing/Unshare After Reply'
+    description '''
+      Can the author unshare after a teammate wrote in the thread?
+      Decided: #242 and #225 §3 (2026-10-14). No: once someone else has written, only an Admin can unshare; anyone may fork privately. The prototype's missing Admin override is a build gap, not a rule.
+      SCN-042 · R-ACC-11 · W-MPL-07 · W-MPL-08 · W-LIN-01 · P-PPL-02
+    '''
+    include
+      personA,
+      personC,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.thread with { title 'Thread (shared, Company)' },
+      signalbox.tree,
+      signalbox.attention
+
+    personA -> signalbox.web 'unshare' {
+      navigateTo person_people_make_private
+      notes '- **Start:** shared thread in Company with turns from B'
+    }
+    signalbox.web -> signalbox.operations 'unshare'
+    signalbox.operations -> signalbox.thread 'who wrote?'
+    signalbox.operations <- signalbox.thread 'B wrote'
+    signalbox.web <- signalbox.operations 'refused' {
+      navigateTo folders_access_thread_unshare
+    }
+    personA <- signalbox.web 'fork or ask Admin'
+    alt 'what A picks' {
+      when 'Fork a private copy' {
+        personA -> signalbox.web 'fork'
+        signalbox.web -> signalbox.thread 'fork "(copy)"' {
+          navigateTo work_threads_fork_at_point
+          notes '- Private copy with lineage; the original stays shared'
+        }
+      }
+      else 'Ask an Admin' {
+        personA -> signalbox.web 'ask an Admin'
+        signalbox.web -> signalbox.attention 'needs-you to C'
+        signalbox.attention -> personC 'unshare request'
+        personC -> signalbox.web 'unshare'
+        signalbox.web -> signalbox.operations 'unshare as C'
+        signalbox.operations -> signalbox.tree 'C is Admin?'
+        signalbox.operations -> signalbox.thread 'narrow visibility' {
+          navigateTo work_threads_multiplayer_make_private
+          notes '''
+            - **End:** A refused; C unshared it, or A works in a private fork
+            - B loses access on the next request. `#decided` #242, #225 §3
+          '''
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_043_remove_poster_from_people_share {
+    #assumption
+    variant sequence
+    title 'Scenarios/Folders/Narrowing/Remove A Poster'
+    description '''
+      Can the author remove someone from a "specific people" share after they posted?
+      Assumption: it follows the unshare rule. The author removes a person only while that person hasn't written; afterwards only an Admin of the thread's folder can, and anyone may fork privately (pending #242 comment). Why: #225 §3 / #242 (2026-10-14) unshare rule; a person's turns aren't the author's to hide.
+      SCN-043 · R-ACC-11 · W-MPL-08 · W-LIN-01 · P-PPL-02
+    '''
+    include
+      personA,
+      personC,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.thread with { title 'Thread (A and B)' },
+      signalbox.tree,
+      signalbox.attention
+
+    personA -> signalbox.web 'Remove access: B' {
+      navigateTo person_people_make_private
+      notes '- **Start:** shared with A and B only'
+    }
+    signalbox.web -> signalbox.operations 'remove B'
+    signalbox.operations -> signalbox.thread 'has B written?'
+    alt "B's turns" {
+      when 'none yet' {
+        signalbox.operations -> signalbox.thread 'remove B' {
+          navigateTo folders_access_thread_unshare
+          notes '- Before B wrote, the author removes B directly'
+        }
+      }
+      else 'B posted' {
+        signalbox.web <- signalbox.operations 'refused' {
+          notes '''- "B posted here. Their turns aren't yours to hide."'''
+        }
+        personA <- signalbox.web 'fork or ask Admin'
+        personA -> signalbox.web 'fork'
+        signalbox.web -> signalbox.thread 'private fork' {
+          navigateTo work_threads_fork_at_point
+          notes '- Same history; the original stays as it is'
+        }
+        opt 'or A asks C' {
+          signalbox.web -> signalbox.attention 'needs-you to C'
+          signalbox.attention -> personC 'remove B?'
+          personC -> signalbox.web 'removes B'
+          signalbox.web -> signalbox.operations 'remove as C'
+          signalbox.operations -> signalbox.tree 'C is Admin?' {
+            notes '''
+              - **End:** B's turns are never silently hidden; only an Admin removes B
+              - `#assumption` pending #242 comment
+            '''
+          }
+        }
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_044_folder_agent_forgets_unshared {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Folders/Narrowing/Agent Forgets Thread'
+    description '''
+      Does the folder agent forget a thread after it's unshared?
+      Decided: #225 §3 (2026-10-14). Yes: the folder agent's memory of it is dropped.
+      Assumption for the mechanism: access is cut at once by the search current-access filter; memory cleanup follows the visibility event; nothing already handed on is recalled. Why: #334/#860 filtering, and "people who saw it keep what they saw" (#242) applies to agents too.
+      SCN-044 · W-MPL-07 · R-ACC-11 · W-SRH-04 · P-AST-30
+    '''
+    include
+      personC,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.thread with { title 'Thread (A, Company)' },
+      signalbox.tree,
+      signalbox.search,
+      signalbox.observability,
+      hier,
+      hier.company,
+      hier.company.agentCo with { title 'Folder agent (Company)' }
+
+    personC -> signalbox.web 'unshare' {
+      navigateTo folders_access_thread_unshare
+      notes '- **Start:** a shared thread the folder agent has read'
+    }
+    signalbox.web -> signalbox.operations 'unshare as Admin'
+    signalbox.operations -> signalbox.thread 'narrow visibility' {
+      navigateTo work_threads_multiplayer_make_private
+    }
+    signalbox.thread -> signalbox.tree 'visibility changed'
+    parallel {
+      signalbox.tree -> signalbox.search 'access filter' {
+        notes '- Cut at once: hits are filtered by current access'
+      }
+      signalbox.tree -> hier.company.agentCo 'drop its notes' {
+        notes '- Notes and references taken from the thread go, as a follow-up'
+      }
+    }
+    hier.company.agentCo -> signalbox.search 'context search' {
+      navigateTo work_search_agent
+    }
+    hier.company.agentCo <- signalbox.search 'no hit'
+    hier.company.agentCo -> signalbox.observability 'past hand-offs stay' {
+      navigateTo person_assistant_ask_up
+      notes '''
+        - **End:** the agent can no longer use the thread
+        - Answers already handed on stay, with their "what crossed" card
+        - `#decided` #225 §3; `#assumption` mechanism
+      '''
+    }
+
+    style signalbox, hier, hier.company { color muted; opacity 10% }
+  }
+
+  dynamic view scn_045_admin_narrows_team_folder {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Folders/Narrowing/Narrow A Folder'
+    description '''
+      What happens when an Admin narrows folder Team inside Company?
+      Decided: #229 d3/d4 and #247 (2026-10-14). General access is a per-folder flag, not a grant; plain members lose sight, explicit roles keep theirs.
+      Assumption: a narrowed folder shows nothing, not even its name, to people without access (pending s4 E3). Why: #334/#846 never leak titles or existence to non-readers.
+      SCN-045 · R-ACC-04 · R-ACC-01 · T-REM-39 · R-TRE-02
+    '''
+    include
+      personC,
+      personA with { description 'plain Member · folder Company' },
+      personB with { description 'Member · explicit role on Team' },
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.search
+
+    personC -> signalbox.web 'general access off' {
+      navigateTo folders_access_roles
+      notes '- **Start:** Team visible to everyone in folder Company'
+    }
+    signalbox.web -> signalbox.operations 'change Team'
+    signalbox.operations -> signalbox.tree 'flag on Team' {
+      notes '- A flag on the folder, not a grant'
+    }
+    personA -> signalbox.web 'next request'
+    signalbox.web -> signalbox.tree 'can A see Team?'
+    signalbox.web <- signalbox.tree 'no' {
+      navigateTo folders_tree_home
+      notes "- Team and everything below disappear from A's breadcrumb and tree"
+    }
+    signalbox.web -> signalbox.search 'A searches'
+    signalbox.web <- signalbox.search 'nothing from Team' {
+      notes '- Not even the name (`#assumption`)'
+    }
+    personB -> signalbox.web 'opens Team'
+    signalbox.web -> signalbox.tree 'can B see Team?'
+    signalbox.web <- signalbox.tree 'yes: Team role'
+    opt 'C widens again' {
+      personC -> signalbox.web 'general access on' {
+        navigateTo folders_access_ui_availability
+        notes '''
+          - **End:** narrowed: plain members lose sight, explicit roles keep theirs; widening restores the default
+          - `#decided` #229 d3/d4, #247
+        '''
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Private chats ─────────────────────────────
+
+  dynamic view scn_047_teammate_private_chat_invisible {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/Invisible To Others'
+    description '''
+      What does a teammate see of someone's private chat in a shared folder?
+      Decided: #846 (2026-10-17) and #334 (2026-10-18). Nothing: no title, count or existence, even for Admins; this supersedes the #225 §5 / #243 metadata row. Costs appear only in folder totals (design A14).
+      SCN-047 · R-ACC-14 · W-MPL-12 · R-TRE-02 · R-USG-06 · P-SET-10
+    '''
+    include
+      personA,
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.thread with { title 'Thread (A private chat)' },
+      signalbox.tree,
+      signalbox.search
+
+    personA -> signalbox.thread 'works privately' {
+      notes '- **Start:** A has a private chat in folder Company'
+    }
+    signalbox.thread -> signalbox.tree 'private catalog row' {
+      notes "- The row reaches A's devices only"
+    }
+    personB -> signalbox.web 'opens Company'
+    signalbox.web -> signalbox.tree 'list threads' {
+      navigateTo folders_tree_catalog
+    }
+    signalbox.web <- signalbox.tree 'rows B can read' {
+      navigateTo work_threads_multiplayer_private_invisible
+      notes '- Live updates never send private rows to non-viewers: no title, row or count'
+    }
+    personB -> signalbox.web 'searches'
+    signalbox.web -> signalbox.search 'query Company'
+    signalbox.web <- signalbox.search "nothing of A's"
+    personB -> signalbox.web 'opens Usage' {
+      navigateTo folders_usage_rollup
+    }
+    signalbox.web -> signalbox.tree 'folder total'
+    signalbox.web <- signalbox.tree 'total, no row' {
+      navigateTo person_settings_usage
+      notes '''
+        - **End:** B sees nothing of it, only its cost inside Company's total
+        - `#decided` #846 (2026-10-17), #334 (2026-10-18)
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_048_link_to_private_chat {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/Private Link'
+    description '''
+      What does B see when opening a link to someone else's private chat?
+      Decided: #37 prototype, #243 and #334 (2026-10-18). "Not found"; existence is never confirmed, no title, snippet or count.
+      SCN-048 · R-ACC-14 · W-MPL-12 · R-TRE-18
+    '''
+    include
+      personB,
+      signalbox,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.operations,
+      signalbox.tree
+
+    personB -> signalbox.web 'opens the URL' {
+      notes "- **Start:** B has a link to A's private chat"
+    }
+    signalbox.web -> signalbox.funnel 'open thread'
+    signalbox.funnel -> signalbox.operations 'read thread'
+    signalbox.operations -> signalbox.tree 'can B read?' {
+      navigateTo folders_tree_catalog
+    }
+    signalbox.operations <- signalbox.tree 'no' {
+      notes '- The Thread actor is never asked, so nothing can leak'
+    }
+    signalbox.funnel <- signalbox.operations 'not found'
+    signalbox.web <- signalbox.funnel 'not found' {
+      navigateTo folders_tree_breadcrumb
+    }
+    personB <- signalbox.web 'chat not here' {
+      navigateTo work_threads_multiplayer_private_invisible
+      notes '''
+        - **End:** "This chat isn't here. It may be private to someone else, or it was removed."
+        - The same reply for a chat that doesn't exist or sits in the trash
+        - `#decided` #37, #243, #334 (2026-10-18)
+      '''
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_049_admin_cannot_read_private_chat {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/No Admin Back Door'
+    description '''
+      Can a folder Admin read a member's private chat?
+      Decided: #270 (2026-10-16) and #312 (2026-10-14). No admin back door; a leaver's private chats are sealed; only an Enterprise opt-in makes chats Admin-visible, with notice to every member. eDiscovery is parked (#225 §13).
+      SCN-049 · R-ACC-14 · R-ACC-17 · R-ACC-18 · P-OUT-05
+    '''
+    include
+      personC,
+      personA,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.search,
+      signalbox.identity,
+      signalbox.thread with { title 'Thread (A private chat)' }
+
+    personC -> signalbox.web 'opens Company' {
+      notes '- **Start:** C is Admin of folder Company; A has a private chat there'
+    }
+    signalbox.web -> signalbox.tree 'list threads' {
+      navigateTo folders_tree_catalog
+    }
+    signalbox.web <- signalbox.tree 'no private rows'
+    alt 'C tries another route' {
+      when 'admin export' {
+        signalbox.web -> signalbox.operations 'export Company'
+        signalbox.web <- signalbox.operations 'private chats skipped'
+      }
+      else 'search' {
+        signalbox.web -> signalbox.search 'search Company'
+        signalbox.web <- signalbox.search 'no hit'
+      }
+    }
+    personA -> signalbox.identity 'leaves the organization' {
+      navigateTo person_leaving_leave_org
+    }
+    signalbox.identity -> signalbox.thread 'seal' {
+      navigateTo state_thread
+      notes '''
+        - Sealed, not handed to C: Admins can't read it
+        - A can delete it to the 30-day trash; a rejoin unseals it
+      '''
+    }
+    opt 'Enterprise organization' {
+      personC -> signalbox.web 'Admin-visible opt-in' {
+        navigateTo scn_054_enterprise_admin_visible_chats
+        notes '''
+          - **End:** C can't read it; only the Enterprise opt-in changes that, for new chats, with notice up front
+          - `#decided` #270 (2026-10-16), #312 (2026-10-14)
+        '''
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_050_private_chat_resolves_company_chain {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/Private Chat Chain'
+    description '''
+      Whose resources does a private chat in folder Company run on?
+      Decided: #225 §2 (2026-10-14). Company's chain via A's mount, same as a shared chat; visibility never changes resources (binding rule: chain from Place {level, via}, nearest wins).
+      v1: partial (the pool resolves; threads aren't v1).
+      SCN-050 · R-PLC-04 · R-PLC-05 · R-PLC-06 · R-USG-09
+    '''
+    include
+      personA,
+      signalbox,
+      signalbox.web,
+      signalbox.thread with { title 'Thread (A private chat)' },
+      signalbox.tree,
+      signalbox.models,
+      signalbox.connections
+
+    personA -> signalbox.web 'new private chat' {
+      notes '- **Start:** A starts a private chat in folder Company'
+    }
+    signalbox.web -> signalbox.thread 'create' {
+      notes "- Place `{level: Company, via: A's Work mount}`"
+    }
+    personA -> signalbox.web 'sends turn'
+    signalbox.web -> signalbox.thread 'turn'
+    signalbox.thread -> signalbox.tree 'resolve chain' {
+      navigateTo folders_placement_resolve
+      notes '''
+        - Company, then across the mount to Work and A's top level
+        - Nearest wins for pool, connections, AGENTS.md
+      '''
+    }
+    signalbox.thread <- signalbox.tree 'Company placements'
+    parallel {
+      signalbox.thread -> signalbox.models 'Company pool' {
+        navigateTo folders_usage_payer
+        notes '- Compute follows tokens: same payer'
+      }
+      signalbox.thread -> signalbox.connections 'Company connections'
+    }
+    opt 'A shares it later' {
+      signalbox.thread -> signalbox.tree 'same resolution' {
+        navigateTo folders_placement_resolve_shared
+        notes '''
+          - **End:** runs on Company's chain via A's mount, private or shared
+          - `#decided` #225 §2 (2026-10-14)
+        '''
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_051_search_skips_private_chats {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/Search Skips Private'
+    description '''
+      Can search or an agent find a member's private chat?
+      Decided: #846 (2026-10-17), #334 (2026-10-18) and #860. No: private chats leak nothing to search, even for Admins; hits are re-checked against current access. The older #225 §5 / #243 metadata row is superseded.
+      SCN-051 · P-SRCH-05 · W-SRH-10 · W-SRH-04 · P-SRCH-10 · R-ACC-14
+    '''
+    include
+      personC,
+      signalbox,
+      signalbox.web,
+      signalbox.search,
+      signalbox.tree,
+      hier,
+      hier.asstA,
+      hier.company,
+      hier.company.agentCo with { title 'Folder agent (Company)' }
+
+    personC -> signalbox.web 'searches a phrase' {
+      notes "- **Start:** the phrase is only in B's private chat in Team"
+    }
+    signalbox.web -> signalbox.search 'query Company'
+    signalbox.search -> signalbox.search 'current-access filter' {
+      navigateTo work_search_visibility
+    }
+    signalbox.search -> signalbox.tree 're-check each hit' {
+      navigateTo folders_tree_catalog
+      notes '- Before any title or snippet leaves the index'
+    }
+    signalbox.search <- signalbox.tree 'B only: drop'
+    signalbox.web <- signalbox.search 'no hit, no count' {
+      notes '- Not even "1 hidden result"'
+    }
+    parallel {
+      hier.asstA -> signalbox.search 'context search'
+      hier.company.agentCo -> signalbox.search 'context search'
+    }
+    signalbox.search -> hier.company.agentCo "nothing of B's" {
+      navigateTo work_search_agent
+      notes '''
+        - **End:** C and every agent get nothing, not even a hint
+        - Content and title skipped the same way for A's assistant
+        - `#decided` #846, #334, #860
+      '''
+    }
+
+    style signalbox, hier, hier.company { color muted; opacity 10% }
+  }
+
+  dynamic view scn_052_request_for_private_context {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/Ask For Private Context'
+    description '''
+      What happens when someone asks for what a member found in a private chat?
+      Decided: #225 §5 (2026-10-14) and #245 (2026-10-16). Never automatic: it goes to the author's assistant first, which answers within A's policy, approves one step, or asks A.
+      SCN-052 · P-AST-30 · P-AST-10 · P-BLK-12 · P-AST-18
+    '''
+    include
+      personB,
+      personA,
+      signalbox,
+      signalbox.web,
+      signalbox.attention,
+      signalbox.observability,
+      hier,
+      hier.asstA,
+      hier.company,
+      hier.company.agentCo with { title 'Folder agent (Company)' }
+
+    personB -> signalbox.web '"what did A find?"' {
+      notes "- **Start:** B asks in folder Company; the finding sits in A's private chat"
+    }
+    signalbox.web -> hier.company.agentCo 'ask folder agent'
+    hier.company.agentCo -> hier.asstA 'request to A' {
+      navigateTo person_assistant_cross_owner_handoff
+      notes '''
+        - The folder agent can't read the private chat
+        - A person's resource goes to that person's assistant first
+      '''
+    }
+    alt "A's policy" {
+      when 'covered' {
+        hier.asstA -> hier.company.agentCo 'answers as A' {
+          navigateTo person_assistant_ask_up
+        }
+      }
+      else 'needs A' {
+        hier.asstA -> signalbox.attention 'Blocker to A' {
+          navigateTo person_pipeline_route
+          notes "- B's thread shows the step waiting on A"
+        }
+        signalbox.attention -> personA 'share this?'
+        personA -> hier.asstA 'approves answer'
+        hier.asstA -> hier.company.agentCo 'answer'
+      }
+    }
+    hier.company.agentCo -> signalbox.observability 'what crossed' {
+      navigateTo journey_assistant_trace
+      notes '- Only the answer crosses; the card records it'
+    }
+    hier.company.agentCo -> signalbox.web 'answer for B' {
+      notes '''
+        - **End:** handled by A's assistant or A, never automatic
+        - `#decided` #225 §5 (2026-10-14), #245 (2026-10-16)
+      '''
+    }
+
+    style signalbox, hier, hier.company { color muted; opacity 10% }
+  }
+
+  dynamic view scn_053_author_pulls_from_own_private_chat {
+    #decided
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/Pull From Own Chat'
+    description '''
+      Can A ask the folder agent to use A's own private chat?
+      Decided: #225 §5 (2026-10-14). Yes, without an ask: the author's request just happens. Answers cross, not access; a card records what crossed.
+      SCN-053 · P-AST-30 · P-AST-18 · P-AST-04 · W-LVL-04
+    '''
+    include
+      personA,
+      signalbox,
+      signalbox.web,
+      signalbox.thread with { title 'Thread (A private chat)' },
+      signalbox.connections,
+      signalbox.observability,
+      hier,
+      hier.company,
+      hier.company.agentCo with { title 'Folder agent (Company)' }
+
+    personA -> signalbox.web '"use what I found"' {
+      navigateTo person_assistant_mention
+      notes "- **Start:** A's finding sits in A's private chat"
+    }
+    signalbox.web -> hier.company.agentCo 'ask folder agent'
+    hier.company.agentCo -> signalbox.thread 'ask the chat' {
+      navigateTo person_assistant_ask_up
+      notes '- No ask to A: A is the author, so it just happens'
+    }
+    signalbox.thread -> signalbox.connections "A's own tools" {
+      notes '- The chat answers as its author, on its own chain, personal connectors included'
+    }
+    hier.company.agentCo <- signalbox.thread 'answer only' {
+      notes '- Never the raw sources or where they came from'
+    }
+    hier.company.agentCo -> signalbox.observability 'what crossed' {
+      navigateTo journey_assistant_trace
+    }
+    hier.company.agentCo -> signalbox.web 'used in Company' {
+      navigateTo work_levelagents_route_up
+      notes '''
+        - **End:** A's finding used in Company work without exposing raw sources
+        - `#decided` #225 §5 (2026-10-14)
+      '''
+    }
+
+    style signalbox, hier, hier.company { color muted; opacity 10% }
+  }
+
+  dynamic view scn_054_enterprise_admin_visible_chats {
+    #decided #assumption
+    variant sequence
+    title 'Scenarios/Folders/PrivateChats/Enterprise Opt In'
+    description '''
+      What changes when an Enterprise organization opts in to Admin-visible chats?
+      Decided: #270 point 4 (2026-10-16). Admins can read chats made from now on; members are told up front.
+      Assumption: the opt-in covers only chats started after it, and turning it off stops it for new chats. Why: chats written under a promise of privacy keep it; mirrors "never retroactive" for visibility defaults (#310).
+      SCN-054 · R-ACC-18 · W-MPL-22 · P-OUT-14 · R-ACC-26 · R-ACC-17
+    '''
+    include
+      personC,
+      personA,
+      signalbox,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.attention,
+      signalbox.identity,
+      signalbox.thread with { title 'Thread (A private chat)' }
+
+    personC -> signalbox.web 'turn on opt-in' {
+      navigateTo folders_access_admin_visible
+      notes '''
+        - **Start:** private chats in Company hidden from Admins
+        - Company's owner is an Enterprise organization (flag set through billing)
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Admin-visible: on'
+    signalbox.operations -> signalbox.tree 'Enterprise flag?' {
+      navigateTo folders_access_enterprise_flag
+    }
+    signalbox.operations <- signalbox.tree 'yes'
+    signalbox.operations -> signalbox.tree 'place opt-in'
+    signalbox.tree -> signalbox.attention 'tell every member'
+    signalbox.attention -> personA 'organization can see chats' {
+      navigateTo work_threads_multiplayer_admin_visible
+      notes '- "This organization can see your chats here", before the next chat'
+    }
+    personA -> signalbox.web 'new private chat'
+    signalbox.web -> signalbox.thread 'create: Admin-visible' {
+      notes '- Chats from before the opt-in stay private (`#assumption`)'
+    }
+    personC -> signalbox.web "opens A's chat"
+    signalbox.web -> signalbox.thread 'read as Admin' {
+      navigateTo folders_access_admin_visible_chats
+    }
+    opt 'A leaves' {
+      signalbox.identity -> signalbox.thread 'Admin-readable' {
+        navigateTo state_thread
+        notes '''
+          - **End:** Admins read chats made since the opt-in; a leaver's are not sealed
+          - Turning it off stops it for new chats. `#decided` #270 (2026-10-16)
+        '''
+      }
+    }
+
+    style signalbox { color muted; opacity 10% }
+  }
+}

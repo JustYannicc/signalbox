@@ -1,0 +1,1933 @@
+// Shard 17: identity and members. Sign-in, sessions, linking, organizations joining,
+// members joining and leaving, invitations, and the admin journeys around a folder's rows.
+// People: A and B are members of folder Company (owner: organization), C is its admin.
+// Folder Company is one Level actor mounted under each member's Work folder.
+// Every view plays in time order (variant sequence); containers are muted lanes.
+views {
+
+  style signalbox, platform, services, hier, build {
+    color muted
+    opacity 10%
+  }
+
+  // ───────────────────────── Journeys/Admin ─────────────────────────
+
+  dynamic view journey_admin_access_lens {
+    #v1
+    variant sequence
+    title 'Journeys/Admin/See what a folder can use'
+    description 'R-ACC-24 (v1 yes; alias T-REM-19) · one access lens per folder: usable, inherited, missing'
+
+    include personA, personB, personC, signalbox, signalbox.web, signalbox.tree
+
+    personA -> signalbox.web 'Opens Access tab' {
+      notes """
+        - A opens the Agent page of folder Team and picks **Access**.
+        - The same answer feeds the folder page's inherited rows, the model picker and every turn.
+      """
+    }
+    signalbox.web -> signalbox.tree 'View access lens' {
+      navigateTo folders_placement_resolve
+      notes """
+        - `Tree.view(at: Team, lens: access)`.
+        - Team's agent has no `via`, so its chain is Team → Company and stops at the organization's folder.
+      """
+    }
+    signalbox.web <- signalbox.tree 'Usable, inherited, missing' {
+      notes """
+        - Every item carries `from`; nearest wins per kind.
+        - `missing` names only role holders **on the chain** who may place that kind (`canPlace`).
+      """
+    }
+    alt 'per row' {
+      when 'usable or inherited' {
+        signalbox.web -> personA 'Shows from Company' {
+          notes """
+            - "Pool P2 · from Company", "Confluence · from Company"; each row links to its home.
+          """
+        }
+      }
+      else 'missing' {
+        signalbox.web -> personA 'Shows ask or lend' {
+          navigateTo folders_lending_lend
+          notes """
+            - No browser connection on the chain: the row names C as the one who can place it.
+            - Or "ask someone to lend": A may lend their own Google · A into Team.
+          """
+        }
+      }
+    }
+    personB -> signalbox.web 'Opens same tab' {
+      notes """
+        - B gets the identical rows: the answer depends on Team's position, never on who looks.
+        - B's own top-level pool never shows; it is not above Team.
+      """
+    }
+    personC -> signalbox.web 'Opens as admin' {
+      navigateTo folders_pools_needs_pool
+      notes """
+        - Same rows; as Admin at Company, each missing row offers C **Place here**.
+        - With no pool anywhere on the chain, the pool row reads "needs a pool".
+      """
+    }
+  }
+
+  dynamic view journey_admin_dev_sharing {
+    variant sequence
+    title 'Journeys/Admin/Share a dev server over Tailscale'
+    description 'R-OPS-39 · maintainer-only: the operator shares a dev server with their own devices over the tailnet; no person using Signalbox ever sees this'
+
+    include operator, build, build.toolchain, build.devAccess, signalbox, signalbox.web
+
+    operator -> build.toolchain 'Runs dev --share' {
+      notes """
+        - The operator starts the dev server with `--share` from a worktree.
+        - Maintainers only; not a product feature.
+      """
+    }
+    build.toolchain -> build.devAccess 'Serves on tailnet' {
+      notes """
+        - The dev runner wires Tailscale itself; never public, never hand-wired.
+        - Single origin: no baked API or socket URLs.
+      """
+    }
+    build.devAccess -> operator 'Pairing URL' {
+      notes """
+        - One-time URL with admin scopes (needed for Connections settings).
+        - Reachable only from devices on the operator's tailnet; never committed or posted.
+      """
+    }
+    alt 'pairing link' {
+      when 'unused' {
+        operator -> signalbox.web 'Opens pairing URL' {
+          notes """
+            - An unpaired browser on the tailnet opens the full URL once.
+            - Afterwards the bare origin works with the dev cookie.
+          """
+        }
+      }
+      else 'already consumed' {
+        operator -> build.toolchain 'Mints fresh token' {
+          notes """
+            - A fresh token carries standard scopes; admin scopes need the startup URL.
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view journey_admin_folder_row_origins {
+    #v1
+    variant sequence
+    title "Journeys/Admin/See where a folder's rows come from"
+    description 'R-PLC-26 (v1 yes; alias T-SET-02) · R-LND-12 (v1 no) · inherited rows say "from <level>", loans say "lent by X"'
+
+    include personB, personC, personA, signalbox, signalbox.web, signalbox.tree
+
+    personB -> signalbox.web 'Opens folder Team' {
+      navigateTo journey_daily_folder_page
+      notes """
+        - B opens Team from Home › Work › Company › Team.
+        - The folder page is the home of everything placed on Team.
+      """
+    }
+    signalbox.web -> signalbox.tree 'View placements lens' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Rows placed on Team, inherited rows from its chain, and loans into Team.
+        - Each item carries `from`, loans also `lentBy`.
+      """
+    }
+    signalbox.web <- signalbox.tree 'Rows with origins' {
+      notes """
+        - Same rows for every viewer: position decides, not the person.
+      """
+    }
+    parallel {
+      signalbox.web -> personB 'Shows from Company' {
+        notes """
+          - "Pool P2 · from Company": inherited, links to its home.
+        """
+      }
+      signalbox.web -> personB 'Shows lent by A' {
+        notes """
+          - "Google · A · lent by A", grouped under "Lent in" (v1 no).
+          - A loan is the only way something not above Team gets here.
+        """
+      }
+    }
+    personB -> signalbox.web 'Clicks inherited row' {
+      notes """
+        - Goes to folder Company, the row's home; it is edited only there.
+      """
+    }
+    personC -> signalbox.web 'Opens same page' {
+      notes """
+        - C sees identical rows and, as Admin, edits Pool P2 at Company.
+      """
+    }
+    personA -> signalbox.web 'Opens same page' {
+      notes """
+        - A sees "lent by you" on Google · A and ends it from that connection's own row.
+      """
+    }
+  }
+
+  dynamic view journey_admin_lender_costs {
+    variant sequence
+    title 'Journeys/Admin/See what my loan costs'
+    description 'R-LND-13 (v1 no) · the lender sees cost per folder and per person, never content or titles'
+
+    include personA, signalbox, signalbox.web, signalbox.tree, signalbox.models
+
+    personA -> signalbox.web 'Opens pool row' {
+      notes """
+        - A lent Pool P1 into folder Team and opens P1's row on their own top level, its home.
+      """
+    }
+    signalbox.web -> signalbox.models 'Reads outbound index' {
+      notes """
+        - `Models.view(outbound: P1)`: pool custody stays inside Models; it lists where P1 is placed and lent: "lent to Team".
+        - Shown even though A could not otherwise reach Team.
+      """
+    }
+    signalbox.web -> signalbox.tree 'View costs lens' {
+      navigateTo folders_usage_cost_view
+      notes """
+        - Level aggregates are projections of P1's usage ledger at the level of use.
+        - Cross-owner views compose at read time.
+      """
+    }
+    signalbox.web <- signalbox.tree 'Per folder, per person' {
+      notes """
+        - Totals only; private chats count without a row.
+      """
+    }
+    signalbox.web -> personA 'Shows loan costs' {
+      notes """
+        - "Team: B 12 €, A 3 €"; no thread titles, no content.
+      """
+    }
+  }
+
+  dynamic view journey_admin_plugins_view {
+    variant sequence
+    title 'Journeys/Admin/Plugins view: everything placed and lent'
+    description 'R-PLC-27 (v1 no) · every placement a person can reach, plus their outbound placements and loans'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.tree, signalbox.models, signalbox.connections
+
+    personA -> signalbox.web 'Opens Plugins' {
+      notes """
+        - Rail › Plugins: one list of every placement A can reach, home as a breadcrumb.
+        - Folder sections are the same rows filtered to one level.
+      """
+    }
+    signalbox.web -> signalbox.tree 'View placements lens' {
+      notes """
+        - `Tree.view(person, lens: placements)` across every level A reaches.
+      """
+    }
+    parallel {
+      signalbox.web -> signalbox.models 'Pool loans' {
+        notes """
+          - `Models.view(outbound)`: where A's pools are placed and lent.
+        """
+      }
+      signalbox.web -> signalbox.connections 'Connection loans' {
+        notes """
+          - Where A's connections are placed and lent, including Google · A in Team.
+        """
+      }
+    }
+    signalbox.web -> personA 'Rows with breadcrumbs' {
+      navigateTo journey_daily_folder_page
+      notes """
+        - A breadcrumb opens the folder page of the row's home.
+      """
+    }
+    personA -> signalbox.web 'Changes reach' {
+      navigateTo folders_placement_place
+      notes """
+        - Toggles Pool P1 between `below` and `here`, in place.
+      """
+    }
+    personA -> signalbox.web 'Ends a loan' {
+      navigateTo folders_lending_end_loan
+      notes """
+        - End loan on Google · A in Team, though Team is not A's.
+        - Running turns finish on their frozen Scope.
+      """
+    }
+    personC -> signalbox.web 'Opens Plugins' {
+      notes """
+        - C sees Company's Pool P2, Confluence and Google · Company at home Company.
+        - Nothing of A's top level shows for C.
+      """
+    }
+  }
+
+  // ───────────────────────── States ─────────────────────────
+
+  dynamic view state_invitation {
+    variant sequence
+    title 'States/Invitation/Walk through'
+    description 'P-ONB-14 · R-ACC-08 (v1 no) · pending → accepted / declined / cancelled; accepted → removed'
+
+    include personC, personB, signalbox, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Invites by email' {
+      navigateTo folders_access_invite_by_email
+      notes """
+        - C (Admin at Company) invites B's address; a Member+ of Team invites D into Team the same way.
+        - **State: pending.** The state machine is States/Invitation/State machine.
+      """
+    }
+    signalbox.web -> signalbox.operations 'Invoke invite' {
+      navigateTo folders_access_folder_invite
+      notes """
+        - Company invites go through Members, Team invites through the Share dialog.
+      """
+    }
+    signalbox.operations -> signalbox.identity 'Create invitation' {
+      notes """
+        - Identity owns invites; the folder only learns a role on accept.
+      """
+    }
+    signalbox.identity -> platform.workos 'WorkOS invitation' {
+      notes """
+        - WorkOS sends the email and tracks the invitation.
+      """
+    }
+    alt 'pending resolves' {
+      when 'accepted' {
+        personB -> signalbox.identity 'Accepts, signs in' {
+          notes """
+            - **pending → accepted.** B lands in B's own personal organization.
+          """
+        }
+        signalbox.identity -> signalbox.tree 'Role: Member' {
+          notes """
+            - Role on the invited folder; roles only add downward.
+          """
+        }
+      }
+      when 'declined' {
+        personB -> signalbox.identity 'Declines' {
+          notes """
+            - **pending → declined.** C sees it in Members.
+          """
+        }
+      }
+      else 'cancelled' {
+        personC -> signalbox.operations 'Cancels invite' {
+          notes """
+            - **pending → cancelled.**
+          """
+        }
+        signalbox.operations -> signalbox.identity 'Revoke invitation' {
+          notes """
+            - The WorkOS invitation is revoked; the link stops working.
+          """
+        }
+      }
+    }
+    opt 'later' {
+      personC -> signalbox.operations 'Removes B' {
+        notes """
+          - **accepted → removed.** Same path as leaving.
+        """
+      }
+      signalbox.operations -> signalbox.tree 'Role: none' {
+        navigateTo organization_identity_leave
+        notes """
+          - `Role(B, null)`; access ends at B's next request.
+        """
+      }
+    }
+  }
+
+  dynamic view state_session {
+    #v1
+    variant sequence
+    title 'States/Session/Walk through'
+    description 'R-IDN-04 (v1 yes) · active → refreshed → signed out on one device, or revoked'
+
+    include personA, signalbox, signalbox.web, signalbox.funnel, signalbox.identity
+
+    personA -> signalbox.web 'Signs in' {
+      navigateTo identity_identity_session
+      notes """
+        - **→ active**, on this device only.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Complete sign-in' {
+      notes """
+        - Identity issues the session for this client.
+      """
+    }
+    loop 'every request' {
+      signalbox.funnel -> signalbox.identity 'Authenticate' {
+        navigateTo identity_identity_authenticate
+        notes """
+          - Checked per request; fail closed.
+        """
+      }
+    }
+    opt 'near expiry' {
+      signalbox.web -> signalbox.identity 'Refresh' {
+        navigateTo identity_identity_session_refresh
+        notes """
+          - **active → active**; the socket stays open.
+        """
+      }
+    }
+    alt 'session ends' {
+      when 'sign out here' {
+        personA -> signalbox.web 'Signs out' {
+          notes """
+            - **active → signed out** on this device; A's other devices stay signed in.
+          """
+        }
+      }
+      when 'removed elsewhere' {
+        personA -> signalbox.web 'Removes a device' {
+          navigateTo person_devices_sign_out_remove
+          notes """
+            - Settings › Devices ends another device's session.
+          """
+        }
+      }
+      else 'revoked' {
+        signalbox.funnel <- signalbox.identity 'Revoked' {
+          notes """
+            - **active → revoked**: membership lost, or the identity became a linked alias.
+          """
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Workflows/Identity ─────────────────────────
+
+  dynamic view identity_identity_company_joins {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/An organization joins and members get folder Company'
+    description 'P-ONB-11 (v1 partial) · P-ONB-12 (v1 yes) · story: one folder Company (owner: organization), one Level, one mount per member; C admin, A and B members'
+
+    include personC, personA, personB, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Signs in with Google' {
+      notes """
+        - C, the admin-to-be, signs in with the company Workspace account.
+        - Always C's personal account; never an organization picker.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Sign in' {
+      notes """
+        - `Identity.signIn`; AuthKit runs the Google Workspace sign-in.
+      """
+    }
+    signalbox.identity -> platform.workos 'Organization with JIT' {
+      navigateTo organization_identity_company_join
+      notes """
+        - A WorkOS organization with the verified company domain and JIT membership.
+        - C still lands in C's personal organization.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Folder Company, C Admin' {
+      notes """
+        - `Tree.change`: folder **Company** (owner: organization) as one Level, C as Admin at its top.
+        - The organization only ever appears as the folder's owner.
+      """
+    }
+    loop 'per colleague (A, then B)' {
+      platform.workos -> signalbox.identity 'Member joined' {
+        navigateTo organization_identity_member_join
+        notes """
+          - A (then B) signs in with Google; JIT adds them by domain.
+          - Arrives as a webhook through Ingress (sub-flow).
+        """
+      }
+      signalbox.identity -> signalbox.tree 'Member + mount' {
+        navigateTo folders_access_newcomer_preset
+        notes """
+          - Role Member on Company (inherits down to Team).
+          - A stable `MountRef` under that person's Work: one Level, many mounts.
+          - Company's newcomer preset applies here, if set.
+        """
+      }
+    }
+    signalbox.web -> personA 'Work › Company' {
+      notes """
+        - A's Home shows Company under their Work folder.
+      """
+    }
+    signalbox.web -> personB 'Work › Company' {
+      notes """
+        - B sees the same folder under B's Work; C sees it too. Nothing is copied.
+      """
+    }
+  }
+
+  dynamic view identity_identity_link_work_account {
+    variant sequence
+    title 'Workflows/Identity/Link a work account'
+    description 'P-ONB-17 · P-ONB-18 · P-OUT-13 (v1 no) · a work identity becomes a permanent alias that never signs in again'
+
+    include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Links work account' {
+      notes """
+        - Settings › Linked accounts › **Link work account**.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Link with proof' {
+      navigateTo identity_identity_link
+      notes """
+        - `Identity.link(person, proof)`.
+      """
+    }
+    alt 'proof' {
+      when 'email code' {
+        signalbox.identity -> platform.workos 'Send email code' {
+          notes """
+            - A types the code from their work inbox.
+          """
+        }
+      }
+      when 'OAuth' {
+        signalbox.identity -> platform.workos 'Work OAuth' {
+          notes """
+            - Sign in once with the work Google or GitHub account.
+          """
+        }
+      }
+      else 'SSO organization' {
+        signalbox.identity -> platform.workos 'SSO once' {
+          notes """
+            - SSO runs only at link time.
+          """
+        }
+      }
+    }
+    signalbox.identity -> platform.workos 'Store alias' {
+      notes """
+        - Permanent alias in WorkOS user metadata; never merged.
+      """
+    }
+    opt 'signed up with work first' {
+      signalbox.identity -> signalbox.tree 'Move held folders' {
+        navigateTo identity_identity_add_personal
+        notes """
+          - After a nudge, A's non-Company folders move to their personal top level.
+        """
+      }
+    }
+    personA -> signalbox.web 'Signs in with alias' {
+      notes """
+        - Later, A tries the work identity directly.
+      """
+    }
+    signalbox.web <- signalbox.identity 'Refused' {
+      navigateTo identity_identity_authenticate
+      notes """
+        - `LinkedIdentitySignIn`; any session on that identity dies at its next request.
+      """
+    }
+    opt 'unlink later' {
+      personA -> signalbox.web 'Unlinks' {
+        navigateTo identity_identity_unlink_work_account
+        notes """
+          - Ends the alias; organization-sourced memory goes with it.
+        """
+      }
+    }
+  }
+
+  dynamic view identity_identity_sign_up {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/Sign up: account, personal organization and top level'
+    description 'P-ONB-01 (v1 yes; aliases T-ENV-26, T-REM-03) · P-ONB-02 (v1 yes) · P-ONB-03 (v1 partial; alias T-ENV-05) · P-ONB-04 (v1 no)'
+
+    include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.thread, signalbox.automations, platform, platform.workos
+
+    personA -> signalbox.web 'First visit' {
+      notes """
+        - Continue with Google, GitHub, Apple or an email code.
+        - Always the personal account; no organization picker.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Sign in' {
+      navigateTo identity_identity_signin
+      notes """
+        - `Identity.signIn(returnTo)` redirects to AuthKit.
+      """
+    }
+    signalbox.identity -> platform.workos 'Ensure personal WorkOS org' {
+      notes """
+        - Idempotent: `external_id = personal:<userId>`.
+        - Invisible to A; it only owns A's things.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Person + top level' {
+      notes """
+        - `Tree.change`: A's Person (mounts, devices, drafts, private notes, attention) and A's top level with folders Personal and Work.
+        - B and C each get their own the same way.
+      """
+    }
+    opt 'not v1' {
+      signalbox.tree -> signalbox.automations 'Place defaults' {
+        notes """
+          - Default automations placed on the new top level.
+        """
+      }
+    }
+    signalbox.web -> signalbox.tree 'Register device' {
+      navigateTo person_devices_register
+      notes """
+        - This browser becomes a device homed at A's top level.
+      """
+    }
+    opt 'first assistant use (not v1)' {
+      signalbox.tree -> signalbox.thread 'Create assistant' {
+        notes """
+          - The top level's agent thread appears on first use via `agentThreadId`.
+        """
+      }
+    }
+    signalbox.web -> personA 'Suggests a pool' {
+      navigateTo folders_pools_first_pool
+      notes """
+        - Empty tree, Personal and Work, and one next step: add a pool.
+      """
+    }
+  }
+
+  dynamic view identity_identity_test_identities {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/Test identities on preview only'
+    description 'P-ONB-23 (v1 yes) · production refuses test identities in code; the e2e run acts as a test person'
+
+    include operator, build, build.review, signalbox, signalbox.identity
+
+    operator -> build.review 'Runs e2e on preview' {
+      notes """
+        - The operator (or CI) starts an e2e run against a preview.
+      """
+    }
+    build.review -> signalbox.identity 'Test sign-in' {
+      notes """
+        - An e2e run presents a signed test identity.
+      """
+    }
+    alt 'environment' {
+      when 'preview or dev' {
+        build.review <- signalbox.identity 'Session' {
+          navigateTo identity_identity_test_signin
+          notes """
+            - Accepted; the run acts as the test person.
+          """
+        }
+      }
+      else 'production' {
+        build.review <- signalbox.identity 'Refused in code' {
+          notes """
+            - Refused even with the signing secret present.
+            - Config of the same code, not a seam.
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view identity_identity_unlink_work_account {
+    variant sequence
+    title 'Workflows/Identity/Unlink a work account'
+    description 'P-OUT-08 (v1 no) · unlinking deletes memories and learner contributions sourced from that company'
+
+    include personA, personC, signalbox, signalbox.identity, signalbox.learner, hier, hier.asstA, platform, platform.workos
+
+    alt 'who ends the link' {
+      when 'A unlinks' {
+        personA -> signalbox.identity 'Unlinks alias' {
+          notes """
+            - From Settings › Linked accounts.
+          """
+        }
+      }
+      else 'organization revokes' {
+        personC -> platform.workos 'Removes work user' {
+          notes """
+            - C removes A's work user in the organization's directory.
+          """
+        }
+        platform.workos -> signalbox.identity 'Revoked' {
+          navigateTo identity_identity_unlink
+          notes """
+            - Webhook through Ingress (sub-flow).
+          """
+        }
+      }
+    }
+    signalbox.identity -> signalbox.identity 'Drop alias' {
+      notes """
+        - Access through that identity ends at the next request.
+      """
+    }
+    parallel {
+      signalbox.identity -> hier.asstA 'Forget company memories' {
+        notes """
+          - A's assistant deletes memories sourced from that company.
+        """
+      }
+      signalbox.identity -> signalbox.learner 'Delete contributions' {
+        notes """
+          - Decision lenses learned from that company's data go.
+        """
+      }
+    }
+    personA <- hier.asstA 'Personal memory stays' {
+      navigateTo identity_identity_link_work_account
+      notes """
+        - Everything A taught it outside that company remains.
+      """
+    }
+  }
+
+  // ───────────────────────── Workflows/Identity/Linking ─────────────────────────
+
+  dynamic view identity_identity_add_personal {
+    variant sequence
+    title 'Workflows/Identity/Linking/Add a personal account after signing up with work'
+    description 'R-IDN-17 (v1 no) · non-Company folders are held until a personal account is linked, then moved'
+
+    include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Signed up with work' {
+      notes """
+        - A's first sign-in used their work email.
+      """
+    }
+    signalbox.web -> personA 'Nudges personal account' {
+      notes """
+        - Non-Company folders A creates are held until a personal account is linked.
+      """
+    }
+    personA -> signalbox.web 'Adds personal account' {
+      notes """
+        - Signs in once with their personal Google account.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Link accounts' {
+      navigateTo identity_identity_link
+      notes """
+        - Personal becomes the sign-in; work becomes the alias.
+      """
+    }
+    signalbox.identity -> platform.workos 'Store alias' {
+      notes """
+        - Alias in WorkOS user metadata.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Keep mounts' {
+      notes """
+        - Company stays mounted under Work by membership.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Move held folders' {
+      navigateTo folders_tree_move_across
+      notes """
+        - Tree Move to A's personal top level.
+      """
+    }
+  }
+
+  dynamic view identity_identity_link {
+    variant sequence
+    title 'Workflows/Identity/Linking/Link a work account'
+    description 'R-IDN-14 (v1 no) · email code, OAuth, or SSO once; alias stored in WorkOS user metadata'
+
+    include personA, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Links work account' {
+      notes """
+        - Settings › Linked accounts.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Link with proof' {
+      notes """
+        - `Identity.link(person, proof)`.
+      """
+    }
+    alt 'proof' {
+      when 'email code' {
+        signalbox.identity -> platform.workos 'Email code' {
+          notes """
+            - Proves control of the work inbox.
+          """
+        }
+      }
+      when 'OAuth' {
+        signalbox.identity -> platform.workos 'OAuth' {
+          notes """
+            - Work Google or GitHub account.
+          """
+        }
+      }
+      else 'SSO organization' {
+        signalbox.identity -> platform.workos 'SSO once' {
+          notes """
+            - Only at link time; never again for sign-in.
+          """
+        }
+      }
+    }
+    try {
+      signalbox.identity -> platform.workos 'Write alias' {
+        notes """
+          - The alias map lives in WorkOS user metadata.
+        """
+      }
+      signalbox.identity -> signalbox.tree 'Record linked identity' {
+        navigateTo journey_settings_linked_identities
+        notes """
+          - Settings lists it under Linked accounts.
+        """
+      }
+    } catch 'linked elsewhere' {
+      signalbox.web <- signalbox.identity 'Already linked' {
+        notes """
+          - `AlreadyLinked`; identities are never merged.
+        """
+      }
+    }
+    personA -> signalbox.web 'Tries alias sign-in' {
+      navigateTo identity_identity_authenticate
+      notes """
+        - Refused with `LinkedIdentitySignIn`.
+      """
+    }
+    opt 'undo' {
+      personA -> signalbox.web 'Unlinks' {
+        navigateTo identity_identity_unlink
+        notes """
+          - Reverse of linking.
+        """
+      }
+    }
+  }
+
+  dynamic view identity_identity_unlink {
+    variant sequence
+    title 'Workflows/Identity/Linking/Unlink or revoke a work account'
+    description 'R-IDN-16 (v1 no) · access ends at the next request; the assistant forgets organization-derived memory'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, signalbox.tree, hier, hier.asstA, platform, platform.workos
+
+    alt 'who ends it' {
+      when 'A unlinks' {
+        personA -> signalbox.web 'Unlinks' {
+          notes """
+            - Settings › Linked accounts › Unlink.
+          """
+        }
+        signalbox.web -> signalbox.identity 'Unlink' {
+          notes """
+            - A asks Identity to drop the alias.
+          """
+        }
+      }
+      else 'organization revokes' {
+        personC -> platform.workos 'Removes work user' {
+          notes """
+            - C acts in the organization's directory.
+          """
+        }
+        platform.workos -> signalbox.ingress 'Revoked webhook' {
+          navigateTo organization_identity_membership_webhook
+          notes """
+            - At least once; Ingress verifies the signature.
+          """
+        }
+        signalbox.ingress -> signalbox.identity 'Revoked' {
+          notes """
+            - Identity owns the change from here; same path as A unlinking.
+          """
+        }
+      }
+    }
+    signalbox.identity -> platform.workos 'Delete alias' {
+      notes """
+        - Removed from WorkOS user metadata.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Drop linked identity' {
+      notes """
+        - Gone from A's Linked accounts.
+      """
+    }
+    signalbox.identity -> hier.asstA 'Forget company memory' {
+      navigateTo identity_identity_unlink_work_account
+      notes """
+        - A's assistant forgets what came from that organization.
+      """
+    }
+    signalbox.web <- signalbox.identity 'Access ends' {
+      navigateTo identity_identity_link
+      notes """
+        - On A's next request, nothing reached through that identity remains.
+      """
+    }
+  }
+
+  // ───────────────────────── Workflows/Identity/Sessions ─────────────────────────
+
+  dynamic view identity_identity_agent_identities {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/Sessions/Mint and verify agent identities'
+    description 'R-IDN-22 (v1 partial) · AgentActor, RunActor, LocalKeyActor and McpSessionActor; runs drawn as Automations'
+
+    include hier, hier.company.agentCo, laptopCli, mcpClient, signalbox, signalbox.gateway, signalbox.identity, signalbox.operations, signalbox.automations
+
+    hier.company.agentCo -> signalbox.gateway 'Turn needs grant' {
+      notes """
+        - Company's agent thread starts a turn and asks Gateway for a grant.
+      """
+    }
+    signalbox.gateway -> signalbox.identity 'Mint token' {
+      notes """
+        - `mint(claims, ttl)`: short-lived, one subject.
+      """
+    }
+    alt 'actor class' {
+      when 'AgentActor' {
+        hier.company.agentCo -> signalbox.gateway 'Tool call' {
+          notes """
+            - No person: rights are its level's and its profile's.
+          """
+        }
+      }
+      when 'RunActor' {
+        signalbox.automations -> signalbox.gateway 'Run step call' {
+          notes """
+            - An automation run, a thread of kind `run`.
+          """
+        }
+      }
+      when 'LocalKeyActor' {
+        laptopCli -> signalbox.gateway 'Local key call' {
+          notes """
+            - Person plus a server-minted, per-person `placeId`.
+          """
+        }
+      }
+      else 'McpSessionActor' {
+        mcpClient -> signalbox.gateway 'MCP call' {
+          navigateTo identity_identity_mcp_signin
+          notes """
+            - AuthKit bearer for one Place, one person.
+          """
+        }
+      }
+    }
+    try {
+      signalbox.gateway -> signalbox.identity 'Verify for audience' {
+        notes """
+          - `verify(token, aud)`: models, tools or MCP resource.
+        """
+      }
+      signalbox.gateway -> signalbox.operations 'Invoke as actor' {
+        navigateTo folders_access_authorize
+        notes """
+          - Agent-class: destructive ops hit the decision gate; human-only ops refuse.
+        """
+      }
+    } catch 'wrong audience or expired' {
+      signalbox.gateway <- signalbox.identity 'Invalid' {
+        notes """
+          - The call fails; nothing reaches a module.
+        """
+      }
+    }
+  }
+
+  dynamic view identity_identity_authenticate {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/Sessions/Authenticate each request, fail closed'
+    description 'R-IDN-05 (v1 yes; alias T-REM-14) · R-IDN-15 (v1 no) · revocation takes effect on the next request'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.tree
+
+    personA -> signalbox.web 'Acts in thread' {
+      notes """
+        - A sends a turn in Team's shared thread.
+      """
+    }
+    signalbox.web -> signalbox.funnel 'Request' {
+      notes """
+        - Cookie, bearer or DPoP proof.
+      """
+    }
+    signalbox.funnel -> signalbox.identity 'Authenticate' {
+      notes """
+        - Every request, no cached trust.
+      """
+    }
+    alt 'result' {
+      when 'valid' {
+        signalbox.funnel -> signalbox.tree 'Check can' {
+          notes """
+            - `Tree.can(actor, action, target)` with A's current role.
+          """
+        }
+      }
+      when 'membership revoked' {
+        signalbox.funnel <- signalbox.identity 'Revoked' {
+          navigateTo organization_identity_leave
+          notes """
+            - A left Company: this request is the first refused.
+          """
+        }
+      }
+      when 'linked work identity' {
+        signalbox.funnel <- signalbox.identity 'Linked alias' {
+          navigateTo identity_identity_link
+          notes """
+            - `LinkedIdentitySignIn`: that session ends.
+          """
+        }
+      }
+      else 'cannot verify' {
+        signalbox.funnel <- signalbox.identity 'Unauthenticated' {
+          notes """
+            - Fail closed; never a guess.
+          """
+        }
+      }
+    }
+    personB -> signalbox.web 'Acts in thread' {
+      notes """
+        - B's requests are checked on B's own membership.
+        - A losing access changes nothing for B.
+      """
+    }
+  }
+
+  dynamic view identity_identity_session {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/Sessions/Issue and use a session'
+    description 'R-IDN-03 (v1 partial; aliases T-DSK-13, T-MOB-07, T-REM-05, T-REM-07) · T-REM-06 (v1 yes)'
+
+    include personA, signalbox, signalbox.web, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.identity, platform, platform.workos
+
+    personA -> signalbox.web 'Signs in' {
+      notes """
+        - The same sign-in on web, desktop or mobile.
+      """
+    }
+    signalbox.web -> signalbox.identity 'AuthKit callback' {
+      notes """
+        - The client returns from AuthKit to the cloud origin with a code.
+      """
+    }
+    signalbox.identity -> platform.workos 'Exchange code' {
+      notes """
+        - AuthKit callback code for the user.
+      """
+    }
+    alt 'client' {
+      when 'web' {
+        signalbox.web <- signalbox.identity 'Session cookie' {
+          navigateTo state_session
+          notes """
+            - HttpOnly cookie on the cloud origin.
+          """
+        }
+      }
+      when 'desktop' {
+        signalbox.desktop <- signalbox.identity 'Bearer token' {
+          notes """
+            - Through the cloud-origin callback, then stored by the app.
+          """
+        }
+      }
+      else 'mobile' {
+        signalbox.mobile <- signalbox.identity 'DPoP bearer' {
+          notes """
+            - Bound to a key in secure storage; each request proves it.
+          """
+        }
+      }
+    }
+    opt 'socket' {
+      signalbox.web -> signalbox.funnel 'Upgrade socket' {
+        notes """
+          - WebSocket upgrade for live views.
+        """
+      }
+      signalbox.funnel -> signalbox.identity 'Session auth' {
+        notes """
+          - Authenticated from the Identity session; no separate ticket store.
+        """
+      }
+    }
+    loop 'every request' {
+      signalbox.funnel -> signalbox.identity 'Authenticate' {
+        navigateTo identity_identity_authenticate
+        notes """
+          - Fail closed on each one.
+        """
+      }
+    }
+  }
+
+  dynamic view identity_identity_session_refresh {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/Sessions/Refresh a session without dropping the socket'
+    description 'T-REM-25 (v1 yes) · refresh on expiry while the socket stays open'
+
+    include signalbox, signalbox.web, signalbox.funnel, signalbox.identity, platform, platform.workos
+
+    signalbox.web -> signalbox.identity 'Refresh near expiry' {
+      navigateTo identity_identity_session
+      notes """
+        - The client notices the session is about to expire.
+      """
+    }
+    try {
+      signalbox.identity -> platform.workos 'Refresh token' {
+        notes """
+          - WorkOS issues new tokens.
+        """
+      }
+      signalbox.web <- signalbox.identity 'Renewed session' {
+        notes """
+          - Same session, new expiry.
+        """
+      }
+      signalbox.web -> signalbox.funnel 'Rebind socket' {
+        navigateTo state_session
+        notes """
+          - The open socket keeps its subscriptions; nothing reconnects.
+        """
+      }
+    } catch 'refresh refused' {
+      signalbox.web <- signalbox.identity 'Unauthenticated' {
+        notes """
+          - The person signs in again.
+        """
+      }
+    }
+  }
+
+  // ───────────────────────── Workflows/Identity/SignIn ─────────────────────────
+
+  dynamic view identity_identity_device_code {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/SignIn/Sign in a CLI or new device by code'
+    description 'R-IDN-06 (v1 yes; aliases T-REM-29, T-REM-37) · R-IDN-21 (v1 no) · device code for the CLI, QR for a new device'
+
+    include personA, signalbox, signalbox.cli, signalbox.desktop, signalbox.mobile, signalbox.funnel, signalbox.identity, platform, platform.workos
+
+    alt 'new device' {
+      when 'CLI device code' {
+        personA -> signalbox.cli 'Runs login' {
+          notes """
+            - A signs the CLI in on their laptop.
+          """
+        }
+        signalbox.cli -> signalbox.identity 'Start device code' {
+          notes """
+            - Identity asks WorkOS for a device authorization.
+          """
+        }
+        signalbox.cli <- signalbox.identity 'Code and URL' {
+          notes """
+            - Printed in the terminal.
+          """
+        }
+        personA -> signalbox.desktop 'Approves code' {
+          notes """
+            - On any client where A is already signed in.
+          """
+        }
+        loop 'until approved' {
+          signalbox.cli -> signalbox.identity 'Poll' {
+            notes """
+              - Stops on approval or expiry.
+            """
+          }
+        }
+        signalbox.cli <- signalbox.identity 'Session' {
+          navigateTo folders_modelgateway_laptop_pool
+          notes """
+            - The CLI can now mint a local key for a Place.
+          """
+        }
+      }
+      else 'QR from phone' {
+        signalbox.desktop -> signalbox.identity 'Request pairing' {
+          notes """
+            - The new desktop shows a QR code, WhatsApp Web style.
+          """
+        }
+        personA -> signalbox.mobile 'Scans QR' {
+          notes """
+            - A's signed-in phone scans it.
+          """
+        }
+        signalbox.mobile -> signalbox.funnel 'Approves pairing' {
+          notes """
+            - Human approval on a trusted device.
+          """
+        }
+        signalbox.funnel -> signalbox.identity 'Approve pairing' {
+          notes """
+            - Identity binds the new device to A.
+          """
+        }
+        signalbox.desktop <- signalbox.identity 'Session' {
+          navigateTo person_devices_register
+          notes """
+            - The desktop is signed in and registers as a device.
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view identity_identity_mcp_signin {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/SignIn/Sign in an outside MCP client'
+    description 'R-IDN-07 (v1 yes; alias T-MCP-02) · each person pastes their own folder URL; the placeId is per person'
+
+    include personA, personB, mcpClient, signalbox, signalbox.gateway, signalbox.identity, platform, platform.workos
+
+    personA -> mcpClient 'Pastes Team URL' {
+      notes """
+        - From **Copy MCP URL** on folder Team.
+      """
+    }
+    mcpClient -> signalbox.gateway 'Connects' {
+      notes """
+        - Gateway answers 401 with resource metadata.
+      """
+    }
+    mcpClient -> platform.workos 'OAuth (CIMD/DCR)' {
+      notes """
+        - AuthKit is the authorization server; the resource indicator names this Place.
+      """
+    }
+    personA -> platform.workos 'Consents' {
+      notes """
+        - Human only.
+      """
+    }
+    mcpClient -> signalbox.gateway 'Calls with bearer' {
+      notes """
+        - Every MCP request carries the bearer.
+      """
+    }
+    signalbox.gateway -> signalbox.identity 'Authenticate' {
+      navigateTo identity_identity_agent_identities
+      notes """
+        - Yields `McpSessionActor{person, placeId}`.
+      """
+    }
+    alt 'who presents it' {
+      when 'A, its owner' {
+        mcpClient <- signalbox.gateway 'Tools at Team' {
+          navigateTo work_agenttools_outside_agent_connect
+          notes """
+            - Exactly what resolved at Team for an external session.
+          """
+        }
+      }
+      else "B with A's URL" {
+        personB -> mcpClient "Reuses A's URL" {
+          notes """
+            - B pasted A's URL instead of their own.
+          """
+        }
+        signalbox.gateway <- signalbox.identity 'Denied' {
+          notes """
+            - A `placeId` is minted per person; B copies their own URL.
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view identity_identity_signin {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/SignIn/Sign in, first time or returning'
+    description 'R-IDN-01 (v1 partial) · R-IDN-02 (v1 yes) · R-IDN-24 (v1 no) · always the personal organization, never a picker'
+
+    include personA, personB, signalbox, signalbox.web, signalbox.funnel, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personA -> signalbox.web 'Picks provider' {
+      notes """
+        - Google, GitHub, Apple or email code.
+      """
+    }
+    signalbox.web -> signalbox.funnel 'Sign-in request' {
+      notes """
+        - Funnel decodes and calls Identity.
+      """
+    }
+    signalbox.funnel -> signalbox.identity 'Sign in' {
+      notes """
+        - `signIn(returnTo)`.
+      """
+    }
+    signalbox.identity -> platform.workos 'AuthKit' {
+      notes """
+        - Hosted sign-in, then the callback.
+      """
+    }
+    opt 'Radar (not v1)' {
+      signalbox.identity -> platform.workos 'Fraud signal' {
+        notes """
+          - Radar in log mode; never blocks.
+        """
+      }
+    }
+    signalbox.identity -> platform.workos 'Personal organization' {
+      notes """
+        - Never an organization picker; `organization_selection_required` is a bug.
+      """
+    }
+    alt 'first time or returning' {
+      when 'first sign-in' {
+        signalbox.identity -> signalbox.tree 'Create top level' {
+          navigateTo identity_identity_sign_up
+          notes """
+            - Person, top level with Personal and Work; default automations later.
+          """
+        }
+      }
+      else 'returning' {
+        signalbox.identity -> signalbox.tree 'Load Person' {
+          notes """
+            - Mounts and devices as left.
+          """
+        }
+      }
+    }
+    signalbox.funnel <- signalbox.identity 'Session' {
+      navigateTo identity_identity_session
+      notes """
+        - Cookie, bearer or DPoP depending on the client.
+      """
+    }
+    signalbox.web -> personA 'Shows Home' {
+      navigateTo state_session
+      notes """
+        - Personal, Work, and Company mounted under Work.
+      """
+    }
+    personB -> signalbox.web 'Signs in' {
+      notes """
+        - Same path; B lands in B's own personal organization with Company under B's Work.
+      """
+    }
+  }
+
+  dynamic view identity_identity_test_signin {
+    #v1
+    variant sequence
+    title 'Workflows/Identity/SignIn/Sign in with a test identity'
+    description 'R-IDN-23 (v1 yes; alias T-REM-13) · preview and dev accept, production refuses'
+
+    include operator, build, build.review, signalbox, signalbox.web, signalbox.identity, platform, platform.workos
+
+    operator -> build.review 'Runs e2e' {
+      notes """
+        - The operator (or CI) starts an e2e run.
+      """
+    }
+    build.review -> signalbox.web 'Starts e2e sign-in' {
+      notes """
+        - The run drives the web client on a preview.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Signed test identity' {
+      notes """
+        - The signature proves it came from our test tooling.
+      """
+    }
+    alt 'environment' {
+      when 'preview or dev' {
+        signalbox.identity -> platform.workos 'E2E sandbox' {
+          notes """
+            - A WorkOS sandbox user, never a real one.
+          """
+        }
+        signalbox.web <- signalbox.identity 'Session' {
+          navigateTo identity_identity_test_identities
+          notes """
+            - The run proceeds as the test person.
+          """
+        }
+      }
+      else 'production' {
+        signalbox.web <- signalbox.identity 'Refused' {
+          notes """
+            - Refused in code, even with secrets present.
+          """
+        }
+      }
+    }
+  }
+
+  // ───────────────────────── Workflows/Organization/Members ─────────────────────────
+
+  dynamic view organization_identity_company_join {
+    #v1
+    variant sequence
+    title 'Workflows/Organization/Members/An organization joins via Google Workspace'
+    description 'R-IDN-08 (v1 yes) · the admin signs in with Google; the organization gets folder Company'
+
+    include personC, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos, services, services.google
+
+    personC -> signalbox.web 'Signs in with Google' {
+      notes """
+        - C's first sign-in with the company Workspace account.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Sign in' {
+      notes """
+        - C lands in C's personal organization, as always.
+      """
+    }
+    signalbox.identity -> platform.workos 'AuthKit' {
+      notes """
+        - Hosted sign-in with Google as the provider.
+      """
+    }
+    platform.workos -> services.google 'Workspace sign-in' {
+      notes """
+        - Google returns the company domain.
+      """
+    }
+    signalbox.identity -> platform.workos 'Create organization' {
+      notes """
+        - Verified domain and JIT, so colleagues join by signing in.
+      """
+    }
+    platform.workos -> signalbox.ingress 'Membership webhook' {
+      notes """
+        - C's membership with role admin.
+      """
+    }
+    signalbox.ingress -> signalbox.identity 'Membership' {
+      notes """
+        - Ingress verifies and hands over; Identity owns the sync.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Make folder Company' {
+      notes """
+        - `Tree.change`: folder Company (owner: organization), one Level.
+        - Optionally C lends their own Pool P4 in, so Company works before it has a pool of its own (an explicit loan).
+      """
+    }
+    signalbox.identity -> signalbox.tree 'C Admin, mounted' {
+      navigateTo organization_identity_member_join
+      notes """
+        - Organization Admin = Admin at Company top.
+        - Company appears under C's Work; colleagues follow the same way (sub-flow).
+      """
+    }
+    opt 'Enterprise' {
+      personC -> signalbox.web 'Upgrades billing' {
+        navigateTo folders_access_enterprise_flag
+        notes """
+          - Sets Enterprise on folder Company.
+        """
+      }
+      signalbox.web -> signalbox.tree 'Enterprise flag' {
+        navigateTo organization_identity_company_sso
+        notes """
+          - Unlocks SSO beyond Google.
+        """
+      }
+    }
+  }
+
+  dynamic view organization_identity_company_sso {
+    variant sequence
+    title 'Workflows/Organization/Members/Set up organization SSO beyond Google'
+    description 'R-IDN-19 (v1 no) · Okta and others through the WorkOS Admin Portal, gated by Enterprise'
+
+    include personC, signalbox, signalbox.web, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Opens SSO setup' {
+      notes """
+        - Folder Company › Members › Set up SSO.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Request SSO setup' {
+      notes """
+        - Admin-only; Identity checks the flag.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Check Enterprise' {
+      navigateTo folders_access_enterprise_flag
+      notes """
+        - The flag lives on folder Company.
+      """
+    }
+    alt 'Enterprise flag' {
+      when 'set' {
+        signalbox.identity -> platform.workos 'Admin Portal link' {
+          notes """
+            - A one-time Admin Portal link with SSO intent.
+          """
+        }
+        personC -> platform.workos 'Configures Okta' {
+          navigateTo organization_identity_company_join
+          notes """
+            - Members now sign in through the company's SSO.
+          """
+        }
+      }
+      else 'not set' {
+        signalbox.web <- signalbox.identity 'Upgrade first' {
+          notes """
+            - Shows the Enterprise upgrade instead.
+          """
+        }
+      }
+    }
+  }
+
+  dynamic view organization_identity_leave {
+    #v1
+    variant sequence
+    title 'Workflows/Organization/Members/Leave, be removed from, or rejoin an organization'
+    description 'R-ACC-15 · R-ACC-16 · R-IDN-11 · R-IDN-12 (v1 partial) · one path for leaving and removal; rejoin reuses the MountRef'
+
+    include personA, personC, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    alt 'how membership ends' {
+      when 'A leaves' {
+        personA -> signalbox.web 'Leaves Company' {
+          notes """
+            - Settings › Organizations › Leave.
+          """
+        }
+      }
+      else 'C removes A' {
+        personC -> signalbox.web 'Removes A' {
+          notes """
+            - Folder Company › Members › Remove A; same path from here on.
+          """
+        }
+      }
+    }
+    signalbox.web -> signalbox.identity 'End membership' {
+      notes """
+        - Identity does not change roles itself; it asks WorkOS.
+      """
+    }
+    signalbox.identity -> platform.workos 'Delete membership' {
+      notes """
+        - The WorkOS membership is deleted.
+      """
+    }
+    platform.workos -> signalbox.ingress 'Membership deleted' {
+      notes """
+        - The webhook is the one source of truth, also for changes made in WorkOS directly.
+      """
+    }
+    signalbox.ingress -> signalbox.identity 'Membership loss' {
+      navigateTo organization_identity_membership_webhook
+      notes """
+        - At least once, ordered by event time.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Role none, unmount' {
+      navigateTo state_mount
+      notes """
+        - Role gone on Company: access ends on the leaver's next request.
+        - The `MountRef` is kept inactive per (person, Company). If the leaver owned anything there, see owner transfer.
+      """
+    }
+    signalbox.web -> personA 'Access ended' {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Private chats sealed; threads lose `via` and resolve on Company only; NeedsPool asks go to C.
+        - A keeps account, assistant, personal folders and pools.
+      """
+    }
+    opt 'rejoin' {
+      platform.workos -> signalbox.ingress 'Membership created' {
+        notes """
+          - Re-invited, or back by domain JIT.
+        """
+      }
+      signalbox.ingress -> signalbox.identity 'Membership' {
+        notes """
+          - Same verified, idempotent path.
+        """
+      }
+      signalbox.identity -> signalbox.tree 'Reactivate mount' {
+        navigateTo person_leaving_rejoin
+        notes """
+          - Same `MountRef`; `via` returns at the next resolve, sealed chats unseal.
+        """
+      }
+    }
+  }
+
+  dynamic view organization_identity_member_join {
+    #v1
+    variant sequence
+    title 'Workflows/Organization/Members/A colleague joins by verified domain'
+    description 'R-IDN-09 (v1 yes) · domain JIT → role mirror on folder Company → a stable mount under Work'
+
+    include personB, personA, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personB -> signalbox.web 'Signs in with Google' {
+      notes """
+        - B's Google account has the company's verified domain.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Sign in' {
+      notes """
+        - B lands in B's personal organization, as always.
+      """
+    }
+    platform.workos -> signalbox.ingress 'Membership created' {
+      navigateTo organization_identity_membership_webhook
+      notes """
+        - WorkOS added B by domain JIT.
+      """
+    }
+    signalbox.ingress -> signalbox.identity 'Membership' {
+      notes """
+        - Idempotent by event; duplicates drop.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Role: Member' {
+      notes """
+        - Member at Company, inherited down to Team.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Mount under Work' {
+      navigateTo state_mount
+      notes """
+        - Stable `MountRef` per (B, Company).
+      """
+    }
+    personA -> signalbox.web 'Sees B in Members' {
+      navigateTo organization_identity_company_join
+      notes """
+        - Same Level actor, now one more mount; nothing in A's tree changes.
+      """
+    }
+  }
+
+  dynamic view organization_identity_membership_webhook {
+    #v1
+    variant sequence
+    title 'Workflows/Organization/Members/Mirror membership and role webhooks'
+    description 'R-ACC-02 · R-IDN-13 (v1 yes) · at least once, ordered by WorkOS event time, idempotent'
+
+    include signalbox, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    loop 'each event' {
+      platform.workos -> signalbox.ingress 'Webhook event' {
+        notes """
+          - Membership or role change; may arrive twice or out of order.
+        """
+      }
+      signalbox.ingress -> signalbox.identity 'Verified event' {
+        notes """
+          - Signature checked at the door.
+        """
+      }
+      alt 'event' {
+        when 'old or duplicate' {
+          signalbox.identity -> signalbox.identity 'Drop' {
+            notes """
+              - Event time not newer than the last applied one.
+            """
+          }
+        }
+        when 'member added' {
+          signalbox.identity -> signalbox.tree 'Role: Member' {
+            navigateTo organization_identity_member_join
+            notes """
+              - Then a mount under the member's Work.
+            """
+          }
+        }
+        when 'role changed' {
+          signalbox.identity -> signalbox.tree 'Role: Admin' {
+            navigateTo folders_access_roles
+            notes """
+              - Organization Admin = Admin at Company top.
+            """
+          }
+        }
+        else 'member removed' {
+          signalbox.identity -> signalbox.tree 'Role: none' {
+            navigateTo organization_identity_leave
+            notes """
+              - Then unmount; access ends next request.
+            """
+          }
+        }
+      }
+      platform.workos <- signalbox.ingress 'Ack' {
+        notes """
+          - Only after the change committed; otherwise WorkOS redelivers.
+        """
+      }
+    }
+  }
+
+  dynamic view organization_identity_org_invite {
+    #v1
+    variant sequence
+    title 'Workflows/Organization/Members/Invite someone into folder Company by email'
+    description 'R-IDN-10 (v1 yes) · a WorkOS invitation for people outside the verified domain'
+
+    include personC, personB, personD, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos
+
+    personC -> signalbox.web 'Invites by email' {
+      notes """
+        - Folder Company › Members › Invite; B's address is outside the domain.
+      """
+    }
+    signalbox.web -> signalbox.identity 'Create invite' {
+      navigateTo state_invitation
+      notes """
+        - Invitation is pending until B answers.
+      """
+    }
+    signalbox.identity -> platform.workos 'WorkOS invitation' {
+      notes """
+        - WorkOS tracks the invitation and sends the email.
+      """
+    }
+    platform.workos -> personB 'Invitation email' {
+      notes """
+        - WorkOS sends it.
+      """
+    }
+    personB -> signalbox.web 'Accepts' {
+      notes """
+        - Signs in; lands in B's personal organization.
+      """
+    }
+    platform.workos -> signalbox.ingress 'Membership created' {
+      notes """
+        - Same webhook as a domain join.
+      """
+    }
+    signalbox.ingress -> signalbox.identity 'Membership' {
+      notes """
+        - Idempotent by event.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Member + mount' {
+      navigateTo organization_identity_member_join
+      notes """
+        - Member at Company; Company appears under B's Work. Same as a domain join from here.
+      """
+    }
+    opt 'outside collaborator: Team only' {
+      personC -> signalbox.web 'Shares Team with D' {
+        navigateTo folders_access_folder_invite
+        notes """
+          - D is outside the organization and gets folder Team only, not all of Company.
+          - No WorkOS membership: a role on Team, through the Share dialog.
+        """
+      }
+      signalbox.web -> personD 'Team in Shared with me' {
+        notes """
+          - D's own top level shows Team under "Shared with me"; nothing of Company above it.
+        """
+      }
+    }
+  }
+
+  // ───────────────────────── Workflows/Person/Leaving ─────────────────────────
+
+  dynamic view person_leaving_leave_org {
+    variant sequence
+    title 'Workflows/Person/Leaving/Leave an organization or be removed'
+    description 'P-OUT-03 (v1 partial) · P-OUT-04 · P-OUT-05 · P-OUT-07 (v1 no) · what leaving changes for A, B and C'
+
+    include personA, personB, personC, signalbox, signalbox.identity, signalbox.tree, signalbox.thread, signalbox.attention
+
+    opt 'before leaving' {
+      personA -> signalbox.thread 'Moves chats out' {
+        navigateTo person_leaving_move_chats_out
+        notes """
+          - A can take their private chats to Personal first.
+        """
+      }
+    }
+    signalbox.identity -> signalbox.tree 'Unmount Company' {
+      navigateTo organization_identity_leave
+      notes """
+        - From the membership webhook; role gone, mount inactive.
+      """
+    }
+    opt 'turn running' {
+      signalbox.thread -> signalbox.thread 'Finish on frozen Scope' {
+        notes """
+          - A's running turn ends on the Scope it started with.
+        """
+      }
+      personA -> signalbox.identity 'Next request' {
+        notes """
+          - Refused with `Revoked`.
+        """
+      }
+    }
+    signalbox.tree -> signalbox.thread 'Seal private chats' {
+      navigateTo state_thread
+      notes """
+        - Kept, readable by nobody, admins included.
+      """
+    }
+    opt 'cleanup' {
+      personC -> signalbox.thread 'Trash sealed chat' {
+        notes """
+          - The only thing C can do with them.
+        """
+      }
+    }
+    signalbox.thread -> signalbox.tree 'Resolve without via' {
+      notes """
+        - Threads filed via A's mount resolve on Company's chain only.
+      """
+    }
+    opt 'nothing placed' {
+      signalbox.thread -> signalbox.attention 'NeedsPool to C' {
+        notes """
+          - A Blocker ask in C's lanes: place a pool on Company.
+        """
+      }
+    }
+    personB -> signalbox.thread 'Keeps working' {
+      notes """
+        - B's mount is untouched; the shared thread resolves the same for B as for anyone.
+      """
+    }
+    personA -> signalbox.tree 'Keeps own tree' {
+      navigateTo person_leaving_rejoin
+      notes """
+        - Account, assistant, personal folders and pools stay with A.
+      """
+    }
+  }
+
+  dynamic view person_leaving_move_chats_out {
+    variant sequence
+    title 'Workflows/Person/Leaving/Move my private chats out before leaving'
+    description "P-OUT-09 (v1 no) · the confirm lists Company sources used; via comes from A's own tree"
+
+    include personA, signalbox, signalbox.web, signalbox.thread, signalbox.tree, signalbox.search
+
+    personA -> signalbox.web 'Selects private chats' {
+      notes """
+        - A's private chats in Team, moving to Personal.
+      """
+    }
+    signalbox.web -> signalbox.thread 'Preview move' {
+      notes """
+        - What the chats used from Company.
+      """
+    }
+    signalbox.web <- signalbox.thread 'Company sources used' {
+      notes """
+        - "Used Confluence and Google · Company; these won't reach Personal."
+      """
+    }
+    personA -> signalbox.web 'Confirms' {
+      notes """
+        - A cross-owner move.
+      """
+    }
+    signalbox.web -> signalbox.thread 'Move' {
+      navigateTo folders_access_move_chat_out
+      notes """
+        - `via` comes from A's own tree: none, Personal is A's.
+      """
+    }
+    signalbox.thread -> signalbox.tree 'Update catalogs' {
+      notes """
+        - Out of Team's catalog, into Personal's.
+      """
+    }
+    signalbox.thread -> signalbox.search 'Reindex' {
+      navigateTo person_leaving_leave_org
+      notes """
+        - Into A's own owner-root shards.
+      """
+    }
+  }
+
+  dynamic view person_leaving_rejoin {
+    variant sequence
+    title 'Workflows/Person/Leaving/Rejoin an organization'
+    description 'P-OUT-06 (v1 no) · the same MountRef reactivates, via returns, sealed chats unseal'
+
+    include personA, personC, signalbox, signalbox.identity, signalbox.tree, signalbox.thread, platform, platform.workos
+
+    alt 'how' {
+      when 'C re-invites' {
+        personC -> signalbox.identity 'Invites A' {
+          notes """
+            - A WorkOS invitation to A's address.
+          """
+        }
+      }
+      else 'domain sign-in' {
+        personA -> signalbox.identity 'Signs in' {
+          notes """
+            - JIT by verified domain.
+          """
+        }
+      }
+    }
+    platform.workos -> signalbox.identity 'Membership created' {
+      navigateTo organization_identity_leave
+      notes """
+        - Via Ingress, like any membership event.
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Reactivate mount' {
+      notes """
+        - The same `MountRef` per (A, Company).
+      """
+    }
+    signalbox.tree -> signalbox.thread 'Unseal chats' {
+      notes """
+        - A's sealed private chats are readable by A again.
+      """
+    }
+    signalbox.thread -> signalbox.tree 'Resolve with via' {
+      navigateTo person_leaving_leave_org
+      notes """
+        - `via` returns at the next resolve; A's top-level pool reaches again.
+      """
+    }
+  }
+}

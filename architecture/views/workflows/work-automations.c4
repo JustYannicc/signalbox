@@ -1,0 +1,1407 @@
+// Automations (define, trigger, run, steps, defaults) and level agents.
+// Run threads: hier.company.team.runThread (folder Team) and hier.company.runCo (folder Company).
+// Other modules stay black boxes: steps target the module (signalbox.thread, signalbox.tree, …),
+// never its actors or parts, and the module is then not also included as a group.
+// Composition (corr. 15): a parent automation's `w.start` step navigates into the child's view.
+views {
+
+  // ───────────────────────────── Journeys ─────────────────────────────
+
+  dynamic view journey_automations_block_library {
+    variant sequence
+    title 'Journeys/Automations/Browse the block library'
+    description 'W-AUT-32 · Person A adds a reusable block through the normal change flow'
+    include personA, signalbox.web, signalbox.automations, signalbox.marketplace
+
+    personA -> signalbox.web 'opens Blocks' {
+      notes """
+        - On a folder's Automations page, A opens the block library
+        - A block is a reusable trigger, step or small sub-automation
+      """
+    }
+    signalbox.web -> signalbox.automations 'lists blocks' {
+      navigateTo mkt_use_automation
+      notes """
+        - Blocks resolve like any placement: this folder → parents → built-ins, nearest wins
+        - Marketplace blocks are listed apart and placed only when A installs one
+      """
+    }
+    signalbox.web <- signalbox.automations 'blocks with diagrams' {
+      notes 'Each block shows the LikeC4 view the compiler emitted from its source (corr. 15)'
+    }
+    personA -> signalbox.web 'picks a block'
+    opt 'from the marketplace' {
+      signalbox.web -> signalbox.marketplace 'installs at folder' {
+        navigateTo mkt_use_automation
+        notes """
+          - Install = placement: the block lands as a definition at this folder only, reaching below it
+          - Nothing lands on A's top level by itself
+        """
+      }
+    }
+    signalbox.web -> signalbox.automations 'adds block' {
+      navigateTo work_automations_define
+      notes """
+        - Adding a block is a normal change: compile, validate, new version
+        - The automation stays disabled until A enables it
+      """
+    }
+    personA <- signalbox.web 'sees new version'
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view journey_automations_rehearse {
+    variant sequence
+    title 'Journeys/Automations/Rehearse an automation before enabling'
+    description 'W-AUT-31 · dry run against safe app copies before the first real run (#317, open)'
+    include personA, signalbox.web, signalbox.automations
+
+    personA -> signalbox.web 'clicks Rehearse' {
+      notes """
+        - The automation is still disabled; A wants to see what it would do
+        - The button sits beside the diagram
+      """
+    }
+    signalbox.web -> signalbox.automations 'rehearsal trigger' {
+      notes """
+        - `trigger(Manual)` flagged as a rehearsal: same pinned version, steps and home chain
+        - Tool calls hit safe app copies (sandbox accounts, recorded fixtures); writes are captured, never sent
+      """
+    }
+    signalbox.automations -> signalbox.automations 'runs on copies' {
+      notes """
+        - `w.ask` asks only A; nobody else is pushed
+        - Model steps still spend from the folder's pool, so cost is honest
+      """
+    }
+    signalbox.web <- signalbox.automations 'would-have effects' {
+      notes """
+        - Each step lights up on the LikeC4 view with what it would have changed
+        - The rehearsal is a run thread A can reopen
+      """
+    }
+    alt 'A decides' {
+      when 'looks right' {
+        personA -> signalbox.web 'clicks Enable'
+        signalbox.web -> signalbox.automations 'change(Enable)' {
+          navigateTo state_automation
+          notes 'Disabled → Enabled; the next trigger starts a real run'
+        }
+      }
+      else 'needs changes' {
+        personA -> signalbox.web 'Change with agent' {
+          navigateTo work_automations_define
+          notes 'Back to the level agent with the rehearsal attached as evidence'
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view journey_automations_runs_page {
+    variant sequence
+    title 'Journeys/Automations/Runs beside the diagram'
+    description 'W-AUT-22 (aliases T-SCH-12) · diagram on one side, its run threads beside it'
+    include personA, signalbox.web, signalbox.automations, hier.company.team.runThread
+
+    personA -> signalbox.web 'opens an automation' {
+      notes """
+        - Folder Team page → Automations → one automation: "what does it do, what did it do lately"
+        - B sees the same page and the same runs: both see folder Team through their mount of Company
+      """
+    }
+    signalbox.web -> signalbox.automations 'diagram and runs'
+    signalbox.web <- signalbox.automations 'view and run list' {
+      notes """
+        - Diagram: the LikeC4 view emitted for the pinned version (corr. 15)
+        - Runs: Thread{kind: run} at the automation's home, newest first; replaces the T3 delivery log
+      """
+    }
+    personA -> signalbox.web 'opens a run'
+    signalbox.web -> hier.company.team.runThread 'watches run thread' {
+      navigateTo work_automations_run
+      notes """
+        - A run is an ordinary thread: same view, history and search
+        - The current step is highlighted on the diagram as events arrive
+      """
+    }
+    opt 'A chats with the run' {
+      personA -> signalbox.web 'asks why'
+      signalbox.web -> hier.company.team.runThread 'sends message' {
+        notes """
+          - The level agent answers; it is responsible for its folder's automations
+          - Chatting never rewrites steps; a change goes through Define
+        """
+      }
+    }
+    signalbox.web <- hier.company.team.runThread 'live events'
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  // ───────────────────────────── State: Automation ─────────────────────────────
+
+  dynamic view state_automation {
+    variant sequence
+    title 'States/Automation/Walk through'
+    description 'W-AUT-19 (aliases T-SCH-02) · Draft → Enabled ⇄ Disabled, Pin, Move, Deleted; agents delete only through the gate'
+    include personA, personC, hier.company.agentCo, signalbox.operations, signalbox.automations, signalbox.tree, signalbox.attention
+
+    personA -> signalbox.automations 'opens to change' {
+      notes """
+        - Example: "Weekly report" at folder Team. A (member) may change it there; C (admin) may change anything under Company
+        - `Tree.can` on the automation's home decides, never who created it
+      """
+    }
+    alt 'transition' {
+      when 'Draft → Enabled' {
+        personA -> signalbox.automations 'change(Enable)' {
+          navigateTo work_automations_define
+          notes 'A published version exists; enabling turns its triggers on'
+        }
+        signalbox.automations -> signalbox.tree 'tick rows on' {
+          notes 'Ticks are rows on the home folder (Level) alarm table, owned by Tree'
+        }
+      }
+      when 'Enabled → Disabled' {
+        personA -> signalbox.automations 'change(Disable)'
+        signalbox.automations -> signalbox.tree 'tick rows off' {
+          notes 'Runs in flight finish on their version; no new runs start'
+        }
+      }
+      when 'Pin version' {
+        personA -> signalbox.automations 'change(Pin)' {
+          notes """
+            - New runs start on the pinned version (stable Dynamic Worker id per version)
+            - Runs in flight keep the version they started with
+          """
+        }
+      }
+      when 'Move home' {
+        personC -> signalbox.automations 'change(Move)' {
+          navigateTo work_automations_move
+          notes 'Home changes; the next run resolves on the new chain'
+        }
+      }
+      when '→ Deleted by a person' {
+        personC -> signalbox.automations 'change(Delete)' {
+          notes """
+            - Placement removed, tick rows dropped
+            - Its run threads stay in history and trash like any thread
+          """
+        }
+      }
+      else '→ Deleted by an agent' {
+        hier.company.agentCo -> signalbox.operations 'proposes delete' {
+          notes 'Delete is destructive, so an agent call never applies directly'
+        }
+        signalbox.operations -> signalbox.attention 'Ready ask (gate)' {
+          navigateTo person_pipeline_ready_gate
+          notes 'The decision gate asks the decider at the home: C for folder Company'
+        }
+        signalbox.attention -> personC 'Ready lane'
+        personC -> signalbox.operations 'approves' {
+          notes 'The answer goes back into the agent thread; Attention never carries it'
+        }
+        signalbox.operations -> signalbox.automations 'change(Delete)'
+      }
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  // ───────────────────────────── Defaults ─────────────────────────────
+
+  dynamic view work_automations_defaults {
+    variant sequence
+    title 'Workflows/Work/Automations/Defaults/Default automations'
+    description 'W-AUT-27, W-AUT-29 (aliases T-THR-17) · where defaults are placed and how a nearer placement overrides them'
+    include personA, personC, signalbox.identity, signalbox.tree, signalbox.automations, hier.topA, hier.company
+
+    personA -> signalbox.identity 'signs up' {
+      navigateTo identity_identity_sign_up
+      notes 'A new person gets a top level, the first home for defaults'
+    }
+    signalbox.identity -> signalbox.tree 'creates top level'
+    signalbox.tree -> signalbox.automations 'level created' {
+      notes 'Every top level and every organization-owned root folder gets the built-in set'
+    }
+    signalbox.automations -> hier.topA 'places defaults' {
+      notes """
+        - Guards, unmovable: Decision gate, Machine reconcile
+        - Overridable, reach below: Completed-turn push, Chat auto-archive, Capture routing, Weekly Considering review, Site change watch
+        - Each is an editable definition, never special-case code (principle 8)
+      """
+    }
+    personC -> signalbox.tree 'makes folder Company' {
+      navigateTo folders_tree_make_org
+      notes 'Owner: the organization; C is admin; it mounts under A and B Work folders'
+    }
+    signalbox.tree -> signalbox.automations 'folder created'
+    signalbox.automations -> hier.company 'places defaults' {
+      navigateTo work_automations_self_healing
+      notes """
+        - Git-host sync, PR watch, CI on Base, Base refresh and status, Nightly rebuild, Merge gate, Payment, Custody sweeper, Release followers, Idle-drive eviction, Self-healing loop
+        - Plus the guards again
+      """
+    }
+    personC -> signalbox.automations 'edits copy at Team' {
+      navigateTo work_automations_define
+      notes """
+        - A copy of "PR watch" placed at folder Team overrides Company's for Team threads: nearest wins
+        - Guards cannot be overridden or moved
+      """
+    }
+    signalbox.automations -> signalbox.tree 'places at Team' {
+      navigateTo work_automations_compose
+      notes """
+        - Team threads now resolve Team's copy; other Company folders keep Company's
+        - A and B get the same behavior in the shared thread: position decides, not who sends
+      """
+    }
+
+    include signalbox, hier
+    style signalbox, hier { color muted; opacity 10% }
+  }
+
+  dynamic view work_automations_metrics_rules {
+    variant sequence
+    title 'Workflows/Work/Automations/Defaults/Needed-no-one rate and proposed rules'
+    description 'W-AUT-23 · run ends are measured; exceptions propose rules; accepted rules become Learner statements'
+    include personA, signalbox.web, signalbox.attention, signalbox.automations, signalbox.learner, hier.company.team.runThread
+
+    signalbox.automations -> signalbox.automations 'measures run end' {
+      navigateTo operations_ops_self_healing
+      notes """
+        - Each run ends as needed-no-one, or as an exception (a person answered, a retry, a manual fix)
+        - The needed-no-one rate per automation per level is its health number
+      """
+    }
+    signalbox.automations -> hier.company.team.runThread 'proposes a rule' {
+      notes 'Repeated exceptions of one kind → "next time, do X", raised as a Considering ask in the run thread'
+    }
+    hier.company.team.runThread -> signalbox.attention 'Considering ask'
+    signalbox.attention -> personA 'Considering lane' {
+      notes """
+        - The automation's home is folder Team; A is the member responsible for it, so the ask lands in A's own lanes
+        - It waits as time, never a badge
+      """
+    }
+    personA -> signalbox.web 'accepts rule'
+    signalbox.web -> hier.company.team.runThread 'sends answer' {
+      notes 'Answers go into the thread, never through Attention'
+    }
+    hier.company.team.runThread -> signalbox.learner 'records decision' {
+      navigateTo work_levelagents_learner
+      notes """
+        - Accepted → a Learner statement at that level; future asks of that kind route by it
+        - Rejected is recorded too, so the same proposal is not raised again
+      """
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_resume_limited {
+    variant sequence
+    title 'Workflows/Work/Automations/Defaults/Resume limited threads when the pool recovers'
+    description 'T-APR-14 · a default automation waits on pool health, then resumes limited threads (unconfirmed)'
+    include personC, hier.company.team.sharedThread, signalbox.automations, signalbox.models, signalbox.harness, signalbox.gateway, signalbox.attention
+
+    hier.company.team.sharedThread -> signalbox.automations 'thread limited' {
+      navigateTo work_turns_pool_exhausted
+      notes """
+        - The shared Team thread hit `PoolExhausted` on pool P2 (placed on folder Company)
+        - A and B both see it Limited: the pool is out, not either person
+      """
+    }
+    signalbox.automations -> signalbox.automations 'starts resume run' {
+      navigateTo work_automations_defaults
+      notes 'An editable default at folder Company, started by the app event'
+    }
+    signalbox.automations -> signalbox.models 'waits for health' {
+      navigateTo folders_pools_account_health
+      notes """
+        - `w.waitForEvent(pool.healthy)`: the run sleeps at no cost, no sleep loops
+        - Models probes its accounts; a reset time passing or a probe success flips one healthy
+      """
+    }
+    alt 'pool' {
+      when 'recovers' {
+        signalbox.automations <- signalbox.models 'pool healthy'
+        signalbox.automations -> hier.company.team.sharedThread 'w.agent resume' {
+          notes 'Stable requestId: a replayed step cannot send twice'
+        }
+        hier.company.team.sharedThread -> signalbox.harness 'turn resumes'
+        signalbox.harness -> signalbox.gateway 'model calls' {
+          notes 'The one model gateway, to a healthy account of pool P2'
+        }
+      }
+      else 'still exhausted at deadline' {
+        signalbox.automations -> signalbox.attention 'Blocker: place pool' {
+          navigateTo person_pipeline_blocker_raise
+          notes 'To whoever can place a pool at folder Team or above'
+        }
+        signalbox.attention -> personC 'Blocker lane' {
+          notes 'C, as admin of folder Company, can place or lend a pool there'
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_self_healing {
+    variant sequence
+    title 'Workflows/Work/Automations/Defaults/Self-healing loop'
+    description 'W-AUT-30 · alert → trace → repro test first → fix PR → Merge gate decides'
+    include telemetry.sentry, signalbox.ingress, signalbox.automations, signalbox.judge, signalbox.observability, signalbox.computer, hier.company.runCo, services.github
+
+    telemetry.sentry -> signalbox.ingress 'alert webhook' {
+      navigateTo operations_ops_self_healing
+      notes 'The Self-healing default sits where the drive is placed (folder Company)'
+    }
+    signalbox.ingress -> signalbox.automations 'trigger(Webhook)' {
+      navigateTo work_automations_webhook
+      notes 'Signature checked, delivery id deduped, payload is ids only'
+    }
+    signalbox.automations -> signalbox.judge 'new and actionable?' {
+      notes """
+        - `w.judge`: dedupes against fix runs already open for the same issue
+        - Low confidence or Insufficient → `w.ask`, never a guess
+      """
+    }
+    signalbox.automations -> signalbox.observability 'reads trace' {
+      notes 'evlog wide events and spans by ids, never content'
+    }
+    signalbox.automations -> hier.company.runCo 'starts run thread' {
+      notes 'The run and every machine it starts are paid by the folder pool, never a person'
+    }
+    hier.company.runCo -> signalbox.computer 'repro test first' {
+      notes """
+        - No fix starts without a test that fails on main
+        - The agent loop runs in the run thread; only the test commands run on a machine forked from the warm Base
+      """
+    }
+    alt 'repro' {
+      when 'reproduced' {
+        hier.company.runCo -> signalbox.computer 'fixes, test passes'
+        hier.company.runCo -> services.github 'opens fix PR' {
+          notes 'Pushed by Git-host sync; links the alert and the repro test'
+        }
+        signalbox.automations -> signalbox.automations 'w.start Merge gate' {
+          navigateTo person_pipeline_ready_merge_gate
+          notes """
+            - Composition: the child automation decides; the loop never merges itself
+            - Reversible → auto-apply; otherwise a Ready ask to the named decider
+          """
+        }
+      }
+      else 'not reproduced' {
+        hier.company.runCo -> signalbox.automations 'no repro' {
+          navigateTo work_levelagents_route_up
+          notes """
+            - The run ends with an ask: the Company agent first, then the responsible people as a Blocker
+            - No guess-fix ever ships
+          """
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company, telemetry, services
+    style signalbox, hier, telemetry, services { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  // ───────────────────────────── Define ─────────────────────────────
+
+  dynamic view work_automations_define {
+    variant sequence
+    title 'Workflows/Work/Automations/Define/Define or change an automation'
+    description 'W-AUT-01, W-AUT-02, W-AUT-26, W-LVL-09 (aliases T-MOB-24, T-SCH-01) · three entries, one compile-validate-define path'
+    include personC, personA, hier.company.agentCo, hier.asstA, signalbox.gateway, signalbox.automations, signalbox.tree
+
+    alt 'who starts it' {
+      when 'C at folder Company' {
+        personC -> hier.company.agentCo 'Change with agent' {
+          notes """
+            - The level agent owns its level's automations (no per-automation agents)
+            - A or B can do the same at any folder `Tree.can` lets them change; the home decides, not the person
+          """
+        }
+        hier.company.agentCo -> hier.company.agentCo 'compiles, validates' {
+          notes """
+            - Caller-side `packages/automation-compiler`: types, lint, LSP diagnostics
+            - Errors go back into the agent loop, not to the person
+          """
+        }
+        hier.company.agentCo -> signalbox.gateway 'automations.define' {
+          notes '`schedule_task` from any agent thread is an alias of this call; home = that thread folder'
+        }
+      }
+      else 'A via their assistant' {
+        personA -> hier.asstA 'change my digest' {
+          navigateTo person_assistant_change_automations
+          notes 'The assistant edits automations at its own level, A top level: coordination, not execution'
+        }
+        hier.asstA -> signalbox.gateway 'automations.define' {
+          notes 'Same compile and validate on the caller side; home = A top level'
+        }
+      }
+    }
+    signalbox.gateway -> signalbox.automations 'define(home, source)'
+    alt 'publish check' {
+      when 'agent publishes a merging one' {
+        signalbox.automations -> signalbox.gateway 'Denied' {
+          notes """
+            - Agents may draft merging automations, never publish them (#702)
+            - A person who can change the home (C at Company) publishes it
+          """
+        }
+      }
+      else 'valid' {
+        signalbox.automations -> signalbox.automations 'new version, view' {
+          notes """
+            - The compiler emits the LikeC4 view from the source (corr. 15)
+            - Versions are immutable; runs pin the version they start on
+          """
+        }
+        signalbox.automations -> signalbox.tree 'versioned placement' {
+          navigateTo state_automation
+          notes """
+            - At folder Company it reaches Team: A's and B's shared thread get it alike
+            - At A's top level it reaches only A's tree
+          """
+        }
+        signalbox.automations -> signalbox.gateway 'diagram, disabled' {
+          navigateTo journey_automations_rehearse
+          notes 'Back to the calling agent; stays disabled until a person enables it, rehearsing first is one click'
+        }
+      }
+    }
+    opt 'run it now' {
+      personC -> signalbox.automations 'Run' {
+        navigateTo work_automations_run
+      }
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_move {
+    variant sequence
+    title 'Workflows/Work/Automations/Define/Move an automation'
+    description 'W-AUT-20 · the next run resolves on the new home chain; the current run is untouched'
+    include personC, signalbox.web, signalbox.automations, signalbox.tree, hier.company.team.runThread, hier.company.runCo
+
+    personC -> signalbox.web 'moves to Company' {
+      notes """
+        - "Weekly report" moves from folder Team to folder Company
+        - C is admin of Company so may place there; A or B move only within folders they can change
+      """
+    }
+    signalbox.web -> signalbox.automations 'change(Move)' {
+      navigateTo state_automation
+    }
+    signalbox.automations -> signalbox.tree 'can C place?' {
+      navigateTo folders_tree_move
+      notes 'Same authority check as any placement move'
+    }
+    signalbox.automations -> signalbox.tree 'moves placement' {
+      notes """
+        - Unplaced at Team, placed at Company; tick rows move with it
+        - Same rule as moving a thread (#313)
+      """
+    }
+    signalbox.automations -> hier.company.team.runThread 'current run untouched' {
+      notes 'Finishes on the Team chain and its pinned version'
+    }
+    signalbox.automations -> hier.company.runCo 'next run at Company' {
+      navigateTo work_automations_run
+      notes """
+        - Resolves on the Company chain only; Team-only placements are now out of reach
+        - Usage of past runs is never reattributed
+      """
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_retire_scheduled_tasks {
+    variant sequence
+    title 'Workflows/Work/Automations/Define/Retire scheduled tasks'
+    description 'W-AUT-03 (aliases T-SET-20) · T3 scheduled tasks become automations at their folder'
+    include personA, signalbox.web, signalbox.funnel, signalbox.automations, signalbox.tree
+
+    signalbox.automations -> signalbox.automations 'converts each task' {
+      navigateTo work_automations_define
+      notes """
+        - One-shot migration: schedule → tick trigger, webhook → webhook trigger, prompt → `w.agent` step
+        - A task bound to a thread → `w.agent` targeting that thread
+      """
+    }
+    signalbox.automations -> signalbox.tree 'places at folder' {
+      notes 'Home = the folder of the task thread, else the top level; tick rows join its alarm table'
+    }
+    personA -> signalbox.web 'opens old link' {
+      notes 'The Settings entry is gone; only old links still reach the route'
+    }
+    signalbox.web -> signalbox.funnel 'old route'
+    signalbox.web <- signalbox.funnel 'redirects to Automations' {
+      navigateTo journey_automations_runs_page
+      notes 'A lands on the folder Automations page, where the converted task now lives'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────────── Runs ─────────────────────────────
+
+  dynamic view work_automations_compose {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/Compose automations'
+    description 'W-AUT-17 · w.start(name) resolves own folder → parents → built-ins; waits or detaches; the child never gets more access'
+    include hier.company.team.runThread, hier.company.runCo, signalbox.automations, signalbox.tree
+
+    hier.company.team.runThread -> signalbox.automations 'w.start child' {
+      navigateTo work_automations_run
+      notes """
+        - A parent run step starts a child automation by name, e.g. `w.start("Notify team")`
+        - Drill in: the step opens the child run (in the app, the child's LikeC4 view; corr. 15)
+      """
+    }
+    signalbox.automations -> signalbox.tree 'resolves name' {
+      navigateTo work_automations_defaults
+      notes 'Own folder → parents → built-ins; nearest wins like any placement'
+    }
+    signalbox.automations <- signalbox.tree 'definition and home'
+    signalbox.automations -> hier.company.runCo 'child run thread' {
+      notes """
+        - Runs at the child's own home, no `via`
+        - Scope capped at the parent's: a child never gets more access than its parent run
+      """
+    }
+    alt 'parent mode' {
+      when 'wait' {
+        signalbox.automations -> hier.company.team.runThread 'parent resumes' {
+          notes 'The child result arrives as a workflow event, not a poll'
+        }
+      }
+      else 'detach' {
+        signalbox.automations -> hier.company.team.runThread 'child ref only' {
+          notes 'The parent continues; the child keeps its own thread and history'
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_cross_owner_handoff {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/Cross-owner handoff'
+    description "W-AUT-25 · A's run asks B's agent; work runs on B's side with B's access; only the declared result crosses"
+    include personA, personB, signalbox.thread, signalbox.automations, signalbox.attention, hier.asstB, hier.topB.personalB.privateB
+
+    signalbox.thread -> signalbox.automations "asks B's agent" {
+      navigateTo person_assistant_cross_owner_handoff
+      notes """
+        - A run thread in A's folder Personal needs something only B's tree holds
+        - The `w.agent` step declares the result shape; that is all that may cross
+      """
+    }
+    signalbox.automations -> hier.asstB 'handoff request' {
+      notes "Lands in B's assistant thread, on B's side"
+    }
+    hier.asstB -> signalbox.attention 'Ready ask'
+    signalbox.attention -> personB 'Ready lane'
+    personB -> hier.asstB 'approves'
+    hier.asstB -> hier.topB.personalB.privateB 'delegates the work' {
+      notes """
+        - The assistant coordinates, never executes: a thread in B's tree does the work with B's access
+        - Nothing is lent to A; A's run never touches B's things
+      """
+    }
+    hier.asstB <- hier.topB.personalB.privateB 'result'
+    alt 'result' {
+      when 'B releases it' {
+        hier.asstB -> signalbox.thread 'declared result only' {
+          notes "A card in A's run records exactly what crossed"
+        }
+        personA <- signalbox.thread 'run continues'
+      }
+      else 'B declines' {
+        hier.asstB -> signalbox.thread 'Denied' {
+          navigateTo work_levelagents_out_of_reach
+          notes 'The run asks A next; the level agent may find another route'
+        }
+      }
+    }
+
+    include signalbox, hier, hier.topB, hier.topB.personalB
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.topB, hier.topB.personalB { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_retry {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/Run fails and retries'
+    description 'W-AUT-21 (aliases T-SCH-06) · retries reuse succeeded steps by step key; otherwise the level agent gets the ask'
+    include hier.company.agentCo, hier.company.runCo, signalbox.automations, signalbox.attention
+
+    signalbox.automations -> hier.company.runCo 'step 3 failed' {
+      notes 'An event in the run thread, visible to everyone who can see the run'
+    }
+    loop 'bounded, with backoff' {
+      signalbox.automations -> signalbox.automations 'replays run' {
+        notes """
+          - The step journal returns steps 1-2 by step key; nothing runs twice
+          - Agent steps keep their stable requestId; compensations run where declared
+        """
+      }
+    }
+    alt 'outcome' {
+      when 'recovers' {
+        signalbox.automations -> hier.company.runCo 'run continues'
+      }
+      else 'still failing' {
+        hier.company.runCo -> hier.company.agentCo 'asks level agent' {
+          navigateTo work_levelagents_route_up
+          notes 'The level agent is responsible; it fixes the definition or input if it can'
+        }
+        opt 'agent cannot fix' {
+          hier.company.agentCo -> signalbox.attention 'Blocker ask' {
+            notes 'To the responsible people at folder Company (C as admin)'
+          }
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_run {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/A run is a thread on its home chain'
+    description 'W-AUT-09, W-AUT-28 (aliases T-SCH-10, T-SCH-11) · Thread{kind: run} at home, no via; Company runs never see Personal threads'
+    include personA, personB, personC, hier.company.runCo, signalbox.automations, signalbox.tree
+
+    signalbox.automations -> hier.company.runCo 'creates run thread' {
+      notes """
+        - Any trigger ends here: Thread{kind: run}, Place = {level: Company, via: none}
+        - A Dynamic Workflow instance on a stable Dynamic Worker id, pinned to one version
+      """
+    }
+    hier.company.runCo -> signalbox.tree 'place → scope'
+    hier.company.runCo <- signalbox.tree 'Company chain only' {
+      notes """
+        - Pool P2, Confluence, Google · Company: placed on Company or above
+        - No `via`: never A's or B's Work or Personal, never B's private draft
+      """
+    }
+    parallel {
+      personA -> hier.company.runCo 'watches (member)' {
+        notes 'Visible to A through their mount of Company'
+      }
+      personB -> hier.company.runCo 'watches (member)'
+      personC -> hier.company.runCo 'watches (admin)' {
+        notes 'C may also change or disable the automation'
+      }
+    }
+    signalbox.automations -> hier.company.runCo 'runs steps' {
+      navigateTo work_automations_steps_call
+      notes 'Agent, model, tool, ask, judge, run and wait steps, each an event in the run thread'
+    }
+    opt 'a step fails' {
+      signalbox.automations -> hier.company.runCo 'retries' {
+        navigateTo work_automations_retry
+      }
+    }
+    signalbox.automations -> hier.company.runCo 'settles run' {
+      notes 'Usage rolls up to folder Company, never to A, B or C'
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_step_ask {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/A run asks a person or the Judge'
+    description 'W-AUT-11, W-AUT-12, W-AUT-18 · w.judge first; low confidence → w.ask; gates go to the named decider (or their assistant), else a Blocker'
+    include personA, personC, hier.asstA, hier.company.runCo, signalbox.automations, signalbox.judge, signalbox.attention
+
+    signalbox.automations -> signalbox.judge 'w.judge' {
+      notes 'Bounded judgment billed to the folder pool: typed value or Insufficient, with p'
+    }
+    alt 'judgment' {
+      when 'confident' {
+        signalbox.automations <- signalbox.judge 'value, p' {
+          notes 'The run continues; nobody is asked'
+        }
+      }
+      else 'low p or Insufficient' {
+        signalbox.automations -> hier.company.runCo 'w.ask' {
+          navigateTo state_ask
+          notes 'The ask is committed in the run thread; the step parks until an answer'
+        }
+        alt 'ask kind' {
+          when 'gate, A delegated this kind' {
+            hier.company.runCo -> hier.asstA 'gate ask' {
+              navigateTo person_pipeline_ready_gate
+              notes """
+                - Merge, release, publish, pay or destructive: the named decider is A
+                - A delegated this kind, so their assistant answers first
+              """
+            }
+            hier.asstA -> hier.company.runCo 'answers as A would' {
+              notes 'Logged with the rule it used, never pushed to A; A can overturn it later'
+            }
+          }
+          when 'gate, not delegated' {
+            hier.company.runCo -> signalbox.attention 'Ready ask' {
+              navigateTo person_pipeline_route
+              notes 'Only in the named decider A lanes'
+            }
+            signalbox.attention -> personA 'Ready lane'
+            personA -> hier.company.runCo 'approves'
+          }
+          else 'needs a person' {
+            hier.company.runCo -> signalbox.attention 'Blocker ask' {
+              navigateTo person_pipeline_blocker_automation_ask
+              notes """
+                - Responsible at folder Company: C as admin, plus members whose call it is
+                - One ask in each person's lanes; the first answer wins
+              """
+            }
+            signalbox.attention -> personC 'Blocker lane'
+            personC -> hier.company.runCo 'answers' {
+              notes 'Answers are `Thread.send(answer)`; Attention never carries them'
+            }
+          }
+        }
+        hier.company.runCo -> signalbox.automations 'step resumes'
+      }
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_step_run {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/Run work elsewhere'
+    description 'W-AUT-15, W-AUT-33 · w.run: a child run thread with a Computer, GitHub Actions, or an external run provider'
+    include hier.company.team.runThread, signalbox.automations, signalbox.computer, services.github, services.zapierN8n
+
+    alt 'where it runs' {
+      when 'needs a computer' {
+        signalbox.automations -> hier.company.team.runThread 'child run thread' {
+          navigateTo work_automations_run
+          notes 'At the same home; the child owns its computer'
+        }
+        hier.company.team.runThread -> signalbox.computer 'opens, executes' {
+          notes """
+            - Every machine a run starts is the run's: granted, paid and metered as that run
+            - A VM exists only while commands execute, forked from a warm Base
+          """
+        }
+        hier.company.team.runThread <- signalbox.computer 'exit code, files'
+      }
+      when 'GitHub Actions' {
+        signalbox.automations -> services.github 'dispatches workflow' {
+          notes 'Through the folder forge connection; payload carries references only'
+        }
+        signalbox.automations -> signalbox.automations 'waits for completion' {
+          navigateTo work_automations_step_wait
+        }
+      }
+      else 'Zapier or n8n' {
+        signalbox.automations -> services.zapierN8n 'starts external run' {
+          notes 'One run-provider adapter per service (#370, open); credentials stay in Connections'
+        }
+        signalbox.automations -> signalbox.automations 'waits for done' {
+          navigateTo work_automations_step_wait
+        }
+      }
+    }
+    signalbox.automations -> hier.company.team.runThread 'next step'
+
+    include signalbox, hier, hier.company, hier.company.team, services
+    style signalbox, hier, services { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_step_wait {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/Wait for an outside event'
+    description 'W-AUT-16 · w.waitForEvent; vendor polling is itself a tick automation that emits the awaited event'
+    include hier.company.team.runThread, signalbox.automations, signalbox.bases, platform.boxd
+
+    signalbox.automations -> signalbox.automations 'w.waitForEvent' {
+      notes """
+        - Waits for `base.ready | base.failed`; the run sleeps at no cost
+        - No special-case alarms, no sleep-step loops
+      """
+    }
+    loop 'Base status tick, while pending' {
+      signalbox.automations -> signalbox.bases 'Bases.status' {
+        navigateTo work_automations_triggers
+        notes 'The vendor forces polling, so the polling is a default automation on a Tick trigger'
+      }
+      signalbox.bases -> platform.boxd 'snapshot status' {
+        notes 'Only Bases talks to boxd; Automations never sees the vendor'
+      }
+      signalbox.automations <- signalbox.bases 'pending, ready, failed'
+    }
+    signalbox.automations -> signalbox.automations 'emits base.ready'
+    alt 'event' {
+      when 'arrives' {
+        signalbox.automations -> hier.company.team.runThread 'run resumes'
+      }
+      else 'times out' {
+        signalbox.automations -> hier.company.team.runThread 'step fails' {
+          navigateTo work_automations_step_run
+          notes 'Retry by step key, else an ask to the level agent'
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company, hier.company.team, platform
+    style signalbox, hier, platform { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_steps_call {
+    variant sequence
+    title 'Workflows/Work/Automations/Runs/Run steps call agents, models and tools'
+    description 'W-AUT-10, W-AUT-13, W-AUT-14 · w.agent (stable requestId), w.llm and w.extract (folder pool, no harness), w.call (connections on the run chain)'
+    include hier.company.team.sharedThread, hier.company.runCo, signalbox.automations, signalbox.tree, signalbox.gateway, signalbox.models, signalbox.connections
+
+    hier.company.runCo -> signalbox.tree 'resolves run scope' {
+      navigateTo work_automations_run
+      notes 'Home chain, no `via`'
+    }
+    alt 'step kind' {
+      when 'w.agent' {
+        signalbox.automations -> hier.company.team.sharedThread 'sends prompt' {
+          notes """
+            - `Thread.send` with a stable requestId: a replay never sends twice
+            - The turn queues in the one Thread actor with A's and B's turns
+          """
+        }
+        signalbox.automations <- hier.company.team.sharedThread 'turn result'
+      }
+      when 'w.llm or w.extract' {
+        signalbox.automations -> signalbox.gateway 'completes' {
+          notes 'A direct model step with the run grant through the one model gateway: no harness, no tools'
+        }
+        signalbox.gateway -> signalbox.models 'pins account' {
+          notes 'Pool P2 on folder Company pays, never A or B, whoever triggered it'
+        }
+      }
+      else 'w.call' {
+        signalbox.automations -> signalbox.connections 'calls tool' {
+          navigateTo folders_connections_turn_and_run_reach
+          notes """
+            - Only connections placed at the home or above: Confluence, Google · Company
+            - A's own Google is unusable unless A lent it into the folder
+          """
+        }
+      }
+    }
+    signalbox.automations -> hier.company.runCo 'step result'
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  // ───────────────────────────── Triggers ─────────────────────────────
+
+  dynamic view work_automations_hooks {
+    variant sequence
+    title 'Workflows/Work/Automations/Triggers/Hooks and interceptors'
+    description 'W-AUT-24 · a hook on a folder returns allow, modify, hold or block; a held message becomes a needs-you ask'
+    include personA, signalbox.web, signalbox.automations, signalbox.attention, hier.company.team.sharedThread
+
+    personA -> signalbox.web 'sends in Team' {
+      notes 'A posts in the shared Team thread; B would hit exactly the same hooks'
+    }
+    signalbox.web -> hier.company.team.sharedThread 'send'
+    hier.company.team.sharedThread -> signalbox.automations 'before-send hook' {
+      notes """
+        - Hooks are automations with an interceptor trigger, placed on a folder
+        - They resolve on the thread chain, so A and B hit the same hooks
+      """
+    }
+    alt 'verdict' {
+      when 'allow' {
+        signalbox.automations -> hier.company.team.sharedThread 'allow'
+      }
+      when 'modify' {
+        signalbox.automations -> hier.company.team.sharedThread 'modified payload' {
+          notes 'Recorded on the event, so the trail shows what the hook changed'
+        }
+      }
+      when 'hold' {
+        signalbox.automations -> hier.company.team.sharedThread 'hold'
+        hier.company.team.sharedThread -> signalbox.attention 'needs-you ask' {
+          navigateTo person_pipeline_blocker_raise
+        }
+        signalbox.attention -> personA 'Blocker lane'
+        personA -> signalbox.web 'releases or edits'
+        signalbox.web -> hier.company.team.sharedThread 'sends answer'
+      }
+      else 'block' {
+        signalbox.automations -> hier.company.team.sharedThread 'block, reason' {
+          notes 'A sees why in the thread'
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_triggers {
+    variant sequence
+    title 'Workflows/Work/Automations/Triggers/Triggers start a run'
+    description 'W-AUT-04, W-AUT-06, W-AUT-07, W-AUT-08, T-SCH-05 (aliases T-SCH-03, T-SCH-04) · tick, app event, source watch, webhook or manual'
+    include personA, signalbox.web, signalbox.tree, signalbox.thread, signalbox.drive, signalbox.ingress, signalbox.automations, hier.company.team.runThread
+
+    alt 'trigger' {
+      when 'tick' {
+        signalbox.tree -> signalbox.automations 'tick row due' {
+          notes """
+            - Rows on the home folder (Level) alarm table, owned by Tree
+            - Person's timezone; an explicit timezone wins
+          """
+        }
+        opt 'missed in an outage' {
+          signalbox.automations -> signalbox.automations 'skips to next' {
+            notes 'The cloud is always on, so only an outage misses one (unconfirmed)'
+          }
+        }
+      }
+      when 'app event' {
+        signalbox.thread -> signalbox.automations 'outbox app event' {
+          notes """
+            - Matches definitions on the event thread chain, `via` included
+            - A's Completed-turn push sees Company threads via their mount; Company automations never see A's Personal threads
+          """
+        }
+      }
+      when 'source watch' {
+        signalbox.drive -> signalbox.automations 'source item changed' {
+          notes 'A poll actor plus a Queue turn outside changes into `source.item.*` events'
+        }
+      }
+      when 'webhook' {
+        signalbox.ingress -> signalbox.automations 'webhook delivery' {
+          navigateTo work_automations_webhook
+        }
+      }
+      else 'manual' {
+        personA -> signalbox.web 'clicks Run'
+        signalbox.web -> signalbox.automations 'trigger(Manual)'
+      }
+    }
+    signalbox.automations -> signalbox.automations 'enabled only' {
+      navigateTo state_automation
+      notes 'Disabled or deleted definitions never fire'
+    }
+    signalbox.automations -> hier.company.team.runThread 'starts run' {
+      navigateTo work_automations_run
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_automations_webhook {
+    variant sequence
+    title 'Workflows/Work/Automations/Triggers/Webhook trigger'
+    description 'W-AUT-05, T-SCH-09 (aliases T-REM-34, T-REM-35, T-SCH-07, T-SCH-08) · verify, dedupe, outbox wake; optional token rotation'
+    include personA, services.webhookSender, signalbox.web, signalbox.ingress, signalbox.automations, hier.company.team.runThread
+
+    services.webhookSender -> signalbox.ingress 'POST webhook' {
+      notes 'Any sender; a forge is the common case'
+    }
+    signalbox.ingress -> signalbox.ingress 'verifies signature' {
+      notes 'Per-automation secret; the payload is stored once and passed on as a reference'
+    }
+    alt 'delivery' {
+      when 'bad signature' {
+        signalbox.ingress -> services.webhookSender 'rejected' {
+          notes 'Nothing reaches Automations'
+        }
+      }
+      when 'seen delivery id' {
+        signalbox.ingress -> services.webhookSender 'dropped (200)' {
+          notes 'Senders retry; runs do not repeat'
+        }
+      }
+      else 'new delivery' {
+        signalbox.ingress -> signalbox.automations 'trigger(Webhook)'
+        signalbox.automations -> hier.company.team.runThread 'starts one run' {
+          navigateTo work_automations_run
+          notes """
+            - Woken through the outbox, idempotent by (sourceKey, seq): one run even if the wake repeats
+            - The run thread sits at the automation's home (folder Team), visible to A and B alike
+          """
+        }
+      }
+    }
+    opt 'A rotates token' {
+      personA -> signalbox.web 'rotates token' {
+        notes 'From the automation page (unconfirmed)'
+      }
+      signalbox.web -> signalbox.automations 'new token'
+      personA <- signalbox.web 'new URL'
+    }
+
+    include services, signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier, services { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  // ───────────────────────────── Level agents ─────────────────────────────
+
+  dynamic view work_levelagents_agent_thread {
+    variant sequence
+    title "Workflows/Work/LevelAgents/A level's agent thread"
+    description 'W-LVL-01, W-LVL-17 · every level gets one agent thread; before it exists, asking the folder starts a normal thread'
+    include personC, personA, signalbox.web, signalbox.tree, signalbox.thread, hier.company.agentCo
+
+    personC -> signalbox.web 'creates folder Company' {
+      notes 'Any level works the same: a top level, a folder in Personal, a folder under Company'
+    }
+    signalbox.web -> signalbox.tree 'change(create)'
+    alt 'agent thread' {
+      when 'created with the level' {
+        signalbox.tree -> hier.company.agentCo 'creates agent thread' {
+          navigateTo state_thread
+          notes """
+            - Thread{kind: agent} with the coordinator profile; the Level records its agentThreadId
+            - One Company agent, shared by everyone who can see folder Company (A, B, C)
+          """
+        }
+        personA -> hier.company.agentCo 'asks folder agent' {
+          navigateTo work_levelagents_chat
+          notes 'A reaches it through their mount of Company; B the same way'
+        }
+      }
+      else 'not yet (interim)' {
+        personA -> signalbox.web 'asks the folder'
+        signalbox.web -> signalbox.thread 'starts a thread' {
+          notes 'A normal thread filed at folder Company answers until the agent exists'
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+
+  dynamic view work_levelagents_assistant_coordinates {
+    variant sequence
+    title 'Workflows/Work/LevelAgents/Assistant coordinates, never executes'
+    description 'W-LVL-07, W-LVL-10 · starts, steers and delegates through Operations; exec, secrets and write tools refused; destructive ops gated'
+    include personA, hier.asstA, hier.company.agentCo, hier.company.team.sharedThread, signalbox.harness, signalbox.gateway, signalbox.operations, signalbox.attention
+
+    personA -> hier.asstA 'fix flaky test' {
+      notes '"Fix the flaky test in Team and tell B"'
+    }
+    hier.asstA -> signalbox.harness 'coordinator turn' {
+      notes 'No exec, scratch-only files, no secret references, read-only connection tools'
+    }
+    signalbox.harness -> signalbox.gateway 'tool calls' {
+      notes 'Every tool call goes through the one tool gateway'
+    }
+    alt 'what it asks for' {
+      when 'exec, secret or write' {
+        signalbox.gateway -> signalbox.harness 'refused' {
+          navigateTo person_assistant_guardrails
+          notes 'Refused by the profile; the assistant delegates instead'
+        }
+      }
+      when 'destructive op' {
+        signalbox.gateway -> signalbox.operations 'gated op'
+        signalbox.operations -> signalbox.attention 'Ready ask'
+        signalbox.attention -> personA 'Ready lane' {
+          notes 'Nothing destructive happens until A answers'
+        }
+      }
+      else 'coordination' {
+        signalbox.gateway -> signalbox.operations 'delegate'
+        signalbox.operations -> hier.company.team.sharedThread 'starts Team thread' {
+          navigateTo person_assistant_delegate
+          notes 'Runs on the Team chain with the Company pool, not A pool; B sees it in Team'
+        }
+        signalbox.operations -> hier.company.agentCo 'consults agent'
+      }
+    }
+    hier.company.team.sharedThread -> hier.asstA 'status line' {
+      notes 'The worker thread executes; the assistant only watches and reports to A'
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+
+  dynamic view work_levelagents_chat {
+    variant sequence
+    title 'Workflows/Work/LevelAgents/Chat with a level agent'
+    description 'W-LVL-03, W-LVL-14 · A and B share the level agent thread; the Company agent has no via, so everyone gets the same answer'
+    include personA, personB, hier.company.agentCo, signalbox.operations, signalbox.tree
+
+    personA -> hier.company.agentCo 'what blocks release?' {
+      navigateTo journey_agents_agent_page
+      notes """
+        - The Company agent thread is one Thread actor; A and B both see it
+        - Their turns queue in the same thread
+      """
+    }
+    personB -> hier.company.agentCo 'asks too'
+    hier.company.agentCo -> signalbox.tree 'Company scope' {
+      notes 'No `via`: it never sees A or B Work, Personal or private threads'
+    }
+    hier.company.agentCo -> signalbox.operations 'native ops' {
+      navigateTo state_thread
+      notes 'Catalog and status reads through Operations'
+    }
+    parallel {
+      personA <- hier.company.agentCo 'answer'
+      personB <- hier.company.agentCo 'same answer' {
+        notes 'Same scope and data, so the same answer whoever asks'
+      }
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+  dynamic view work_levelagents_learner {
+    variant sequence
+    title 'Workflows/Work/LevelAgents/Learner per level'
+    description 'W-LVL-16 · answers and overturns teach one learner per level; its lenses route the next ask'
+    include personB, personA, hier.asstA, hier.company.team.sharedThread, signalbox.learner, signalbox.tree
+
+    personB -> hier.company.team.sharedThread 'answers in Team' {
+      notes 'Answers go into the thread that raised the ask'
+    }
+    hier.asstA -> hier.company.team.sharedThread 'answers for A' {
+      notes 'On-behalf answer, logged with its rule, never pushed'
+    }
+    personA -> hier.company.team.sharedThread 'overturns' {
+      navigateTo person_assistant_learner_levels
+    }
+    hier.company.team.sharedThread -> signalbox.learner 'decision events' {
+      notes 'Each event names its level: Team answers teach Team, never A top level'
+    }
+    signalbox.learner -> signalbox.tree 'lenses per level' {
+      notes 'One learner instance per level, stored with that folder'
+    }
+    signalbox.learner -> hier.company.team.sharedThread 'routes next ask' {
+      navigateTo work_levelagents_route_up
+      notes 'RouteAuthority: the next ask of that kind follows the lens'
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+
+  dynamic view work_levelagents_out_of_reach {
+    variant sequence
+    title 'Workflows/Work/LevelAgents/Agent needs something out of reach'
+    description "W-LVL-05, W-LVL-06 · ask up to the lowest covering level (answers, not access), or ask the owner's assistant to lend"
+    include personA, hier.asstA, hier.company.agentCo, hier.company.team.sharedThread, signalbox.tree, signalbox.attention
+
+    hier.company.team.sharedThread -> signalbox.tree 'can I reach?' {
+      notes 'Not placed at Team or above, so out of reach; who sent the turn never matters'
+    }
+    alt 'what is missing' {
+      when "another folder's data" {
+        hier.company.team.sharedThread -> hier.company.agentCo 'asks up' {
+          navigateTo person_assistant_ask_up
+          notes 'Folder Company is the lowest level covering both; its agent works on its own chain'
+        }
+        hier.company.team.sharedThread <- hier.company.agentCo 'answer only' {
+          notes 'Answers cross, access does not; a card records what crossed'
+        }
+      }
+      else "A's Google account" {
+        hier.company.team.sharedThread -> hier.asstA 'access request' {
+          navigateTo folders_lending_access_request
+          notes 'Only A or their assistant can lend A things; B and admin C cannot'
+        }
+        alt "assistant's options" {
+          when 'lending delegated' {
+            hier.asstA -> signalbox.tree 'lends to Team' {
+              navigateTo folders_lending_lend
+              notes 'An explicit, revocable placement into folder Team'
+            }
+          }
+          when 'one step' {
+            hier.asstA -> hier.company.team.sharedThread 'approves one call'
+          }
+          else 'ask A' {
+            hier.asstA -> signalbox.attention 'Blocker ask'
+            signalbox.attention -> personA 'Blocker lane'
+            personA -> hier.company.team.sharedThread 'answers Lend'
+          }
+        }
+      }
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_levelagents_pave {
+    variant sequence
+    title 'Workflows/Work/LevelAgents/Agent paves behind done-enough tasks'
+    description 'W-LVL-15 · a task settled as done enough becomes follow-up work for the level agent'
+    include personA, hier.company.team.sharedThread, signalbox.tree, hier.company.team.agentTeam, hier.company.team.runThread
+
+    personA -> hier.company.team.sharedThread 'settles: done enough' {
+      navigateTo person_assistant_settle_reason
+      notes 'The settle reason says what was skipped: tests, docs, cleanup'
+    }
+    hier.company.team.sharedThread -> signalbox.tree 'settled, with reason' {
+      notes 'Status row into folder Team'
+    }
+    signalbox.tree -> hier.company.team.agentTeam 'follow-up' {
+      navigateTo state_thread
+    }
+    hier.company.team.agentTeam -> hier.company.team.agentTeam 'picks paving work' {
+      notes 'Only what is that level business; the rest goes back as an ask'
+    }
+    hier.company.team.agentTeam -> hier.company.team.runThread 'starts follow-up run' {
+      notes 'Filed at the same folder on the same pool; A and B see it beside the original'
+    }
+
+    include hier, hier.company, hier.company.team, signalbox
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+
+  dynamic view work_levelagents_route_up {
+    variant sequence
+    title 'Workflows/Work/LevelAgents/Question routes up the chain'
+    description 'W-LVL-04, W-LVL-08 · worker → folder agent → up while it is that level interest → assistants first → people as a Blocker'
+    include personA, personB, personC, hier.asstA, hier.company.agentCo, hier.company.team.agentTeam, hier.company.team.runThread, signalbox.attention
+
+    hier.company.team.runThread -> hier.company.team.agentTeam 'raises ask' {
+      navigateTo state_ask
+      notes """
+        - The worker is a run or task in folder Team; the Team agent first, then the Company agent
+        - The Team learner's lenses say who usually answers this kind
+      """
+    }
+    loop 'up while it is that level interest' {
+      hier.company.team.agentTeam -> hier.company.agentCo 'answers or passes' {
+        navigateTo person_pipeline_route
+      }
+    }
+    alt 'responsible people' {
+      when 'A delegated kind' {
+        hier.company.agentCo -> hier.asstA 'assistant first'
+        hier.asstA -> hier.company.team.runThread 'answers for A' {
+          notes 'Logged with the rule used, never pushed to A'
+        }
+      }
+      else 'not delegated' {
+        hier.company.agentCo -> signalbox.attention 'Blocker ask'
+        parallel {
+          signalbox.attention -> personA 'member lane'
+          signalbox.attention -> personB 'member lane'
+          signalbox.attention -> personC 'admin lane' {
+            notes 'Recipients by role on the chain, each in their own lanes'
+          }
+        }
+        personB -> hier.company.team.runThread 'answers first' {
+          navigateTo person_pipeline_shared_asks
+          notes 'First answer wins; A and C see it resolved'
+        }
+      }
+    }
+    opt 'A overturns' {
+      personA -> hier.company.team.runThread 'overturns' {
+        navigateTo work_levelagents_learner
+        notes 'The overturn teaches the Team learner, so the next ask of this kind routes differently'
+      }
+    }
+
+    include signalbox, hier, hier.company, hier.company.team
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company, hier.company.team { color muted; opacity 20% }
+  }
+
+  dynamic view work_levelagents_status_rollup {
+    variant sequence
+    title 'Workflows/Work/LevelAgents/Thread and folder status'
+    description 'W-LVL-13, W-MCP-09 · thread status rolls up into the Level; agents use thread_status, folder_status, set_thread_status'
+    include personA, personB, hier.company.agentCo, signalbox.gateway, signalbox.thread, signalbox.tree
+
+    hier.company.agentCo -> signalbox.gateway 'set_thread_status' {
+      notes '"blocked: waiting on CI" on a Team thread'
+    }
+    signalbox.gateway -> signalbox.thread 'sets status'
+    signalbox.thread -> signalbox.tree 'status row' {
+      notes 'Outbox delivery to folder Team; Team rolls up into Company aggregates'
+    }
+    hier.company.agentCo -> signalbox.gateway 'folder_status'
+    signalbox.gateway -> signalbox.tree 'reads rollup'
+    signalbox.gateway -> hier.company.agentCo 'Company rollup'
+    parallel {
+      signalbox.tree -> personA 'status line' {
+        navigateTo person_pipeline_project_ask
+        notes 'A blocked status that needs someone becomes an ask, not a badge'
+      }
+      signalbox.tree -> personB 'same status line' {
+        notes 'Same folder, same status for everyone who can see it'
+      }
+    }
+
+    include signalbox, hier, hier.company
+    style signalbox, hier { color muted; opacity 10% }
+    style hier.company { color muted; opacity 20% }
+  }
+
+}

@@ -1,0 +1,66 @@
+model {
+  extend signalbox {
+    identity = module 'Identity' {
+      #deep #v1
+      icon bootstrap:person-badge
+      description 'authenticate · signIn · complete · link · mint · verify'
+      technology 'WorkOS AuthKit · jose · @noble/curves · @noble/hashes'
+      metadata {
+        interface '6'
+        deletion 'session logic smears across Funnel'
+      }
+
+      api = iface 'Identity · interface' {
+        description '6 verbs: authenticate · signIn · complete · link · mint · verify'
+        technology 'Deletion test: without it, session logic smears across Funnel'
+      }
+
+      authkit = part 'AuthKit client' {
+        #v1
+        icon tech:workos-icon
+        description 'no account picker ever'
+        technology 'WorkOS AuthKit · domain JIT'
+      }
+      personalOrg = part 'Personal owner' {
+        icon bootstrap:person-circle
+        description 'invisible WorkOS organization per person'
+      }
+      aliases = part 'Alias map' {
+        icon bootstrap:link-45deg
+        description 'linked identities'
+        technology 'WorkOS user metadata'
+      }
+      membership = part 'Membership sync' {
+        icon bootstrap:people
+        description 'webhook → folder roles'
+      }
+      mcpAuthz = part 'MCP authorization' {
+        icon tech:oauth
+        technology 'AuthKit CIMD/DCR · resource indicators'
+      }
+      deviceCode = part 'Device code' {
+        icon bootstrap:qr-code
+        description 'CLI login'
+      }
+      signer = part 'Token signer' {
+        icon bootstrap:key
+        description 'mint · verify'
+        technology 'jose · JWKS · @noble/*'
+      }
+
+      authkit -> personalOrg 'complete'
+      authkit -> aliases 'link'
+      membership -> personalOrg 'mounts'
+    }
+
+    identity.authkit -> platform.workos 'AuthKit'
+    identity.membership -> signalbox.tree.api 'roles'
+
+    // Interface → hidden parts (the only way in)
+    identity.api -> identity.authkit 'signIn · complete · link'
+    identity.api -> identity.deviceCode 'signIn (CLI)'
+    identity.api -> identity.mcpAuthz 'authenticate (MCP)'
+    identity.api -> identity.signer 'mint · verify'
+    identity.api -> identity.membership 'membership webhook'
+  }
+}

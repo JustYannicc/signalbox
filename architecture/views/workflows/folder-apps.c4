@@ -1,0 +1,562 @@
+// Folder apps (owner addition, correction 18, issue #485). A small app placed in a folder like
+// anything else: here a dashboard homed at folder Team. Its server runs in a Dynamic Worker with
+// its own SQLite and no outbound network except granted bindings; its UI runs in a sandboxed
+// iframe that talks only to its own server; agents call the same server methods as the UI;
+// releases are immutable with atomic activation and rollback; it resolves and is visible by
+// hierarchy. Members of the folder use it; an agent can build or change it.
+// Apps is a black box here (App actor, releases, runner and frame bridge show in its own view);
+// the app frame is part of the Web and Mobile clients; app and binding placements are Tree's.
+views {
+
+  dynamic view apps_story {
+    variant sequence
+    title 'Workflows/Folders/Apps/A team folder gets its own app'
+    description 'Folder apps (#485, correction 18): the whole life of the Team dashboard, one step per sub-flow.'
+
+    include personB, personA, personC, hier, hier.company.team.sharedThread, hier.company.team.agentTeam, signalbox, signalbox.tree, signalbox.apps, signalbox.web
+
+    personB -> hier.company.team.sharedThread 'asks for a dashboard' {
+      navigateTo apps_build
+      notes """
+        - In the Shared work thread of folder Team: "make us a dashboard for the launch"
+        - The agent writes the server and UI in the thread's fork
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.tree 'places it at Team' {
+      navigateTo apps_place
+      notes """
+        - One home: the thread's folder; it shows in Team next to its threads
+      """
+    }
+    personA -> signalbox.web 'opens the dashboard' {
+      navigateTo apps_open
+      notes """
+        - A, B, C and D (outside collaborator on Team) see it; A's Personal never does
+      """
+    }
+    signalbox.web -> signalbox.apps 'frame talks to its server' {
+      notes """
+        - Sandboxed iframe; it can reach only its own server
+      """
+    }
+    hier.company.team.agentTeam -> signalbox.apps 'calls app methods' {
+      navigateTo apps_agent_calls
+      notes """
+        - The Team agent (and any thread at Team) calls the same methods the UI uses
+      """
+    }
+    personB -> hier.company.team.sharedThread 'asks for a change' {
+      navigateTo apps_release
+      notes """
+        - A new immutable release; one click rolls back
+      """
+    }
+    personC -> signalbox.web 'shares or publishes' {
+      navigateTo apps_share
+      notes """
+        - By folder roles, a loan into another folder, or a template on the marketplace
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_build {
+    variant sequence
+    title 'Workflows/Folders/Apps/Build an app in a folder'
+    description "Folder apps (#485): an agent builds the Team dashboard from a thread and it lands in the thread's folder as release v1."
+
+    include personB, hier, hier.company.team.sharedThread, signalbox, signalbox.harness, signalbox.drive, signalbox.tree, signalbox.apps
+
+    personB -> hier.company.team.sharedThread 'make us a dashboard' {
+      navigateTo work_threads_multiplayer_live
+      notes """
+        - In folder Team's Shared work thread (A and B both work in it), sent from any client
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.harness 'turn' {
+      notes """
+        - The harness loop runs in the isolate tier; no machine is needed to build a folder app
+      """
+    }
+    signalbox.harness -> signalbox.drive 'write app in fork' {
+      navigateTo work_drive_thread_fork
+      notes """
+        - Server (methods + SQLite schema), UI bundle, and a manifest of binding shapes it needs
+      """
+    }
+    signalbox.harness -> signalbox.apps 'bundle + preview' {
+      navigateTo work_previews_worker_app
+      notes """
+        - worker-bundler into a Dynamic Worker with a throwaway SQLite; no machine
+        - No outbound network even in preview
+      """
+    }
+    signalbox.harness -> signalbox.drive 'accept into Team drive' {
+      navigateTo work_drive_accept
+    }
+    signalbox.harness -> signalbox.tree 'Place{kind: app, at: Team}' {
+      navigateTo folders_placement_place
+      notes """
+        - Home = the thread's folder; reach here by default (assumption)
+        - Placing needs Member at Team, checked against who the thread acts for
+      """
+    }
+    alt 'role at Team' {
+      when 'Member or above' {
+        signalbox.tree -> signalbox.apps 'create app, release v1' {
+          notes """
+            - App actor: its own SQLite, the active-release pointer, binding epochs
+            - Release v1 = (accepted commit, bundle hash, binding shapes); immutable
+          """
+        }
+        signalbox.apps -> signalbox.tree 'app ready' {
+          notes """
+            - Catalog row at Team; open frames and agents see it from now
+          """
+        }
+        hier.company.team.sharedThread -> personB 'link to the app' {
+          notes """
+            - A and B see the same link in the shared thread; the app row appears in Team
+          """
+        }
+      }
+      else 'Viewer only' {
+        signalbox.tree -> hier.company.team.sharedThread 'AccessRequired' {
+          navigateTo person_pipeline_blocker_access
+          notes """
+            - Becomes a Blocker for Team's Members; the build stays in the fork
+          """
+        }
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_place {
+    variant sequence
+    title 'Workflows/Folders/Apps/Place, move or widen an app'
+    description 'Folder apps (#485): an app has one home and a reach, like an automation; moving it changes who sees it and which agents can call it.'
+
+    include personC, personB, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.apps, signalbox.search
+    include signalbox
+
+    alt 'change' {
+      when 'C moves the app to folder Company' {
+        personC -> signalbox.web 'Move to Company' {
+          navigateTo folders_placement_kind_automation
+          notes """
+            - Needs Member at both the old and the new home (same rule as automations)
+          """
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.tree 'Tree.change(move app)' {
+          notes """
+            - One home; the app is now visible to every Company member
+          """
+        }
+      }
+      else 'B sets reach below' {
+        personB -> signalbox.web 'Available to folders inside' {
+          notes """
+            - Folders below Team see and call it too; nearest app of the same name wins
+          """
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.tree 'Place.reach = below'
+      }
+    }
+    signalbox.tree -> signalbox.apps 'rebind on new chain' {
+      navigateTo state_placement
+      notes """
+        - SQLite and releases stay with the app; nothing is copied
+        - Bindings re-resolve on the new chain; one that no longer resolves is unbound and the app shows a repair state
+      """
+    }
+    signalbox.tree -> signalbox.search 'catalog rows' {
+      notes """
+        - Search and Home show it at its new home; agents get it from their next turn
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_open {
+    variant sequence
+    title 'Workflows/Folders/Apps/Open an app'
+    description 'Folder apps (#485): a member opens the Team dashboard; the sandboxed frame reaches only its own server; visibility by hierarchy for A, B, C and D.'
+
+    include personA, personD, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.tree, signalbox.apps
+    include signalbox
+
+    personA -> signalbox.web 'opens Team › Dashboard' {
+      notes """
+        - The app row sits in folder Team next to its threads
+      """
+    }
+    signalbox.web -> signalbox.funnel 'open app'
+    signalbox.funnel -> signalbox.tree 'can(person, use app)?' {
+      notes """
+        - Roles inherit down: Viewer+ at Team uses it, Member+ changes it
+      """
+    }
+    alt 'who opens it' {
+      when 'A or B (members via folder Company)' {
+        signalbox.tree -> signalbox.funnel 'allowed · release v1'
+      }
+      when 'D (outside collaborator, folder Team) on the phone' {
+        personD -> signalbox.mobile 'opens Dashboard' {
+          notes """
+            - Same UI in a WebView with the same sandbox (assumption; #485 open question)
+            - D uses it as a Viewer: reads, can't change
+          """
+        }
+        signalbox.mobile -> signalbox.funnel 'open app'
+        signalbox.tree -> signalbox.funnel 'allowed · Viewer' {
+          notes """
+            - Team is on D's chain through D's share; Company above it is not
+          """
+        }
+      }
+      else 'anyone without Team on their chain' {
+        signalbox.tree -> signalbox.funnel 'NotFound' {
+          notes """
+            - Invisible, not denied: A's Personal folder never lists it
+          """
+        }
+      }
+    }
+    signalbox.funnel -> signalbox.web 'frame URL + capability' {
+      notes """
+        - Sandboxed iframe on the app origin, CSP default-src 'none', no cookies
+        - Capability scoped to (app, person, role), short-lived
+      """
+    }
+    signalbox.web -> signalbox.funnel 'frame RPC' {
+      notes """
+        - Cap'n Web over postMessage to the parent, which forwards only to this app
+      """
+    }
+    signalbox.funnel -> signalbox.apps 'call app method' {
+      notes """
+        - Dynamic Worker for the active release; env = its SQLite + granted bindings
+        - globalOutbound null: no network of its own
+      """
+    }
+    signalbox.apps -> signalbox.funnel 'result'
+    signalbox.funnel -> signalbox.web 'render'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_agent_calls {
+    variant sequence
+    title 'Workflows/Folders/Apps/An agent works inside an app'
+    description 'Folder apps (#485): agents call the same server methods as the UI, resolved by hierarchy like connections; open frames update live.'
+
+    include personB, hier, hier.company.agentCo, hier.company.team.sharedThread, signalbox, signalbox.harness, signalbox.tree, signalbox.gateway, signalbox.operations, signalbox.apps
+
+    personB -> hier.company.team.sharedThread 'add this week to the dashboard'
+    hier.company.team.sharedThread -> signalbox.tree 'resolve Scope' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Apps at Team, or above with reach below, join the toolbox
+        - Same for A's and B's turns: position, never sender
+      """
+    }
+    signalbox.tree -> hier.company.team.sharedThread 'Scope with app tools'
+    hier.company.team.sharedThread -> signalbox.harness 'turn with Scope'
+    signalbox.harness -> signalbox.gateway 'tool search: dashboard' {
+      navigateTo folders_connections_tool_search_call
+    }
+    signalbox.gateway -> signalbox.apps 'call addRows()' {
+      notes """
+        - The same method the UI's button calls
+        - Role checked like a UI call: a thread acting for a Member can write
+      """
+    }
+    opt 'a destructive method' {
+      signalbox.gateway -> signalbox.operations 'decision gate' {
+        navigateTo folders_gates_destructive
+        notes """
+          - Methods the app marks destructive (delete all rows) ask a person first
+        """
+      }
+    }
+    signalbox.apps -> signalbox.gateway 'result' {
+      notes """
+        - Open frames (A watching the dashboard) refresh live
+      """
+    }
+    opt 'the Company agent wants it' {
+      hier.company.agentCo -> signalbox.tree 'resolve Scope' {
+        navigateTo work_levelagents_out_of_reach
+        notes """
+          - Not on folder Company's chain (it sits below)
+          - It asks the Team agent: a loan for the task, or just the answer
+        """
+      }
+      signalbox.tree -> hier.company.agentCo 'no app tools' {
+        notes """
+          - Its Scope never contains the Team app: resolution follows position, not who asks
+        """
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_bindings {
+    variant sequence
+    title 'Workflows/Folders/Apps/Give an app a binding'
+    description 'Folder apps (#485): the app reaches a service only through a binding someone granted; everything else fails closed.'
+
+    include personC, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.apps, signalbox.gateway, signalbox.connections, services.google
+    include signalbox, services
+
+    signalbox.apps -> signalbox.web 'needs Google Sheets' {
+      notes """
+        - The release manifest names binding shapes; the frame shows a slot to fill
+      """
+    }
+    personC -> signalbox.web 'grants Sheets' {
+      notes """
+        - Member+ at the app's home; only connections that resolve at Team (else lend one)
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'Place{binding, app, connection}' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - A placement edge from a connection on the chain to this app
+      """
+    }
+    signalbox.tree -> signalbox.apps 'binding epoch'
+    signalbox.apps -> signalbox.gateway 'call via binding' {
+      notes """
+        - Subject = the app; logged like any tool call, without content
+      """
+    }
+    signalbox.gateway -> signalbox.connections 'call tool'
+    signalbox.connections -> services.google 'Sheets API'
+    alt 'when it fails closed' {
+      when 'raw fetch() from the app' {
+        signalbox.apps -> signalbox.apps 'fetch blocked' {
+          notes """
+            - globalOutbound null: there is no network besides bindings
+          """
+        }
+      }
+      else 'connection disconnected or moved off the chain' {
+        signalbox.tree -> signalbox.apps 'binding unresolved' {
+          navigateTo folders_connections_disconnect
+          notes """
+            - Calls fail closed; the app shows a repair slot
+          """
+        }
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_release {
+    variant sequence
+    title 'Workflows/Folders/Apps/Update or roll back an app'
+    description "Folder apps (#485): immutable releases, atomic activation, one-click rollback; data stays in the app's SQLite."
+
+    include personB, personA, hier, hier.company.team.sharedThread, signalbox, signalbox.web, signalbox.funnel, signalbox.harness, signalbox.drive, signalbox.apps
+
+    personB -> hier.company.team.sharedThread 'add a burn-down chart'
+    hier.company.team.sharedThread -> signalbox.harness 'turn'
+    signalbox.harness -> signalbox.drive 'change + accept' {
+      navigateTo work_drive_accept
+    }
+    signalbox.harness -> signalbox.apps 'build release v2' {
+      notes """
+        - New immutable release; v1 stays as it was
+      """
+    }
+    opt 'the data shape changes' {
+      signalbox.apps -> signalbox.apps 'migrate a copy first' {
+        navigateTo operations_ops_pitr
+        notes """
+          - A restore point is taken; a failed migration leaves v1 active
+        """
+      }
+    }
+    signalbox.apps -> signalbox.apps 'activate v2' {
+      notes """
+        - The active pointer flips atomically
+        - Calls in flight finish on v1; new calls go to v2
+      """
+    }
+    signalbox.apps -> signalbox.web 'frames reload v2' {
+      notes """
+        - A's open dashboard reloads on v2
+      """
+    }
+    opt 'v2 is broken' {
+      personA -> signalbox.web 'Roll back' {
+        notes """
+          - Any Member, or an agent asked to; Viewers can't
+        """
+      }
+      signalbox.web -> signalbox.funnel -> signalbox.apps 'activate v1' {
+        notes """
+          - Pointer back to v1; the data stays
+          - If v2 migrated the schema, going back restores the restore point and asks first (writes since are lost)
+        """
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_share {
+    variant sequence
+    title 'Workflows/Folders/Apps/Share, lend or publish an app'
+    description 'Folder apps (#485): shared by folder roles, lent into another folder, or published as a template (code and binding shapes, never data).'
+
+    include personC, personA, signalbox, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.marketplace, signalbox.drive, signalbox.apps
+
+    alt 'how it travels' {
+      when 'by folder roles' {
+        personC -> signalbox.web 'adds D as Viewer' {
+          navigateTo folders_access_roles
+          notes """
+            - D (outside collaborator) gets Viewer on Team, so D uses the app without seeing Company
+            - Viewers use the app, Members change it, Admins set bindings and remove it
+          """
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.tree 'role at Team'
+      }
+      when 'lent into another folder' {
+        personA -> signalbox.web 'lends Dashboard' {
+          navigateTo folders_lending_lend
+          notes """
+            - An explicit, revocable placement into a folder or one thread; ends on revoke or with the task
+          """
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.tree 'loan{app, into, until}' {
+          navigateTo state_loan
+          notes """
+            - Same app and data, not a copy; bindings still resolve at its home
+          """
+        }
+      }
+      else 'published as a template' {
+        personC -> signalbox.web 'publishes template' {
+          navigateTo mkt_publish_blueprint
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.marketplace 'listing' {
+          notes """
+            - A blueprint listing at folder Company
+          """
+        }
+        signalbox.marketplace -> signalbox.drive 'snapshot code + shapes' {
+          notes """
+            - Never data, chats or credentials
+          """
+        }
+      }
+    }
+    opt 'someone installs the template' {
+      signalbox.marketplace -> signalbox.apps 'independent copy' {
+        navigateTo mkt_use_folder_app
+        notes """
+          - Fresh SQLite at the installing folder; bindings to fill
+        """
+      }
+      signalbox.apps -> signalbox.tree 'Place at that folder' {
+        notes """
+          - Install = a placement into the installing folder; it resolves by hierarchy from there
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view apps_remove {
+    variant sequence
+    title 'Workflows/Folders/Apps/Remove, restore or purge an app'
+    description 'Folder apps (#485): removing goes to the 30-day trash with its data; a purge deletes data and releases; templates never held data.'
+
+    include personC, hier.company.team.agentTeam, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.apps
+    include signalbox, hier
+
+    alt 'who removes it' {
+      when 'C (or any Admin at Team)' {
+        personC -> signalbox.web 'Remove Dashboard'
+        signalbox.web -> signalbox.funnel -> signalbox.operations 'remove app'
+      }
+      else 'the Team agent, asked to' {
+        hier.company.team.agentTeam -> signalbox.operations 'remove app' {
+          navigateTo folders_gates_destructive
+          notes """
+            - Destructive: the gate turns it into a Ready ask for an Admin
+          """
+        }
+      }
+    }
+    signalbox.operations -> signalbox.tree 'unplace → trash' {
+      notes """
+        - Frames close; the tools leave agents' toolboxes from the next turn
+        - Calls in flight finish
+      """
+    }
+    signalbox.tree -> signalbox.apps 'freeze app' {
+      notes """
+        - Dynamic Worker unloaded; SQLite and releases kept 30 days
+      """
+    }
+    alt 'later' {
+      when 'restored within 30 days' {
+        personC -> signalbox.web 'Restore'
+        signalbox.web -> signalbox.funnel -> signalbox.tree 're-place app' {
+          notes """
+            - Same home if it still exists; bindings re-resolve
+          """
+        }
+      }
+      else 'after 30 days' {
+        signalbox.tree -> signalbox.apps 'purge' {
+          navigateTo folders_tree_purge
+          notes """
+            - SQLite, releases and binding records deleted
+            - Folder trash cascades to its apps the same way
+          """
+        }
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+}
