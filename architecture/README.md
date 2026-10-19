@@ -29,9 +29,9 @@ views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
                      lifecycle_tool_needs_vm, lifecycle_long_process, lifecycle_idle_dev_server,
                      lifecycle_wake_after_day, lifecycle_fork_thread, lifecycle_interrupt,
                      lifecycle_park_and_shutdown, lifecycle_file_sync, lifecycle_boxd_data
-  workflows/v1.c4    v1 end to end (Workflows/v1/...): 0 first day (index) · 1 sign in · 2 create a pool
-                     · 3 invite B · 4 your own Google and Confluence · 5 set up this computer
-                     · 6 local model request · 7 local tool call
+  workflows/v1.c4    v1 end to end (Workflows/v1/...): 0 first day (index) · 1 sign in · 2 fill your pool
+                     · 3 share your pool · 4 usage · 5 your own tools · 6 set up this computer
+                     · 7 local model request · 8 local tool call
 views/journeys/      scenario walk-throughs (Scenarios/... in the sidebar)
 CONTEXT.md           glossary and the words that are never kinds
 ```
