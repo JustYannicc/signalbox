@@ -32,7 +32,8 @@ For the local workerd pass, build the command Runner from `apps/server` with
 `node apps/cloud/infra/computerBoxdProof/local.ts --program-dir DIR --stage-file FILE --output FILE`
 from the repository root. Use a clean, reviewed commit and supply `BOXD_API_KEY`
 through the process environment. The local pass needs `cloudflared` for the VM's
-Runner callback; its endpoint stays out of receipts. It keeps SQLite ownership
+Runner callback. Put it on PATH or set `CLOUDFLARED_BIN` to its executable path;
+its endpoint stays out of receipts. It keeps SQLite ownership
 state beside the stage file. Recover an interrupted local pass with the same
 commit and `local.ts --recover-stage-file FILE --output NEW_FILE`.
 

@@ -4,7 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 /** The callback tunnel carries only this disposable Worker's private protocol. */
 export async function openLocalProofTunnel(origin: string) {
   const child = NodeChildProcess.spawn(
-    "/opt/homebrew/bin/cloudflared",
+    process.env.CLOUDFLARED_BIN ?? "cloudflared",
     ["tunnel", "--url", origin, "--no-autoupdate"],
     {
       stdio: ["ignore", "pipe", "pipe"],

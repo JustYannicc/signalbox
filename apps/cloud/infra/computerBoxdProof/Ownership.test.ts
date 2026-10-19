@@ -6,7 +6,7 @@ import {
   type BoxdMachineClient,
   type BoxdMachineRecord,
 } from "../../src/computer/BoxdMachines.ts";
-import { sqliteFixture } from "../../src/computer/tests/helpers/sqliteFixture.ts";
+import { sqliteFixture } from "./ProofSqliteFixture.ts";
 import { ProofOwnership, type ProofState } from "./Ownership.ts";
 
 type ProofStorage = ReturnType<typeof sqliteFixture>["storage"] & {
