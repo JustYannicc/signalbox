@@ -54,7 +54,12 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     const preopens = new BashPreopens(context.filesystem.descriptors, parentPreopens);
     const syscalls = createKernelSyscallHost(context);
     const memory = new SyscallMemory();
-    const imports = createBashHostImports(context, credentials, memory, preopens);
+    const namespaces = createBashHostImports(context, credentials, () => memory, preopens);
+    const imports = new Map<string, (...args: number[]) => number | Promise<number>>(
+      Object.entries(namespaces).flatMap(([namespace, handlers]) =>
+        Object.entries(handlers).map(([name, handler]) => [`${namespace}.${name}`, handler]),
+      ),
+    );
     const completion = Promise.withResolvers<KernelExitStatus>();
     // The root is completed by the caller's program host, outside this process table.
     void completion.promise.catch(() => {});
@@ -239,6 +244,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
   return {
     pid: options.context.identity.pid,
     port: root.port,
+    exited: root.completion,
     close(): Promise<void> {
       return (closing ??= (async () => {
         closed = true;

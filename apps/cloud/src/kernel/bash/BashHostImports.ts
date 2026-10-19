@@ -1,19 +1,19 @@
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
 import { createKernelNimbusMetadata } from "../KernelNimbusMetadata.ts";
 import type { KernelBashCredentials, KernelBashProgramContext } from "./BashContext.ts";
-import type { SyscallMemory } from "../syscall/SyscallMemory.ts";
+import type { WasiMemory } from "../wasi/internal_wasi_memory.ts";
 import type { BashPreopens } from "./BashPreopens.ts";
 import { errno, range, resultErrno, string } from "./BashMemory.ts";
 
 export function createBashHostImports(
   context: KernelBashProgramContext,
   credentials: KernelBashCredentials,
-  memory: SyscallMemory,
+  memory: () => WebAssembly.Memory | WasiMemory,
   preopens: BashPreopens,
 ) {
   const descriptors = context.filesystem.descriptors;
   const descriptorHost = new AgentOsDescriptorHost({
-    memory: () => memory,
+    memory,
     descriptors,
     wakes: context.wakes,
     asyncMode: true,
@@ -26,8 +26,8 @@ export function createBashHostImports(
       return -errno(error);
     }
   };
-  const imports = {
-    "env.umask": (mask: number) =>
+  const env = {
+    umask: (mask: number) =>
       attempt(() => {
         const next = mask & 0o777;
         const previous =
@@ -37,27 +37,28 @@ export function createBashHostImports(
         credentials.umask = next;
         return previous;
       }),
-    "nimbus_proc.startup_cwd": (pointer: number, capacity: number) =>
+  };
+  const nimbus = {
+    startup_cwd: (pointer: number, capacity: number) =>
       attempt(() => {
         const bytes = new TextEncoder().encode(context.filesystem.cwd);
         if (capacity === 0) return bytes.length;
         if (capacity >>> 0 <= bytes.length) return -68;
-        const target = range(memory, pointer, bytes.length + 1);
+        const target = range(memory(), pointer, bytes.length + 1);
         target.set(bytes);
         target[bytes.length] = 0;
         return bytes.length;
       }),
-    "nimbus_proc.capture_cwd": (pointer: number, length: number) => {
+    capture_cwd: (pointer: number, length: number) => {
       try {
-        context.filesystem.chdir(string(memory, pointer, length));
+        context.filesystem.chdir(string(memory(), pointer, length));
         return 0;
       } catch (error) {
         return errno(error);
       }
     },
-    "nimbus_proc.pipe": (pointer: number) =>
-      -descriptorHost.imports.fd_pipe(pointer, (pointer >>> 0) + 4),
-    "nimbus_proc.fd_getfd": (fd: number) => {
+    pipe: (pointer: number) => -descriptorHost.imports.fd_pipe(pointer, (pointer >>> 0) + 4),
+    fd_getfd: (fd: number) => {
       try {
         descriptors.get(fd >>> 0);
         return 0;
@@ -65,23 +66,23 @@ export function createBashHostImports(
         return errno(error);
       }
     },
-    "nimbus_proc.dup": (fd: number) => attempt(() => descriptors.duplicate(fd >>> 0)),
-    "nimbus_proc.dup2": async (source: number, target: number) => {
+    dup: (fd: number) => attempt(() => descriptors.duplicate(fd >>> 0)),
+    dup2: async (source: number, target: number) => {
       try {
         return await preopens.duplicateTo(source >>> 0, target >>> 0);
       } catch (error) {
         return -errno(error);
       }
     },
-    "nimbus_proc.kill": (pid: number, signal: number) => {
+    kill: (pid: number, signal: number) => {
       const result = context.processes.signalPid(context.identity.handle, pid, signal);
       return result.status === "ok" ? 0 : -resultErrno(result, "kill");
     },
-    "nimbus_proc.getppid": () => {
+    getppid: () => {
       const result = context.processes.info(context.identity.handle);
       return result.status === "ok" ? result.value.parentPid : -resultErrno(result, "getppid");
     },
-    "nimbus_proc.getpgid": (pid: number) => {
+    getpgid: (pid: number) => {
       const result =
         pid === 0 || pid === context.identity.pid
           ? context.processes.info(context.identity.handle)
@@ -93,15 +94,16 @@ export function createBashHostImports(
         : -resultErrno(result, "getpgid");
     },
   };
-  return new Map<string, (...args: number[]) => number | Promise<number>>([
-    ...Object.entries(imports),
-    ...Object.entries(
-      createKernelNimbusMetadata({
-        memory: () => memory,
+  return {
+    env,
+    nimbus_proc: {
+      ...nimbus,
+      ...createKernelNimbusMetadata({
+        memory,
         filesystem: context.filesystem,
         credentials,
         directoryFd: (fd) => Number(preopens.transformArguments("path_open", [fd])[0]),
       }),
-    ).map(([name, handler]) => [`nimbus_proc.${name}`, handler] as const),
-  ]);
+    },
+  };
 }

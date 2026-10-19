@@ -34,6 +34,11 @@ export function bashTransitionImports(process: BashContinuation, pid: number) {
   };
   const fork = () => (landing() ? process.resume : transition({ kind: "fork" }));
   return {
+    setpgid: (_pid: number, _group: number) => -58,
+    tcgetpgrp: (_fd: number) => -59,
+    tcsetpgrp: (_fd: number, _group: number) => -59,
+    tcgetattr: (_fd: number, _termios: number) => -59,
+    tcsetattr: (_fd: number, _action: number, _termios: number) => -59,
     setjmp: (env: number) => {
       if (landing()) return;
       range(memory(), env, 12);

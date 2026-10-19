@@ -52,6 +52,121 @@ async function withContext(run: (context: KernelAsyncProgramContext) => Promise<
 }
 
 describe("ChildWorkerProgram", () => {
+  it("returns logical exit while retaining admission through a late dispatch failure and gated close", () =>
+    withContext(async (context) => {
+      const capacity = new ChildWorkerCapacity(1);
+      const exited = Promise.withResolvers<{
+        exitCode: number;
+        signal: number;
+        coreDumped: boolean;
+      }>();
+      const dispatched = Promise.withResolvers<never>();
+      const closing = deferred<void>();
+      const closed = Promise.withResolvers<void>();
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity,
+        dispatch: { run: () => dispatched.promise },
+        createHost: () => ({
+          host: {},
+          exited: exited.promise,
+          async close() {
+            closing.resolve();
+            await closed.promise;
+          },
+        }),
+      });
+      const result = program.run(context);
+      const status = { exitCode: 17, signal: 0, coreDumped: false };
+      exited.resolve(status);
+      expect(await result).toEqual(status);
+      expect(capacity.active).toBe(1);
+      dispatched.reject(new Error("Late dispatch failure"));
+      await closing.promise;
+      expect(capacity.active).toBe(1);
+      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      closed.reject(new Error("Late close failure"));
+      await drained;
+      expect(capacity.active).toBe(0);
+      expect(await result).toEqual(status);
+    }));
+
+  it("reports dispatch failure before logical exit even while physical close remains blocked", () =>
+    withContext(async (context) => {
+      const capacity = new ChildWorkerCapacity(1);
+      const exited = Promise.withResolvers<{
+        exitCode: number;
+        signal: number;
+        coreDumped: boolean;
+      }>();
+      const dispatched = Promise.withResolvers<never>();
+      const closing = deferred<void>();
+      const closed = Promise.withResolvers<void>();
+      const failure = new Error("Dispatch failed before exit");
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity,
+        dispatch: { run: () => dispatched.promise },
+        createHost: () => ({
+          host: {},
+          exited: exited.promise,
+          async close() {
+            closing.resolve();
+            await closed.promise;
+          },
+        }),
+      });
+      const result = program.run(context);
+      const rejected = expect(result).rejects.toBe(failure);
+      dispatched.reject(failure);
+      await closing.promise;
+      await rejected;
+      exited.resolve({ exitCode: 17, signal: 0, coreDumped: false });
+      expect(capacity.active).toBe(1);
+      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      closed.reject(new Error("Close also failed"));
+      await drained;
+      expect(capacity.active).toBe(0);
+      await expect(result).rejects.toBe(failure);
+    }));
+
+  it("reports a closing failure when no logical exit was published", () =>
+    withContext(async (context) => {
+      const capacity = new ChildWorkerCapacity(1);
+      const exited = Promise.withResolvers<{
+        exitCode: number;
+        signal: number;
+        coreDumped: boolean;
+      }>();
+      const closing = deferred<void>();
+      const closed = Promise.withResolvers<void>();
+      const failure = new Error("Close failed before logical exit");
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity,
+        dispatch: { run: async () => ({ exitCode: 17, signal: 0, coreDumped: false }) },
+        createHost: () => ({
+          host: {},
+          exited: exited.promise,
+          async close() {
+            closing.resolve();
+            await closed.promise;
+          },
+        }),
+      });
+      const result = program.run(context);
+      const rejected = expect(result).rejects.toBe(failure);
+      await closing.promise;
+      expect(capacity.active).toBe(1);
+      closed.reject(failure);
+      await rejected;
+      expect(capacity.active).toBe(0);
+      exited.reject(new Error("Owner also failed"));
+    }));
+
   it("captures code and exact command while keeping process resources at the owner", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity();

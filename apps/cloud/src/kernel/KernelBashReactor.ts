@@ -30,12 +30,11 @@ const status = (exitCode: number): KernelExitStatus => ({ exitCode, signal: 0, c
 /** Owns only guest continuations and heaps. Process resources remain behind the supplied ports. */
 export function createKernelBashReactor(options: KernelBashReactorOptions) {
   const children = new Set<Promise<void>>();
-  let childFailure: unknown;
-  let started = false;
+  let root: Promise<KernelExitStatus> | undefined;
 
   function create(pid: number, port: KernelBashPort) {
     const binding = options.createBinding(port);
-    // Import closures are first invoked after the instance and capture arena are bound.
+    // Instance construction needs these closures before exports exist. They run only after binding.
     const process = {
       stats: { mainHi: 0, captureBytesHi: 0, captureCompactions: 0, captureLiveHi: 0 },
       rewinding: false,
@@ -56,16 +55,12 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
       nimbus_proc: {
         ...binding.imports.nimbus_proc,
         ...bashTransitionImports(process, pid),
-        setpgid: () => -58,
-        tcgetpgrp: () => -59,
-        tcsetpgrp: () => -59,
-        tcgetattr: () => -59,
-        tcsetattr: () => -59,
       },
       nimbus_procenv: { full: () => process.captures.applyLog(memory()) },
     };
-    Object.assign(process, createBashInstance(options.module, imports));
-    binding.bind((process as BashContinuation & { instance: WebAssembly.Instance }).instance);
+    const created = createBashInstance(options.module, imports);
+    Object.assign(process, created);
+    binding.bind(created.instance);
     return { process, binding, pid, port };
   }
 
@@ -112,13 +107,12 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
               child.process.exports.__stack_pointer.value = ex.__stack_pointer.value;
               child.process.captures = process.captures.fork();
               rewindBash(child.process);
+              // The port records failure for waitpid; a fork cannot replace the root's exit result.
               const completion = Promise.resolve()
                 .then(() => run(child))
                 .then(
                   () => {},
-                  (error: unknown) => {
-                    childFailure ??= error;
-                  },
+                  () => {},
                 );
               children.add(completion);
               void completion.then(() => children.delete(completion));
@@ -174,18 +168,16 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
 
   return {
     async run(): Promise<KernelExitStatus> {
-      if (started) throw new Error("GNU Bash reactor has already started");
-      started = true;
-      const result = await Promise.resolve()
-        .then(() => run(create(options.pid, options.port)))
-        .then(
-          (value) => ({ kind: "exit" as const, value }),
-          (error: unknown) => ({ kind: "failure" as const, error }),
-        );
+      if (root !== undefined) throw new Error("GNU Bash reactor has already started");
+      root = Promise.resolve().then(() => run(create(options.pid, options.port)));
+      void root.catch(() => {});
+      return root;
+    },
+    /** Keep the worker request open through this drain even when its root has already exited. */
+    async drain(): Promise<void> {
+      if (root === undefined) throw new Error("GNU Bash reactor has not started");
+      await root.catch(() => {});
       while (children.size > 0) await Promise.all(children);
-      if (result.kind === "failure") throw result.error;
-      if (childFailure !== undefined) throw childFailure;
-      return result.value;
     },
   };
 }

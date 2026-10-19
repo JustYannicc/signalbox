@@ -1,16 +1,21 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads only the locally prepared, hash-pinned WASM test artifact.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeProcess from "node:process";
 import { describe, expect, it } from "vite-plus/test";
 import { KERNEL_BASH_ARTIFACT, createKernelBashProgram } from "../../kernel/KernelBashProgram.ts";
 import { createChildBash } from "../ChildBash.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelSyscallRequest } from "../../kernel/KernelSyscallPort.ts";
 import { bashCredentials, childBashFixture, exited, text } from "./ChildBashFixture.ts";
+import { childBashLifetimeFixture } from "./ChildBashLifetimeFixture.ts";
 
 // The pinned third-party artifact is prepared locally; it is never committed as test data.
 const artifact = new URL("../../../../../.t3/1071/programs/bash.wasm", import.meta.url);
 const available = NodeFS.existsSync(artifact);
+if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_BASH_ARTIFACT === "1") {
+  throw new Error(`Required GNU Bash test artifact is missing: ${artifact.pathname}`);
+}
 let module: WebAssembly.Module;
 if (available) {
   const bytes = NodeFS.readFileSync(artifact);
@@ -34,6 +39,95 @@ function bridge(fixture: ReturnType<typeof childBashFixture>, port = fixture.own
 }
 
 describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
+  it("reports root exit while a background child retains the worker and its descriptors", async () => {
+    const control = childBashLifetimeFixture(module, false);
+    const fixture = childBashLifetimeFixture(module);
+    try {
+      const expected = control.start("/bin/blocked & exit 17");
+      await control.entered;
+      expect(await expected.exited).toMatchObject({ status: "ok", value: exited(17) });
+      const command = fixture.start("/bin/blocked & exit 17");
+      const background = await fixture.entered;
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+      expect(fixture.capacity.active).toBe(1);
+      expect(fixture.rootContext().filesystem.descriptors.has(1)).toBe(false);
+      expect(background.filesystem.descriptors.has(1)).toBe(true);
+      expect(background.signal.aborted).toBe(false);
+      const drained = fixture.capacity
+        .acquire(new AbortController().signal)
+        .then((permit) => permit.release());
+      fixture.release();
+      await drained;
+      expect(fixture.capacity.active).toBe(0);
+      expect(fixture.files.stdout()).toBe("background output");
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+    } finally {
+      await fixture.close();
+      await control.close();
+    }
+  });
+
+  it("holds the background worker until explicit close after publishing the root's exit", async () => {
+    const fixture = childBashLifetimeFixture(module);
+    try {
+      const command = fixture.start("/bin/blocked & exit 17");
+      await fixture.entered;
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+      expect(fixture.capacity.active).toBe(1);
+      const drained = fixture.capacity
+        .acquire(new AbortController().signal)
+        .then((permit) => permit.release());
+      await fixture.closeWorker();
+      await fixture.aborted;
+      await drained;
+      expect(fixture.capacity.active).toBe(0);
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("signals the retained background identity after the root is reaped and keeps its exit result", async () => {
+    const fixture = childBashLifetimeFixture(module);
+    try {
+      const command = fixture.start("/bin/blocked & exit 17");
+      const background = await fixture.entered;
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+      expect(fixture.programs.reap(command.handle).status).toBe("ok");
+      expect(fixture.programs.processes.info(background.identity.handle)).toMatchObject({
+        status: "ok",
+        value: { parentPid: 1 },
+      });
+      expect(fixture.capacity.active).toBe(1);
+      const drained = fixture.capacity
+        .acquire(new AbortController().signal)
+        .then((permit) => permit.release());
+      expect(fixture.programs.processes.signal(background.identity.handle, 9).status).toBe("ok");
+      await fixture.aborted;
+      await drained;
+      expect(fixture.capacity.active).toBe(0);
+      expect(fixture.files.stdout()).toBe("");
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("preserves a successful root result after Bash handles a fork's execution failure", async () => {
+    const control = childBashLifetimeFixture(module, false);
+    const fixture = childBashLifetimeFixture(module);
+    try {
+      const script = '/bin/broken; printf "recovered:%s" "$?"';
+      expect(await control.start(script).exited).toMatchObject({ status: "ok", value: exited() });
+      expect(await fixture.start(script).exited).toMatchObject({ status: "ok", value: exited() });
+      expect(control.files.stdout()).toBe("recovered:0");
+      expect(fixture.files.stdout()).toBe(control.files.stdout());
+    } finally {
+      await fixture.close();
+      await control.close();
+    }
+  });
+
   it("preserves caller argv0, cwd, environment, PID, split streams and live filesystem writes", async () => {
     const fixture = childBashFixture({
       args: [
