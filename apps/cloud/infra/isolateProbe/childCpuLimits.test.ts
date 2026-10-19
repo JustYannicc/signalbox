@@ -3,13 +3,25 @@ import { RpcTarget } from "cloudflare:workers";
 import { ChildWorkerDispatch, childWorkerDispatchBinding } from "./childWorkerDispatch.ts";
 import { CodeGeneration, codeGenerationBinding } from "./codeGeneration.ts";
 import { ChildWorkerDispatchError } from "../../src/computer/ChildWorkerDispatchError.ts";
+import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
+import {
+  createChildWorkerProgram,
+  type ChildWorkerCode,
+  type ChildWorkerModules,
+} from "../../src/computer/ChildWorkerProgram.ts";
 import {
   createWorkerLoaderDispatch,
   type ChildWorkerLoaderPort,
 } from "../../src/computer/WorkerLoaderDispatch.ts";
 import type { ChildWorkerLimits } from "../../src/computer/ChildWorkerLimits.ts";
+import type { KernelAsyncProgramContext } from "../../src/kernel/KernelAsyncProgram.ts";
 
 const bindings = vi.hoisted(() => ({ child: vi.fn(), generated: vi.fn() }));
+const wasmRegistry = vi.hoisted(() => {
+  const reference = "c".repeat(64);
+  const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+  return { reference, module, modules: new Map([[reference, module]]) };
+});
 
 vi.mock("cloudflare:workers", () => ({
   RpcTarget: Object,
@@ -22,6 +34,9 @@ vi.mock("cloudflare:workers", () => ({
     }
   },
   exports: { ChildWorkerDispatch: bindings.child, CodeGeneration: bindings.generated },
+}));
+vi.mock("./programWasmRegistry.ts", () => ({
+  CHILD_PROGRAM_WASM_REGISTRY: wasmRegistry.modules,
 }));
 
 class Host extends RpcTarget {
@@ -68,6 +83,72 @@ function request(value: unknown = envelope) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(value),
   });
+}
+
+function alternateWasmBuffer() {
+  const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 0, 2, 1, 120]);
+  if (!WebAssembly.validate(bytes)) throw new Error("Invalid alternate WASM fixture");
+  return bytes.buffer;
+}
+
+function composedProgramFixture(sourceKind: "static" | "lazy-factory") {
+  const codes: WorkerLoaderWorkerCode[] = [];
+  const host = new Host();
+  const target = {
+    run: vi.fn(async (_command: unknown, invocation: unknown) => {
+      const capability = invocation as { host(): Host; stopped(): void };
+      expect(capability.host()).toBe(host);
+      capability.stopped();
+      return exit;
+    }),
+  };
+  const getEntrypoint = vi.fn().mockReturnValue(target);
+  const get = vi.fn<WorkerLoader["get"]>().mockImplementation((_name, factory) => {
+    const code = factory();
+    if (code instanceof Promise) throw new Error("Unexpected async code factory");
+    codes.push(code);
+    return { getEntrypoint, getDurableObjectClass: vi.fn() };
+  });
+  const adapter = new ChildWorkerDispatch(
+    {
+      props: { namespace: "unused", limits: { cpuMs: 1_000 } },
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    },
+    { LOADER: { get, load: vi.fn() } },
+  );
+  const dispatch = createWorkerLoaderDispatch<Host>(adapter as unknown as ChildWorkerLoaderPort);
+  const context = {
+    signal: new AbortController().signal,
+    args: ["/bin/program"],
+    filesystem: { cwd: "/work" },
+    env: {},
+  } as unknown as KernelAsyncProgramContext;
+  const close = vi.fn();
+
+  return {
+    codes,
+    get,
+    host,
+    target,
+    context,
+    close,
+    code(modules: ChildWorkerModules): ChildWorkerCode {
+      return {
+        mainModule: "main.js",
+        modules: sourceKind === "static" ? modules : () => modules,
+      };
+    },
+    createProgram(modules: ChildWorkerModules) {
+      return createChildWorkerProgram({
+        executable: "/bin/program",
+        code: this.code(modules),
+        capacity: new ChildWorkerCapacity(),
+        dispatch,
+        createHost: () => ({ host, close }),
+      });
+    },
+  };
 }
 
 describe("host-selected child CPU limits", () => {
@@ -179,6 +260,57 @@ describe("host-selected child CPU limits", () => {
     expect(completionHost.stopped).toHaveBeenCalledOnce();
     expect(f.get).toHaveBeenCalledOnce();
   });
+
+  it.each(["static", "lazy-factory"] as const)(
+    "rejects declared unknown and malformed references before loading for %s modules",
+    async (sourceKind) => {
+      for (const reference of ["d".repeat(64), "not-a-sha256"]) {
+        const f = composedProgramFixture(sourceKind);
+        const module = { wasm: alternateWasmBuffer(), wasmReference: reference };
+        const program = f.createProgram({
+          "main.js": "export default {};",
+          "program.wasm": module,
+        });
+        const expectedMessage =
+          reference === "not-a-sha256"
+            ? "Invalid child WASM reference"
+            : "Unknown child WASM reference";
+
+        await expect(program.run(f.context)).rejects.toMatchObject({
+          code: "CHILD_EXECUTION_FAILED",
+          message: expectedMessage,
+          termination: { kind: "stopped" },
+        });
+        expect(f.get).not.toHaveBeenCalled();
+        expect(f.target.run).not.toHaveBeenCalled();
+        expect(f.close).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it.each(["static", "lazy-factory"] as const)(
+    "resolves the registered module instead of raw bytes for %s modules",
+    async (sourceKind) => {
+      const f = composedProgramFixture(sourceKind);
+      const rawBytes = alternateWasmBuffer();
+      const program = f.createProgram({
+        "main.js": "export default {};",
+        "program.wasm": { wasm: rawBytes, wasmReference: wasmRegistry.reference },
+      });
+
+      await expect(program.run(f.context)).resolves.toEqual(exit);
+
+      const resolved = f.codes[0]?.modules["program.wasm"];
+      if (typeof resolved !== "object" || resolved === null || !("wasm" in resolved)) {
+        throw new Error("Registered WASM module missing from loader input");
+      }
+      expect(resolved.wasm).toBe(wasmRegistry.module);
+      expect(resolved.wasm).not.toBe(rawBytes);
+      expect(f.get).toHaveBeenCalledOnce();
+      expect(f.target.run).toHaveBeenCalledOnce();
+      expect(f.close).toHaveBeenCalledOnce();
+    },
+  );
 
   it("carries the core capability through the public adapter and compiled loader preflight", async () => {
     let observedHost: Host | undefined;

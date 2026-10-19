@@ -135,10 +135,10 @@ function captureModules(modules: ChildWorkerModules): ChildWorkerModules {
         name,
         typeof module === "string"
           ? module
-          : "wasm" in module
-            ? Object.freeze({ wasm: module.wasm })
-            : "wasmReference" in module
-              ? Object.freeze({ wasmReference: module.wasmReference })
+          : "wasmReference" in module
+            ? Object.freeze({ wasmReference: module.wasmReference })
+            : "wasm" in module
+              ? Object.freeze({ wasm: module.wasm })
               : Object.freeze({ js: module.js }),
       ]),
     ),

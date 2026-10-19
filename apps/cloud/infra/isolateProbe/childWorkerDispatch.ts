@@ -21,8 +21,8 @@ export class ChildWorkerDispatch extends WorkerEntrypoint<
       CHILD_PROGRAM_WASM_REGISTRY,
       limits,
     );
-    // Public probe callers supply their own RPC capability target. Computer's dispatch has
-    // already wrapped that target with host()/stopped() before it reaches this loader.
+    // Preflight rejection calls stopped() to acknowledge that no child started. Computer
+    // supplies it on its wrapped target; raw public callers must provide it themselves.
     return dispatch.run({ ...invocation, limits }, host);
   }
 }
