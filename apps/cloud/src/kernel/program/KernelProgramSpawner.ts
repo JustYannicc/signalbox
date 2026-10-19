@@ -299,6 +299,22 @@ export class KernelProgramSpawner {
       ticket?.throwCancelFailure();
       return Promise.resolve(fileByteSelectionError(error));
     }
+    // Admission can wait while the parent changes cwd. Relative requests retain their captured base.
+    const cwd = ticket === undefined ? capture.requestedCwd : capture.baseCwd;
+    const actions =
+      ticket !== undefined && capture.requestedCwd !== undefined
+        ? [
+            {
+              kind: "chdir" as const,
+              fd: 0,
+              sourceFd: 0,
+              flags: 0,
+              mode: 0,
+              path: capture.requestedCwd,
+            },
+            ...capture.actions,
+          ]
+        : capture.actions;
     const launch = (args: readonly string[], env: Readonly<Record<string, string>>) =>
       this.#spawnWithFactory(
         capture.parent,
@@ -312,8 +328,8 @@ export class KernelProgramSpawner {
               ...(admission === undefined ? {} : { admission }),
             },
             {
-              ...(capture.requestedCwd === undefined ? {} : { cwd: capture.requestedCwd }),
-              actions: capture.actions,
+              ...(cwd === undefined ? {} : { cwd }),
+              actions,
               fileBytes,
             },
           ),

@@ -16,7 +16,8 @@ export function assertComputerForwardingSupported(request: KernelProgramAdmissio
   const attributes = request.attributes;
   if (
     attributes !== undefined &&
-    (attributes.processGroup !== 0 ||
+    ((attributes.flags & 2) !== 0 ||
+      attributes.processGroup !== 0 ||
       attributes.defaultMask.low !== 0 ||
       attributes.defaultMask.high !== 0 ||
       attributes.signalMask.low !== 0 ||
@@ -26,6 +27,28 @@ export function assertComputerForwardingSupported(request: KernelProgramAdmissio
       "ENOTSUP",
       "Machine process attributes are unavailable",
     );
+  }
+  const handle = request.kind === "exec" ? request.identity?.handle : request.parent;
+  if (request.kind === "exec" && handle === undefined) {
+    throw new KernelProgramExecAdmissionError("EINVAL", "Machine exec process is missing");
+  }
+  const process = request.processes.info(handle);
+  const root = request.processes.info();
+  if (process.status !== "ok" || root.status !== "ok") {
+    throw new KernelProgramExecAdmissionError("ESRCH", "Machine process state is unavailable");
+  }
+  // Ordinary descendants inherit the root group, rather than using their own PID.
+  if (process.value.processGroupId !== root.value.processGroupId) {
+    throw new KernelProgramExecAdmissionError("ENOTSUP", "Machine process groups are unavailable");
+  }
+  if (request.kind === "exec") {
+    const mask = request.processes.signalMask(handle, 3);
+    if (mask.status !== "ok") {
+      throw new KernelProgramExecAdmissionError("ESRCH", "Machine signal mask is unavailable");
+    }
+    if (mask.value.low !== 0 || mask.value.high !== 0) {
+      throw new KernelProgramExecAdmissionError("ENOTSUP", "Machine signal masks are unavailable");
+    }
   }
   const descriptors = new Map(
     Array.from(request.filesystem.descriptors.entries(), ([fd, descriptor]) => [
