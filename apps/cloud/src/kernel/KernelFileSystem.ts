@@ -1,3 +1,4 @@
+import { canonicalFileByteSelection, type KernelFileByteSelection } from "./KernelFileBytes.ts";
 import type { Mount, Storage, Times } from "./storage.ts";
 import type { CreateOptions, Inode } from "./storage.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
@@ -38,6 +39,7 @@ export type { WasiStdio } from "./wasi/internal_wasi_descriptors.ts";
 
 export interface KernelFileSystemConfig {
   readonly mounts: Mount<Storage>[];
+  readonly fileBytes?: KernelFileByteSelection;
   readonly stdio?: readonly [WasiStdio, WasiStdio, WasiStdio];
   readonly cwd?: string;
   readonly descriptors?: WasiDescriptorTable;
@@ -69,9 +71,11 @@ export class KernelFileSystem {
   readonly #ownsDescriptors: boolean;
   #cwdAnchor: WasiPathAnchor | undefined;
   #disposed = false;
+  #fileBytes: KernelFileByteSelection;
 
   constructor(config: KernelFileSystemConfig) {
     const forkContext = (config as KernelFileSystemInternalConfig)[forkContextSymbol];
+    this.#fileBytes = config.fileBytes ?? canonicalFileByteSelection;
     this.#mounts = config.mounts.map((mount) => ({ ...mount }));
     this.#posix = new KernelPosix(forkContext?.posix ?? config.posix);
     this.#ownsDescriptors = config.descriptors === undefined;
@@ -94,8 +98,13 @@ export class KernelFileSystem {
         this.descriptors,
         forkContext?.cwdAnchor,
       );
-      this.#paths = new KernelFileSystemPaths(resolver, this.descriptors, this.#posix);
-      this.#open = new KernelFileSystemOpen(this.descriptors, this.#paths);
+      this.#paths = new KernelFileSystemPaths(
+        resolver,
+        this.descriptors,
+        this.#posix,
+        () => this.#fileBytes,
+      );
+      this.#open = new KernelFileSystemOpen(this.descriptors, this.#paths, () => this.#fileBytes);
       this.#io = new KernelFileSystemIo(this.descriptors);
       if (forkContext?.cwdAnchor !== undefined) {
         this.#retainCwdAnchor(forkContext.cwdAnchor);
@@ -152,13 +161,28 @@ export class KernelFileSystem {
     return this.#posix.policy;
   }
 
-  fork(descriptors: WasiDescriptorTable): KernelFileSystem {
+  get fileBytes(): KernelFileByteSelection {
+    return this.#fileBytes;
+  }
+
+  setFileBytes(selection: KernelFileByteSelection): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#fileBytes = selection;
+    });
+  }
+
+  fork(
+    descriptors: WasiDescriptorTable,
+    options: { readonly fileBytes?: KernelFileByteSelection } = {},
+  ): KernelFileSystem {
     return this.#system(() => {
       this.#assertOpen();
       const cwdAnchor = this.#cwdAnchor;
       const config: KernelFileSystemInternalConfig = {
         mounts: this.#mounts,
         descriptors,
+        fileBytes: options.fileBytes ?? this.#fileBytes,
         [forkContextSymbol]: {
           mounts: this.#mountedMounts,
           ...(cwdAnchor === undefined ? {} : { cwdAnchor: copyAnchor(cwdAnchor) }),

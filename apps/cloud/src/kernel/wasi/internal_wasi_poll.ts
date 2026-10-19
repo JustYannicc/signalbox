@@ -352,7 +352,7 @@ export class WasiPoller {
     if (mount === undefined || inode === undefined) {
       throw new WasiError(ERRNO_EBADF);
     }
-    const stat = mount.storage.stat(inode);
+    const stat = descriptor.byteAccess?.stat() ?? mount.storage.stat(inode);
     if (isPromiseLike(stat)) {
       if (!this.#asyncMode) {
         consumeRejection(stat);

@@ -125,9 +125,9 @@ export class WasiFdCalls {
     const size = normalizeU64(length);
     const end = start + size;
     if (end > MAX_FILE_SIZE) throw new WasiError(EFBIG);
-    const stat = yield* complete(descriptor.mount.storage.stat(descriptor.inode));
+    const stat = yield* this.#stat(descriptor);
     if (stat.type !== "file") throw new WasiError(stat.type === "directory" ? EISDIR : EINVAL);
-    if (end > stat.size) yield* complete(descriptor.mount.storage.truncate(descriptor.inode, end));
+    if (end > stat.size) yield* this.#truncate(descriptor, end);
     return 0;
   }
 
@@ -203,7 +203,7 @@ export class WasiFdCalls {
       stat = stdioStat();
     } else {
       const storageDescriptor = requireStorageDescriptor(descriptor);
-      stat = yield* complete(storageDescriptor.mount.storage.stat(storageDescriptor.inode));
+      stat = yield* this.#stat(storageDescriptor);
       device = storageDescriptor.mount.device;
       inode = storageDescriptor.inode;
     }
@@ -224,9 +224,9 @@ export class WasiFdCalls {
     this.#requireWritable(descriptor);
     const newSize = normalizeU64(size);
     if (newSize > MAX_FILE_SIZE) throw new WasiError(EFBIG);
-    const stat = yield* complete(descriptor.mount.storage.stat(descriptor.inode));
+    const stat = yield* this.#stat(descriptor);
     if (stat.type !== "file") throw new WasiError(stat.type === "directory" ? EISDIR : EINVAL);
-    yield* complete(descriptor.mount.storage.truncate(descriptor.inode, newSize));
+    yield* this.#truncate(descriptor, newSize);
     return 0;
   }
 
@@ -425,8 +425,7 @@ export class WasiFdCalls {
         break;
       case 2: {
         const storageDescriptor = requireStorageDescriptor(descriptor);
-        base = (yield* complete(storageDescriptor.mount.storage.stat(storageDescriptor.inode)))
-          .size;
+        base = (yield* this.#stat(storageDescriptor)).size;
         break;
       }
       default:
@@ -512,7 +511,11 @@ export class WasiFdCalls {
       if (descriptor.stdio?.sync !== undefined) yield* complete(descriptor.stdio.sync());
     } else {
       const storageDescriptor = requireStorageDescriptor(descriptor);
-      yield* complete(storageDescriptor.mount.storage.sync(storageDescriptor.inode, dataOnly));
+      if (storageDescriptor.byteAccess !== undefined) {
+        storageDescriptor.byteAccess.sync(dataOnly);
+      } else {
+        yield* complete(storageDescriptor.mount.storage.sync(storageDescriptor.inode, dataOnly));
+      }
     }
   }
 
@@ -575,7 +578,7 @@ export class WasiFdCalls {
     limit: number,
     position: bigint,
   ): WasiCall<number> {
-    const stat = yield* complete(descriptor.mount.storage.stat(descriptor.inode));
+    const stat = yield* this.#stat(descriptor);
     if (stat.type !== "file") throw new WasiError(stat.type === "directory" ? EISDIR : EINVAL);
     let total = 0;
     for (const vector of vectors) {
@@ -584,9 +587,7 @@ export class WasiFdCalls {
         const size = Math.min(vector.length - offset, limit - total, IO_CHUNK_BYTES);
         if (position + BigInt(total) + BigInt(size) > MAX_FILE_SIZE) throw new WasiError(EOVERFLOW);
         const scratch = new Uint8Array(size);
-        const count = yield* complete(
-          descriptor.mount.storage.readInto(descriptor.inode, position + BigInt(total), scratch),
-        );
+        const count = yield* this.#readInto(descriptor, position + BigInt(total), scratch);
         validateCount(count, size);
         if (count === 0) return total;
         this.#memory.range(vector.pointer + offset, count).set(scratch.subarray(0, count));
@@ -604,14 +605,26 @@ export class WasiFdCalls {
     position: bigint,
     useAppend: boolean,
   ): WasiCall<number> {
-    const stat = yield* complete(descriptor.mount.storage.stat(descriptor.inode));
+    const stat = yield* this.#stat(descriptor);
     if (stat.type !== "file") throw new WasiError(stat.type === "directory" ? EISDIR : EINVAL);
     if (source.byteLength === 0) return 0;
     if (useAppend && (descriptor.flags & FDFLAGS.APPEND) !== 0) {
-      const result = yield* complete(descriptor.mount.storage.append(descriptor.inode, source));
+      let result: { offset: bigint; bytesWritten: number };
+      if (descriptor.byteAccess === undefined) {
+        result = yield* complete(descriptor.mount.storage.append(descriptor.inode, source));
+      } else {
+        result = descriptor.byteAccess.append(source);
+      }
       validateCount(result.bytesWritten, source.byteLength);
       descriptor.offset = result.offset + BigInt(result.bytesWritten);
       return result.bytesWritten;
+    }
+    if (descriptor.byteAccess !== undefined) {
+      if (position + BigInt(source.byteLength) > MAX_FILE_SIZE) throw new WasiError(EFBIG);
+      const count = descriptor.byteAccess.write(position, source);
+      validateCount(count, source.byteLength);
+      if (count === 0) throw new WasiError(EIO);
+      return count;
     }
     let total = 0;
     while (total < source.byteLength) {
@@ -631,6 +644,30 @@ export class WasiFdCalls {
       if (count < size) return total;
     }
     return total;
+  }
+
+  *#stat(descriptor: WasiStorageDescriptor): WasiCall<Stat> {
+    if (descriptor.byteAccess !== undefined) return descriptor.byteAccess.stat();
+    return yield* complete(descriptor.mount.storage.stat(descriptor.inode));
+  }
+
+  *#readInto(
+    descriptor: WasiStorageDescriptor,
+    offset: bigint,
+    target: Uint8Array,
+  ): WasiCall<number> {
+    if (descriptor.byteAccess !== undefined) {
+      return descriptor.byteAccess.readInto(offset, target);
+    }
+    return yield* complete(descriptor.mount.storage.readInto(descriptor.inode, offset, target));
+  }
+
+  *#truncate(descriptor: WasiStorageDescriptor, size: bigint): WasiCall<void> {
+    if (descriptor.byteAccess !== undefined) {
+      descriptor.byteAccess.truncate(size);
+      return;
+    }
+    yield* complete(descriptor.mount.storage.truncate(descriptor.inode, size));
   }
 
   *#getDirectoryEntries(descriptor: WasiStorageDescriptor): WasiCall<DirectoryEntry[]> {

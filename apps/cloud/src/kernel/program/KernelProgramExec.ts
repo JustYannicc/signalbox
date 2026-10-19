@@ -1,4 +1,5 @@
 import { type KernelHandle, type KernelResult, type ResolvedProgram } from "../KernelAbi.ts";
+import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import type {
   KernelAsyncProgramContext,
   KernelAsyncProgramCpu,
@@ -12,8 +13,14 @@ import { enterCurrentKernelCpuUser } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
+import type { KernelProgramFileByteSelector } from "./KernelProgramFileBytes.ts";
 import {
-  createKernelWasiRuntime,
+  assertKernelFileByteSelectionCompatible,
+  commitKernelProgramFileBytes,
+  resolveKernelProgramFileBytes,
+} from "./KernelProgramFileBytes.ts";
+import {
+  prepareKernelWasiRuntime,
   runInlineJavaScript,
   type KernelProgramBinding,
 } from "./KernelProgramRuntime.ts";
@@ -26,6 +33,7 @@ export interface KernelProgramExecOptions {
   readonly spawnFor: (
     context: Pick<KernelAsyncProgramExecRequest, "filesystem" | "identity" | "signal" | "home">,
   ) => (request: AgentOsSpawnRequest) => Promise<KernelResult<KernelHandle<"process">>>;
+  readonly selectFileBytes?: KernelProgramFileByteSelector;
 }
 
 export type KernelAsyncProgramBaseContext = Omit<KernelAsyncProgramContext, "exec">;
@@ -83,10 +91,23 @@ export function execKernelProgram(
     const { implementation } = binding;
     const prepared = { filesystem: request.filesystem, home: request.home };
     const spawn = beforeExecCommit(() => options.spawnFor(request));
+    const fileBytes: KernelFileByteSelection = beforeExecCommit(() =>
+      resolveKernelProgramFileBytes({
+        executable: request.path,
+        ...(options.selectFileBytes === undefined ? {} : { selector: options.selectFileBytes }),
+        filesystem: request.filesystem,
+        parent: request.identity.handle,
+      }),
+    );
+    beforeExecCommit(() =>
+      assertKernelFileByteSelectionCompatible(request.filesystem.descriptors.entries(), fileBytes, {
+        survivingOnly: true,
+      }),
+    );
     if (implementation.kind === "wasm") {
       // Validate every import before CLOEXEC descriptors are removed.
       const runtime = beforeExecCommit(() =>
-        createKernelWasiRuntime(implementation.module, {
+        prepareKernelWasiRuntime(implementation.module, {
           ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
           ...(implementation.cwdEnvironment === undefined
             ? {}
@@ -106,7 +127,8 @@ export function execKernelProgram(
       try {
         return await afterExecCommit(async () => {
           sweepCloseOnExec(request);
-          const exitCode = await runtime.lifecycle.startAsync(runtime.instance);
+          commitKernelProgramFileBytes(request.filesystem, fileBytes);
+          const exitCode = await runtime.lifecycle.startAsync(runtime.instantiate());
           return status(exitCode);
         });
       } finally {
@@ -117,6 +139,7 @@ export function execKernelProgram(
     if (implementation.kind === "javascript") {
       return afterExecCommit(() => {
         sweepCloseOnExec(request);
+        commitKernelProgramFileBytes(request.filesystem, fileBytes);
         const exitCode = runKernelInlineExecution(request.signal, () =>
           runInlineJavaScript(
             implementation.runInline,
@@ -134,6 +157,7 @@ export function execKernelProgram(
 
     return afterExecCommit(async () => {
       sweepCloseOnExec(request);
+      commitKernelProgramFileBytes(request.filesystem, fileBytes);
       const context: KernelAsyncProgramBaseContext = Object.freeze({
         filesystem: request.filesystem,
         home: request.home,
