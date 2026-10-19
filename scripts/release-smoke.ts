@@ -40,6 +40,8 @@ const workspaceFiles = [
   "packages/provider-pi/package.json",
   "packages/provider-acp/package.json",
   "packages/provider-acp-registry/package.json",
+  "packages/provider-claude/package.json", // signalbox: keep extracted provider dependencies in release smoke coverage.
+  "packages/provider-codex/package.json", // signalbox: keep extracted provider dependencies in release smoke coverage.
   "packages/provider-cursor/package.json",
   "packages/provider-grok/package.json",
   "packages/provider-muse/package.json",
