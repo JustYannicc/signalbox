@@ -22,6 +22,7 @@ export const prepare = async () => {
     "moduleTransport",
     "moduleUpload",
     "codeGeneration",
+    "childWorkerDispatch",
   ]) {
     const source = await NodeFSP.readFile(new URL(`./${name}.ts`, import.meta.url), "utf8");
     const js = NodeModule.stripTypeScriptTypes(source, { mode: "strip" })

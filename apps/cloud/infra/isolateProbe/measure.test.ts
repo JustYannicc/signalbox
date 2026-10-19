@@ -64,6 +64,7 @@ describe("fixture measurement CLI", () => {
             mainModule: "nested/main.js",
             entrypoint: "ProbeFacet",
             allowGeneratedCode,
+            allowChildWorkers: allowGeneratedCode,
             modules: {
               "nested/main.js": { path: "source.js", type: "js" },
               "nested/engine.wasm": { path: "binary.wasm", type: "wasm" },
@@ -115,6 +116,7 @@ describe("fixture measurement CLI", () => {
             mode: "facet",
             allowOutbound: false,
             allowGeneratedCode: allowGeneratedCode === true,
+            allowChildWorkers: allowGeneratedCode === true,
             mainModule: "nested/main.js",
             entrypoint: "ProbeFacet",
             path: ["/first", "/fails", "/last"][index],
@@ -232,6 +234,7 @@ describe("fixture measurement CLI", () => {
           mainModule: "main.js",
           entrypoint: "ProbeFacet",
           allowGeneratedCode,
+          allowChildWorkers: allowGeneratedCode,
           modules: {},
           requests: [
             {
@@ -275,6 +278,7 @@ describe("fixture measurement CLI", () => {
         id: expect.stringMatching(/^[a-f0-9]+-upload-fixture$/),
         path: "/upload",
         allowGeneratedCode: allowGeneratedCode === true,
+        allowChildWorkers: allowGeneratedCode === true,
         method: "POST",
         contentType: "application/octet-stream",
       });
@@ -282,6 +286,7 @@ describe("fixture measurement CLI", () => {
       expect(received[1]?.input).toMatchObject({
         path: "/fails",
         allowGeneratedCode: allowGeneratedCode === true,
+        allowChildWorkers: allowGeneratedCode === true,
       });
       expect(received[1]?.input).not.toHaveProperty("method");
       const evidence: unknown = JSON.parse(await NodeFSP.readFile(output, "utf8"));
