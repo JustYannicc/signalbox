@@ -19,6 +19,7 @@ import { KERNEL_BASH_ARTIFACT, type KernelBashCredentials } from "../kernel/Kern
 import { KERNEL_BUSYBOX_VERSION } from "../kernel/KernelBusyboxPrograms.ts";
 import { KERNEL_RIPGREP_PROGRAM_MANIFEST } from "../kernel/KernelRipgrepProgram.ts";
 import type { ChildWorkerCode } from "./ChildWorkerProgram.ts";
+import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
 export interface ChildProgramCodes {
   readonly bash: ChildWorkerCode;
   readonly busyboxCat: ChildWorkerCode;
@@ -35,28 +36,15 @@ export interface ChildProgramCatalogOptions {
 }
 
 export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
-  const lifetimes = new Set<Promise<unknown>>();
-  const failures: unknown[] = [];
-  const capacity = {
-    run<T>(signal: AbortSignal, work: () => Promise<T>) {
-      const lifetime = options.capacity.run(signal, work);
-      lifetimes.add(lifetime);
-      void lifetime.then(
-        () => lifetimes.delete(lifetime),
-        (error: unknown) => {
-          failures.push(error);
-          lifetimes.delete(lifetime);
-        },
-      );
-      return lifetime;
-    },
-  };
+  const capacity = options.capacity;
+  const lifetimes = new ChildWorkerLifetimes();
   const credentials = bashCredentials(options.filesystem, options.hostname);
   const bashDispatch = createWorkerLoaderDispatch<KernelBashPort>(options.loader);
   const bash = createChildWorkerProgram({
     executable: "/bin/bash",
     code: options.programs.bash,
     capacity,
+    lifetimes,
     dispatch: bashDispatch,
     createHost: (context) => createWorkerBashHost({ context, credentials }),
   });
@@ -89,6 +77,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     executable: "/bin/cat",
     code: options.programs.busyboxCat,
     capacity,
+    lifetimes,
     dispatch: catDispatch,
     parentRpcTarget: (port) => new WorkerBusyboxPort(port),
   });
@@ -99,6 +88,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     executable: "/bin/rg",
     code: options.programs.ripgrep,
     capacity,
+    lifetimes,
     dispatch: ripgrepDispatch,
     createHost(context) {
       return createWorkerSyscalls({
@@ -120,9 +110,14 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
   return {
     bindings,
     async drain() {
-      // Logical root exit can precede the dispatch ACK and capability close.
-      while (lifetimes.size > 0) await Promise.allSettled(lifetimes);
-      if (failures.length > 0) throw new AggregateError(failures, "Child program cleanup failed");
+      try {
+        await lifetimes.drain();
+      } catch (error) {
+        throw new AggregateError(
+          error instanceof AggregateError ? error.errors : [error],
+          "Child program cleanup failed",
+        );
+      }
     },
   };
 }

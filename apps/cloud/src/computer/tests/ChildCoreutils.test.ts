@@ -105,7 +105,9 @@ describe("Coreutils child bridge", () => {
       "shares the normalized cwd with the parent and child for %s",
       async (_name, env) => {
         const fixture = childBusyboxFixture({ args: ["pwd"], env });
-        const capacity = new ChildWorkerCapacity();
+        const capacity = new ChildWorkerCapacity(1);
+        const reservation = capacity.tryReserve(fixture.context.signal)!;
+        const capacityRun = vi.spyOn(capacity, "run");
         const commands: KernelCommand[] = [];
         let parentEnvironment: string | undefined;
         const module = wasmEnvironmentGetCommand();
@@ -113,6 +115,11 @@ describe("Coreutils child bridge", () => {
           executable: "/bin/pwd",
           code: childCode,
           capacity,
+          reservationFor: (context) => {
+            expect(context).toBe(fixture.context);
+            expect(context.env).toBe(env);
+            return reservation;
+          },
           dispatch: {
             async run(input, port: KernelCoreutilsPort) {
               commands.push(structuredClone(input.command));
@@ -151,6 +158,9 @@ describe("Coreutils child bridge", () => {
             },
           ]);
           expect(capacity.active).toBe(0);
+          expect(capacityRun).not.toHaveBeenCalled();
+          expect(fixture.context.env).toEqual(env);
+          await program.drain();
         } finally {
           await fixture.close();
         }
