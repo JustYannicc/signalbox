@@ -181,7 +181,7 @@ describe("SecretFileBytes", () => {
     ).toThrow(codeError("ENOMEM"));
   });
 
-  it("fills escaped Unicode values and refuses their shared scrubber forms before exceeding the budget", () => {
+  it("fills escaped Unicode values and refuses bindings whose shared forms exceed the budget", () => {
     const values = [
       "quotes ' \" slash \\ dollar $ tick ` newline\n tab\t and shell ;<>|",
       "üñíçødé 🔑 中文 and url /?&=+%",
