@@ -29,7 +29,7 @@ const files = {
   "real/nested/file.ts": "real file",
 };
 
-export async function nodeFsGlobOracleFixture() {
+export async function nodeFsGlobOracleFixture({ symlinks = true } = {}) {
   const fixture = nodeFsPosixFixture();
   const promises = createNodeFs(fixture.kernelFs)["fs/promises"];
   const nativeRoot = await NodeFSP.mkdtemp(
@@ -46,10 +46,12 @@ export async function nodeFsGlobOracleFixture() {
       await promises.writeFile(`/work/${path}`, contents);
       await NodeFSP.writeFile(NodePath.join(nativeRoot, path), contents);
     }
-    await promises.symlink("/work/real", "/work/alias");
-    await promises.symlink("/work", "/work/real/nested/cycle");
-    await NodeFSP.symlink(NodePath.join(nativeRoot, "real"), NodePath.join(nativeRoot, "alias"));
-    await NodeFSP.symlink(nativeRoot, NodePath.join(nativeRoot, "real/nested/cycle"));
+    if (symlinks) {
+      await promises.symlink("/work/real", "/work/alias");
+      await promises.symlink("/work", "/work/real/nested/cycle");
+      await NodeFSP.symlink(NodePath.join(nativeRoot, "real"), NodePath.join(nativeRoot, "alias"));
+      await NodeFSP.symlink(nativeRoot, NodePath.join(nativeRoot, "real/nested/cycle"));
+    }
 
     return {
       kernelFs: fixture.kernelFs,

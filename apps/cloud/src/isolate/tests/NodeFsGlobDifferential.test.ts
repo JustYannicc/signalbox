@@ -43,7 +43,8 @@ function errorCode(error: unknown): string | undefined {
 
 describe("Node fs/promises glob differential behavior", () => {
   it("matches Node for braces, classes, extglobs, dotfiles, arrays, and exclusions", async () => {
-    const fixture = await nodeFsGlobOracleFixture();
+    // Node 24.22 changed symlink traversal. Its pinned 24.18 contract has a separate test.
+    const fixture = await nodeFsGlobOracleFixture({ symlinks: false });
     const kernelGlob = globApi(fixture.promises.glob);
     const nativeGlob = globApi(NodeFSP.glob);
     try {
