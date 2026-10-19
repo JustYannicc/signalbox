@@ -1,4 +1,5 @@
 import { Boxd, NotFoundError } from "@boxd-sh/sdk/web";
+import type { Machine as BoxdSdkMachine, MachineForkParams } from "@boxd-sh/sdk/web";
 import * as Option from "effect/Option";
 import {
   MachineCreationError,
@@ -7,6 +8,7 @@ import {
   type MachineHandle,
   type MachineReconciliation,
 } from "../Machine.ts";
+import type { BaseLease } from "../Computer.ts";
 
 const BOXD_BASE_URL = "https://boxd.sh:9443";
 const BOXD_TIMEOUT_MS = 10_000;
@@ -24,17 +26,13 @@ export const boxdMachineClient = (token: string) =>
     maxRetries: 0,
   });
 
-export interface BoxdMachineRecord {
-  readonly id: string;
-  readonly name: string;
-  readonly status: string;
-  readonly shared: boolean;
-  readonly networking: {
-    readonly isolated: boolean;
-    readonly networks: ReadonlyArray<string>;
-  };
-  readonly deleteAt: Date | null;
-}
+export type BoxdMachineRecord = Pick<
+  BoxdSdkMachine,
+  "id" | "name" | "status" | "shared" | "deleteAt"
+> & {
+  readonly networking: Pick<BoxdSdkMachine["networking"], "isolated" | "networks">;
+  readonly idle: Pick<BoxdSdkMachine["idle"], "destroyAfter">;
+};
 
 export interface BoxdMachineClient {
   readonly machines: {
@@ -59,19 +57,20 @@ export interface BoxdMachineClient {
     }) => Promise<{ readonly id: string }>;
     readonly fork: (
       source: string,
-      input: {
+      input: MachineForkParams & {
         readonly name: string;
         readonly isolated: true;
         readonly networks: string[];
         readonly shared: false;
         readonly deleteAfter: number;
+        readonly config: {
+          readonly autoSuspendTimeout: 0;
+          readonly autoDestroyTimeout: 0;
+          readonly idleIgnoreOutbound: true;
+        };
       },
     ) => Promise<{ readonly id: string }>;
     readonly get: (name: string) => Promise<BoxdMachineRecord | null>;
-    readonly waitUntilReady: (
-      id: string,
-      params: { readonly timeout: number; readonly pollInterval: number },
-    ) => Promise<unknown>;
     readonly delete: (id: string) => Promise<unknown>;
     readonly setDeleteAfter: (name: string, seconds: number) => Promise<unknown>;
     readonly proxies: {
@@ -136,6 +135,19 @@ const assertUnexpired = (expiresAt: number, now: number) => {
   }
 };
 
+const assertBaseCanFork = (base: BaseLease, expiresAt: number, now: number) => {
+  if (base.retention !== "until-release") {
+    throw new MachineCreationError(
+      "not_created",
+      "Base lease is not retained until explicit release",
+    );
+  }
+  if (base.expiresAt !== expiresAt) {
+    throw new RangeError("Machine expiry must match the Base lease expiry.");
+  }
+  assertUnexpired(base.expiresAt, now);
+};
+
 const abortIfNeeded = (signal: AbortSignal) => {
   if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
 };
@@ -152,40 +164,89 @@ const get = async (client: BoxdMachineClient, name: string) => {
   }
 };
 
-const waitUntilReady = async (client: BoxdMachineClient, id: string, signal: AbortSignal) => {
-  let rejectAborted!: (reason: unknown) => void;
-  const aborted = new Promise<never>((_resolve, reject) => {
-    rejectAborted = reject;
+const awaitWithSignal = <A>(promise: Promise<A>, signal: AbortSignal): Promise<A> =>
+  new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    void promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
   });
-  const onAbort = () => rejectAborted(signal.reason ?? new DOMException("Aborted", "AbortError"));
-  signal.addEventListener("abort", onAbort, { once: true });
 
-  try {
-    abortIfNeeded(signal);
-    await Promise.race([
-      client.machines.waitUntilReady(id, {
-        timeout: BOXD_READY_TIMEOUT_MS,
-        pollInterval: BOXD_READY_POLL_INTERVAL_MS,
-      }),
-      aborted,
-    ]);
-    abortIfNeeded(signal);
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-  }
-};
+const sleep = (milliseconds: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 
-const readyMachine = async (
+type TimeoutSignalFactory = (milliseconds: number) => AbortSignal;
+
+// The SDK readiness helper waits on an exec duplex with no caller signal. Public status GETs are
+// bounded by the client timeout; MachineCommandRuntime.attach proves the fresh Runner hello.
+const waitForRunning = async (
   client: BoxdMachineClient,
   name: string,
   id: string,
-  signal: AbortSignal,
+  callerSignal: AbortSignal,
+  makeTimeoutSignal: TimeoutSignalFactory,
 ) => {
-  await waitUntilReady(client, id, signal);
-  const machine = await get(client, name);
-  if (!machine) throw new BoxdMachinePendingError(name);
-  if (machine.id !== id) throw new Error("Boxd machine id changed while waiting for readiness.");
-  return machine;
+  const deadline = makeTimeoutSignal(BOXD_READY_TIMEOUT_MS);
+  const signal = AbortSignal.any([callerSignal, deadline]);
+  try {
+    while (true) {
+      abortIfNeeded(signal);
+      let machine: BoxdMachineRecord | null = null;
+      try {
+        machine = await awaitWithSignal(get(client, name), signal);
+      } catch (error) {
+        if (signal.aborted) throw error;
+      }
+      if (machine) {
+        if (machine.id !== id) {
+          throw new Error("Boxd machine id changed while waiting for readiness.");
+        }
+        if (machine.status === "running") return machine;
+      }
+      await sleep(BOXD_READY_POLL_INTERVAL_MS, signal);
+    }
+  } catch (error) {
+    if (deadline.aborted && !callerSignal.aborted) {
+      throw new MachineCreationError(
+        "unknown",
+        `Boxd machine ${name} did not report running before the readiness deadline; an in-flight SDK status request may still finish.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 };
 
 const isPrivate = (machine: BoxdMachineRecord) =>
@@ -198,6 +259,7 @@ export const makeBoxdMachines = (
   reservations: BoxdMachineReservations,
   config: BoxdMachinesConfig,
   now: () => number = Date.now,
+  makeTimeoutSignal: TimeoutSignalFactory = (milliseconds) => AbortSignal.timeout(milliseconds),
 ): Machine => {
   const deleteOwnedMachine = async (reservation: BoxdMachineReservation, machineId: string) => {
     const current = await get(client, reservation.name);
@@ -260,7 +322,8 @@ export const makeBoxdMachines = (
         refreshed.id !== machine.id ||
         refreshed.name !== reservation.name ||
         !isPrivate(refreshed) ||
-        refreshed.deleteAt !== null
+        refreshed.deleteAt !== null ||
+        refreshed.idle.destroyAfter !== 0
       ) {
         throw new Error("Boxd machine security or deletion timer mismatch.");
       }
@@ -302,23 +365,31 @@ export const makeBoxdMachines = (
       try {
         abortIfNeeded(signal);
         const base = Option.isSome(input.base) ? input.base.value : null;
-        if (base && base.expiresAt !== input.expiresAt) {
-          throw new RangeError("Machine expiry must match the Base lease expiry.");
-        }
-        assertUnexpired(input.expiresAt, now());
+        if (base) assertBaseCanFork(base, input.expiresAt, now());
+        else assertUnexpired(input.expiresAt, now());
         const reservation = await reservations.reserve(input);
         if (!reservation.id || !reservation.name || reservation.generation < 0) {
           throw new Error("Boxd machine reservation is invalid.");
         }
         dispatchMayHaveStarted = reservation.createStarted;
         abortIfNeeded(signal);
+        if (!reservation.createStarted) {
+          if (base) assertBaseCanFork(base, input.expiresAt, now());
+          else assertUnexpired(input.expiresAt, now());
+        }
 
         let machine = await get(client, reservation.name);
         if (machine) {
           if (!reservation.createStarted) {
             throw new Error("A Boxd machine already uses the reserved name.");
           }
-          machine = await readyMachine(client, reservation.name, machine.id, signal);
+          machine = await waitForRunning(
+            client,
+            reservation.name,
+            machine.id,
+            signal,
+            makeTimeoutSignal,
+          );
           return await prepare(reservation, machine, signal);
         }
         if (reservation.createStarted) throw new BoxdMachinePendingError(reservation.name);
@@ -332,7 +403,13 @@ export const makeBoxdMachines = (
           machine = await get(client, reservation.name);
           if (!machine) throw new BoxdMachinePendingError(reservation.name);
           if (!resumed.createStarted) throw new Error("Boxd machine reservation state changed.");
-          machine = await readyMachine(client, reservation.name, machine.id, signal);
+          machine = await waitForRunning(
+            client,
+            reservation.name,
+            machine.id,
+            signal,
+            makeTimeoutSignal,
+          );
           return await prepare(resumed, machine, signal);
         }
 
@@ -357,6 +434,21 @@ export const makeBoxdMachines = (
           throw new MachineCreationError("not_created", messageOf(reason), { cause: reason });
         }
 
+        if (base && (!Number.isFinite(base.expiresAt) || base.expiresAt <= now())) {
+          if (await get(client, reservation.name)) {
+            throw new MachineCreationError(
+              "unknown",
+              "A Boxd machine appeared before the expired Base fork could dispatch.",
+            );
+          }
+          await reservations.release(reservation);
+          dispatchMayHaveStarted = false;
+          throw new MachineCreationError(
+            "not_created",
+            "Base lease expired before its fork was dispatched.",
+          );
+        }
+
         const created = base
           ? await client.machines.fork(base.sourceRef, {
               name: reservation.name,
@@ -364,6 +456,11 @@ export const makeBoxdMachines = (
               networks: [],
               shared: false,
               deleteAfter: 0,
+              config: {
+                autoSuspendTimeout: 0,
+                autoDestroyTimeout: 0,
+                idleIgnoreOutbound: true,
+              },
             })
           : await client.machines.create({
               name: reservation.name,
@@ -386,7 +483,13 @@ export const makeBoxdMachines = (
             });
 
         if (!created.id) throw new Error("Boxd create returned no machine id.");
-        machine = await readyMachine(client, reservation.name, created.id, signal);
+        machine = await waitForRunning(
+          client,
+          reservation.name,
+          created.id,
+          signal,
+          makeTimeoutSignal,
+        );
         return await prepare(reservation, machine, signal);
       } catch (error) {
         if (error instanceof MachineCreationError) throw error;

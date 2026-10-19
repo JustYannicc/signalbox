@@ -23,6 +23,7 @@ const machine = (name: string, fields: Partial<BoxdMachineRecord> = {}): BoxdMac
   status: "running",
   shared: false,
   networking: { isolated: true, networks: [] },
+  idle: { destroyAfter: 0 },
   deleteAt: null,
   ...fields,
 });
@@ -34,22 +35,16 @@ const input = (
   drive: "my/personal/alice" as DriveRef,
   recipeHash: "sha256:abc" as RecipeHash,
   base,
-  expiresAt: NOW + 900_000,
+  expiresAt: Option.isSome(base) ? base.value.expiresAt : NOW + 900_000,
 });
 
-const fixture = () => {
+const fixture = (
+  now: () => number = () => NOW,
+  makeTimeoutSignal?: (milliseconds: number) => AbortSignal,
+) => {
   const events: string[] = [];
   const machines = new Map<string, BoxdMachineRecord>();
   const state = { createStarted: false, machineId: null as string | null, released: false };
-  const waitUntilReady = vi.fn(
-    async (id: string, _params: { readonly timeout: number; readonly pollInterval: number }) => {
-      const current = [...machines.values()].find(
-        (candidate) => candidate.id === id || candidate.name === id,
-      );
-      if (!current) throw new Error(`Missing fake machine ${id}`);
-      return current;
-    },
-  );
   const currentReservation = (): BoxdMachineReservation => ({
     id: "reservation-1",
     name: NAME,
@@ -90,14 +85,18 @@ const fixture = () => {
       }),
       fork: vi.fn(async (_source, options) => {
         events.push("fork");
-        machines.set(options.name, machine(options.name));
+        machines.set(
+          options.name,
+          machine(options.name, {
+            idle: { destroyAfter: options.config?.autoDestroyTimeout ?? 600 },
+          }),
+        );
         return { id: MACHINE_ID };
       }),
       get: vi.fn(async (name) => {
         events.push(`get:${name}`);
         return machines.get(name) ?? null;
       }),
-      waitUntilReady,
       delete: vi.fn(async (id) => {
         events.push(`delete:${id}`);
         for (const [name, current] of machines) {
@@ -126,18 +125,27 @@ const fixture = () => {
       },
     },
   };
-  const port = makeBoxdMachines(
-    client,
-    reservations,
-    { org: "test-org", image: "runner-image", vcpu: 1, memory: "4G" },
-    () => NOW,
-  );
-  return { client, events, machines, port, reservations, state, waitUntilReady };
+  const port = makeTimeoutSignal
+    ? makeBoxdMachines(
+        client,
+        reservations,
+        { org: "test-org", image: "runner-image", vcpu: 1, memory: "4G" },
+        now,
+        makeTimeoutSignal,
+      )
+    : makeBoxdMachines(
+        client,
+        reservations,
+        { org: "test-org", image: "runner-image", vcpu: 1, memory: "4G" },
+        now,
+      );
+  return { client, events, machines, port, reservations, state };
 };
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("BoxdMachines", () => {
@@ -173,48 +181,70 @@ describe("BoxdMachines", () => {
     expect(f.reservations.recordMachineId).toHaveBeenCalledWith(expect.anything(), MACHINE_ID);
   });
 
-  it("waits for Boxd readiness before returning a pending create", async () => {
+  it("retries public status probes until Boxd reports running", async () => {
     const f = fixture();
+    let signalPendingStatus!: () => void;
+    const pendingStatus = new Promise<void>((resolve) => {
+      signalPendingStatus = resolve;
+    });
+    let reads = 0;
     vi.mocked(f.client.machines.create).mockImplementationOnce(async (options) => {
       f.events.push("create-pending");
       f.machines.set(options.name, machine(options.name, { status: "pending" }));
       return { id: MACHINE_ID };
     });
-    f.waitUntilReady.mockImplementationOnce(async (id) => {
-      f.events.push("waitUntilReady");
-      const pending = f.machines.get(NAME);
-      if (!pending || pending.id !== id) throw new Error("missing pending machine");
-      const ready = { ...pending, status: "running" };
-      f.machines.set(NAME, ready);
-      return ready;
+    vi.mocked(f.client.machines.get).mockImplementation(async (name) => {
+      f.events.push(`get:${name}`);
+      reads += 1;
+      const current = f.machines.get(name) ?? null;
+      if (reads === 2) {
+        signalPendingStatus();
+        throw new Error("temporary Boxd status failure");
+      }
+      if (reads === 4 && current) {
+        const ready = { ...current, status: "running" as const };
+        f.machines.set(name, ready);
+        return ready;
+      }
+      return current;
     });
 
-    const handle = await f.port.create(input(), new AbortController().signal);
+    vi.useFakeTimers();
+    const creation = f.port.create(input(), new AbortController().signal);
+    await pendingStatus;
+    await vi.advanceTimersByTimeAsync(1_000);
+    const handle = await creation;
 
-    expect(f.waitUntilReady.mock.calls[0]?.[0]).toBe(MACHINE_ID);
-    expect(f.waitUntilReady.mock.calls[0]?.[1]).toEqual({ timeout: 90_000, pollInterval: 500 });
-    expect(f.events.indexOf("create-pending")).toBeLessThan(f.events.indexOf("waitUntilReady"));
+    expect(reads).toBeGreaterThanOrEqual(4);
+    expect(f.events.indexOf("create-pending")).toBeLessThan(f.events.lastIndexOf(`get:${NAME}`));
     expect(handle.id).toBe(MACHINE_ID);
     expect(f.client.machines.create).toHaveBeenCalledTimes(1);
   });
 
-  it("stops waiting for SDK readiness when the caller aborts", async () => {
+  it("stops waiting on an SDK status lookup when the caller aborts", async () => {
     const f = fixture();
-    let signalWaitStarted!: () => void;
-    const waitStarted = new Promise<void>((resolve) => {
-      signalWaitStarted = resolve;
+    let signalLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      signalLookupStarted = resolve;
     });
+    let finishLookup!: (machine: BoxdMachineRecord | null) => void;
+    const unresponsiveLookup = new Promise<BoxdMachineRecord | null>((resolve) => {
+      finishLookup = resolve;
+    });
+    let reads = 0;
     vi.mocked(f.client.machines.create).mockImplementationOnce(async (options) => {
       f.machines.set(options.name, machine(options.name, { status: "pending" }));
       return { id: MACHINE_ID };
     });
-    f.waitUntilReady.mockImplementationOnce(async () => {
-      signalWaitStarted();
-      return new Promise(() => undefined);
+    vi.mocked(f.client.machines.get).mockImplementation(async (_name) => {
+      reads += 1;
+      if (reads === 1) return null;
+      signalLookupStarted();
+      return unresponsiveLookup;
     });
     const controller = new AbortController();
     const creation = f.port.create(input(), controller.signal);
-    await waitStarted;
+    await lookupStarted;
     controller.abort(new Error("cancelled while waiting for Boxd"));
 
     await expect(creation).rejects.toMatchObject({
@@ -222,6 +252,59 @@ describe("BoxdMachines", () => {
       message: "cancelled while waiting for Boxd",
     });
     expect(f.client.machines.create).toHaveBeenCalledTimes(1);
+    expect(f.client.machines.delete).not.toHaveBeenCalled();
+    expect(f.reservations.release).not.toHaveBeenCalled();
+    finishLookup(null);
+  });
+
+  it("bounds a hung status lookup without releasing its reservation", async () => {
+    vi.useFakeTimers();
+    const f = fixture(undefined, (milliseconds) => {
+      const deadline = new AbortController();
+      setTimeout(
+        () => deadline.abort(new DOMException("Readiness timed out", "TimeoutError")),
+        milliseconds,
+      );
+      return deadline.signal;
+    });
+    let signalLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      signalLookupStarted = resolve;
+    });
+    let finishLookup!: (machine: BoxdMachineRecord | null) => void;
+    const unresponsiveLookup = new Promise<BoxdMachineRecord | null>((resolve) => {
+      finishLookup = resolve;
+    });
+    let reads = 0;
+    vi.mocked(f.client.machines.create).mockImplementationOnce(async (options) => {
+      f.machines.set(options.name, machine(options.name, { status: "pending" }));
+      return { id: MACHINE_ID };
+    });
+    vi.mocked(f.client.machines.get).mockImplementation(async (_name) => {
+      reads += 1;
+      if (reads === 1) return null;
+      signalLookupStarted();
+      return unresponsiveLookup;
+    });
+
+    const creation = f.port.create(input(), new AbortController().signal);
+    const creationResult = creation.then(
+      () => ({ status: "resolved" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    await lookupStarted;
+    await vi.advanceTimersByTimeAsync(90_000);
+    const result = await creationResult;
+    expect(result.status).toBe("rejected");
+    if (result.status !== "rejected") throw new Error("Readiness probe unexpectedly resolved");
+    expect(result.error).toMatchObject({
+      disposition: "unknown",
+      message: expect.stringContaining("readiness deadline"),
+    });
+
+    expect(f.client.machines.delete).not.toHaveBeenCalled();
+    expect(f.reservations.release).not.toHaveBeenCalled();
+    finishLookup(null);
   });
 
   it("forks only the supplied Base source and clears machine deletion timers", async () => {
@@ -230,6 +313,7 @@ describe("BoxdMachines", () => {
       id: "base-lease-1",
       sourceRef: "opaque-boxd-source",
       expiresAt: NOW + 900_000,
+      retention: "until-release",
     };
 
     await f.port.create(input(Option.some(lease)), new AbortController().signal);
@@ -241,7 +325,114 @@ describe("BoxdMachines", () => {
       networks: [],
       shared: false,
       deleteAfter: 0,
+      config: {
+        autoSuspendTimeout: 0,
+        autoDestroyTimeout: 0,
+        idleIgnoreOutbound: true,
+      },
     });
+  });
+
+  it("rejects a legacy expiring Base before reserving or forking", async () => {
+    const f = fixture();
+    const legacyLease: BaseLease = {
+      id: "legacy-base",
+      sourceRef: "opaque-boxd-source",
+      expiresAt: NOW + 900_000,
+    };
+
+    await expect(
+      f.port.create(input(Option.some(legacyLease)), new AbortController().signal),
+    ).rejects.toMatchObject({ disposition: "not_created" });
+
+    expect(f.reservations.reserve).not.toHaveBeenCalled();
+    expect(f.client.machines.fork).not.toHaveBeenCalled();
+  });
+
+  it("rejects a warm fork when the provider still reports an inherited destroy timer", async () => {
+    const f = fixture();
+    const lease: BaseLease = {
+      id: "base-lease-1",
+      sourceRef: "opaque-boxd-source",
+      expiresAt: NOW + 900_000,
+      retention: "until-release",
+    };
+    vi.mocked(f.client.machines.setDeleteAfter).mockImplementationOnce(async (name, seconds) => {
+      const current = f.machines.get(name);
+      if (current) {
+        f.machines.set(name, {
+          ...current,
+          deleteAt: seconds === 0 ? null : current.deleteAt,
+          idle: { destroyAfter: 60 },
+        });
+      }
+    });
+
+    await expect(
+      f.port.create(input(Option.some(lease)), new AbortController().signal),
+    ).rejects.toMatchObject({
+      disposition: "not_created",
+      message: "Boxd machine security or deletion timer mismatch.",
+    });
+
+    expect(f.client.machines.delete).toHaveBeenCalledWith(MACHINE_ID);
+    expect(f.reservations.release).toHaveBeenCalledTimes(1);
+    expect(f.reservations.recordMachineId).not.toHaveBeenCalled();
+  });
+
+  it("checks a Base fork deadline again after the reservation write", async () => {
+    let clock = NOW;
+    const f = fixture(() => clock);
+    const lease: BaseLease = {
+      id: "base-lease-1",
+      sourceRef: "opaque-boxd-source",
+      expiresAt: NOW + 1_000,
+      retention: "until-release",
+    };
+    vi.mocked(f.reservations.reserve).mockImplementationOnce(async () => {
+      f.events.push("reserve");
+      clock = NOW + 1_001;
+      return {
+        id: "reservation-1",
+        name: NAME,
+        generation: 7,
+        createStarted: false,
+        machineId: null,
+      };
+    });
+
+    await expect(
+      f.port.create(input(Option.some(lease)), new AbortController().signal),
+    ).rejects.toMatchObject({
+      disposition: "not_created",
+    });
+
+    expect(f.reservations.startCreate).not.toHaveBeenCalled();
+    expect(f.client.machines.fork).not.toHaveBeenCalled();
+  });
+
+  it("releases a reservation when the Base expires before fork dispatch", async () => {
+    let clock = NOW;
+    const f = fixture(() => clock);
+    const lease: BaseLease = {
+      id: "base-lease-1",
+      sourceRef: "opaque-boxd-source",
+      expiresAt: NOW + 1_000,
+      retention: "until-release",
+    };
+    vi.mocked(f.reservations.startCreate).mockImplementationOnce(async () => {
+      f.events.push("startCreate");
+      f.state.createStarted = true;
+      clock = NOW + 1_001;
+      return true;
+    });
+
+    await expect(
+      f.port.create(input(Option.some(lease)), new AbortController().signal),
+    ).rejects.toMatchObject({ disposition: "not_created" });
+
+    expect(f.client.machines.fork).not.toHaveBeenCalled();
+    expect(f.reservations.release).toHaveBeenCalledTimes(1);
   });
 
   it("recovers an ambiguous create by exact name without repeating the mutation", async () => {

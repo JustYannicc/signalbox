@@ -11,6 +11,7 @@ const base = Schema.Struct({
   id: Schema.String,
   sourceRef: Schema.String,
   expiresAt: Schema.Number,
+  retention: Schema.optionalKey(Schema.Literal("until-release")),
 });
 const createInput = Schema.Struct({
   operationId: Schema.String,
@@ -86,7 +87,8 @@ export class SqliteMachineCommandJournal implements MachineCommandJournal {
       captured.createInput?.base &&
       (captured.base?.id !== captured.createInput.base.id ||
         captured.base.sourceRef !== captured.createInput.base.sourceRef ||
-        captured.base.expiresAt !== captured.createInput.base.expiresAt)
+        captured.base.expiresAt !== captured.createInput.base.expiresAt ||
+        captured.base.retention !== captured.createInput.base.retention)
     ) {
       throw new Error("Machine create Base does not match the journaled lease");
     }

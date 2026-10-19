@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Option from "effect/Option";
+import { KernelProgramExecAdmissionError } from "../../kernel/KernelAsyncProgram.ts";
 import type { BaseLease } from "../Computer.ts";
 import { MachineCreationError, type MachineHandle } from "../Machine.ts";
 import type { MachineCommandJournal, MachineCommandRecord } from "../MachineCommandJournal.ts";
@@ -37,7 +38,7 @@ function indexOf(events: readonly string[], event: string) {
 }
 
 describe("MachineCommands", () => {
-  it("holds workspace admission through apply and cancels callers queued behind it", async () => {
+  it("rejects another command while apply holds capacity, then admits one after settlement", async () => {
     const checkpointIds: string[] = [];
     let nextId = 0;
     let releaseApply!: () => void;
@@ -67,10 +68,13 @@ describe("MachineCommands", () => {
     fixture.closeChild();
     await applyEntered;
 
-    const queuedController = new AbortController();
-    const queued = fixture.commands.spawn(machineCommand, queuedController.signal);
-    queuedController.abort(new Error("cancelled while queued"));
-    await expect(queued).rejects.toThrow("cancelled while queued");
+    const competing = fixture.commands.spawn(machineCommand, new AbortController().signal);
+    const competingOutcome = competing.then(
+      () => "resolved" as const,
+      (error: unknown) => error,
+    );
+    await Promise.resolve();
+    const immediate = await Promise.race([competingOutcome, Promise.resolve("pending" as const)]);
     expect(checkpointIds).toEqual(["machine-op-1:before"]);
     expect(fixture.createCalls).toHaveLength(1);
     expect(fixture.spawnCalls).toHaveLength(1);
@@ -80,6 +84,14 @@ describe("MachineCommands", () => {
       exitCode: 0,
       signal: 0,
       coreDumped: false,
+    });
+
+    const competingResult = await competingOutcome;
+    expect(immediate).toBeInstanceOf(KernelProgramExecAdmissionError);
+    expect(competingResult).toBeInstanceOf(KernelProgramExecAdmissionError);
+    expect(competingResult).toMatchObject({
+      code: "RESOURCE_LIMIT",
+      message: "Command capacity is full",
     });
 
     const next = await fixture.commands.spawn(machineCommand, new AbortController().signal);
@@ -93,11 +105,12 @@ describe("MachineCommands", () => {
     expect(fixture.spawnCalls).toHaveLength(2);
   });
 
-  it("recovers persisted rows before accepting a new command", async () => {
+  it("blocks a new command while an executed row remains unresolved", async () => {
     const pending: MachineCommandRecord = {
       operationId: "interrupted-op",
-      phase: "create",
+      phase: "execute",
       before: machineBefore,
+      machine: { id: "interrupted-machine", generation: 7 },
       createInput: {
         operationId: "interrupted-op",
         drive: "drive:test",
@@ -138,6 +151,92 @@ describe("MachineCommands", () => {
     expect(fixture.events).not.toContain("checkpoint");
     expect(fixture.createCalls).toHaveLength(0);
     expect(fixture.spawnCalls).toHaveLength(0);
+  });
+
+  it("rejects an expiring Base before creating a machine", async () => {
+    const legacyBase: BaseLease = {
+      id: "legacy-base",
+      sourceRef: "recipe:snapshot",
+      expiresAt: 1_900_000_000_000,
+    };
+    const fixture = createMachineFixture({
+      baseLease: legacyBase,
+      createMachine: async () => {
+        throw new Error("Machine.create must not run for a legacy Base lease");
+      },
+    });
+
+    await expect(
+      fixture.commands.spawn(machineCommand, new AbortController().signal),
+    ).rejects.toThrow("Base lease is not retained until explicit release");
+
+    expect(fixture.createCalls).toHaveLength(0);
+    expect(fixture.spawnCalls).toHaveLength(0);
+    expect(fixture.events).toContain("base.release");
+    expect(fixture.records.at(-1)?.phase).toBe("complete");
+  });
+
+  it("keeps an unresolved pre-execution create row without blocking the next command", async () => {
+    const ambiguous = new MachineCreationError("unknown", "create result is unknown");
+    const records = new Map<string, MachineCommandRecord>();
+    const journal: MachineCommandJournal = {
+      async write(record) {
+        records.set(record.operationId, structuredClone(record));
+      },
+      read(operationId) {
+        return records.get(operationId);
+      },
+      pending() {
+        return [...records.values()].filter((record) => record.phase !== "complete");
+      },
+    };
+    let operation = 0;
+    let lastHandle: MachineHandle | undefined;
+    const fixture = createMachineFixture({
+      journal,
+      nextOperationId: () => (++operation === 1 ? "unknown-create" : "next-command"),
+      createMachine: async (input, _signal, handle) => {
+        lastHandle = handle;
+        if (input.operationId === "unknown-create") throw ambiguous;
+        return handle;
+      },
+      reconcileMachine: async (input) => {
+        if (input.operationId === "unknown-create") return { status: "unknown" };
+        if (!lastHandle) throw new Error("The local fake lost its provider handle");
+        return {
+          status: "owned",
+          handle: lastHandle,
+          ownership: {
+            operationId: input.operationId,
+            machineId: lastHandle.id,
+            generation: lastHandle.generation,
+          },
+        };
+      },
+    });
+
+    await expect(
+      fixture.commands.spawn(machineCommand, new AbortController().signal),
+    ).rejects.toMatchObject({ message: "Command failed and its workspace requires recovery" });
+    expect(journal.read("unknown-create")?.phase).toBe("create");
+    await expect(fixture.commands.recoverPending()).rejects.toThrow(
+      "Machine ownership is still unknown; keeping its journal and Base lease",
+    );
+
+    const next = await fixture.commands.spawn(machineCommand, new AbortController().signal);
+    fixture.closeChild();
+    await expect(next.exited).resolves.toEqual({
+      exitCode: 0,
+      signal: 0,
+      coreDumped: false,
+    });
+
+    expect(fixture.createCalls.map((input) => input.operationId)).toEqual([
+      "unknown-create",
+      "next-command",
+    ]);
+    expect(fixture.spawnCalls).toHaveLength(1);
+    expect(journal.read("unknown-create")?.phase).toBe("create");
   });
 
   it("captures the admitted command and brackets one cold execution through live apply", async () => {
@@ -231,6 +330,7 @@ describe("MachineCommands", () => {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
+      retention: "until-release",
     };
     const fixture = createMachineFixture({ baseLease: base, commitFailures: 1 });
     const caller = new AbortController();
@@ -267,6 +367,7 @@ describe("MachineCommands", () => {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
+      retention: "until-release",
     };
     let applyAttempts = 0;
     const appliedRevisions: string[] = [];
@@ -303,6 +404,7 @@ describe("MachineCommands", () => {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
+      retention: "until-release",
     };
     const records = new Map<string, MachineCommandRecord>();
     let failComplete = true;
@@ -351,6 +453,7 @@ describe("MachineCommands", () => {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
+      retention: "until-release",
     };
     let deleteAttempts = 0;
     const fixture = createMachineFixture({
@@ -411,6 +514,7 @@ describe("MachineCommands", () => {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
+      retention: "until-release",
     };
     let disposeAttempts = 0;
     let fixture!: ReturnType<typeof createMachineFixture>;
@@ -455,6 +559,7 @@ describe("MachineCommands", () => {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
+      retention: "until-release",
     };
     const ambiguous = new MachineCreationError("unknown", "create result is unknown");
     let reconciliations = 0;
@@ -509,6 +614,7 @@ describe("MachineCommands", () => {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
+      retention: "until-release",
     };
     const failure = new MachineCreationError("not_created", "provider rejected creation");
     const fixture = createMachineFixture({

@@ -1,4 +1,5 @@
 import * as Option from "effect/Option";
+import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
 import type { FilePersistencePorts } from "../kernel/FilePersistencePorts.ts";
 import type {
   KernelCommand,
@@ -51,13 +52,16 @@ export class MachineCommands implements KernelCommandForwarder {
   ): Promise<KernelCommandChild> => {
     signal.throwIfAborted();
     const admittedCommand = captureCommand(command);
-    const releaseAdmission = await this.#admission.acquire(signal);
+    const releaseAdmission = this.#admission.tryAcquire(signal);
+    if (!releaseAdmission) {
+      throw new KernelProgramExecAdmissionError("RESOURCE_LIMIT", "Command capacity is full");
+    }
     let handoffAdmission = false;
     let operationId: string | undefined;
 
     try {
       signal.throwIfAborted();
-      await this.#recoverPendingLocked();
+      await this.#recoverPendingLocked({ allowUnresolvedSafeRows: true });
       signal.throwIfAborted();
 
       const options = this.#options;
@@ -79,6 +83,9 @@ export class MachineCommands implements KernelCommandForwarder {
         const base = await options.bases.acquire();
         if (Option.isSome(base)) record = { ...record, base: base.value };
         await write(record);
+        if (Option.isSome(base) && base.value.retention !== "until-release") {
+          throw new Error("Base lease is not retained until explicit release");
+        }
 
         const createInput: MachineCreateInput = {
           operationId,
@@ -201,7 +208,7 @@ export class MachineCommands implements KernelCommandForwarder {
     }
   };
 
-  /** Startup barrier; unresolved rows keep new command brackets from being admitted. */
+  /** Reports unresolved startup rows; spawn only blocks on rows that may still change live files. */
   readonly recoverPending = async (): Promise<void> => {
     const releaseAdmission = await this.#admission.acquire();
     try {
@@ -221,11 +228,28 @@ export class MachineCommands implements KernelCommandForwarder {
     }
   };
 
-  async #recoverPendingLocked(): Promise<void> {
+  async #recoverPendingLocked(options: { readonly allowUnresolvedSafeRows?: boolean } = {}) {
+    const unresolved: Array<{ readonly operationId: string; readonly error: unknown }> = [];
     for (const record of this.#options.journal.pending()) {
-      await this.#recovery.recover(record.operationId);
+      try {
+        await this.#recovery.recover(record.operationId);
+      } catch (error) {
+        if (options.allowUnresolvedSafeRows && canLeavePending(record.phase)) continue;
+        unresolved.push({ operationId: record.operationId, error });
+      }
+    }
+    if (unresolved.length === 1) throw unresolved[0]!.error;
+    if (unresolved.length > 1) {
+      throw new AggregateError(
+        unresolved.map(({ error }) => error),
+        `Pending machine commands remain unresolved: ${unresolved.map(({ operationId }) => operationId).join(", ")}`,
+      );
     }
   }
+}
+
+function canLeavePending(phase: MachineCommandRecord["phase"]) {
+  return phase === "checkpoint" || phase === "create" || phase === "prepare" || phase === "delete";
 }
 
 function sameCommand(left: KernelCommand, right: KernelCommand) {

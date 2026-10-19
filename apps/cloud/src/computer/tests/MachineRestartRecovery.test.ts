@@ -8,10 +8,13 @@ import {
 } from "../BoxdMachines.ts";
 import { SqliteBoxdReservations } from "../SqliteBoxdReservations.ts";
 import { SqliteMachineCommandJournal } from "../SqliteMachineCommandJournal.ts";
+import type { MachineWorkspaceMount } from "../MachineWorkspace.ts";
+import type { CommitInode } from "../../kernel/FilePersistencePorts.ts";
 import type { DriveRef, RecipeHash } from "../Computer.ts";
 import type { MachineCommandJournal, MachineCommandRecord } from "../MachineCommandJournal.ts";
 import {
   createMachineFixture,
+  machineBefore,
   machineCommand,
   machineOutputBytes,
   machineOutputPath,
@@ -23,13 +26,31 @@ const baseLease = {
   id: "warm-base",
   sourceRef: "recipe:snapshot",
   expiresAt: 1_900_000_000_000,
+  retention: "until-release",
 } as const;
+
+const legacyOutputInode: CommitInode = {
+  inode: 2n,
+  paths: [machineOutputPath],
+  removedPaths: [],
+  stat: {
+    type: "file",
+    size: BigInt(machineOutputBytes.byteLength),
+    nlink: 1n,
+    atimeNs: 0n,
+    mtimeNs: 0n,
+    ctimeNs: 0n,
+  },
+  symlinkTarget: null,
+  async *readChunks() {
+    yield machineOutputBytes;
+  },
+};
 
 function boxdFake() {
   const machines = new Map<string, BoxdMachineRecord>();
   let creates = 0;
   let deletes = 0;
-  let readinessWaits = 0;
   let failCreate: Error | undefined;
   const client: BoxdMachineClient = {
     machines: {
@@ -40,9 +61,10 @@ function boxdFake() {
         machines.set(input.name, {
           id,
           name: input.name,
-          status: "pending",
+          status: "running",
           shared: false,
           networking: { isolated: true, networks: [] },
+          idle: { destroyAfter: 0 },
           deleteAt: null,
         });
         return { id };
@@ -54,25 +76,16 @@ function boxdFake() {
         machines.set(input.name, {
           id,
           name: input.name,
-          status: "pending",
+          status: "running",
           shared: false,
           networking: { isolated: true, networks: [] },
+          idle: { destroyAfter: 0 },
           deleteAt: null,
         });
         return { id };
       },
       async get(name) {
         return machines.get(name) ?? null;
-      },
-      async waitUntilReady(id) {
-        readinessWaits += 1;
-        const machine = [...machines.values()].find(
-          (candidate) => candidate.id === id || candidate.name === id,
-        );
-        if (!machine) throw new Error(`Missing fake machine ${id}`);
-        const ready = { ...machine, status: "running" };
-        machines.set(machine.name, ready);
-        return ready;
       },
       async delete(id) {
         deletes += 1;
@@ -97,7 +110,7 @@ function boxdFake() {
   };
   return {
     client,
-    counts: () => ({ creates, deletes, readinessWaits }),
+    counts: () => ({ creates, deletes }),
     failNextCreate(error: Error) {
       failCreate = error;
     },
@@ -108,6 +121,7 @@ function boxdFake() {
         status: "running",
         shared: false,
         networking: { isolated: true, networks: [] },
+        idle: { destroyAfter: 0 },
         deleteAt: null,
       });
     },
@@ -223,7 +237,6 @@ describe("MachineCommands durable restart recovery", () => {
       const journal = new SqliteMachineCommandJournal(sqlite.storage);
       const first = createMachineFixture({ baseLease, machine, journal });
       await first.commands.spawn(machineCommand, new AbortController().signal);
-      expect(provider.counts().readinessWaits).toBe(1);
       const interrupted = currentRecord(journal);
       expect(interrupted.phase).toBe("execute");
       expect(interrupted.createInput?.expiresAt).toBe(baseLease.expiresAt);
@@ -331,6 +344,88 @@ describe("MachineCommands durable restart recovery", () => {
       expect(first.spawnCalls).toHaveLength(1);
       expect(recovery.fixture.spawnCalls).toHaveLength(0);
       expect(sqliteJournal.read("machine-op-1")?.phase).toBe("complete");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("applies executed legacy work even when its Base has no durable hold marker", async () => {
+    const sqlite = createTestFilesystem();
+    const provider = boxdFake();
+    const legacyBase = {
+      id: "legacy-base",
+      sourceRef: "recipe:legacy-snapshot",
+      expiresAt: 1_900_000_000_000,
+    };
+    const operationId = "legacy-executed";
+    const createInput = {
+      operationId,
+      drive: "drive:test" as DriveRef,
+      recipeHash: "recipe:test" as RecipeHash,
+      base: Option.some(legacyBase),
+      expiresAt: legacyBase.expiresAt,
+    };
+    try {
+      const { machine, reservations } = makeMachine(provider.client, sqlite.storage);
+      const reservation = await reservations.reserve(createInput);
+      expect(await reservations.startCreate(reservation)).toBe(true);
+      await reservations.recordMachineId(reservation, "boxd-legacy");
+      provider.addMachine(reservation.name, "boxd-legacy");
+
+      const journal = new SqliteMachineCommandJournal(sqlite.storage);
+      await journal.write({ operationId, phase: "checkpoint" });
+      await journal.write({
+        operationId,
+        phase: "create",
+        before: machineBefore,
+        base: legacyBase,
+        createInput: {
+          operationId,
+          drive: createInput.drive,
+          recipeHash: createInput.recipeHash,
+          base: legacyBase,
+          expiresAt: legacyBase.expiresAt,
+        },
+      });
+      await journal.write({
+        operationId,
+        phase: "execute",
+        before: machineBefore,
+        base: legacyBase,
+        createInput: {
+          operationId,
+          drive: createInput.drive,
+          recipeHash: createInput.recipeHash,
+          base: legacyBase,
+          expiresAt: legacyBase.expiresAt,
+        },
+        machine: { id: "boxd-legacy", generation: reservation.generation },
+      });
+
+      const source = createMachineFixture({ journal, machine });
+      const resumedMount: MachineWorkspaceMount = {
+        canonicalCwd: async (command) => command.cwd,
+        changes: async () => [legacyOutputInode],
+      };
+      const recovery = createRecoveryFixture({
+        storage: sqlite.storage,
+        client: provider.client,
+        ports: source.ports,
+        resumedMount,
+        journal,
+      });
+
+      await recovery.fixture.commands.recover(operationId);
+
+      expect(source.memory.committedTurns).toHaveLength(1);
+      expect(recovery.fixture.appliedBytes).toEqual([machineOutputBytes]);
+      expect(source.spawnCalls).toHaveLength(0);
+      expect(recovery.fixture.spawnCalls).toHaveLength(0);
+      expect(provider.counts()).toEqual({ creates: 0, deletes: 1 });
+      expect(journal.read(operationId)?.phase).toBe("complete");
+      expect(recovery.fixture.events.indexOf("machine.delete")).toBeLessThan(
+        recovery.fixture.events.indexOf("base.release"),
+      );
     } finally {
       sqlite.close();
     }

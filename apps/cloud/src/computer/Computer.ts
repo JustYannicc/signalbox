@@ -16,15 +16,19 @@ export type RecipeHash = string & Brand.Brand<"RecipeHash">;
 export interface BaseLease {
   readonly id: string;
   readonly sourceRef: string;
+  /** Deadline to begin a fork. It does not bound a source held by a lease. */
   readonly expiresAt: number;
+  /** Provider assertion that the source survives restart until idempotent release. Optional only in legacy rows. */
+  readonly retention?: "until-release";
 }
 
-/** Computer can borrow a prepared source when one exists, while remaining usable without Bases. */
+/** Return Some only when the source is durable through release; otherwise return None. */
 export interface Bases {
   readonly acquire: (
     drive: DriveRef,
     recipeHash: RecipeHash,
   ) => Effect.Effect<Option.Option<BaseLease>>;
+  /** Idempotent by lease id, including leases already expired or released. */
   readonly release: (lease: BaseLease) => Effect.Effect<void>;
 }
 

@@ -10,13 +10,19 @@ const base: BaseLease = {
   id: "warm-base",
   sourceRef: "recipe:snapshot",
   expiresAt: 1_900_000_000_000,
+  retention: "until-release",
 };
-const createInput = (operationId: string) => ({
+const legacyBase: BaseLease = {
+  id: "legacy-base",
+  sourceRef: "recipe:legacy-snapshot",
+  expiresAt: 1_900_000_000_000,
+};
+const createInput = (operationId: string, lease: BaseLease = base) => ({
   operationId,
   drive: "drive:one",
   recipeHash: "recipe:one",
-  base,
-  expiresAt: base.expiresAt,
+  base: lease,
+  expiresAt: lease.expiresAt,
 });
 
 describe("SqliteMachineCommandJournal", () => {
@@ -52,6 +58,70 @@ describe("SqliteMachineCommandJournal", () => {
       expect(commands.createCalls).toHaveLength(0);
       expect(commands.spawnCalls).toHaveLength(0);
       expect(commands.events).toEqual([]);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("round-trips the durable hold marker and keeps legacy Base records readable", async () => {
+    const fixture = createTestFilesystem();
+    try {
+      const journal = new SqliteMachineCommandJournal(fixture.storage);
+      await journal.write({ operationId: "supported-op", phase: "checkpoint" });
+      await journal.write({
+        operationId: "supported-op",
+        phase: "create",
+        before,
+        base,
+        createInput: createInput("supported-op"),
+      });
+      await journal.write({ operationId: "legacy-op", phase: "checkpoint" });
+      await journal.write({
+        operationId: "legacy-op",
+        phase: "create",
+        before,
+        base: legacyBase,
+        createInput: createInput("legacy-op", legacyBase),
+      });
+
+      const reopened = new SqliteMachineCommandJournal(fixture.storage);
+      expect(reopened.read("supported-op")?.base?.retention).toBe("until-release");
+      expect(reopened.read("supported-op")?.createInput?.base).toEqual(base);
+      expect(reopened.read("legacy-op")?.base).toEqual(legacyBase);
+      expect(reopened.read("legacy-op")?.createInput?.base).toEqual(legacyBase);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("requires the journaled Base copies to agree on durable retention", async () => {
+    const fixture = createTestFilesystem();
+    try {
+      const journal = new SqliteMachineCommandJournal(fixture.storage);
+      const legacyCopy: BaseLease = {
+        id: base.id,
+        sourceRef: base.sourceRef,
+        expiresAt: base.expiresAt,
+      };
+      await journal.write({ operationId: "retention-op", phase: "checkpoint" });
+      await journal.write({
+        operationId: "retention-op",
+        phase: "create",
+        before,
+        base,
+        createInput: createInput("retention-op"),
+      });
+
+      await expect(
+        journal.write({
+          operationId: "retention-op",
+          phase: "create",
+          before,
+          base,
+          createInput: createInput("retention-op", legacyCopy),
+        }),
+      ).rejects.toThrow("Machine create Base does not match the journaled lease");
+      expect(journal.read("retention-op")?.createInput?.base).toEqual(base);
     } finally {
       fixture.close();
     }
