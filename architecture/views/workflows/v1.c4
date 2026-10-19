@@ -1,0 +1,527 @@
+// v1 end to end (#1192): sign in, a pool, connections, and one click that points local Claude Code
+// and Codex at Signalbox for both models and tools. Today they point at a self-hosted CLIProxyAPI
+// (base URL + key) and a self-hosted Executor MCP server (URL + bearer); v1 replaces both.
+// Generic tree: folder Company (owner: organization), A and B members, C admin. Modules are black
+// boxes; the Gateway appears only as its two ports. The harness sees a normal provider and normal
+// MCP servers. No threads, harness runtime, computer, Base, drive, assistant or automations.
+views {
+
+  style signalbox, platform, modelProviders, services {
+    color muted
+    opacity 10%
+  }
+
+  // ───────────────────────────── 0 · Index ─────────────────────────────
+
+  dynamic view v1_overview_journey {
+    #v1
+    variant sequence
+    title 'Workflows/v1/0 · First day with Signalbox v1'
+    description '''
+      What does a company's first day on Signalbox v1 look like? Six steps, each opening its own sequence:
+      sign in, a pool on Company, connections on Company, set up this computer, then a local model request
+      and a local tool call. Exactly sign in, a pool and connections (#1192).
+    '''
+
+    include personA, personB, personC, laptopCli, signalbox, signalbox.identity, signalbox.models, signalbox.connections, signalbox.gateway
+
+    personA -> signalbox.identity 'Sign in' {
+      navigateTo v1_sign_in
+      notes """
+        - Google Workspace through WorkOS AuthKit; lands in folder Company, no picker
+      """
+    }
+    personB -> signalbox.identity 'Joins Company too' {
+      navigateTo v1_sign_in
+      notes """
+        - Same verified domain, same folder, nothing to set up
+      """
+    }
+    personC -> signalbox.models 'Pool on Company' {
+      navigateTo v1_pool_one_click
+      notes """
+        - One click per subscription; an API key works too
+        - Members use it and never see a credential
+      """
+    }
+    personC -> signalbox.connections 'Google · Confluence' {
+      navigateTo v1_connections_one_click
+      notes """
+        - One click each, placed on Company; hosted OAuth
+      """
+    }
+    personA -> laptopCli 'Set up this computer' {
+      navigateTo v1_set_up_this_computer
+      notes """
+        - One click: a key bound to Company, then Claude Code and Codex config written
+      """
+    }
+    laptopCli -[model]-> signalbox.gateway 'Model request' {
+      navigateTo v1_local_model_request
+      notes """
+        - Company's pool serves it; usage on Company with A's identity
+      """
+    }
+    laptopCli -[tool]-> signalbox.gateway 'Tool call' {
+      navigateTo v1_local_tool_call
+      notes """
+        - Company's connections, found by search or called directly
+      """
+    }
+
+    style personA, personB, personC {
+      color green
+    }
+  }
+
+  // ───────────────────────────── 1 · Sign in ─────────────────────────────
+
+  dynamic view v1_sign_in {
+    #v1
+    variant sequence
+    title 'Workflows/v1/1 · Sign in and land in Company'
+    description '''
+      How does a person get from "Continue with Google" to folder Company? WorkOS AuthKit with Google
+      Workspace; the verified domain auto-joins A to Company (owner: organization), A's personal top level
+      is made invisibly, and nobody picks an organization. B from the same domain lands in the same folder.
+      Assumes C's organization already has Company (see the first step's link).
+    '''
+
+    include personA, personB, signalbox, signalbox.web, signalbox.ingress, signalbox.identity, signalbox.tree, platform, platform.workos, services, services.google
+
+    personA -> signalbox.web 'Continue with Google' {
+      navigateTo organization_identity_company_join
+      notes """
+        - A's Google Workspace account on the company's verified domain
+        - Company already exists: C's organization made it (link)
+      """
+    }
+    signalbox.web -> signalbox.identity 'signIn' {
+      navigateTo identity_identity_signin
+    }
+    signalbox.identity -> platform.workos 'AuthKit' {
+      notes """
+        - Hosted sign-in with Google as the provider
+        - No account or organization picker, ever
+      """
+    }
+    platform.workos -> services.google 'Workspace sign-in' {
+      notes """
+        - Google returns A and the verified domain
+      """
+    }
+    signalbox.identity <- platform.workos 'complete' {
+      notes """
+        - Domain JIT: WorkOS makes A a member of the organization
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Personal top level' {
+      navigateTo identity_identity_sign_up
+      notes """
+        - Made invisibly on first sign-in: A's own top level, owned by A
+        - A never sees an "organization" for it
+      """
+    }
+    platform.workos -> signalbox.ingress 'Membership webhook' {
+      notes """
+        - Idempotent by event; Ingress only verifies and hands over
+      """
+    }
+    signalbox.ingress -> signalbox.identity 'Membership'
+    signalbox.identity -> signalbox.tree 'Member at Company' {
+      notes """
+        - Role mirrored onto folder Company; Company mounts under A's top level
+      """
+    }
+    signalbox.web <- signalbox.identity 'Session'
+    personA <- signalbox.web 'Company in the tree' {
+      notes """
+        - A's top level, with Company in it; nothing to set up
+      """
+    }
+    personB -> signalbox.web 'Continue with Google' {
+      navigateTo organization_identity_member_join
+      notes """
+        - Same verified domain: steps 2 to 10 again, for B
+      """
+    }
+    signalbox.identity -> signalbox.tree 'Member at Company' {
+      notes """
+        - Same folder, same Level: A and B now share Company
+      """
+    }
+    personB <- signalbox.web 'Same Company'
+
+    style personA, personB {
+      color green
+    }
+  }
+
+  // ───────────────────────────── 2 · Pool ─────────────────────────────
+
+  dynamic view v1_pool_one_click {
+    #v1
+    variant sequence
+    title 'Workflows/v1/2 · Put a pool on Company'
+    description '''
+      How does a company get models without anyone handing out credentials? C (admin of Company) puts a
+      pool on folder Company and adds a subscription in one click, plus an API key if wanted. Subscriptions
+      live in Models behind the one model gateway, with CLIProxyAPI pools as the backend. A uses the pool
+      and only ever sees models and remaining usage.
+    '''
+
+    include personC, personA, signalbox, signalbox.web, signalbox.models, signalbox.tree, modelProviders, modelProviders.anthropic, modelProviders.openai
+
+    personC -> signalbox.web 'Add subscription' {
+      navigateTo folders_pools_add_account
+      notes """
+        - On folder Company's page, Pool section; C is admin there
+        - Company has no pool yet, so this makes one
+      """
+    }
+    signalbox.web -> signalbox.models 'connect(into: new)' {
+      notes """
+        - The pool and its custody belong to Company's owner, the organization
+      """
+    }
+    signalbox.models -> signalbox.tree 'Place pool at Company' {
+      navigateTo folders_placement_kind_pool_connection
+      notes """
+        - A placement on Company; Tree checks C may place pools there
+      """
+    }
+    signalbox.models -> modelProviders.anthropic 'Subscription sign-in' {
+      navigateTo folders_pools_signin_subscription
+      notes """
+        - One click opens the provider's sign-in; C approves
+        - ChatGPT works the same way, by device code
+      """
+    }
+    signalbox.models -> signalbox.models 'Seal into CLIProxyAPI' {
+      notes """
+        - The auth file goes into the pool's CLIProxyAPI host, never to a client
+      """
+    }
+    signalbox.web <- signalbox.models 'Account live'
+    opt 'an API key too' {
+      personC -> signalbox.web 'Paste API key' {
+        navigateTo folders_pools_paste_credentials
+      }
+      signalbox.web -> signalbox.models 'connect(API key)' {
+        notes """
+          - Same pool, same routing and custody as the subscription
+        """
+      }
+      signalbox.models -> modelProviders.openai 'Check key'
+    }
+    personA -> signalbox.web 'Open Company pool' {
+      navigateTo folders_pools_open_view
+    }
+    signalbox.web -> signalbox.models 'view (member)'
+    signalbox.web <- signalbox.models 'Models · usage left' {
+      notes """
+        - Members see what they can use; never an account or a credential
+      """
+    }
+
+    style personA, personC {
+      color green
+    }
+  }
+
+  // ───────────────────────────── 3 · Connections ─────────────────────────────
+
+  dynamic view v1_connections_one_click {
+    #v1
+    variant sequence
+    title 'Workflows/v1/3 · Connect Google and Confluence'
+    description '''
+      How do Company's tools appear for everyone in it? C connects Google and Confluence in one click each,
+      placed on folder Company. The hosted service brings the OAuth apps. The tools are served at Company's
+      MCP endpoint, which is Executor: Gateway's ToolGateway plus Connections. Exposure is `search` by
+      default and `direct` for chosen tools.
+    '''
+
+    include personC, personA, signalbox, signalbox.web, signalbox.ingress, signalbox.gateway.toolGateway, signalbox.connections, signalbox.tree, services, services.google, services.atlassian
+
+    personC -> signalbox.web 'Connect Google' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - On folder Company's page, Connections section
+      """
+    }
+    signalbox.web -> signalbox.connections 'connect(Google, Company)' {
+      notes """
+        - Hosted OAuth: the Signalbox-hosted service provides the OAuth app
+        - Nobody creates their own OAuth client
+      """
+    }
+    signalbox.web -> services.google 'Consent' {
+      notes """
+        - C's one human click
+      """
+    }
+    services.google -> signalbox.ingress 'OAuth callback'
+    signalbox.ingress -> signalbox.connections 'complete' {
+      navigateTo state_connection
+      notes """
+        - Tokens sealed in the vault; no client ever holds them
+      """
+    }
+    signalbox.connections -> signalbox.tree 'Place at Company' {
+      navigateTo folders_placement_kind_pool_connection
+    }
+    personC -> signalbox.web 'Connect Confluence' {
+      notes """
+        - Same one click: steps 2 to 6 with Atlassian
+      """
+    }
+    signalbox.web -> services.atlassian 'Consent'
+    signalbox.connections -> signalbox.tree 'Place at Company'
+    opt 'a tool C wants native' {
+      personC -> signalbox.web 'Set exposure: direct' {
+        notes """
+          - Exposure is a placement too, nearest wins
+          - Default is `search`: found through tool search, run through execute
+        """
+      }
+      signalbox.web -> signalbox.tree 'Place exposure at Company'
+    }
+    personA -> signalbox.gateway.toolGateway "Company's MCP endpoint" {
+      navigateTo folders_connections_mcp_url
+      notes """
+        - Any member's agent, through its own key or MCP sign-in
+      """
+    }
+    signalbox.gateway.toolGateway -> signalbox.tree 'Resolve Company'
+    signalbox.gateway.toolGateway -> signalbox.connections 'toolbox' {
+      notes """
+        - search + execute, plus each `direct` tool under its normal name
+      """
+    }
+    personA <- signalbox.gateway.toolGateway 'Google · Confluence tools' {
+      notes """
+        - Same tools for A and B; credentials never leave Signalbox
+      """
+    }
+
+    style personA, personC {
+      color green
+    }
+  }
+
+  // ───────────────────────────── 4 · Set up this computer ─────────────────────────────
+
+  dynamic view v1_set_up_this_computer {
+    #v1
+    variant sequence
+    title 'Workflows/v1/4 · Set up this computer'
+    description '''
+      What does one click on "Set up this computer" change on A's machine? It mints a key bound to a folder
+      (default: A's nearest folder with a pool, here Company) and writes Claude Code's and Codex's own config
+      so their models and tools go through Signalbox. The desktop app writes it, or a served command does in
+      a terminal (#403). The apps stay signed in (#449). Undo removes exactly what was written; revoking the
+      key stops the next request.
+    '''
+
+    include personA, signalbox, signalbox.desktop, signalbox.cli, signalbox.tree, signalbox.gateway, signalbox.identity, laptopCli
+
+    personA -> signalbox.desktop 'Set up this computer' {
+      notes """
+        - One click; the web app shows the same button
+      """
+    }
+    signalbox.desktop -> signalbox.tree 'Default folder' {
+      navigateTo folders_placement_resolve
+      notes """
+        - A's nearest folder with a pool: Company
+        - A can pick another folder before confirming
+      """
+    }
+    signalbox.desktop -> signalbox.gateway 'Mint key (Company)' {
+      navigateTo folders_pools_local_key
+      notes """
+        - One key per person per folder; it carries A and Company
+      """
+    }
+    signalbox.gateway -> signalbox.identity 'Sign for A'
+    signalbox.desktop <- signalbox.gateway 'Folder-bound key'
+    alt 'who writes the config' {
+      when 'desktop app' {
+        signalbox.desktop -> laptopCli 'Write Claude Code' {
+          notes """
+            - Settings env `ANTHROPIC_BASE_URL` → the Signalbox model gateway
+            - The key in Claude Code's own settings, so a Dock-launched app works too
+            - An MCP entry named for Signalbox → Company's MCP endpoint
+          """
+        }
+        signalbox.desktop -> laptopCli 'Write Codex' {
+          notes """
+            - `~/.codex/config.toml`: a `model_providers` entry with `requires_openai_auth = true`,
+              the Signalbox endpoint and the key in `http_headers`; `model_provider` selects it
+            - An `mcp_servers` entry → Company's MCP endpoint
+            - `auth.json` is left alone, so the Codex app stays signed in
+          """
+        }
+      }
+      else 'terminal' {
+        personA -> signalbox.cli 'Run served command' {
+          navigateTo folders_modelgateway_laptop_pool
+          notes """
+            - The page shows one command for machines without the desktop app
+          """
+        }
+        signalbox.cli -> laptopCli 'Write the same config' {
+          notes """
+            - Same entries, same key, same undo
+          """
+        }
+      }
+    }
+    laptopCli -> laptopCli 'Normal provider · MCP' {
+      notes """
+        - Each harness sees one more provider and MCP server, nothing else
+        - Servers with `direct` tools also get an entry under their normal name
+      """
+    }
+    opt 'undo' {
+      signalbox.desktop -> laptopCli 'Remove what was written' {
+        notes """
+          - Exactly the written entries; A's other settings and sign-ins untouched
+        """
+      }
+    }
+    opt 'revoke' {
+      personA -> signalbox.desktop 'Revoke key'
+      signalbox.desktop -> signalbox.gateway 'Revoke'
+      laptopCli -> signalbox.gateway 'Next request'
+      laptopCli <- signalbox.gateway 'Denied' {
+        notes """
+          - Fails clearly on the very next model or tool request
+        """
+      }
+    }
+
+    style personA {
+      color green
+    }
+  }
+
+  // ───────────────────────────── 5 · Local model request ─────────────────────────────
+
+  dynamic view v1_local_model_request {
+    #v1
+    variant sequence
+    title 'Workflows/v1/5 · Local model request'
+    description '''
+      Which pool serves A's local Claude Code and Codex, and who is charged? Each request carries the
+      folder-bound key to the model gateway. Tree resolves Company's pool (nearest wins, never who asks),
+      Models serves it through the pool's subscriptions, and usage is recorded on Company with A's identity.
+    '''
+
+    include personA, laptopCli, signalbox, signalbox.gateway.modelGateway, signalbox.identity, signalbox.tree, signalbox.models, modelProviders, modelProviders.anthropic, modelProviders.openai
+
+    personA -> laptopCli 'Runs Claude Code'
+    laptopCli -[model]-> signalbox.gateway.modelGateway 'Messages call + key' {
+      notes """
+        - `ANTHROPIC_BASE_URL` points here; Claude Code thinks it is a normal provider
+      """
+    }
+    signalbox.gateway.modelGateway -> signalbox.identity 'Verify key' {
+      notes """
+        - Yields A and folder Company; a revoked key stops here
+      """
+    }
+    signalbox.gateway.modelGateway -> signalbox.tree 'Resolve pool (Company)' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Nearest pool up from Company wins; the person asking never changes it
+        - A nearer pool on Team would win for a key bound to Team
+      """
+    }
+    signalbox.gateway.modelGateway -[model]-> signalbox.models 'serve' {
+      notes """
+        - Company's pool: CLIProxyAPI picks a subscription account
+      """
+    }
+    signalbox.models -[model]-> modelProviders.anthropic 'Messages'
+    laptopCli <- signalbox.gateway.modelGateway 'Streamed reply'
+    signalbox.gateway.modelGateway -[async]-> signalbox.models 'meter' {
+      navigateTo folders_usage_record
+      notes """
+        - Usage row: folder Company, A, the key; off the request path
+      """
+    }
+    personA -> laptopCli 'Runs Codex'
+    laptopCli -[model]-> signalbox.gateway.modelGateway 'Responses call + key' {
+      notes """
+        - Same key, same steps 3 to 8
+        - The gateway drops `ChatGPT-Account-ID` (#449)
+      """
+    }
+    signalbox.gateway.modelGateway -[model]-> signalbox.models 'serve (same pool)'
+    signalbox.models -[model]-> modelProviders.openai 'Responses'
+    laptopCli <- signalbox.gateway.modelGateway 'Streamed reply'
+
+    style personA {
+      color green
+    }
+  }
+
+  // ───────────────────────────── 6 · Local tool call ─────────────────────────────
+
+  dynamic view v1_local_tool_call {
+    #v1
+    variant sequence
+    title 'Workflows/v1/6 · Local tool call'
+    description '''
+      How does A's local Codex reach Company's Confluence and Google? Through Company's MCP endpoint
+      (Executor: ToolGateway plus Connections). Confluence is found by search (exposure `search`), a Google
+      tool is called by its normal name (exposure `direct`). Executor resolves the connections on the key's
+      folder and fills credentials from the vault at egress.
+    '''
+
+    include personA, laptopCli, signalbox, signalbox.gateway.toolGateway, signalbox.tree, signalbox.connections, services, services.atlassian, services.google
+
+    personA -> laptopCli 'Ask in Codex'
+    laptopCli -[tool]-> signalbox.gateway.toolGateway 'search "confluence"' {
+      navigateTo folders_connections_tool_search_call
+      notes """
+        - The Signalbox MCP entry's search tool, with the folder-bound key
+      """
+    }
+    signalbox.gateway.toolGateway -> signalbox.tree 'Resolve Company' {
+      navigateTo folders_placement_resolve
+      notes """
+        - Connections and exposure placed on Company's chain; nothing from outside it
+      """
+    }
+    signalbox.gateway.toolGateway -> signalbox.connections 'toolbox (search)'
+    laptopCli <- signalbox.gateway.toolGateway 'Confluence tools'
+    laptopCli -[tool]-> signalbox.gateway.toolGateway 'execute' {
+      notes """
+        - `search` exposure: the tool runs through execute
+      """
+    }
+    signalbox.gateway.toolGateway -[tool]-> signalbox.connections 'call'
+    signalbox.connections -> signalbox.connections 'Fill from vault' {
+      notes """
+        - Credentials injected at egress only; never returned to the harness
+      """
+    }
+    signalbox.connections -[tool]-> services.atlassian 'Confluence API'
+    laptopCli <- signalbox.gateway.toolGateway 'Result'
+    laptopCli -[tool]-> signalbox.gateway.toolGateway 'Google tool, by name' {
+      notes """
+        - `direct` exposure: a native-named MCP entry, so no search first
+      """
+    }
+    signalbox.gateway.toolGateway -[tool]-> signalbox.connections 'call'
+    signalbox.connections -[tool]-> services.google 'Google API'
+    laptopCli <- signalbox.gateway.toolGateway 'Result'
+
+    style personA {
+      color green
+    }
+  }
+}

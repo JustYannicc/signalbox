@@ -5,23 +5,35 @@ views {
       What exactly ships in v1? Three things, nothing more: sign in, a pool, and connections usable as tools (Executor
       absorbed into Connections). Green = sign in, red = a pool, indigo = connections. Pools and connections are
       placed on folders, so Tree ships too, and both wires pass the one Gateway. No threads, harness,
-      computer, drive, assistant or automations: local Claude Code and Codex use the pool, any MCP client uses the tools.
-      Final interfaces, subset live.
+      computer, drive, assistant or automations: local Claude Code and Codex use the pool and the tools through one
+      click on "Set up this computer"; any MCP client uses the tools. Final interfaces, subset live.
+
+      Walk it end to end in `Workflows / v1` (click a box or wire here to open its step):
+      0 First day (Person A) · 1 Sign in (Identity) · 2 Pool on Company (Models) · 3 Google and Confluence
+      (Connections) · 4 Set up this computer (local Claude Code · Codex) · 5 Local model request (Gateway → Models)
+      · 6 Local tool call (Gateway → Connections).
     '''
-    include personA, personB, personC
+    include personA with { navigateTo v1_overview_journey }
+    include personB, personC
     // Colour = which of the three v1 things an element serves: green sign in, red pool, indigo connections.
-    include signalbox.web, signalbox.funnel, signalbox.identity, platform.workos
-    include laptopCli, signalbox.models, modelProviders.anthropic, modelProviders.openai
-    include mcpClient, signalbox.connections, services.google, services.atlassian
+    include signalbox.web, signalbox.funnel, platform.workos
+    include signalbox.identity with { navigateTo v1_sign_in }
+    include modelProviders.anthropic, modelProviders.openai
+    include laptopCli with { navigateTo v1_set_up_this_computer }
+    include signalbox.models with { navigateTo v1_pool_one_click }
+    include mcpClient, services.google, services.atlassian
+    include signalbox.connections with { navigateTo v1_connections_one_click }
     include signalbox.gateway, signalbox.tree
     // Only the wiring that tells the v1 story; everything else is in Modules/All modules.
     exclude * -> *
     include personA -> signalbox.web, personB -> signalbox.web, personC -> signalbox.web
     include personA -> laptopCli, personC -> mcpClient
     include signalbox.web -> signalbox.funnel, signalbox.funnel -> signalbox.identity, signalbox.identity -> platform.workos
-    include laptopCli -> signalbox.gateway, signalbox.gateway -> signalbox.models, signalbox.models -> modelProviders.anthropic, signalbox.models -> modelProviders.openai
-    include mcpClient -> signalbox.gateway, signalbox.gateway -> signalbox.connections, signalbox.connections -> services.google, signalbox.connections -> services.atlassian
+    include laptopCli -> signalbox.gateway, signalbox.models -> modelProviders.anthropic, signalbox.models -> modelProviders.openai
+    include mcpClient -> signalbox.gateway, signalbox.connections -> services.google, signalbox.connections -> services.atlassian
     include signalbox.tree -> signalbox.models, signalbox.tree -> signalbox.connections
+    include signalbox.gateway -> signalbox.models with { navigateTo v1_local_model_request }
+    include signalbox.gateway -> signalbox.connections with { navigateTo v1_local_tool_call }
     style personA, personB, personC { color green }
     style signalbox.web, signalbox.funnel, signalbox.identity, platform.workos { color green }
     style laptopCli, signalbox.models, modelProviders.anthropic, modelProviders.openai { color red }
