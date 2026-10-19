@@ -1,6 +1,6 @@
 export const MODEL_CPU_WORK = Object.freeze({
   chunks: 9,
-  iterationsPerChunk: 2_000_000_000,
+  iterationsPerChunk: 500_000_000,
   seed: 1,
 });
 
