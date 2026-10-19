@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - isolated in-memory SQLite fixture, never live userdata.
 import { describe, expect, it } from "vite-plus/test";
-import { MIN_SCRUBBED_LENGTH } from "@signalbox/runner-protocol/SecretScrubber";
+import { MIN_SCRUBBED_LENGTH, secretForms } from "@signalbox/runner-protocol/SecretScrubber";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
 import { createFacetSqliteStorage, FILE_CHUNK_BYTES } from "../kernel/FacetSqliteStorage.ts";
 import type { Storage } from "../kernel/storage.ts";
@@ -179,6 +179,44 @@ describe("SecretFileBytes", () => {
         bindings: [{ placeholder: keyToken, value: "x".repeat(100_000) }],
       }),
     ).toThrow(codeError("ENOMEM"));
+  });
+
+  it("fills escaped Unicode values and refuses their shared scrubber forms before exceeding the budget", () => {
+    const values = [
+      "quotes ' \" slash \\ dollar $ tick ` newline\n tab\t and shell ;<>|",
+      "üñíçødé 🔑 中文 and url /?&=+%",
+      "control\u0000\u0001\u001f escaped-json \\",
+    ];
+    for (const value of values) {
+      const fixture = makeFixture({
+        canonical: keyToken,
+        bindings: [{ placeholder: keyToken, value }],
+      });
+      try {
+        expect(fixture.rawBytes()).toEqual(encoder.encode(value));
+        fixture.access.write(0n, encoder.encode(value));
+        expect(fixture.canonicalBytes()).toEqual(encoder.encode(keyToken));
+      } finally {
+        fixture.close();
+      }
+
+      const oversized = value.repeat(10_000);
+      const forms = secretForms(oversized);
+      const retainedBytes = forms.reduce(
+        (size, form) => size + form.length * 2 + encoder.encode(form).byteLength,
+        0,
+      );
+      expect(encoder.encode(oversized).byteLength).toBeLessThan(1_048_576);
+      expect(retainedBytes).toBeGreaterThan(4_194_304);
+      const storage = {} as Storage;
+      expect(() =>
+        createSecretFileByteView({
+          canonical: storage,
+          transactions: { storage, run: (operation) => operation(storage) },
+          bindings: [{ placeholder: keyToken, value: oversized }],
+        }),
+      ).toThrow(codeError("ENOMEM"));
+    }
   });
 
   it("projects more than 1,024 references and accepts tokens longer than 4 KiB", () => {
