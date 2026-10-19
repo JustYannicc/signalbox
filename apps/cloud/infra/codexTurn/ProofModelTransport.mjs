@@ -58,7 +58,7 @@ export function createProofModelTransport({ request, context, execution }) {
     supportsWebSockets: !http,
     cpuOnly: cpu?.cpuOnly ?? false,
     execSocket: cpu?.execSocket,
-    ...(cpu ? { streamIdleTimeoutMs: 90000, watchdogMs: 90000 } : {}),
+    ...(cpu ? { streamIdleTimeoutMs: 180000, watchdogMs: 180000 } : {}),
     async route(input) {
       const result = await dial(input);
       const socket = result.response.webSocket;
