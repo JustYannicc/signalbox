@@ -265,6 +265,8 @@ describe("ChildWorkerProgram", () => {
       const capacity = new ChildWorkerCapacity();
       const wasm = new Uint8Array([0, 97, 115, 109]);
       const modules = { "entry.js": "original", "tool.wasm": { wasm: wasm.buffer } };
+      const limits = { cpuMs: 777 };
+      const code = { mainModule: "entry.js", modules, entrypoint: "Program", limits };
       const host = { identity: context.identity };
       const close = vi.fn();
       const run = vi.fn(async (input: ChildWorkerInvocation, owner: typeof host) => {
@@ -276,26 +278,59 @@ describe("ChildWorkerProgram", () => {
           cwd: "/",
           env: context.env,
         });
+        expect(input.mainModule).toBe("entry.js");
+        expect(input.entrypoint).toBe("Program");
         expect(input.modules["entry.js"]).toBe("original");
+        expect(input.limits).toEqual({ cpuMs: 777 });
         const module = input.modules["tool.wasm"];
-        if (!module || typeof module === "string" || !("wasm" in module))
+        if (
+          !module ||
+          typeof module === "string" ||
+          !("wasm" in module) ||
+          !(module.wasm instanceof ArrayBuffer)
+        ) {
           throw new Error("Wasm module missing");
+        }
+        expect(module.wasm).toBe(wasm.buffer);
         expect(new Uint8Array(module.wasm)).toEqual(Uint8Array.of(0, 97, 115, 109));
         return { exitCode: 17, signal: 0, coreDumped: false };
       });
       const program = createChildWorkerProgram({
         executable: "/bin/tool",
-        code: { mainModule: "entry.js", modules },
+        code,
         capacity,
         dispatch: { run },
         createHost: () => ({ host, close }),
       });
       modules["entry.js"] = "changed";
-      wasm.fill(255);
+      code.mainModule = "changed.js";
+      code.entrypoint = "ChangedProgram";
+      limits.cpuMs = 888;
       expect(await program.run(context)).toEqual({ exitCode: 17, signal: 0, coreDumped: false });
       expect(close).toHaveBeenCalledOnce();
       expect(capacity.active).toBe(0);
     }));
+
+  it("rejects invalid limits before capacity, host creation, or dispatch", () => {
+    const capacity = new ChildWorkerCapacity();
+    const runCapacity = vi.spyOn(capacity, "run");
+    const dispatch = vi.fn(async () => ({ exitCode: 0, signal: 0, coreDumped: false }));
+    const createHost = vi.fn(() => ({ host: {}, close() {} }));
+
+    expect(() =>
+      createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {}, limits: { cpuMs: 0 } },
+        capacity,
+        dispatch: { run: dispatch },
+        createHost,
+      }),
+    ).toThrow("Child worker cpuMs must be a positive safe integer");
+
+    expect(runCapacity).not.toHaveBeenCalled();
+    expect(createHost).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
 
   it("holds admission through actual dispatch and host close after cancellation", () =>
     withContext(async (context) => {
