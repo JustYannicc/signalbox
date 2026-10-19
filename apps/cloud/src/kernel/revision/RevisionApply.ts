@@ -1,17 +1,16 @@
 import type { CommitInode, FileHydrationPort, ForkCommit } from "../FilePersistencePorts.ts";
-import { isPosixMetadata } from "../PosixStorage.ts";
 import type { Inode } from "../storage.ts";
 import type { FacetStorage } from "../FacetSqliteStorage.ts";
 import type { createFacetFilePersistence } from "../FacetFilePersistence.ts";
-import type { ApplyPlan, Persistence, TreeEntry, WorkspaceState } from "./RevisionTypes.ts";
-import {
-  assertUnchanged,
-  KernelRevisionWorkspaceError,
-  persistenceError,
-} from "./RevisionErrors.ts";
-import { readEpoch, readState } from "./RevisionJournal.ts";
-import { encodeManifest, sameCommit, scanTree } from "./RevisionTree.ts";
+import type { ApplyPlan, WorkspaceState } from "./RevisionTypes.ts";
+import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
+import { readDirty, readEpoch, readState, restoreDirtySnapshot } from "./RevisionJournal.ts";
+import { applyChangesToManifest, encodeManifest, sameCommit, scanTree } from "./RevisionTree.ts";
+import { assertNoRevisionConflict } from "./RevisionConflict.ts";
+import { findRetiredInodes, resolveLocalInodes, validatePlans } from "./RevisionPlan.ts";
+import { hydratePendingCandidates, stageFiles } from "./RevisionStaging.ts";
 import { reconcileNamespace } from "./RevisionNamespace.ts";
+import { assertNamespacePathsOwned } from "./RevisionNamespaceOwnership.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 
 export async function applyRevision(input: {
@@ -46,15 +45,37 @@ export async function applyRevision(input: {
   } = input;
   const storage = persistence.storage;
   try {
-    assertUnchanged(baseline.epoch, readEpoch(database));
     const plans = validatePlans(changedInodes);
+    assertNamespacePathsOwned(
+      filesystem,
+      mountPath,
+      storage,
+      plans.flatMap((plan) => [...plan.changed.paths, ...plan.changed.removedPaths]),
+    );
+    assertNoRevisionConflict(
+      baseline.manifest,
+      scanTree(storage, rootInode),
+      readDirty(database),
+      changedInodes,
+      rootInode,
+    );
     await stageFiles(database, hydration, after, applyId, plans, signal);
-    const current = scanTree(storage, rootInode);
-    assertUnchanged(baseline.epoch, readEpoch(database));
-    const retired = findRetiredInodes(baseline.manifest, current, plans);
-    const resolved = resolveLocalInodes(baseline.manifest, current, plans, retired, storage);
+    signal.throwIfAborted();
+    const stagedTree = scanTree(storage, rootInode);
+    const stagedDirty = readDirty(database);
+    assertNoRevisionConflict(baseline.manifest, stagedTree, stagedDirty, changedInodes, rootInode);
+    const retired = findRetiredInodes(baseline.manifest, stagedTree, plans);
+    const resolved = resolveLocalInodes(baseline.manifest, stagedTree, plans, retired, storage);
     await hydratePendingCandidates(storage, persistence, resolved, signal);
     signal.throwIfAborted();
+    const hydratedTree = scanTree(storage, rootInode);
+    assertNoRevisionConflict(
+      baseline.manifest,
+      hydratedTree,
+      readDirty(database),
+      changedInodes,
+      rootInode,
+    );
     database.transactionSync(() => {
       const latest = readState(database);
       if (!sameCommit(latest.at, before))
@@ -62,239 +83,43 @@ export async function applyRevision(input: {
           "ESTALE",
           "The live workspace revision changed during apply",
         );
-      assertUnchanged(baseline.epoch, readEpoch(database));
-      const reconciled = reconcileNamespace(filesystem, mountPath, rootRealPath, applyId, resolved);
+      const current = scanTree(storage, rootInode);
+      const dirtyBeforeApply = readDirty(database);
+      assertNoRevisionConflict(
+        baseline.manifest,
+        current,
+        dirtyBeforeApply,
+        changedInodes,
+        rootInode,
+      );
+      const currentRetired = findRetiredInodes(baseline.manifest, current, plans);
+      const currentPlans = resolveLocalInodes(
+        baseline.manifest,
+        current,
+        plans,
+        currentRetired,
+        storage,
+      );
+      const reconciled = reconcileNamespace(
+        filesystem,
+        mountPath,
+        rootRealPath,
+        storage,
+        applyId,
+        currentPlans,
+      );
       applyMetadataAndChunks(database, reconciled, applyId);
-      const manifest = scanTree(storage, rootInode);
+      const manifest = applyChangesToManifest(baseline.manifest, reconciled);
       database.sql.exec(
         "UPDATE kernel_fs_workspace_state SET commit_id = ?, manifest_json = ?, baseline_epoch = ? WHERE singleton = 1",
         after.commit,
         encodeManifest(manifest),
         readEpoch(database),
       );
-      database.sql.exec("DELETE FROM kernel_fs_workspace_dirty_inode");
+      restoreDirtySnapshot(database, dirtyBeforeApply);
     });
   } finally {
     database.sql.exec("DELETE FROM kernel_fs_workspace_apply_chunk WHERE apply_id = ?", applyId);
-  }
-}
-
-function validateWorkspacePath(path: string): void {
-  if (
-    !path.startsWith("/") ||
-    path.includes("\0") ||
-    path === "/" ||
-    path
-      .split("/")
-      .slice(1)
-      .some((part) => !part || part === "." || part === "..")
-  ) {
-    throw new KernelRevisionWorkspaceError(
-      "EINVAL",
-      "The persistence port returned a path outside the revision root",
-    );
-  }
-}
-
-function validatePlans(changed: readonly CommitInode[]): ApplyPlan[] {
-  const seenInodes = new Set<string>();
-  const desiredPaths = new Set<string>();
-  return changed.map((entry) => {
-    const remoteInode = entry.inode.toString();
-    if (seenInodes.has(remoteInode))
-      throw new KernelRevisionWorkspaceError("EINVAL", "The VM returned a duplicate changed inode");
-    seenInodes.add(remoteInode);
-    for (const path of [...entry.paths, ...entry.removedPaths]) validateWorkspacePath(path);
-    if (entry.stat) {
-      if (entry.stat.size < 0n || entry.stat.nlink < 0n)
-        throw new KernelRevisionWorkspaceError("EINVAL", "The VM returned invalid inode metadata");
-      if (entry.paths.length === 0)
-        throw new KernelRevisionWorkspaceError("EINVAL", "A live inode needs at least one path");
-      if (entry.stat.type === "symlink" && entry.symlinkTarget === null)
-        throw new KernelRevisionWorkspaceError("EINVAL", "A symlink needs a target");
-      if (entry.stat.nlink > BigInt(Number.MAX_SAFE_INTEGER))
-        throw new KernelRevisionWorkspaceError(
-          "EOVERFLOW",
-          "The VM returned an unsupported link count",
-        );
-      if (entry.stat.type === "directory" && entry.paths.length !== 1)
-        throw new KernelRevisionWorkspaceError("EPERM", "Directories cannot have hard links");
-      if (entry.stat.type === "symlink" && entry.symlinkTarget !== null) {
-        if (
-          entry.symlinkTarget.includes("\0") ||
-          BigInt(new TextEncoder().encode(entry.symlinkTarget).byteLength) !== entry.stat.size
-        ) {
-          throw new KernelRevisionWorkspaceError(
-            "EINVAL",
-            "The VM returned invalid symlink metadata",
-          );
-        }
-      }
-      if (entry.posix != null && !isPosixMetadata(entry.posix))
-        throw new KernelRevisionWorkspaceError("EINVAL", "The VM returned invalid POSIX metadata");
-    }
-    for (const path of entry.paths) {
-      if (desiredPaths.has(path))
-        throw new KernelRevisionWorkspaceError(
-          "EINVAL",
-          "The VM returned more than one inode for a path",
-        );
-      desiredPaths.add(path);
-    }
-    return { changed: entry, sourcePaths: [] };
-  });
-}
-
-async function stageFiles(
-  database: FacetStorage,
-  hydration: FileHydrationPort,
-  after: ForkCommit,
-  applyId: string,
-  plans: readonly ApplyPlan[],
-  signal: AbortSignal,
-): Promise<void> {
-  const files = plans.filter((plan) => plan.changed.stat?.type === "file");
-  const paths = files.map((plan) => plan.changed.paths[0]!);
-  if (paths.length === 0) return;
-  database.sql.exec("DELETE FROM kernel_fs_workspace_apply_chunk WHERE apply_id = ?", applyId);
-  const result = await hydration.fetch({ at: after, paths, signal });
-  if (result.status === "error") throw persistenceError(result);
-  if (result.value.length !== paths.length)
-    throw new KernelRevisionWorkspaceError(
-      "IO_ERROR",
-      "Hydration did not return every changed file",
-    );
-  const byPath = new Map(files.map((plan) => [plan.changed.paths[0]!, plan.changed]));
-  const seen = new Set<string>();
-  for (const file of result.value) {
-    const entry = byPath.get(file.path);
-    if (!entry || seen.has(file.path))
-      throw new KernelRevisionWorkspaceError(
-        "IO_ERROR",
-        "Hydration returned an unexpected changed path",
-      );
-    seen.add(file.path);
-    let received = 0n;
-    let part = 0;
-    let buffered = 0;
-    const block = new Uint8Array(64 * 1024);
-    const persistBlock = (bytes: Uint8Array) => {
-      const blob = bytes.slice().buffer as ArrayBuffer;
-      database.sql.exec(
-        "INSERT INTO kernel_fs_workspace_apply_chunk VALUES (?, ?, ?, ?)",
-        applyId,
-        entry.inode.toString(),
-        part++,
-        blob,
-      );
-    };
-    for await (const chunk of file.chunks) {
-      signal.throwIfAborted();
-      if (!(chunk instanceof Uint8Array))
-        throw new KernelRevisionWorkspaceError("IO_ERROR", "Hydration returned a non-byte chunk");
-      received += BigInt(chunk.byteLength);
-      if (received > entry.stat!.size)
-        throw new KernelRevisionWorkspaceError(
-          "IO_ERROR",
-          "Hydration exceeded the declared file size",
-        );
-      let offset = 0;
-      while (offset < chunk.byteLength) {
-        const copied = Math.min(block.byteLength - buffered, chunk.byteLength - offset);
-        block.set(chunk.subarray(offset, offset + copied), buffered);
-        buffered += copied;
-        offset += copied;
-        if (buffered === block.byteLength) {
-          persistBlock(block);
-          buffered = 0;
-        }
-      }
-    }
-    if (buffered > 0) persistBlock(block.subarray(0, buffered));
-    if (received !== entry.stat!.size)
-      throw new KernelRevisionWorkspaceError(
-        "IO_ERROR",
-        "Hydration did not match the declared file size",
-      );
-  }
-}
-
-function findRetiredInodes(
-  before: ReadonlyMap<string, TreeEntry>,
-  current: ReadonlyMap<string, TreeEntry>,
-  plans: readonly ApplyPlan[],
-): Set<string> {
-  const retired = new Set<string>();
-  const paths = new Set(
-    plans.filter((plan) => plan.changed.stat === null).flatMap((plan) => plan.changed.removedPaths),
-  );
-  for (const [inode, entry] of before)
-    if (entry.paths.some((path) => paths.has(path))) retired.add(inode);
-  for (const [inode, entry] of current)
-    if (entry.paths.some((path) => paths.has(path))) retired.add(inode);
-  return retired;
-}
-
-function resolveLocalInodes(
-  before: ReadonlyMap<string, TreeEntry>,
-  current: ReadonlyMap<string, TreeEntry>,
-  plans: readonly ApplyPlan[],
-  retired: ReadonlySet<string>,
-  storage: Persistence["storage"],
-): ApplyPlan[] {
-  const used = new Set<string>();
-  const byPath = (tree: ReadonlyMap<string, TreeEntry>) =>
-    new Map(
-      [...tree.values()].flatMap((entry) => entry.paths.map((path) => [path, entry] as const)),
-    );
-  const oldPaths = byPath(before);
-  const livePaths = byPath(current);
-  return plans.map((plan) => {
-    if (!plan.changed.stat) return plan;
-    const candidates = [
-      ...plan.changed.removedPaths.map((path) => oldPaths.get(path) ?? livePaths.get(path)),
-      ...plan.changed.paths.map((path) => livePaths.get(path) ?? oldPaths.get(path)),
-    ].filter((entry): entry is TreeEntry => entry !== undefined);
-    const candidate = candidates.find((entry) => {
-      if (retired.has(entry.inode) || used.has(entry.inode)) return false;
-      try {
-        return storage.stat(BigInt(entry.inode) as Inode).type === plan.changed.stat!.type;
-      } catch {
-        return false;
-      }
-    });
-    if (!candidate) return plan;
-    used.add(candidate.inode);
-    const sourcePaths = [
-      ...new Set([
-        ...(before.get(candidate.inode)?.paths ?? []),
-        ...(current.get(candidate.inode)?.paths ?? []),
-      ]),
-    ];
-    return { ...plan, localInode: BigInt(candidate.inode) as Inode, sourcePaths };
-  });
-}
-
-async function hydratePendingCandidates(
-  storage: Persistence["storage"],
-  persistence: Persistence,
-  plans: readonly ApplyPlan[],
-  signal: AbortSignal,
-): Promise<void> {
-  const seen = new Set<Inode>();
-  for (const plan of plans) {
-    if (
-      plan.changed.stat?.type !== "file" ||
-      plan.localInode === undefined ||
-      seen.has(plan.localInode)
-    )
-      continue;
-    seen.add(plan.localInode);
-    signal.throwIfAborted();
-    await persistence.runLeaf(
-      () => storage.readInto(plan.localInode!, 0n, new Uint8Array(0)),
-      signal,
-    );
   }
 }
 

@@ -27,12 +27,3 @@ export function persistenceError<T>(
 ): KernelRevisionWorkspaceError {
   return new KernelRevisionWorkspaceError(result.error.code, result.error.message);
 }
-
-export function assertUnchanged(expected: number, actual: number): void {
-  if (expected !== actual) {
-    throw new KernelRevisionWorkspaceError(
-      "LIVE_FILESYSTEM_DIVERGED",
-      "The live filesystem changed after the command checkpoint; VM output was kept unapplied",
-    );
-  }
-}

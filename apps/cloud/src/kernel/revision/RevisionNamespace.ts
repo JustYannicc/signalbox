@@ -3,7 +3,8 @@ import { KernelOpenFlags } from "../KernelFileSystem.ts";
 import type { CommitInode } from "../FilePersistencePorts.ts";
 import type { Inode } from "../storage.ts";
 import { KernelRevisionWorkspaceError, errorCode } from "./RevisionErrors.ts";
-import type { ApplyPlan } from "./RevisionTypes.ts";
+import type { ApplyPlan, Persistence } from "./RevisionTypes.ts";
+import { assertOwnedResolvedPath, guestPath } from "./RevisionNamespaceOwnership.ts";
 
 export function normalizeMountPath(path: string): string {
   if (!path.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) {
@@ -20,6 +21,7 @@ export function reconcileNamespace(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
+  storage: Persistence["storage"],
   applyId: string,
   plans: readonly ApplyPlan[],
 ): ApplyPlan[] {
@@ -27,11 +29,11 @@ export function reconcileNamespace(
     .filter((plan) => plan.changed.stat === null)
     .flatMap((plan) => plan.changed.removedPaths)
     .sort((left, right) => depth(right) - depth(left));
-  const deletedDirectories: string[] = [];
+  const deletedDirectories: { readonly path: string; readonly inode: Inode }[] = [];
   for (const path of deletions) {
-    const entry = safeLstat(filesystem, mountPath, rootRealPath, path);
-    if (entry?.type === "directory") deletedDirectories.push(path);
-    else if (entry) removePath(filesystem, mountPath, rootRealPath, path);
+    const entry = safeLstat(filesystem, mountPath, rootRealPath, storage, path);
+    if (entry?.type === "directory") deletedDirectories.push({ path, inode: entry.ino });
+    else if (entry) removePath(filesystem, mountPath, rootRealPath, storage, path);
   }
 
   const livePlans = plans
@@ -39,7 +41,10 @@ export function reconcileNamespace(
     .sort((left, right) => {
       const leftDir = left.changed.stat!.type === "directory" ? 0 : 1;
       const rightDir = right.changed.stat!.type === "directory" ? 0 : 1;
-      return leftDir - rightDir || depth(left.changed.paths[0]!) - depth(right.changed.paths[0]!);
+      const depthOrder = depth(left.changed.paths[0]!) - depth(right.changed.paths[0]!);
+      const identityOrder =
+        Number(left.localInode === undefined) - Number(right.localInode === undefined);
+      return leftDir - rightDir || depthOrder || identityOrder;
     });
   const byLocalInode = new Map(
     livePlans.flatMap((plan) =>
@@ -53,8 +58,8 @@ export function reconcileNamespace(
     const plan = { ...sourcePlan };
     const change = plan.changed;
     const primary = change.paths[0]!;
-    ensureParents(filesystem, mountPath, rootRealPath, primary);
-    const existing = safeLstat(filesystem, mountPath, rootRealPath, primary);
+    ensureParents(filesystem, mountPath, rootRealPath, storage, primary);
+    const existing = safeLstat(filesystem, mountPath, rootRealPath, storage, primary);
     let localInode = plan.localInode;
     if (localInode !== undefined && existing?.ino !== localInode) {
       const source =
@@ -63,34 +68,35 @@ export function reconcileNamespace(
           filesystem,
           mountPath,
           rootRealPath,
+          storage,
           localInode,
           plan.sourcePaths,
           change.paths,
         );
       if (source) {
         if (existing && existing.ino !== localInode)
-          removePath(filesystem, mountPath, rootRealPath, primary);
-        assertParentInside(filesystem, mountPath, rootRealPath, primary);
+          removePath(filesystem, mountPath, rootRealPath, storage, primary);
+        assertParentInside(filesystem, mountPath, rootRealPath, storage, primary);
         filesystem.rename(guestPath(mountPath, source), guestPath(mountPath, primary));
       } else {
         localInode = undefined;
       }
     }
     if (localInode === undefined) {
-      if (existing) removePath(filesystem, mountPath, rootRealPath, primary);
+      if (existing) removePath(filesystem, mountPath, rootRealPath, storage, primary);
       createPath(filesystem, mountPath, primary, change);
     }
     for (const alias of change.paths.slice(1)) {
-      ensureParents(filesystem, mountPath, rootRealPath, alias);
-      const aliasEntry = safeLstat(filesystem, mountPath, rootRealPath, alias);
-      const primaryEntry = safeLstat(filesystem, mountPath, rootRealPath, primary);
+      ensureParents(filesystem, mountPath, rootRealPath, storage, alias);
+      const aliasEntry = safeLstat(filesystem, mountPath, rootRealPath, storage, alias);
+      const primaryEntry = safeLstat(filesystem, mountPath, rootRealPath, storage, primary);
       if (primaryEntry === undefined)
         throw new KernelRevisionWorkspaceError("EIO", "The applied inode lost its primary path");
       if (aliasEntry?.ino === primaryEntry.ino) continue;
-      if (aliasEntry) removePath(filesystem, mountPath, rootRealPath, alias);
+      if (aliasEntry) removePath(filesystem, mountPath, rootRealPath, storage, alias);
       if (change.stat!.type === "directory")
         throw new KernelRevisionWorkspaceError("EPERM", "Directories cannot have hard links");
-      assertParentInside(filesystem, mountPath, rootRealPath, alias);
+      assertParentInside(filesystem, mountPath, rootRealPath, storage, alias);
       filesystem.link(guestPath(mountPath, primary), guestPath(mountPath, alias));
     }
     if (localInode !== undefined) {
@@ -98,11 +104,15 @@ export function reconcileNamespace(
       for (const path of change.removedPaths) oldPaths.add(path);
       for (const oldPath of oldPaths) {
         if (change.paths.includes(oldPath)) continue;
-        const entry = safeLstat(filesystem, mountPath, rootRealPath, oldPath);
-        if (entry?.ino === localInode) removePath(filesystem, mountPath, rootRealPath, oldPath);
+        const entry = safeLstat(filesystem, mountPath, rootRealPath, storage, oldPath);
+        if (entry?.ino === localInode)
+          removePath(filesystem, mountPath, rootRealPath, storage, oldPath);
       }
     }
-    plan.localInode = filesystem.lstat(guestPath(mountPath, primary)).ino;
+    const finalEntry = safeLstat(filesystem, mountPath, rootRealPath, storage, primary);
+    if (finalEntry === undefined)
+      throw new KernelRevisionWorkspaceError("EIO", "The applied inode lost its primary path");
+    plan.localInode = finalEntry.ino;
     reconciled.set(change.inode.toString(), plan);
   };
 
@@ -116,7 +126,7 @@ export function reconcileNamespace(
   for (const plan of filePlans) {
     if (plan.localInode === undefined) continue;
     const destination = plan.changed.paths[0]!;
-    const destinationEntry = safeLstat(filesystem, mountPath, rootRealPath, destination);
+    const destinationEntry = safeLstat(filesystem, mountPath, rootRealPath, storage, destination);
     if (!destinationEntry || destinationEntry.ino === plan.localInode) continue;
     const blocker = byLocalInode.get(destinationEntry.ino.toString());
     if (blocker && blocker.changed.paths[0] !== destination) {
@@ -136,6 +146,7 @@ export function reconcileNamespace(
       filesystem,
       mountPath,
       rootRealPath,
+      storage,
       plan.localInode!,
       plan.sourcePaths,
       plan.changed.paths,
@@ -144,15 +155,19 @@ export function reconcileNamespace(
     let temp: string;
     do {
       temp = `/.signalbox-apply-${hash(applyId)}-${parkIndex++}`;
-    } while (safeLstat(filesystem, mountPath, rootRealPath, temp));
-    assertParentInside(filesystem, mountPath, rootRealPath, temp);
+    } while (safeLstat(filesystem, mountPath, rootRealPath, storage, temp));
+    assertParentInside(filesystem, mountPath, rootRealPath, storage, temp);
     filesystem.rename(guestPath(mountPath, source), guestPath(mountPath, temp));
     parked.set(inode, temp);
   }
 
   for (const plan of filePlans) reconcilePlan(plan);
-  for (const path of deletedDirectories.sort((left, right) => depth(right) - depth(left))) {
-    removePath(filesystem, mountPath, rootRealPath, path);
+  for (const deletion of deletedDirectories.sort(
+    (left, right) => depth(right.path) - depth(left.path),
+  )) {
+    const current = safeLstat(filesystem, mountPath, rootRealPath, storage, deletion.path);
+    if (current?.ino === deletion.inode)
+      removePath(filesystem, mountPath, rootRealPath, storage, deletion.path);
   }
   return plans.map((plan) => reconciled.get(plan.changed.inode.toString()) ?? plan);
 }
@@ -188,9 +203,10 @@ function removePath(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
+  storage: Persistence["storage"],
   path: string,
 ): void {
-  const entry = safeLstat(filesystem, mountPath, rootRealPath, path);
+  const entry = safeLstat(filesystem, mountPath, rootRealPath, storage, path);
   if (!entry) return;
   const guest = guestPath(mountPath, path);
   if (entry.type === "directory") filesystem.rmdir(guest);
@@ -201,27 +217,35 @@ function ensureParents(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
+  storage: Persistence["storage"],
   path: string,
 ): void {
   const segments = path.slice(1).split("/");
   let current = "";
   for (const segment of segments.slice(0, -1)) {
     current += `/${segment}`;
-    if (!safeLstat(filesystem, mountPath, rootRealPath, current))
+    if (!safeLstat(filesystem, mountPath, rootRealPath, storage, current))
       filesystem.mkdir(guestPath(mountPath, current));
   }
-  assertParentInside(filesystem, mountPath, rootRealPath, path);
+  assertParentInside(filesystem, mountPath, rootRealPath, storage, path);
 }
 
 function safeLstat(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
+  storage: Persistence["storage"],
   path: string,
 ) {
   try {
-    assertParentInside(filesystem, mountPath, rootRealPath, path);
-    return filesystem.lstat(guestPath(mountPath, path));
+    assertParentInside(filesystem, mountPath, rootRealPath, storage, path);
+    const guest = guestPath(mountPath, path);
+    const resolved = filesystem.resolve(guest, { followFinal: false });
+    assertOwnedResolvedPath(resolved, storage);
+    const entry = filesystem.lstat(guest);
+    if (entry.ino !== resolved.inode)
+      throw new KernelRevisionWorkspaceError("ESTALE", "A workspace path changed during apply");
+    return entry;
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
     throw error;
@@ -232,11 +256,15 @@ function assertParentInside(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
+  storage: Persistence["storage"],
   path: string,
 ): void {
   const slash = path.lastIndexOf("/");
   const parent = slash === 0 ? "/" : path.slice(0, slash);
-  const realParent = filesystem.realpath(guestPath(mountPath, parent));
+  const parentPath = guestPath(mountPath, parent);
+  const resolvedParent = filesystem.resolve(parentPath);
+  assertOwnedResolvedPath(resolvedParent, storage);
+  const realParent = filesystem.realpath(parentPath);
   const within =
     rootRealPath === "/"
       ? realParent.startsWith("/")
@@ -252,19 +280,16 @@ function findLivePath(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
+  storage: Persistence["storage"],
   inode: Inode,
   candidates: readonly string[],
   desired: readonly string[],
 ): string | undefined {
   for (const path of [...desired, ...candidates]) {
-    const entry = safeLstat(filesystem, mountPath, rootRealPath, path);
+    const entry = safeLstat(filesystem, mountPath, rootRealPath, storage, path);
     if (entry?.ino === inode) return path;
   }
   return undefined;
-}
-
-function guestPath(mountPath: string, workspacePath: string): string {
-  return mountPath === "/" ? workspacePath : `${mountPath}${workspacePath}`;
 }
 
 function depth(path: string): number {

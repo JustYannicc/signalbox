@@ -125,6 +125,17 @@ export function readDirty(database: FacetStorage): DirtyInode[] {
   );
 }
 
+export function restoreDirtySnapshot(database: FacetStorage, dirty: readonly DirtyInode[]): void {
+  database.sql.exec("DELETE FROM kernel_fs_workspace_dirty_inode");
+  for (const entry of dirty) {
+    database.sql.exec(
+      "INSERT INTO kernel_fs_workspace_dirty_inode (ino, version) VALUES (?, ?)",
+      entry.inode,
+      entry.version,
+    );
+  }
+}
+
 export function readAttempt(
   database: FacetStorage,
   operationId: string,

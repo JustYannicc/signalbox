@@ -3,7 +3,7 @@ import type { ChangedInode, ForkCommit } from "../FilePersistencePorts.ts";
 import { isPosixMetadata } from "../PosixStorage.ts";
 import type { Inode, Stat } from "../storage.ts";
 import { KernelRevisionWorkspaceError, errorCode } from "./RevisionErrors.ts";
-import type { Persistence, TreeEntry } from "./RevisionTypes.ts";
+import type { ApplyPlan, Persistence, TreeEntry } from "./RevisionTypes.ts";
 
 const TreeEntrySchema = Schema.Struct({
   inode: Schema.String,
@@ -128,6 +128,43 @@ export function diffTrees(
     });
   }
   return changed;
+}
+
+export function applyChangesToManifest(
+  baseline: ReadonlyMap<string, TreeEntry>,
+  plans: readonly ApplyPlan[],
+): Map<string, TreeEntry> {
+  const affectedPaths = new Set(
+    plans.flatMap((plan) => [...plan.changed.paths, ...plan.changed.removedPaths]),
+  );
+  const manifest = new Map<string, TreeEntry>();
+  for (const [inode, entry] of baseline) {
+    const paths = entry.paths.filter((path) => !affectedPaths.has(path));
+    if (paths.length === 0) continue;
+    manifest.set(
+      inode,
+      paths.length === entry.paths.length
+        ? entry
+        : { ...entry, paths, stat: { ...entry.stat, nlink: BigInt(paths.length) } },
+    );
+  }
+
+  for (const plan of plans) {
+    const change = plan.changed;
+    if (!change.stat) continue;
+    if (plan.localInode === undefined)
+      throw new KernelRevisionWorkspaceError("EIO", "The applied inode has no live identity");
+    const inode = plan.localInode.toString();
+    const prior = baseline.get(inode);
+    manifest.set(inode, {
+      inode,
+      paths: [...change.paths].sort(),
+      stat: { ...change.stat },
+      symlinkTarget: change.stat.type === "symlink" ? change.symlinkTarget : null,
+      posix: change.posix === undefined ? (prior?.posix ?? null) : change.posix,
+    });
+  }
+  return manifest;
 }
 
 function sameTreeEntry(left: TreeEntry, right: TreeEntry): boolean {
