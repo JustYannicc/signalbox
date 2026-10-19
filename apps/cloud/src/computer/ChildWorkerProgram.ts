@@ -2,6 +2,7 @@ import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts"
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import type { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
+import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 
 export type ChildWorkerModule = string | { readonly js: string } | { readonly wasm: ArrayBuffer };
 
@@ -62,6 +63,7 @@ export function createChildWorkerProgram<Host extends object>(
         context.signal.throwIfAborted();
         const owner = options.createHost(context);
         if (owner.exited !== undefined) void owner.exited.then(result.resolve, result.reject);
+        let failure: ChildWorkerDispatchError | undefined;
         try {
           return await options.dispatch.run(
             {
@@ -76,11 +78,25 @@ export function createChildWorkerProgram<Host extends object>(
             owner.host,
           );
         } catch (error) {
-          if (owner.exited !== undefined) result.reject(error);
-          throw error;
+          failure =
+            error instanceof ChildWorkerDispatchError
+              ? error
+              : new ChildWorkerDispatchError(error, {
+                  kind: "unconfirmed",
+                  stopped: new Promise<void>(() => {}),
+                });
+          result.reject(failure);
         } finally {
-          await owner.close();
+          try {
+            await owner.close();
+          } finally {
+            if (failure?.termination.kind === "unconfirmed") {
+              // Capability cleanup cannot acknowledge a worker whose transport disappeared.
+              await failure.termination.stopped;
+            }
+          }
         }
+        throw failure;
       });
       // Observe late dispatch/close failures while capacity remains held through physical teardown.
       void lifetime.then(result.resolve, result.reject);
