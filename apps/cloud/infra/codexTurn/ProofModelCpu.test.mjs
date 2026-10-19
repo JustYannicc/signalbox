@@ -49,3 +49,11 @@ NodeTest.test("a completed response does not send an unsolicited pacing ACK", as
   await delivered.promise;
   NodeAssert.deepEqual(sent, []);
 });
+
+NodeTest.test("native close events reach the CPU proof even without a guest close listener", () => {
+  const socket = new EventTarget();
+  let closed = 0;
+  observeProofSocket(socket, { closedSocket: () => closed++ });
+  socket.dispatchEvent(new Event("close"));
+  NodeAssert.equal(closed, 1);
+});

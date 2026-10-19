@@ -3,6 +3,14 @@ const encoder = new TextEncoder();
 const MAX_REQUEST_FRAME_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_RESPONSE_EVENTS = 64;
+const RESPONSE_EVENT_TYPES = new Set([
+  "response.content_part.added",
+  "response.content_part.done",
+  "response.output_item.added",
+  "response.output_item.done",
+  "response.output_text.delta",
+  "response.output_text.done",
+]);
 
 export function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -89,8 +97,27 @@ export function parseSse(sse) {
     throw new Error("mock Responses stream must complete the created response");
   }
   for (const event of events.slice(1, -1)) {
-    if (event.type !== "response.output_item.done" || !isRecord(event.item)) {
+    if (!RESPONSE_EVENT_TYPES.has(event.type)) {
       throw new Error("mock Responses stream contains an unexpected event");
+    }
+    if (
+      (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
+      !isRecord(event.item)
+    ) {
+      throw new Error(`${event.type} requires an item object`);
+    }
+    if (
+      (event.type === "response.content_part.added" ||
+        event.type === "response.content_part.done") &&
+      !isRecord(event.part)
+    ) {
+      throw new Error(`${event.type} requires a content part object`);
+    }
+    if (event.type === "response.output_text.delta" && typeof event.delta !== "string") {
+      throw new Error("response.output_text.delta requires text");
+    }
+    if (event.type === "response.output_text.done" && typeof event.text !== "string") {
+      throw new Error("response.output_text.done requires text");
     }
   }
   return { id: createdId, events };

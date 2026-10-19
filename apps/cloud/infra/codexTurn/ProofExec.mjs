@@ -62,7 +62,14 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors })
   });
 }
 
-export function createProofWebSocket({ memory, binding, sessions, context, modelRoute }) {
+export function createProofWebSocket({
+  memory,
+  binding,
+  sessions,
+  context,
+  modelRoute,
+  execSocket,
+}) {
   return new KernelWebSocketHost({
     memory,
     descriptors: binding.descriptors,
@@ -72,8 +79,15 @@ export function createProofWebSocket({ memory, binding, sessions, context, model
         if (modelRoute) return modelRoute(input);
         throw new Error("Unexpected WebSocket route");
       }
+      execSocket?.opened();
       const response = acceptCodexExecWebSocket(request, sessions, context);
       response.webSocket?.accept();
+      if (response.webSocket && execSocket)
+        return {
+          status: response.status,
+          headers: [],
+          webSocket: execSocket.observe(response.webSocket),
+        };
       return { response, headers: [] };
     },
   });

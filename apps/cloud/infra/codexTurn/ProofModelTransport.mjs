@@ -37,7 +37,10 @@ export function createProofModelTransport({ request, context, execution }) {
     const disconnect = input.searchParams.get("disconnect");
     if (disconnect) target.searchParams.set("disconnect", disconnect);
     if (input.searchParams.get("hold") === "once") target.searchParams.set("hold", "once");
-    if (cpu) target.searchParams.set("pace", "true");
+    if (cpu) {
+      target.searchParams.set("pace", "true");
+      target.searchParams.set("cpu", "only");
+    }
     try {
       const response = await fetch(new Request(target, upgrade));
       if (response.webSocket) cpu?.createdSocket();
@@ -53,6 +56,8 @@ export function createProofModelTransport({ request, context, execution }) {
   return {
     baseUrl: http ? "http://mock.invalid/v1" : endpoint.href,
     supportsWebSockets: !http,
+    cpuOnly: cpu?.cpuOnly ?? false,
+    execSocket: cpu?.execSocket,
     ...(cpu ? { streamIdleTimeoutMs: 90000, watchdogMs: 90000 } : {}),
     async route(input) {
       const result = await dial(input);

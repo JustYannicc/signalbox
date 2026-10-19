@@ -32,7 +32,7 @@ export async function normalizeWebSocketRouteResponse(
     if (result instanceof Response) {
       throw new WebSocketRouteError(
         WS_ERRNO.EIO,
-        "Loopback WebSocket adapter must supply raw header pairs with its Response",
+        "WebSocket adapter must supply raw header pairs with its Response",
       );
     }
     if (isResponseWithHeaders(result)) return await normalizeResponseWithHeaders(result, signal);
@@ -42,29 +42,17 @@ export async function normalizeWebSocketRouteResponse(
       !Number.isSafeInteger(result.status) ||
       !Array.isArray(result.headers)
     ) {
-      throw new WebSocketRouteError(
-        WS_ERRNO.EIO,
-        "Loopback WebSocket router returned an invalid response",
-      );
+      throw new WebSocketRouteError(WS_ERRNO.EIO, "WebSocket router returned an invalid response");
     }
     const body = result.body ?? new Uint8Array();
     if (!(body instanceof Uint8Array)) {
-      throw new WebSocketRouteError(
-        WS_ERRNO.EIO,
-        "Loopback WebSocket router returned an invalid body",
-      );
+      throw new WebSocketRouteError(WS_ERRNO.EIO, "WebSocket router returned an invalid body");
     }
     if (body.byteLength > MAX_HANDSHAKE_BODY_BYTES) {
-      throw new WebSocketRouteError(
-        WS_ERRNO.EMSGSIZE,
-        "Loopback WebSocket response body is too large",
-      );
+      throw new WebSocketRouteError(WS_ERRNO.EMSGSIZE, "WebSocket response body is too large");
     }
     if (result.status === 101 && result.webSocket == null) {
-      throw new WebSocketRouteError(
-        WS_ERRNO.EIO,
-        "Loopback WebSocket upgrade did not return a socket",
-      );
+      throw new WebSocketRouteError(WS_ERRNO.EIO, "WebSocket upgrade did not return a socket");
     }
     return {
       handshake: {
@@ -108,17 +96,11 @@ async function normalizeResponseWithHeaders(
 ): Promise<NormalizedWebSocketRouteResponse> {
   const { response, headers } = result;
   if (!(response instanceof Response) || !Array.isArray(headers)) {
-    throw new WebSocketRouteError(
-      WS_ERRNO.EIO,
-      "Loopback WebSocket adapter returned an invalid response",
-    );
+    throw new WebSocketRouteError(WS_ERRNO.EIO, "WebSocket adapter returned an invalid response");
   }
   const webSocket = getResponseWebSocket(response);
   if (response.status === 101 && webSocket === undefined) {
-    throw new WebSocketRouteError(
-      WS_ERRNO.EIO,
-      "Loopback WebSocket upgrade did not return a socket",
-    );
+    throw new WebSocketRouteError(WS_ERRNO.EIO, "WebSocket upgrade did not return a socket");
   }
 
   return {
@@ -150,25 +132,22 @@ async function readLimitedBody(
   signal.addEventListener("abort", cancel, { once: true });
   try {
     if (signal.aborted)
-      throw new WebSocketRouteError(WS_ERRNO.EIO, "Loopback WebSocket response was cancelled");
+      throw new WebSocketRouteError(WS_ERRNO.EIO, "WebSocket response was cancelled");
     for (;;) {
       const result = await reader.read();
       if (signal.aborted)
-        throw new WebSocketRouteError(WS_ERRNO.EIO, "Loopback WebSocket response was cancelled");
+        throw new WebSocketRouteError(WS_ERRNO.EIO, "WebSocket response was cancelled");
       if (result.done) break;
       total += result.value.byteLength;
       if (total > MAX_HANDSHAKE_BODY_BYTES) {
         void reader.cancel().catch(() => {});
-        throw new WebSocketRouteError(
-          WS_ERRNO.EMSGSIZE,
-          "Loopback WebSocket response body is too large",
-        );
+        throw new WebSocketRouteError(WS_ERRNO.EMSGSIZE, "WebSocket response body is too large");
       }
       chunks.push(result.value.slice());
     }
   } catch (error) {
     if (error instanceof WebSocketRouteError) throw error;
-    throw new WebSocketRouteError(WS_ERRNO.EIO, "Could not read loopback WebSocket response body");
+    throw new WebSocketRouteError(WS_ERRNO.EIO, "Could not read WebSocket response body");
   } finally {
     signal.removeEventListener("abort", cancel);
     reader.releaseLock();

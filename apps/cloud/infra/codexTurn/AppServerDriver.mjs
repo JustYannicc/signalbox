@@ -98,7 +98,9 @@ export function createAppServerDriver({ sendLine, closeInput }) {
       waiters.set(name, set);
     });
   }
-  async function run() {
+  async function run({
+    prompt = "Run the command to verify the workspace, add proof.txt with the requested text, then confirm completion.",
+  } = {}) {
     try {
       await wait("ready");
       const started = await request("thread/start", {
@@ -115,7 +117,7 @@ export function createAppServerDriver({ sendLine, closeInput }) {
         input: [
           {
             type: "text",
-            text: "Run the command to verify the workspace, add proof.txt with the requested text, then confirm completion.",
+            text: prompt,
           },
         ],
         cwd: "/workspace",

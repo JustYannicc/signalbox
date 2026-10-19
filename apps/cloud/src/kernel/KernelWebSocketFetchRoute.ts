@@ -13,7 +13,7 @@ export function createKernelWebSocketFetchRoute(
     url.protocol = url.protocol === "wss:" ? "https:" : "http:";
     const headers = new Headers(request.headers);
     headers.set("upgrade", "websocket");
-    const response = await fetchUpgrade(new Request(url, { headers, signal }));
+    const response = await fetchUpgrade(new Request(url, { headers, signal, redirect: "manual" }));
     const socket = response.webSocket;
     if (socket != null) {
       socket.accept();

@@ -1,4 +1,8 @@
-export const MODEL_CPU_WORK = Object.freeze({ chunks: 9, iterationsPerChunk: 60_000_000, seed: 1 });
+export const MODEL_CPU_WORK = Object.freeze({
+  chunks: 9,
+  iterationsPerChunk: 120_000_000,
+  seed: 1,
+});
 
 export function modelCpuChunk(value, iterations) {
   for (let index = 0; index < iterations; index++)
@@ -23,6 +27,9 @@ export function createProofModelCpu({ context, execution, mode }) {
   const rows = [];
   let frames = 0,
     chunks = 0,
+    execOpens = 0,
+    execFrames = 0,
+    disqualified = false,
     checksum = MODEL_CPU_WORK.seed,
     warmup = false;
   const persist = (phase, extra = {}) => {
@@ -36,6 +43,9 @@ export function createProofModelCpu({ context, execution, mode }) {
       chunks,
       work: chunks * MODEL_CPU_WORK.iterationsPerChunk,
       checksum,
+      execOpens,
+      execFrames,
+      disqualified,
       wasiStartPending: execution.pending,
       wasiStartEnteredAt: execution.enteredAt,
       ...extra,
@@ -44,7 +54,28 @@ export function createProofModelCpu({ context, execution, mode }) {
     rows.push(row);
   };
   persist("created", { owner: "engine-facet", workPlan: MODEL_CPU_WORK });
+  const execEvent = (phase) => {
+    if (frames > 0 && chunks < MODEL_CPU_WORK.chunks) disqualified = true;
+    persist(phase);
+  };
   return {
+    cpuOnly: true,
+    execSocket: {
+      opened() {
+        execOpens++;
+        execEvent("exec-socket-opened");
+      },
+      observe(socket) {
+        return observeNativeSocket(
+          socket,
+          () => {
+            execFrames++;
+            execEvent("exec-frame-received");
+          },
+          () => execEvent("exec-socket-closed"),
+        );
+      },
+    },
     dialStarted() {
       persist("socket-dial-started", { owner: "engine-facet" });
     },
@@ -54,13 +85,18 @@ export function createProofModelCpu({ context, execution, mode }) {
     acceptedSocket() {
       persist("socket-accepted", { owner: "engine-facet" });
     },
+    closedSocket() {
+      if (frames > 0 && chunks < MODEL_CPU_WORK.chunks) disqualified = true;
+      persist("model-socket-closed");
+    },
     async receive(event) {
       if (typeof event.data !== "string") throw new Error("CPU proof requires native text frames");
       const frame = JSON.parse(event.data);
       if (frame.type === "response.created")
         warmup = frame.response.id.startsWith("resp-1069-warmup-");
       if (warmup) return;
-      if (!execution.pending) throw new Error("Native receive outlived its WASIstart continuation");
+      if (!execution.pending)
+        throw new Error("Native receive outlived its WASI start continuation");
       frames++;
       persist("received", { frameType: frame.type, callbackOwner: "engine-facet" });
       await context.storage.sync();
@@ -77,6 +113,7 @@ export function createProofModelCpu({ context, execution, mode }) {
       if (frames === MODEL_CPU_WORK.chunks) persist("work-complete");
     },
     inspect() {
+      if (disqualified) throw new Error("CPU proof received exec socket traffic during work");
       if (chunks !== MODEL_CPU_WORK.chunks || frames !== MODEL_CPU_WORK.chunks)
         throw new Error("CPU proof did not consume its fixed frame/work sequence");
       persist("native-turn-complete");
@@ -104,6 +141,19 @@ export function readProofModelCpu(context) {
 /** The listener still runs on the native socket's captured engine-facet IoContext. */
 export function observeProofSocket(socket, proof) {
   if (!proof) return socket;
+  return observeNativeSocket(
+    socket,
+    async (event) => {
+      await proof.receive(event);
+      if (JSON.parse(event.data).type !== "response.completed")
+        socket.send("signalbox-proof-frame-ack");
+    },
+    () => proof.closedSocket?.(),
+  );
+}
+
+function observeNativeSocket(socket, beforeMessage, onClose) {
+  socket.addEventListener("close", () => onClose?.());
   const listeners = new Map();
   return new Proxy(socket, {
     get(target, key) {
@@ -111,9 +161,7 @@ export function observeProofSocket(socket, proof) {
         return (type, listener, options) => {
           if (type !== "message") return target.addEventListener(type, listener, options);
           const wrapped = async (event) => {
-            await proof.receive(event);
-            if (JSON.parse(event.data).type !== "response.completed")
-              target.send("signalbox-proof-frame-ack");
+            await beforeMessage(event);
             if (typeof listener === "function") listener.call(target, event);
             else listener.handleEvent(event);
           };

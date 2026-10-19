@@ -1,6 +1,7 @@
 import { DurableObject, WorkerEntrypoint, exports as hostExports } from "cloudflare:workers";
 import probe, { ProbeSession as BaseProbeSession } from "../isolateProbe/generated/worker.js";
 import { createMockResponses } from "./MockResponses.mjs";
+import { createMockResponsesCpu } from "./MockResponsesCpu.mjs";
 import { createMockResponsesWebSocket } from "./MockResponsesWebSocket.mjs";
 import { nativeTimingBinding } from "./ModelProofTiming.mjs";
 
@@ -104,15 +105,23 @@ export class MockModel extends DurableObject {
         headers: { "content-type": "text/event-stream" },
       });
     }
-    this.peer ??= createMockResponsesWebSocket({
-      mock: this.mock,
-      faults: {
-        closeBeforeCompletedOnce: url.searchParams.get("disconnect") === "once",
-        closeBeforeOutputOnce: url.searchParams.get("disconnect") === "early",
-        holdBeforeOutputOnce: url.searchParams.get("hold") === "once",
-        paceFrames: url.searchParams.get("pace") === "true",
-      },
-    });
+    if (!this.peer) {
+      if (
+        request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+        url.searchParams.get("cpu") === "only"
+      ) {
+        this.mock = createMockResponsesCpu();
+      }
+      this.peer = createMockResponsesWebSocket({
+        mock: this.mock,
+        faults: {
+          closeBeforeCompletedOnce: url.searchParams.get("disconnect") === "once",
+          closeBeforeOutputOnce: url.searchParams.get("disconnect") === "early",
+          holdBeforeOutputOnce: url.searchParams.get("hold") === "once",
+          paceFrames: url.searchParams.get("pace") === "true",
+        },
+      });
+    }
     this.resolvePeer();
     const result = this.peer.route({ request });
     return new Response(result.body ?? null, {

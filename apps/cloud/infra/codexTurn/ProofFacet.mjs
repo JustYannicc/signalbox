@@ -195,6 +195,7 @@ export function createProofFacet(engine, createHost, options = {}) {
           sessions,
           context: this.ctx,
           modelRoute: model.route,
+          execSocket: model.execSocket,
         });
         const http = createMockHttpAdapter({
           memory: () => memory,
@@ -240,15 +241,21 @@ export function createProofFacet(engine, createHost, options = {}) {
         if (pipe.tryWrite(bytes) !== bytes.length)
           throw new Error("Bootstrap exceeds pipe capacity");
         const driven = turnMode
-          ? driver.run().then(
-              (result) => {
-                turnResult = result;
-              },
-              (error) => {
-                failure = String(error);
-                closeInput();
-              },
-            )
+          ? driver
+              .run(
+                model.cpuOnly
+                  ? { prompt: "Reply with the CPU proof message. Do not call tools." }
+                  : undefined,
+              )
+              .then(
+                (result) => {
+                  turnResult = result;
+                },
+                (error) => {
+                  failure = String(error);
+                  closeInput();
+                },
+              )
           : undefined;
         watchdog = setTimeout(() => {
           failure ??= "Engine proof exceeded its milestone budget";
@@ -279,7 +286,19 @@ export function createProofFacet(engine, createHost, options = {}) {
             if (model.metrics.opens < 1 || model.metrics.httpFallbacks !== 0)
               throw new Error("Default Responses proof did not stay on WebSockets");
           }
-          proofContent = verifyPatchResult(filesystem);
+          if (model.cpuOnly) {
+            if (execTranscript.some((entry) => entry.method === "process/start"))
+              throw new Error("CPU proof executed a tool");
+            const messages = driver.transcript.filter(
+              (entry) =>
+                entry.direction === "from-engine" &&
+                entry.message.method === "item/completed" &&
+                entry.message.params?.item?.type === "agentMessage",
+            );
+            if (!messages.some((entry) => entry.message.params.item.text === "CPU proof complete."))
+              throw new Error("CPU proof did not deliver its complete native message");
+            proofContent = "CPU proof complete.";
+          } else proofContent = verifyPatchResult(filesystem);
         }
         compositionResult = await composition?.verify?.({ filesystem, turnResult, mock, driver });
       } catch (error) {

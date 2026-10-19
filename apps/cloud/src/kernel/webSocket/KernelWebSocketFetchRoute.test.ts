@@ -84,4 +84,22 @@ describe("createKernelWebSocketFetchRoute", () => {
     await expect(opened).rejects.toThrow("turn canceled");
     expect(calls).toEqual(["accept", "close"]);
   });
+
+  it("returns a redirect handshake without following its destination", async () => {
+    const requests: Request[] = [];
+    const response = new Response("upgrade moved", {
+      status: 302,
+      headers: { location: "https://other.invalid/responses" },
+    });
+    const route = createKernelWebSocketFetchRoute(async (request) => {
+      requests.push(request);
+      return response;
+    });
+    const result = await route(routeRequest("wss://model.invalid/v1/responses"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.redirect).toBe("manual");
+    expect("response" in result && result.response.status).toBe(302);
+    expect(result.headers).toContainEqual(["location", "https://other.invalid/responses"]);
+    expect(await response.text()).toBe("upgrade moved");
+  });
 });
