@@ -4,12 +4,8 @@ import bundledRoots from "./node/tls/bundledRoots.json" with { type: "json" };
 
 const fallbackRoots = Object.freeze(bundledRoots.certificates);
 
-export function createNodeTls(native = NodeTls) {
+export function nodeRootCertificates(native = NodeTls.rootCertificates) {
   // Node's bundled Mozilla snapshot is separate from the active TLS trust store.
   // Workerd exposes no bundled metadata; its handshake validation stays native.
-  const rootCertificates = native.rootCertificates.length
-    ? Object.freeze([...native.rootCertificates])
-    : fallbackRoots;
-  const module = { ...native, rootCertificates };
-  return Object.freeze(Object.assign(module, { default: module }));
+  return native.length ? Object.freeze([...native]) : fallbackRoots;
 }

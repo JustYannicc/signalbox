@@ -50,10 +50,10 @@ import {httpServerHandler} from 'cloudflare:node';
 import {connect} from 'cloudflare:sockets';
 import * as nativeTls from 'node:tls';
 import {X509Certificate, createHash, createPublicKey} from 'node:crypto';
-import {createNodeTls} from '../../src/isolate/NodeTls.ts';
+import {nodeRootCertificates} from '../../src/isolate/NodeTls.ts';
 import {createNodeNetworkModules} from '../../src/isolate/NodeNetwork.ts';
 import {installNodePersonality} from '../../src/isolate/NodeBootstrap.ts';
-const tls = createNodeTls();
+const tls = {...nativeTls, rootCertificates:nodeRootCertificates()};
 const guestTls = createNodeNetworkModules({httpServerHandler, connectSocket:connect}).tls;
 let guest;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -76,10 +76,10 @@ export class TlsRootsFacet extends DurableObject {
     const fingerprints=certificates.map(cert=>hash(cert.raw));
     checks.allParseableCa = certificates.length > 0 && certificates.every(cert=>cert.ca);
     checks.uniqueRoots = new Set(fingerprints).size === roots.length;
-    checks.publicKeysReadable = certificates.every(cert => {
-      let key=cert.publicKey;
-      try { key=createPublicKey({key:key.export({format:'jwk'}),format:'jwk'}); } catch {}
-      return hash(key.export({type:'spki',format:'der'})).length===64;
+    checks.publicKeySpkiRoundTrip = certificates.every(cert => {
+      const spki=cert.publicKey.export({type:'spki',format:'der'});
+      const key=createPublicKey({key:spki,format:'der',type:'spki'});
+      return hash(spki)===hash(key.export({type:'spki',format:'der'}));
     });
     const excluded=new Set(fingerprints.slice(0,1));
     const allowed=roots.filter(pem=>!excluded.has(hash(new X509Certificate(pem).raw)));

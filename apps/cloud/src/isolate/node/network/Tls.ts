@@ -1,5 +1,5 @@
 import * as NodeTls from "node:tls";
-import { createNodeTls } from "../../NodeTls.ts";
+import { nodeRootCertificates } from "../../NodeTls.ts";
 import { isLocalHost } from "./address.ts";
 import { unsupportedNetworkOperation } from "./errors.ts";
 import { LoopbackSocket } from "./LoopbackSocket.ts";
@@ -52,7 +52,7 @@ function tlsTarget(options: Record<string, unknown>): {
 
 export function createTlsModule(): object {
   const module = copyNativeExports(NodeTls);
-  module.rootCertificates = createNodeTls().rootCertificates;
+  module.rootCertificates = nodeRootCertificates();
   const nativeConnect = Reflect.get(NodeTls, "connect");
   const connect = (...args: unknown[]): unknown => {
     const options = connectionOptions(args);
