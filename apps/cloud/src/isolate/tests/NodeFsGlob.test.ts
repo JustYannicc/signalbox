@@ -1,5 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import type * as NodeFS from "node:fs";
 import { createNodeFs } from "../NodeFs.ts";
 import { nodeFsPosixFixture } from "./helpers/NodeFsPosixFixture.ts";
 
@@ -92,19 +91,18 @@ describe("Node fs/promises glob", () => {
       fixture.kernelFs.chdir("/work");
 
       const excludedNames: string[] = [];
-      const dirents: NodeFS.Dirent<string>[] = [];
+      const dirents = [];
       for await (const entry of promises.glob("**/*", {
         cwd: "/work",
         withFileTypes: true,
         exclude: (candidate) => {
           if (typeof candidate === "string") throw new Error("Expected a Dirent exclude value");
-          const dirent = candidate as NodeFS.Dirent<string>;
-          excludedNames.push(String(dirent.name));
-          return dirent.name === ".git" || dirent.name === "node_modules";
+          excludedNames.push(String(candidate.name));
+          return candidate.name === ".git" || candidate.name === "node_modules";
         },
       })) {
         if (typeof entry === "string") throw new Error("Expected Dirent results");
-        dirents.push(entry as NodeFS.Dirent<string>);
+        dirents.push(entry);
       }
 
       expect(excludedNames).toContain("node_modules");
@@ -150,9 +148,8 @@ describe("Node fs/promises glob", () => {
           withFileTypes: true,
           exclude: (candidate) => {
             if (typeof candidate === "string") throw new Error("Expected a Dirent exclude value");
-            const dirent = candidate as NodeFS.Dirent<string>;
-            gitExclusions.push(String(dirent.name));
-            return dirent.name === ".git";
+            gitExclusions.push(String(candidate.name));
+            return candidate.name === ".git";
           },
         }),
       );
