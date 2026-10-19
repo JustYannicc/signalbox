@@ -16,6 +16,8 @@ import {
   type CodexHookRuntimeComposition,
   type CodexHookRuntimeConfiguration,
 } from "./codexRuntime.ts";
+import { STANDARD_PROOF_WRITE } from "./standardProofAdapter.ts";
+import { STANDARD_PROOF_WIRE_TEXT } from "./standardProofEvidence.ts";
 
 interface ProofFacetConfiguration extends CodexHookRuntimeConfiguration {
   readonly filesystem: KernelFileSystem;
@@ -25,6 +27,14 @@ interface ProofFacetConfiguration extends CodexHookRuntimeConfiguration {
 
 interface ProofFacetOptions {
   configure(input: ProofFacetConfiguration): CodexHookRuntimeComposition;
+  readonly mockResponses: {
+    readonly secretFile: {
+      readonly path: string;
+      readonly placeholderText: string;
+      readonly readCommand: string;
+      readonly expectedReadOutput: string;
+    };
+  };
 }
 
 interface ProofHostOwner {
@@ -81,6 +91,14 @@ export function createCodexHooksProofClass(
       return runtime.host;
     },
     {
+      mockResponses: {
+        secretFile: {
+          path: "/workspace/proof.txt",
+          placeholderText: STANDARD_PROOF_WRITE,
+          readCommand: "cat /workspace/proof.txt",
+          expectedReadOutput: STANDARD_PROOF_WIRE_TEXT,
+        },
+      },
       configure(input) {
         const runtime = runtimes.get(input.host);
         if (!runtime) throw new Error("Codex proof runtime was not created for this request");

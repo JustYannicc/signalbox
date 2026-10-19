@@ -18,6 +18,7 @@ import {
   type NodeGeneratedCodeOpenPort,
 } from "../../src/isolate/NodeGeneratedCode.ts";
 import { KernelFileSystem, KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
+import { canonicalFileByteSelection } from "../../src/kernel/KernelFileBytes.ts";
 import {
   kernelError,
   kernelOk,
@@ -31,9 +32,15 @@ import {
 } from "../../src/kernel/KernelProgramHost.ts";
 import type { KernelExitStatus } from "../../src/kernel/KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
+import type { Storage } from "../../src/kernel/storage.ts";
 import { createHookService } from "../../src/hooks/HookService.ts";
 import { KERNEL_HOOK_EXECUTABLE, registerKernelHookProgram } from "../../src/hooks/HookProgram.ts";
 import { createStandardProofAdapter, type StandardProofAdapter } from "./standardProofAdapter.ts";
+import { createProofCommandFilesystem } from "./proofCommandFilesystem.ts";
+import {
+  captureStandardProofSessions,
+  inspectStandardProofSessions,
+} from "./standardProofRecords.ts";
 import {
   verifyCodexHooks,
   type GeneratedCallRecord,
@@ -45,6 +52,7 @@ import {
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+const SESSION_ROOT = "/home/codex/sessions";
 
 type ProofEnv = Readonly<Record<string, unknown>>;
 type GeneratedInvokeOptions = Readonly<{ signal?: AbortSignal }>;
@@ -55,13 +63,21 @@ interface GeneratedCodeInvokePort {
 
 export interface CodexHookRuntimeConfiguration {
   readonly filesystem: KernelFileSystem;
+  readonly storage: Storage;
   readonly facetStorage: Parameters<typeof createNodeGeneratedCode>[0]["storage"];
   readonly host: KernelProgramHost;
   readonly wakes: KernelWakeRegistry;
   readonly env: ProofEnv;
+  readonly modelForward?: (request: Request) => Promise<Response>;
 }
 
 export interface CodexHookRuntimeComposition {
+  readonly prepare: () => Promise<void>;
+  readonly modelHttp: (request: Request) => Promise<Response>;
+  readonly commands: StandardProofAdapter["commands"];
+  readonly commandFilesystem: KernelFileSystem;
+  readonly proofContent: (filesystem: KernelFileSystem) => string;
+  readonly scrubRecord: (record: unknown) => unknown;
   readonly bootstrap: (input: { readonly overrides: Readonly<Record<string, unknown>> }) => {
     readonly overrides: Readonly<Record<string, unknown>>;
   };
@@ -132,7 +148,16 @@ export function createCodexHookRuntime(
   });
 
   for (const [path, binding] of hookPrograms) programs.set(path, binding);
-  const host = new KernelProgramHost({ registry, wakes, programs });
+  let filePolicy: StandardProofAdapter["selectFileBytes"] | undefined;
+  const host = new KernelProgramHost({
+    registry,
+    wakes,
+    programs,
+    selectFileBytes: (input) => {
+      if (!filePolicy) throw new Error("Codex proof file policy is not configured");
+      return filePolicy(input);
+    },
+  });
 
   return {
     host,
@@ -141,6 +166,7 @@ export function createCodexHookRuntime(
       if (KERNEL_HOOK_EXECUTABLE !== CODEX_HOOK_EXECUTABLE)
         throw new Error("Codex hook facade path differs from its kernel registration");
 
+      const sessionBaseline = captureStandardProofSessions(configuration.filesystem, SESSION_ROOT);
       seedCodexSettings(configuration.filesystem);
       getBinding(configuration.env, "CHILD_WORKERS");
       const codeGeneration = createNodeGeneratedCodeFetcher(
@@ -155,18 +181,28 @@ export function createCodexHookRuntime(
       const generated = instrumentGeneratedCode(generatedService, generatedCalls);
       let standard: StandardProofAdapter | undefined;
       let engineProcess: ReturnType<typeof admitEngineProcess> | undefined;
+      let commandFilesystem: ReturnType<typeof createProofCommandFilesystem> | undefined;
       try {
-        standard = createStandardProofAdapter(configuration.facetStorage, "codex-standard-hooks");
+        standard = createStandardProofAdapter(
+          configuration.facetStorage,
+          "codex-standard-hooks",
+          configuration.modelForward,
+          configuration.storage,
+        );
         const activeStandard = standard;
+        filePolicy = activeStandard.selectFileBytes;
         const registrations = createCodexHookServiceRegistrations((request) => {
           signalboxCalls.push({ request: structuredClone(request) });
         }, activeStandard.callback);
+        commandFilesystem = createProofCommandFilesystem(configuration.filesystem);
+        const activeCommandFilesystem = commandFilesystem;
         engineProcess = admitEngineProcess(host);
         const activeEngine = engineProcess;
         const computer = createComputerCommands({
           kernel: {
             host,
             filesystem: configuration.filesystem,
+            fileBytes: canonicalFileByteSelection,
             parent: activeEngine.parent,
             home: "/home/codex",
           },
@@ -234,6 +270,22 @@ export function createCodexHookRuntime(
         };
 
         return {
+          prepare: activeStandard.prepare,
+          modelHttp: (request) => activeStandard.serve(request, "openai"),
+          commands: activeStandard.commands,
+          commandFilesystem: activeCommandFilesystem.filesystem,
+          proofContent: (filesystem) => {
+            const fd = filesystem.open("/workspace/proof.txt", KernelOpenFlags.O_RDONLY);
+            try {
+              const bytes = new Uint8Array(Number(filesystem.fstat(fd).size));
+              const count = filesystem.read(fd, bytes, 0n);
+              if (count !== bytes.byteLength) throw new Error("Native patch read ended early");
+              return decoder.decode(bytes);
+            } finally {
+              filesystem.close(fd);
+            }
+          },
+          scrubRecord: activeStandard.scrubRecord,
           bootstrap: (input) => ({
             ...input,
             overrides: { ...input.overrides, "features.hooks": true },
@@ -265,6 +317,11 @@ export function createCodexHookRuntime(
           verify: async ({ filesystem }) => {
             await commandPrograms.drain();
             const standardResult = activeStandard.inspect();
+            const sessionMirror = inspectStandardProofSessions(
+              filesystem,
+              SESSION_ROOT,
+              sessionBaseline,
+            );
             const result = await verifyCodexHooks({
               filesystem,
               host,
@@ -276,19 +333,29 @@ export function createCodexHookRuntime(
               spawnCalls,
               machineAttempts,
               standard: standardResult,
+              nativeFileRead: activeStandard.output.takeFileRead("/workspace/proof.txt"),
             });
             return {
               ...result,
               standard: standardResult,
+              sessionMirror,
               capacity: { active: capacity.active, limit: capacity.limit },
-              ok: result.ok && standardResult.ok && capacity.active === 0,
+              ok: result.ok && standardResult.ok && sessionMirror.ok && capacity.active === 0,
             };
           },
           async finish({ exit, failure }) {
             try {
               await activeEngine.finish({ exit, failure });
             } finally {
-              activeStandard.close();
+              try {
+                await commandPrograms.drain();
+              } finally {
+                try {
+                  activeCommandFilesystem.close();
+                } finally {
+                  activeStandard.close();
+                }
+              }
             }
           },
         };
@@ -297,9 +364,19 @@ export function createCodexHookRuntime(
           void engineProcess
             .finish({ exit: undefined, failure: String(error) })
             .catch(() => undefined)
-            .finally(() => standard?.close());
+            .finally(() => {
+              try {
+                commandFilesystem?.close();
+              } finally {
+                standard?.close();
+              }
+            });
         } else {
-          standard?.close();
+          try {
+            commandFilesystem?.close();
+          } finally {
+            standard?.close();
+          }
         }
         throw error;
       }

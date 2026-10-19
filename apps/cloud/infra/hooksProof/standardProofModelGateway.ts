@@ -1,4 +1,5 @@
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import { secretPlaceholder } from "@signalbox/runner-protocol/SecretScrubber";
 import * as Effect from "effect/Effect";
 
@@ -19,6 +20,7 @@ type Binding = {
   readonly attemptKey: string;
   readonly poolId: string;
   readonly model: string;
+  readonly provider: ModelGatewayProvider;
   readonly signal: AbortSignal;
   readonly placeholderNames: ReadonlyArray<string>;
 };
@@ -28,6 +30,7 @@ type ForwardEvidence = {
   readonly thread: string;
   readonly runId: string;
   readonly method: string;
+  readonly provider: ModelGatewayProvider;
   readonly model: string;
   readonly responseStatus: number;
   readonly body: string;
@@ -79,6 +82,7 @@ export async function createStandardProofModelGateway(input: {
     purpose: Purpose,
     poolId: string,
     model: string,
+    provider: ModelGatewayProvider,
     signal: AbortSignal,
     placeholderNames: ReadonlyArray<string>,
     requestedAttempt?: string,
@@ -101,6 +105,7 @@ export async function createStandardProofModelGateway(input: {
       attemptKey: key,
       poolId,
       model,
+      provider,
       signal,
       placeholderNames,
     });
@@ -114,7 +119,7 @@ export async function createStandardProofModelGateway(input: {
       const active = input.authority.activeAttempt();
       if (
         binding === undefined ||
-        provider !== "anthropic" ||
+        provider !== binding.provider ||
         threadId !== input.authority.threadId ||
         active === null ||
         !sameAttempt(active, binding.attempt)
@@ -196,6 +201,7 @@ export async function createStandardProofModelGateway(input: {
         thread: String(binding.attempt.threadId),
         runId: String(binding.attempt.runId),
         method: request.method,
+        provider: binding.provider,
         model: binding.model,
         responseStatus: response.status,
         body: scrubbed ? body : "[omitted because secret scrubbing failed]",
@@ -218,6 +224,7 @@ export async function createStandardProofModelGateway(input: {
     "unregistered-probe",
     STANDARD_PROOF_MODEL_POOL_ID,
     STANDARD_PROOF_MODEL_ID,
+    "anthropic",
     probeSignal,
     [],
   );
@@ -236,13 +243,18 @@ export async function createStandardProofModelGateway(input: {
   const probeDenied =
     probe._tag === "granted" && probe.reply._tag === "denied" && probeForwardedCalls === 0;
 
-  const serveBound = async (token: string, request: Request, signal: AbortSignal) => {
+  const serveBound = async (
+    token: string,
+    request: Request,
+    signal: AbortSignal,
+    provider: ModelGatewayProvider,
+  ) => {
     signal.throwIfAborted();
     input.assertActive(signal);
     const url = new URL(request.url);
     const reply = await access.serve({
       token,
-      provider: "anthropic",
+      provider,
       path: `${url.pathname}${url.search}`,
       request,
     });
@@ -267,6 +279,7 @@ export async function createStandardProofModelGateway(input: {
         "status",
         request.poolId,
         request.model,
+        "anthropic",
         signal,
         secrets.map((secret) => secret.name),
         request.attempt,
@@ -282,6 +295,7 @@ export async function createStandardProofModelGateway(input: {
           }),
         }),
         signal,
+        "anthropic",
       );
       if (reply._tag !== "granted" || reply.reply._tag !== "forwarded") {
         throw new Error("Standard proof status request was denied by ModelAccess");
@@ -298,9 +312,13 @@ export async function createStandardProofModelGateway(input: {
         throw new Error("Standard proof model returned an invalid status note");
       return { nextStep: note.nextStep, progress: note.progress };
     },
-    async serve(request: Request, signal = new AbortController().signal) {
+    async serve(
+      request: Request,
+      signal = new AbortController().signal,
+      provider: ModelGatewayProvider = "anthropic",
+    ) {
       const active = input.authority.activeAttempt();
-      if (active === null) throw new Error("Standard proof has no active Claude attempt");
+      if (active === null) throw new Error("Standard proof has no active attempt");
       const secrets = input.registered() ?? [];
       const body = await request.clone().text();
       const placeholderNames = secrets
@@ -310,10 +328,11 @@ export async function createStandardProofModelGateway(input: {
         "native",
         STANDARD_PROOF_MODEL_POOL_ID,
         await modelIn(request),
+        provider,
         signal,
         placeholderNames,
       );
-      const reply = await serveBound(token, request, signal);
+      const reply = await serveBound(token, request, signal, provider);
       if (reply._tag === "granted" && reply.reply._tag === "forwarded") return reply.reply.response;
       if (reply._tag === "granted" && reply.reply._tag === "failed") {
         return new Response(reply.reply.reason, { status: 502 });
