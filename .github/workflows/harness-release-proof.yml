@@ -1,0 +1,148 @@
+name: Harness release proof
+run-name: ${{ inputs.runKey || format('harness-release:{0}:{1}', inputs.provider, inputs.version) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        type: choice
+        options: [claude-code, claude-agent-sdk, codex]
+        required: true
+      version:
+        description: Exact stable upstream version
+        type: string
+        required: true
+      runKey:
+        description: Discovery key, harness-release:provider:version
+        type: string
+      selection:
+        type: choice
+        options: [current, backfill]
+        default: current
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+  WRANGLER_SEND_METRICS: "false"
+  NO_COLOR: "1"
+
+jobs:
+  proof:
+    if: github.ref == 'refs/heads/main'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 150
+    environment: harness-release-proof
+    concurrency:
+      group: harness-release-${{ inputs.provider }}-${{ inputs.version }}-${{ github.sha }}
+      cancel-in-progress: false
+    env:
+      PROVIDER: ${{ inputs.provider }}
+      VERSION: ${{ inputs.version }}
+      RUN_KEY: ${{ inputs.runKey || format('harness-release:{0}:{1}', inputs.provider, inputs.version) }}
+      SELECTION: ${{ inputs.selection }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+              - --filter=@t3tools/scripts...
+              - --filter=@t3tools/monorepo
+
+      - name: Validate the exact release request
+        run: |
+          node --input-type=module <<'NODE'
+          import { assertReleaseSelection } from './scripts/harness-releases/releaseIdentity.ts';
+          assertReleaseSelection(process.env.PROVIDER, process.env.VERSION);
+          if (process.env.RUN_KEY !== `harness-release:${process.env.PROVIDER}:${process.env.VERSION}`)
+            throw new Error('Release run key does not match its provider and version.');
+          NODE
+
+      - name: Check the deterministic runner
+        run: |
+          ./node_modules/.bin/vp test run \
+            scripts/harness-releases/runner.test.ts \
+            scripts/harness-releases/buildClaude.test.ts \
+            scripts/harness-releases/claudeInputs.test.ts \
+            scripts/harness-releases/releaseIdentity.test.ts \
+            scripts/harness-releases/sourceFreeze.test.ts \
+            scripts/harness-releases/measurement.test.ts \
+            scripts/harness-releases/discovery.test.ts \
+            scripts/harness-releases/programInputs.test.ts \
+            scripts/claude-bunfs/scanner-node.test.ts \
+            apps/cloud/src/harnessReleases/tests/HarnessProjectReleaseSqliteStore.test.ts \
+            apps/cloud/src/harnessReleases/tests/HarnessReleaseLedger.test.ts \
+            --maxWorkers=2
+          ./node_modules/.bin/tsc-rs --noEmit -p scripts/harness-releases/tsconfig.json
+
+      - uses: actions/setup-python@v6
+        if: inputs.provider == 'codex'
+        with:
+          python-version: "3.11"
+
+      - name: Fetch the pinned runner program inputs
+        run: node scripts/harness-releases/fetchPrograms.ts --output "$RUNNER_TEMP/harness-release-programs"
+
+      - name: Run the frozen release pipeline
+        id: run
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.HARNESS_RELEASE_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.HARNESS_RELEASE_CLOUDFLARE_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          HARNESS_RELEASE_DEPLOY: "1"
+        run: |
+          node scripts/harness-releases/run.ts \
+            --provider "$PROVIDER" --version "$VERSION" --run-key "$RUN_KEY" \
+            --selection "$SELECTION" --output "$RUNNER_TEMP/harness-release" \
+            --bash "$RUNNER_TEMP/harness-release-programs/bash.wasm" \
+            --busybox "$RUNNER_TEMP/harness-release-programs/busybox.wasm" \
+            --ripgrep "$RUNNER_TEMP/harness-release-programs/rg.wasm"
+
+      - name: Recover cleanup after cancellation or a failed process
+        if: always()
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.HARNESS_RELEASE_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.HARNESS_RELEASE_CLOUDFLARE_API_TOKEN }}
+          HARNESS_RELEASE_DEPLOY: "1"
+        run: node scripts/harness-releases/run.ts --cleanup --output "$RUNNER_TEMP/harness-release"
+
+      - name: Upload immutable release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: harness-release-${{ inputs.provider }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/harness-release/result.json
+            ${{ runner.temp }}/harness-release/identity.json
+            ${{ runner.temp }}/harness-release/fixture.json
+            ${{ runner.temp }}/harness-release/inventory.json
+            ${{ runner.temp }}/harness-release/inventory-diff.json
+            ${{ runner.temp }}/harness-release/scan-assessment.json
+            ${{ runner.temp }}/harness-release/local-workerd.json
+            ${{ runner.temp }}/harness-release/local-workerd-identity.json
+            ${{ runner.temp }}/harness-release/deployed.json
+            ${{ runner.temp }}/harness-release/deployment-identity.json
+            ${{ runner.temp }}/harness-release/deployed-active-before.json
+            ${{ runner.temp }}/harness-release/deployed-active-after.json
+            ${{ runner.temp }}/harness-release/*-criteria.json
+            ${{ runner.temp }}/harness-release/[0-9][0-9]-*.json
+            ${{ runner.temp }}/harness-release/deployment-cleanup.json
+            ${{ runner.temp }}/harness-release/program-inputs.json
+            ${{ runner.temp }}/harness-release/probe-host-inventory.json
+            ${{ runner.temp }}/harness-release/source-freeze.json
+            ${{ runner.temp }}/harness-release/owned-worker.json
+            ${{ runner.temp }}/harness-release/cleanup-recovery-*.json
+            ${{ runner.temp }}/harness-release-programs/program-inputs.json
+            ${{ runner.temp }}/harness-release-programs/verified-inputs.json
+            ${{ runner.temp }}/harness-release-programs/*.provenance.json
+          if-no-files-found: warn
