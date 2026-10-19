@@ -178,13 +178,13 @@ views {
       '''
     }
     signalbox.computer.api -> signalbox.computer.backend.kernelFs 'exec' {
-      notes '- Registered program (just-bash, WASI, git.wasm, ripgrep) in the kernel'
+      notes '- A registered kernel program: GNU Bash (WASI), coreutils, ripgrep or Git'
     }
     signalbox.computer.backend.kernelFs -> signalbox.computer.escalation 'needs a machine?' {
       navigateTo work_computer_escalate
       notes '''
-        - Deterministic routing table, per command (#1071)
-        - Here: a known kernel program, so it stays in the isolate
+        - Routing per program at kernel exec (#1071)
+        - Here: one of the small isolate set (file edits, cat, ls, grep/rg), so it stays in the isolate
       '''
     }
     loop 'child isolates full (≤10 in flight)' {
@@ -631,7 +631,7 @@ views {
   dynamic view work_computer_paths_sources_vm {
     variant sequence
     title 'Workflows/Work/Computer/Paths/Sources visible on the VM'
-    description "W-CMP-15. Computer's own internal flow: /sources/* on the VM via computerd FUSE, backed by Gateway reads through its EgressProxy."
+    description "W-CMP-15. Computer's own internal flow: /sources/* on the VM, backed by Gateway reads through its EgressProxy. Assumption: the VM-side mount mechanism isn't built or chosen yet."
 
     include
       signalbox.computer.execDaemon,
@@ -640,7 +640,7 @@ views {
 
     signalbox.computer.execDaemon -> signalbox.computer.execDaemon 'script reads sources' {
       navigateTo work_computer_escalate
-      notes '- computerd FUSE VFS on the VM; same paths the kernel shows'
+      notes '- A read-only mount on the VM showing the same paths the kernel shows (mechanism not chosen yet)'
     }
     signalbox.computer.execDaemon -> signalbox.gateway 'read via EgressProxy' {
       notes '''
