@@ -5,6 +5,7 @@ import * as NodeProcess from "node:process";
 import { validateNodeProcessHost, type NodeProcessHostContext } from "./node/process/context.ts";
 import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
 import { nodeProcessSignalError, normalizeNodeSignal } from "./node/process/signals.ts";
+import { createCpuUsage } from "./node/process/cpu-usage.ts";
 
 /* Adapted from Rivet agentOS's Node process bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * This keeps its exit-event/typed-exit shape while requiring Signalbox host identity and capabilities.
@@ -269,7 +270,8 @@ class HostProcess extends NodeEvents.EventEmitter {
   }
 
   memoryUsage = unsupportedMemoryUsage();
-  cpuUsage = unsupportedMeasurement("cpuUsage");
+  // Logical user/syscall time uses the kernel's clock resolution; Cloudflare advances it at I/O.
+  cpuUsage = createCpuUsage(() => this.#host.cpuAccounting?.snapshot());
   resourceUsage = unsupportedMeasurement("resourceUsage");
   getActiveResourcesInfo = unsupportedMeasurement("getActiveResourcesInfo");
   availableMemory = unsupportedMeasurement("availableMemory");

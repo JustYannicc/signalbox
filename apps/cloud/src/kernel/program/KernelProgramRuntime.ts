@@ -8,6 +8,11 @@ import { AgentOsProcessHost } from "../AgentOsProcessHost.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import type { KernelProcessIdentity, KernelProcessTable } from "../KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
+import {
+  enterCurrentKernelCpuUser,
+  runCurrentKernelCpuAwaitableSystemImport,
+  runCurrentKernelCpuSystemImport,
+} from "../KernelCpuExecution.ts";
 import { currentKernelSignal } from "../process/KernelExecution.ts";
 import { validateOptions } from "../wasi/internal_wasi_options.ts";
 import { WasiLifecycle } from "../wasi/internal_wasi_lifecycle.ts";
@@ -151,14 +156,25 @@ export function runInlineJavaScript(
   args: readonly string[],
   env: Readonly<Record<string, string>>,
 ): number {
-  const result: unknown = runInline({
-    filesystem: prepared.filesystem,
-    home: prepared.home,
-    args: Object.freeze([...args]),
-    env: Object.freeze({ ...env }),
-  });
-  if (isPromiseLike(result)) {
-    void Promise.resolve(result).catch(() => undefined);
+  const leaveUser = enterCurrentKernelCpuUser();
+  let result: unknown;
+  let returnedAsync = false;
+  try {
+    result = runInline({
+      filesystem: prepared.filesystem,
+      home: prepared.home,
+      args: Object.freeze([...args]),
+      env: Object.freeze({ ...env }),
+    });
+    returnedAsync = isPromiseLike(result);
+    if (returnedAsync) {
+      // Inline work is invalid, but a failed leave must still observe its rejection.
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } finally {
+    leaveUser();
+  }
+  if (returnedAsync) {
     throw Object.assign(new Error("Inline program returned asynchronous work"), {
       code: "ERR_KERNEL_INLINE_ASYNC_UNSUPPORTED",
     });
@@ -209,7 +225,8 @@ function hostProcessImports(
     if (handler === undefined) continue;
     const suspending = processSuspending.has(name) || descriptorSuspending.has(name);
     if (!suspending) {
-      imports[name] = handler as WebAssembly.ImportValue;
+      imports[name] = ((...args: number[]) =>
+        runCurrentKernelCpuSystemImport(() => handler(...args))) as WebAssembly.ImportValue;
       continue;
     }
     if (!asyncMode) {
@@ -222,7 +239,9 @@ function hostProcessImports(
         code: "ERR_KERNEL_JSPI_UNAVAILABLE",
       });
     }
-    imports[name] = new wasm.Suspending(handler as (...args: number[]) => unknown);
+    imports[name] = new wasm.Suspending((...args: number[]) =>
+      runCurrentKernelCpuAwaitableSystemImport(() => handler(...args)),
+    );
   }
   return imports;
 }

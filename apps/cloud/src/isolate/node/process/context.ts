@@ -4,6 +4,7 @@ import type * as NodeStream from "node:stream";
 import type { KernelHandle } from "../../../kernel/KernelAbi.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import type { KernelProcessTable } from "../../../kernel/KernelProcessTable.ts";
+import type { KernelCpuProcess } from "../../../kernel/KernelCpuAccounting.ts";
 
 export type NodeProcessEnvironment = Record<string, string | undefined>;
 export type NodeProcessFileSystem = Pick<KernelFileSystem, "cwd" | "chdir">;
@@ -48,6 +49,7 @@ export interface NodeProcessHostContext {
   readonly streams: NodeProcessStreams;
   /** Monotonic nanoseconds for this host; defaults to the captured native clock. */
   readonly monotonicNowNs?: () => bigint;
+  readonly cpuAccounting?: Pick<KernelCpuProcess, "snapshot">;
   readonly processes?: Pick<KernelProcessTable, "signalPid">;
   readonly parentProcessHandle?: KernelHandle<"process">;
 }
@@ -151,6 +153,9 @@ export function validateNodeProcessHost(context: NodeProcessHostContext): void {
   }
   if (context.monotonicNowNs !== undefined && typeof context.monotonicNowNs !== "function") {
     throw new TypeError("Node host context monotonicNowNs must be a function when supplied");
+  }
+  if (context.cpuAccounting !== undefined && typeof context.cpuAccounting.snapshot !== "function") {
+    throw new TypeError("Node host context cpuAccounting must provide snapshot");
   }
   validateNodeRuntimeIdentity(context.identity);
 }
