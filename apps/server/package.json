@@ -18,6 +18,7 @@
     "dev": "node ../../packages/shared/src/agentProcesses/cli.ts run -- node --watch src/bin.ts",
     "runner": "node ../../packages/shared/src/agentProcesses/cli.ts run -- node src/signalbox/runner/main.ts",
     "runner:bundle": "vp pack src/signalbox/runner/main.ts -d dist/runner",
+    "runner:command:bundle": "node runner-command.config.ts",
     "build:bundle": "vp pack",
     "build:exe": "node scripts/cli.ts build-exe",
     "start": "node ../../packages/shared/src/agentProcesses/cli.ts run -- node dist/bin.mjs",
