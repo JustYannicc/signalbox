@@ -17,7 +17,10 @@ import {
 } from "./MachineCommandAttestations.ts";
 
 interface MachineCommandRecoveryOptions {
-  readonly bases: { readonly release: (lease: BaseLease) => Promise<void> };
+  readonly bases: {
+    /** Must be idempotent by lease id; recovery can retry after an ambiguous acknowledgement. */
+    readonly release: (lease: BaseLease) => Promise<void>;
+  };
   readonly machines: Machine;
   readonly workspace: MachineWorkspace;
   readonly runtime: MachineCommandRuntime;

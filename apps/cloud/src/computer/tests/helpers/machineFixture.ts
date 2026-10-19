@@ -61,6 +61,7 @@ export interface MachineFixtureOptions {
   ) => Promise<KernelCommandChild>;
   readonly changes?: () => readonly CommitInode[];
   readonly machine?: Machine;
+  readonly nextOperationId?: () => string;
   readonly runtime?: MachineCommandRuntime;
   readonly workspace?: MachineWorkspace;
   readonly ports?: FilePersistencePorts;
@@ -341,6 +342,7 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
         ? await options.createMachine(input, signal, handle)
         : handle;
       machineCreated = true;
+      machineDeleted = false;
       return created;
     },
     async reconcile(input, signal) {
@@ -470,7 +472,7 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
     runtime,
     ports,
     journal: options.journal ?? memoryJournal,
-    nextOperationId: () => "machine-op-1",
+    nextOperationId: options.nextOperationId ?? (() => "machine-op-1"),
     coldExpiresAt: () => 2_000_000_000_000,
     recoverySignal: fixture.recoverySignal,
   });

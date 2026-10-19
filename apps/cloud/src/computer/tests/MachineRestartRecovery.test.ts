@@ -29,35 +29,50 @@ function boxdFake() {
   const machines = new Map<string, BoxdMachineRecord>();
   let creates = 0;
   let deletes = 0;
+  let readinessWaits = 0;
   let failCreate: Error | undefined;
   const client: BoxdMachineClient = {
     machines: {
       async create(input) {
         creates += 1;
         if (failCreate) throw failCreate;
+        const id = `boxd-${creates}`;
         machines.set(input.name, {
-          id: `boxd-${creates}`,
+          id,
           name: input.name,
-          status: "running",
+          status: "pending",
           shared: false,
           networking: { isolated: true, networks: [] },
           deleteAt: null,
         });
+        return { id };
       },
       async fork(_source, input) {
         creates += 1;
         if (failCreate) throw failCreate;
+        const id = `boxd-${creates}`;
         machines.set(input.name, {
-          id: `boxd-${creates}`,
+          id,
           name: input.name,
-          status: "running",
+          status: "pending",
           shared: false,
           networking: { isolated: true, networks: [] },
           deleteAt: null,
         });
+        return { id };
       },
       async get(name) {
         return machines.get(name) ?? null;
+      },
+      async waitUntilReady(id) {
+        readinessWaits += 1;
+        const machine = [...machines.values()].find(
+          (candidate) => candidate.id === id || candidate.name === id,
+        );
+        if (!machine) throw new Error(`Missing fake machine ${id}`);
+        const ready = { ...machine, status: "running" };
+        machines.set(machine.name, ready);
+        return ready;
       },
       async delete(id) {
         deletes += 1;
@@ -68,7 +83,8 @@ function boxdFake() {
         if (machine)
           machines.set(name, {
             ...machine,
-            deleteAt: DateTime.toDate(DateTime.makeUnsafe(now + seconds * 1_000)),
+            deleteAt:
+              seconds === 0 ? null : DateTime.toDate(DateTime.makeUnsafe(now + seconds * 1_000)),
           });
       },
       proxies: {
@@ -81,7 +97,7 @@ function boxdFake() {
   };
   return {
     client,
-    counts: () => ({ creates, deletes }),
+    counts: () => ({ creates, deletes, readinessWaits }),
     failNextCreate(error: Error) {
       failCreate = error;
     },
@@ -188,7 +204,7 @@ describe("MachineCommands durable restart recovery", () => {
         client: provider.client,
         ports: first.ports,
       });
-      await recovery.fixture.commands.recover("machine-op-1");
+      await recovery.fixture.commands.recoverPending();
 
       expect(provider.counts()).toMatchObject({ creates: 1, deletes: 1 });
       expect(first.spawnCalls).toHaveLength(0);
@@ -207,6 +223,7 @@ describe("MachineCommands durable restart recovery", () => {
       const journal = new SqliteMachineCommandJournal(sqlite.storage);
       const first = createMachineFixture({ baseLease, machine, journal });
       await first.commands.spawn(machineCommand, new AbortController().signal);
+      expect(provider.counts().readinessWaits).toBe(1);
       const interrupted = currentRecord(journal);
       expect(interrupted.phase).toBe("execute");
       expect(interrupted.createInput?.expiresAt).toBe(baseLease.expiresAt);

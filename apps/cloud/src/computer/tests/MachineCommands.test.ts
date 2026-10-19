@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Option from "effect/Option";
 import type { BaseLease } from "../Computer.ts";
 import { MachineCreationError, type MachineHandle } from "../Machine.ts";
+import type { MachineCommandJournal, MachineCommandRecord } from "../MachineCommandJournal.ts";
 import {
   createMachineFixture,
   machineBefore,
@@ -36,6 +37,109 @@ function indexOf(events: readonly string[], event: string) {
 }
 
 describe("MachineCommands", () => {
+  it("holds workspace admission through apply and cancels callers queued behind it", async () => {
+    const checkpointIds: string[] = [];
+    let nextId = 0;
+    let releaseApply!: () => void;
+    let signalApplyEntered!: () => void;
+    const applyEntered = new Promise<void>((resolve) => {
+      signalApplyEntered = resolve;
+    });
+    const applyGate = new Promise<void>((resolve) => {
+      releaseApply = resolve;
+    });
+    let currentCommit = machineBefore.commit;
+    const fixture = createMachineFixture({
+      nextOperationId: () => `machine-op-${++nextId}`,
+      checkpoint: async (operationId, signal) => {
+        checkpointIds.push(operationId);
+        signal.throwIfAborted();
+        return { ...machineBefore, commit: currentCommit };
+      },
+      apply: async ({ after }) => {
+        signalApplyEntered();
+        await applyGate;
+        currentCommit = after.commit;
+      },
+    });
+
+    const first = await fixture.commands.spawn(machineCommand, new AbortController().signal);
+    fixture.closeChild();
+    await applyEntered;
+
+    const queuedController = new AbortController();
+    const queued = fixture.commands.spawn(machineCommand, queuedController.signal);
+    queuedController.abort(new Error("cancelled while queued"));
+    await expect(queued).rejects.toThrow("cancelled while queued");
+    expect(checkpointIds).toEqual(["machine-op-1:before"]);
+    expect(fixture.createCalls).toHaveLength(1);
+    expect(fixture.spawnCalls).toHaveLength(1);
+
+    releaseApply();
+    await expect(first.exited).resolves.toEqual({
+      exitCode: 0,
+      signal: 0,
+      coreDumped: false,
+    });
+
+    const next = await fixture.commands.spawn(machineCommand, new AbortController().signal);
+    await expect(next.exited).resolves.toEqual({
+      exitCode: 0,
+      signal: 0,
+      coreDumped: false,
+    });
+    expect(checkpointIds).toEqual(["machine-op-1:before", "machine-op-2:before"]);
+    expect(fixture.createCalls).toHaveLength(2);
+    expect(fixture.spawnCalls).toHaveLength(2);
+  });
+
+  it("recovers persisted rows before accepting a new command", async () => {
+    const pending: MachineCommandRecord = {
+      operationId: "interrupted-op",
+      phase: "create",
+      before: machineBefore,
+      createInput: {
+        operationId: "interrupted-op",
+        drive: "drive:test",
+        recipeHash: "recipe:test",
+        base: null,
+        expiresAt: 2_000_000_000_000,
+      },
+    };
+    const records = new Map([[pending.operationId, pending]]);
+    const journal: MachineCommandJournal = {
+      async write(record) {
+        records.set(record.operationId, record);
+      },
+      read(operationId) {
+        return records.get(operationId);
+      },
+      pending() {
+        return [...records.values()].filter((record) => record.phase !== "complete");
+      },
+    };
+    let reconciliations = 0;
+    const fixture = createMachineFixture({
+      journal,
+      nextOperationId: () => "new-op",
+      reconcileMachine: async () => {
+        reconciliations += 1;
+        return { status: "unknown" };
+      },
+    });
+    await expect(fixture.commands.recoverPending()).rejects.toThrow(
+      "Machine ownership is still unknown; keeping its journal and Base lease",
+    );
+    await expect(
+      fixture.commands.spawn(machineCommand, new AbortController().signal),
+    ).rejects.toThrow("Machine ownership is still unknown; keeping its journal and Base lease");
+
+    expect(reconciliations).toBe(2);
+    expect(fixture.events).not.toContain("checkpoint");
+    expect(fixture.createCalls).toHaveLength(0);
+    expect(fixture.spawnCalls).toHaveLength(0);
+  });
+
   it("captures the admitted command and brackets one cold execution through live apply", async () => {
     let resumeCheckpoint: ((at: typeof machineBefore) => void) | undefined;
     let checkpointEntered!: () => void;
@@ -192,6 +296,54 @@ describe("MachineCommands", () => {
       indexOf(fixture.events, "base.release"),
     );
     expect(fixture.records.at(-1)?.phase).toBe("complete");
+  });
+
+  it("retries Base release by lease id after the completion write fails", async () => {
+    const base: BaseLease = {
+      id: "warm-base",
+      sourceRef: "recipe:snapshot",
+      expiresAt: 1_900_000_000_000,
+    };
+    const records = new Map<string, MachineCommandRecord>();
+    let failComplete = true;
+    const journal: MachineCommandJournal = {
+      async write(record) {
+        if (record.phase === "complete" && failComplete) {
+          failComplete = false;
+          throw new Error("completion journal write failed after Base release");
+        }
+        records.set(record.operationId, structuredClone(record));
+      },
+      read(operationId) {
+        return records.get(operationId);
+      },
+      pending() {
+        return [...records.values()].filter((record) => record.phase !== "complete");
+      },
+    };
+    const releasedLeaseIds = new Set<string>();
+    let releaseAttempts = 0;
+    const fixture = createMachineFixture({
+      baseLease: base,
+      journal,
+      releaseBase: async (lease) => {
+        releaseAttempts += 1;
+        releasedLeaseIds.add(lease.id);
+      },
+    });
+    const child = await fixture.commands.spawn(machineCommand, new AbortController().signal);
+    fixture.closeChild();
+
+    await expect(child.exited).rejects.toThrow(
+      "completion journal write failed after Base release",
+    );
+    expect(releaseAttempts).toBe(1);
+
+    await fixture.commands.recover("machine-op-1");
+
+    expect(releaseAttempts).toBe(2);
+    expect(releasedLeaseIds).toEqual(new Set([base.id]));
+    expect(journal.read("machine-op-1")?.phase).toBe("complete");
   });
 
   it("keeps the Base until a failed VM deletion is confirmed on recovery", async () => {

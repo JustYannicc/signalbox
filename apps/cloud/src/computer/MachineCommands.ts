@@ -9,6 +9,7 @@ import type { BaseLease, DriveRef, RecipeHash } from "./Computer.ts";
 import type { Machine, MachineCreateInput } from "./Machine.ts";
 import type { MachineCommandJournal, MachineCommandRecord } from "./MachineCommandJournal.ts";
 import type { MachineCommandRuntime, MachineWorkspace } from "./MachineWorkspace.ts";
+import { MachineCommandAdmission } from "./commands/MachineCommandAdmission.ts";
 import { assertMachineOwnership } from "./commands/MachineCommandAttestations.ts";
 import { MachineCommandRecovery } from "./commands/MachineCommandRecovery.ts";
 
@@ -19,6 +20,7 @@ export interface MachineCommandsOptions {
   readonly recipeHash: RecipeHash;
   readonly bases: {
     readonly acquire: () => Promise<Option.Option<BaseLease>>;
+    /** Must be idempotent by lease id; recovery can retry after an ambiguous acknowledgement. */
     readonly release: (lease: BaseLease) => Promise<void>;
   };
   readonly machines: Machine;
@@ -36,6 +38,7 @@ export interface MachineCommandsOptions {
 export class MachineCommands implements KernelCommandForwarder {
   readonly #options: MachineCommandsOptions;
   readonly #recovery: MachineCommandRecovery;
+  readonly #admission = new MachineCommandAdmission();
 
   constructor(options: MachineCommandsOptions) {
     this.#options = options;
@@ -46,124 +49,182 @@ export class MachineCommands implements KernelCommandForwarder {
     command: KernelCommand,
     signal: AbortSignal,
   ): Promise<KernelCommandChild> => {
-    const options = this.#options;
     signal.throwIfAborted();
     const admittedCommand = captureCommand(command);
-    const operationId = options.nextOperationId();
-    if (!operationId || options.journal.read(operationId))
-      throw new Error("Duplicate machine command identity");
+    const releaseAdmission = await this.#admission.acquire(signal);
+    let handoffAdmission = false;
+    let operationId: string | undefined;
 
-    let record: MachineCommandRecord = { operationId, phase: "checkpoint" };
-    const write = async (next: MachineCommandRecord) => {
-      await options.journal.write(next);
-      record = next;
-    };
-
-    await options.journal.write(record);
     try {
-      const before = await options.workspace.checkpoint(`${operationId}:before`, signal);
-      record = { ...record, before };
-      await write(record);
-      const base = await options.bases.acquire();
-      if (Option.isSome(base)) record = { ...record, base: base.value };
-      await write(record);
+      signal.throwIfAborted();
+      await this.#recoverPendingLocked();
+      signal.throwIfAborted();
 
-      const createInput: MachineCreateInput = {
-        operationId,
-        drive: options.drive,
-        recipeHash: options.recipeHash,
-        base,
-        expiresAt: Option.isSome(base) ? base.value.expiresAt : options.coldExpiresAt(),
+      const options = this.#options;
+      operationId = options.nextOperationId();
+      if (!operationId || options.journal.read(operationId))
+        throw new Error("Duplicate machine command identity");
+
+      let record: MachineCommandRecord = { operationId, phase: "checkpoint" };
+      const write = async (next: MachineCommandRecord) => {
+        await options.journal.write(next);
+        record = next;
       };
-      record = {
-        ...record,
-        phase: "create",
-        createInput: {
+
+      await options.journal.write(record);
+      try {
+        const before = await options.workspace.checkpoint(`${operationId}:before`, signal);
+        record = { ...record, before };
+        await write(record);
+        const base = await options.bases.acquire();
+        if (Option.isSome(base)) record = { ...record, base: base.value };
+        await write(record);
+
+        const createInput: MachineCreateInput = {
           operationId,
           drive: options.drive,
           recipeHash: options.recipeHash,
-          base: Option.isSome(base) ? base.value : null,
-          expiresAt: createInput.expiresAt,
-        },
-      };
-      await write(record);
-
-      const machine = await options.machines.create(createInput, signal);
-      this.#recovery.rememberMachine(operationId, machine);
-      record = {
-        ...record,
-        phase: "prepare",
-        machine: { id: machine.id, generation: machine.generation },
-      };
-      await write(record);
-
-      const mount = await options.workspace.prepare(
-        machine,
-        before,
-        options.ports.hydration,
-        signal,
-      );
-      this.#recovery.rememberMount(operationId, mount);
-      const runtime = await options.runtime.attach({
-        operationId,
-        machine,
-        workspace: mount,
-        policy: {
-          authorize: async (candidate) => {
-            if (!sameCommand(admittedCommand, candidate))
-              throw new Error("Command changed after Computer admission");
+          base,
+          expiresAt: Option.isSome(base) ? base.value.expiresAt : options.coldExpiresAt(),
+        };
+        record = {
+          ...record,
+          phase: "create",
+          createInput: {
+            operationId,
+            drive: options.drive,
+            recipeHash: options.recipeHash,
+            base: Option.isSome(base) ? base.value : null,
+            expiresAt: createInput.expiresAt,
           },
-        },
-        signal,
-      });
-      this.#recovery.rememberRuntime(operationId, runtime);
-      assertMachineOwnership(
-        { operationId, id: machine.id, generation: machine.generation },
-        runtime.owner,
-      );
-      record = { ...record, phase: "execute" };
-      await write(record);
+        };
+        await write(record);
 
-      const child = await runtime.spawn(admittedCommand, signal);
-      const settle = async () => {
-        try {
-          await child.dispose();
-        } catch (disposeError) {
-          try {
-            await this.recover(operationId);
-          } catch (recoveryError) {
-            throw recoveryFailure(disposeError, recoveryError);
+        const machine = await options.machines.create(createInput, signal);
+        this.#recovery.rememberMachine(operationId, machine);
+        record = {
+          ...record,
+          phase: "prepare",
+          machine: { id: machine.id, generation: machine.generation },
+        };
+        await write(record);
+
+        const mount = await options.workspace.prepare(
+          machine,
+          before,
+          options.ports.hydration,
+          signal,
+        );
+        this.#recovery.rememberMount(operationId, mount);
+        const runtime = await options.runtime.attach({
+          operationId,
+          machine,
+          workspace: mount,
+          policy: {
+            authorize: async (candidate) => {
+              if (!sameCommand(admittedCommand, candidate))
+                throw new Error("Command changed after Computer admission");
+            },
+          },
+          signal,
+        });
+        this.#recovery.rememberRuntime(operationId, runtime);
+        assertMachineOwnership(
+          { operationId, id: machine.id, generation: machine.generation },
+          runtime.owner,
+        );
+        record = { ...record, phase: "execute" };
+        await write(record);
+
+        const child = await runtime.spawn(admittedCommand, signal);
+        let settlement: Promise<void> | undefined;
+        const settle = () => {
+          if (!settlement) {
+            settlement = (async () => {
+              try {
+                await child.dispose();
+              } catch (disposeError) {
+                try {
+                  await this.#recovery.recover(operationId!);
+                } catch (recoveryError) {
+                  throw recoveryFailure(disposeError, recoveryError);
+                }
+                throw disposeError;
+              }
+              await this.#recovery.recover(operationId!);
+            })();
           }
-          throw disposeError;
+          return settlement;
+        };
+        const exited = child.exited
+          .then(
+            async (exit) => {
+              await settle();
+              return exit;
+            },
+            async (error: unknown) => {
+              try {
+                await settle();
+              } catch (recoveryError) {
+                throw recoveryFailure(error, recoveryError);
+              }
+              throw error;
+            },
+          )
+          .finally(releaseAdmission);
+        void exited.catch(() => undefined);
+        handoffAdmission = true;
+        return {
+          stdin: child.stdin,
+          stdout: child.stdout,
+          stderr: child.stderr,
+          exited,
+          signal: child.signal,
+          dispose: async () => {
+            try {
+              await settle();
+            } finally {
+              releaseAdmission();
+            }
+          },
+        };
+      } catch (error) {
+        try {
+          await this.#recovery.recover(operationId);
+        } catch (recoveryError) {
+          throw recoveryFailure(error, recoveryError);
         }
-        await this.recover(operationId);
-      };
-      const exited = child.exited.then(async (exit) => {
-        await settle();
-        return exit;
-      });
-      void exited.catch(() => undefined);
-      return {
-        stdin: child.stdin,
-        stdout: child.stdout,
-        stderr: child.stderr,
-        exited,
-        signal: child.signal,
-        dispose: settle,
-      };
-    } catch (error) {
-      try {
-        await this.recover(operationId);
-      } catch (recoveryError) {
-        throw recoveryFailure(error, recoveryError);
+        throw error;
       }
-      throw error;
+    } finally {
+      if (!handoffAdmission) releaseAdmission();
+    }
+  };
+
+  /** Startup barrier; unresolved rows keep new command brackets from being admitted. */
+  readonly recoverPending = async (): Promise<void> => {
+    const releaseAdmission = await this.#admission.acquire();
+    try {
+      await this.#recoverPendingLocked();
+    } finally {
+      releaseAdmission();
     }
   };
 
   /** Reconcile one pending row. This path never spawns a command or creates a machine. */
-  recover(operationId: string): Promise<void> {
-    return this.#recovery.recover(operationId);
+  readonly recover = async (operationId: string): Promise<void> => {
+    const releaseAdmission = await this.#admission.acquire();
+    try {
+      await this.#recovery.recover(operationId);
+    } finally {
+      releaseAdmission();
+    }
+  };
+
+  async #recoverPendingLocked(): Promise<void> {
+    for (const record of this.#options.journal.pending()) {
+      await this.#recovery.recover(record.operationId);
+    }
   }
 }
 

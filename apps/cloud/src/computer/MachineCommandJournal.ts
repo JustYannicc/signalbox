@@ -36,5 +36,6 @@ export interface MachineCommandRecord {
 export interface MachineCommandJournal {
   readonly write: (record: MachineCommandRecord) => Promise<void>;
   readonly read: (operationId: string) => MachineCommandRecord | undefined;
+  /** Lists every non-complete row for the startup admission barrier. */
   readonly pending: () => readonly MachineCommandRecord[];
 }

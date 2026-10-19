@@ -41,6 +41,15 @@ const fixture = () => {
   const events: string[] = [];
   const machines = new Map<string, BoxdMachineRecord>();
   const state = { createStarted: false, machineId: null as string | null, released: false };
+  const waitUntilReady = vi.fn(
+    async (id: string, _params: { readonly timeout: number; readonly pollInterval: number }) => {
+      const current = [...machines.values()].find(
+        (candidate) => candidate.id === id || candidate.name === id,
+      );
+      if (!current) throw new Error(`Missing fake machine ${id}`);
+      return current;
+    },
+  );
   const currentReservation = (): BoxdMachineReservation => ({
     id: "reservation-1",
     name: NAME,
@@ -77,15 +86,18 @@ const fixture = () => {
       create: vi.fn(async (options) => {
         events.push("create");
         machines.set(options.name, machine(options.name));
+        return { id: MACHINE_ID };
       }),
       fork: vi.fn(async (_source, options) => {
         events.push("fork");
         machines.set(options.name, machine(options.name));
+        return { id: MACHINE_ID };
       }),
       get: vi.fn(async (name) => {
         events.push(`get:${name}`);
         return machines.get(name) ?? null;
       }),
+      waitUntilReady,
       delete: vi.fn(async (id) => {
         events.push(`delete:${id}`);
         for (const [name, current] of machines) {
@@ -98,7 +110,8 @@ const fixture = () => {
         if (current) {
           machines.set(name, {
             ...current,
-            deleteAt: DateTime.toDate(DateTime.makeUnsafe(NOW + seconds * 1_000)),
+            deleteAt:
+              seconds === 0 ? null : DateTime.toDate(DateTime.makeUnsafe(NOW + seconds * 1_000)),
           });
         }
       }),
@@ -119,7 +132,7 @@ const fixture = () => {
     { org: "test-org", image: "runner-image", vcpu: 1, memory: "4G" },
     () => NOW,
   );
-  return { client, events, machines, port, reservations, state };
+  return { client, events, machines, port, reservations, state, waitUntilReady };
 };
 
 afterEach(() => {
@@ -142,7 +155,7 @@ describe("BoxdMachines", () => {
       isolated: true,
       networks: [],
       shared: false,
-      deleteAfter: 900,
+      deleteAfter: 0,
       cmd: ["sleep", "infinity"],
       restartPolicy: "never",
       config: {
@@ -150,17 +163,68 @@ describe("BoxdMachines", () => {
         memory: "4G",
         ssh: false,
         autoSuspendTimeout: 0,
-        autoDestroyTimeout: 900,
+        autoDestroyTimeout: 0,
         idleIgnoreOutbound: true,
       },
     });
-    expect(f.client.machines.setDeleteAfter).toHaveBeenCalledWith(NAME, 900);
+    expect(f.client.machines.setDeleteAfter).toHaveBeenCalledWith(NAME, 0);
     expect(f.client.machines.proxies.setPort).toHaveBeenCalledWith(NAME, 65535);
     expect(handle).toMatchObject({ id: MACHINE_ID, generation: 7 });
     expect(f.reservations.recordMachineId).toHaveBeenCalledWith(expect.anything(), MACHINE_ID);
   });
 
-  it("forks only the supplied Base source and keeps its expiry", async () => {
+  it("waits for Boxd readiness before returning a pending create", async () => {
+    const f = fixture();
+    vi.mocked(f.client.machines.create).mockImplementationOnce(async (options) => {
+      f.events.push("create-pending");
+      f.machines.set(options.name, machine(options.name, { status: "pending" }));
+      return { id: MACHINE_ID };
+    });
+    f.waitUntilReady.mockImplementationOnce(async (id) => {
+      f.events.push("waitUntilReady");
+      const pending = f.machines.get(NAME);
+      if (!pending || pending.id !== id) throw new Error("missing pending machine");
+      const ready = { ...pending, status: "running" };
+      f.machines.set(NAME, ready);
+      return ready;
+    });
+
+    const handle = await f.port.create(input(), new AbortController().signal);
+
+    expect(f.waitUntilReady.mock.calls[0]?.[0]).toBe(MACHINE_ID);
+    expect(f.waitUntilReady.mock.calls[0]?.[1]).toEqual({ timeout: 90_000, pollInterval: 500 });
+    expect(f.events.indexOf("create-pending")).toBeLessThan(f.events.indexOf("waitUntilReady"));
+    expect(handle.id).toBe(MACHINE_ID);
+    expect(f.client.machines.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops waiting for SDK readiness when the caller aborts", async () => {
+    const f = fixture();
+    let signalWaitStarted!: () => void;
+    const waitStarted = new Promise<void>((resolve) => {
+      signalWaitStarted = resolve;
+    });
+    vi.mocked(f.client.machines.create).mockImplementationOnce(async (options) => {
+      f.machines.set(options.name, machine(options.name, { status: "pending" }));
+      return { id: MACHINE_ID };
+    });
+    f.waitUntilReady.mockImplementationOnce(async () => {
+      signalWaitStarted();
+      return new Promise(() => undefined);
+    });
+    const controller = new AbortController();
+    const creation = f.port.create(input(), controller.signal);
+    await waitStarted;
+    controller.abort(new Error("cancelled while waiting for Boxd"));
+
+    await expect(creation).rejects.toMatchObject({
+      disposition: "unknown",
+      message: "cancelled while waiting for Boxd",
+    });
+    expect(f.client.machines.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("forks only the supplied Base source and clears machine deletion timers", async () => {
     const f = fixture();
     const lease: BaseLease = {
       id: "base-lease-1",
@@ -176,7 +240,7 @@ describe("BoxdMachines", () => {
       isolated: true,
       networks: [],
       shared: false,
-      deleteAfter: 900,
+      deleteAfter: 0,
     });
   });
 
@@ -240,6 +304,7 @@ describe("BoxdMachines", () => {
     const f = fixture();
     vi.mocked(f.client.machines.create).mockImplementationOnce(async (options) => {
       f.machines.set(options.name, machine(options.name, { shared: true }));
+      return { id: MACHINE_ID };
     });
 
     await expect(f.port.create(input(), new AbortController().signal)).rejects.toMatchObject({
