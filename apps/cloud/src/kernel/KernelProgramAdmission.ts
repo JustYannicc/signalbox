@@ -8,7 +8,7 @@ import type { AgentOsSpawnRequest } from "./AgentOsProcessWire.ts";
 import type { KernelCommand } from "./KernelCommandForwarder.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelProcessIdentity, KernelProcessTable } from "./KernelProcessTable.ts";
-import type { KernelProgramBinding } from "./KernelProgramHost.ts";
+import type { KernelProgramBinding } from "./program/KernelProgramRuntime.ts";
 
 export interface KernelProgramAdmissionRequest {
   readonly kind: "spawn" | "exec";
