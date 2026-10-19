@@ -29,8 +29,11 @@ export function installStandardProofFiles(fs: NodeFsModules, gateway: StandardPr
   promises.open = async (...args) => {
     const handle = await open(...args);
     const write = handle.writeFile.bind(handle);
-    handle.writeFile = (data, options) =>
-      fill(handle.path, data, (filled) => write(filled, options));
+    handle.writeFile = async (data, options) => {
+      // Official writes can arrive through a retained directory descriptor.
+      const path = await promises.realpath(`/proc/self/fd/${handle.fd}`);
+      return fill(path, data, (filled) => write(filled, options));
+    };
     return handle;
   };
   promises.writeFile = (path, data, options) =>

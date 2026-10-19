@@ -24,7 +24,9 @@ describe("standard proof file boundary", () => {
         },
         { signal: gateway.signal },
       );
-      const handle = await host.fs["fs/promises"].open("/work/temporary", "w");
+      const directory = await host.fs["fs/promises"].open("/work", "r");
+      const temporary = `/proc/self/fd/${directory.fd}/temporary`;
+      const handle = await host.fs["fs/promises"].open(temporary, "w");
       const fd = handle.fd;
       await handle.writeFile(STANDARD_PROOF_WRITE, "utf8");
       expect(handle.fd).toBe(fd);
@@ -33,7 +35,8 @@ describe("standard proof file boundary", () => {
       );
       await handle.close();
       expect(handle.closed).toBe(true);
-      await host.fs["fs/promises"].rename("/work/temporary", "/work/official-write.txt");
+      await host.fs["fs/promises"].rename(temporary, "/work/official-write.txt");
+      await directory.close();
       expect(host.fs.fs.readFileSync("/work/official-write.txt", "utf8")).toBe(
         STANDARD_PROOF_FILLED_WRITE,
       );
