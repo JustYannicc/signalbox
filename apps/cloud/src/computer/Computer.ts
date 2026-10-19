@@ -1,3 +1,7 @@
+import type * as Brand from "effect/Brand";
+import type * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
+import type { SignalboxDriveId } from "@t3tools/contracts/signalboxDrives";
 import type {
   KernelCommand,
   KernelCommandChild,
@@ -5,6 +9,24 @@ import type {
 } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { FileCommitReceipt } from "../kernel/FilePersistencePorts.ts";
+
+export type DriveRef = SignalboxDriveId;
+export type RecipeHash = string & Brand.Brand<"RecipeHash">;
+
+export interface BaseLease {
+  readonly id: string;
+  readonly sourceRef: string;
+  readonly expiresAt: number;
+}
+
+/** Computer can borrow a prepared source when one exists, while remaining usable without Bases. */
+export interface Bases {
+  readonly acquire: (
+    drive: DriveRef,
+    recipeHash: RecipeHash,
+  ) => Effect.Effect<Option.Option<BaseLease>>;
+  readonly release: (lease: BaseLease) => Effect.Effect<void>;
+}
 
 /** Shared by command hooks, harness child processes and the exec server. */
 export interface ComputerExecPort {
