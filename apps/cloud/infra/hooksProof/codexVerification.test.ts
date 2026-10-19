@@ -28,7 +28,7 @@ import {
   type CodexHookVerificationInput,
 } from "./codexVerification.ts";
 
-function fixture() {
+function fixture(bashPostToolUseResponse = "codex-exec-proof\n") {
   const database = createProofTestStorage();
   const storage = createFacetSqliteStorage(database.storage, () => 1n);
   const filesystem = new KernelFileSystem({
@@ -105,7 +105,7 @@ function fixture() {
                 ? "Success. Updated the following files:\nA /workspace/proof.txt\n"
                 : toolIndex === 2
                   ? CODEX_SECRET_PROOF_WIRE_TEXT
-                  : "codex-exec-proof\n",
+                  : bashPostToolUseResponse,
           }
         : {}),
     };
@@ -260,6 +260,53 @@ describe("Codex hook proof result validation", () => {
         },
       });
       expect(JSON.stringify(result)).not.toContain(standardProofFilledWrite());
+    } finally {
+      await test.close();
+    }
+  });
+
+  it("checks the selected exec against its terminal poll output while preserving the cat hook", async () => {
+    const test = fixture("complete\n");
+    try {
+      const result = await verifyCodexHooks({
+        ...test.input,
+        bashExpectation: {
+          command: EXEC_ARGUMENTS.cmd,
+          output: "full aggregate output\n",
+          postToolUseResponse: () => "complete\n",
+        },
+      });
+      expect(result).toMatchObject({ ok: true, failures: [] });
+      expect(JSON.stringify(result)).not.toContain(standardProofFilledWrite());
+    } finally {
+      await test.close();
+    }
+  });
+
+  it.each([
+    ["aggregate output", () => "full aggregate output\n"],
+    ["missing output", () => undefined],
+    ["non-string output", () => 42],
+    [
+      "throwing getter",
+      () => {
+        throw new Error("unavailable");
+      },
+    ],
+  ])("rejects %s from the terminal response getter", async (_label, postToolUseResponse) => {
+    const test = fixture("complete\n");
+    try {
+      const result = await verifyCodexHooks({
+        ...test.input,
+        bashExpectation: {
+          command: EXEC_ARGUMENTS.cmd,
+          output: "full aggregate output\n",
+          postToolUseResponse,
+        },
+      });
+      expect(result.failures).toContain(
+        `${CODEX_HOOK_REGISTRATIONS[2]!.id} lost the real tool_response`,
+      );
     } finally {
       await test.close();
     }

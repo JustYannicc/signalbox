@@ -34,7 +34,24 @@ interface ProofFacetOptions {
       readonly readCommand: string;
       readonly expectedReadOutput: string;
     };
+    readonly execCommand?: CodexExecCommandExpectation;
   };
+  readonly model: (input: {
+    readonly mock: CodexMockResponses;
+    readonly request: Request;
+    readonly context: DurableObjectState;
+    readonly execution: { readonly pending: boolean; readonly enteredAt: number | null };
+  }) => undefined;
+}
+
+export interface CodexExecCommandExpectation {
+  readonly arguments: Readonly<Record<string, unknown> & { readonly cmd: string }>;
+  readonly result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string };
+  readonly running?: boolean;
+}
+
+interface CodexMockResponses {
+  readonly postToolUseResponse?: unknown;
 }
 
 interface ProofHostOwner {
@@ -58,9 +75,12 @@ export function createCodexHooksProofClass(
   programs: ChildProgramSources,
   catalog: ChildProgramExecutableCatalog,
   createProofFacet: ProofFacetFactory,
+  options: { readonly execCommand?: CodexExecCommandExpectation } = {},
 ): ProofFacetClass {
   const runtimes = new WeakMap<KernelProgramHost, ReturnType<typeof createCodexHookRuntime>>();
   const capacities = new WeakMap<DurableObjectState, ChildWorkerCapacity>();
+  const requestsByHost = new WeakMap<KernelProgramHost, Request>();
+  const mocksByRequest = new WeakMap<Request, CodexMockResponses>();
   return createProofFacet(
     engine,
     async (wakes, owner) => {
@@ -88,6 +108,7 @@ export function createCodexHooksProofClass(
         sharedCapacity,
       );
       runtimes.set(runtime.host, runtime);
+      requestsByHost.set(runtime.host, owner.request);
       return runtime.host;
     },
     {
@@ -98,11 +119,29 @@ export function createCodexHooksProofClass(
           readCommand: "cat /workspace/proof.txt",
           expectedReadOutput: STANDARD_PROOF_WIRE_TEXT,
         },
+        ...(options.execCommand === undefined ? {} : { execCommand: options.execCommand }),
+      },
+      model({ mock, request }) {
+        mocksByRequest.set(request, mock);
+        return undefined;
       },
       configure(input) {
         const runtime = runtimes.get(input.host);
         if (!runtime) throw new Error("Codex proof runtime was not created for this request");
-        return runtime.configure(input);
+        const request = requestsByHost.get(input.host);
+        const mock = request === undefined ? undefined : mocksByRequest.get(request);
+        return runtime.configure({
+          ...input,
+          ...(options.execCommand === undefined
+            ? {}
+            : {
+                bashExpectation: {
+                  command: options.execCommand.arguments.cmd,
+                  output: options.execCommand.result.stdout,
+                  postToolUseResponse: () => mock?.postToolUseResponse,
+                },
+              }),
+        });
       },
     },
   );

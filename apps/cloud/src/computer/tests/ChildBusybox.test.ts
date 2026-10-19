@@ -163,6 +163,7 @@ describe.skipIf(!available)("actual pinned Nimbus BusyBox child", () => {
           const binary = input.modules["busybox.wasm"];
           if (binary === undefined || typeof binary === "string" || !("wasm" in binary))
             throw new Error("Missing child binary");
+          if (!(binary.wasm instanceof ArrayBuffer)) throw new Error("Expected raw child bytes");
           return createChildBusybox({
             module: new WebAssembly.Module(binary.wasm),
             port,

@@ -1,36 +1,36 @@
 import { RpcTarget, WorkerEntrypoint, exports as hostExports } from "cloudflare:workers";
-import type { KernelCommand, KernelCommandExit } from "../../src/kernel/KernelCommandForwarder.ts";
+import { createCompiledChildWorkerLoader } from "../../src/computer/CompiledChildWorkerLoader.ts";
+import type { ChildWorkerInvocation } from "../../src/computer/ChildWorkerProgram.ts";
+import {
+  type ChildWorkerLimits,
+  resolveChildWorkerLimits,
+} from "../../src/computer/ChildWorkerLimits.ts";
+import { CHILD_PROGRAM_WASM_REGISTRY } from "./programWasmRegistry.ts";
 
-export interface ChildWorkerInvocation {
-  readonly modules: Record<string, WorkerLoaderModule | string>;
-  readonly mainModule: string;
-  readonly entrypoint?: string;
-  readonly command: KernelCommand;
-}
-
-interface ChildEntrypoint extends WorkerEntrypoint {
-  run(command: KernelCommand, host: RpcTarget): Promise<KernelCommandExit>;
-}
+export type { ChildWorkerInvocation };
 
 /** Proof facets receive this service instead of retaining a raw WorkerLoader binding. */
-export class ChildWorkerDispatch extends WorkerEntrypoint<{ LOADER: WorkerLoader }> {
-  async run(invocation: ChildWorkerInvocation, host: RpcTarget): Promise<KernelCommandExit> {
-    const child = this.env.LOADER.get(null, () => ({
-      compatibilityDate: "2026-10-18",
-      compatibilityFlags: ["nodejs_compat"],
-      mainModule: invocation.mainModule,
-      modules: invocation.modules,
-      globalOutbound: null,
-    }));
-    return await child
-      .getEntrypoint<ChildEntrypoint>(invocation.entrypoint)
-      .run(invocation.command, host);
+export class ChildWorkerDispatch extends WorkerEntrypoint<
+  { LOADER: WorkerLoader },
+  { limits?: ChildWorkerLimits }
+> {
+  async run(invocation: ChildWorkerInvocation, host: RpcTarget) {
+    const limits = resolveChildWorkerLimits(this.ctx.props.limits);
+    const dispatch = createCompiledChildWorkerLoader(
+      this.env.LOADER,
+      CHILD_PROGRAM_WASM_REGISTRY,
+      limits,
+    );
+    // Preflight rejection calls stopped() to acknowledge that no child started. Computer
+    // supplies it on its wrapped target; raw public callers must provide it themselves.
+    return dispatch.run({ ...invocation, limits }, host);
   }
 }
 
-export function childWorkerDispatchBinding() {
+export function childWorkerDispatchBinding(limits?: ChildWorkerLimits) {
+  const resolved = resolveChildWorkerLimits(limits);
   const entrypoints = hostExports as {
     ChildWorkerDispatch: LoopbackServiceStub<ChildWorkerDispatch>;
   };
-  return entrypoints.ChildWorkerDispatch({});
+  return entrypoints.ChildWorkerDispatch({ props: { limits: resolved } });
 }

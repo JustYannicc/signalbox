@@ -1,3 +1,5 @@
+import { createMockExecPolling } from "./MockExecPolling.mjs";
+
 const EXEC_CALL_ID = "call-1069-exec";
 const PATCH_CALL_ID = "call-1069-apply-patch";
 const SECRET_READ_CALL_ID = "call-1242-secret-read";
@@ -120,7 +122,7 @@ export function createSecretPatchInput(path, content) {
   ].join("\n");
 }
 
-function assertExecCallAndOutput(body) {
+function assertExecCall(body, expectation) {
   const call = inputItem(body, "function_call", EXEC_CALL_ID);
   if (call.name !== "exec_command" || typeof call.arguments !== "string") {
     throw new Error("exec_command function_call did not match the forced call");
@@ -133,27 +135,49 @@ function assertExecCallAndOutput(body) {
     throw new Error("exec_command function_call arguments were not valid JSON");
   }
   const argumentKeys = Object.keys(argumentsValue ?? {}).sort();
-  const expectedKeys = Object.keys(EXEC_ARGUMENTS).sort();
+  const expectedKeys = Object.keys(expectation.arguments).sort();
   if (
     JSON.stringify(argumentKeys) !== JSON.stringify(expectedKeys) ||
-    Object.entries(EXEC_ARGUMENTS).some(([key, value]) => argumentsValue[key] !== value)
+    Object.entries(expectation.arguments).some(([key, value]) => argumentsValue[key] !== value)
   ) {
     throw new Error("exec_command function_call arguments did not match the forced command");
   }
 
   const output = inputItem(body, "function_call_output", EXEC_CALL_ID);
-  const text = outputText(output, "exec_command");
+  return outputText(output, "exec_command");
+}
+
+function assertExecCallAndOutput(body, expectation) {
+  const text = assertExecCall(body, expectation);
   const exitCodes = [...text.matchAll(/^Process exited with code (-?\d+)$/gm)];
-  if (exitCodes.length !== 1 || exitCodes[0][1] !== "0") {
-    throw new Error("exec_command output did not report exit code 0");
+  if (exitCodes.length !== 1 || Number(exitCodes[0][1]) !== expectation.result.exitCode) {
+    if (expectation.result.exitCode === 0) {
+      throw new Error("exec_command output did not report exit code 0");
+    }
+    throw new Error("exec_command output did not report the expected exit code");
   }
   if (
     /^Process running with session ID /m.test(text) ||
-    !/^Output:$/m.test(text) ||
-    [...text.matchAll(new RegExp(`^${EXEC_OUTPUT_MARKER}$`, "gm"))].length !== 1
+    [...text.matchAll(/^Output:$/gm)].length !== 1
   ) {
-    throw new Error("exec_command output did not contain the exact stdout proof line");
+    throw new Error("exec_command output did not contain one completed Output section");
   }
+  const outputStart = text.indexOf("Output:\n");
+  if (outputStart === -1) {
+    throw new Error("exec_command output did not contain an Output section");
+  }
+  const captured = text.slice(outputStart + "Output:\n".length);
+  const stderrMarker = /\r?\n\r?\nStandard [Ee]rror:\r?\n/;
+  const stderrMatch = stderrMarker.exec(captured);
+  const stdout = stderrMatch ? captured.slice(0, stderrMatch.index) : captured;
+  const stderr = stderrMatch ? captured.slice(stderrMatch.index + stderrMatch[0].length) : "";
+  if (stdout !== expectation.result.stdout || stderr !== expectation.result.stderr) {
+    if (expectation.result.stdout === `${EXEC_OUTPUT_MARKER}\n`) {
+      throw new Error("exec_command output did not contain the exact stdout proof line");
+    }
+    throw new Error("exec_command stdout or stderr differed from the machine capture");
+  }
+  return { exitCode: Number(exitCodes[0][1]), stdout, stderr };
 }
 
 function assertPatchCallAndOutput(body, patchInput, outputPath) {
@@ -238,6 +262,28 @@ function requestForLog(body, secretFile) {
  */
 export function createMockResponses(options = {}) {
   const secretFile = options.secretFile;
+  const execExpectation = options.execCommand ?? {
+    arguments: EXEC_ARGUMENTS,
+    result: { exitCode: 0, stdout: `${EXEC_OUTPUT_MARKER}\n`, stderr: "" },
+  };
+  if (
+    typeof execExpectation !== "object" ||
+    execExpectation === null ||
+    typeof execExpectation.arguments !== "object" ||
+    execExpectation.arguments === null ||
+    typeof execExpectation.result !== "object" ||
+    execExpectation.result === null ||
+    !Number.isSafeInteger(execExpectation.result.exitCode) ||
+    typeof execExpectation.result.stdout !== "string" ||
+    typeof execExpectation.result.stderr !== "string"
+  ) {
+    throw new TypeError("execCommand requires arguments and an exitCode/stdout/stderr result");
+  }
+  if (execExpectation.running !== undefined && typeof execExpectation.running !== "boolean") {
+    throw new TypeError("execCommand.running must be a boolean");
+  }
+  const runningExec = execExpectation.running === true;
+  const execPolling = runningExec ? createMockExecPolling(execExpectation.result) : undefined;
   if (
     secretFile !== undefined &&
     (typeof secretFile !== "object" ||
@@ -254,6 +300,22 @@ export function createMockResponses(options = {}) {
   const requests = [];
   let phase = "awaiting-exec-request";
   let startupRequestConsumed = false;
+  let execution, postToolUseResponse;
+
+  function issuePoll(poll) {
+    phase = "awaiting-poll-output";
+    return response(poll.responseId, poll.call);
+  }
+
+  function patchRequest() {
+    phase = "awaiting-patch-output";
+    return response("resp-1069-patch", {
+      type: "custom_tool_call",
+      call_id: PATCH_CALL_ID,
+      name: "apply_patch",
+      input: patchInput,
+    });
+  }
 
   function respond(requestBody) {
     const body = asRequestBody(requestBody);
@@ -271,19 +333,27 @@ export function createMockResponses(options = {}) {
         type: "function_call",
         call_id: EXEC_CALL_ID,
         name: "exec_command",
-        arguments: JSON.stringify(EXEC_ARGUMENTS),
+        arguments: JSON.stringify(execExpectation.arguments),
       });
     }
 
     if (phase === "awaiting-exec-output") {
-      assertExecCallAndOutput(body);
-      phase = "awaiting-patch-output";
-      return response("resp-1069-patch", {
-        type: "custom_tool_call",
-        call_id: PATCH_CALL_ID,
-        name: "apply_patch",
-        input: patchInput,
-      });
+      if (runningExec) {
+        const result = execPolling.acceptInitial(assertExecCall(body, execExpectation));
+        if (result.status === "running") return issuePoll(result.poll);
+        execution = result.execution;
+      } else {
+        execution = assertExecCallAndOutput(body, execExpectation);
+        postToolUseResponse = execution.stdout;
+      }
+      return patchRequest();
+    }
+
+    if (phase === "awaiting-poll-output") {
+      const result = execPolling.acceptPoll(body);
+      if (result.status === "running") return issuePoll(result.poll);
+      execution = result.execution;
+      return patchRequest();
     }
 
     if (phase === "awaiting-patch-output") {
@@ -331,6 +401,12 @@ export function createMockResponses(options = {}) {
     },
     get startupRequestConsumed() {
       return startupRequestConsumed;
+    },
+    get execution() {
+      return execution;
+    },
+    get postToolUseResponse() {
+      return runningExec ? execPolling.postToolUseResponse : postToolUseResponse;
     },
   };
 }
