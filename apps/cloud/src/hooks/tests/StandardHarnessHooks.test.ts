@@ -18,13 +18,18 @@ const request = (event: HarnessHookRequest["event"]): HarnessHookRequest => ({
   payload: { hook_event_name: event },
 });
 
-function fixture(active: ThreadHarnessActiveAttempt | null = attempt, status = async () => {}) {
+function fixture(
+  active: ThreadHarnessActiveAttempt | null = attempt,
+  status = async (effects: string[]) => {
+    effects.push("status");
+  },
+) {
   const effects: string[] = [];
   const controller = new AbortController();
   const callback = createStandardHarnessHookCallback(
     { threadId, activeAttempt: () => active },
     {
-      thread: { ensureTurnStatus: status },
+      thread: { ensureTurnStatus: () => status(effects) },
       gateway: {
         async beforeToolUse() {
           effects.push("before");
@@ -64,7 +69,7 @@ describe("standard hook dispatch guards", () => {
     expect(test.effects).toEqual([]);
   });
 
-  it("does not publish a settled event while status is pending or after status fails", async () => {
+  it("publishes settlement after a failed status write while preserving its error", async () => {
     const status = Promise.withResolvers<void>();
     const started = Promise.withResolvers<void>();
     const test = fixture(attempt, async () => {
@@ -76,7 +81,7 @@ describe("standard hook dispatch guards", () => {
     expect(test.effects).toEqual([]);
     status.reject(new Error("status unavailable"));
     await expect(pending).rejects.toThrow("status unavailable");
-    expect(test.effects).toEqual([]);
+    expect(test.effects).toEqual(["settled"]);
   });
 
   it("checks cancellation between a completed status write and publishing the settled event", async () => {

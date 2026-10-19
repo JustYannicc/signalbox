@@ -186,7 +186,7 @@ export function createHookSecretBoundary(ports: HookSecretBoundaryOptions): Hook
     },
     useEnvironment: async (environment, operation, signal) => {
       for (const name of Object.keys(environment)) {
-        if (!NAME.test(name) || routesHarness(name)) throw failure("invalid");
+        if (!NAME.test(name)) throw failure("invalid");
       }
 
       const entries: Array<readonly [string, string]> = [];

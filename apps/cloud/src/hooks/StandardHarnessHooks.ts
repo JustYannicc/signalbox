@@ -44,9 +44,13 @@ export function createStandardHarnessHookCallback(
           await ports.gateway.afterToolUse(context);
           break;
         case "stop":
-          await ports.thread.ensureTurnStatus(context);
-          context.signal.throwIfAborted();
-          await ports.automations.turnSettled(context);
+          try {
+            await ports.thread.ensureTurnStatus(context);
+          } finally {
+            // Holding settlement until a status note exists belongs to Thread's policy.
+            context.signal.throwIfAborted();
+            await ports.automations.turnSettled(context);
+          }
           break;
       }
 

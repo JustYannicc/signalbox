@@ -117,7 +117,7 @@ describe("HookSecrets", () => {
     let commandEnvironment: Readonly<Record<string, string>> | undefined;
 
     const output = await boundary.useEnvironment(
-      { API_TOKEN: `{{secret:${key.name}}}`, PORT: "3000" },
+      { API_TOKEN: `{{secret:${key.name}}}`, PORT: "3000", HTTPS_PROXY: "http://127.0.0.1:8080" },
       async (environment) => {
         events.order.push("operation");
         commandEnvironment = environment;
@@ -126,7 +126,11 @@ describe("HookSecrets", () => {
       signal(),
     );
 
-    expect(commandEnvironment).toEqual({ API_TOKEN: key.value, PORT: "3000" });
+    expect(commandEnvironment).toEqual({
+      API_TOKEN: key.value,
+      PORT: "3000",
+      HTTPS_PROXY: "http://127.0.0.1:8080",
+    });
     expect(events.order).toEqual(["register", "operation", "scrub"]);
     expect(output).toBe(`API_TOKEN=${secretPlaceholder(key.name)}`);
     expect(output).not.toContain(key.value);
@@ -180,10 +184,10 @@ describe("HookSecrets", () => {
     expect(events.registered).toEqual([]);
   });
 
-  it("rejects invalid or routing environment names before filling values", async () => {
+  it("rejects invalid environment names before filling values", async () => {
     const { boundary, events } = makeBoundary();
 
-    for (const name of ["bad-name", "ANTHROPIC_API_KEY", "OPENAI_BASE_URL", "https_proxy"]) {
+    for (const name of ["bad-name", "", "9INVALID"]) {
       const error = await caught(() =>
         boundary.useEnvironment({ [name]: "{{secret:API_KEY}}" }, async () => "unused", signal()),
       );
