@@ -1,11 +1,26 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { SeededChildProgramCatalogOptions } from "../childPrograms/runtime.ts";
-import { asyncBinding } from "../../src/kernel/tests/kernelProgramAdmissionFixture.ts";
+import { ABI_VERSION } from "../../src/kernel/KernelAbi.ts";
+import type { KernelAsyncProgram } from "../../src/kernel/KernelAsyncProgram.ts";
+import type { KernelProgramBinding } from "../../src/kernel/KernelProgramHost.ts";
 import { KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
 import { createKernelProcessStreams } from "../../src/kernel/KernelProcessStreams.ts";
 import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { EXPECTED_STDOUT, INITIAL_FILE, RESULT_FILE } from "./Command.ts";
 import { sqliteFixture } from "./ProofSqliteFixture.ts";
+
+function asyncBinding(name: string, run: KernelAsyncProgram["run"]): KernelProgramBinding {
+  return {
+    manifest: {
+      name,
+      version: "1",
+      abiVersion: ABI_VERSION,
+      requiredCapabilities: [],
+      entrypoint: name,
+    },
+    implementation: { kind: "async", run },
+  };
+}
 
 const observed = vi.hoisted(() => ({
   contexts: [] as { admission: object | undefined; pid: number }[],

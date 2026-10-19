@@ -280,158 +280,160 @@ describe("computer Boxd proof recovery wiring", () => {
     const revisions = createDurableProofRevisionPorts(proofStorage.database);
     const provider = createProviderClient(RESULT_FILE);
     return Effect.gen(function* () {
-      try {
-        revisions.seedFile(PROOF_INITIAL_REVISION, "/out.bin", NESTED_PRIOR_FILE);
-        const beforeResult = yield* Effect.promise(() =>
-          revisions.commits.commit({
-            at: PROOF_INITIAL_REVISION,
-            turnId: `${RECOVERY_OWNER}-before`,
-            changedInodes: [changedInode(inode, NESTED_PRIOR_FILE)],
-            signal: new AbortController().signal,
-          }),
-        );
-        if (beforeResult.status !== "ok") throw new Error("Could not seed the before revision");
-        const before = { ...PROOF_INITIAL_REVISION, commit: beforeResult.value.commit };
-        const afterResult = yield* Effect.promise(() =>
-          revisions.commits.commit({
-            at: before,
-            turnId: `${RECOVERY_OWNER}-after`,
-            changedInodes: [changedInode(inode, RESULT_FILE)],
-            signal: new AbortController().signal,
-          }),
-        );
-        if (afterResult.status !== "ok") throw new Error("Could not seed the after revision");
-        const after = { ...before, commit: afterResult.value.commit };
-        createFacetWorkspace({
-          database: proofStorage.database,
-          persistence: state.persistence,
-          filesystem: state.filesystem,
-          mountPath: "/workspace",
-          initial: before,
-          mount: async () => {
-            throw new Error("The recovered fixture cannot mount a fresh workspace");
-          },
-        });
+      revisions.seedFile(PROOF_INITIAL_REVISION, "/out.bin", NESTED_PRIOR_FILE);
+      const beforeResult = yield* Effect.promise(() =>
+        revisions.commits.commit({
+          at: PROOF_INITIAL_REVISION,
+          turnId: `${RECOVERY_OWNER}-before`,
+          changedInodes: [changedInode(inode, NESTED_PRIOR_FILE)],
+          signal: new AbortController().signal,
+        }),
+      );
+      if (beforeResult.status !== "ok") throw new Error("Could not seed the before revision");
+      const before = { ...PROOF_INITIAL_REVISION, commit: beforeResult.value.commit };
+      const afterResult = yield* Effect.promise(() =>
+        revisions.commits.commit({
+          at: before,
+          turnId: `${RECOVERY_OWNER}-after`,
+          changedInodes: [changedInode(inode, RESULT_FILE)],
+          signal: new AbortController().signal,
+        }),
+      );
+      if (afterResult.status !== "ok") throw new Error("Could not seed the after revision");
+      const after = { ...before, commit: afterResult.value.commit };
+      createFacetWorkspace({
+        database: proofStorage.database,
+        persistence: state.persistence,
+        filesystem: state.filesystem,
+        mountPath: "/workspace",
+        initial: before,
+        mount: async () => {
+          throw new Error("The recovered fixture cannot mount a fresh workspace");
+        },
+      });
 
-        const owner = new ProofOwnership(proofStorage.storage, RECOVERY_OWNER, provider.client);
-        const sourceInput = yield* Effect.promise(() => owner.prepareSourceInput());
-        const source = yield* Effect.promise(() =>
-          owner.source.create(sourceInput, new AbortController().signal),
-        );
-        const leases = createDurableProofBases(proofStorage.database, {
-          drive: owner.drive,
-          recipeHash: owner.recipeHash,
-          sourceRef: source.id,
-          verifyHeldSource: () => owner.verifySource(source.id),
-          now: () => 1_900_000_000_000,
-          nextLeaseId: () => `${RECOVERY_OWNER}-lease`,
-        });
-        const base = yield* leases.bases.acquire(owner.drive, owner.recipeHash);
-        if (Option.isNone(base)) throw new Error("Could not seed the retained Base lease");
-        const machine = yield* Effect.promise(() =>
-          owner.commands.create(
-            {
-              operationId: owner.commandOperation,
-              drive: owner.drive,
-              recipeHash: owner.recipeHash,
-              base,
-              expiresAt: base.value.expiresAt,
-            },
-            new AbortController().signal,
-          ),
-        );
-        const createInput = {
+      const owner = new ProofOwnership(proofStorage.storage, RECOVERY_OWNER, provider.client);
+      const sourceInput = yield* Effect.promise(() => owner.prepareSourceInput());
+      const source = yield* Effect.promise(() =>
+        owner.source.create(sourceInput, new AbortController().signal),
+      );
+      const leases = createDurableProofBases(proofStorage.database, {
+        drive: owner.drive,
+        recipeHash: owner.recipeHash,
+        sourceRef: source.id,
+        verifyHeldSource: () => owner.verifySource(source.id),
+        now: () => 1_900_000_000_000,
+        nextLeaseId: () => `${RECOVERY_OWNER}-lease`,
+      });
+      const base = yield* leases.bases.acquire(owner.drive, owner.recipeHash);
+      if (Option.isNone(base)) throw new Error("Could not seed the retained Base lease");
+      const machine = yield* Effect.promise(() =>
+        owner.commands.create(
+          {
+            operationId: owner.commandOperation,
+            drive: owner.drive,
+            recipeHash: owner.recipeHash,
+            base,
+            expiresAt: base.value.expiresAt,
+          },
+          new AbortController().signal,
+        ),
+      );
+      const createInput = {
+        operationId: owner.commandOperation,
+        drive: owner.drive,
+        recipeHash: owner.recipeHash,
+        base: base.value,
+        expiresAt: base.value.expiresAt,
+      };
+      yield* Effect.promise(() =>
+        owner.journal.write({ operationId: owner.commandOperation, phase: "checkpoint" }),
+      );
+      yield* Effect.promise(() =>
+        owner.journal.write({
           operationId: owner.commandOperation,
-          drive: owner.drive,
-          recipeHash: owner.recipeHash,
+          phase: "create",
+          before,
           base: base.value,
-          expiresAt: base.value.expiresAt,
-        };
-        yield* Effect.promise(() =>
-          owner.journal.write({ operationId: owner.commandOperation, phase: "checkpoint" }),
-        );
-        yield* Effect.promise(() =>
-          owner.journal.write({
+          createInput,
+        }),
+      );
+      yield* Effect.promise(() =>
+        owner.journal.write({
+          operationId: owner.commandOperation,
+          phase: "apply",
+          before,
+          after,
+          base: base.value,
+          createInput,
+          machine: { id: machine.id, generation: machine.generation },
+        }),
+      );
+
+      const commitsBeforeRecovery = revisions.committedTurns.length;
+      const providerCallsBeforeRecovery = provider.counts();
+      yield* Effect.promise(() =>
+        recoverComputerBoxdProof({
+          ownership: owner,
+          endpoint: "wss://proof.invalid/api/computer/runner",
+          signal: new AbortController().signal,
+          expected: {
             operationId: owner.commandOperation,
-            phase: "create",
-            before,
-            base: base.value,
-            createInput,
-          }),
-        );
-        yield* Effect.promise(() =>
-          owner.journal.write({
-            operationId: owner.commandOperation,
-            phase: "apply",
             before,
             after,
-            base: base.value,
-            createInput,
-            machine: { id: machine.id, generation: machine.generation },
-          }),
-        );
+            inode,
+            sourceRef: source.id,
+          },
+        }),
+      );
 
-        const commitsBeforeRecovery = revisions.committedTurns.length;
-        const providerCallsBeforeRecovery = provider.counts();
-        yield* Effect.promise(() =>
-          recoverComputerBoxdProof({
-            ownership: owner,
-            endpoint: "wss://proof.invalid/api/computer/runner",
-            signal: new AbortController().signal,
-            expected: {
-              operationId: owner.commandOperation,
-              before,
-              after,
-              inode,
-              sourceRef: source.id,
-            },
-          }),
-        );
-
-        expect(owner.journal.read(owner.commandOperation)?.phase).toBe("complete");
-        expect(provider.machines.has(`computer-${owner.commandOperation}`)).toBe(false);
-        expect(state.filesystem.fstat(held).ino).toBe(inode);
-        expect(state.read(held)).toEqual(RESULT_FILE);
-        expect(revisions.inspectTree(before)?.["/out.bin"]?.data).toEqual(NESTED_PRIOR_FILE);
-        expect(revisions.inspectTree(after)?.["/out.bin"]?.data).toEqual(RESULT_FILE);
-        expect(leases.inspect()).toEqual({ acquired: 1, released: 1, held: 0 });
-        expect(revisions.committedTurns).toHaveLength(commitsBeforeRecovery);
-        expect(provider.counts()).toEqual({
-          creates: providerCallsBeforeRecovery.creates,
-          forks: providerCallsBeforeRecovery.forks,
-          deletes: providerCallsBeforeRecovery.deletes + 1,
-          vmExecs: providerCallsBeforeRecovery.vmExecs + 3,
-          quiesces: providerCallsBeforeRecovery.quiesces + 1,
-        });
-        const proofState = proofStorage.read("proof-state") as {
-          readonly checks: Record<string, string>;
-        };
-        expect(proofState.checks).toMatchObject({
-          replacementReopenedDurableBracket: "passed",
-          replacementBeforeImmutable: "passed",
-          replacementAfterCommitStable: "passed",
-          replacementOriginalInodeApplied: "passed",
-          replacementResultBytesMatch: "passed",
-          replacementNoReplay: "passed",
-          replacementBaseLeaseReleased: "passed",
-          replacementMachineAbsent: "passed",
-          replacementJournalComplete: "passed",
-          commandResult: "skipped",
-          nativeCommandBytesAndExit: "skipped",
-          commandStdoutBytesMatch: "skipped",
-          commandStderrBytesMatch: "skipped",
-          commandExitCode17: "skipped",
-          commandSignalZero: "skipped",
-          commandCoreDumpedFalse: "skipped",
-          heldInodeRevisionAssertion: "skipped",
-          sameOpenInodeApplied: "skipped",
-          nestedPriorWriteAndRootContinuation: "skipped",
-        });
-      } finally {
-        state.filesystem.close(held);
-        state.close();
-        proofStorage.close();
-      }
-    });
+      expect(owner.journal.read(owner.commandOperation)?.phase).toBe("complete");
+      expect(provider.machines.has(`computer-${owner.commandOperation}`)).toBe(false);
+      expect(state.filesystem.fstat(held).ino).toBe(inode);
+      expect(state.read(held)).toEqual(RESULT_FILE);
+      expect(revisions.inspectTree(before)?.["/out.bin"]?.data).toEqual(NESTED_PRIOR_FILE);
+      expect(revisions.inspectTree(after)?.["/out.bin"]?.data).toEqual(RESULT_FILE);
+      expect(leases.inspect()).toEqual({ acquired: 1, released: 1, held: 0 });
+      expect(revisions.committedTurns).toHaveLength(commitsBeforeRecovery);
+      expect(provider.counts()).toEqual({
+        creates: providerCallsBeforeRecovery.creates,
+        forks: providerCallsBeforeRecovery.forks,
+        deletes: providerCallsBeforeRecovery.deletes + 1,
+        vmExecs: providerCallsBeforeRecovery.vmExecs + 3,
+        quiesces: providerCallsBeforeRecovery.quiesces + 1,
+      });
+      const proofState = proofStorage.read("proof-state") as {
+        readonly checks: Record<string, string>;
+      };
+      expect(proofState.checks).toMatchObject({
+        replacementReopenedDurableBracket: "passed",
+        replacementBeforeImmutable: "passed",
+        replacementAfterCommitStable: "passed",
+        replacementOriginalInodeApplied: "passed",
+        replacementResultBytesMatch: "passed",
+        replacementNoReplay: "passed",
+        replacementBaseLeaseReleased: "passed",
+        replacementMachineAbsent: "passed",
+        replacementJournalComplete: "passed",
+        commandResult: "skipped",
+        nativeCommandBytesAndExit: "skipped",
+        commandStdoutBytesMatch: "skipped",
+        commandStderrBytesMatch: "skipped",
+        commandExitCode17: "skipped",
+        commandSignalZero: "skipped",
+        commandCoreDumpedFalse: "skipped",
+        heldInodeRevisionAssertion: "skipped",
+        sameOpenInodeApplied: "skipped",
+        nestedPriorWriteAndRootContinuation: "skipped",
+      });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          state.filesystem.close(held);
+          state.close();
+          proofStorage.close();
+        }),
+      ),
+    );
   });
 });
