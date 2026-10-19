@@ -143,9 +143,8 @@ describe("child Worker proof dispatch", () => {
 
   it("rejects a missing public registry reference before starting the child", async () => {
     expect(await run(true, "child-unknown-wasm", "b".repeat(64))).toMatchObject({
-      status: 200,
+      status: 500,
       result: {
-        status: 500,
         error: "Error: Unknown child WASM reference",
         stopped: 1,
         incrementCount: 0,

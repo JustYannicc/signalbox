@@ -14,6 +14,8 @@ class Target extends RpcTarget {
   readonly stopped = vi.fn();
 }
 
+class RawCaller extends RpcTarget {}
+
 function fixture(cpuMs = 300_000) {
   const run = vi.fn().mockResolvedValue(exit);
   const getEntrypoint = vi.fn().mockReturnValue({ run });
@@ -88,7 +90,7 @@ describe("compiled child worker loader", () => {
   it("preserves a legacy ArrayBuffer by identity through the same loader", async () => {
     const f = fixture();
     const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer;
-    const target = new RpcTarget();
+    const target = new RawCaller();
     await expect(
       f.port.run(
         {
