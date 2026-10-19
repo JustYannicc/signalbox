@@ -80,7 +80,31 @@ export function createProofWebSocket({
         throw new Error("Unexpected WebSocket route");
       }
       execSocket?.opened();
-      const response = acceptCodexExecWebSocket(request, sessions, context);
+      const observedSessions = execSocket
+        ? new Proxy(sessions, {
+            get(target, key) {
+              if (key !== "connect") return Reflect.get(target, key, target);
+              return (...args) => {
+                const connection = target.connect(...args);
+                return {
+                  ...connection,
+                  get closed() {
+                    return connection.closed;
+                  },
+                  receive(text) {
+                    execSocket.serverReceive();
+                    return connection.receive(text);
+                  },
+                  disconnect() {
+                    execSocket.serverClose();
+                    return connection.disconnect();
+                  },
+                };
+              };
+            },
+          })
+        : sessions;
+      const response = acceptCodexExecWebSocket(request, observedSessions, context);
       response.webSocket?.accept();
       if (response.webSocket && execSocket)
         return {

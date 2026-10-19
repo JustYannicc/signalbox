@@ -1,6 +1,6 @@
 export const MODEL_CPU_WORK = Object.freeze({
   chunks: 9,
-  iterationsPerChunk: 120_000_000,
+  iterationsPerChunk: 240_000_000,
   seed: 1,
 });
 
@@ -61,6 +61,13 @@ export function createProofModelCpu({ context, execution, mode }) {
   return {
     cpuOnly: true,
     execSocket: {
+      serverReceive() {
+        execFrames++;
+        execEvent("exec-server-frame-received");
+      },
+      serverClose() {
+        execEvent("exec-server-socket-closed");
+      },
       opened() {
         execOpens++;
         execEvent("exec-socket-opened");
