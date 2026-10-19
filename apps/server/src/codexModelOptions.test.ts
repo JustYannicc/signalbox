@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
-import { getCodexServiceTierOptionValue } from "./codexModelOptions.ts";
+import { getCodexServiceTierOptionValue } from "@signalbox/provider-codex/modelOptions";
 
 it("returns the selected Codex service tier id", () => {
   const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5", [

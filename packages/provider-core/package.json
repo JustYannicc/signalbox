@@ -198,6 +198,18 @@
     "./server/usageLimits": {
       "types": "./src/server/usageLimits.ts",
       "import": "./src/server/usageLimits.ts"
+    },
+    "./server/ProviderTextDeltaCoalescer": {
+      "types": "./src/server/ProviderTextDeltaCoalescer.ts",
+      "import": "./src/server/ProviderTextDeltaCoalescer.ts"
+    },
+    "./server/unknownField": {
+      "types": "./src/server/unknownField.ts",
+      "import": "./src/server/unknownField.ts"
+    },
+    "./server/automationReadOnlyTools": {
+      "types": "./src/server/automationReadOnlyTools.ts",
+      "import": "./src/server/automationReadOnlyTools.ts"
     }
   },
   "scripts": {

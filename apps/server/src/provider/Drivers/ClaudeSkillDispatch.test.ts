@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
+import { planClaudeSkillDispatch } from "@signalbox/provider-claude/ClaudeSkillDispatch";
 
 const SKILLS = new Set(["2spec", "implement", "review", "re-release-version"]);
 

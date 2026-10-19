@@ -1,7 +1,7 @@
 import * as NodeOS from "node:os";
 
-import { CODEX_THREAD_CONFIG } from "../src/orchestration-v2/Adapters/CodexAdapterV2.ts";
-import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
+import { CODEX_THREAD_CONFIG } from "@signalbox/provider-codex/threadConfig";
+import { revertCodexThread } from "@signalbox/provider-codex/threadRevert";
 import { buildCodexInitializeParams } from "../src/provider/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";

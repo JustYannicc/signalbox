@@ -10,16 +10,18 @@ import * as ServerConfig from "../../config.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   ClaudeAdapterV2Driver,
-  ClaudeAgentSdkQueryRunner,
-  type ClaudeAgentSdkQueryRunnerShape,
   layerQueryRunner as layerClaudeQueryRunner,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import {
+  ClaudeAgentSdkQueryRunner,
+  type ClaudeAgentSdkQueryRunnerShape,
+} from "@signalbox/provider-claude/ClaudeQueryRunner";
+import {
   CodexAdapterV2Driver,
   CodexAppServerClientFactory,
-  type CodexAppServerClientFactoryShape,
   layerAppServerClientFactory as layerCodexClientFactory,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { type CodexAppServerClientFactoryShape } from "@signalbox/provider-codex/clientFactory";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { type HarnessStderr, makeHarnessStderr } from "./harnessStderr.ts";

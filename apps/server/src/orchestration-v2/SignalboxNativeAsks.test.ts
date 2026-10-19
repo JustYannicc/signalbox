@@ -12,11 +12,11 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { CodexProviderCapabilitiesV2 } from "@signalbox/provider-codex/defaults";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
-import { nativeCodexQuestions } from "../provider/nativeCodexQuestions.ts";
+import { nativeCodexQuestions } from "@signalbox/provider-codex/questions";
 import { layer, threadId, create, answer, instanceId, driver } from "./SignalboxAsks.testkit.ts";
 
 const native = (now: DateTime.Utc, suffix = "native", includeSecret = false) => {

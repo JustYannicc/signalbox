@@ -8,7 +8,10 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 
-import { drainClaudePersistedOutput, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import {
+  drainClaudePersistedOutput,
+  tailClaudeTaskOutput,
+} from "@signalbox/provider-claude/ClaudeTaskOutputTail";
 
 const SESSION_ID = "0c91bb28-9e89-4889-bd22-3de9880233d3";
 const TASK_ID = "bk6xreeye";

@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type { HttpClient } from "effect/http";
 
-import { CODEX_DRIVER_KIND } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { CODEX_DRIVER_KIND } from "@signalbox/provider-codex/defaults";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { type ClaudeSessions, makeClaudeSessions } from "./RunnerClaudeSessions.ts";
 import { makeCodexRollouts } from "./RunnerCodexRollouts.ts";

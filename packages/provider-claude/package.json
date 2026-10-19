@@ -1,0 +1,79 @@
+{
+  "name": "@signalbox/provider-claude",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./ClaudeAdapter": {
+      "types": "./src/ClaudeAdapter.ts",
+      "import": "./src/ClaudeAdapter.ts"
+    },
+    "./ClaudeAdapterHost": {
+      "types": "./src/ClaudeAdapterHost.ts",
+      "import": "./src/ClaudeAdapterHost.ts"
+    },
+    "./ClaudeQueryRunner": {
+      "types": "./src/ClaudeQueryRunner.ts",
+      "import": "./src/ClaudeQueryRunner.ts"
+    },
+    "./ClaudeModelCatalog": {
+      "types": "./src/ClaudeModelCatalog.ts",
+      "import": "./src/ClaudeModelCatalog.ts"
+    },
+    "./ClaudeTaskOutputTail": {
+      "types": "./src/ClaudeTaskOutputTail.ts",
+      "import": "./src/ClaudeTaskOutputTail.ts"
+    },
+    "./claudeWorkflowProgress": {
+      "types": "./src/claudeWorkflowProgress.ts",
+      "import": "./src/claudeWorkflowProgress.ts"
+    },
+    "./ClaudeTurnTokenUsage": {
+      "types": "./src/ClaudeTurnTokenUsage.ts",
+      "import": "./src/ClaudeTurnTokenUsage.ts"
+    },
+    "./claudeUsageLimits": {
+      "types": "./src/claudeUsageLimits.ts",
+      "import": "./src/claudeUsageLimits.ts"
+    },
+    "./ClaudeSkillDispatch": {
+      "types": "./src/ClaudeSkillDispatch.ts",
+      "import": "./src/ClaudeSkillDispatch.ts"
+    },
+    "./ClaudeModelManifest": {
+      "types": "./src/ClaudeModelManifest.ts",
+      "import": "./src/ClaudeModelManifest.ts"
+    },
+    "./claudeModelOptions": {
+      "types": "./src/claudeModelOptions.ts",
+      "import": "./src/claudeModelOptions.ts"
+    },
+    "./ClaudeSdkQueryRunner": {
+      "types": "./src/ClaudeSdkQueryRunner.ts",
+      "import": "./src/ClaudeSdkQueryRunner.ts"
+    },
+    "./ClaudeQueryProtocol": {
+      "types": "./src/ClaudeQueryProtocol.ts",
+      "import": "./src/ClaudeQueryProtocol.ts"
+    },
+    "./ClaudeThreadSnapshots": {
+      "types": "./src/ClaudeThreadSnapshots.ts",
+      "import": "./src/ClaudeThreadSnapshots.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.276",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

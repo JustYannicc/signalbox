@@ -36,6 +36,7 @@ import {
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import { CodexDriver } from "./CodexDriver.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CodexAdapterV2ClientFactory from "@signalbox/provider-codex/clientFactory";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
@@ -136,7 +137,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const serverConfig = yield* ServerConfig.ServerConfig;
         const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
         const launches: Array<
-          Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
+          Parameters<CodexAdapterV2ClientFactory.CodexAppServerClientFactoryShape["open"]>[0]
         > = [];
 
         let interruptedChecks = 0;

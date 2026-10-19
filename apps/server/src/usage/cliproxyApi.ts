@@ -14,8 +14,8 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
-import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
-import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+import { codexRateLimitsToLimits } from "@signalbox/provider-codex/usageLimits";
+import { claudeUsageResponseToLimits } from "@signalbox/provider-claude/claudeUsageLimits";
 import {
   makeUnavailableUsageLimits,
   makeUsageLimits,

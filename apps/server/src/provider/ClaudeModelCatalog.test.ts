@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
+import { hasValidClaudeManifestAdapters } from "@signalbox/provider-claude/ClaudeModelManifest";
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
@@ -9,12 +9,12 @@ import {
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
-  resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
   resolveClaudeUpdateRequiredModels,
   scopeClaudeModelCatalog,
-} from "./ClaudeModelCatalog.ts";
+} from "@signalbox/provider-claude/ClaudeModelCatalog";
+import { resolveClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
 
 const manifest = (): ModelManifestData => ({
   version: 1,

@@ -8,7 +8,7 @@ import {
   codexResetCreditsToContract,
   codexUsageLimitMessage,
   mergeCodexRateLimits,
-} from "./codexUsageLimits.ts";
+} from "@signalbox/provider-codex/usageLimits";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 
@@ -298,7 +298,7 @@ describe("mergeCodexRateLimits", () => {
   });
 });
 
-import { codexUsageLimitResetAt } from "./codexUsageLimits.ts";
+import { codexUsageLimitResetAt } from "@signalbox/provider-codex/usageLimits";
 
 describe("codexUsageLimitResetAt", () => {
   it("waits for every exhausted window and never invents an unknown reset", () => {
