@@ -1,7 +1,7 @@
 // Routing intent only. These destinations do not establish callable support.
 export const NODE_BUILTIN_ROUTES = {
   assert: "workerd",
-  async_hooks: "workerd",
+  async_hooks: "workerd-partial",
   buffer: "workerd",
   child_process: "kernel-process",
   console: "workerd-partial",

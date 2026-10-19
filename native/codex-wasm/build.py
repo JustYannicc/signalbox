@@ -12,9 +12,13 @@ import subprocess
 import sys
 
 from binaryen import prepare_binaryen
+from dependencies.url_stage import prepare_url_dependency
 from overlay import apply_overlay
 from sources import checkout, export_tree, read_pin, verify_checkout, verify_output_location
+from sqlite import prepare_sqlite_dependencies
 from toolchain import prepare_dependencies, prepare_wasi_toolchain
+from wasi_reactor import prepare_wasi_reactor
+from websocket import apply_websocket_overlay
 from workspace import patch_lock_updates, prepare_workspace, verify_engine_graph
 
 ROOT = Path(__file__).resolve().parent
@@ -57,7 +61,11 @@ def build(args):
         copied = output / "source"
         export_tree(source, copied, pin["commit"])
         report["overlay"] = apply_overlay(copied, args.target)
-        patches = prepare_dependencies(cache, references)
+        report["overlay"] += apply_websocket_overlay(copied, args.target)
+        patches = prepare_wasi_reactor(cache / "reactor", references,
+                                       prepare_dependencies(cache, references))
+        patches.update(prepare_url_dependency(cache, references))
+        patches = prepare_sqlite_dependencies(cache / "sqlite", references, patches)
         workspace = prepare_workspace(copied, ROOT / "engine", patches, pin["version"])
         report["workspace"] = str(workspace.relative_to(output))
         if args.prepare_only:

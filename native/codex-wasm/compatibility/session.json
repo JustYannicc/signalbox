@@ -1,0 +1,35 @@
+{
+  "reference": "openai/codex@092d3acd6bec3e3a14bdc7e7a2810ab628ab759d; deferred local rollout creation",
+  "rules": [
+    {
+      "rule": "new-local-thread-title",
+      "path": "codex-rs/core/src/session/session.rs",
+      "before": [
+        "            let thread_name_lookup = async {",
+        "                if config.ephemeral && matches!(&initial_history, InitialHistory::Forked(_)) {",
+        "                    None",
+        "                } else {",
+        "                    thread_title_from_thread_store(live_thread.as_ref(), &thread_store, thread_id)",
+        "                        .await",
+        "                }",
+        "            }"
+      ],
+      "after": [
+        "            let thread_name_lookup = async {",
+        "                // New local threads have no persisted title; fallback search requires native threads.",
+        "                if cfg!(target_os = \"wasi\")",
+        "                    && thread_store.as_any().is::<LocalThreadStore>()",
+        "                    && matches!(&initial_history, InitialHistory::New | InitialHistory::Cleared)",
+        "                {",
+        "                    None",
+        "                } else if config.ephemeral && matches!(&initial_history, InitialHistory::Forked(_)) {",
+        "                    None",
+        "                } else {",
+        "                    thread_title_from_thread_store(live_thread.as_ref(), &thread_store, thread_id)",
+        "                        .await",
+        "                }",
+        "            }"
+      ]
+    }
+  ]
+}
