@@ -24,6 +24,11 @@ export type WasiImportArgumentTransform = (
   name: string,
   args: readonly WasmArgument[],
 ) => readonly WasmArgument[];
+// signalbox: kernel virtual devices adapt raw syscalls inside the existing accounting/JSPI boundary.
+export type WasiFileSystemImportAdapter = (
+  memory: WasiMemory,
+  imports: WasiFileSystem["imports"],
+) => WasiFileSystem["imports"];
 interface Instance {
   exports: Record<string, unknown>;
 }
@@ -70,6 +75,7 @@ export class WasiLifecycle {
     asyncMode: boolean,
     descriptorContext?: WasiDescriptorContext,
     transformArguments?: WasiImportArgumentTransform,
+    adaptFileSystemImports?: WasiFileSystemImportAdapter,
   ) {
     this.#async = asyncMode;
     this.#returnOnExit = options.returnOnExit;
@@ -96,7 +102,8 @@ export class WasiLifecycle {
     );
     const imports = {
       ...host.imports,
-      ...this.filesystem.imports,
+      ...(adaptFileSystemImports?.(this.memory, this.filesystem.imports) ??
+        this.filesystem.imports),
     } as unknown as Record<string, ImportFunction>;
     for (const [name, handler] of Object.entries(imports)) {
       // The suspending wrapper sits directly on the Wasm import. An async JS

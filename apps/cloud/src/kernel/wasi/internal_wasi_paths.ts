@@ -40,6 +40,13 @@ export interface WasiPathAnchor {
 
 export type WasiPathSearchCheck = (mount: WasiMountedStorage, directory: Inode) => void;
 export type WasiPathCheck = (mount: WasiMountedStorage, components: readonly string[]) => void;
+// signalbox: a kernel device can terminate a missing lookup without inventing a storage inode.
+export type WasiMissingPathCheck = (
+  parent: WasiPathAnchor,
+  name: string,
+  remaining: readonly string[],
+  requireDirectory: boolean,
+) => void;
 
 export interface WasiResolvedPath {
   readonly mount: WasiMountedStorage;
@@ -87,10 +94,16 @@ export class WasiPathResolver {
   readonly #complete: typeof complete;
   // signalbox: personality mount overlays must reject hidden entries before traversal.
   readonly #checkPath: WasiPathCheck | undefined;
+  readonly #missingPath: WasiMissingPathCheck | undefined;
 
-  constructor(completeCall: typeof complete, checkPath?: WasiPathCheck) {
+  constructor(
+    completeCall: typeof complete,
+    checkPath?: WasiPathCheck,
+    missingPath?: WasiMissingPathCheck,
+  ) {
     this.#complete = completeCall;
     this.#checkPath = checkPath;
+    this.#missingPath = missingPath;
   }
 
   /** Validates the recorded parent chain and returns its current names. */
@@ -197,6 +210,14 @@ export class WasiPathResolver {
       try {
         inode = yield* this.#complete(base.mount.storage.lookup(current, name));
       } catch (error) {
+        if (isErrno(error, ENOENT)) {
+          this.#missingPath?.(
+            { mount: base.mount, inode: current, ancestors, pathComponents },
+            name,
+            pending.slice(index),
+            requireDirectory,
+          );
+        }
         if (isLast && !requireDirectory && isErrno(error, ENOENT)) {
           return {
             kind: "missing",

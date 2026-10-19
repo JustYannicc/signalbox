@@ -25,7 +25,7 @@
   "portableAdaptations": [
     {
       "file": "internal_wasi_paths.ts",
-      "reason": "Optional internal per-component path guard enforces configured mount masking before each lookup, including symlink-expanded components and missing leaves. KernelWasi supplies the existing policy through its internal descriptor context; generic WASI defaults and the Storage contract remain unchanged."
+      "reason": "Optional internal per-component path and missing-entry hooks let the kernel enforce mount masking and supply canonical virtual devices after anchored traversal. Existing storage entries and symlinks retain precedence. Generic WASI defaults and the Storage contract remain unchanged."
     },
     {
       "file": "internal_wasi_stdio.ts",
@@ -37,7 +37,7 @@
     },
     {
       "file": "internal_wasi_lifecycle.ts",
-      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands before JSPI wrappers. Configured kernel CPU scopes charge WASM exports as user work and synchronous import steps as system work, pausing the user scope during suspension. Reactor entry and exit always release the active flag even when the accounting clock fails; unconfigured WASI behavior remains unchanged."
+      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands, and an optional filesystem-import adapter supplies canonical kernel devices inside the existing errno, CPU and JSPI wrappers. Configured kernel CPU scopes charge WASM exports as user work and synchronous import steps as system work, pausing the user scope during suspension. Reactor entry and exit release the active flag even when the accounting clock fails; unconfigured WASI behavior remains unchanged."
     },
     {
       "file": "internal_wasi_calls.ts",
