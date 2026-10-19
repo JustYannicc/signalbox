@@ -1,20 +1,13 @@
-import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
-import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import { KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
 import type { FacetStorage } from "../../src/kernel/FacetSqliteStorage.ts";
-import { createSeededChildProgramCatalog } from "../childPrograms/runtime.ts";
-import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
-import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
-import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import { createFacetWorkspace } from "../../src/computer/FacetWorkspace.ts";
 import { createBoxdProofWorkspace, type BoxdProofVmPort } from "./Workspace.ts";
 import type { decodeProofSeed } from "./SeedProtocol.ts";
 import { INITIAL_FILE, RESULT_FILE, PROOF_COMMAND, runProofCommand, sameBytes } from "./Command.ts";
 import { openProofFilesystem, PROOF_INITIAL_REVISION } from "./Filesystem.ts";
-import { createComputerProgramAdmission } from "../../src/computer/ComputerProgramAdmission.ts";
-import type { KernelCommandForwarder } from "../../src/kernel/KernelCommandForwarder.ts";
 import type { ForkCommit } from "../../src/kernel/FilePersistencePorts.ts";
-import { nestedProofEscalation } from "./NestedCommand.ts";
+import { createProofAdmittedCommands } from "./AdmittedCommands.ts";
+import { runLocalOnlyControl } from "./LocalOnlyControl.ts";
 import type { ChildWorkerLoaderPort } from "../../src/computer/WorkerLoaderDispatch.ts";
 
 /** One facet SQLite filesystem and durable one-file proof revision repository. */
@@ -33,34 +26,13 @@ export function proofKernel(
   filesystem.chdir("/workspace");
   for (const executable of seed.executables) write(executable.path, executable.bytes, 0o755);
   write("/workspace/out.bin", INITIAL_FILE);
-  const registry = new KernelProgramRegistry();
-  const capacity = new ChildWorkerCapacity();
-  const catalog = createSeededChildProgramCatalog({
-    registry,
+  const admitted = createProofAdmittedCommands({
     filesystem,
     loader,
-    capacity,
     programs: seed.programs,
-    hostname: "proof-host",
-  });
-  let admission: ReturnType<typeof createComputerProgramAdmission> | undefined;
-  const escalation = nestedProofEscalation();
-  const host = new KernelProgramHost({
-    registry,
     wakes,
-    programs: catalog.bindings,
-    admit: (request) => {
-      if (!admission) throw new Error("Nested proof admission is not bound");
-      return admission.admit(request);
-    },
   });
-  // The preflight runs before a machine exists, including every shell descendant.
-  const localHost = new KernelProgramHost({
-    registry,
-    wakes,
-    processes: host.processes,
-    programs: catalog.bindings,
-  });
+  const host = admitted.host;
   const held = filesystem.open(
     "/workspace/out.bin",
     KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_CLOEXEC,
@@ -71,26 +43,20 @@ export function proofKernel(
     ports,
     host,
     inode,
-    escalation,
-    bindNestedMachine(machine: KernelCommandForwarder) {
-      if (admission) throw new Error("Nested proof admission was already bound");
-      admission = createComputerProgramAdmission({ escalation, capacity, machine });
-    },
+    escalation: admitted.escalation,
+    commands: admitted.commands,
+    bindNestedMachine: admitted.bindNestedMachine,
+    admissionSnapshot: admitted.snapshot,
+    drain: admitted.drain,
+    admissionDiagnostics: admitted.admissionDiagnostics,
+    settledDiagnostics: admitted.settledDiagnostics,
     async localControl(signal: AbortSignal) {
-      const commands = createComputerCommands({
-        kernel: { host: localHost, filesystem },
-        escalation: new ComputerEscalationTable(),
-        machine: {
-          spawn: async () => {
-            throw new Error("Local control attempted VM forwarding");
-          },
-        },
-      });
-      await runProofCommand(await commands.exec(PROOF_COMMAND, signal));
-      await catalog.drain();
-      if (!sameBytes(read(held), RESULT_FILE) || capacity.active !== 0)
+      await runProofCommand(await admitted.commands.isolate.exec(PROOF_COMMAND, signal));
+      await admitted.drain();
+      if (!sameBytes(read(held), RESULT_FILE) || admitted.snapshot().active !== 0)
         throw new Error("Child Dynamic Worker did not settle its file writes and capacity");
       write("/workspace/out.bin", INITIAL_FILE);
+      return runLocalOnlyControl(admitted, signal);
     },
     workspace(vm: BoxdProofVmPort) {
       return createFacetWorkspace({
@@ -146,8 +112,7 @@ export function proofKernel(
       }
     },
     async close() {
-      admission?.close();
-      await catalog.drain();
+      await admitted.close();
       await host.processes.dispose();
       filesystem.close(held);
       state.close();

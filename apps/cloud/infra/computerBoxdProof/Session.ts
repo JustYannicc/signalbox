@@ -99,7 +99,11 @@ export async function runComputerBoxdProof(input: {
   try {
     await ownership.check("kernelSetup", "passed");
     await ownership.check("childDynamicWorkerControl", "pending");
-    await kernel.localControl(signal);
+    const localChecks = await kernel.localControl(signal);
+    for (const [name, passed] of Object.entries(localChecks)) {
+      await ownership.check(name, passed ? "passed" : "failed");
+      if (!passed) throw new Error("Local-only admitted control failed");
+    }
     await ownership.check("childDynamicWorkerControl", "passed");
     signal.throwIfAborted();
     await ownership.check("warmSourcePrepared", "pending");
@@ -205,19 +209,24 @@ export async function runComputerBoxdProof(input: {
     const nested = input.mode === "nested" ? captureNestedForwarding(machine) : undefined;
     const reportNestedCapture = async () => {
       if (!nested) return;
-      for (const [name, passed] of Object.entries(nested.diagnostics())) {
+      for (const [name, passed] of Object.entries({
+        ...nested.diagnostics(),
+        ...kernel.admissionDiagnostics(),
+      })) {
         await ownership.check(name, passed ? "passed" : "failed");
         if (!passed) throw new Error("Nested command admission changed its raw command");
       }
     };
     if (nested) kernel.bindNestedMachine(nested.machine);
-    const commands = createComputerCommands({
-      kernel: { host: kernel.host, filesystem: kernel.filesystem },
-      escalation: nested
-        ? kernel.escalation
-        : new ComputerEscalationTable([{ id: "proof-force-bash", executable: "/bin/bash" }]),
-      machine,
-    });
+    const commands = nested
+      ? kernel.commands
+      : createComputerCommands({
+          kernel: { host: kernel.host, filesystem: kernel.filesystem },
+          escalation: new ComputerEscalationTable([
+            { id: "proof-force-bash", executable: "/bin/bash" },
+          ]),
+          machine,
+        });
     await ownership.check("nativeCommandBytesAndExit", "pending");
     await ownership.check("commandResult", "pending");
     try {
@@ -240,6 +249,10 @@ export async function runComputerBoxdProof(input: {
     await ownership.check("commandResult", "passed");
     if (nested) {
       await reportNestedCapture();
+      for (const [name, passed] of Object.entries(await kernel.settledDiagnostics())) {
+        await ownership.check(name, passed ? "passed" : "failed");
+        if (!passed) throw new Error("Admitted child capacity did not drain");
+      }
       await ownership.check("nestedPriorWriteAndRootContinuation", "passed");
     }
     await ownership.check("leaseJournalSettlement", "pending");

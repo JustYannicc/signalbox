@@ -38,12 +38,18 @@ state beside the stage file. Keep the generated `<stage>-worker/` directory ther
 until cleanup is confirmed; recovery reuses that static WASM bundle. Recover an interrupted local pass with the same
 commit and `local.ts --recover-stage-file FILE --output NEW_FILE`.
 
-Both passes compare a real Bash child Dynamic Worker with the same command over
-the real VM Runner socket, including binary streams, argv0, cwd, environment and
-exit status. The VM pass forks one run-owned prepared source and applies the
-result into an already-open kernel inode. This covers the proof's one-file
-workspace adapter; it does not establish a general native mount or production
-Bases lifecycle.
+Choose `nested` to run Bash in a child Dynamic Worker and forward one external
+command to a VM. Use `nested-recovery` separately to destroy the Durable Object
+owner after the VM commits its result. A fresh owner must settle the saved
+revision bracket and lease without replaying the command. This mode skips the
+old root's return streams; use the normal nested run to check those. Set the
+workflow's `mode` input, or pass `--mode` to the local launcher. `direct` keeps
+the earlier comparison of child Bash with a command started directly on a VM.
+
+The proof checks binary streams, argv0, cwd, environment and exit status, then
+applies the result into an already-open kernel inode. Its one-file workspace
+and durable revision adapters do not establish a general native mount or
+production Bases lifecycle.
 
 The provider credential stays in the Worker. The VM receives only the scoped
 Runner callback token, never tenant connection credentials. This probe makes no
