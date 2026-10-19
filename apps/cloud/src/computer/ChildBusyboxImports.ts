@@ -1,25 +1,10 @@
 import type { KernelBusyboxPort } from "../kernel/KernelBusyboxPort.ts";
+import { nimbusPlans, type NimbusMemoryPlan } from "./nimbus/NimbusPlans.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 
-type Plan = (regions: MemoryRegions, args: readonly number[]) => void;
-const none: Plan = () => {};
-const plans: Readonly<Record<string, Plan>> = {
-  identity: none,
-  startup_cwd: (regions, args) => regions.add(args[0]!, args[1]!),
-  stat_metadata(regions, args) {
-    if (args[1] !== 0) regions.add(args[1]!, args[2]!);
-    regions.add(args[4]!, 12);
-  },
-  account(regions, args) {
-    if (args[1] === 1) regions.add(args[2]!, args[3]!);
-    regions.add(args[5]!, args[6]!);
-    regions.add(args[7]!, 4);
-  },
-  chmod: (regions, args) => regions.add(args[0]!, args[1]!),
-  fchmod: none,
-  chown(regions, args) {
-    if (args[1] !== 0) regions.add(args[1]!, args[2]!);
-  },
+const plans: Readonly<Record<string, NimbusMemoryPlan>> = {
+  ...nimbusPlans,
+  identity: () => {},
 };
 
 /** Nimbus imports use their own ABI; standard WASI is composed by ChildBusybox. */
@@ -50,7 +35,7 @@ export function createChildBusyboxImports(options: {
     namespace[item.name] = new wasm.Suspending(async (...args) => {
       if (memory === undefined) throw new Error("BusyBox child memory is not bound");
       const regions = new MemoryRegions(memory);
-      plan(regions, args);
+      plan(regions, args, memory.buffer.byteLength);
       const result = await options.port.callBusybox({
         name: item.name,
         args,

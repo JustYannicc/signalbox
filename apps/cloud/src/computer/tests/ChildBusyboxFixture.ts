@@ -1,7 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - isolated in-memory test storage, never live userdata.
-import * as NodeSqlite from "node:sqlite";
 import { kernelError } from "../../kernel/KernelAbi.ts";
-import { createFacetSqliteStorage, type FacetStorage } from "../../kernel/FacetSqliteStorage.ts";
+import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import {
   KernelFileSystem,
   KernelOpenFlags,
@@ -14,6 +12,7 @@ import {
   type KernelProcessIdentity,
 } from "../../kernel/KernelProcessTable.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
+import { sqliteFixture } from "./helpers/sqliteFixture.ts";
 
 export const busyboxCredentials = { uid: 1000, gid: 1000, euid: 1000, egid: 1000 };
 export const text = (value: string) => new TextEncoder().encode(value);
@@ -32,36 +31,8 @@ export function childBusyboxFixture(
     readonly posix?: KernelPosixOptions | false;
   } = {},
 ) {
-  const database = new NodeSqlite.DatabaseSync(":memory:");
-  const storage: FacetStorage = {
-    sql: {
-      get databaseSize() {
-        return 0;
-      },
-      exec(query, ...bindings) {
-        const statement = database.prepare(query);
-        const values = bindings.map((value) =>
-          value instanceof ArrayBuffer ? new Uint8Array(value) : value,
-        );
-        return statement.columns().length
-          ? statement.all(...values)
-          : (statement.run(...values), []);
-      },
-    },
-    transactionSync(callback) {
-      database.exec("SAVEPOINT busybox_test");
-      try {
-        const value = callback();
-        database.exec("RELEASE busybox_test");
-        return value;
-      } catch (error) {
-        database.exec("ROLLBACK TO busybox_test");
-        database.exec("RELEASE busybox_test");
-        throw error;
-      }
-    },
-  };
-  const root = createFacetSqliteStorage(storage, () => 1n);
+  const database = sqliteFixture();
+  const root = createFacetSqliteStorage(database.storage, () => 1n);
   const posix =
     options.posix === false
       ? undefined
