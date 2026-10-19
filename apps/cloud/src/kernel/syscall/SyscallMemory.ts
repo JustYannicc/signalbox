@@ -5,6 +5,11 @@ import type { KernelMemoryRegion } from "../KernelSyscallPort.ts";
 export class SyscallMemory extends WasiMemory {
   #size = 0;
   #regions: KernelMemoryRegion[] = [];
+  #original: readonly KernelMemoryRegion[] = [];
+
+  override get byteLength(): number {
+    return this.#size;
+  }
 
   bind(size: number, regions: readonly KernelMemoryRegion[]) {
     if (!Number.isSafeInteger(size) || size < 0 || size > 0x1_0000_0000) {
@@ -23,6 +28,7 @@ export class SyscallMemory extends WasiMemory {
       previousEnd = region.pointer + region.bytes.byteLength;
       return { pointer: region.pointer, bytes: region.bytes.slice() };
     });
+    this.#original = regions;
     this.#size = size;
   }
 
@@ -45,14 +51,23 @@ export class SyscallMemory extends WasiMemory {
   }
 
   snapshot(): readonly KernelMemoryRegion[] {
-    return this.#regions.map((region) => ({
-      pointer: region.pointer,
-      bytes: region.bytes.slice(),
-    }));
+    return this.#regions.flatMap((region, index) => {
+      const original = this.#original[index]!;
+      let first = 0;
+      while (first < region.bytes.length && region.bytes[first] === original.bytes[first]) first++;
+      if (first === region.bytes.length) return [];
+      let last = region.bytes.length;
+      while (last > first && region.bytes[last - 1] === original.bytes[last - 1]) last--;
+      // Retain whole ABI words without echoing unchanged input buffers.
+      const start = Math.floor(first / 8) * 8;
+      const end = Math.min(region.bytes.length, Math.ceil(last / 8) * 8);
+      return [{ pointer: region.pointer + start, bytes: region.bytes.slice(start, end) }];
+    });
   }
 
   clear() {
     this.#regions = [];
+    this.#original = [];
     this.#size = 0;
   }
 }

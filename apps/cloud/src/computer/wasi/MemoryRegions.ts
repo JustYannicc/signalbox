@@ -1,6 +1,7 @@
 import type { KernelMemoryRegion } from "../../kernel/KernelSyscallPort.ts";
 
 const MAX_IOVECS = 1024;
+const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
 
 interface MemoryRange {
   readonly start: number;
@@ -35,9 +36,15 @@ export class MemoryRegions {
 
     this.add(pointer, tableSize);
     const table = new DataView(this.#memory.buffer, start, tableSize);
+    let remaining = MAX_TRANSFER_BYTES;
     for (let index = 0; index < itemCount; index++) {
       const offset = index * 8;
-      this.add(table.getUint32(offset, true), table.getUint32(offset + 4, true));
+      const pointer = table.getUint32(offset, true);
+      const length = table.getUint32(offset + 4, true);
+      const copied = Math.min(remaining, length);
+      // The owner validates every original range after descriptor rights, including uncopied suffixes.
+      if (pointer + length <= this.#memory.buffer.byteLength) this.add(pointer, copied);
+      remaining -= copied;
     }
   }
 

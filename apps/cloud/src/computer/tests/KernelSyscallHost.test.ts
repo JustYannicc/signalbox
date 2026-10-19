@@ -250,7 +250,9 @@ describe("createKernelSyscallHost", () => {
         );
         expect(envResult.value).toBe(0);
         expect(region(envResult, 16)).toEqual(expectedEnv.pointers);
-        expect(region(envResult, 64)).toEqual(expectedEnv.buffer);
+        const envBytes = new Uint8Array(expectedEnv.buffer.length);
+        envBytes.set(region(envResult, 64));
+        expect(envBytes).toEqual(expectedEnv.buffer);
       },
       { args: ["/bin/demo", "--empty", ""], env: { EMPTY: "", TOKEN: "a=b" } },
     ));

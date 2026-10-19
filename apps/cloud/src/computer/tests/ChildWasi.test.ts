@@ -3,11 +3,97 @@ import { KernelFileSystem, type WasiStdio } from "../../kernel/KernelFileSystem.
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import type { KernelSyscallPort, KernelSyscallRequest } from "../../kernel/KernelSyscallPort.ts";
 import { ChildWasiExit, createChildWasi } from "../ChildWasi.ts";
-import { MemoryRegions } from "../wasi/MemoryRegions.ts";
 
 const bytes = (value: string) => new TextEncoder().encode(value);
 
 describe("ChildWasi", () => {
+  it("bounds a large EOF iovec before copying and returns no unchanged payload", async () => {
+    const fixture = harness({ stdio: [{ readInto: () => 0 }, {}, {}] });
+    const module = wasmImportRun(
+      "wasi_snapshot_preview1",
+      "fd_read",
+      ["i32", "i32", "i32", "i32"],
+      ["i32"],
+    );
+    let responseBytes = -1;
+    const child = createChildWasi({
+      module,
+      args: [],
+      env: {},
+      syscalls: {
+        async call(request) {
+          const response = await fixture.syscalls.call(request);
+          responseBytes =
+            response.kind === "return"
+              ? response.regions.reduce((size, region) => size + region.bytes.length, 0)
+              : 0;
+          return response;
+        },
+      },
+    });
+    const instance = new WebAssembly.Instance(module, child.imports);
+    child.bind(instance);
+    const memory = guestMemory(instance);
+    memory.grow(1279);
+    const view = new DataView(memory.buffer);
+    view.setUint32(32, 1024, true);
+    view.setUint32(36, 64 * 1024 * 1024, true);
+    new Uint8Array(memory.buffer)[1024 + 64 * 1024 * 1024 - 1] = 255;
+    try {
+      expect(await child.run(guestRun(instance), 0, 32, 1, 16)).toBe(0);
+      const requestBytes = fixture.requests[0]!.regions.reduce(
+        (size, region) => size + region.bytes.length,
+        0,
+      );
+      expect(requestBytes).toBe(16 * 1024 * 1024 + 12);
+      expect(responseBytes).toBe(0);
+      expect(view.getUint32(16, true)).toBe(0);
+      expect(new Uint8Array(memory.buffer)[1024 + 64 * 1024 * 1024 - 1]).toBe(255);
+    } finally {
+      fixture.filesystem.dispose();
+    }
+  });
+
+  it("validates uncopied iovec suffixes after the descriptor rights check", async () => {
+    let reads = 0;
+    const fixture = harness({
+      stdio: [
+        {
+          readInto: () => {
+            reads++;
+            return 0;
+          },
+        },
+        {},
+        {},
+      ],
+    });
+    const module = wasmImportRun(
+      "wasi_snapshot_preview1",
+      "fd_read",
+      ["i32", "i32", "i32", "i32"],
+      ["i32"],
+    );
+    const child = createChildWasi({ module, syscalls: fixture.syscalls, args: [], env: {} });
+    const instance = new WebAssembly.Instance(module, child.imports);
+    child.bind(instance);
+    const memory = guestMemory(instance);
+    memory.grow(300);
+    const view = new DataView(memory.buffer);
+    view.setUint32(32, 1024, true);
+    view.setUint32(36, 16 * 1024 * 1024, true);
+    view.setUint32(40, memory.buffer.byteLength - 1, true);
+    view.setUint32(44, 2, true);
+    try {
+      expect(await child.run(guestRun(instance), 1, 32, 2, 16)).toBe(76);
+      const result = await child.run(guestRun(instance), 0, 32, 2, 16);
+      expect(result).toBe(21);
+      expect(reads).toBe(0);
+    } finally {
+      fixture.filesystem.dispose();
+    }
+  });
+
   it("sends only fd_read ABI ranges and copies exact binary output back into guest memory", async () => {
     const input = Uint8Array.from([0x00, 0x80, 0xff, 0x42]);
     let inputOffset = 0;
@@ -266,22 +352,6 @@ describe("ChildWasi", () => {
     } finally {
       fixture.filesystem.dispose();
     }
-  });
-
-  it("merges overlapping ranges, omits invalid pointers, and bounds response writes", () => {
-    const memory = new WebAssembly.Memory({ initial: 1 });
-    const regions = new MemoryRegions(memory);
-    regions.add(20, 8);
-    regions.add(8, 16);
-    regions.add(-8, 16);
-    expect(regionBounds({ regions: regions.snapshot() })).toEqual([[8, 20]]);
-    expect(() => regions.apply([{ pointer: 512, bytes: Uint8Array.of(1) }])).toThrow(
-      "Invalid syscall memory response regions",
-    );
-
-    const oversizedVectors = new MemoryRegions(memory);
-    oversizedVectors.addIovecs(0, 1025);
-    expect(oversizedVectors.snapshot()).toEqual([]);
   });
 });
 

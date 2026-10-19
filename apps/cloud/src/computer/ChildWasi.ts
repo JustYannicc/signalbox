@@ -24,6 +24,7 @@ interface EncodedOptions {
 
 const WASI_NAMESPACES = new Set(["wasi_snapshot_preview1", "wasi_unstable"]);
 const encoder = new TextEncoder();
+const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
 
 const noMemory: WasiMemoryPlan = () => {};
 const pointer = (args: readonly WasmArgument[], index: number): number => {
@@ -104,7 +105,7 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
     regions.addIovecs(pointer(args, 1), pointer(args, 2));
   },
   fd_readdir(regions, args) {
-    regions.add(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 1), Math.min(pointer(args, 2) >>> 0, MAX_TRANSFER_BYTES));
     regions.add(pointer(args, 4), 4);
   },
   fd_renumber: noMemory,
@@ -139,7 +140,7 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
   },
   path_readlink(regions, args) {
     regions.add(pointer(args, 1), pointer(args, 2));
-    regions.add(pointer(args, 3), pointer(args, 4));
+    regions.add(pointer(args, 3), Math.min(pointer(args, 4) >>> 0, MAX_TRANSFER_BYTES));
     regions.add(pointer(args, 5), 4);
   },
   path_remove_directory(regions, args) {
@@ -214,6 +215,18 @@ export function createChildWasi(options: ChildWasiOptions) {
     namespace[imported.name] = new wasm.Suspending(async (...args): Promise<number> => {
       if (instance === undefined || memory === undefined) {
         throw new Error("Child WASI memory has not been bound");
+      }
+      // Random bytes use the child's own heap and crypto source, with no descriptor state to share.
+      if (imported.name === "random_get") {
+        const start = pointer(args, 0) >>> 0;
+        const length = pointer(args, 1) >>> 0;
+        if (start + length > memory.buffer.byteLength) return 21;
+        for (let offset = 0; offset < length; offset += 65_536) {
+          crypto.getRandomValues(
+            new Uint8Array(memory.buffer, start + offset, Math.min(65_536, length - offset)),
+          );
+        }
+        return 0;
       }
       const regions = new MemoryRegions(memory);
       MEMORY_PLANS[imported.name]!(regions, args, encoded);

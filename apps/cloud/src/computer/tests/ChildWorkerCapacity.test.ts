@@ -2,6 +2,39 @@ import { describe, expect, it } from "vite-plus/test";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 
 describe("ChildWorkerCapacity", () => {
+  it("refuses nested callback work at full capacity while every ancestor remains live", async () => {
+    const capacity = new ChildWorkerCapacity(10);
+    const signal = new AbortController().signal;
+    const ancestors = await Promise.all(Array.from({ length: 10 }, () => capacity.acquire(signal)));
+    let starts = 0;
+    try {
+      const outcomes = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          capacity
+            .run(signal, async () => {
+              starts++;
+            })
+            .catch((error: unknown) => error),
+        ),
+      );
+      expect(
+        outcomes.every(
+          (error) => error instanceof Error && "code" in error && error.code === "RESOURCE_LIMIT",
+        ),
+      ).toBe(true);
+      expect(starts).toBe(0);
+      expect(capacity.active).toBe(10);
+    } finally {
+      ancestors.forEach((permit) => permit.release());
+    }
+    expect(capacity.active).toBe(0);
+    await capacity.run(signal, async () => {
+      starts++;
+    });
+    expect(starts).toBe(1);
+    expect(capacity.active).toBe(0);
+  });
+
   it("enforces a default maximum of ten positive integer permits", () => {
     expect(new ChildWorkerCapacity().limit).toBe(10);
     expect(new ChildWorkerCapacity(1).limit).toBe(1);
@@ -171,13 +204,11 @@ describe("ChildWorkerCapacity", () => {
   it("releases capacity in run when finite work rejects", async () => {
     const capacity = new ChildWorkerCapacity(1);
     const reason = new Error("child failed");
-    const held = await capacity.acquire(new AbortController().signal);
-    const work = capacity.run(new AbortController().signal, async () => {
-      throw reason;
-    });
-
-    held.release();
-    await expect(work).rejects.toBe(reason);
+    await expect(
+      capacity.run(new AbortController().signal, async () => {
+        throw reason;
+      }),
+    ).rejects.toBe(reason);
     expect(capacity.active).toBe(0);
   });
 });

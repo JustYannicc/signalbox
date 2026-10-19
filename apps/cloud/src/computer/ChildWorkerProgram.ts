@@ -22,7 +22,7 @@ export interface ChildWorkerDispatch<Host extends object> {
 export interface ChildWorkerProgramOptions<Host extends object> {
   readonly executable: string;
   readonly code: ChildWorkerCode;
-  readonly capacity: Pick<ChildWorkerCapacity, "acquire">;
+  readonly capacity: Pick<ChildWorkerCapacity, "run">;
   readonly dispatch: ChildWorkerDispatch<Host>;
   /** The adapter supplies an RPC target; its methods retain the process's actual kernel resources. */
   readonly createHost: (context: KernelAsyncProgramContext) => {
@@ -54,8 +54,7 @@ export function createChildWorkerProgram<Host extends object>(
   return Object.freeze({
     kind: "async" as const,
     async run(context: KernelAsyncProgramContext) {
-      const permit = await options.capacity.acquire(context.signal);
-      try {
+      return options.capacity.run(context.signal, async () => {
         context.signal.throwIfAborted();
         const owner = options.createHost(context);
         try {
@@ -74,9 +73,7 @@ export function createChildWorkerProgram<Host extends object>(
         } finally {
           await owner.close();
         }
-      } finally {
-        permit.release();
-      }
+      });
     },
   });
 }
