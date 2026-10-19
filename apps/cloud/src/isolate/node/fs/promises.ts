@@ -14,6 +14,7 @@ import { NodeFileHandle } from "./file-handle.ts";
 import { createAsyncOperations } from "./async-operations.ts";
 import type { AsyncLeafRunner } from "./operations.ts";
 import { NodeFsDir } from "./directory.ts";
+import { createNodeFsGlob } from "./glob.ts";
 
 export interface OpenDirectoryOptions {
   encoding?: BufferEncoding | "buffer";
@@ -24,6 +25,7 @@ export interface OpenDirectoryOptions {
 export function createPromisesApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
   const operations = createAsyncOperations(kernelFs, runLeaf);
   return {
+    glob: createNodeFsGlob(kernelFs, runLeaf),
     async access(path: PathLike, mode = 0): Promise<void> {
       await operations.access(path, mode);
     },
