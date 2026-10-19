@@ -53,6 +53,13 @@ export function proofKernel(
       return admission.admit(request);
     },
   });
+  // The preflight runs before a machine exists, including every shell descendant.
+  const localHost = new KernelProgramHost({
+    registry,
+    wakes,
+    processes: host.processes,
+    programs: catalog.bindings,
+  });
   const held = filesystem.open(
     "/workspace/out.bin",
     KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_CLOEXEC,
@@ -70,7 +77,7 @@ export function proofKernel(
     },
     async localControl(signal: AbortSignal) {
       const commands = createComputerCommands({
-        kernel: { host, filesystem },
+        kernel: { host: localHost, filesystem },
         escalation: new ComputerEscalationTable(),
         machine: {
           spawn: async () => {

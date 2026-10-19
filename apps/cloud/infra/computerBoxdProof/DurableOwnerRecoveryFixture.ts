@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import type { BaseLease, DriveRef, RecipeHash } from "../../src/computer/Computer.ts";
 import { MachineCommands } from "../../src/computer/MachineCommands.ts";
+import { createRecoveryMachine } from "./RecoveryMachine.ts";
 import {
   makeBoxdMachines,
   type BoxdMachineClient,
@@ -333,7 +334,11 @@ function machineWorkspace(
 export function createFreshOwner(
   storage: FacetStorage,
   external: DurableOwnerExternalState,
-  options: { readonly loseCommitAck?: boolean; readonly loseApplyAck?: boolean } = {},
+  options: {
+    readonly loseCommitAck?: boolean;
+    readonly loseApplyAck?: boolean;
+    readonly recoveryOnly?: boolean;
+  } = {},
 ) {
   const journal = new SqliteMachineCommandJournal(storage);
   const durableBases = createDurableProofBases(storage, proofBaseSource(external));
@@ -368,19 +373,35 @@ export function createFreshOwner(
     { org: "proof", image: "proof-runner", vcpu: 1, memory: "4G" },
     () => 1_800_000_000_000,
   );
-  return new MachineCommands({
+  const workspace = machineWorkspace(external, options);
+  const runtime = machineRuntime(external);
+  const machineOptions = {
     drive: ownerDrive,
     recipeHash: ownerRecipe,
     bases,
     machines: machine,
-    workspace: machineWorkspace(external, options),
-    runtime: machineRuntime(external),
+    workspace,
+    runtime,
     ports,
     journal,
     nextOperationId: () => ownerOperationId,
     coldExpiresAt: () => 1_900_000_000_000,
     recoverySignal: new AbortController().signal,
-  });
+  };
+  if (options.recoveryOnly) {
+    return createRecoveryMachine({
+      drive: ownerDrive,
+      recipeHash: ownerRecipe,
+      bases,
+      machines: machine,
+      workspace,
+      runtime,
+      hydration: ports.hydration,
+      journal,
+      recoverySignal: machineOptions.recoverySignal,
+    });
+  }
+  return new MachineCommands(machineOptions);
 }
 
 export async function leaveExecutionPending(

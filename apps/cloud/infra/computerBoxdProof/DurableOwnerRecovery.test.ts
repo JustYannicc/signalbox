@@ -75,7 +75,7 @@ describe("durable Computer owner replacement", () => {
       expect(external.baseReleaseCalls).toBe(0);
       expect(inspectBaseLeases(sqlite.storage, external).held).toBe(1);
 
-      const finalOwner = createFreshOwner(sqlite.storage, external);
+      const finalOwner = createFreshOwner(sqlite.storage, external, { recoveryOnly: true });
       await finalOwner.recoverPending();
       const completed = new SqliteMachineCommandJournal(sqlite.storage).read(ownerOperationId);
       expect(completed?.phase).toBe("complete");

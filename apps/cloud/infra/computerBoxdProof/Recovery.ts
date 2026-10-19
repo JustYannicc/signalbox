@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ThreadId } from "@t3tools/contracts";
 import { createFacetWorkspace } from "../../src/computer/FacetWorkspace.ts";
-import { MachineCommands } from "../../src/computer/MachineCommands.ts";
 import { createRunnerMachineRuntime } from "../../src/computer/RunnerMachineRuntime.ts";
 import { RunnerMachineSockets } from "../../src/computer/RunnerMachineSockets.ts";
 import { KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
@@ -16,6 +15,7 @@ import type { ProofOwnership } from "./Ownership.ts";
 import type { ProofRecoveryReceipt } from "./OwnerReplacement.ts";
 import { proofProvider, WORKSPACE_RECEIPT } from "./Provider.ts";
 import { createBoxdProofWorkspaceResume } from "./Workspace.ts";
+import { createRecoveryMachine } from "./RecoveryMachine.ts";
 import type { proofKernel } from "./Kernel.ts";
 
 export type { ProofRecoveryReceipt } from "./OwnerReplacement.ts";
@@ -144,47 +144,17 @@ export async function recoverComputerBoxdProof(input: {
       }),
     });
     const runtime = createRunnerMachineRuntime(sockets);
-    const machine = new MachineCommands({
+    const machine = createRecoveryMachine({
       drive: ownership.drive,
       recipeHash: ownership.recipeHash,
       bases: {
-        acquire: async () => {
-          throw new Error("Recovery cannot acquire a Base");
-        },
         release: (lease) => Effect.runPromise(leases.bases.release(lease)),
       },
-      machines: {
-        create: async () => {
-          throw new Error("Recovery cannot create a machine");
-        },
-        reconcile: (createInput, reconcileSignal) =>
-          ownership.commands.reconcile(createInput, reconcileSignal),
-      },
+      machines: ownership.commands,
       workspace,
-      runtime: {
-        attach: async () => {
-          throw new Error("Recovery cannot attach a command runtime");
-        },
-        rebind: (owner) => {
-          if (!runtime.rebind) throw new Error("Recovery runtime cannot attest ownership");
-          return runtime.rebind(owner);
-        },
-      },
-      ports: {
-        hydration: ports.hydration,
-        commits: {
-          commit: async () => {
-            throw new Error("Apply recovery cannot recommit the command");
-          },
-        },
-      },
+      runtime,
+      hydration: ports.hydration,
       journal: ownership.journal,
-      nextOperationId: () => {
-        throw new Error("Recovery cannot allocate a command identity");
-      },
-      coldExpiresAt: () => {
-        throw new Error("Recovery cannot allocate a cold machine");
-      },
       recoverySignal: signal,
     });
     await machine.recoverPending();
