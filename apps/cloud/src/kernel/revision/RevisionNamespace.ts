@@ -162,6 +162,7 @@ function parkMovingInodes(
       );
     });
 
+  const finalPaths = plans.flatMap((plan) => plan.changed.paths);
   let parkIndex = 0;
   for (const plan of moving) {
     const inode = plan.localInode!;
@@ -178,7 +179,10 @@ function parkMovingInodes(
     let temp: string;
     do {
       temp = `/.signalbox-apply-${hash(applyId)}-${parkIndex++}`;
-    } while (safeLstat(filesystem, mountPath, rootRealPath, storage, temp));
+    } while (
+      finalPaths.some((path) => path === temp || path.startsWith(`${temp}/`)) ||
+      safeLstat(filesystem, mountPath, rootRealPath, storage, temp)
+    );
     assertParentInside(filesystem, mountPath, rootRealPath, storage, temp);
     filesystem.rename(guestPath(mountPath, source), guestPath(mountPath, temp));
     parked.set(inode.toString(), temp);
