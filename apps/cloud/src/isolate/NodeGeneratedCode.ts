@@ -1,4 +1,11 @@
 import type { FacetStorage } from "../kernel/FacetSqliteStorage.ts";
+export { createNodeGeneratedCodeFetcher } from "./node/generated/invocation-fetcher.ts";
+export { NodeGeneratedCodeCleanupError } from "./node/generated/invocation-errors.ts";
+export type {
+  NodeGeneratedCodeInvocation,
+  NodeGeneratedCodeOpenPort,
+  NodeGeneratedCodeResponseHead,
+} from "./node/generated/invocation.ts";
 import { generatedCodePromise } from "./node/generated/generation-realm.ts";
 import type { NodeGeneratedCodeRetentionLimits } from "./node/generated/retention.ts";
 export { NODE_GENERATED_CODE_DEFAULT_RETENTION } from "./node/generated/retention.ts";
@@ -62,7 +69,10 @@ export interface NodeGeneratedCodeOptions {
 
 export interface NodeGeneratedCode {
   /** The binding's Response is returned unchanged. Callers own status and JSON decoding. */
-  invoke(input: NodeGeneratedCodeInvokeInput): Promise<Response>;
+  invoke(
+    input: NodeGeneratedCodeInvokeInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<Response>;
   /**
    * Called after an interpreter Function constructor succeeds. The VM owner
    * must observe this promise before the facet can prepare its next boot.
@@ -89,9 +99,11 @@ export function createNodeGeneratedCode(options: NodeGeneratedCodeOptions): Node
   const fetcher = options.fetcher;
 
   const generated: NodeGeneratedCode = {
-    invoke: (input) =>
+    invoke: (input, invokeOptions) =>
       generatedCodePromise(
         (async () => {
+          const signal = invokeOptions?.signal;
+          if (signal?.aborted) throw signal.reason;
           const validated = validateNodeGeneratedCodeInvokeInput(input);
           if (!fetcher) throw new NodeGeneratedCodeUnavailableError();
           return generatedCodePromise(
@@ -100,6 +112,7 @@ export function createNodeGeneratedCode(options: NodeGeneratedCodeOptions): Node
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: nodeGeneratedCodeInvokeBody(validated),
+                ...(signal ? { signal } : {}),
               }),
             ),
           );

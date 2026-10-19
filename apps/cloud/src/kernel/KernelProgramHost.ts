@@ -11,6 +11,7 @@ import {
 } from "./KernelAbi.ts";
 import { KernelProcessTable, type KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
+import type { AgentOsSpawnRequest } from "./AgentOsProcessWire.ts";
 import { runKernelInlineExecution } from "./process/KernelExecution.ts";
 import {
   prepareKernelProgram,
@@ -153,6 +154,17 @@ export class KernelProgramHost {
 
   backend(prepared: KernelPreparedProgram): KernelBackend {
     return this.#spawner.backend(prepared);
+  }
+
+  /** Direct guest spawns use the same admission, actions and attributes as nested programs. */
+  spawn(
+    input: KernelProgramPrepareInput & {
+      readonly parent: KernelHandle<"process">;
+      readonly signal: AbortSignal;
+    },
+    request: AgentOsSpawnRequest,
+  ): Promise<KernelResult<KernelHandle<"process">>> {
+    return this.#spawner.spawn(input.filesystem, input.parent, input.signal, input.home, request);
   }
 
   async exitStatus(

@@ -227,4 +227,4 @@ export function createMockResponses() {
   };
 }
 
-export { FINAL_MESSAGE, PATCH_INPUT };
+export { EXEC_ARGUMENTS, FINAL_MESSAGE, PATCH_INPUT };
