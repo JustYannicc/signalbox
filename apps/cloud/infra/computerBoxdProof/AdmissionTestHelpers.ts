@@ -19,10 +19,13 @@ export class FakeStorage implements StoragePort {
     return value === undefined ? undefined : structuredClone(value);
   }
 
-  async put(key: string, value: unknown) {
-    const copy = structuredClone(value);
-    this.writes.push({ key, value: copy });
-    this.values.set(key, copy);
+  async put(input: string | Record<string, unknown>, value?: unknown) {
+    const entries = typeof input === "string" ? [[input, value] as const] : Object.entries(input);
+    for (const [key, item] of entries) {
+      const copy = structuredClone(item);
+      this.writes.push({ key, value: copy });
+      this.values.set(key, copy);
+    }
   }
 
   async setAlarm(_time: number) {}

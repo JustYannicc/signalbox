@@ -16,9 +16,24 @@ interface Env {
 }
 
 const ADMISSION_CLOSED = "proof-admission-closed";
+const SEED_IDENTITY = "proof-seed-identity";
+async function seedIdentity(seed: Awaited<ReturnType<typeof decodeProofSeed>>) {
+  // Executables are fixed by decodeProofSeed; bind the remaining caller-supplied inputs.
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({
+      sourceCommit: seed.sourceCommit,
+      runnerSha256: seed.runner.sha256,
+      programs: seed.programs,
+    }),
+  );
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
 const runInput = Schema.decodeUnknownSync(
   Schema.Struct({
     runnerEndpoint: Schema.optionalKey(Schema.String),
+    seed: Schema.optionalKey(Schema.Unknown),
   }),
 );
 const evidence = (state: ProofState) => ({
@@ -98,15 +113,25 @@ export class ComputerBoxdProof extends DurableObject<Env> {
     if (path === "/seed" && request.method === "POST") {
       if (this.admissionClosed) return new Response("Admission closed", { status: 409 });
       const seed = await decodeProofSeed(await request.json());
+      const identity = await seedIdentity(seed);
+      const expectedIdentity = await this.ctx.storage.get(SEED_IDENTITY);
       const state = await this.state();
-      if (this.admissionClosed || state.status !== "pending" || this.seed !== undefined)
+      if (
+        this.admissionClosed ||
+        state.status !== "pending" ||
+        this.seed !== undefined ||
+        expectedIdentity !== undefined
+      )
         return new Response("Already seeded", { status: 409 });
       this.seed = seed;
-      await this.ctx.storage.put("proof-state", {
-        ...state,
-        sourceCommit: this.seed.sourceCommit,
-        runnerSha256: this.seed.runner.sha256,
-        checks: { seedInputs: "passed" },
+      await this.ctx.storage.put({
+        [SEED_IDENTITY]: identity,
+        "proof-state": {
+          ...state,
+          sourceCommit: seed.sourceCommit,
+          runnerSha256: seed.runner.sha256,
+          checks: { seedInputs: "passed" },
+        },
       });
       return Response.json(evidence(await this.state()), { status: 202 });
     }
@@ -134,10 +159,17 @@ export class ComputerBoxdProof extends DurableObject<Env> {
       ) {
         return new Response("Invalid Runner endpoint", { status: 400 });
       }
+      // An idle object can be evicted after /seed. The run request carries the same
+      // validated inputs so admission never relies on memory surviving another request.
+      const seed = options.seed === undefined ? this.seed : await decodeProofSeed(options.seed);
+      const identity = seed === undefined ? undefined : await seedIdentity(seed);
+      const expectedIdentity = await this.ctx.storage.get<string>(SEED_IDENTITY);
       const state = await this.state();
-      if (this.admissionClosed || state.status !== "pending" || this.active || !this.seed)
+      if (this.admissionClosed || state.status !== "pending" || this.active)
         return new Response("Run unavailable", { status: 409 });
-      const seed = this.seed;
+      if (!seed) return new Response("Run seed unavailable", { status: 409 });
+      if (identity === undefined || identity !== expectedIdentity)
+        return new Response("Run seed mismatch", { status: 409 });
       this.seed = undefined;
       this.controller = new AbortController();
       const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(600_000)]);

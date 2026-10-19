@@ -66,6 +66,73 @@ describe("computer boxd proof admission", () => {
     ports.closeProvider.mockResolvedValue(undefined);
   });
 
+  it("admits the same seeded proof after reconstructing the idle object", async () => {
+    const storage = new FakeStorage();
+    const first = createWorker(storage);
+    await first.ready;
+    expect((await request(first.worker, "/seed", "{}")).status).toBe(202);
+
+    const reopened = createWorker(storage);
+    await reopened.ready;
+    const response = await request(reopened.worker, "/run", JSON.stringify({ seed: seedA }));
+    await Promise.all(reopened.background);
+
+    expect(response.status).toBe(202);
+    expect(ports.runProof).toHaveBeenCalledTimes(1);
+    expect(ports.runProof.mock.calls[0]?.[0].seed).toEqual(seedA);
+    expect((await status(reopened.worker)).status).toBe("passed");
+  });
+
+  it("rejects replaced inputs and reseeding after idle reconstruction", async () => {
+    const storage = new FakeStorage();
+    const first = createWorker(storage);
+    await first.ready;
+    expect((await request(first.worker, "/seed", "{}")).status).toBe(202);
+    const reopened = createWorker(storage);
+    await reopened.ready;
+    ports.decodeSeed.mockResolvedValue(seedB);
+
+    expect((await request(reopened.worker, "/seed", "{}")).status).toBe(409);
+    const changed = await request(reopened.worker, "/run", JSON.stringify({ seed: seedB }));
+    expect(changed.status).toBe(409);
+    expect(await changed.text()).toBe("Run seed mismatch");
+    expect(ports.runProof).not.toHaveBeenCalled();
+
+    ports.decodeSeed.mockResolvedValue(seedA);
+    expect((await request(reopened.worker, "/run", JSON.stringify({ seed: seedA }))).status).toBe(
+      202,
+    );
+    await Promise.all(reopened.background);
+    expect(ports.runProof).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects changed program sources under the same commit and Runner hash", async () => {
+    const original = { ...seedA, programs: { bash: { mainModule: "first.js" } } };
+    ports.decodeSeed.mockResolvedValue(original);
+    const storage = new FakeStorage();
+    const first = createWorker(storage);
+    await first.ready;
+    expect((await request(first.worker, "/seed", "{}")).status).toBe(202);
+    const reopened = createWorker(storage);
+    await reopened.ready;
+    ports.decodeSeed.mockResolvedValue({
+      ...original,
+      programs: { bash: { mainModule: "changed.js" } },
+    });
+    expect(
+      (await request(reopened.worker, "/run", JSON.stringify({ seed: original }))).status,
+    ).toBe(409);
+    expect(ports.runProof).not.toHaveBeenCalled();
+  });
+
+  it("does not admit supplied inputs without a prior seed", async () => {
+    const proof = createWorker(new FakeStorage());
+    await proof.ready;
+    const response = await request(proof.worker, "/run", JSON.stringify({ seed: seedA }));
+    expect(response.status).toBe(409);
+    expect(ports.runProof).not.toHaveBeenCalled();
+  });
+
   it("rejects a late run after recovering a seeded proof", async () => {
     const storage = new FakeStorage();
     const proof = createWorker(storage);
@@ -102,7 +169,7 @@ describe("computer boxd proof admission", () => {
     await reopened.ready;
     const runBeforeSeed = await request(reopened.worker, "/run");
     const lateSeed = await request(reopened.worker, "/seed", "{}");
-    const runAfterSeed = await request(reopened.worker, "/run");
+    const runAfterSeed = await request(reopened.worker, "/run", JSON.stringify({ seed: seedA }));
     await Promise.all([...first.background, ...reopened.background]);
     const saved = (await storage.get("proof-state")) as { sourceCommit?: string };
 

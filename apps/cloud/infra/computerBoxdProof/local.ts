@@ -133,7 +133,7 @@ try {
     const callback = new URL("/api/computer/runner", tunnel.url);
     callback.protocol = "wss:";
     await stage.update("running");
-    let state = await request("/run", { runnerEndpoint: callback.href });
+    let state = await request("/run", { runnerEndpoint: callback.href, seed });
     const deadline = Date.now() + 600_000;
     while (state.status === "pending" || state.status === "running") {
       if (Date.now() > deadline) throw new Error("Local VM proof timed out");

@@ -194,13 +194,13 @@ async function waitReady(context: Context) {
   throw new ProofLauncherFailure(last?.safeMessage ?? "Worker /status failed (readiness timeout).");
 }
 
-async function runAndWait(context: Context) {
+async function runAndWait(context: Context, seed: Awaited<ReturnType<typeof seedFor>>) {
   const response = await requestProofWorker({
     url: context.workerUrl!,
     token: context.token,
     route: "/run",
     method: "POST",
-    body: {},
+    body: { seed },
     signal: context.signal,
   });
   let evidence = workerEvidence(response.body, context.stageFile.record.stage);
@@ -355,7 +355,7 @@ async function runProof(options: RunOptions, signal: AbortSignal) {
     activeCheck = "proofRun";
     await stageFile.update("running");
     await save(context, { ...context.receipt, cleanup: "pending" });
-    await runAndWait(context);
+    await runAndWait(context, seed);
   } catch (error) {
     failure =
       error instanceof ProofLauncherFailure
