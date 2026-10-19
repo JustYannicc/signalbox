@@ -1066,6 +1066,7 @@ export const makeEngine = <R>(
       taskLifecycle,
       registerBuiltinTools: (handler) =>
         builtinTools.register({
+          ...handler,
           tools: [...handler.tools, "task_lifecycle"],
           call: (call) =>
             call.tool === "task_lifecycle"

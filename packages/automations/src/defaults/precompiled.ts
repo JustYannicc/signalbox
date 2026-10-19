@@ -4516,4 +4516,2632 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
     workerModule:
       'export function load(workflow) {\nconst meta = {\n\tname: "Payment",\n\tdescription: "Hands a payment an agent\'s browser reached to you: you finish it in the agent\'s browser, answer Done or Failed, and the agent carries on.",\n\tintent: "let me finish the payments my agents reach"\n};\nconst __signalboxWorkflow = workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the agent\'s thread.");\n\tconst answer = await w.ask("s1", `Finish the payment on ${input.site}`, {\n\t\tquestion: [\n\t\t\tinput.note,\n\t\t\t"Open the agent\'s browser, take over and pay. The agent waits until you say how it went.",\n\t\t\tinput.ownBrowserUrl ? `Or finish it in your own browser: ${input.ownBrowserUrl}` : null\n\t\t].filter(Boolean).join("\\n\\n"),\n\t\toptions: ["done", "failed"],\n\t\tfields: { note: {\n\t\t\ttype: "text",\n\t\t\tlabel: "Anything the agent should know?"\n\t\t} },\n\t\topen: {\n\t\t\tthreadId,\n\t\t\tview: "browser"\n\t\t}\n\t});\n\t// The agent reads this from the run: it waits on it, so nothing has to wake it.\n\treturn {\n\t\toutcome: answer.choice,\n\t\tnote: answer.values.note ?? null\n\t};\n});\n\nreturn __signalboxWorkflow;\n}\n',
   },
+  "harness-release-watch": {
+    meta: {
+      name: "Watch harness releases",
+      description:
+        "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project's ID to install its hourly trigger in that project.",
+      intent: "keep the selected agent harness release backed by exact current-release proof",
+      triggers: [
+        {
+          cron: "0 * * * *",
+          timezone: "Europe/Zurich",
+        },
+      ],
+      overlap: "skip",
+    },
+    graph: {
+      nodes: [
+        {
+          type: "loop",
+          id: "s1",
+          line: 968,
+          verb: "for",
+          label: {
+            text: "For each source in NPM_PACKAGES",
+            dynamic: false,
+          },
+          body: [
+            {
+              type: "step",
+              id: "s2",
+              line: 970,
+              verb: "http",
+              label: {
+                text: "Read npm release metadata",
+                dynamic: false,
+              },
+              service: "registry.npmjs.org",
+              detail: {
+                url: {
+                  expression: "`https://registry.npmjs.org/${packagePath}`",
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: "loop",
+          id: "s3/s4",
+          line: 338,
+          verb: "for",
+          label: {
+            text: "While page <= CODEX_MAX_PAGES",
+            dynamic: false,
+          },
+          body: [
+            {
+              type: "step",
+              id: "s3/s5",
+              line: 343,
+              verb: "http",
+              label: {
+                text: "Read Codex release page",
+                dynamic: false,
+              },
+              detail: {
+                url: {
+                  expression: "next",
+                },
+              },
+            },
+            {
+              type: "branch",
+              id: "s3/s6",
+              line: 361,
+              source: "condition",
+              label: {
+                text: "!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "end",
+                      id: "s3/s7",
+                      line: 361,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "step",
+          id: "s8",
+          line: 978,
+          verb: "http",
+          label: {
+            text: "Read the Signalbox source head",
+            dynamic: false,
+          },
+          service: "api.github.com",
+          detail: {
+            url: {
+              literal: "https://api.github.com/repos/JustYannicc/signalbox/commits/main",
+            },
+          },
+        },
+        {
+          type: "branch",
+          id: "s9",
+          line: 982,
+          source: "condition",
+          label: {
+            text: '!isRecord(head) || typeof head.sha !== "string"',
+            dynamic: false,
+          },
+          arms: [
+            {
+              label: "Yes",
+              body: [
+                {
+                  type: "end",
+                  id: "s10",
+                  line: 983,
+                  exit: "workflow",
+                },
+              ],
+            },
+            {
+              label: "No",
+              body: [],
+            },
+          ],
+        },
+        {
+          type: "loop",
+          id: "s11",
+          line: 991,
+          verb: "for",
+          label: {
+            text: "For each candidate in currentBatch",
+            dynamic: false,
+          },
+          body: [
+            {
+              type: "step",
+              id: "s12/s13",
+              line: 517,
+              verb: "recall",
+              label: {
+                text: "Read the release receipt",
+                dynamic: false,
+              },
+              detail: {
+                key: {
+                  expression: "receiptKey",
+                },
+              },
+            },
+            {
+              type: "step",
+              id: "s12/s14",
+              line: 520,
+              verb: "recall",
+              label: {
+                text: "Read the release tracking thread",
+                dynamic: false,
+              },
+              detail: {
+                key: {
+                  expression: "runKey",
+                },
+              },
+            },
+            {
+              type: "branch",
+              id: "s12/s15",
+              line: 526,
+              source: "condition",
+              label: {
+                text: 'disposition === "reuse"',
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "branch",
+                      id: "s12/s16",
+                      line: 527,
+                      source: "condition",
+                      label: {
+                        text: 'candidate.selection === "current" && previous?.status === "red" && previous !==…',
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "branch",
+                              id: "s12/s17/s18",
+                              line: 460,
+                              source: "condition",
+                              label: {
+                                text: 'receipt.handoffStatus === "created"',
+                                dynamic: false,
+                              },
+                              arms: [
+                                {
+                                  label: "Yes",
+                                  body: [
+                                    {
+                                      type: "end",
+                                      id: "s12/s17/s19",
+                                      line: 460,
+                                      exit: "helper",
+                                    },
+                                  ],
+                                },
+                                {
+                                  label: "No",
+                                  body: [],
+                                },
+                              ],
+                            },
+                            {
+                              type: "try",
+                              id: "s12/s17/s20",
+                              line: 467,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s12/s17/s21",
+                                  line: 469,
+                                  verb: "call",
+                                  label: {
+                                    text: "Hand the failed proof to GitHub",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.github_issue",
+                                    },
+                                    args: {
+                                      expression:
+                                        '{ action: "create", correlationId: `${runKey}:${headSha}:red`, title: `Harness proof failed: ${candidate.provider} ${candidate.version}`, body: [`The exact ${candidate.provider} ${candidate.version} proof returned red.`, `Run key: ${runKey}`, `Source head: ${headSha}`, `Workflow: ${receipt.workflow…',
+                                    },
+                                  },
+                                },
+                              ],
+                              failure: [],
+                            },
+                            {
+                              type: "step",
+                              id: "s12/s17/s22",
+                              line: 498,
+                              verb: "remember",
+                              label: {
+                                text: "Store the red proof handoff",
+                                dynamic: false,
+                              },
+                              detail: {
+                                key: {
+                                  expression: "receiptKey",
+                                },
+                                value: {
+                                  expression: "next",
+                                },
+                              },
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "end",
+                      id: "s12/s23",
+                      line: 534,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "branch",
+              id: "s12/s24",
+              line: 543,
+              source: "condition",
+              label: {
+                text: "childThreadId === null",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "try",
+                      id: "s12/s25",
+                      line: 544,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s26",
+                          line: 545,
+                          verb: "agent",
+                          label: {
+                            text: "Create a release proof thread",
+                            dynamic: false,
+                          },
+                          detail: {
+                            prompt: {
+                              expression:
+                                '["This thread tracks one exact harness release attempt.", `Provider: ${candidate.provider}.`, `Version: ${candidate.version}.`, `Source head: ${headSha}.`, `Run key: ${runKey}.`, "The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external co…',
+                            },
+                          },
+                        },
+                        {
+                          type: "branch",
+                          id: "s12/s27",
+                          line: 556,
+                          source: "condition",
+                          label: {
+                            text: "childThreadId !== null",
+                            dynamic: false,
+                          },
+                          arms: [
+                            {
+                              label: "Yes",
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s12/s28",
+                                  line: 557,
+                                  verb: "remember",
+                                  label: {
+                                    text: "Keep the release tracking thread",
+                                    dynamic: false,
+                                  },
+                                  detail: {
+                                    key: {
+                                      expression: "runKey",
+                                    },
+                                    value: {
+                                      expression:
+                                        "{ runKey, provider: candidate.provider, version: candidate.version, childThreadId }",
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                            {
+                              label: "No",
+                              body: [],
+                            },
+                          ],
+                        },
+                      ],
+                      failure: [],
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "branch",
+              id: "s12/s29",
+              line: 576,
+              source: "condition",
+              label: {
+                text: "childThreadId === null",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "step",
+                      id: "s12/s30/s31",
+                      line: 445,
+                      verb: "remember",
+                      label: {
+                        text: "Keep the release receipt pending",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                        value: {
+                          expression: '{ ...fields, status: "pending" }',
+                        },
+                      },
+                    },
+                    {
+                      type: "end",
+                      id: "s12/s32",
+                      line: 591,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "branch",
+              id: "s12/s33",
+              line: 599,
+              source: "condition",
+              label: {
+                text: "expectedRevision === null",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "try",
+                      id: "s12/s34",
+                      line: 600,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s35",
+                          line: 601,
+                          verb: "call",
+                          label: {
+                            text: "Read the selected release revision",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.harness_release_ledger",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "selection", provider: ledgerProviderFor(candidate.provider) }',
+                            },
+                          },
+                        },
+                      ],
+                      failure: [],
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "branch",
+              id: "s12/s36",
+              line: 617,
+              source: "condition",
+              label: {
+                text: "expectedRevision === null",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "branch",
+                      id: "s12/s37/s38",
+                      line: 424,
+                      source: "condition",
+                      label: {
+                        text: "previous?.threadUpdate === fingerprint",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "end",
+                              id: "s12/s37/s39",
+                              line: 424,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s12/s37/s40",
+                      line: 425,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s37/s41",
+                          line: 426,
+                          verb: "call",
+                          label: {
+                            text: "Update the release proof thread",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.t3_thread_send",
+                            },
+                            args: {
+                              expression: "{ threadId, message }",
+                            },
+                          },
+                        },
+                        {
+                          type: "end",
+                          id: "s12/s37/s42",
+                          line: 433,
+                          exit: "helper",
+                        },
+                      ],
+                      failure: [
+                        {
+                          type: "end",
+                          id: "s12/s37/s43",
+                          line: 437,
+                          exit: "helper",
+                        },
+                      ],
+                    },
+                    {
+                      type: "step",
+                      id: "s12/s44/s31",
+                      line: 445,
+                      verb: "remember",
+                      label: {
+                        text: "Keep the release receipt pending",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                        value: {
+                          expression: '{ ...fields, status: "pending" }',
+                        },
+                      },
+                    },
+                    {
+                      type: "end",
+                      id: "s12/s45",
+                      line: 643,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "try",
+              id: "s12/s46",
+              line: 652,
+              label: {
+                text: "If something fails",
+                dynamic: false,
+              },
+              body: [
+                {
+                  type: "branch",
+                  id: "s12/s47",
+                  line: 653,
+                  source: "condition",
+                  label: {
+                    text: 'disposition === "read" && previous !== null',
+                    dynamic: false,
+                  },
+                  arms: [
+                    {
+                      label: "Yes",
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s48",
+                          line: 653,
+                          verb: "call",
+                          label: {
+                            text: "Read the existing exact release run",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.github_workflow",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "read", workflowFile, runId: previous.workflowRunId, headSha }',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      label: "No",
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s49",
+                          line: 661,
+                          verb: "call",
+                          label: {
+                            text: "Dispatch the exact release proof",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.github_workflow",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "dispatch", workflowFile, ref: "main", headSha, correlationId: runKey, inputs: { provider: candidate.provider, version: candidate.version, runKey, selection: candidate.selection } }',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+              failure: [],
+            },
+            {
+              type: "branch",
+              id: "s12/s50",
+              line: 685,
+              source: "condition",
+              label: {
+                text: "run === null || run.workflowFile !== workflowFile || run.headSha !== headSha ||…",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "branch",
+                      id: "s12/s51/s38",
+                      line: 424,
+                      source: "condition",
+                      label: {
+                        text: "previous?.threadUpdate === fingerprint",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "end",
+                              id: "s12/s51/s39",
+                              line: 424,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s12/s51/s40",
+                      line: 425,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s51/s41",
+                          line: 426,
+                          verb: "call",
+                          label: {
+                            text: "Update the release proof thread",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.t3_thread_send",
+                            },
+                            args: {
+                              expression: "{ threadId, message }",
+                            },
+                          },
+                        },
+                        {
+                          type: "end",
+                          id: "s12/s51/s42",
+                          line: 433,
+                          exit: "helper",
+                        },
+                      ],
+                      failure: [
+                        {
+                          type: "end",
+                          id: "s12/s51/s43",
+                          line: 437,
+                          exit: "helper",
+                        },
+                      ],
+                    },
+                    {
+                      type: "step",
+                      id: "s12/s52/s31",
+                      line: 445,
+                      verb: "remember",
+                      label: {
+                        text: "Keep the release receipt pending",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                        value: {
+                          expression: '{ ...fields, status: "pending" }',
+                        },
+                      },
+                    },
+                    {
+                      type: "end",
+                      id: "s12/s53",
+                      line: 719,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "branch",
+              id: "s12/s54",
+              line: 740,
+              source: "condition",
+              label: {
+                text: 'run.status !== "completed"',
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "step",
+                      id: "s12/s55/s31",
+                      line: 445,
+                      verb: "remember",
+                      label: {
+                        text: "Keep the release receipt pending",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                        value: {
+                          expression: '{ ...fields, status: "pending" }',
+                        },
+                      },
+                    },
+                    {
+                      type: "end",
+                      id: "s12/s56",
+                      line: 750,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "try",
+              id: "s12/s57",
+              line: 759,
+              label: {
+                text: "If something fails",
+                dynamic: false,
+              },
+              body: [
+                {
+                  type: "step",
+                  id: "s12/s58",
+                  line: 760,
+                  verb: "call",
+                  label: {
+                    text: "Read the completed release proof artifact",
+                    dynamic: false,
+                  },
+                  service: "signalbox",
+                  detail: {
+                    operation: {
+                      literal: "signalbox.github_workflow",
+                    },
+                    args: {
+                      expression:
+                        '{ action: "artifact", workflowFile, runId: run.runId, headSha, artifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId), entryPath: HARNESS_RELEASE_RESULT_PATH }',
+                    },
+                  },
+                },
+              ],
+              failure: [],
+            },
+            {
+              type: "branch",
+              id: "s12/s59",
+              line: 784,
+              source: "condition",
+              label: {
+                text: "verified === null",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "branch",
+                      id: "s12/s60/s38",
+                      line: 424,
+                      source: "condition",
+                      label: {
+                        text: "previous?.threadUpdate === fingerprint",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "end",
+                              id: "s12/s60/s39",
+                              line: 424,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s12/s60/s40",
+                      line: 425,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s60/s41",
+                          line: 426,
+                          verb: "call",
+                          label: {
+                            text: "Update the release proof thread",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.t3_thread_send",
+                            },
+                            args: {
+                              expression: "{ threadId, message }",
+                            },
+                          },
+                        },
+                        {
+                          type: "end",
+                          id: "s12/s60/s42",
+                          line: 433,
+                          exit: "helper",
+                        },
+                      ],
+                      failure: [
+                        {
+                          type: "end",
+                          id: "s12/s60/s43",
+                          line: 437,
+                          exit: "helper",
+                        },
+                      ],
+                    },
+                    {
+                      type: "step",
+                      id: "s12/s61/s31",
+                      line: 445,
+                      verb: "remember",
+                      label: {
+                        text: "Keep the release receipt pending",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                        value: {
+                          expression: '{ ...fields, status: "pending" }',
+                        },
+                      },
+                    },
+                    {
+                      type: "end",
+                      id: "s12/s62",
+                      line: 802,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "try",
+              id: "s12/s63",
+              line: 812,
+              label: {
+                text: "If something fails",
+                dynamic: false,
+              },
+              body: [
+                {
+                  type: "step",
+                  id: "s12/s64",
+                  line: 813,
+                  verb: "call",
+                  label: {
+                    text: "Verify the immutable release result in the project ledger",
+                    dynamic: false,
+                  },
+                  service: "signalbox",
+                  detail: {
+                    operation: {
+                      literal: "signalbox.harness_release_ledger",
+                    },
+                    args: {
+                      expression:
+                        '{ action: "record", provider: ledgerProviderFor(candidate.provider), version: candidate.version, selection: candidate.selection, runKey, headSha, workflowFile, workflowRunId: run.runId, artifactName: verified.artifact.name, entryPath: verified.artifact.entryPath }',
+                    },
+                  },
+                },
+              ],
+              failure: [],
+            },
+            {
+              type: "branch",
+              id: "s12/s65",
+              line: 860,
+              source: "condition",
+              label: {
+                text: 'status === "green" && candidate.selection === "current" && expectedRevision !==…',
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "try",
+                      id: "s12/s66",
+                      line: 861,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s67",
+                          line: 862,
+                          verb: "call",
+                          label: {
+                            text: "Read the selected release revision",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.harness_release_ledger",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "selection", provider: ledgerProviderFor(candidate.provider) }',
+                            },
+                          },
+                        },
+                        {
+                          type: "branch",
+                          id: "s12/s68",
+                          line: 870,
+                          source: "condition",
+                          label: {
+                            text: "!canPromoteHarnessRelease( { selection: candidate.selection, status, runtimeArt…",
+                            dynamic: false,
+                          },
+                          arms: [
+                            {
+                              label: "Yes",
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s12/s69/s31",
+                                  line: 445,
+                                  verb: "remember",
+                                  label: {
+                                    text: "Keep the release receipt pending",
+                                    dynamic: false,
+                                  },
+                                  detail: {
+                                    key: {
+                                      expression: "receiptKey",
+                                    },
+                                    value: {
+                                      expression: '{ ...fields, status: "pending" }',
+                                    },
+                                  },
+                                },
+                                {
+                                  type: "end",
+                                  id: "s12/s70",
+                                  line: 887,
+                                  exit: "helper",
+                                },
+                              ],
+                            },
+                            {
+                              label: "No",
+                              body: [],
+                            },
+                          ],
+                        },
+                        {
+                          type: "step",
+                          id: "s12/s71",
+                          line: 896,
+                          verb: "call",
+                          label: {
+                            text: "Select the proven current release",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.harness_release_ledger",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "promote", provider: ledgerProviderFor(candidate.provider), releaseId: result.candidateId, expectedRevision, changedAt: triggerAt }',
+                            },
+                          },
+                        },
+                      ],
+                      failure: [
+                        {
+                          type: "step",
+                          id: "s12/s72/s31",
+                          line: 445,
+                          verb: "remember",
+                          label: {
+                            text: "Keep the release receipt pending",
+                            dynamic: false,
+                          },
+                          detail: {
+                            key: {
+                              expression: "receiptKey",
+                            },
+                            value: {
+                              expression: '{ ...fields, status: "pending" }',
+                            },
+                          },
+                        },
+                        {
+                          type: "end",
+                          id: "s12/s73",
+                          line: 916,
+                          exit: "helper",
+                        },
+                      ],
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "branch",
+              id: "s12/s74",
+              line: 926,
+              source: "condition",
+              label: {
+                text: 'status === "red" && candidate.selection === "current"',
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "branch",
+                      id: "s12/s75/s18",
+                      line: 460,
+                      source: "condition",
+                      label: {
+                        text: 'receipt.handoffStatus === "created"',
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "end",
+                              id: "s12/s75/s19",
+                              line: 460,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s12/s75/s20",
+                      line: 467,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s12/s75/s21",
+                          line: 469,
+                          verb: "call",
+                          label: {
+                            text: "Hand the failed proof to GitHub",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.github_issue",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "create", correlationId: `${runKey}:${headSha}:red`, title: `Harness proof failed: ${candidate.provider} ${candidate.version}`, body: [`The exact ${candidate.provider} ${candidate.version} proof returned red.`, `Run key: ${runKey}`, `Source head: ${headSha}`, `Workflow: ${receipt.workflow…',
+                            },
+                          },
+                        },
+                      ],
+                      failure: [],
+                    },
+                    {
+                      type: "step",
+                      id: "s12/s75/s22",
+                      line: 498,
+                      verb: "remember",
+                      label: {
+                        text: "Store the red proof handoff",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                        value: {
+                          expression: "next",
+                        },
+                      },
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "branch",
+              id: "s12/s76/s38",
+              line: 424,
+              source: "condition",
+              label: {
+                text: "previous?.threadUpdate === fingerprint",
+                dynamic: false,
+              },
+              arms: [
+                {
+                  label: "Yes",
+                  body: [
+                    {
+                      type: "end",
+                      id: "s12/s76/s39",
+                      line: 424,
+                      exit: "helper",
+                    },
+                  ],
+                },
+                {
+                  label: "No",
+                  body: [],
+                },
+              ],
+            },
+            {
+              type: "try",
+              id: "s12/s76/s40",
+              line: 425,
+              label: {
+                text: "If something fails",
+                dynamic: false,
+              },
+              body: [
+                {
+                  type: "step",
+                  id: "s12/s76/s41",
+                  line: 426,
+                  verb: "call",
+                  label: {
+                    text: "Update the release proof thread",
+                    dynamic: false,
+                  },
+                  service: "signalbox",
+                  detail: {
+                    operation: {
+                      literal: "signalbox.t3_thread_send",
+                    },
+                    args: {
+                      expression: "{ threadId, message }",
+                    },
+                  },
+                },
+                {
+                  type: "end",
+                  id: "s12/s76/s42",
+                  line: 433,
+                  exit: "helper",
+                },
+              ],
+              failure: [
+                {
+                  type: "end",
+                  id: "s12/s76/s43",
+                  line: 437,
+                  exit: "helper",
+                },
+              ],
+            },
+            {
+              type: "step",
+              id: "s12/s77",
+              line: 942,
+              verb: "remember",
+              label: {
+                text: "Store the release proof status",
+                dynamic: false,
+              },
+              detail: {
+                key: {
+                  expression: "receiptKey",
+                },
+                value: {
+                  expression: "finalReceipt",
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: "branch",
+          id: "s78",
+          line: 1007,
+          source: "condition",
+          label: {
+            text: "allCurrentGreen",
+            dynamic: false,
+          },
+          arms: [
+            {
+              label: "Yes",
+              body: [
+                {
+                  type: "loop",
+                  id: "s79",
+                  line: 1009,
+                  verb: "for",
+                  label: {
+                    text: "For each candidate in backfill",
+                    dynamic: false,
+                  },
+                  body: [
+                    {
+                      type: "step",
+                      id: "s80",
+                      line: 1010,
+                      verb: "recall",
+                      label: {
+                        text: "Read a historical release receipt",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression:
+                            "releaseReceiptKey(candidate.provider, candidate.version, head.sha)",
+                        },
+                      },
+                    },
+                  ],
+                },
+                {
+                  type: "loop",
+                  id: "s81",
+                  line: 1027,
+                  verb: "for",
+                  label: {
+                    text: "For each candidate in backfillBatch",
+                    dynamic: false,
+                  },
+                  body: [
+                    {
+                      type: "step",
+                      id: "s82/s13",
+                      line: 517,
+                      verb: "recall",
+                      label: {
+                        text: "Read the release receipt",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                      },
+                    },
+                    {
+                      type: "step",
+                      id: "s82/s14",
+                      line: 520,
+                      verb: "recall",
+                      label: {
+                        text: "Read the release tracking thread",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "runKey",
+                        },
+                      },
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s15",
+                      line: 526,
+                      source: "condition",
+                      label: {
+                        text: 'disposition === "reuse"',
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "branch",
+                              id: "s82/s16",
+                              line: 527,
+                              source: "condition",
+                              label: {
+                                text: 'candidate.selection === "current" && previous?.status === "red" && previous !==…',
+                                dynamic: false,
+                              },
+                              arms: [
+                                {
+                                  label: "Yes",
+                                  body: [
+                                    {
+                                      type: "branch",
+                                      id: "s82/s17/s18",
+                                      line: 460,
+                                      source: "condition",
+                                      label: {
+                                        text: 'receipt.handoffStatus === "created"',
+                                        dynamic: false,
+                                      },
+                                      arms: [
+                                        {
+                                          label: "Yes",
+                                          body: [
+                                            {
+                                              type: "end",
+                                              id: "s82/s17/s19",
+                                              line: 460,
+                                              exit: "helper",
+                                            },
+                                          ],
+                                        },
+                                        {
+                                          label: "No",
+                                          body: [],
+                                        },
+                                      ],
+                                    },
+                                    {
+                                      type: "try",
+                                      id: "s82/s17/s20",
+                                      line: 467,
+                                      label: {
+                                        text: "If something fails",
+                                        dynamic: false,
+                                      },
+                                      body: [
+                                        {
+                                          type: "step",
+                                          id: "s82/s17/s21",
+                                          line: 469,
+                                          verb: "call",
+                                          label: {
+                                            text: "Hand the failed proof to GitHub",
+                                            dynamic: false,
+                                          },
+                                          service: "signalbox",
+                                          detail: {
+                                            operation: {
+                                              literal: "signalbox.github_issue",
+                                            },
+                                            args: {
+                                              expression:
+                                                '{ action: "create", correlationId: `${runKey}:${headSha}:red`, title: `Harness proof failed: ${candidate.provider} ${candidate.version}`, body: [`The exact ${candidate.provider} ${candidate.version} proof returned red.`, `Run key: ${runKey}`, `Source head: ${headSha}`, `Workflow: ${receipt.workflow…',
+                                            },
+                                          },
+                                        },
+                                      ],
+                                      failure: [],
+                                    },
+                                    {
+                                      type: "step",
+                                      id: "s82/s17/s22",
+                                      line: 498,
+                                      verb: "remember",
+                                      label: {
+                                        text: "Store the red proof handoff",
+                                        dynamic: false,
+                                      },
+                                      detail: {
+                                        key: {
+                                          expression: "receiptKey",
+                                        },
+                                        value: {
+                                          expression: "next",
+                                        },
+                                      },
+                                    },
+                                  ],
+                                },
+                                {
+                                  label: "No",
+                                  body: [],
+                                },
+                              ],
+                            },
+                            {
+                              type: "end",
+                              id: "s82/s23",
+                              line: 534,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s24",
+                      line: 543,
+                      source: "condition",
+                      label: {
+                        text: "childThreadId === null",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "try",
+                              id: "s82/s25",
+                              line: 544,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s26",
+                                  line: 545,
+                                  verb: "agent",
+                                  label: {
+                                    text: "Create a release proof thread",
+                                    dynamic: false,
+                                  },
+                                  detail: {
+                                    prompt: {
+                                      expression:
+                                        '["This thread tracks one exact harness release attempt.", `Provider: ${candidate.provider}.`, `Version: ${candidate.version}.`, `Source head: ${headSha}.`, `Run key: ${runKey}.`, "The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external co…',
+                                    },
+                                  },
+                                },
+                                {
+                                  type: "branch",
+                                  id: "s82/s27",
+                                  line: 556,
+                                  source: "condition",
+                                  label: {
+                                    text: "childThreadId !== null",
+                                    dynamic: false,
+                                  },
+                                  arms: [
+                                    {
+                                      label: "Yes",
+                                      body: [
+                                        {
+                                          type: "step",
+                                          id: "s82/s28",
+                                          line: 557,
+                                          verb: "remember",
+                                          label: {
+                                            text: "Keep the release tracking thread",
+                                            dynamic: false,
+                                          },
+                                          detail: {
+                                            key: {
+                                              expression: "runKey",
+                                            },
+                                            value: {
+                                              expression:
+                                                "{ runKey, provider: candidate.provider, version: candidate.version, childThreadId }",
+                                            },
+                                          },
+                                        },
+                                      ],
+                                    },
+                                    {
+                                      label: "No",
+                                      body: [],
+                                    },
+                                  ],
+                                },
+                              ],
+                              failure: [],
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s29",
+                      line: 576,
+                      source: "condition",
+                      label: {
+                        text: "childThreadId === null",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "step",
+                              id: "s82/s30/s31",
+                              line: 445,
+                              verb: "remember",
+                              label: {
+                                text: "Keep the release receipt pending",
+                                dynamic: false,
+                              },
+                              detail: {
+                                key: {
+                                  expression: "receiptKey",
+                                },
+                                value: {
+                                  expression: '{ ...fields, status: "pending" }',
+                                },
+                              },
+                            },
+                            {
+                              type: "end",
+                              id: "s82/s32",
+                              line: 591,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s33",
+                      line: 599,
+                      source: "condition",
+                      label: {
+                        text: "expectedRevision === null",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "try",
+                              id: "s82/s34",
+                              line: 600,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s35",
+                                  line: 601,
+                                  verb: "call",
+                                  label: {
+                                    text: "Read the selected release revision",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.harness_release_ledger",
+                                    },
+                                    args: {
+                                      expression:
+                                        '{ action: "selection", provider: ledgerProviderFor(candidate.provider) }',
+                                    },
+                                  },
+                                },
+                              ],
+                              failure: [],
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s36",
+                      line: 617,
+                      source: "condition",
+                      label: {
+                        text: "expectedRevision === null",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "branch",
+                              id: "s82/s37/s38",
+                              line: 424,
+                              source: "condition",
+                              label: {
+                                text: "previous?.threadUpdate === fingerprint",
+                                dynamic: false,
+                              },
+                              arms: [
+                                {
+                                  label: "Yes",
+                                  body: [
+                                    {
+                                      type: "end",
+                                      id: "s82/s37/s39",
+                                      line: 424,
+                                      exit: "helper",
+                                    },
+                                  ],
+                                },
+                                {
+                                  label: "No",
+                                  body: [],
+                                },
+                              ],
+                            },
+                            {
+                              type: "try",
+                              id: "s82/s37/s40",
+                              line: 425,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s37/s41",
+                                  line: 426,
+                                  verb: "call",
+                                  label: {
+                                    text: "Update the release proof thread",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.t3_thread_send",
+                                    },
+                                    args: {
+                                      expression: "{ threadId, message }",
+                                    },
+                                  },
+                                },
+                                {
+                                  type: "end",
+                                  id: "s82/s37/s42",
+                                  line: 433,
+                                  exit: "helper",
+                                },
+                              ],
+                              failure: [
+                                {
+                                  type: "end",
+                                  id: "s82/s37/s43",
+                                  line: 437,
+                                  exit: "helper",
+                                },
+                              ],
+                            },
+                            {
+                              type: "step",
+                              id: "s82/s44/s31",
+                              line: 445,
+                              verb: "remember",
+                              label: {
+                                text: "Keep the release receipt pending",
+                                dynamic: false,
+                              },
+                              detail: {
+                                key: {
+                                  expression: "receiptKey",
+                                },
+                                value: {
+                                  expression: '{ ...fields, status: "pending" }',
+                                },
+                              },
+                            },
+                            {
+                              type: "end",
+                              id: "s82/s45",
+                              line: 643,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s82/s46",
+                      line: 652,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "branch",
+                          id: "s82/s47",
+                          line: 653,
+                          source: "condition",
+                          label: {
+                            text: 'disposition === "read" && previous !== null',
+                            dynamic: false,
+                          },
+                          arms: [
+                            {
+                              label: "Yes",
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s48",
+                                  line: 653,
+                                  verb: "call",
+                                  label: {
+                                    text: "Read the existing exact release run",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.github_workflow",
+                                    },
+                                    args: {
+                                      expression:
+                                        '{ action: "read", workflowFile, runId: previous.workflowRunId, headSha }',
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                            {
+                              label: "No",
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s49",
+                                  line: 661,
+                                  verb: "call",
+                                  label: {
+                                    text: "Dispatch the exact release proof",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.github_workflow",
+                                    },
+                                    args: {
+                                      expression:
+                                        '{ action: "dispatch", workflowFile, ref: "main", headSha, correlationId: runKey, inputs: { provider: candidate.provider, version: candidate.version, runKey, selection: candidate.selection } }',
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                      failure: [],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s50",
+                      line: 685,
+                      source: "condition",
+                      label: {
+                        text: "run === null || run.workflowFile !== workflowFile || run.headSha !== headSha ||…",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "branch",
+                              id: "s82/s51/s38",
+                              line: 424,
+                              source: "condition",
+                              label: {
+                                text: "previous?.threadUpdate === fingerprint",
+                                dynamic: false,
+                              },
+                              arms: [
+                                {
+                                  label: "Yes",
+                                  body: [
+                                    {
+                                      type: "end",
+                                      id: "s82/s51/s39",
+                                      line: 424,
+                                      exit: "helper",
+                                    },
+                                  ],
+                                },
+                                {
+                                  label: "No",
+                                  body: [],
+                                },
+                              ],
+                            },
+                            {
+                              type: "try",
+                              id: "s82/s51/s40",
+                              line: 425,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s51/s41",
+                                  line: 426,
+                                  verb: "call",
+                                  label: {
+                                    text: "Update the release proof thread",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.t3_thread_send",
+                                    },
+                                    args: {
+                                      expression: "{ threadId, message }",
+                                    },
+                                  },
+                                },
+                                {
+                                  type: "end",
+                                  id: "s82/s51/s42",
+                                  line: 433,
+                                  exit: "helper",
+                                },
+                              ],
+                              failure: [
+                                {
+                                  type: "end",
+                                  id: "s82/s51/s43",
+                                  line: 437,
+                                  exit: "helper",
+                                },
+                              ],
+                            },
+                            {
+                              type: "step",
+                              id: "s82/s52/s31",
+                              line: 445,
+                              verb: "remember",
+                              label: {
+                                text: "Keep the release receipt pending",
+                                dynamic: false,
+                              },
+                              detail: {
+                                key: {
+                                  expression: "receiptKey",
+                                },
+                                value: {
+                                  expression: '{ ...fields, status: "pending" }',
+                                },
+                              },
+                            },
+                            {
+                              type: "end",
+                              id: "s82/s53",
+                              line: 719,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s54",
+                      line: 740,
+                      source: "condition",
+                      label: {
+                        text: 'run.status !== "completed"',
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "step",
+                              id: "s82/s55/s31",
+                              line: 445,
+                              verb: "remember",
+                              label: {
+                                text: "Keep the release receipt pending",
+                                dynamic: false,
+                              },
+                              detail: {
+                                key: {
+                                  expression: "receiptKey",
+                                },
+                                value: {
+                                  expression: '{ ...fields, status: "pending" }',
+                                },
+                              },
+                            },
+                            {
+                              type: "end",
+                              id: "s82/s56",
+                              line: 750,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s82/s57",
+                      line: 759,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s82/s58",
+                          line: 760,
+                          verb: "call",
+                          label: {
+                            text: "Read the completed release proof artifact",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.github_workflow",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "artifact", workflowFile, runId: run.runId, headSha, artifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId), entryPath: HARNESS_RELEASE_RESULT_PATH }',
+                            },
+                          },
+                        },
+                      ],
+                      failure: [],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s59",
+                      line: 784,
+                      source: "condition",
+                      label: {
+                        text: "verified === null",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "branch",
+                              id: "s82/s60/s38",
+                              line: 424,
+                              source: "condition",
+                              label: {
+                                text: "previous?.threadUpdate === fingerprint",
+                                dynamic: false,
+                              },
+                              arms: [
+                                {
+                                  label: "Yes",
+                                  body: [
+                                    {
+                                      type: "end",
+                                      id: "s82/s60/s39",
+                                      line: 424,
+                                      exit: "helper",
+                                    },
+                                  ],
+                                },
+                                {
+                                  label: "No",
+                                  body: [],
+                                },
+                              ],
+                            },
+                            {
+                              type: "try",
+                              id: "s82/s60/s40",
+                              line: 425,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s60/s41",
+                                  line: 426,
+                                  verb: "call",
+                                  label: {
+                                    text: "Update the release proof thread",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.t3_thread_send",
+                                    },
+                                    args: {
+                                      expression: "{ threadId, message }",
+                                    },
+                                  },
+                                },
+                                {
+                                  type: "end",
+                                  id: "s82/s60/s42",
+                                  line: 433,
+                                  exit: "helper",
+                                },
+                              ],
+                              failure: [
+                                {
+                                  type: "end",
+                                  id: "s82/s60/s43",
+                                  line: 437,
+                                  exit: "helper",
+                                },
+                              ],
+                            },
+                            {
+                              type: "step",
+                              id: "s82/s61/s31",
+                              line: 445,
+                              verb: "remember",
+                              label: {
+                                text: "Keep the release receipt pending",
+                                dynamic: false,
+                              },
+                              detail: {
+                                key: {
+                                  expression: "receiptKey",
+                                },
+                                value: {
+                                  expression: '{ ...fields, status: "pending" }',
+                                },
+                              },
+                            },
+                            {
+                              type: "end",
+                              id: "s82/s62",
+                              line: 802,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s82/s63",
+                      line: 812,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s82/s64",
+                          line: 813,
+                          verb: "call",
+                          label: {
+                            text: "Verify the immutable release result in the project ledger",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.harness_release_ledger",
+                            },
+                            args: {
+                              expression:
+                                '{ action: "record", provider: ledgerProviderFor(candidate.provider), version: candidate.version, selection: candidate.selection, runKey, headSha, workflowFile, workflowRunId: run.runId, artifactName: verified.artifact.name, entryPath: verified.artifact.entryPath }',
+                            },
+                          },
+                        },
+                      ],
+                      failure: [],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s65",
+                      line: 860,
+                      source: "condition",
+                      label: {
+                        text: 'status === "green" && candidate.selection === "current" && expectedRevision !==…',
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "try",
+                              id: "s82/s66",
+                              line: 861,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s67",
+                                  line: 862,
+                                  verb: "call",
+                                  label: {
+                                    text: "Read the selected release revision",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.harness_release_ledger",
+                                    },
+                                    args: {
+                                      expression:
+                                        '{ action: "selection", provider: ledgerProviderFor(candidate.provider) }',
+                                    },
+                                  },
+                                },
+                                {
+                                  type: "branch",
+                                  id: "s82/s68",
+                                  line: 870,
+                                  source: "condition",
+                                  label: {
+                                    text: "!canPromoteHarnessRelease( { selection: candidate.selection, status, runtimeArt…",
+                                    dynamic: false,
+                                  },
+                                  arms: [
+                                    {
+                                      label: "Yes",
+                                      body: [
+                                        {
+                                          type: "step",
+                                          id: "s82/s69/s31",
+                                          line: 445,
+                                          verb: "remember",
+                                          label: {
+                                            text: "Keep the release receipt pending",
+                                            dynamic: false,
+                                          },
+                                          detail: {
+                                            key: {
+                                              expression: "receiptKey",
+                                            },
+                                            value: {
+                                              expression: '{ ...fields, status: "pending" }',
+                                            },
+                                          },
+                                        },
+                                        {
+                                          type: "end",
+                                          id: "s82/s70",
+                                          line: 887,
+                                          exit: "helper",
+                                        },
+                                      ],
+                                    },
+                                    {
+                                      label: "No",
+                                      body: [],
+                                    },
+                                  ],
+                                },
+                                {
+                                  type: "step",
+                                  id: "s82/s71",
+                                  line: 896,
+                                  verb: "call",
+                                  label: {
+                                    text: "Select the proven current release",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.harness_release_ledger",
+                                    },
+                                    args: {
+                                      expression:
+                                        '{ action: "promote", provider: ledgerProviderFor(candidate.provider), releaseId: result.candidateId, expectedRevision, changedAt: triggerAt }',
+                                    },
+                                  },
+                                },
+                              ],
+                              failure: [
+                                {
+                                  type: "step",
+                                  id: "s82/s72/s31",
+                                  line: 445,
+                                  verb: "remember",
+                                  label: {
+                                    text: "Keep the release receipt pending",
+                                    dynamic: false,
+                                  },
+                                  detail: {
+                                    key: {
+                                      expression: "receiptKey",
+                                    },
+                                    value: {
+                                      expression: '{ ...fields, status: "pending" }',
+                                    },
+                                  },
+                                },
+                                {
+                                  type: "end",
+                                  id: "s82/s73",
+                                  line: 916,
+                                  exit: "helper",
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s74",
+                      line: 926,
+                      source: "condition",
+                      label: {
+                        text: 'status === "red" && candidate.selection === "current"',
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "branch",
+                              id: "s82/s75/s18",
+                              line: 460,
+                              source: "condition",
+                              label: {
+                                text: 'receipt.handoffStatus === "created"',
+                                dynamic: false,
+                              },
+                              arms: [
+                                {
+                                  label: "Yes",
+                                  body: [
+                                    {
+                                      type: "end",
+                                      id: "s82/s75/s19",
+                                      line: 460,
+                                      exit: "helper",
+                                    },
+                                  ],
+                                },
+                                {
+                                  label: "No",
+                                  body: [],
+                                },
+                              ],
+                            },
+                            {
+                              type: "try",
+                              id: "s82/s75/s20",
+                              line: 467,
+                              label: {
+                                text: "If something fails",
+                                dynamic: false,
+                              },
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s82/s75/s21",
+                                  line: 469,
+                                  verb: "call",
+                                  label: {
+                                    text: "Hand the failed proof to GitHub",
+                                    dynamic: false,
+                                  },
+                                  service: "signalbox",
+                                  detail: {
+                                    operation: {
+                                      literal: "signalbox.github_issue",
+                                    },
+                                    args: {
+                                      expression:
+                                        '{ action: "create", correlationId: `${runKey}:${headSha}:red`, title: `Harness proof failed: ${candidate.provider} ${candidate.version}`, body: [`The exact ${candidate.provider} ${candidate.version} proof returned red.`, `Run key: ${runKey}`, `Source head: ${headSha}`, `Workflow: ${receipt.workflow…',
+                                    },
+                                  },
+                                },
+                              ],
+                              failure: [],
+                            },
+                            {
+                              type: "step",
+                              id: "s82/s75/s22",
+                              line: 498,
+                              verb: "remember",
+                              label: {
+                                text: "Store the red proof handoff",
+                                dynamic: false,
+                              },
+                              detail: {
+                                key: {
+                                  expression: "receiptKey",
+                                },
+                                value: {
+                                  expression: "next",
+                                },
+                              },
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "branch",
+                      id: "s82/s76/s38",
+                      line: 424,
+                      source: "condition",
+                      label: {
+                        text: "previous?.threadUpdate === fingerprint",
+                        dynamic: false,
+                      },
+                      arms: [
+                        {
+                          label: "Yes",
+                          body: [
+                            {
+                              type: "end",
+                              id: "s82/s76/s39",
+                              line: 424,
+                              exit: "helper",
+                            },
+                          ],
+                        },
+                        {
+                          label: "No",
+                          body: [],
+                        },
+                      ],
+                    },
+                    {
+                      type: "try",
+                      id: "s82/s76/s40",
+                      line: 425,
+                      label: {
+                        text: "If something fails",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s82/s76/s41",
+                          line: 426,
+                          verb: "call",
+                          label: {
+                            text: "Update the release proof thread",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.t3_thread_send",
+                            },
+                            args: {
+                              expression: "{ threadId, message }",
+                            },
+                          },
+                        },
+                        {
+                          type: "end",
+                          id: "s82/s76/s42",
+                          line: 433,
+                          exit: "helper",
+                        },
+                      ],
+                      failure: [
+                        {
+                          type: "end",
+                          id: "s82/s76/s43",
+                          line: 437,
+                          exit: "helper",
+                        },
+                      ],
+                    },
+                    {
+                      type: "step",
+                      id: "s82/s77",
+                      line: 942,
+                      verb: "remember",
+                      label: {
+                        text: "Store the release proof status",
+                        dynamic: false,
+                      },
+                      detail: {
+                        key: {
+                          expression: "receiptKey",
+                        },
+                        value: {
+                          expression: "finalReceipt",
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              label: "No",
+              body: [],
+            },
+          ],
+        },
+      ],
+    },
+    script:
+      'export const meta = {\n\tname: "Watch harness releases",\n\tdescription: "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project\'s ID to install its hourly trigger in that project.",\n\tintent: "keep the selected agent harness release backed by exact current-release proof",\n\ttriggers: [{\n\t\tcron: "0 * * * *",\n\t\ttimezone: "Europe/Zurich"\n\t}],\n\toverlap: "skip"\n};\nconst HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";\nconst HARNESS_RELEASE_RESULT_PATH = "result.json";\nconst HARNESS_RELEASE_BACKFILL_LIMITS = {\n\t"claude-code": 50,\n\t"claude-agent-sdk": 0,\n\t"codex": 10\n};\nconst releaseArtifactName = (provider, version, runId) => `harness-release-${provider}-${version}-${runId}-1`;\nconst isVerifiedHarnessRelease = (status, result) => {\n\tif (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed") return false;\n\tconst requiredChecks = [\n\t\t"boot",\n\t\t"text",\n\t\t"readEdit",\n\t\t"bash",\n\t\t"grep",\n\t\t"resume",\n\t\t"mcp",\n\t\t"interrupt",\n\t\t"publicHarness"\n\t];\n\tconst requiredMetrics = [\n\t\t"moduleBytes",\n\t\t"bootTimeMs",\n\t\t"peakHeapBytes"\n\t];\n\tfor (const environment of ["local-workerd", "deployed"]) {\n\t\tconst assessment = result.environments?.[environment];\n\t\tif (!assessment?.checks || assessment.checks.length !== requiredChecks.length || requiredChecks.some((name) => assessment.checks?.filter((check) => check.name === name).length !== 1) || assessment.checks.some((check) => check.status !== "passed")) return false;\n\t\tfor (const name of requiredMetrics) {\n\t\t\tconst metric = assessment.metrics?.[name];\n\t\t\tif (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0) return false;\n\t\t}\n\t}\n\treturn true;\n};\nconst canPromoteHarnessRelease = (input) => {\n\tif (input.selection !== "current" || !input.runtimeArtifactVerified || input.expectedRevision === null || input.currentRevision !== input.expectedRevision) return false;\n\treturn isVerifiedHarnessRelease(input.status, input.result);\n};\nconst ledgerProviderFor = (provider) => provider === "claude-agent-sdk" ? "agent-sdk" : provider;\nconst nextHarnessReleaseBatch = (releases, verifiedCurrentProviders = [], terminalBackfillIds = []) => {\n\tconst ordered = orderReleaseCandidates(releases);\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst requiredCurrentProviders = [\n\t\t"claude-code",\n\t\t"claude-agent-sdk",\n\t\t"codex"\n\t];\n\tconst readyForBackfill = requiredCurrentProviders.every((provider) => current.some((release) => release.provider === provider) && verifiedCurrentProviders.includes(provider));\n\tif (!readyForBackfill) return current;\n\tconst terminal = new Set(terminalBackfillIds);\n\tconst backfill = ordered.filter((release) => release.selection === "backfill" && !terminal.has(release.id));\n\treturn [\n\t\t...current,\n\t\t...backfill.filter((release) => release.provider === "claude-code").slice(0, 1),\n\t\t...backfill.filter((release) => release.provider === "codex").slice(0, 1)\n\t];\n};\nconst orderReleaseCandidates = (releases) => {\n\tconst priority = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 1,\n\t\tcodex: 2\n\t};\n\tconst current = releases.filter((release) => release.selection === "current").sort((left, right) => priority[left.provider] - priority[right.provider]);\n\tconst seenCurrent = new Set();\n\tconst uniqueCurrent = current.filter((release) => {\n\t\tif (seenCurrent.has(release.provider)) return false;\n\t\tseenCurrent.add(release.provider);\n\t\treturn true;\n\t});\n\tconst limits = HARNESS_RELEASE_BACKFILL_LIMITS;\n\tconst counts = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 0,\n\t\tcodex: 0\n\t};\n\tconst seenIds = new Set(uniqueCurrent.map((release) => release.id));\n\tconst backfill = releases.filter((release) => release.selection === "backfill").sort((left, right) => priority[left.provider] - priority[right.provider]).filter((release) => {\n\t\tif (seenIds.has(release.id) || counts[release.provider] >= limits[release.provider]) return false;\n\t\tseenIds.add(release.id);\n\t\tcounts[release.provider] += 1;\n\t\treturn true;\n\t});\n\treturn [...uniqueCurrent, ...backfill];\n};\nconst releaseReceiptKey = (provider, version, headSha) => `${releaseRunKey(provider, version)}:${headSha}`;\nconst releaseReceiptDisposition = (receipt, runKey, headSha) => {\n\tif (receipt?.runKey !== runKey || receipt.headSha !== headSha) return "dispatch";\n\tif (shouldReuseReleaseReceipt(receipt, runKey, headSha)) return "reuse";\n\treturn typeof receipt.workflowRunId === "string" && receipt.workflowRunId !== "" ? "read" : "dispatch";\n};\nconst releaseRunKey = (provider, version) => `harness-release:${provider}:${version}`;\nconst shouldReuseReleaseReceipt = (receipt, runKey, headSha) => receipt?.runKey === runKey && receipt.headSha === headSha && receipt.workflowStatus === "completed" && (receipt.status === "green" && receipt.ledgerStatus === "recorded" && receipt.proofArtifactVerified === true && receipt.runtimeArtifactVerified === true || (receipt.status === "red" || receipt.status === "pending") && receipt.proofArtifactVerified === true);\nconst summarizeHarnessBackfill = (releases, receipts, headSha) => {\n\tconst backfill = orderReleaseCandidates(releases).filter((release) => release.selection === "backfill");\n\tlet green = 0;\n\tlet red = 0;\n\tlet pending = 0;\n\tlet terminal = 0;\n\tfor (const release of backfill) {\n\t\tconst receipt = receipts.find((candidate) => candidate.discoveryId === release.id && candidate.runKey === releaseRunKey(release.provider, release.version) && candidate.headSha === headSha && candidate.workflowStatus === "completed" && candidate.proofArtifactVerified === true);\n\t\tif (receipt === undefined) continue;\n\t\tterminal += 1;\n\t\tif (receipt?.proofStatus === "green") green += 1;\n\t\telse if (receipt?.proofStatus === "red") red += 1;\n\t\telse pending += 1;\n\t}\n\treturn {\n\t\ttotal: backfill.length,\n\t\tterminal,\n\t\tgreen,\n\t\tred,\n\t\tpending,\n\t\tacceptance: backfill.length === 0 ? "pending" : terminal < backfill.length ? "in-progress" : green / backfill.length >= .9 ? "met" : "missed"\n\t};\n};\nconst NPM_PACKAGES = [{\n\t"packageName": "@anthropic-ai/claude-code",\n\t"provider": "claude-code",\n\t"backfillLimit": 50\n}, {\n\t"packageName": "@anthropic-ai/claude-agent-sdk",\n\t"provider": "claude-agent-sdk",\n\t"backfillLimit": 0\n}];\nconst CODEX_RELEASE_LIMIT = 11;\nconst CODEX_MAX_PAGES = 10;\nconst RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;\nfunction isRecord(value) {\n\treturn value !== null && typeof value === "object" && !Array.isArray(value);\n}\nfunction responseJson(value) {\n\tif (!isRecord(value)) return value;\n\tif ("body" in value) return value.body;\n\treturn value;\n}\nfunction compareText(left, right) {\n\treturn left < right ? -1 : left > right ? 1 : 0;\n}\nfunction compareVersions(left, right) {\n\tconst a = left.split(".");\n\tconst b = right.split(".");\n\tfor (let index = 0; index < 3; index += 1) {\n\t\tconst leftPart = a[index] ?? "";\n\t\tconst rightPart = b[index] ?? "";\n\t\tif (leftPart === rightPart) continue;\n\t\treturn leftPart.length === rightPart.length ? compareText(leftPart, rightPart) : leftPart.length - rightPart.length;\n\t}\n\treturn 0;\n}\nfunction compareCandidates(left, right) {\n\treturn compareVersions(right.version, left.version) || compareText(left.upstreamIdentity, right.upstreamIdentity);\n}\nfunction stableVersion(value) {\n\treturn typeof value === "string" && RELEASE_VERSION.test(value);\n}\nfunction makeCandidate(provider, version, upstreamIdentity, selection, provenance) {\n\treturn {\n\t\tid: `${provider}:${version}:${upstreamIdentity}`,\n\t\tprovider,\n\t\tversion,\n\t\tupstreamIdentity,\n\t\tselection,\n\t\tprovenance\n\t};\n}\nfunction parseNpm(packageInfo, source) {\n\tif (!isRecord(packageInfo) || packageInfo.name !== source.packageName || !isRecord(packageInfo.versions) || !isRecord(packageInfo["dist-tags"])) return [];\n\tconst stable = Object.entries(packageInfo.versions).flatMap(([version, metadata]) => {\n\t\tif (!stableVersion(version) || !isRecord(metadata) || metadata.name !== source.packageName || metadata.version !== version) return [];\n\t\tconst dist = isRecord(metadata.dist) ? metadata.dist : {};\n\t\tconst integrity = typeof dist.integrity === "string" && dist.integrity.trim() ? dist.integrity : undefined;\n\t\treturn [{\n\t\t\tversion,\n\t\t\tcandidate: makeCandidate(source.provider, version, `npm:${source.packageName}`, "backfill", {\n\t\t\t\tkind: "npm",\n\t\t\t\tpackageName: source.packageName,\n\t\t\t\t...integrity ? { integrity } : {}\n\t\t\t})\n\t\t}];\n\t}).sort((left, right) => compareCandidates(left.candidate, right.candidate));\n\tconst currentVersion = packageInfo["dist-tags"].latest;\n\tconst current = typeof currentVersion === "string" ? stable.find((release) => release.version === currentVersion) : undefined;\n\treturn [...current ? [{\n\t\t...current.candidate,\n\t\tselection: "current"\n\t}] : [], ...stable.filter((release) => release.version !== current?.version).slice(0, source.backfillLimit).map((release) => release.candidate)];\n}\nfunction parseCodexPage(value) {\n\tif (!Array.isArray(value)) return [];\n\treturn value.flatMap((release) => {\n\t\tif (!isRecord(release) || release.draft !== false || release.prerelease !== false || typeof release.tag_name !== "string") return [];\n\t\tconst tagName = release.tag_name;\n\t\tconst version = /^rust-v(.+)$/u.exec(tagName)?.[1];\n\t\tif (!stableVersion(version)) return [];\n\t\tconst nestedCommit = isRecord(release.commit) && typeof release.commit.sha === "string" ? release.commit.sha : undefined;\n\t\tconst commitSha = typeof release.commit_sha === "string" ? release.commit_sha : nestedCommit;\n\t\tconst targetCommitish = typeof release.target_commitish === "string" ? release.target_commitish : undefined;\n\t\treturn [makeCandidate("codex", version, `github:openai/codex:${tagName}`, "backfill", {\n\t\t\tkind: "github",\n\t\t\trepository: "openai/codex",\n\t\t\ttagName,\n\t\t\t...targetCommitish ? { targetCommitish } : {},\n\t\t\t...commitSha && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(commitSha) ? { commitSha } : {}\n\t\t})];\n\t}).sort(compareCandidates);\n}\nfunction selectCodex(releases) {\n\tconst seenIds = new Set();\n\tconst seenVersions = new Set();\n\treturn releases.filter((release) => !seenIds.has(release.id) && !!seenIds.add(release.id)).sort(compareCandidates).filter((release) => !seenVersions.has(release.version) && !!seenVersions.add(release.version)).slice(0, CODEX_RELEASE_LIMIT).map((release, index) => ({\n\t\t...release,\n\t\tselection: index === 0 ? "current" : "backfill"\n\t}));\n}\nfunction nextLink(header) {\n\treturn /<([^>]+)>\\s*;\\s*rel="?next"?/u.exec(header ?? "")?.[1] ?? null;\n}\nfunction codexNextUrl(_current, candidate) {\n\tconst endpoint = "https://api.github.com/repos/openai/codex/releases";\n\tif (candidate !== endpoint && !candidate.startsWith(`${endpoint}?`)) throw new Error("Codex release discovery returned an unexpected pagination URL");\n\treturn candidate;\n}\nasync function discoverCodex(w) {\n\tconst releases = [];\n\tconst seen = new Set();\n\tconst visited = new Set();\n\tlet next = "https://api.github.com/repos/openai/codex/releases?per_page=100&page=1";\n\tfor (let page = 1; page <= CODEX_MAX_PAGES; page += 1) {\n\t\tw.$arm("s4", 0);\n\t\tif (visited.has(next)) throw new Error("Codex release discovery pagination loop");\n\t\tvisited.add(next);\n\t\tconst response = await w.http("s5", "Read Codex release page", next);\n\t\tif (isRecord(response) && response.ok === false) throw new Error(`Codex release discovery failed with HTTP ${String(response.status)}`);\n\t\tconst body = responseJson(response);\n\t\tif (!Array.isArray(body)) throw new Error("Codex release discovery returned invalid data");\n\t\tfor (const release of parseCodexPage(body)) {\n\t\t\tif (!seen.has(release.id)) {\n\t\t\t\tseen.add(release.id);\n\t\t\t\treleases.push(release);\n\t\t\t}\n\t\t}\n\t\tconst headers = isRecord(response) && isRecord(response.headers) ? response.headers : {};\n\t\tconst linkHeader = Object.entries(headers).find(([name]) => name.toLowerCase() === "link")?.[1];\n\t\tconst link = nextLink(typeof linkHeader === "string" ? linkHeader : null);\n\t\tif (!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT) {\n\t\t\tw.$arm("s6", 0);\n\t\t\treturn selectCodex(releases);\n\t\t} else {\n\t\t\tw.$arm("s6", 1);\n\t\t}\n\t\tif (page === CODEX_MAX_PAGES) throw new Error(`Codex release discovery exceeded ${CODEX_MAX_PAGES} pages`);\n\t\tnext = codexNextUrl(next, link);\n\t}\n\treturn selectCodex(releases);\n}\nfunction workflowRun(value) {\n\tif (!isRecord(value) || typeof value.runId !== "string" || typeof value.url !== "string" || typeof value.workflowFile !== "string" || typeof value.headSha !== "string" || typeof value.displayTitle !== "string" || typeof value.status !== "string" || value.conclusion !== null && typeof value.conclusion !== "string") return null;\n\treturn {\n\t\trunId: value.runId,\n\t\turl: value.url,\n\t\tworkflowFile: value.workflowFile,\n\t\theadSha: value.headSha,\n\t\tdisplayTitle: value.displayTitle,\n\t\tstatus: value.status,\n\t\tconclusion: value.conclusion\n\t};\n}\nfunction verifiedWorkflowArtifact(value, candidate, headSha, runKey, expectedRun) {\n\tif (expectedRun === null || !isRecord(value) || !isRecord(value.run) || !isRecord(value.artifact) || typeof value.text !== "string") return null;\n\tconst run = workflowRun(value.run);\n\tconst artifact = value.artifact;\n\tif (run === null || run.runId !== expectedRun.runId || run.workflowFile !== HARNESS_RELEASE_WORKFLOW_FILE || run.headSha !== headSha || run.displayTitle !== runKey || run.status !== "completed" || artifact.name !== releaseArtifactName(candidate.provider, candidate.version, run.runId) || artifact.entryPath !== HARNESS_RELEASE_RESULT_PATH || typeof artifact.id !== "string" || typeof artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(artifact.digest) || typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256) || typeof artifact.bytes !== "number" || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) return null;\n\ttry {\n\t\tconst decoded = JSON.parse(value.text);\n\t\tif (!isRecord(decoded) || decoded.schemaVersion !== 1 || decoded.provider !== candidate.provider || decoded.version !== candidate.version || decoded.runKey !== runKey || decoded.selection !== candidate.selection || !isRecord(decoded.source) || decoded.source.commit !== headSha || decoded.status !== "green" && decoded.status !== "red" && decoded.status !== "pending") return null;\n\t\tif (decoded.status === "green" && run.conclusion !== "success") return null;\n\t\treturn {\n\t\t\trun,\n\t\t\tartifact: {\n\t\t\t\tid: artifact.id,\n\t\t\t\tname: artifact.name,\n\t\t\t\tdigest: artifact.digest,\n\t\t\t\tentryPath: artifact.entryPath,\n\t\t\t\tsha256: artifact.sha256,\n\t\t\t\tbytes: artifact.bytes\n\t\t\t},\n\t\t\tresult: decoded\n\t\t};\n\t} catch {\n\t\treturn null;\n\t}\n}\nasync function updateReleaseThread(w, threadId, previous, fingerprint, message) {\n\tif (previous?.threadUpdate === fingerprint) {\n\t\tw.$arm("s38", 0);\n\t\treturn fingerprint;\n\t} else {\n\t\tw.$arm("s38", 1);\n\t}\n\ttry {\n\t\tw.$arm("s40", 0);\n\t\tawait w.call("s41", "Update the release proof thread", "signalbox.t3_thread_send", {\n\t\t\tthreadId,\n\t\t\tmessage\n\t\t});\n\t\treturn fingerprint;\n\t} catch {\n\t\tw.$arm("s40", 1);\n\t\treturn previous?.threadUpdate ?? null;\n\t}\n}\nasync function rememberPending(w, receiptKey, fields) {\n\tawait w.remember("s31", "Keep the release receipt pending", receiptKey, {\n\t\t...fields,\n\t\tstatus: "pending"\n\t});\n}\nasync function handoffRedProof(w, receiptKey, receipt, candidate, runKey, headSha) {\n\tif (receipt.handoffStatus === "created") {\n\t\tw.$arm("s18", 0);\n\t\treturn receipt;\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\tconst result = isRecord(receipt.result) ? receipt.result : {};\n\tconst artifact = isRecord(receipt.workflowArtifact) ? receipt.workflowArtifact : null;\n\tconst stages = Array.isArray(result.stages) ? result.stages.filter((stage) => isRecord(stage) && stage.status === "rejected").map((stage) => isRecord(stage) && typeof stage.name === "string" ? stage.name : null).filter(Boolean).join(", ") : "";\n\tlet next;\n\ttry {\n\t\tw.$arm("s20", 0);\n\t\tif (artifact === null || typeof artifact.id !== "string" || typeof artifact.sha256 !== "string" || typeof receipt.workflowUrl !== "string") throw new Error("The verified red proof receipt has no handoff details.");\n\t\tconst issue = await w.call("s21", "Hand the failed proof to GitHub", "signalbox.github_issue", {\n\t\t\taction: "create",\n\t\t\tcorrelationId: `${runKey}:${headSha}:red`,\n\t\t\ttitle: `Harness proof failed: ${candidate.provider} ${candidate.version}`,\n\t\t\tbody: [\n\t\t\t\t`The exact ${candidate.provider} ${candidate.version} proof returned red.`,\n\t\t\t\t`Run key: ${runKey}`,\n\t\t\t\t`Source head: ${headSha}`,\n\t\t\t\t`Workflow: ${receipt.workflowUrl}`,\n\t\t\t\t`Failed stages: ${stages || "not listed"}`,\n\t\t\t\t`Workflow artifact: ${artifact.id} (${artifact.sha256})`,\n\t\t\t\t"The previous green release remains selected."\n\t\t\t].join("\\n\\n")\n\t\t});\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "created",\n\t\t\thandoff: issue\n\t\t};\n\t} catch {\n\t\tw.$arm("s20", 1);\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "unavailable"\n\t\t};\n\t}\n\tawait w.remember("s22", "Store the red proof handoff", receiptKey, next);\n\treturn next;\n}\nfunction proofStatusOf(value) {\n\treturn value === "green" || value === "red" || value === "pending" ? value : null;\n}\nasync function runRelease(w, candidate, headSha, triggerAt) {\n\tconst runKey = releaseRunKey(candidate.provider, candidate.version);\n\tconst receiptKey = releaseReceiptKey(candidate.provider, candidate.version, headSha);\n\tconst recalled = await w.recall("s13", "Read the release receipt", receiptKey);\n\tconst previous = isRecord(recalled) && recalled.runKey === runKey && recalled.headSha === headSha ? recalled : null;\n\tconst releaseThreadValue = await w.recall("s14", "Read the release tracking thread", runKey);\n\tconst releaseThread = isRecord(releaseThreadValue) && releaseThreadValue.runKey === runKey ? releaseThreadValue : null;\n\tconst disposition = releaseReceiptDisposition(previous, runKey, headSha);\n\tif (disposition === "reuse") {\n\t\tw.$arm("s15", 0);\n\t\tconst reusable = candidate.selection === "current" && previous?.status === "red" && previous !== null ? (w.$arm("s16", 0), await handoffRedProof(w.$frame("s17"), receiptKey, previous, candidate, runKey, headSha)) : (w.$arm("s16", 1), previous);\n\t\tconst result = reusable !== null && isRecord(reusable.result) ? reusable.result : null;\n\t\treturn {\n\t\t\tstatus: reusable?.status,\n\t\t\treused: true,\n\t\t\tverified: reusable?.status === "green" && reusable?.ledgerStatus === "recorded" && reusable?.runtimeArtifactVerified === true && result !== null && isVerifiedHarnessRelease("green", result)\n\t\t};\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet childThreadId = releaseThread !== null && typeof releaseThread.childThreadId === "string" ? releaseThread.childThreadId : previous !== null && typeof previous.childThreadId === "string" ? previous.childThreadId : null;\n\tif (childThreadId === null) {\n\t\tw.$arm("s24", 0);\n\t\ttry {\n\t\t\tw.$arm("s25", 0);\n\t\t\tconst child = await w.agent("s26", "Create a release proof thread", { prompt: [\n\t\t\t\t"This thread tracks one exact harness release attempt.",\n\t\t\t\t`Provider: ${candidate.provider}.`,\n\t\t\t\t`Version: ${candidate.version}.`,\n\t\t\t\t`Source head: ${headSha}.`,\n\t\t\t\t`Run key: ${runKey}.`,\n\t\t\t\t"The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external commands or claim a proof result. The automation will send the verified outcome to this thread."\n\t\t\t].join("\\n\\n") });\n\t\t\tchildThreadId = isRecord(child) && typeof child.threadId === "string" ? child.threadId : null;\n\t\t\tif (childThreadId !== null) {\n\t\t\t\tw.$arm("s27", 0);\n\t\t\t\tawait w.remember("s28", "Keep the release tracking thread", runKey, {\n\t\t\t\t\trunKey,\n\t\t\t\t\tprovider: candidate.provider,\n\t\t\t\t\tversion: candidate.version,\n\t\t\t\t\tchildThreadId\n\t\t\t\t});\n\t\t\t} else {\n\t\t\t\tw.$arm("s27", 1);\n\t\t\t}\n\t\t} catch {\n\t\t\tw.$arm("s25", 1);\n\t\t\tchildThreadId = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s24", 1);\n\t}\n\tif (childThreadId === null) {\n\t\tw.$arm("s29", 0);\n\t\tawait rememberPending(w.$frame("s30"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\treason: "The release proof thread could not be created."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s29", 1);\n\t}\n\tlet expectedRevision = previous !== null && typeof previous.expectedRevision === "number" ? previous.expectedRevision : null;\n\tif (expectedRevision === null) {\n\t\tw.$arm("s33", 0);\n\t\ttry {\n\t\t\tw.$arm("s34", 0);\n\t\t\tconst selection = await w.call("s35", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\texpectedRevision = isRecord(selection) && Number.isSafeInteger(selection.revision) ? selection.revision : null;\n\t\t} catch {\n\t\t\tw.$arm("s34", 1);\n\t\t\texpectedRevision = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s33", 1);\n\t}\n\tif (expectedRevision === null) {\n\t\tw.$arm("s36", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s37"), childThreadId, previous, `ledger-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending because its project ledger is unavailable. Run key: ${runKey}. Source head: ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s44"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tchildThreadId,\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\texpectedRevision: null,\n\t\t\tthreadUpdate,\n\t\t\treason: "The project ledger could not capture a selection revision before proof started."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s36", 1);\n\t}\n\tconst workflowFile = HARNESS_RELEASE_WORKFLOW_FILE;\n\tlet run = null;\n\ttry {\n\t\tw.$arm("s46", 0);\n\t\tconst response = disposition === "read" && previous !== null ? (w.$arm("s47", 0), await w.call("s48", "Read the existing exact release run", "signalbox.github_workflow", {\n\t\t\taction: "read",\n\t\t\tworkflowFile,\n\t\t\trunId: previous.workflowRunId,\n\t\t\theadSha\n\t\t})) : (w.$arm("s47", 1), await w.call("s49", "Dispatch the exact release proof", "signalbox.github_workflow", {\n\t\t\taction: "dispatch",\n\t\t\tworkflowFile,\n\t\t\tref: "main",\n\t\t\theadSha,\n\t\t\tcorrelationId: runKey,\n\t\t\tinputs: {\n\t\t\t\tprovider: candidate.provider,\n\t\t\t\tversion: candidate.version,\n\t\t\t\trunKey,\n\t\t\t\tselection: candidate.selection\n\t\t\t}\n\t\t}));\n\t\trun = workflowRun(response);\n\t} catch {\n\t\tw.$arm("s46", 1);\n\t\trun = null;\n\t}\n\tif (run === null || run.workflowFile !== workflowFile || run.headSha !== headSha || run.displayTitle !== runKey) {\n\t\tw.$arm("s50", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s51"), childThreadId, previous, `workflow-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending. The automation could not confirm a workflow run for ${runKey} at ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s52"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\texpectedRevision,\n\t\t\tchildThreadId,\n\t\t\t...run === null ? {} : {\n\t\t\t\tworkflowRunId: run.runId,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t},\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: run?.status ?? "unknown",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason: "The workflow run did not match the exact release attempt."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s50", 1);\n\t}\n\tconst baseReceipt = {\n\t\t...previous,\n\t\tdiscoveryId: candidate.id,\n\t\tprovider: candidate.provider,\n\t\tversion: candidate.version,\n\t\tselection: candidate.selection,\n\t\trunKey,\n\t\theadSha,\n\t\texpectedRevision,\n\t\tchildThreadId,\n\t\tworkflowRunId: run.runId,\n\t\tworkflowUrl: run.url,\n\t\tworkflowStatus: run.status\n\t};\n\tif (run.status !== "completed") {\n\t\tw.$arm("s54", 0);\n\t\tawait rememberPending(w.$frame("s55"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: run.status\n\t\t};\n\t} else {\n\t\tw.$arm("s54", 1);\n\t}\n\tlet evidence = null;\n\ttry {\n\t\tw.$arm("s57", 0);\n\t\tevidence = await w.call("s58", "Read the completed release proof artifact", "signalbox.github_workflow", {\n\t\t\taction: "artifact",\n\t\t\tworkflowFile,\n\t\t\trunId: run.runId,\n\t\t\theadSha,\n\t\t\tartifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId),\n\t\t\tentryPath: HARNESS_RELEASE_RESULT_PATH\n\t\t});\n\t} catch {\n\t\tw.$arm("s57", 1);\n\t\tevidence = null;\n\t}\n\tconst verified = verifiedWorkflowArtifact(evidence, candidate, headSha, runKey, run);\n\tif (verified === null) {\n\t\tw.$arm("s59", 0);\n\t\tconst reason = "The completed workflow\'s immutable result artifact is unavailable or mismatched.";\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s60"), childThreadId, previous, `completed-artifact-pending:${headSha}`, `The ${candidate.provider} ${candidate.version} workflow completed, but its exact result artifact could not be verified. Status remains pending. Run: ${run.url}`);\n\t\tawait rememberPending(w.$frame("s61"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowUrl: run.url,\n\t\t\treason\n\t\t};\n\t} else {\n\t\tw.$arm("s59", 1);\n\t}\n\tlet recorded = null;\n\ttry {\n\t\tw.$arm("s63", 0);\n\t\trecorded = await w.call("s64", "Verify the immutable release result in the project ledger", "signalbox.harness_release_ledger", {\n\t\t\taction: "record",\n\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowFile,\n\t\t\tworkflowRunId: run.runId,\n\t\t\tartifactName: verified.artifact.name,\n\t\t\tentryPath: verified.artifact.entryPath\n\t\t});\n\t} catch {\n\t\tw.$arm("s63", 1);\n\t\trecorded = null;\n\t}\n\tconst ledgerRecorded = isRecord(recorded) && recorded.status === "recorded";\n\tconst runtimeArtifactVerified = isRecord(recorded) && recorded.runtimeArtifactVerified === true;\n\tconst result = isRecord(recorded) && isRecord(recorded.result) ? recorded.result : verified.result;\n\tconst proofStatus = isRecord(recorded) && proofStatusOf(recorded.proofStatus) !== null ? proofStatusOf(recorded.proofStatus) : proofStatusOf(verified.result.status) ?? "pending";\n\tconst proofArtifactVerified = true;\n\tconst status = proofStatus === "red" && proofArtifactVerified ? "red" : proofStatus === "green" && ledgerRecorded && runtimeArtifactVerified && isVerifiedHarnessRelease("green", result) ? "green" : "pending";\n\tconst reason = isRecord(recorded) && typeof recorded.reason === "string" ? recorded.reason : status === "pending" ? "The immutable proof is verified, but its deployable runtime payload is not available yet." : undefined;\n\tlet stored = {\n\t\t...baseReceipt,\n\t\tstatus,\n\t\tproofStatus,\n\t\tledgerStatus: ledgerRecorded ? "recorded" : "unverified",\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tresult,\n\t\tworkflowArtifact: verified.artifact,\n\t\tthreadUpdate: previous?.threadUpdate ?? null,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n\tif (status === "green" && candidate.selection === "current" && expectedRevision !== null) {\n\t\tw.$arm("s65", 0);\n\t\ttry {\n\t\t\tw.$arm("s66", 0);\n\t\t\tconst latest = await w.call("s67", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\tconst currentRevision = isRecord(latest) && Number.isSafeInteger(latest.revision) ? latest.revision : null;\n\t\t\tif (!canPromoteHarnessRelease({\n\t\t\t\tselection: candidate.selection,\n\t\t\t\tstatus,\n\t\t\t\truntimeArtifactVerified,\n\t\t\t\texpectedRevision,\n\t\t\t\tcurrentRevision,\n\t\t\t\tresult\n\t\t\t})) {\n\t\t\t\tw.$arm("s68", 0);\n\t\t\t\tawait rememberPending(w.$frame("s69"), receiptKey, {\n\t\t\t\t\t...stored,\n\t\t\t\t\tpromotionStatus: "stale",\n\t\t\t\t\treason: "The captured selection revision changed while this proof ran."\n\t\t\t\t});\n\t\t\t\treturn {\n\t\t\t\t\tstatus: "pending",\n\t\t\t\t\trunKey,\n\t\t\t\t\theadSha,\n\t\t\t\t\tworkflowUrl: run.url,\n\t\t\t\t\tpromotion: "stale"\n\t\t\t\t};\n\t\t\t} else {\n\t\t\t\tw.$arm("s68", 1);\n\t\t\t}\n\t\t\tawait w.call("s71", "Select the proven current release", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "promote",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\t\treleaseId: result.candidateId,\n\t\t\t\texpectedRevision,\n\t\t\t\tchangedAt: triggerAt\n\t\t\t});\n\t\t} catch {\n\t\t\tw.$arm("s66", 1);\n\t\t\tawait rememberPending(w.$frame("s72"), receiptKey, {\n\t\t\t\t...stored,\n\t\t\t\tpromotionStatus: "not-selected"\n\t\t\t});\n\t\t\treturn {\n\t\t\t\tstatus: "pending",\n\t\t\t\trunKey,\n\t\t\t\theadSha,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t};\n\t\t}\n\t} else {\n\t\tw.$arm("s65", 1);\n\t}\n\tif (status === "red" && candidate.selection === "current") {\n\t\tw.$arm("s74", 0);\n\t\tstored = await handoffRedProof(w.$frame("s75"), receiptKey, stored, candidate, runKey, headSha);\n\t} else {\n\t\tw.$arm("s74", 1);\n\t}\n\tconst threadMessage = status === "red" ? `The exact ${candidate.provider} ${candidate.version} proof is red. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. The previous green release remains selected.` : status === "green" ? `The exact ${candidate.provider} ${candidate.version} proof is green and selected. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}.` : `The exact ${candidate.provider} ${candidate.version} proof is pending. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. ${reason ?? "The previous green release remains selected."}`;\n\tconst threadUpdate = await updateReleaseThread(w.$frame("s76"), childThreadId, previous, `${headSha}:${run.status}:${status}:${proofStatus}:${runtimeArtifactVerified}`, threadMessage);\n\tconst finalReceipt = {\n\t\t...stored,\n\t\tthreadUpdate\n\t};\n\tawait w.remember("s77", "Store the release proof status", receiptKey, finalReceipt);\n\treturn {\n\t\tstatus,\n\t\tverified: status === "green" && runtimeArtifactVerified,\n\t\tproofStatus,\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tworkflowStatus: run.status,\n\t\tdiscoveryId: candidate.id,\n\t\trunKey,\n\t\theadSha,\n\t\tworkflowUrl: run.url,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n}\nexport default workflow(async (w, _input, trigger) => {\n\tconst candidates = [];\n\tfor (const source of NPM_PACKAGES) {\n\t\tw.$arm("s1", 0);\n\t\tconst packagePath = source.packageName.replace("/", "%2f");\n\t\tconst metadata = responseJson(await w.http("s2", "Read npm release metadata", `https://registry.npmjs.org/${packagePath}`));\n\t\tcandidates.push(...parseNpm(metadata, source));\n\t}\n\tcandidates.push(...await discoverCodex(w.$frame("s3")));\n\tconst ordered = orderReleaseCandidates(candidates);\n\tconst head = responseJson(await w.http("s8", "Read the Signalbox source head", "https://api.github.com/repos/JustYannicc/signalbox/commits/main"));\n\tif (!isRecord(head) || typeof head.sha !== "string") {\n\t\tw.$arm("s9", 0);\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\treason: "The current source head could not be read."\n\t\t};\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst backfill = ordered.filter((release) => release.selection === "backfill");\n\tconst results = [];\n\tconst verifiedCurrentProviders = [];\n\tconst currentBatch = nextHarnessReleaseBatch(candidates).filter((release) => release.selection === "current");\n\tfor (const candidate of currentBatch) {\n\t\tw.$arm("s11", 0);\n\t\tconst result = await runRelease(w.$frame("s12"), candidate, head.sha, trigger.at);\n\t\tresults.push({\n\t\t\tdiscoveryId: candidate.id,\n\t\t\t...result\n\t\t});\n\t\tif (result.verified === true) verifiedCurrentProviders.push(candidate.provider);\n\t}\n\tconst allCurrentGreen = current.length === 3 && current.every((release) => verifiedCurrentProviders.includes(release.provider));\n\tlet backfillSummary = {\n\t\ttotal: backfill.length,\n\t\tterminal: 0,\n\t\tgreen: 0,\n\t\tred: 0,\n\t\tpending: backfill.length,\n\t\tacceptance: "blocked-on-current"\n\t};\n\tif (allCurrentGreen) {\n\t\tw.$arm("s78", 0);\n\t\tconst backfillReceipts = [];\n\t\tfor (const candidate of backfill) {\n\t\t\tw.$arm("s79", 0);\n\t\t\tconst receipt = await w.recall("s80", "Read a historical release receipt", releaseReceiptKey(candidate.provider, candidate.version, head.sha));\n\t\t\tif (isRecord(receipt)) backfillReceipts.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...receipt\n\t\t\t});\n\t\t}\n\t\tconst terminalBackfillIds = backfillReceipts.filter((receipt) => receipt.workflowStatus === "completed" && receipt.proofArtifactVerified === true).map((receipt) => receipt.discoveryId).filter((id) => typeof id === "string");\n\t\tconst backfillBatch = nextHarnessReleaseBatch(candidates, verifiedCurrentProviders, terminalBackfillIds).filter((release) => release.selection === "backfill");\n\t\tfor (const candidate of backfillBatch) {\n\t\t\tw.$arm("s81", 0);\n\t\t\tconst result = await runRelease(w.$frame("s82"), candidate, head.sha, trigger.at);\n\t\t\tresults.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...result\n\t\t\t});\n\t\t\tconst currentReceipts = backfillReceipts.filter((receipt) => receipt.discoveryId !== candidate.id);\n\t\t\tif (result.proofArtifactVerified === true) {\n\t\t\t\tcurrentReceipts.push({\n\t\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t\trunKey: releaseRunKey(candidate.provider, candidate.version),\n\t\t\t\t\theadSha: head.sha,\n\t\t\t\t\tworkflowStatus: result.workflowStatus,\n\t\t\t\t\tproofStatus: result.proofStatus,\n\t\t\t\t\tproofArtifactVerified: true\n\t\t\t\t});\n\t\t\t}\n\t\t\tbackfillReceipts.splice(0, backfillReceipts.length, ...currentReceipts);\n\t\t}\n\t\tbackfillSummary = summarizeHarnessBackfill(candidates, backfillReceipts, head.sha);\n\t} else {\n\t\tw.$arm("s78", 1);\n\t}\n\treturn {\n\t\theadSha: head.sha,\n\t\tcurrent: current.length,\n\t\tbackfillAvailable: backfill.length,\n\t\tbackfillAcceptance: backfillSummary,\n\t\tattempted: results.length,\n\t\tresults\n\t};\n});\n',
+    runModule: null,
+    workerModule:
+      'export function load(workflow) {\nconst meta = {\n\tname: "Watch harness releases",\n\tdescription: "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project\'s ID to install its hourly trigger in that project.",\n\tintent: "keep the selected agent harness release backed by exact current-release proof",\n\ttriggers: [{\n\t\tcron: "0 * * * *",\n\t\ttimezone: "Europe/Zurich"\n\t}],\n\toverlap: "skip"\n};\nconst HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";\nconst HARNESS_RELEASE_RESULT_PATH = "result.json";\nconst HARNESS_RELEASE_BACKFILL_LIMITS = {\n\t"claude-code": 50,\n\t"claude-agent-sdk": 0,\n\t"codex": 10\n};\nconst releaseArtifactName = (provider, version, runId) => `harness-release-${provider}-${version}-${runId}-1`;\nconst isVerifiedHarnessRelease = (status, result) => {\n\tif (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed") return false;\n\tconst requiredChecks = [\n\t\t"boot",\n\t\t"text",\n\t\t"readEdit",\n\t\t"bash",\n\t\t"grep",\n\t\t"resume",\n\t\t"mcp",\n\t\t"interrupt",\n\t\t"publicHarness"\n\t];\n\tconst requiredMetrics = [\n\t\t"moduleBytes",\n\t\t"bootTimeMs",\n\t\t"peakHeapBytes"\n\t];\n\tfor (const environment of ["local-workerd", "deployed"]) {\n\t\tconst assessment = result.environments?.[environment];\n\t\tif (!assessment?.checks || assessment.checks.length !== requiredChecks.length || requiredChecks.some((name) => assessment.checks?.filter((check) => check.name === name).length !== 1) || assessment.checks.some((check) => check.status !== "passed")) return false;\n\t\tfor (const name of requiredMetrics) {\n\t\t\tconst metric = assessment.metrics?.[name];\n\t\t\tif (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0) return false;\n\t\t}\n\t}\n\treturn true;\n};\nconst canPromoteHarnessRelease = (input) => {\n\tif (input.selection !== "current" || !input.runtimeArtifactVerified || input.expectedRevision === null || input.currentRevision !== input.expectedRevision) return false;\n\treturn isVerifiedHarnessRelease(input.status, input.result);\n};\nconst ledgerProviderFor = (provider) => provider === "claude-agent-sdk" ? "agent-sdk" : provider;\nconst nextHarnessReleaseBatch = (releases, verifiedCurrentProviders = [], terminalBackfillIds = []) => {\n\tconst ordered = orderReleaseCandidates(releases);\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst requiredCurrentProviders = [\n\t\t"claude-code",\n\t\t"claude-agent-sdk",\n\t\t"codex"\n\t];\n\tconst readyForBackfill = requiredCurrentProviders.every((provider) => current.some((release) => release.provider === provider) && verifiedCurrentProviders.includes(provider));\n\tif (!readyForBackfill) return current;\n\tconst terminal = new Set(terminalBackfillIds);\n\tconst backfill = ordered.filter((release) => release.selection === "backfill" && !terminal.has(release.id));\n\treturn [\n\t\t...current,\n\t\t...backfill.filter((release) => release.provider === "claude-code").slice(0, 1),\n\t\t...backfill.filter((release) => release.provider === "codex").slice(0, 1)\n\t];\n};\nconst orderReleaseCandidates = (releases) => {\n\tconst priority = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 1,\n\t\tcodex: 2\n\t};\n\tconst current = releases.filter((release) => release.selection === "current").sort((left, right) => priority[left.provider] - priority[right.provider]);\n\tconst seenCurrent = new Set();\n\tconst uniqueCurrent = current.filter((release) => {\n\t\tif (seenCurrent.has(release.provider)) return false;\n\t\tseenCurrent.add(release.provider);\n\t\treturn true;\n\t});\n\tconst limits = HARNESS_RELEASE_BACKFILL_LIMITS;\n\tconst counts = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 0,\n\t\tcodex: 0\n\t};\n\tconst seenIds = new Set(uniqueCurrent.map((release) => release.id));\n\tconst backfill = releases.filter((release) => release.selection === "backfill").sort((left, right) => priority[left.provider] - priority[right.provider]).filter((release) => {\n\t\tif (seenIds.has(release.id) || counts[release.provider] >= limits[release.provider]) return false;\n\t\tseenIds.add(release.id);\n\t\tcounts[release.provider] += 1;\n\t\treturn true;\n\t});\n\treturn [...uniqueCurrent, ...backfill];\n};\nconst releaseReceiptKey = (provider, version, headSha) => `${releaseRunKey(provider, version)}:${headSha}`;\nconst releaseReceiptDisposition = (receipt, runKey, headSha) => {\n\tif (receipt?.runKey !== runKey || receipt.headSha !== headSha) return "dispatch";\n\tif (shouldReuseReleaseReceipt(receipt, runKey, headSha)) return "reuse";\n\treturn typeof receipt.workflowRunId === "string" && receipt.workflowRunId !== "" ? "read" : "dispatch";\n};\nconst releaseRunKey = (provider, version) => `harness-release:${provider}:${version}`;\nconst shouldReuseReleaseReceipt = (receipt, runKey, headSha) => receipt?.runKey === runKey && receipt.headSha === headSha && receipt.workflowStatus === "completed" && (receipt.status === "green" && receipt.ledgerStatus === "recorded" && receipt.proofArtifactVerified === true && receipt.runtimeArtifactVerified === true || (receipt.status === "red" || receipt.status === "pending") && receipt.proofArtifactVerified === true);\nconst summarizeHarnessBackfill = (releases, receipts, headSha) => {\n\tconst backfill = orderReleaseCandidates(releases).filter((release) => release.selection === "backfill");\n\tlet green = 0;\n\tlet red = 0;\n\tlet pending = 0;\n\tlet terminal = 0;\n\tfor (const release of backfill) {\n\t\tconst receipt = receipts.find((candidate) => candidate.discoveryId === release.id && candidate.runKey === releaseRunKey(release.provider, release.version) && candidate.headSha === headSha && candidate.workflowStatus === "completed" && candidate.proofArtifactVerified === true);\n\t\tif (receipt === undefined) continue;\n\t\tterminal += 1;\n\t\tif (receipt?.proofStatus === "green") green += 1;\n\t\telse if (receipt?.proofStatus === "red") red += 1;\n\t\telse pending += 1;\n\t}\n\treturn {\n\t\ttotal: backfill.length,\n\t\tterminal,\n\t\tgreen,\n\t\tred,\n\t\tpending,\n\t\tacceptance: backfill.length === 0 ? "pending" : terminal < backfill.length ? "in-progress" : green / backfill.length >= .9 ? "met" : "missed"\n\t};\n};\nconst NPM_PACKAGES = [{\n\t"packageName": "@anthropic-ai/claude-code",\n\t"provider": "claude-code",\n\t"backfillLimit": 50\n}, {\n\t"packageName": "@anthropic-ai/claude-agent-sdk",\n\t"provider": "claude-agent-sdk",\n\t"backfillLimit": 0\n}];\nconst CODEX_RELEASE_LIMIT = 11;\nconst CODEX_MAX_PAGES = 10;\nconst RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;\nfunction isRecord(value) {\n\treturn value !== null && typeof value === "object" && !Array.isArray(value);\n}\nfunction responseJson(value) {\n\tif (!isRecord(value)) return value;\n\tif ("body" in value) return value.body;\n\treturn value;\n}\nfunction compareText(left, right) {\n\treturn left < right ? -1 : left > right ? 1 : 0;\n}\nfunction compareVersions(left, right) {\n\tconst a = left.split(".");\n\tconst b = right.split(".");\n\tfor (let index = 0; index < 3; index += 1) {\n\t\tconst leftPart = a[index] ?? "";\n\t\tconst rightPart = b[index] ?? "";\n\t\tif (leftPart === rightPart) continue;\n\t\treturn leftPart.length === rightPart.length ? compareText(leftPart, rightPart) : leftPart.length - rightPart.length;\n\t}\n\treturn 0;\n}\nfunction compareCandidates(left, right) {\n\treturn compareVersions(right.version, left.version) || compareText(left.upstreamIdentity, right.upstreamIdentity);\n}\nfunction stableVersion(value) {\n\treturn typeof value === "string" && RELEASE_VERSION.test(value);\n}\nfunction makeCandidate(provider, version, upstreamIdentity, selection, provenance) {\n\treturn {\n\t\tid: `${provider}:${version}:${upstreamIdentity}`,\n\t\tprovider,\n\t\tversion,\n\t\tupstreamIdentity,\n\t\tselection,\n\t\tprovenance\n\t};\n}\nfunction parseNpm(packageInfo, source) {\n\tif (!isRecord(packageInfo) || packageInfo.name !== source.packageName || !isRecord(packageInfo.versions) || !isRecord(packageInfo["dist-tags"])) return [];\n\tconst stable = Object.entries(packageInfo.versions).flatMap(([version, metadata]) => {\n\t\tif (!stableVersion(version) || !isRecord(metadata) || metadata.name !== source.packageName || metadata.version !== version) return [];\n\t\tconst dist = isRecord(metadata.dist) ? metadata.dist : {};\n\t\tconst integrity = typeof dist.integrity === "string" && dist.integrity.trim() ? dist.integrity : undefined;\n\t\treturn [{\n\t\t\tversion,\n\t\t\tcandidate: makeCandidate(source.provider, version, `npm:${source.packageName}`, "backfill", {\n\t\t\t\tkind: "npm",\n\t\t\t\tpackageName: source.packageName,\n\t\t\t\t...integrity ? { integrity } : {}\n\t\t\t})\n\t\t}];\n\t}).sort((left, right) => compareCandidates(left.candidate, right.candidate));\n\tconst currentVersion = packageInfo["dist-tags"].latest;\n\tconst current = typeof currentVersion === "string" ? stable.find((release) => release.version === currentVersion) : undefined;\n\treturn [...current ? [{\n\t\t...current.candidate,\n\t\tselection: "current"\n\t}] : [], ...stable.filter((release) => release.version !== current?.version).slice(0, source.backfillLimit).map((release) => release.candidate)];\n}\nfunction parseCodexPage(value) {\n\tif (!Array.isArray(value)) return [];\n\treturn value.flatMap((release) => {\n\t\tif (!isRecord(release) || release.draft !== false || release.prerelease !== false || typeof release.tag_name !== "string") return [];\n\t\tconst tagName = release.tag_name;\n\t\tconst version = /^rust-v(.+)$/u.exec(tagName)?.[1];\n\t\tif (!stableVersion(version)) return [];\n\t\tconst nestedCommit = isRecord(release.commit) && typeof release.commit.sha === "string" ? release.commit.sha : undefined;\n\t\tconst commitSha = typeof release.commit_sha === "string" ? release.commit_sha : nestedCommit;\n\t\tconst targetCommitish = typeof release.target_commitish === "string" ? release.target_commitish : undefined;\n\t\treturn [makeCandidate("codex", version, `github:openai/codex:${tagName}`, "backfill", {\n\t\t\tkind: "github",\n\t\t\trepository: "openai/codex",\n\t\t\ttagName,\n\t\t\t...targetCommitish ? { targetCommitish } : {},\n\t\t\t...commitSha && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(commitSha) ? { commitSha } : {}\n\t\t})];\n\t}).sort(compareCandidates);\n}\nfunction selectCodex(releases) {\n\tconst seenIds = new Set();\n\tconst seenVersions = new Set();\n\treturn releases.filter((release) => !seenIds.has(release.id) && !!seenIds.add(release.id)).sort(compareCandidates).filter((release) => !seenVersions.has(release.version) && !!seenVersions.add(release.version)).slice(0, CODEX_RELEASE_LIMIT).map((release, index) => ({\n\t\t...release,\n\t\tselection: index === 0 ? "current" : "backfill"\n\t}));\n}\nfunction nextLink(header) {\n\treturn /<([^>]+)>\\s*;\\s*rel="?next"?/u.exec(header ?? "")?.[1] ?? null;\n}\nfunction codexNextUrl(_current, candidate) {\n\tconst endpoint = "https://api.github.com/repos/openai/codex/releases";\n\tif (candidate !== endpoint && !candidate.startsWith(`${endpoint}?`)) throw new Error("Codex release discovery returned an unexpected pagination URL");\n\treturn candidate;\n}\nasync function discoverCodex(w) {\n\tconst releases = [];\n\tconst seen = new Set();\n\tconst visited = new Set();\n\tlet next = "https://api.github.com/repos/openai/codex/releases?per_page=100&page=1";\n\tfor (let page = 1; page <= CODEX_MAX_PAGES; page += 1) {\n\t\tw.$arm("s4", 0);\n\t\tif (visited.has(next)) throw new Error("Codex release discovery pagination loop");\n\t\tvisited.add(next);\n\t\tconst response = await w.http("s5", "Read Codex release page", next);\n\t\tif (isRecord(response) && response.ok === false) throw new Error(`Codex release discovery failed with HTTP ${String(response.status)}`);\n\t\tconst body = responseJson(response);\n\t\tif (!Array.isArray(body)) throw new Error("Codex release discovery returned invalid data");\n\t\tfor (const release of parseCodexPage(body)) {\n\t\t\tif (!seen.has(release.id)) {\n\t\t\t\tseen.add(release.id);\n\t\t\t\treleases.push(release);\n\t\t\t}\n\t\t}\n\t\tconst headers = isRecord(response) && isRecord(response.headers) ? response.headers : {};\n\t\tconst linkHeader = Object.entries(headers).find(([name]) => name.toLowerCase() === "link")?.[1];\n\t\tconst link = nextLink(typeof linkHeader === "string" ? linkHeader : null);\n\t\tif (!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT) {\n\t\t\tw.$arm("s6", 0);\n\t\t\treturn selectCodex(releases);\n\t\t} else {\n\t\t\tw.$arm("s6", 1);\n\t\t}\n\t\tif (page === CODEX_MAX_PAGES) throw new Error(`Codex release discovery exceeded ${CODEX_MAX_PAGES} pages`);\n\t\tnext = codexNextUrl(next, link);\n\t}\n\treturn selectCodex(releases);\n}\nfunction workflowRun(value) {\n\tif (!isRecord(value) || typeof value.runId !== "string" || typeof value.url !== "string" || typeof value.workflowFile !== "string" || typeof value.headSha !== "string" || typeof value.displayTitle !== "string" || typeof value.status !== "string" || value.conclusion !== null && typeof value.conclusion !== "string") return null;\n\treturn {\n\t\trunId: value.runId,\n\t\turl: value.url,\n\t\tworkflowFile: value.workflowFile,\n\t\theadSha: value.headSha,\n\t\tdisplayTitle: value.displayTitle,\n\t\tstatus: value.status,\n\t\tconclusion: value.conclusion\n\t};\n}\nfunction verifiedWorkflowArtifact(value, candidate, headSha, runKey, expectedRun) {\n\tif (expectedRun === null || !isRecord(value) || !isRecord(value.run) || !isRecord(value.artifact) || typeof value.text !== "string") return null;\n\tconst run = workflowRun(value.run);\n\tconst artifact = value.artifact;\n\tif (run === null || run.runId !== expectedRun.runId || run.workflowFile !== HARNESS_RELEASE_WORKFLOW_FILE || run.headSha !== headSha || run.displayTitle !== runKey || run.status !== "completed" || artifact.name !== releaseArtifactName(candidate.provider, candidate.version, run.runId) || artifact.entryPath !== HARNESS_RELEASE_RESULT_PATH || typeof artifact.id !== "string" || typeof artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(artifact.digest) || typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256) || typeof artifact.bytes !== "number" || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) return null;\n\ttry {\n\t\tconst decoded = JSON.parse(value.text);\n\t\tif (!isRecord(decoded) || decoded.schemaVersion !== 1 || decoded.provider !== candidate.provider || decoded.version !== candidate.version || decoded.runKey !== runKey || decoded.selection !== candidate.selection || !isRecord(decoded.source) || decoded.source.commit !== headSha || decoded.status !== "green" && decoded.status !== "red" && decoded.status !== "pending") return null;\n\t\tif (decoded.status === "green" && run.conclusion !== "success") return null;\n\t\treturn {\n\t\t\trun,\n\t\t\tartifact: {\n\t\t\t\tid: artifact.id,\n\t\t\t\tname: artifact.name,\n\t\t\t\tdigest: artifact.digest,\n\t\t\t\tentryPath: artifact.entryPath,\n\t\t\t\tsha256: artifact.sha256,\n\t\t\t\tbytes: artifact.bytes\n\t\t\t},\n\t\t\tresult: decoded\n\t\t};\n\t} catch {\n\t\treturn null;\n\t}\n}\nasync function updateReleaseThread(w, threadId, previous, fingerprint, message) {\n\tif (previous?.threadUpdate === fingerprint) {\n\t\tw.$arm("s38", 0);\n\t\treturn fingerprint;\n\t} else {\n\t\tw.$arm("s38", 1);\n\t}\n\ttry {\n\t\tw.$arm("s40", 0);\n\t\tawait w.call("s41", "Update the release proof thread", "signalbox.t3_thread_send", {\n\t\t\tthreadId,\n\t\t\tmessage\n\t\t});\n\t\treturn fingerprint;\n\t} catch {\n\t\tw.$arm("s40", 1);\n\t\treturn previous?.threadUpdate ?? null;\n\t}\n}\nasync function rememberPending(w, receiptKey, fields) {\n\tawait w.remember("s31", "Keep the release receipt pending", receiptKey, {\n\t\t...fields,\n\t\tstatus: "pending"\n\t});\n}\nasync function handoffRedProof(w, receiptKey, receipt, candidate, runKey, headSha) {\n\tif (receipt.handoffStatus === "created") {\n\t\tw.$arm("s18", 0);\n\t\treturn receipt;\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\tconst result = isRecord(receipt.result) ? receipt.result : {};\n\tconst artifact = isRecord(receipt.workflowArtifact) ? receipt.workflowArtifact : null;\n\tconst stages = Array.isArray(result.stages) ? result.stages.filter((stage) => isRecord(stage) && stage.status === "rejected").map((stage) => isRecord(stage) && typeof stage.name === "string" ? stage.name : null).filter(Boolean).join(", ") : "";\n\tlet next;\n\ttry {\n\t\tw.$arm("s20", 0);\n\t\tif (artifact === null || typeof artifact.id !== "string" || typeof artifact.sha256 !== "string" || typeof receipt.workflowUrl !== "string") throw new Error("The verified red proof receipt has no handoff details.");\n\t\tconst issue = await w.call("s21", "Hand the failed proof to GitHub", "signalbox.github_issue", {\n\t\t\taction: "create",\n\t\t\tcorrelationId: `${runKey}:${headSha}:red`,\n\t\t\ttitle: `Harness proof failed: ${candidate.provider} ${candidate.version}`,\n\t\t\tbody: [\n\t\t\t\t`The exact ${candidate.provider} ${candidate.version} proof returned red.`,\n\t\t\t\t`Run key: ${runKey}`,\n\t\t\t\t`Source head: ${headSha}`,\n\t\t\t\t`Workflow: ${receipt.workflowUrl}`,\n\t\t\t\t`Failed stages: ${stages || "not listed"}`,\n\t\t\t\t`Workflow artifact: ${artifact.id} (${artifact.sha256})`,\n\t\t\t\t"The previous green release remains selected."\n\t\t\t].join("\\n\\n")\n\t\t});\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "created",\n\t\t\thandoff: issue\n\t\t};\n\t} catch {\n\t\tw.$arm("s20", 1);\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "unavailable"\n\t\t};\n\t}\n\tawait w.remember("s22", "Store the red proof handoff", receiptKey, next);\n\treturn next;\n}\nfunction proofStatusOf(value) {\n\treturn value === "green" || value === "red" || value === "pending" ? value : null;\n}\nasync function runRelease(w, candidate, headSha, triggerAt) {\n\tconst runKey = releaseRunKey(candidate.provider, candidate.version);\n\tconst receiptKey = releaseReceiptKey(candidate.provider, candidate.version, headSha);\n\tconst recalled = await w.recall("s13", "Read the release receipt", receiptKey);\n\tconst previous = isRecord(recalled) && recalled.runKey === runKey && recalled.headSha === headSha ? recalled : null;\n\tconst releaseThreadValue = await w.recall("s14", "Read the release tracking thread", runKey);\n\tconst releaseThread = isRecord(releaseThreadValue) && releaseThreadValue.runKey === runKey ? releaseThreadValue : null;\n\tconst disposition = releaseReceiptDisposition(previous, runKey, headSha);\n\tif (disposition === "reuse") {\n\t\tw.$arm("s15", 0);\n\t\tconst reusable = candidate.selection === "current" && previous?.status === "red" && previous !== null ? (w.$arm("s16", 0), await handoffRedProof(w.$frame("s17"), receiptKey, previous, candidate, runKey, headSha)) : (w.$arm("s16", 1), previous);\n\t\tconst result = reusable !== null && isRecord(reusable.result) ? reusable.result : null;\n\t\treturn {\n\t\t\tstatus: reusable?.status,\n\t\t\treused: true,\n\t\t\tverified: reusable?.status === "green" && reusable?.ledgerStatus === "recorded" && reusable?.runtimeArtifactVerified === true && result !== null && isVerifiedHarnessRelease("green", result)\n\t\t};\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet childThreadId = releaseThread !== null && typeof releaseThread.childThreadId === "string" ? releaseThread.childThreadId : previous !== null && typeof previous.childThreadId === "string" ? previous.childThreadId : null;\n\tif (childThreadId === null) {\n\t\tw.$arm("s24", 0);\n\t\ttry {\n\t\t\tw.$arm("s25", 0);\n\t\t\tconst child = await w.agent("s26", "Create a release proof thread", { prompt: [\n\t\t\t\t"This thread tracks one exact harness release attempt.",\n\t\t\t\t`Provider: ${candidate.provider}.`,\n\t\t\t\t`Version: ${candidate.version}.`,\n\t\t\t\t`Source head: ${headSha}.`,\n\t\t\t\t`Run key: ${runKey}.`,\n\t\t\t\t"The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external commands or claim a proof result. The automation will send the verified outcome to this thread."\n\t\t\t].join("\\n\\n") });\n\t\t\tchildThreadId = isRecord(child) && typeof child.threadId === "string" ? child.threadId : null;\n\t\t\tif (childThreadId !== null) {\n\t\t\t\tw.$arm("s27", 0);\n\t\t\t\tawait w.remember("s28", "Keep the release tracking thread", runKey, {\n\t\t\t\t\trunKey,\n\t\t\t\t\tprovider: candidate.provider,\n\t\t\t\t\tversion: candidate.version,\n\t\t\t\t\tchildThreadId\n\t\t\t\t});\n\t\t\t} else {\n\t\t\t\tw.$arm("s27", 1);\n\t\t\t}\n\t\t} catch {\n\t\t\tw.$arm("s25", 1);\n\t\t\tchildThreadId = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s24", 1);\n\t}\n\tif (childThreadId === null) {\n\t\tw.$arm("s29", 0);\n\t\tawait rememberPending(w.$frame("s30"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\treason: "The release proof thread could not be created."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s29", 1);\n\t}\n\tlet expectedRevision = previous !== null && typeof previous.expectedRevision === "number" ? previous.expectedRevision : null;\n\tif (expectedRevision === null) {\n\t\tw.$arm("s33", 0);\n\t\ttry {\n\t\t\tw.$arm("s34", 0);\n\t\t\tconst selection = await w.call("s35", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\texpectedRevision = isRecord(selection) && Number.isSafeInteger(selection.revision) ? selection.revision : null;\n\t\t} catch {\n\t\t\tw.$arm("s34", 1);\n\t\t\texpectedRevision = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s33", 1);\n\t}\n\tif (expectedRevision === null) {\n\t\tw.$arm("s36", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s37"), childThreadId, previous, `ledger-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending because its project ledger is unavailable. Run key: ${runKey}. Source head: ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s44"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tchildThreadId,\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\texpectedRevision: null,\n\t\t\tthreadUpdate,\n\t\t\treason: "The project ledger could not capture a selection revision before proof started."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s36", 1);\n\t}\n\tconst workflowFile = HARNESS_RELEASE_WORKFLOW_FILE;\n\tlet run = null;\n\ttry {\n\t\tw.$arm("s46", 0);\n\t\tconst response = disposition === "read" && previous !== null ? (w.$arm("s47", 0), await w.call("s48", "Read the existing exact release run", "signalbox.github_workflow", {\n\t\t\taction: "read",\n\t\t\tworkflowFile,\n\t\t\trunId: previous.workflowRunId,\n\t\t\theadSha\n\t\t})) : (w.$arm("s47", 1), await w.call("s49", "Dispatch the exact release proof", "signalbox.github_workflow", {\n\t\t\taction: "dispatch",\n\t\t\tworkflowFile,\n\t\t\tref: "main",\n\t\t\theadSha,\n\t\t\tcorrelationId: runKey,\n\t\t\tinputs: {\n\t\t\t\tprovider: candidate.provider,\n\t\t\t\tversion: candidate.version,\n\t\t\t\trunKey,\n\t\t\t\tselection: candidate.selection\n\t\t\t}\n\t\t}));\n\t\trun = workflowRun(response);\n\t} catch {\n\t\tw.$arm("s46", 1);\n\t\trun = null;\n\t}\n\tif (run === null || run.workflowFile !== workflowFile || run.headSha !== headSha || run.displayTitle !== runKey) {\n\t\tw.$arm("s50", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s51"), childThreadId, previous, `workflow-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending. The automation could not confirm a workflow run for ${runKey} at ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s52"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\texpectedRevision,\n\t\t\tchildThreadId,\n\t\t\t...run === null ? {} : {\n\t\t\t\tworkflowRunId: run.runId,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t},\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: run?.status ?? "unknown",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason: "The workflow run did not match the exact release attempt."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s50", 1);\n\t}\n\tconst baseReceipt = {\n\t\t...previous,\n\t\tdiscoveryId: candidate.id,\n\t\tprovider: candidate.provider,\n\t\tversion: candidate.version,\n\t\tselection: candidate.selection,\n\t\trunKey,\n\t\theadSha,\n\t\texpectedRevision,\n\t\tchildThreadId,\n\t\tworkflowRunId: run.runId,\n\t\tworkflowUrl: run.url,\n\t\tworkflowStatus: run.status\n\t};\n\tif (run.status !== "completed") {\n\t\tw.$arm("s54", 0);\n\t\tawait rememberPending(w.$frame("s55"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: run.status\n\t\t};\n\t} else {\n\t\tw.$arm("s54", 1);\n\t}\n\tlet evidence = null;\n\ttry {\n\t\tw.$arm("s57", 0);\n\t\tevidence = await w.call("s58", "Read the completed release proof artifact", "signalbox.github_workflow", {\n\t\t\taction: "artifact",\n\t\t\tworkflowFile,\n\t\t\trunId: run.runId,\n\t\t\theadSha,\n\t\t\tartifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId),\n\t\t\tentryPath: HARNESS_RELEASE_RESULT_PATH\n\t\t});\n\t} catch {\n\t\tw.$arm("s57", 1);\n\t\tevidence = null;\n\t}\n\tconst verified = verifiedWorkflowArtifact(evidence, candidate, headSha, runKey, run);\n\tif (verified === null) {\n\t\tw.$arm("s59", 0);\n\t\tconst reason = "The completed workflow\'s immutable result artifact is unavailable or mismatched.";\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s60"), childThreadId, previous, `completed-artifact-pending:${headSha}`, `The ${candidate.provider} ${candidate.version} workflow completed, but its exact result artifact could not be verified. Status remains pending. Run: ${run.url}`);\n\t\tawait rememberPending(w.$frame("s61"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowUrl: run.url,\n\t\t\treason\n\t\t};\n\t} else {\n\t\tw.$arm("s59", 1);\n\t}\n\tlet recorded = null;\n\ttry {\n\t\tw.$arm("s63", 0);\n\t\trecorded = await w.call("s64", "Verify the immutable release result in the project ledger", "signalbox.harness_release_ledger", {\n\t\t\taction: "record",\n\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowFile,\n\t\t\tworkflowRunId: run.runId,\n\t\t\tartifactName: verified.artifact.name,\n\t\t\tentryPath: verified.artifact.entryPath\n\t\t});\n\t} catch {\n\t\tw.$arm("s63", 1);\n\t\trecorded = null;\n\t}\n\tconst ledgerRecorded = isRecord(recorded) && recorded.status === "recorded";\n\tconst runtimeArtifactVerified = isRecord(recorded) && recorded.runtimeArtifactVerified === true;\n\tconst result = isRecord(recorded) && isRecord(recorded.result) ? recorded.result : verified.result;\n\tconst proofStatus = isRecord(recorded) && proofStatusOf(recorded.proofStatus) !== null ? proofStatusOf(recorded.proofStatus) : proofStatusOf(verified.result.status) ?? "pending";\n\tconst proofArtifactVerified = true;\n\tconst status = proofStatus === "red" && proofArtifactVerified ? "red" : proofStatus === "green" && ledgerRecorded && runtimeArtifactVerified && isVerifiedHarnessRelease("green", result) ? "green" : "pending";\n\tconst reason = isRecord(recorded) && typeof recorded.reason === "string" ? recorded.reason : status === "pending" ? "The immutable proof is verified, but its deployable runtime payload is not available yet." : undefined;\n\tlet stored = {\n\t\t...baseReceipt,\n\t\tstatus,\n\t\tproofStatus,\n\t\tledgerStatus: ledgerRecorded ? "recorded" : "unverified",\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tresult,\n\t\tworkflowArtifact: verified.artifact,\n\t\tthreadUpdate: previous?.threadUpdate ?? null,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n\tif (status === "green" && candidate.selection === "current" && expectedRevision !== null) {\n\t\tw.$arm("s65", 0);\n\t\ttry {\n\t\t\tw.$arm("s66", 0);\n\t\t\tconst latest = await w.call("s67", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\tconst currentRevision = isRecord(latest) && Number.isSafeInteger(latest.revision) ? latest.revision : null;\n\t\t\tif (!canPromoteHarnessRelease({\n\t\t\t\tselection: candidate.selection,\n\t\t\t\tstatus,\n\t\t\t\truntimeArtifactVerified,\n\t\t\t\texpectedRevision,\n\t\t\t\tcurrentRevision,\n\t\t\t\tresult\n\t\t\t})) {\n\t\t\t\tw.$arm("s68", 0);\n\t\t\t\tawait rememberPending(w.$frame("s69"), receiptKey, {\n\t\t\t\t\t...stored,\n\t\t\t\t\tpromotionStatus: "stale",\n\t\t\t\t\treason: "The captured selection revision changed while this proof ran."\n\t\t\t\t});\n\t\t\t\treturn {\n\t\t\t\t\tstatus: "pending",\n\t\t\t\t\trunKey,\n\t\t\t\t\theadSha,\n\t\t\t\t\tworkflowUrl: run.url,\n\t\t\t\t\tpromotion: "stale"\n\t\t\t\t};\n\t\t\t} else {\n\t\t\t\tw.$arm("s68", 1);\n\t\t\t}\n\t\t\tawait w.call("s71", "Select the proven current release", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "promote",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\t\treleaseId: result.candidateId,\n\t\t\t\texpectedRevision,\n\t\t\t\tchangedAt: triggerAt\n\t\t\t});\n\t\t} catch {\n\t\t\tw.$arm("s66", 1);\n\t\t\tawait rememberPending(w.$frame("s72"), receiptKey, {\n\t\t\t\t...stored,\n\t\t\t\tpromotionStatus: "not-selected"\n\t\t\t});\n\t\t\treturn {\n\t\t\t\tstatus: "pending",\n\t\t\t\trunKey,\n\t\t\t\theadSha,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t};\n\t\t}\n\t} else {\n\t\tw.$arm("s65", 1);\n\t}\n\tif (status === "red" && candidate.selection === "current") {\n\t\tw.$arm("s74", 0);\n\t\tstored = await handoffRedProof(w.$frame("s75"), receiptKey, stored, candidate, runKey, headSha);\n\t} else {\n\t\tw.$arm("s74", 1);\n\t}\n\tconst threadMessage = status === "red" ? `The exact ${candidate.provider} ${candidate.version} proof is red. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. The previous green release remains selected.` : status === "green" ? `The exact ${candidate.provider} ${candidate.version} proof is green and selected. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}.` : `The exact ${candidate.provider} ${candidate.version} proof is pending. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. ${reason ?? "The previous green release remains selected."}`;\n\tconst threadUpdate = await updateReleaseThread(w.$frame("s76"), childThreadId, previous, `${headSha}:${run.status}:${status}:${proofStatus}:${runtimeArtifactVerified}`, threadMessage);\n\tconst finalReceipt = {\n\t\t...stored,\n\t\tthreadUpdate\n\t};\n\tawait w.remember("s77", "Store the release proof status", receiptKey, finalReceipt);\n\treturn {\n\t\tstatus,\n\t\tverified: status === "green" && runtimeArtifactVerified,\n\t\tproofStatus,\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tworkflowStatus: run.status,\n\t\tdiscoveryId: candidate.id,\n\t\trunKey,\n\t\theadSha,\n\t\tworkflowUrl: run.url,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n}\nconst __signalboxWorkflow = workflow(async (w, _input, trigger) => {\n\tconst candidates = [];\n\tfor (const source of NPM_PACKAGES) {\n\t\tw.$arm("s1", 0);\n\t\tconst packagePath = source.packageName.replace("/", "%2f");\n\t\tconst metadata = responseJson(await w.http("s2", "Read npm release metadata", `https://registry.npmjs.org/${packagePath}`));\n\t\tcandidates.push(...parseNpm(metadata, source));\n\t}\n\tcandidates.push(...await discoverCodex(w.$frame("s3")));\n\tconst ordered = orderReleaseCandidates(candidates);\n\tconst head = responseJson(await w.http("s8", "Read the Signalbox source head", "https://api.github.com/repos/JustYannicc/signalbox/commits/main"));\n\tif (!isRecord(head) || typeof head.sha !== "string") {\n\t\tw.$arm("s9", 0);\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\treason: "The current source head could not be read."\n\t\t};\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst backfill = ordered.filter((release) => release.selection === "backfill");\n\tconst results = [];\n\tconst verifiedCurrentProviders = [];\n\tconst currentBatch = nextHarnessReleaseBatch(candidates).filter((release) => release.selection === "current");\n\tfor (const candidate of currentBatch) {\n\t\tw.$arm("s11", 0);\n\t\tconst result = await runRelease(w.$frame("s12"), candidate, head.sha, trigger.at);\n\t\tresults.push({\n\t\t\tdiscoveryId: candidate.id,\n\t\t\t...result\n\t\t});\n\t\tif (result.verified === true) verifiedCurrentProviders.push(candidate.provider);\n\t}\n\tconst allCurrentGreen = current.length === 3 && current.every((release) => verifiedCurrentProviders.includes(release.provider));\n\tlet backfillSummary = {\n\t\ttotal: backfill.length,\n\t\tterminal: 0,\n\t\tgreen: 0,\n\t\tred: 0,\n\t\tpending: backfill.length,\n\t\tacceptance: "blocked-on-current"\n\t};\n\tif (allCurrentGreen) {\n\t\tw.$arm("s78", 0);\n\t\tconst backfillReceipts = [];\n\t\tfor (const candidate of backfill) {\n\t\t\tw.$arm("s79", 0);\n\t\t\tconst receipt = await w.recall("s80", "Read a historical release receipt", releaseReceiptKey(candidate.provider, candidate.version, head.sha));\n\t\t\tif (isRecord(receipt)) backfillReceipts.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...receipt\n\t\t\t});\n\t\t}\n\t\tconst terminalBackfillIds = backfillReceipts.filter((receipt) => receipt.workflowStatus === "completed" && receipt.proofArtifactVerified === true).map((receipt) => receipt.discoveryId).filter((id) => typeof id === "string");\n\t\tconst backfillBatch = nextHarnessReleaseBatch(candidates, verifiedCurrentProviders, terminalBackfillIds).filter((release) => release.selection === "backfill");\n\t\tfor (const candidate of backfillBatch) {\n\t\t\tw.$arm("s81", 0);\n\t\t\tconst result = await runRelease(w.$frame("s82"), candidate, head.sha, trigger.at);\n\t\t\tresults.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...result\n\t\t\t});\n\t\t\tconst currentReceipts = backfillReceipts.filter((receipt) => receipt.discoveryId !== candidate.id);\n\t\t\tif (result.proofArtifactVerified === true) {\n\t\t\t\tcurrentReceipts.push({\n\t\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t\trunKey: releaseRunKey(candidate.provider, candidate.version),\n\t\t\t\t\theadSha: head.sha,\n\t\t\t\t\tworkflowStatus: result.workflowStatus,\n\t\t\t\t\tproofStatus: result.proofStatus,\n\t\t\t\t\tproofArtifactVerified: true\n\t\t\t\t});\n\t\t\t}\n\t\t\tbackfillReceipts.splice(0, backfillReceipts.length, ...currentReceipts);\n\t\t}\n\t\tbackfillSummary = summarizeHarnessBackfill(candidates, backfillReceipts, head.sha);\n\t} else {\n\t\tw.$arm("s78", 1);\n\t}\n\treturn {\n\t\theadSha: head.sha,\n\t\tcurrent: current.length,\n\t\tbackfillAvailable: backfill.length,\n\t\tbackfillAcceptance: backfillSummary,\n\t\tattempted: results.length,\n\t\tresults\n\t};\n});\n\nreturn __signalboxWorkflow;\n}\n',
+  },
 };

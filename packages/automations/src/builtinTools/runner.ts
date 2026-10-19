@@ -14,9 +14,6 @@ import type { VersionApproval } from "../WorkflowStore.ts";
 
 const BUILTIN_TOOL_PREFIX = "signalbox.";
 
-/** The `service` the compiler gives built-in tool steps, for their logo. */
-const BUILTIN_TOOL_SERVICE = "signalbox";
-
 export const isBuiltinToolOperation = (operation: string) =>
   operation.startsWith(BUILTIN_TOOL_PREFIX);
 
@@ -37,17 +34,17 @@ export interface BuiltinToolCall {
 
 export interface BuiltinToolHandler {
   readonly tools: ReadonlyArray<string>;
+  /** Protected tools declare their authority and project boundary at registration. */
+  readonly policies?: Readonly<Record<string, BuiltinToolPolicy>>;
   readonly call: (input: BuiltinToolCall) => Effect.Effect<unknown, AutomationError>;
 }
 
-/**
- * Tools only code a person or Signalbox stands behind may call, and only on
- * threads of the automation's own project. Agents can save and run their own
- * automations, so without this an agent could merge by writing a two-line
- * automation instead of asking the merge gate.
- */
-const VOUCHED_TOOLS: ReadonlySet<string> = new Set(["pull_request_action"]);
+export interface BuiltinToolPolicy {
+  readonly requiresVouch?: boolean;
+  readonly projectScope?: "run" | "thread";
+}
 
+/** Agent-authored versions cannot use protected authority without a person publishing them. */
 const isTaskLifecycleRead = (args: unknown) =>
   typeof args === "object" &&
   args !== null &&
@@ -77,13 +74,33 @@ export const makeBuiltinTools = (guards: BuiltinToolGuards) => {
             },
           );
         return yield* explained(
-          `Only Signalbox's own automations, or one a person published, can use signalbox.${tool}.`,
+          "A person must publish this automation before it can use this protected tool.",
           {
-            why: "An agent saved this version, and agents ask for merges through the merge gate rather than make them.",
-            fix: "Save it as a draft and have the user publish it in Signalbox, or call merge_pull_request.",
+            why: "Agent-authored automation versions do not have authority to use protected tools.",
+            fix: "Save it as a draft and have a person publish the version in Signalbox.",
           },
         );
       }
+    });
+
+  const scoped = (
+    policy: BuiltinToolPolicy | undefined,
+    tool: string,
+    input: Omit<BuiltinToolCall, "tool">,
+  ) =>
+    Effect.gen(function* () {
+      const scope =
+        policy?.projectScope ??
+        (tool === "task_lifecycle" && !isTaskLifecycleRead(input.args) ? "thread" : undefined);
+      if (scope === "run") {
+        if (input.projectId.trim() === "")
+          return yield* explained("This protected tool needs the automation run's project.", {
+            fix: "Run the automation in a project.",
+          });
+        return;
+      }
+      if (scope !== "thread") return;
+
       const threadId = (input.args as { readonly threadId?: unknown } | null)?.threadId;
       const projectId =
         typeof threadId === "string" ? yield* guards.projectOfThread(threadId) : undefined;
@@ -122,9 +139,12 @@ export const makeBuiltinTools = (guards: BuiltinToolGuards) => {
         );
       }
       const call = handler.call({ ...input, tool });
+      const policy = handler.policies?.[tool];
       const needsVouch =
-        VOUCHED_TOOLS.has(tool) || (tool === "task_lifecycle" && !isTaskLifecycleRead(input.args));
-      return needsVouch ? vouched(tool, input).pipe(Effect.andThen(call)) : call;
+        policy?.requiresVouch === true ||
+        (tool === "task_lifecycle" && !isTaskLifecycleRead(input.args));
+      const authorization = needsVouch ? vouched(tool, input) : Effect.void;
+      return authorization.pipe(Effect.andThen(scoped(policy, tool, input)), Effect.andThen(call));
     });
 
   return { register, call };

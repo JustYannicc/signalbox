@@ -4,6 +4,8 @@ import {
   MessageId,
   PullRequestMergeMethod,
   ThreadId,
+  NonNegativeInt,
+  TrimmedNonEmptyString,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import type {
@@ -20,7 +22,22 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type {
+  GitHubActions,
+  WorkflowArtifactInput,
+  WorkflowDispatchInput,
+  WorkflowReadInput,
+} from "../github/GitHubActions.ts";
 import type { PullRequestMerges } from "../github/PullRequestMerges.ts";
+import {
+  HARNESS_RELEASE_RESULT_PATH,
+  HARNESS_RELEASE_WORKFLOW_FILE,
+} from "@signalbox/automations/defaults/harnessReleasePolicy";
+import type { HarnessProvider } from "../harnessReleases/HarnessReleaseLedger.ts";
+import type {
+  HarnessReleaseLedgerService,
+  HarnessReleaseRunSelection,
+} from "../harnessReleases/HarnessReleaseLedgerService.ts";
 import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import type { UserFolders } from "../user/UserFolders.ts";
@@ -38,6 +55,17 @@ type Args = Readonly<Record<string, unknown>>;
 const refuse = (message: string) => Effect.fail(new AutomationError({ message }));
 const argsOf = (args: unknown): Args =>
   args !== null && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};
+const stringOf = (args: Args, key: string) =>
+  typeof args[key] === "string" && args[key] !== "" ? args[key] : null;
+const stringRecordOf = (value: unknown): Readonly<Record<string, string>> | null => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [key, field] of Object.entries(value)) {
+    if (typeof field !== "string") return null;
+    result[key] = field;
+  }
+  return result;
+};
 const threadIdOf = (args: Args) =>
   typeof args.threadId === "string" && args.threadId !== ""
     ? Effect.succeed(ThreadId.make(args.threadId))
@@ -46,13 +74,47 @@ const threadIdOf = (args: Args) =>
 /** A pull request's web URL: host, owner/repo and number. */
 const PULL_URL = /^https?:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)/;
 const isMergeMethod = Schema.is(PullRequestMergeMethod);
+const harnessProvider = Schema.Literals([
+  "claude-code",
+  "agent-sdk",
+  "codex",
+] satisfies ReadonlyArray<HarnessProvider>);
+const harnessRunSelection = Schema.Literals([
+  "current",
+  "backfill",
+] satisfies ReadonlyArray<HarnessReleaseRunSelection>);
+const HarnessReleaseLedgerRequest = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("selection"), provider: harnessProvider }),
+  Schema.Struct({
+    action: Schema.Literal("record"),
+    provider: harnessProvider,
+    version: TrimmedNonEmptyString,
+    selection: harnessRunSelection,
+    runKey: TrimmedNonEmptyString,
+    headSha: TrimmedNonEmptyString,
+    workflowFile: Schema.Literal(HARNESS_RELEASE_WORKFLOW_FILE),
+    workflowRunId: TrimmedNonEmptyString,
+    artifactName: TrimmedNonEmptyString,
+    entryPath: Schema.Literal(HARNESS_RELEASE_RESULT_PATH),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("promote"),
+    provider: harnessProvider,
+    releaseId: TrimmedNonEmptyString,
+    expectedRevision: NonNegativeInt,
+    changedAt: TrimmedNonEmptyString,
+  }),
+]);
+const decodeHarnessReleaseLedgerRequest = Schema.decodeUnknownEffect(HarnessReleaseLedgerRequest);
 
 export const makeCloudBuiltinTools = (deps: {
   readonly threads: AutomationThreadsShape;
   readonly service: CloudThreadService.CloudThreadService["Service"];
   readonly owner: Effect.Effect<Actor, AutomationError>;
   readonly merges: PullRequestMerges["Service"];
+  readonly github: GitHubActions["Service"];
   readonly folders: UserFolders["Service"];
+  readonly harnessReleaseLedger: HarnessReleaseLedgerService["Service"];
 }): BuiltinToolHandler => {
   const shellOf = (threadId: ThreadId) =>
     deps.threads
@@ -229,10 +291,90 @@ export const makeCloudBuiltinTools = (deps: {
         });
         return { threadId, delivery: "queued" };
       }),
+    harness_release_ledger: (call, args) =>
+      Effect.gen(function* () {
+        const request = yield* decodeHarnessReleaseLedgerRequest(args).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AutomationError({
+                message: "The harness release ledger request is invalid.",
+                cause,
+              }),
+          ),
+        );
+        if (request.action === "selection")
+          return yield* deps.harnessReleaseLedger.selection(call.projectId, request.provider);
+        if (request.action === "promote") {
+          const { action: _action, ...input } = request;
+          return yield* deps.harnessReleaseLedger.promote(call.projectId, input);
+        }
+        const { action: _action, ...input } = request;
+        return yield* deps.harnessReleaseLedger.record(call.projectId, input);
+      }),
+    github_workflow: (call, args) =>
+      Effect.gen(function* () {
+        const action = stringOf(args, "action");
+        const workflowFile = stringOf(args, "workflowFile");
+        const headSha = stringOf(args, "headSha");
+        if (workflowFile === null || headSha === null)
+          return yield* refuse("Pass workflowFile and headSha.");
+        if (action === "dispatch") {
+          const ref = stringOf(args, "ref");
+          const correlationId = stringOf(args, "correlationId");
+          const inputs = stringRecordOf(args.inputs);
+          if (ref === null || correlationId === null || inputs === null)
+            return yield* refuse("Dispatch needs ref, correlationId and string inputs.");
+          const request: WorkflowDispatchInput = {
+            workflowFile,
+            ref,
+            headSha,
+            correlationId,
+            inputs,
+          };
+          return yield* deps.github.workflowDispatch(call.projectId, request);
+        }
+        const runId = stringOf(args, "runId");
+        if (runId === null) return yield* refuse("Pass runId.");
+        if (action === "read") {
+          const request: WorkflowReadInput = { workflowFile, runId, headSha };
+          return yield* deps.github.workflowRead(call.projectId, request);
+        }
+        if (action === "artifact") {
+          const artifactName = stringOf(args, "artifactName");
+          const entryPath = stringOf(args, "entryPath");
+          if (artifactName === null || entryPath === null)
+            return yield* refuse("Artifact reads need artifactName and entryPath.");
+          const request: WorkflowArtifactInput = {
+            workflowFile,
+            runId,
+            headSha,
+            artifactName,
+            entryPath,
+          };
+          return yield* deps.github.workflowArtifact(call.projectId, request);
+        }
+        return yield* refuse("github_workflow action is dispatch, read or artifact.");
+      }),
+    github_issue: (call, args) =>
+      Effect.gen(function* () {
+        if (args.action !== "create") return yield* refuse("github_issue action is create.");
+        const title = stringOf(args, "title");
+        const body = stringOf(args, "body");
+        const correlationId = stringOf(args, "correlationId");
+        if (title === null || body === null || correlationId === null)
+          return yield* refuse("Issue creation needs title, body and correlationId.");
+        return yield* deps.github.createIssue(call.projectId, { title, body, correlationId });
+      }),
   };
 
   return {
     tools: Object.keys(tools),
+    policies: {
+      pull_request_action: { requiresVouch: true, projectScope: "thread" },
+      harness_release_ledger: { requiresVouch: true, projectScope: "run" },
+      github_workflow: { requiresVouch: true, projectScope: "run" },
+      github_issue: { requiresVouch: true, projectScope: "run" },
+    },
     call: (call) => {
       const tool = tools[call.tool];
       return tool

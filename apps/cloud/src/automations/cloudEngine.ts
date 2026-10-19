@@ -22,6 +22,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as PullRequestMergesModule from "../github/PullRequestMerges.ts";
 import * as PullRequestReadsModule from "../github/PullRequestReads.ts";
 import * as GitHubWebhooksModule from "../github/GitHubWebhooks.ts";
+import { GitHubActions } from "../github/GitHubActions.ts";
+import { HarnessReleaseLedgerService } from "../harnessReleases/HarnessReleaseLedgerService.ts";
 import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { contextOfProject, projectOfDrive } from "../user/contextProjects.ts";
@@ -134,10 +136,20 @@ const make = Effect.gen(function* () {
 
   yield* ensureCursors.pipe(Effect.orDie);
   const merges = yield* PullRequestMergesModule.PullRequestMerges;
+  const github = yield* GitHubActions;
+  const harnessReleaseLedger = yield* HarnessReleaseLedgerService;
   const changedFiles = yield* makeChangedFiles;
   const folders = yield* UserFolders.UserFolders;
   yield* engine.registerBuiltinTools(
-    makeCloudBuiltinTools({ threads, service, owner, merges, folders }),
+    makeCloudBuiltinTools({
+      threads,
+      service,
+      owner,
+      merges,
+      github,
+      folders,
+      harnessReleaseLedger,
+    }),
   );
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);

@@ -31,6 +31,7 @@ import * as CloudAttachments from "./attachments/CloudAttachments.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
+import { harnessReleaseLedgerTestingLayer } from "./harnessReleases/testing.ts";
 import { canWrite, myDriveId } from "./drive/driveAccess.ts";
 import * as DriveDirectory from "./drive/DriveDirectory.ts";
 import * as DriveFiles from "./drive/DriveFiles.ts";
@@ -260,7 +261,9 @@ const makeUserRuntime = (
   const services =
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
-      Layer.provide(Layer.mergeAll(runner, alarm, modelCompletion)),
+      Layer.provide(
+        Layer.mergeAll(runner, alarm, modelCompletion, harnessReleaseLedgerTestingLayer()),
+      ),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
@@ -432,6 +435,7 @@ export const makeMemoryCloud = (
           | PullRequestPolls.PullRequestPolls
         >,
       ) => Promise<A>;
+      readonly dispose: () => Promise<void>;
     }
   >();
   const mcpHandlers = new Map<string, ReturnType<typeof makeMcpHandler>>();
@@ -568,7 +572,7 @@ export const makeMemoryCloud = (
       browserTrail: async () => ({ _tag: "ok", value: [] }),
       browserStep: async () => ({ _tag: "unavailable", message: "No steps in tests." }),
     };
-    const object = { api, run };
+    const object = { api, run, dispose: () => runtime.dispose() };
     threads.set(threadId, object);
     return object;
   };
@@ -683,6 +687,13 @@ export const makeMemoryCloud = (
         ),
       ),
     settle,
+    /** Releases each memory object's runtime and any resources owned by its scope. */
+    dispose: Effect.promise(async () => {
+      await Promise.all([
+        ...Array.from(users.values(), ({ runtime }) => runtime.dispose()),
+        ...Array.from(threads.values(), ({ dispose }) => dispose()),
+      ]);
+    }),
     /** Every event a thread committed, oldest first. */
     threadEvents: (threadId: string) =>
       Effect.promise(() =>
