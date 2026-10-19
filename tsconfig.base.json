@@ -58,12 +58,25 @@
         },
         "overrides": [
           {
+            // signalbox: native infrastructure fixtures and artifact packagers run outside Effect.
+            "include": [
+              "**/apps/cloud/infra/**/*.test.ts",
+              "**/apps/cloud/infra/kernelPrograms/**/*.ts"
+            ],
+            "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          },
+          {
             // signalbox: release CI and its storage proof tests own native process and fixture I/O.
             "include": [
               "**/scripts/harness-releases/**/*.ts",
               "**/apps/cloud/src/harnessReleases/tests/**/*.ts"
             ],
             "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          },
+          {
+            // signalbox: these fixtures drive workerd over its native HTTP entry point.
+            "include": ["**/apps/cloud/infra/**/*.test.ts"],
+            "options": { "diagnosticSeverity": { "globalFetch": "off" } }
           },
           {
             // signalbox: Lunora emits native engine contexts; their clock runs outside Effect.
