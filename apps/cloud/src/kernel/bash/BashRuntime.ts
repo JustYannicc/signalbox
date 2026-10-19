@@ -10,11 +10,12 @@ import { runAsync } from "../wasi/internal_wasi_calls.ts";
 import { WasiExit } from "../wasi/internal_wasi_memory.ts";
 import { WasiLifecycle } from "../wasi/internal_wasi_lifecycle.ts";
 import { validateOptions } from "../wasi/internal_wasi_options.ts";
-import { ARENA_SIZE, BashCaptureStore } from "./BashCaptureStore.ts";
+import { createBashInstance } from "./BashInstance.ts";
+import { rewindBash as rewind } from "./BashTransitions.ts";
 import type { KernelBashCredentials, KernelBashProgramContext } from "./BashContext.ts";
 import { bashImports } from "./BashImports.ts";
 import { errno, range, resultErrno } from "./BashMemory.ts";
-import type { BashExports, BashProcess } from "./BashProcess.ts";
+import type { BashProcess } from "./BashProcess.ts";
 import { BashPreopens } from "./BashPreopens.ts";
 
 const PAGE = 65_536;
@@ -72,55 +73,13 @@ function createProcess(
     pending: undefined,
   } as BashProcess;
   try {
-    process.instance = new WebAssembly.Instance(module, bashImports(process));
-    process.exports = checkedExports(process.instance);
+    Object.assign(process, createBashInstance(module, bashImports(process)));
     lifecycle.finalizeBindings(process.instance);
-    const ex = process.exports;
-    const base = ex.memory.buffer.byteLength;
-    ex.memory.grow(ARENA_SIZE / PAGE);
-    process.captures = new BashCaptureStore(
-      {
-        low: Number(ex.__data_end.value),
-        high: Number(ex.__heap_base.value),
-        log: ex.nimbus_procenv_log(),
-      },
-      base,
-      ARENA_SIZE,
-    );
     return process;
   } catch (error) {
     lifecycle.close();
     throw error;
   }
-}
-
-function checkedExports(instance: WebAssembly.Instance): BashExports {
-  const ex = instance.exports;
-  for (const name of [
-    "_start",
-    "nimbus_procenv_log",
-    "asyncify_start_unwind",
-    "asyncify_stop_unwind",
-    "asyncify_start_rewind",
-    "asyncify_stop_rewind",
-  ]) {
-    if (typeof ex[name] !== "function") throw new Error(`GNU Bash module lacks ${name}`);
-  }
-  if (!(ex.memory instanceof WebAssembly.Memory)) throw new Error("GNU Bash module lacks memory");
-  for (const name of ["__stack_pointer", "__data_end", "__heap_base"]) {
-    if (!(ex[name] instanceof WebAssembly.Global)) throw new Error(`GNU Bash module lacks ${name}`);
-  }
-  const checked = ex as unknown as BashExports;
-  const sp = Number(checked.__stack_pointer.value);
-  if (!(Number(checked.__data_end.value) < sp && sp <= Number(checked.__heap_base.value)))
-    throw new Error("GNU Bash stack bounds are invalid");
-  checked.__stack_pointer.value = sp;
-  return checked;
-}
-
-function rewind(process: BashProcess, pointer = process.captures.top): void {
-  process.rewinding = true;
-  process.exports.asyncify_start_rewind(pointer);
 }
 
 async function execute(

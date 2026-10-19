@@ -16,6 +16,7 @@ export interface ChildWorkerInvocation extends ChildWorkerCode {
 }
 
 export interface ChildWorkerDispatch<Host extends object> {
+  /** The permit follows this promise, including any descendant continuations in the worker. */
   readonly run: (input: ChildWorkerInvocation, host: Host) => Promise<KernelCommandExit>;
 }
 
@@ -27,6 +28,8 @@ export interface ChildWorkerProgramOptions<Host extends object> {
   /** The adapter supplies an RPC target; its methods retain the process's actual kernel resources. */
   readonly createHost: (context: KernelAsyncProgramContext) => {
     readonly host: Host;
+    /** Logical exit may precede dispatch completion when descendants retain the worker. */
+    readonly exited?: Promise<KernelCommandExit>;
     readonly close: () => Promise<void> | void;
   };
 }
@@ -54,9 +57,11 @@ export function createChildWorkerProgram<Host extends object>(
   return Object.freeze({
     kind: "async" as const,
     async run(context: KernelAsyncProgramContext) {
-      return options.capacity.run(context.signal, async () => {
+      const result = Promise.withResolvers<KernelCommandExit>();
+      const lifetime = options.capacity.run(context.signal, async () => {
         context.signal.throwIfAborted();
         const owner = options.createHost(context);
+        if (owner.exited !== undefined) void owner.exited.then(result.resolve, result.reject);
         try {
           return await options.dispatch.run(
             {
@@ -70,10 +75,16 @@ export function createChildWorkerProgram<Host extends object>(
             },
             owner.host,
           );
+        } catch (error) {
+          if (owner.exited !== undefined) result.reject(error);
+          throw error;
         } finally {
           await owner.close();
         }
       });
+      // Observe late dispatch/close failures while capacity remains held through physical teardown.
+      void lifetime.then(result.resolve, result.reject);
+      return result.promise;
     },
   });
 }

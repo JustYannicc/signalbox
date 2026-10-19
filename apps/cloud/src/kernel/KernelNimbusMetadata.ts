@@ -1,11 +1,12 @@
 import { KernelOpenFlags, type KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelBashCredentials } from "./bash/BashContext.ts";
+import { asWasiMemory, type WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { errno, range, string } from "./bash/BashMemory.ts";
 import { assertBashPosixCredentials } from "./bash/BashEnvironment.ts";
 
 const encoder = new TextEncoder();
 export function createKernelNimbusMetadata(options: {
-  readonly memory: () => WebAssembly.Memory;
+  readonly memory: () => WebAssembly.Memory | WasiMemory;
   readonly filesystem: KernelFileSystem;
   readonly credentials?: Pick<KernelBashCredentials, "uid" | "gid" | "euid" | "egid">;
   readonly directoryFd?: (fd: number) => number;
@@ -70,10 +71,10 @@ export function createKernelNimbusMetadata(options: {
           symlink: 0o120000,
           character: 0o020000,
         };
-        const view = new DataView(memory.buffer);
-        view.setUint32(out >>> 0, bits[type] | (metadata.mode & 0o7777), true);
-        view.setUint32((out >>> 0) + 4, metadata.uid, true);
-        view.setUint32((out >>> 0) + 8, metadata.gid, true);
+        const view = asWasiMemory(memory).view(out, 12);
+        view.setUint32(0, bits[type] | (metadata.mode & 0o7777), true);
+        view.setUint32(4, metadata.uid, true);
+        view.setUint32(8, metadata.gid, true);
         return 0;
       } catch (error) {
         return errno(error);
@@ -155,12 +156,12 @@ export function createKernelNimbusMetadata(options: {
             : [row[0]!, row[1]!, ...members];
         const encoded = strings.map((value) => encoder.encode(value));
         const size = 8 + encoded.reduce((total, bytes) => total + bytes.length + 1, 0);
-        const view = new DataView(memory.buffer);
-        view.setUint32(needed >>> 0, size, true);
+        asWasiMemory(memory).u32(needed, size);
         if (size > capacity >>> 0) return 68;
         range(memory, out, size);
-        view.setUint32(out >>> 0, uid, true);
-        view.setUint32((out >>> 0) + 4, gid ?? members.length, true);
+        const view = asWasiMemory(memory).view(out, 8);
+        view.setUint32(0, uid, true);
+        view.setUint32(4, gid ?? members.length, true);
         let cursor = (out >>> 0) + 8;
         for (const bytes of encoded) {
           const target = range(memory, cursor, bytes.length + 1);
