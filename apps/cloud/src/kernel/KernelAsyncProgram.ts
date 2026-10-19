@@ -19,8 +19,12 @@ export interface KernelAsyncProgramExecRequest {
 }
 
 export interface KernelAsyncProgramCpu {
+  /** Selects one process identity without keeping a CPU scope open during waits. */
+  run<T>(run: () => T): T;
   /** Runs one synchronous user-code slice; async waits stay outside the scope. */
   runUser<T>(run: () => T): T;
+  forProcess(pid: number): KernelAsyncProgramCpu;
+  stop(): void;
 }
 
 export interface KernelAsyncProgramContext {
