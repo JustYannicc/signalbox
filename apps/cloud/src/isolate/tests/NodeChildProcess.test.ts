@@ -705,12 +705,9 @@ describe("Node child_process adapter", () => {
     );
   });
 
-  it("keeps IPC, PTY and non-pipe stdio paths explicitly unsupported", () => {
+  it("keeps IPC and PTY paths explicitly unsupported", () => {
     const host = fixture();
     expect(() => host.childProcess.fork("worker.js")).toThrow(
-      expect.objectContaining({ code: "ENOTSUP" }),
-    );
-    expect(() => host.childProcess.spawn("worker", { stdio: "inherit" })).toThrow(
       expect.objectContaining({ code: "ENOTSUP" }),
     );
     expect(() => host.childProcess.spawn("worker", { agentosPty: true })).toThrow(

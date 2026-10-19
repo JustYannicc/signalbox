@@ -92,7 +92,90 @@ function spawnError(child: NodeChildProcess): Promise<Error> {
   return new Promise((resolve) => child.once("error", resolve));
 }
 
+function installParentStdio(host: ReturnType<typeof harness>) {
+  const paths = ["/work/inherited-input", "/work/inherited-output", "/work/inherited-error"];
+  host.nodeFs.writeFileSync(paths[0]!, "input");
+  for (const [fd, path] of paths.entries()) {
+    const source = host.nodeFs.openSync(path, fd === 0 ? "r" : "w+");
+    host.filesystem.descriptors.put(fd, host.filesystem.descriptors.take(source));
+  }
+  return paths;
+}
+
 describe("Node child_process stdio over the kernel host", () => {
+  it.each(["async", "sync"] as const)(
+    "inherits all parent descriptors through the %s route",
+    async (route) => {
+      const host = harness(({ filesystem }) => {
+        const input = new Uint8Array(5);
+        const count = filesystem.read(0, input, null);
+        filesystem.write(1, input.subarray(0, count), null);
+        filesystem.write(2, bytes("err"), null);
+        return 0;
+      });
+      const paths = installParentStdio(host);
+      try {
+        if (route === "async") {
+          const child = host.childProcess.spawn("/bin/stdio-tool", { stdio: "inherit" });
+          expect(child.stdio).toEqual([null, null, null]);
+          await closed(child);
+        } else {
+          const result = host.childProcess.spawnSync("/bin/stdio-tool", { stdio: "inherit" });
+          expect(result.error).toBeUndefined();
+          expect(result.status).toBe(0);
+          expect(result.stdout).toBeNull();
+          expect(result.stderr).toBeNull();
+        }
+        expect(host.nodeFs.readFileSync(paths[1]!).toString()).toBe("input");
+        expect(host.nodeFs.readFileSync(paths[2]!).toString()).toBe("err");
+        expect(host.nodeFs.readSync(0, new Uint8Array(1), 0, 1, null)).toBe(0);
+        host.nodeFs.writeSync(1, "-parent");
+        expect(host.nodeFs.readFileSync(paths[1]!).toString()).toBe("input-parent");
+        for (const fd of [0, 1, 2]) expect(host.nodeFs.fstatSync(fd).isFile()).toBe(true);
+      } finally {
+        await host.close();
+      }
+    },
+  );
+
+  it.each(["async", "sync"] as const)(
+    "mixes inherited and piped output through the %s route",
+    async (route) => {
+      const host = harness(({ filesystem }) => {
+        filesystem.write(1, bytes("out"), null);
+        filesystem.write(2, bytes("err"), null);
+        return 0;
+      });
+      const paths = installParentStdio(host);
+      try {
+        if (route === "async") {
+          const child = host.childProcess.spawn("/bin/stdio-tool", {
+            stdio: ["ignore", "pipe", "inherit"],
+          });
+          if (!child.stdout) throw new Error("Expected child stdout pipe");
+          expect(child.stdin).toBeNull();
+          expect(child.stderr).toBeNull();
+          const stdoutText = output(child.stdout);
+          await closed(child);
+          expect(await stdoutText).toBe("out");
+        } else {
+          const result = host.childProcess.spawnSync("/bin/stdio-tool", {
+            stdio: ["ignore", "pipe", "inherit"],
+          });
+          expect(result.error).toBeUndefined();
+          expect(result.status).toBe(0);
+          expect(result.stdout?.toString()).toBe("out");
+          expect(result.stderr).toBeNull();
+        }
+        expect(host.nodeFs.readFileSync(paths[1]!).toString()).toBe("");
+        expect(host.nodeFs.readFileSync(paths[2]!).toString()).toBe("err");
+        expect(host.nodeFs.fstatSync(2).isFile()).toBe(true);
+      } finally {
+        await host.close();
+      }
+    },
+  );
+
   it("uses pipes for null and undefined array slots", async () => {
     const host = harness(({ filesystem }) => {
       filesystem.write(1, bytes("out"), null);

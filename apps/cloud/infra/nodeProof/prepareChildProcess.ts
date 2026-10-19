@@ -147,6 +147,22 @@ export class ChildProcessFacet extends DurableObject {
       results.closed=await run(cp.spawn('/bin/rg',['--version'],{stdio:['ignore',999999,999999]}));
       checks.closedDescriptor=results.closed.error?.code==='EBADF' && results.closed.events.at(-1)==='close';
       checks.eventOrder=results.defaults.events.join(',')==='spawn,exit,close' && results.redirected.events.join(',')==='spawn,exit,close';
+      const inheritedPaths=['/work/inherited-in','/work/inherited-out','/work/inherited-err'];
+      fs.writeFileSync(inheritedPaths[0],'inherit-input');
+      for(const [slot,path] of inheritedPaths.entries()){
+        const fd=fs.openSync(path,slot===0?'r':'w+');
+        kernel.descriptors.put(slot,kernel.descriptors.take(fd));
+      }
+      results.inherit=await run(cp.spawn('/bin/cat',[],{stdio:'inherit'}));
+      checks.inheritAll=results.inherit.code===0 && results.inherit.stdout==='' && fs.readFileSync(inheritedPaths[1],'utf8')==='inherit-input' && fs.readSync(0,new Uint8Array(1),0,1,null)===0;
+      const mixed=cp.spawn('/bin/bash',['-c','printf out; printf err >&2'],{stdio:['ignore','pipe','inherit']});
+      checks.inheritMixedStreams=mixed.stdin===null && mixed.stdout!==null && mixed.stderr===null;
+      results.inheritMixed=await run(mixed);
+      checks.inheritMixedOutput=results.inheritMixed.code===0 && results.inheritMixed.stdout==='out' && results.inheritMixed.stderr==='' && fs.readFileSync(inheritedPaths[2],'utf8')==='err';
+      results.inheritSync=cp.spawnSync('/bin/bash',['-c','printf sync-out; printf sync-err >&2'],{stdio:'inherit'});
+      checks.inheritSync=results.inheritSync.status===0 && !results.inheritSync.error && results.inheritSync.stdout===null && results.inheritSync.stderr===null && fs.readFileSync(inheritedPaths[1],'utf8')==='inherit-inputsync-out' && fs.readFileSync(inheritedPaths[2],'utf8')==='errsync-err';
+      fs.writeSync(1,'-parent');
+      checks.inheritedParentStillOwned=[0,1,2].every(fd=>fs.fstatSync(fd).isFile()) && fs.readFileSync(inheritedPaths[1],'utf8')==='inherit-inputsync-out-parent';
       checks.resourcesReleased=host.processes.size===0 && wakes.size===0;
       const ok=Object.values(checks).every(Boolean);return Response.json({ok,calls,checks,results,note:'Public child bridge and pinned programs. Official release execution and update proof remain separate.'},{status:ok?200:500});
     }catch(error){return Response.json({ok:false,checks,results,error:String(error),stack:error.stack},{status:500});}

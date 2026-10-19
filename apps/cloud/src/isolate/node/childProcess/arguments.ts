@@ -114,19 +114,23 @@ function normalizeStdio(
 ): readonly [NodeChildProcessStdio, NodeChildProcessStdio, NodeChildProcessStdio] {
   if (stdio === undefined || stdio === null) return ["pipe", "pipe", "pipe"];
   if (typeof stdio === "string") {
-    const mode = normalizeStdioEntry(stdio);
-    return [mode, mode, mode];
+    return [
+      normalizeStdioEntry(stdio, 0),
+      normalizeStdioEntry(stdio, 1),
+      normalizeStdioEntry(stdio, 2),
+    ];
   }
   if (!Array.isArray(stdio)) unsupportedNodeOperation("child_process.stdio mode");
   if (stdio.length > 3) unsupportedNodeOperation("child_process.stdio mode");
   return [
-    normalizeStdioEntry(stdio[0]),
-    normalizeStdioEntry(stdio[1]),
-    normalizeStdioEntry(stdio[2]),
+    normalizeStdioEntry(stdio[0], 0),
+    normalizeStdioEntry(stdio[1], 1),
+    normalizeStdioEntry(stdio[2], 2),
   ];
 }
 
-function normalizeStdioEntry(value: unknown): NodeChildProcessStdio {
+function normalizeStdioEntry(value: unknown, index: 0 | 1 | 2): NodeChildProcessStdio {
+  if (value === "inherit") return index;
   if (value === undefined || value === null || value === "pipe") return "pipe";
   if (value === "ignore") return value;
   if (typeof value === "number") {
