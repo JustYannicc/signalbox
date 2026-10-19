@@ -12,6 +12,11 @@ import {
 import { KernelProcessTable, type KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import type { AgentOsSpawnRequest } from "./AgentOsProcessWire.ts";
+import type { KernelCommand } from "./KernelCommandForwarder.ts";
+import type {
+  KernelProgramAdmissionDecision,
+  KernelProgramAdmissionRequest,
+} from "./KernelProgramAdmission.ts";
 import { runKernelInlineExecution } from "./process/KernelExecution.ts";
 import {
   prepareKernelProgram,
@@ -71,7 +76,15 @@ export interface KernelProgramHostOptions {
   readonly processes?: KernelProcessTable;
   readonly cpuAccounting?: KernelCpuAccounting;
   readonly selectFileBytes?: KernelProgramFileByteSelector;
+  readonly admit?: (
+    request: KernelProgramAdmissionRequest,
+  ) => Promise<KernelProgramAdmissionDecision>;
 }
+
+export type {
+  KernelProgramAdmissionDecision,
+  KernelProgramAdmissionRequest,
+} from "./KernelProgramAdmission.ts";
 
 type ProgramRecord = {
   readonly executable: string;
@@ -132,6 +145,7 @@ export class KernelProgramHost {
       bindingFor: (program) => this.#resolved.get(program)?.binding,
       executableFor: (program) => this.#resolved.get(program)?.executable,
       ...(this.#selectFileBytes === undefined ? {} : { selectFileBytes: this.#selectFileBytes }),
+      ...(options.admit === undefined ? {} : { admit: options.admit }),
     });
   }
 
@@ -198,6 +212,16 @@ export class KernelProgramHost {
       request,
       input.admission,
     );
+  }
+
+  spawnCommandPiped(
+    input: KernelProgramPrepareInput,
+    command: KernelCommand,
+    options: Pick<KernelProgramPrepareOptions, "fileBytes"> = {},
+  ): Promise<
+    KernelResult<{ readonly handle: KernelHandle<"process">; readonly piped: KernelPipedProgram }>
+  > {
+    return this.#spawner.spawnCommandPiped(input, command, options);
   }
 
   async exitStatus(

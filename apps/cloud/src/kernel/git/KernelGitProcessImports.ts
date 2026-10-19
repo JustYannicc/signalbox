@@ -17,7 +17,10 @@ import {
   gitErrnoOf,
   gitSpawnFileAction,
   GIT_ERRNO,
+  gitMemoryRange,
+  gitMemoryView,
   validGitMemoryRange,
+  type KernelGitMemory,
 } from "./KernelGitProcessWire.ts";
 
 const {
@@ -29,7 +32,7 @@ const {
 } = GIT_ERRNO;
 
 interface GitProcessImportOptions {
-  readonly memory: () => WebAssembly.Memory;
+  readonly memory: () => KernelGitMemory;
   readonly context: KernelAsyncProgramContext;
   readonly credentials: KernelGitCredentials;
 }
@@ -119,10 +122,14 @@ export class KernelGitProcessImports {
   #ids(pointer: number) {
     const memory = this.#options.memory();
     if (!validGitMemoryRange(memory, pointer, 8)) return EFAULT;
-    const view = new DataView(memory.buffer);
-    view.setUint32(pointer >>> 0, this.#options.credentials.uid, true);
-    view.setUint32((pointer >>> 0) + 4, this.#options.credentials.gid, true);
-    return 0;
+    try {
+      const view = gitMemoryView(memory, pointer, 8);
+      view.setUint32(0, this.#options.credentials.uid, true);
+      view.setUint32(4, this.#options.credentials.gid, true);
+      return 0;
+    } catch {
+      return EFAULT;
+    }
   }
 
   #startupCwd(pointer: number, capacity: number) {
@@ -132,21 +139,31 @@ export class KernelGitProcessImports {
     if (size === 0) return cwd.byteLength;
     if (size <= cwd.byteLength) return -GIT_ERRNO.noSpace;
     if (!validGitMemoryRange(memory, pointer, cwd.byteLength + 1)) return -GIT_ERRNO.fault;
-    const output = new Uint8Array(memory.buffer, pointer >>> 0, cwd.byteLength + 1);
-    output.set(cwd);
-    output[cwd.byteLength] = 0;
-    return cwd.byteLength;
+    try {
+      const output = gitMemoryRange(memory, pointer, cwd.byteLength + 1);
+      output.set(cwd);
+      output[cwd.byteLength] = 0;
+      return cwd.byteLength;
+    } catch {
+      return -GIT_ERRNO.fault;
+    }
   }
 
   #pipe(fdsPointer: number) {
+    const memory = this.#options.memory();
     const start = fdsPointer >>> 0;
-    if (!validGitMemoryRange(this.#options.memory(), start, 8)) return EFAULT;
+    if (!validGitMemoryRange(memory, start, 8)) return EFAULT;
+    let output: DataView;
+    try {
+      output = gitMemoryView(memory, start, 8);
+    } catch {
+      return EFAULT;
+    }
     const result = this.#descriptors.imports.fd_pipe(start, start + 4);
     if (result !== 0) return result;
-    const view = new DataView(this.#options.memory().buffer);
     const descriptors = this.#options.context.filesystem.descriptors;
     for (const pointer of [start, start + 4]) {
-      const endpoint = descriptors.get(view.getInt32(pointer, true)).stdio;
+      const endpoint = descriptors.get(output.getInt32(pointer - start, true)).stdio;
       if (endpoint !== undefined) this.#pipeEndpoints.add(endpoint);
     }
     return 0;
@@ -156,10 +173,11 @@ export class KernelGitProcessImports {
     const memory = this.#options.memory();
     if (!validGitMemoryRange(memory, outPointer, 4)) return EFAULT;
     try {
+      const output = gitMemoryView(memory, outPointer, 4);
       const duplicate = this.#options.context.filesystem.descriptors.duplicate(fd | 0, {
         closeOnExec: false,
       });
-      new DataView(memory.buffer).setInt32(outPointer >>> 0, duplicate, true);
+      output.setInt32(0, duplicate, true);
       return 0;
     } catch (error) {
       return mapErrno(error);
@@ -199,6 +217,14 @@ export class KernelGitProcessImports {
       !validGitMemoryRange(memory, waitedPointer, 4)
     )
       return EFAULT;
+    let statusOutput: DataView;
+    let waitedOutput: DataView;
+    try {
+      statusOutput = gitMemoryView(memory, statusPointer, 4);
+      waitedOutput = gitMemoryView(memory, waitedPointer, 4);
+    } catch {
+      return EFAULT;
+    }
     if (((options >>> 0) & ~KERNEL_WNOHANG) !== 0) return EINVAL;
     if ((pid | 0) <= 0) return ENOTSUP;
     const child = this.#children.get(pid | 0);
@@ -213,15 +239,14 @@ export class KernelGitProcessImports {
       }
       return gitErrnoForKernelError(result.error.code);
     }
-    const view = new DataView(memory.buffer);
     if (!("status" in result.value)) {
-      view.setInt32(statusPointer >>> 0, 0, true);
-      view.setInt32(waitedPointer >>> 0, 0, true);
+      statusOutput.setInt32(0, 0, true);
+      waitedOutput.setInt32(0, 0, true);
       return 0;
     }
     const status = result.value.status;
-    view.setInt32(statusPointer >>> 0, encodeGitWaitStatus(status), true);
-    view.setInt32(waitedPointer >>> 0, pid | 0, true);
+    statusOutput.setInt32(0, encodeGitWaitStatus(status), true);
+    waitedOutput.setInt32(0, pid | 0, true);
     this.#children.delete(pid | 0);
     return 0;
   }
@@ -240,6 +265,12 @@ export class KernelGitProcessImports {
   ) {
     const memory = this.#options.memory();
     if (!validGitMemoryRange(memory, pidPointer, 4)) return EFAULT;
+    let pidOutput: DataView;
+    try {
+      pidOutput = gitMemoryView(memory, pidPointer, 4);
+    } catch {
+      return EFAULT;
+    }
     const argv = decodeGitStrings(memory, argvPointer, argvLength);
     const envStrings = decodeGitStrings(memory, envPointer, envLength);
     const cwd = decodeGitBytes(memory, cwdPointer, cwdLength);
@@ -281,7 +312,7 @@ export class KernelGitProcessImports {
     const pid = this.#allocatePid();
     if (pid === undefined) return GIT_ERRNO.resourceLimit;
     this.#children.set(pid, { request });
-    new DataView(memory.buffer).setInt32(pidPointer >>> 0, pid, true);
+    pidOutput.setInt32(0, pid, true);
     return 0;
   }
 
