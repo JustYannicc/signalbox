@@ -264,10 +264,27 @@ describe("createComputerCommands", () => {
     expect(machine.spawn).not.toHaveBeenCalled();
   });
 
-  it("does not implicitly fall back to the machine for an unregistered command", async () => {
+  it.each(["/bin/missing", "/usr/bin/apt", "/usr/bin/docker", "/usr/bin/gcc"])(
+    "routes unregistered %s to the machine with the exact command",
+    async (executable) => {
+      const { context, commands, child, machine } = computerHarness(() => 0);
+      context.filesystem.mkdir("/workspace");
+      const command = {
+        executable,
+        argv: ["custom-argv0", "--flag", ""],
+        cwd: "/workspace",
+        env: { EMPTY: "", PATH: "/bin", TOKEN: "exact" },
+      };
+      const signal = new AbortController().signal;
+      await expect(commands.exec(command, signal)).resolves.toBe(child);
+      expect(machine.spawn).toHaveBeenCalledExactlyOnceWith(command, signal);
+    },
+  );
+
+  it("rejects unregistered commands on the isolate-only entry point", async () => {
     const { commands, machine } = computerHarness(() => 0);
     await expect(
-      commands.exec(
+      commands.isolate.exec(
         { ...probeCommand(), executable: "/bin/missing", argv: ["missing"] },
         new AbortController().signal,
       ),

@@ -22,6 +22,10 @@ export interface ComputerCommandOptions {
 export function createComputerCommands(options: ComputerCommandOptions): ComputerExecPort & {
   readonly isolate: ComputerExecPort;
 } {
+  const commands = new KernelCommandExecutor({
+    ...options.kernel,
+    forwarder: options.machine,
+  });
   const local = new KernelCommandExecutor({
     ...options.kernel,
     forwarder: {
@@ -55,7 +59,7 @@ export function createComputerCommands(options: ComputerCommandOptions): Compute
       const decision = options.escalation.decide(captured, evidence);
       return decision.kind === "machine"
         ? options.machine.spawn(captured, signal)
-        : local.spawn(captured, signal);
+        : commands.spawn(captured, signal);
     },
   });
 }
