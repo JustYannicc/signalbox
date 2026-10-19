@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  KERNEL_HOOK_EXECUTABLE,
-  KERNEL_HOOK_MAX_INPUT_BYTES,
-  type KernelHookInvoker,
-} from "../HookProgram.ts";
+import { KERNEL_HOOK_EXECUTABLE, type KernelHookInvoker } from "../HookProgram.ts";
 import {
   bytes,
   collect,
@@ -193,43 +189,48 @@ describe("registered kernel hook program", () => {
     }
   });
 
-  it("rejects malformed or oversized JSON without calling the handler", async () => {
+  it("rejects malformed JSON and invalid UTF-8 without calling the handler", async () => {
     const invoke = vi.fn<KernelHookInvoker>();
-
-    for (const input of [
-      bytes("{broken"),
-      new Uint8Array(KERNEL_HOOK_MAX_INPUT_BYTES + 1).fill(0x20),
-    ]) {
+    for (const input of [bytes("{broken"), Uint8Array.of(0x22, 0xff, 0x22)]) {
       const test = setup(invoke);
       const piped = prepare(test);
       const child = spawn(test, piped);
       try {
-        let result: Awaited<ReturnType<typeof collect>>;
-        if (input.byteLength > KERNEL_HOOK_MAX_INPUT_BYTES) {
-          const writer = piped.stdin.getWriter();
-          const sending = writer.write(input).then(
-            () => undefined,
-            () => undefined,
-          );
-          result = await collect(test, piped, child);
-          await sending;
-          writer.releaseLock();
-          expect(result.stderr).toEqual(
-            bytes(`signalbox-hook: stdin exceeds ${KERNEL_HOOK_MAX_INPUT_BYTES} bytes\n`),
-          );
-        } else {
-          await writeInput(piped.stdin, input);
-          result = await collect(test, piped, child);
-          expect(result.stderr).toEqual(
-            bytes("signalbox-hook: stdin must contain one UTF-8 JSON value\n"),
-          );
-        }
+        await writeInput(piped.stdin, input);
+        const result = await collect(test, piped, child);
+        expect(result.stderr).toEqual(
+          bytes("signalbox-hook: stdin must contain one UTF-8 JSON value\n"),
+        );
         expect(result.exited).toMatchObject({ status: "ok", value: { exitCode: 2 } });
       } finally {
         await test.close(piped);
       }
     }
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("preserves a tool payload larger than one MiB through pipe backpressure", async () => {
+    const payload = { hook_event_name: "PostToolUse", tool_response: "a".repeat(1_100_000) };
+    const invoke = vi.fn<KernelHookInvoker>(async (_id, received) => {
+      expect(received).toEqual(payload);
+      return {
+        stdout: bytes('{"continue":true}'),
+        stderr: new Uint8Array(),
+        exit: { exitCode: 0, signal: 0, coreDumped: false },
+      };
+    });
+    const test = setup(invoke);
+    const piped = prepare(test);
+    const child = spawn(test, piped);
+    try {
+      await writeInput(piped.stdin, bytes(JSON.stringify(payload)));
+      const result = await collect(test, piped, child);
+      expect(result.stdout).toEqual(bytes('{"continue":true}'));
+      expect(result.exited).toMatchObject({ status: "ok", value: { exitCode: 0 } });
+      expect(invoke).toHaveBeenCalledOnce();
+    } finally {
+      await test.close(piped);
+    }
   });
 
   it("returns usage for anything other than one operand after argv[0]", async () => {

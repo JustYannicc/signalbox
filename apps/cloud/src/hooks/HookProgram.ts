@@ -6,12 +6,10 @@ import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import type { HarnessHookJson } from "./HarnessHooks.ts";
 
 export const KERNEL_HOOK_EXECUTABLE = "/usr/bin/signalbox-hook";
-export const KERNEL_HOOK_MAX_INPUT_BYTES = 1_048_576;
 
 const INPUT_CHUNK_BYTES = 16_384;
 const USAGE = "Usage: signalbox-hook <id>\n";
 const INVALID_INPUT = "signalbox-hook: stdin must contain one UTF-8 JSON value\n";
-const INPUT_TOO_LARGE = `signalbox-hook: stdin exceeds ${KERNEL_HOOK_MAX_INPUT_BYTES} bytes\n`;
 const HANDLER_FAILED = "signalbox-hook: hook handler failed\n";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -61,10 +59,6 @@ export function createKernelHookProgram(invoke: KernelHookInvoker) {
         payload = parseHookJson(await readInput(context, stdin));
       } catch (error) {
         if (context.signal.aborted) throw context.signal.reason ?? error;
-        if (error instanceof HookInputTooLargeError) {
-          await writeAll(context, stderr, encoder.encode(INPUT_TOO_LARGE));
-          return exit(2);
-        }
         if (error instanceof HookInputError) {
           await writeAll(context, stderr, encoder.encode(INVALID_INPUT));
           return exit(2);
@@ -121,15 +115,13 @@ async function readInput(
   const chunks: Uint8Array[] = [];
   let length = 0;
   for (;;) {
-    const target = new Uint8Array(
-      Math.min(INPUT_CHUNK_BYTES, KERNEL_HOOK_MAX_INPUT_BYTES + 1 - length),
-    );
+    const target = new Uint8Array(INPUT_CHUNK_BYTES);
     const count = await io(context, input, "read", () =>
       input.stream.readInto!(target, input.descriptor.flags),
     );
     if (count === 0) break;
-    if (count > target.byteLength || length + count > KERNEL_HOOK_MAX_INPUT_BYTES) {
-      throw new HookInputTooLargeError();
+    if (count > target.byteLength) {
+      throw Object.assign(new Error("Hook stdin returned an invalid byte count"), { code: "EIO" });
     }
     chunks.push(target.slice(0, count));
     length += count;
@@ -229,4 +221,3 @@ function exit(exitCode: number): KernelCommandExit {
 }
 
 class HookInputError extends Error {}
-class HookInputTooLargeError extends HookInputError {}
