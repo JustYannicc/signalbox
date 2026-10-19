@@ -2,6 +2,11 @@ import type { CommitInode } from "../FilePersistencePorts.ts";
 import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
 import { diffTrees } from "./RevisionTree.ts";
 import type { DirtyInode, TreeEntry } from "./RevisionTypes.ts";
+import {
+  localContentChanged,
+  mergePosixMetadata,
+  remoteContentChanged,
+} from "./RevisionMetadata.ts";
 
 export function assertNoRevisionConflict(
   baseline: ReadonlyMap<string, TreeEntry>,
@@ -9,8 +14,9 @@ export function assertNoRevisionConflict(
   dirty: readonly DirtyInode[],
   remote: readonly CommitInode[],
 ): void {
+  const dirtyInodes = new Set(dirty.map((entry) => entry.inode));
   const baselinePaths = pathsByName(baseline);
-  const local = diffTrees(baseline, current, new Set(dirty.map((entry) => entry.inode)));
+  const local = diffTrees(baseline, current, dirtyInodes);
   if (local.length === 0) return;
 
   const currentPaths = pathsByName(current);
@@ -23,8 +29,22 @@ export function assertNoRevisionConflict(
       for (const entry of [baselinePaths.get(path), currentPaths.get(path)]) {
         if (!entry || !localInodes.has(entry.inode)) continue;
         const localChange = localByInode.get(entry.inode)!;
-        if (isDirectoryMetadataOverlap(localChange, change, path, baseline, current, baselinePaths))
+        if (
+          canMergeStableInodeUpdate(
+            localChange,
+            change,
+            path,
+            baseline,
+            current,
+            baselinePaths,
+            dirtyInodes,
+          )
+        ) {
+          const before = baseline.get(entry.inode);
+          const live = current.get(entry.inode);
+          mergePosixMetadata(before?.posix ?? null, live?.posix ?? null, change.posix);
           continue;
+        }
         throw revisionConflict();
       }
     }
@@ -37,13 +57,14 @@ export function assertNoRevisionConflict(
         localPaths.some(
           (localPath) =>
             remotePaths.includes(localPath) &&
-            !isDirectoryMetadataOverlap(
+            !canMergeStableInodeUpdate(
               localChange,
               change,
               localPath,
               baseline,
               current,
               baselinePaths,
+              dirtyInodes,
             ),
         ) ||
         localDirectoryPaths.some((directory) =>
@@ -57,6 +78,39 @@ export function assertNoRevisionConflict(
       }
     }
   }
+}
+
+function canMergeStableInodeUpdate(
+  localChange: ReturnType<typeof diffTrees>[number],
+  remoteChange: CommitInode,
+  path: string,
+  baseline: ReadonlyMap<string, TreeEntry>,
+  current: ReadonlyMap<string, TreeEntry>,
+  baselinePaths: ReadonlyMap<string, TreeEntry>,
+  dirtyInodes: ReadonlySet<string>,
+): boolean {
+  if (
+    isDirectoryMetadataOverlap(localChange, remoteChange, path, baseline, current, baselinePaths)
+  ) {
+    return true;
+  }
+  const before = baselinePaths.get(path);
+  if (!before || before.inode !== localChange.inode.toString()) return false;
+  const local = current.get(before.inode);
+  if (
+    !local ||
+    remoteChange.stat === null ||
+    remoteChange.stat.type !== before.stat.type ||
+    remoteChange.removedPaths.length > 0 ||
+    !samePathSet(before.paths, local.paths) ||
+    !samePathSet(before.paths, remoteChange.paths)
+  ) {
+    return false;
+  }
+  return !(
+    (localContentChanged(before, local) || dirtyInodes.has(localChange.inode.toString())) &&
+    remoteContentChanged(before, remoteChange)
+  );
 }
 
 function isDirectoryMetadataOverlap(
@@ -133,6 +187,10 @@ function isLocalDirectoryMetadataOnly(
 
 function samePaths(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((path, index) => path === right[index]);
+}
+
+function samePathSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((path) => right.includes(path));
 }
 
 function pathsByName(tree: ReadonlyMap<string, TreeEntry>): Map<string, TreeEntry> {

@@ -2,7 +2,7 @@ import type { CommitInode, FileHydrationPort, ForkCommit } from "../FilePersiste
 import type { Inode } from "../storage.ts";
 import type { FacetStorage } from "../FacetSqliteStorage.ts";
 import type { createFacetFilePersistence } from "../FacetFilePersistence.ts";
-import type { ApplyPlan, WorkspaceState } from "./RevisionTypes.ts";
+import type { ApplyPlan, DirtyInode, TreeEntry, WorkspaceState } from "./RevisionTypes.ts";
 import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
 import { readDirty, readEpoch, readState, restoreDirtySnapshot } from "./RevisionJournal.ts";
 import { applyChangesToManifest, encodeManifest, sameCommit, scanTree } from "./RevisionTree.ts";
@@ -11,6 +11,12 @@ import { findRetiredInodes, resolveLocalInodes, validatePlans } from "./Revision
 import { hydratePendingCandidates, stageFiles } from "./RevisionStaging.ts";
 import { reconcileNamespace } from "./RevisionNamespace.ts";
 import { assertNamespacePathsOwned } from "./RevisionNamespaceOwnership.ts";
+import {
+  localContentChanged,
+  mergePosixMetadata,
+  mergeRevisionStat,
+  remoteContentChanged,
+} from "./RevisionMetadata.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 
 export async function applyRevision(input: {
@@ -95,8 +101,16 @@ export async function applyRevision(input: {
         applyId,
         currentPlans,
       );
-      applyMetadataAndChunks(database, reconciled, applyId);
-      const manifest = applyChangesToManifest(baseline.manifest, reconciled);
+      const applied = applyMetadataAndChunks(
+        database,
+        storage,
+        baseline.manifest,
+        current,
+        reconciled,
+        dirtyBeforeApply,
+        applyId,
+      );
+      const manifest = applyChangesToManifest(baseline.manifest, applied);
       database.sql.exec(
         "UPDATE kernel_fs_workspace_state SET commit_id = ?, manifest_json = ?, baseline_epoch = ? WHERE singleton = 1",
         after.commit,
@@ -112,15 +126,37 @@ export async function applyRevision(input: {
 
 function applyMetadataAndChunks(
   database: FacetStorage,
+  storage: ReturnType<typeof createFacetFilePersistence>["storage"],
+  baseline: ReadonlyMap<string, TreeEntry>,
+  current: ReadonlyMap<string, TreeEntry>,
   plans: readonly ApplyPlan[],
+  dirty: readonly DirtyInode[],
   applyId: string,
-): void {
+): ApplyPlan[] {
+  const applied: ApplyPlan[] = [];
+  const dirtyInodes = new Set(dirty.map((entry) => entry.inode));
   for (const plan of plans) {
-    if (!plan.changed.stat) continue;
+    if (!plan.changed.stat) {
+      applied.push(plan);
+      continue;
+    }
     const localInode = plan.localInode;
     if (localInode === undefined)
       throw new KernelRevisionWorkspaceError("EIO", "The applied inode has no live identity");
-    const stat = plan.changed.stat;
+    const key = localInode.toString();
+    const old = baseline.get(key);
+    const local = current.get(key);
+    const stat = mergeRevisionStat(plan.changed, old, local, storage.stat(localInode));
+    const posix = mergePosixMetadata(old?.posix ?? null, local?.posix ?? null, plan.changed.posix);
+    // A coarse filesystem clock can hide a same-size write from stat comparisons.
+    const preserveLocalContent =
+      old !== undefined &&
+      local !== undefined &&
+      !remoteContentChanged(old, plan.changed) &&
+      (localContentChanged(old, local) || dirtyInodes.has(key));
+    const symlinkTarget = preserveLocalContent
+      ? (local?.symlinkTarget ?? plan.changed.symlinkTarget)
+      : plan.changed.symlinkTarget;
     database.transactionSync(() => {
       // Descriptors point at the local inode number, so replace its rows instead of swapping in a copy.
       database.sql.exec(
@@ -131,20 +167,20 @@ function applyMetadataAndChunks(
         stat.atimeNs.toString(),
         stat.mtimeNs.toString(),
         stat.ctimeNs.toString(),
-        stat.type === "symlink" ? plan.changed.symlinkTarget : null,
+        stat.type === "symlink" ? symlinkTarget : null,
         localInode.toString(),
       );
-      if (plan.changed.posix === null)
+      if (posix === null)
         database.sql.exec("DELETE FROM kernel_fs_posix WHERE ino = ?", localInode.toString());
-      else if (plan.changed.posix !== undefined)
+      else
         database.sql.exec(
           "INSERT INTO kernel_fs_posix (ino, mode, uid, gid) VALUES (?, ?, ?, ?) ON CONFLICT(ino) DO UPDATE SET mode = excluded.mode, uid = excluded.uid, gid = excluded.gid",
           localInode.toString(),
-          plan.changed.posix.mode,
-          plan.changed.posix.uid,
-          plan.changed.posix.gid,
+          posix.mode,
+          posix.uid,
+          posix.gid,
         );
-      if (stat.type !== "file") return;
+      if (stat.type !== "file" || !remoteContentChanged(old, plan.changed)) return;
       database.sql.exec("DELETE FROM kernel_fs_chunk WHERE ino = ?", localInode.toString());
       database.sql.exec(
         "INSERT INTO kernel_fs_chunk (ino, part, bin) SELECT ?, part, bin FROM kernel_fs_workspace_apply_chunk WHERE apply_id = ? AND remote_ino = ?",
@@ -158,5 +194,10 @@ function applyMetadataAndChunks(
         localInode.toString(),
       );
     });
+    applied.push({
+      ...plan,
+      changed: { ...plan.changed, stat, posix, symlinkTarget },
+    });
   }
+  return applied;
 }

@@ -46,11 +46,6 @@ export function reconcileNamespace(
         Number(left.localInode === undefined) - Number(right.localInode === undefined);
       return leftDir - rightDir || depthOrder || identityOrder;
     });
-  const byLocalInode = new Map(
-    livePlans.flatMap((plan) =>
-      plan.localInode === undefined ? [] : [[plan.localInode.toString(), plan] as const],
-    ),
-  );
   const parked = new Map<string, string>();
   const reconciled = new Map<string, ApplyPlan>();
 
@@ -116,25 +111,58 @@ export function reconcileNamespace(
     reconciled.set(change.inode.toString(), plan);
   };
 
-  // Park displaced inodes before a shallow replacement can remove a deeper rename source.
-  const toPark = new Set<string>();
-  for (const plan of livePlans) {
-    const destination = plan.changed.paths[0]!;
-    const destinationEntry = safeLstat(filesystem, mountPath, rootRealPath, storage, destination);
-    if (!destinationEntry || destinationEntry.ino === plan.localInode) continue;
-    const blocker = byLocalInode.get(destinationEntry.ino.toString());
-    if (blocker && blocker.changed.paths[0] !== destination)
-      toPark.add(destinationEntry.ino.toString());
+  parkMovingInodes(filesystem, mountPath, rootRealPath, storage, applyId, livePlans, parked);
+
+  for (const deletion of deletedDirectories.sort(
+    (left, right) => depth(right.path) - depth(left.path),
+  )) {
+    const current = safeLstat(filesystem, mountPath, rootRealPath, storage, deletion.path);
+    if (current?.ino === deletion.inode)
+      removePath(filesystem, mountPath, rootRealPath, storage, deletion.path);
   }
+
+  // Parent directories must settle first so descendants resolve in the final namespace.
+  for (const plan of livePlans) {
+    if (plan.changed.stat?.type === "directory") reconcilePlan(plan);
+  }
+
+  const filePlans = livePlans.filter((plan) => plan.changed.stat?.type !== "directory");
+  for (const plan of filePlans) reconcilePlan(plan);
+  return plans.map((plan) => reconciled.get(plan.changed.inode.toString()) ?? plan);
+}
+
+function parkMovingInodes(
+  filesystem: KernelFileSystem,
+  mountPath: string,
+  rootRealPath: string,
+  storage: Persistence["storage"],
+  applyId: string,
+  plans: readonly ApplyPlan[],
+  parked: Map<string, string>,
+): void {
+  const moving = plans
+    .filter(
+      (plan) =>
+        plan.localInode !== undefined &&
+        plan.sourcePaths.some((path) => !plan.changed.paths.includes(path)),
+    )
+    .sort((left, right) => {
+      const deepestSource = (plan: ApplyPlan) => Math.max(...plan.sourcePaths.map(depth));
+      return (
+        deepestSource(right) - deepestSource(left) ||
+        left.localInode!.toString().localeCompare(right.localInode!.toString())
+      );
+    });
+
   let parkIndex = 0;
-  for (const inode of toPark) {
-    const plan = byLocalInode.get(inode)!;
+  for (const plan of moving) {
+    const inode = plan.localInode!;
     const source = findLivePath(
       filesystem,
       mountPath,
       rootRealPath,
       storage,
-      plan.localInode!,
+      inode,
       plan.sourcePaths,
       plan.changed.paths,
     );
@@ -145,24 +173,8 @@ export function reconcileNamespace(
     } while (safeLstat(filesystem, mountPath, rootRealPath, storage, temp));
     assertParentInside(filesystem, mountPath, rootRealPath, storage, temp);
     filesystem.rename(guestPath(mountPath, source), guestPath(mountPath, temp));
-    parked.set(inode, temp);
+    parked.set(inode.toString(), temp);
   }
-
-  // Parent directories must settle first so descendants resolve in the final namespace.
-  for (const plan of livePlans) {
-    if (plan.changed.stat?.type === "directory") reconcilePlan(plan);
-  }
-
-  const filePlans = livePlans.filter((plan) => plan.changed.stat?.type !== "directory");
-  for (const plan of filePlans) reconcilePlan(plan);
-  for (const deletion of deletedDirectories.sort(
-    (left, right) => depth(right.path) - depth(left.path),
-  )) {
-    const current = safeLstat(filesystem, mountPath, rootRealPath, storage, deletion.path);
-    if (current?.ino === deletion.inode)
-      removePath(filesystem, mountPath, rootRealPath, storage, deletion.path);
-  }
-  return plans.map((plan) => reconciled.get(plan.changed.inode.toString()) ?? plan);
 }
 
 function createPath(
