@@ -2,7 +2,7 @@ import type {
   KernelTscFileSystemPort,
   KernelTscFileSystemRequest,
   KernelTscFileSystemResponse,
-} from "../KernelTscFileSystem.ts";
+} from "./KernelTscFileSystem.ts";
 
 const OP_READ = 0;
 const OP_STAT = 1;

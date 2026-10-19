@@ -1,5 +1,5 @@
 import type { KernelTscFileSystemPort } from "./KernelTscFileSystem.ts";
-import { createKernelTscHostImports } from "./tsc/KernelTscFileSystemImports.ts";
+import { createKernelTscHostImports } from "./KernelTscHostImports.ts";
 import { WasiExit } from "./wasi/internal_wasi_memory.ts";
 
 const TSC_HOST_IMPORTS = Object.freeze(["fs", "fs_take"]);

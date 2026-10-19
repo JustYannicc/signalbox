@@ -78,12 +78,23 @@ describe("Kernel tsc-rs adapter", () => {
           { name: "source.ts", kind: "file" },
         ],
       });
+      filesystem.symlink("/workspace/source.ts", "/workspace/out/link.ts");
       expect(await port.execute({ op: "remove", path: "/workspace/out" })).toEqual({
         kind: "written",
       });
       expect(await port.execute({ op: "read", path: "/workspace/out/nested/emit.js" })).toEqual({
         kind: "missing",
       });
+      expect(await port.execute({ op: "remove", path: "/workspace/out" })).toEqual({
+        kind: "written",
+      });
+      expect(await port.execute({ op: "read", path: "/workspace/source.ts" })).toEqual({
+        kind: "bytes",
+        bytes: new Uint8Array([0, 255, 10]),
+      });
+      expect(
+        await port.execute({ op: "remove", path: "/workspace/source.ts/child" }),
+      ).toMatchObject({ kind: "error", message: expect.stringContaining("not a directory") });
     } finally {
       filesystem.dispose();
       await fixture.close();

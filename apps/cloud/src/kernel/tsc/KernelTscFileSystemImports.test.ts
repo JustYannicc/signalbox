@@ -4,7 +4,7 @@ import type {
   KernelTscFileSystemRequest,
   KernelTscFileSystemResponse,
 } from "../KernelTscFileSystem.ts";
-import { createKernelTscHostImports } from "./KernelTscFileSystemImports.ts";
+import { createKernelTscHostImports } from "../KernelTscHostImports.ts";
 import { tscGuest } from "./tests/TscWasmFixture.ts";
 
 const encoder = new TextEncoder();

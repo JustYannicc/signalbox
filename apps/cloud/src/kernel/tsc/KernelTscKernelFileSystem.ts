@@ -154,13 +154,18 @@ export class KernelTscKernelFileSystem implements KernelTscFileSystemPort {
   }
 
   #remove(path: string): void {
-    const stat = this.#filesystem.lstat(path);
-    if (stat.type !== "directory") {
-      this.#filesystem.unlink(path);
-      return;
+    try {
+      const stat = this.#filesystem.lstat(path);
+      if (stat.type !== "directory") {
+        this.#filesystem.unlink(path);
+        return;
+      }
+      for (const name of this.#filesystem.readdir(path)) this.#remove(joinPath(path, name));
+      this.#filesystem.rmdir(path);
+    } catch (error) {
+      // Upstream uses RemoveAll, including paths another writer has already deleted.
+      if (!isMissing(error)) throw error;
     }
-    for (const name of this.#filesystem.readdir(path)) this.#remove(joinPath(path, name));
-    this.#filesystem.rmdir(path);
   }
 
   #ensureParents(path: string): void {
