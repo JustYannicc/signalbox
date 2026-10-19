@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { ExecCommand, ExecCommandErrorCode } from "@signalbox/runner-protocol/ExecProtocol";
 import { RunnerExecChild } from "./RunnerExecChild.ts";
 
@@ -86,6 +86,36 @@ async function read(stream: ReadableStream<Uint8Array>) {
 }
 
 describe("Runner stdin terminal acknowledgements", () => {
+  it("finishes an in-flight close when terminal reports arrive without its acknowledgement", async () => {
+    vi.useFakeTimers();
+    try {
+      const controlled = await fixture();
+      const writer = controlled.child.stdin.getWriter();
+      await writer.write(new Uint8Array([1]));
+      const result = writer.close().then(
+        () => "closed",
+        (error: unknown) => error,
+      );
+      await controlled.closeRequest;
+      controlled.finish();
+      await expect(controlled.child.exited).resolves.toEqual({
+        exitCode: 17,
+        signal: 0,
+        coreDumped: false,
+      });
+      await controlled.child.dispose();
+      await vi.runAllTimersAsync();
+      const outcome = await result;
+      writer.releaseLock();
+
+      expect(controlled.released()).toBe(1);
+      expect(outcome).toBe("closed");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("closes stdin when the native process exits before its close request arrives", async () => {
     const controlled = await fixture();
     const writer = controlled.child.stdin.getWriter();

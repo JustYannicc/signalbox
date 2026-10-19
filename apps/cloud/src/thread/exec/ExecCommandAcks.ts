@@ -74,6 +74,15 @@ export class ExecCommandAcks {
     pending.resolve(report);
   }
 
+  forget(command: ExecCommand) {
+    const operationId = "writeId" in command ? command.writeId : command.requestId;
+    const key = ackKey(command.type, operationId);
+    const pending = this.#pending.get(key);
+    if (pending === undefined) return;
+    this.#pending.delete(key);
+    clearTimeout(pending.timeout);
+  }
+
   fail(error: Error) {
     for (const [key, pending] of this.#pending) {
       this.#pending.delete(key);
