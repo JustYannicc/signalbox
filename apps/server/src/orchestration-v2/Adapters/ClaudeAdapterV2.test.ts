@@ -54,6 +54,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -14557,22 +14558,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
 
           const offered = harness.offeredMessages.length;
-          const steer = harness.runtime.steerTurn({
-            threadId: harness.threadId,
-            runId: input.runId,
-            providerThread: harness.providerThread,
-            providerTurnId: idAllocator.derive.providerTurn({
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-              nativeTurnId: `turn:${attemptId}`,
-            }),
-            message: {
-              createdBy: "user",
-              creationSource: "web",
-              messageId: MessageId.make("message-steer-foreground-subagent"),
-              text: "Also check the docs.",
-              attachments: [],
-            },
-          });
+          const backgroundTimeouts = yield* Queue.unbounded<void>();
+          const clock = yield* Clock.Clock;
+          const steerClock = {
+            ...clock,
+            sleep: (duration: Duration.Duration) =>
+              Effect.suspend(() =>
+                Duration.toMillis(duration) === 5000
+                  ? Queue.offer(backgroundTimeouts, undefined).pipe(
+                      Effect.andThen(clock.sleep(duration)),
+                    )
+                  : clock.sleep(duration),
+              ),
+          };
+          const steer = harness.runtime
+            .steerTurn({
+              threadId: harness.threadId,
+              runId: input.runId,
+              providerThread: harness.providerThread,
+              providerTurnId: idAllocator.derive.providerTurn({
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeTurnId: `turn:${attemptId}`,
+              }),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: MessageId.make("message-steer-foreground-subagent"),
+                text: "Also check the docs.",
+                attachments: [],
+              },
+            })
+            .pipe(Effect.provideService(Clock.Clock, steerClock));
           const RERUN_TOOL_USE_ID = "toolu-steer-rerun";
           if (backgrounding === "answers after the subagent ran again") {
             beforeAnswer = harness
@@ -14603,6 +14619,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ) {
             yield* awaitUntil(() => calls.length === 1, "background request");
             assert.equal(harness.offeredMessages.length, offered);
+            yield* Queue.take(backgroundTimeouts);
             yield* TestClock.adjust("5 seconds");
           }
           const steered = yield* Fiber.await(steering);
@@ -14619,10 +14636,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           if (backgrounding === "never answers") {
             for (let repeat = 1; repeat <= 2; repeat++) {
               const again = yield* Effect.forkScoped(steer);
-              for (let tick = 0; tick < 100 && again.pollUnsafe() === undefined; tick++) {
-                yield* TestClock.adjust("1 second");
-                yield* Effect.yieldNow;
-              }
+              yield* Queue.take(backgroundTimeouts);
+              yield* TestClock.adjust("5 seconds");
               assert.isTrue(Exit.isSuccess(yield* Fiber.await(again)));
               assert.equal(harness.offeredMessages.length, offered + 1 + repeat);
             }
