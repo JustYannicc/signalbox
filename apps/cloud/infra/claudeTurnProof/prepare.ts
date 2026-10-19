@@ -122,6 +122,7 @@ async function verifiedBytes(root: string, entry: ArtifactEntry) {
 export async function prepareClaudeTurnProof(options: {
   releaseDir: string;
   outputDir: string;
+  hostRuntime?: string;
   seedAssets?: boolean;
   assetsOnly?: boolean;
   packagesOnly?: boolean;
@@ -194,7 +195,9 @@ export async function prepareClaudeTurnProof(options: {
     environment === undefined
       ? 'async()=>{throw new Error("ERR_DIAGNOSTIC_ASSETS_ONLY");}'
       : `async()=>{const[yaml,undici]=await Promise.all([import(${JSON.stringify(`./${environment.packageEntrypoints.yaml}`)}),import(${JSON.stringify(`./${environment.packageEntrypoints.undici}`)})]);return {yaml:yaml.default,undici:undici.default};}`;
-  const runtime = NodePath.join(import.meta.dirname, "ClaudeTurnProof.ts");
+  const runtime = options.hostRuntime
+    ? NodePath.resolve(options.hostRuntime)
+    : NodePath.join(import.meta.dirname, "ClaudeTurnProof.ts");
   const source = `${programs?.imports ?? ""}
 import {createClaudeTurnProofClass} from ${JSON.stringify(runtime)};
 export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},packagesOnly:${options.packagesOnly === true},loadPackages:${loadPackages},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}${programs === undefined ? "" : `,programs:${programs.configExpression},programFiles:${JSON.stringify(programs.executableCatalog)}`}});`;
