@@ -80,6 +80,7 @@
     "effect-codex-app-server": "workspace:*"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }

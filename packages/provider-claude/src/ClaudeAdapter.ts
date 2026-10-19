@@ -1,4 +1,26 @@
 import * as Base64 from "effect/encoding/Base64";
+import {
+  claudeRecoveryAdmission,
+  type ClaudeNativeReceipt,
+  type ClaudeNativeRecoveryBinding,
+} from "./ClaudeNativeRecovery.ts";
+export { prepareClaudeNativeAdmission } from "./ClaudeNativeRecovery.ts";
+export {
+  inspectClaudeNativeRecovery,
+  confirmClaudeNativeAdmission,
+} from "./ClaudeNativeRecoveryInspection.ts";
+export type {
+  ClaudeNativeAdmission,
+  ClaudeNativeFileLocator,
+  ClaudeNativeInspection,
+  ClaudeNativeModelRequest,
+  ClaudeNativePendingAction,
+  ClaudeNativeReceipt,
+  ClaudeNativeRecoveryBinding,
+  ClaudeNativeRecoveryOutcome,
+  ClaudeNativeRecoveryPlan,
+  ClaudeNativeReference,
+} from "./ClaudeNativeRecovery.ts";
 import * as Result from "effect/Result";
 import {
   collectClaudeSnapshotEvent,
@@ -170,7 +192,10 @@ import {
   type ClaudeAgentSdkQueryRunnerShape,
 } from "./ClaudeQueryRunner.ts";
 
-type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
+type ClaudeQueryStreamExit = Exit.Exit<
+  void,
+  ClaudeAgentSdkQueryRunnerError | ProviderAdapter.ProviderAdapterProtocolError
+>;
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
@@ -387,6 +412,7 @@ export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
   readonly resume: boolean;
+  readonly resumeInterruptedTurn?: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
   readonly attachmentsDir?: string;
@@ -403,6 +429,9 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
 }): ClaudeAgentSdkQueryOptions {
+  if (input.resumeInterruptedTurn && (!input.resume || input.resumeSessionAt !== undefined)) {
+    throw new Error("Interrupted-turn recovery requires the same complete native session.");
+  }
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const {
     "permission-mode": launchArgPermissionMode,
@@ -479,7 +508,11 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    ...(input.resumeInterruptedTurn
+      ? { env: { ...input.environment, CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1" } }
+      : input.environment === undefined
+        ? {}
+        : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
@@ -2677,6 +2710,7 @@ export function claudeProposedPlan(input: unknown): string | null {
 }
 
 export interface ClaudeAdapterV2Options {
+  readonly nativeRecovery?: ClaudeNativeRecoveryBinding;
   readonly initialSnapshot?: ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
   readonly host: ClaudeAdapterHost;
   readonly modelCatalog: ClaudeModelCatalog;
@@ -5352,14 +5386,48 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
 
+        const nativeRecovery = adapterOptions.nativeRecovery;
+        let recoveryClaimed = false;
+        let recoveryNativeStartObserved = false;
+        let recoveryNativeResultObserved = false;
+        const observeNativeRecovery = (receipt: ClaudeNativeReceipt) =>
+          nativeRecovery === undefined
+            ? Effect.void
+            : nativeRecovery.observe(receipt).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: "Native recovery receipt could not be persisted.",
+                      payload: cause,
+                    }),
+                ),
+              );
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           closedQuery: ClaudeLiveQueryContext,
-          cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+          cause?: Cause.Cause<
+            ClaudeAgentSdkQueryRunnerError | ProviderAdapter.ProviderAdapterProtocolError
+          >,
         ) {
           const current = yield* Ref.get(activeTurn);
           const context =
             current?.nativeThreadId === closedQuery.nativeThreadId ? current : closedQuery.lastTurn;
           if (context === null) return;
+          if (
+            nativeRecovery !== undefined &&
+            recoveryClaimed &&
+            context.input.runId === claudeRecoveryAdmission(nativeRecovery).logicalRunId &&
+            !recoveryNativeResultObserved
+          ) {
+            yield* observeNativeRecovery({
+              status: "indeterminate",
+              operation: "query/exit",
+              admission: claudeRecoveryAdmission(nativeRecovery),
+              nativePromptId: null,
+              nativeMessageId: null,
+              reason: "The native query ended without a correlated terminal recovery result.",
+            });
+          }
           const interrupted =
             closedQuery.stopping || (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
@@ -6930,9 +6998,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
+            const terminalStatus = interrupted
+              ? "interrupted"
+              : terminalStatusFromResult(message, failureHint);
+            if (
+              nativeRecovery !== undefined &&
+              recoveryClaimed &&
+              context.input.runId === claudeRecoveryAdmission(nativeRecovery).logicalRunId
+            ) {
+              recoveryNativeResultObserved = true;
+              yield* observeNativeRecovery({
+                status: "completed",
+                admission: claudeRecoveryAdmission(nativeRecovery),
+                operation: "result",
+                nativePromptId: null,
+                nativeMessageId: null,
+                terminalStatus:
+                  terminalStatus === "completed"
+                    ? "completed"
+                    : terminalStatus === "interrupted"
+                      ? "interrupted"
+                      : "failed",
+              });
+            }
             yield* finalizeActiveTurn({
               context,
-              status: interrupted ? "interrupted" : terminalStatusFromResult(message, failureHint),
+              status: terminalStatus,
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
@@ -7485,6 +7576,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          openingTurn?: ActiveClaudeTurnContext,
         ) {
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
           const mcpOverrides = claudeMcpQueryOverrides({
@@ -7500,8 +7592,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.modelSelection,
             adapterOptions.modelCatalog,
           );
-          const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
+          const resumeInterruptedTurn = nativeRecovery?.mode.type === "resume-unfinished";
+          const resumeSessionAt = resumeInterruptedTurn
+            ? undefined
+            : yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          if (resumeInterruptedTurn && existing !== null) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: "Native recovery requires a fresh, exclusively owned incarnation.",
+            });
+          }
           // A continuation prompts nothing: it drains output the live process
           // already produced, so it keeps that process whatever its selection.
           if (
@@ -7578,12 +7679,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const hasPersistedProviderTurn =
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+            resumeInterruptedTurn ||
+            resumeSessionAt !== undefined ||
+            openedWithResume ||
+            hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
             modelCatalog: adapterOptions.modelCatalog,
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
             resume: shouldResume,
+            ...(resumeInterruptedTurn ? { resumeInterruptedTurn: true } : {}),
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
@@ -7645,7 +7750,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             queryPolicyKey,
             selection: compiledSelection,
             closed,
-            lastTurn: null,
+            lastTurn: openingTurn ?? null,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
             permissionMode: queryOptions.permissionMode,
@@ -7657,10 +7762,88 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           };
           yield* Ref.set(queryContext, context);
+          if (openingTurn !== undefined) {
+            yield* emitProviderEvent({
+              type: "provider_turn.updated",
+              driver: CLAUDE_PROVIDER,
+              providerTurn: providerTurnPayload({
+                context: openingTurn,
+                status: "running",
+                completedAt: null,
+              }),
+            });
+          }
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
-                Effect.suspend(() => {
+                Effect.gen(function* () {
+                  if (
+                    nativeRecovery !== undefined &&
+                    recoveryClaimed &&
+                    openingTurn !== undefined
+                  ) {
+                    const admission = claudeRecoveryAdmission(nativeRecovery);
+                    const sessionId: unknown = Reflect.get(message, "session_id");
+                    const echoes = claudeEchoedPromptUuids(message);
+                    if (
+                      (typeof sessionId === "string" && sessionId !== admission.nativeSessionId) ||
+                      (echoes.length > 0 && !echoes.includes(admission.nativeInputId))
+                    ) {
+                      yield* observeNativeRecovery({
+                        status: "indeterminate",
+                        admission,
+                        operation: "query/exit",
+                        nativePromptId: echoes.at(-1) ?? null,
+                        nativeMessageId: null,
+                        reason: "Native recovery output belongs to another session or prompt.",
+                      });
+                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CLAUDE_PROVIDER,
+                        detail: "Native recovery output identity does not match its admission.",
+                      });
+                    }
+                    const lifecycle = claudePromptLifecycle(message);
+                    const nativeMessageId =
+                      message.type === "stream_event" &&
+                      message.event.type === "message_start" &&
+                      message.parent_tool_use_id === null
+                        ? message.event.message.id
+                        : null;
+                    const started =
+                      lifecycle?.state === "started" &&
+                      (resumeInterruptedTurn || lifecycle.uuid === admission.nativeInputId);
+                    if (!recoveryNativeStartObserved && (started || nativeMessageId !== null)) {
+                      recoveryNativeStartObserved = true;
+                      yield* observeNativeRecovery({
+                        status: "continued",
+                        admission,
+                        operation: started ? "command_lifecycle" : "stream_event/message_start",
+                        nativePromptId: lifecycle?.uuid ?? echoes.at(-1) ?? null,
+                        nativeMessageId,
+                      });
+                    }
+                    if (message.type === "result") {
+                      if (
+                        resumeInterruptedTurn &&
+                        !recoveryNativeStartObserved &&
+                        message.num_turns === 0
+                      ) {
+                        yield* observeNativeRecovery({
+                          status: "indeterminate",
+                          admission,
+                          operation: "result",
+                          nativePromptId: null,
+                          nativeMessageId: null,
+                          reason:
+                            "Native interrupted-turn rescue was suppressed or produced no model turn.",
+                        });
+                        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver: CLAUDE_PROVIDER,
+                          detail: "Native recovery produced no observed turn.",
+                        });
+                      }
+                    }
+                  }
                   if (
                     message.type === "system" &&
                     (message.subtype === "init" || message.subtype === "status") &&
@@ -7668,7 +7851,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  return yield* handleSdkMessage({ query: querySession, message });
                 }),
               ),
             ),
@@ -7708,24 +7891,69 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
+            const admission =
+              nativeRecovery === undefined ? undefined : claudeRecoveryAdmission(nativeRecovery);
+            const resumeInterruptedTurn = nativeRecovery?.mode.type === "resume-unfinished";
+            if (admission !== undefined) {
+              if (
+                recoveryClaimed ||
+                admission.logicalRunId !== turnInput.runId ||
+                admission.nativeSessionId !== nativeThreadId ||
+                admission.inputId !== turnInput.message.messageId ||
+                !isClaudePromptUuid(admission.nativeInputId) ||
+                (resumeInterruptedTurn && admission.inputDurability !== "native-file")
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: "Native recovery admission is stale, mismatched, or already consumed.",
+                });
+              }
+              recoveryClaimed = true;
+              yield* nativeRecovery!.beforeNativeStart(admission).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: "Native admission reservation could not be persisted.",
+                      payload: cause,
+                    }),
+                ),
+              );
+              yield* observeNativeRecovery({
+                status: "reserved",
+                admission,
+                operation: resumeInterruptedTurn ? "query/resume-interrupted" : "prompt/offer",
+                nativePromptId: admission.nativeInputId,
+                nativeMessageId: null,
+              });
+            }
             const nativeTurnId = `turn:${turnInput.attemptId}`;
             // Fresh for every offer: Claude acks a prompt whose uuid its
             // transcript already holds without running a turn, and a session
             // can outlive this database (or be resumed from a copy of it), so
             // a uuid derived from run ids can repeat.
-            const promptUuid = isClaudeProviderContinuationTurn(turnInput)
-              ? null
-              : yield* crypto.randomUUIDv4().pipe(
-                  Effect.filterOrFail(isClaudePromptUuid),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderAdapter.ProviderAdapterProtocolError({
-                        driver: CLAUDE_PROVIDER,
-                        detail: "Failed to allocate a Claude prompt uuid.",
-                        payload: cause,
-                      }),
-                  ),
-                );
+            const reservedPromptUuid = admission?.nativeInputId;
+            if (reservedPromptUuid !== undefined && !isClaudePromptUuid(reservedPromptUuid)) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "The reserved Claude prompt UUID is invalid.",
+              });
+            }
+            const promptUuid =
+              reservedPromptUuid ??
+              (isClaudeProviderContinuationTurn(turnInput)
+                ? null
+                : yield* crypto.randomUUIDv4().pipe(
+                    Effect.filterOrFail(isClaudePromptUuid),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver: CLAUDE_PROVIDER,
+                          detail: "Failed to allocate a Claude prompt uuid.",
+                          payload: cause,
+                        }),
+                    ),
+                  ));
             const providerTurnId = idAllocator.derive.providerTurn({
               driver: CLAUDE_PROVIDER,
               nativeTurnId,
@@ -7785,13 +8013,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
               promptUuid,
-              promptEcho: isClaudeProviderContinuationTurn(turnInput) ? "confirmed" : "pending",
+              promptEcho:
+                resumeInterruptedTurn || isClaudeProviderContinuationTurn(turnInput)
+                  ? "confirmed"
+                  : "pending",
               promptStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
             };
             const userMessage =
-              promptUuid === null
+              resumeInterruptedTurn || promptUuid === null
                 ? null
                 : yield* makeClaudeUserMessageWithAttachments({
                     resolveAttachmentPath: adapterOptions.host.resolveAttachmentPath,
@@ -7808,7 +8039,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
                     uuid: promptUuid,
                   });
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
+            if (admission !== undefined) yield* Ref.set(activeTurn, context);
+            const querySession = yield* openQuery(
+              turnInput,
+              nativeThreadId,
+              admission === undefined ? undefined : context,
+            ).pipe(
+              Effect.tapError(() =>
+                admission === undefined
+                  ? Effect.void
+                  : observeNativeRecovery({
+                      status: "indeterminate",
+                      admission,
+                      operation: "query/exit",
+                      nativePromptId: null,
+                      nativeMessageId: null,
+                      reason:
+                        "The query may have opened before native recovery admission could be observed.",
+                    }),
+              ),
+            );
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
@@ -7822,10 +8072,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               });
             });
+            if (resumeInterruptedTurn) return;
             if (userMessage !== null) {
-              yield* attachTurn;
+              if (admission === undefined) yield* attachTurn;
               yield* startUserTurnForWakeReports(nativeThreadId);
               yield* querySession.query.offer(userMessage);
+              if (admission !== undefined)
+                yield* observeNativeRecovery({
+                  status: "reserved",
+                  admission,
+                  operation: "prompt/offer",
+                  nativePromptId: admission.nativeInputId,
+                  nativeMessageId: null,
+                });
               return;
             }
             // Transcript reads suspend replay. Hold live SDK frames until the whole
@@ -7849,6 +8108,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   return updated;
                 });
                 if (drained.length === 0) {
+                  if (nativeRecovery !== undefined) {
+                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail:
+                        "No buffered native output exists. An unfinished native turn needs explicit recovery.",
+                    });
+                  }
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                   return;
