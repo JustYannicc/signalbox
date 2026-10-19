@@ -53,6 +53,8 @@ export default {
       entry: [
         "src/bin.ts!",
         "src/signalbox/runner/main.ts!", // Started through the process cleanup wrapper.
+        "src/signalbox/runner/command-main.ts!", // Command-only VM bootstrap.
+        "runner-command.config.ts!",
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
