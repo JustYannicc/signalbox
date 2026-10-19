@@ -1,4 +1,5 @@
 export const COMPUTER_BOXD_PROOF_STAGE = /^computer-boxd-[a-z0-9]{8,20}$/;
+export type ProofMode = "direct" | "nested" | "nested-recovery";
 export type StagePhase =
   | "created"
   | "building-runner"
