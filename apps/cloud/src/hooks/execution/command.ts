@@ -32,8 +32,20 @@ export async function runHookCommand(
     const outputTask = readOutput(stdout);
     const errorTask = readOutput(stderr);
     const inputTask = (async () => {
-      await writer.write(input);
-      await writer.close();
+      try {
+        await writer.write(input);
+        await writer.close();
+      } catch (error) {
+        // Native hooks may refuse a tool and exit before consuming the whole event.
+        if (
+          typeof error !== "object" ||
+          error === null ||
+          !("code" in error) ||
+          error.code !== "EPIPE"
+        ) {
+          throw error;
+        }
+      }
     })();
     pending = [outputTask, errorTask, child.exited, inputTask];
     const [output, error, exit] = await Promise.all([

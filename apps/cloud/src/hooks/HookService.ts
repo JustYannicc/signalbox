@@ -86,16 +86,60 @@ export function createHookService(options: HookServiceOptions) {
       }
       return options.capacity.run(invocation.signal, async () => {
         invocation.signal.throwIfAborted();
-        const response = await options.generated.invoke({
-          ...registration.program,
-          input: payload,
-        });
+        const response = await options.generated.invoke(
+          {
+            ...registration.program,
+            input: payload,
+          },
+          { signal: invocation.signal },
+        );
         // Consuming the response belongs to the admitted invocation, including error bodies.
-        const stdout = new Uint8Array(await response.arrayBuffer());
+        const stdout = await consumeScriptResponse(response, invocation.signal);
         invocation.signal.throwIfAborted();
         if (!response.ok) throw new Error(`Hook script failed with HTTP ${response.status}`);
         return { stdout, stderr: new Uint8Array(), exit: successExit };
       });
     },
   };
+}
+
+async function consumeScriptResponse(response: Response, signal: AbortSignal): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    signal.throwIfAborted();
+    return new Uint8Array();
+  }
+  let cancellation: Promise<void> | undefined;
+  const abort = () => {
+    cancellation ??= reader.cancel(signal.reason);
+    void cancellation.catch(() => undefined);
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  try {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      signal.throwIfAborted();
+      const next = await reader.read();
+      signal.throwIfAborted();
+      if (next.done) break;
+      chunks.push(next.value);
+      size += next.value.byteLength;
+    }
+    const output = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      output.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return output;
+  } finally {
+    signal.removeEventListener("abort", abort);
+    try {
+      await cancellation;
+    } finally {
+      reader.releaseLock();
+    }
+  }
 }

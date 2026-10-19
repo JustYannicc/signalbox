@@ -1,11 +1,6 @@
 import type { RunAttemptId, RunId, ThreadId } from "@t3tools/contracts";
 
-import type {
-  HarnessHookCallback,
-  HarnessHookInvocationOptions,
-  HarnessHookRequest,
-  HarnessHookResult,
-} from "./HarnessHooks.ts";
+import type { HarnessHookCallback, HarnessHookRequest, HarnessHookResult } from "./HarnessHooks.ts";
 
 /** The run lease comes from the host's active Runner turn, never hook JSON. */
 export interface ThreadHarnessActiveAttempt {
@@ -32,11 +27,7 @@ export interface ThreadHarnessHookContext {
   readonly signal: AbortSignal;
 }
 
-/**
- * Host-supplied bridge to existing Thread RPCs and services. There is no
- * production construction site for this capability yet, so this is an
- * integration seam, not an implemented standard hook set.
- */
+/** Service wrappers must recheck the supplied attempt before committing an effect. */
 export interface ThreadHarnessHookCapabilities {
   readonly invoke: (context: ThreadHarnessHookContext) => Promise<HarnessHookResult>;
 }
@@ -50,7 +41,7 @@ export function createThreadHarnessHookCallback(
   authority: ThreadHarnessHookAuthority,
   capabilities: ThreadHarnessHookCapabilities,
 ): HarnessHookCallback {
-  return async (request, options: HarnessHookInvocationOptions) => {
+  return async (request, options) => {
     options.signal.throwIfAborted();
 
     const activeAttempt = authority.activeAttempt();
