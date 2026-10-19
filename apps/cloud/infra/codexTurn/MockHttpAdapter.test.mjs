@@ -191,6 +191,52 @@ test("matches the R3 host_net imports and AgentOS socket constants", () => {
   NodeAssert.equal(harness.adapter.imports.net_recvfrom(fd, 0, 0, 0, 0, 0, 0), NOTSUP);
 });
 
+test("requires JSPI only when wrapping async native HTTP receives", async () => {
+  const suspendingDescriptor = Object.getOwnPropertyDescriptor(WebAssembly, "Suspending");
+  try {
+    Object.defineProperty(WebAssembly, "Suspending", {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
+    const syncHarness = createHarness();
+    NodeAssert.equal(typeof syncHarness.adapter.getImportObject().host_net.net_recv, "function");
+
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const asyncAdapter = createMockHttpAdapter({
+      memory: () => memory,
+      descriptors: new SharedDescriptors(),
+      handleRequest: async () => new Response("async"),
+    });
+    NodeAssert.throws(() => asyncAdapter.getImportObject(), {
+      code: "ERR_CODEX_JSPI_UNAVAILABLE",
+      message: "Codex async HTTP receive requires WebAssembly JSPI",
+    });
+
+    class TestSuspending {
+      constructor(fn) {
+        this.fn = fn;
+      }
+
+      invoke(...args) {
+        return this.fn(...args);
+      }
+    }
+    Object.defineProperty(WebAssembly, "Suspending", {
+      configurable: true,
+      writable: true,
+      value: TestSuspending,
+    });
+    const wrapped = asyncAdapter.getImportObject().host_net.net_recv;
+    NodeAssert.ok(wrapped instanceof TestSuspending);
+    NodeAssert.equal(await wrapped.invoke(99, 8, 0, 0, 0), 8);
+  } finally {
+    if (suspendingDescriptor === undefined) delete WebAssembly.Suspending;
+    else Object.defineProperty(WebAssembly, "Suspending", suspendingDescriptor);
+  }
+});
+
 test("buffers fragmented HTTP by Content-Length and returns exact HTTP/SSE bytes", () => {
   const harness = createHarness();
   const fd = openSocket(harness);

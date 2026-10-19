@@ -7,6 +7,7 @@ import {
   parseRequestHead,
   sseResponse,
 } from "./MockHttpWire.mjs";
+import { requestFromHttpBytes, responseToHttpBytes } from "./MockHttpBridge.mjs";
 
 const ERRNO = Object.freeze({
   AGAIN: 6,
@@ -33,12 +34,21 @@ export class MockHttpSocket {
   #requestStart = null;
   #requestMeta = null;
   #expectedRequestLength = null;
+  #requestComplete = false;
   #response = null;
   #readOffset = 0;
   #closed = false;
+  #handleRequest;
 
   connected = false;
   recvTimeoutMs = null;
+
+  constructor({ handleRequest } = {}) {
+    if (handleRequest !== undefined && typeof handleRequest !== "function") {
+      throw new TypeError("handleRequest must be a function");
+    }
+    this.#handleRequest = handleRequest;
+  }
 
   connect(address) {
     if (this.#closed) fail(ERRNO.BADF, "Socket is closed");
@@ -65,7 +75,7 @@ export class MockHttpSocket {
   send(bytes, mock) {
     if (this.#closed) fail(ERRNO.BADF, "Socket is closed");
     if (!this.connected) fail(ERRNO.NOTCONN, "Socket is not connected");
-    if (this.#response) fail(ERRNO.IO, "Request is already complete");
+    if (this.#response || this.#requestComplete) fail(ERRNO.IO, "Request is already complete");
     if (bytes.byteLength === 0) return 0;
 
     const nextLength = this.#request.byteLength + bytes.byteLength;
@@ -110,6 +120,7 @@ export class MockHttpSocket {
         this.#setResponse(errorResponse(400, "Bad Request"));
         return;
       }
+      this.#requestComplete = true;
       this.#finishRequest(mock);
     } catch (error) {
       const status = error instanceof MockHttpWireError ? error.status : 400;
@@ -126,6 +137,10 @@ export class MockHttpSocket {
     }
     if (request.host !== "mock.invalid" && request.host !== "mock.invalid:80") {
       this.#setResponse(errorResponse(421, "Misdirected Request"));
+      return;
+    }
+    if (this.#handleRequest !== undefined) {
+      this.#serveRequest();
       return;
     }
     if (request.target !== "/v1/responses") {
@@ -154,8 +169,26 @@ export class MockHttpSocket {
     this.#setResponse(sseResponse(sse));
   }
 
+  #serveRequest() {
+    let request;
+    try {
+      request = requestFromHttpBytes(this.#request);
+    } catch (error) {
+      const status = error instanceof MockHttpWireError ? error.status : 400;
+      const reason = error instanceof MockHttpWireError ? error.reason : "Bad Request";
+      this.#setResponse(errorResponse(status, reason));
+      return;
+    }
+
+    Promise.resolve()
+      .then(() => this.#handleRequest(request))
+      .then((response) => responseToHttpBytes(response, request.method))
+      .then((response) => this.#setResponse(response))
+      .catch(() => this.#setResponse(errorResponse(502, "HTTP Handler Failed")));
+  }
+
   #setResponse(response) {
-    if (this.#response) return;
+    if (this.#response || this.#closed) return;
     this.#response = response;
     this.#notify("read");
   }
@@ -184,7 +217,7 @@ export class MockHttpSocket {
     if (this.#closed) return { bytes: 0n, hangup: true };
     if (direction === "write") {
       if (!this.connected) return undefined;
-      return this.#response ? { bytes: 0n, hangup: true } : { bytes: 0n };
+      return this.#requestComplete ? { bytes: 0n, hangup: true } : { bytes: 0n };
     }
     if (!this.#response) return undefined;
     const remaining = this.#response.byteLength - this.#readOffset;
