@@ -1,3 +1,8 @@
+import {
+  canonicalFileByteSelection,
+  bindFileByteAccess,
+  type KernelFileByteSelection,
+} from "../KernelFileBytes.ts";
 import type { CreateOptions, Inode, Times } from "../storage.ts";
 import type { PosixMetadata } from "../PosixStorage.ts";
 import {
@@ -23,11 +28,18 @@ export class KernelFileSystemPaths {
   readonly resolver: KernelPathResolver;
   readonly #descriptors: WasiDescriptorTable;
   readonly #posix: KernelPosix;
+  readonly #fileBytes: () => KernelFileByteSelection;
 
-  constructor(resolver: KernelPathResolver, descriptors: WasiDescriptorTable, posix: KernelPosix) {
+  constructor(
+    resolver: KernelPathResolver,
+    descriptors: WasiDescriptorTable,
+    posix: KernelPosix,
+    fileBytes: () => KernelFileByteSelection = () => canonicalFileByteSelection,
+  ) {
     this.resolver = resolver;
     this.#descriptors = descriptors;
     this.#posix = posix;
+    this.#fileBytes = fileBytes;
   }
 
   get cwd(): string {
@@ -308,7 +320,9 @@ export class KernelFileSystemPaths {
       if (virtualDevice(path) !== undefined) throw kernelError("ENOTSUP");
       const resolved = this.resolve(path);
       this.#assertWritable(resolved.mount);
-      this.#truncate(resolved.mount, resolved.inode, resolved.stat.type, size);
+      const alias = descriptorPathAlias(path);
+      const descriptor = alias === undefined ? undefined : this.#getAlias(alias);
+      this.#truncate(resolved.mount, resolved.inode, resolved.stat.type, size, descriptor);
     });
   }
 
@@ -333,7 +347,7 @@ export class KernelFileSystemPaths {
     });
   }
 
-  #statResolved(resolved: WasiResolvedPath): KernelStat {
+  #statResolved(resolved: WasiResolvedPath, descriptor?: WasiDescriptor): KernelStat {
     let posix: PosixMetadata | undefined;
     try {
       // Keep inode metadata in the same syscall snapshot so async clients cannot mix replacements.
@@ -341,19 +355,28 @@ export class KernelFileSystemPaths {
     } catch (error) {
       if (!isCode(error, "ENOTSUP")) throw error;
     }
-    return {
-      ...resolved.stat,
-      ino: resolved.inode,
-      dev: resolved.mount.device,
-      ...(posix === undefined ? {} : { posix }),
-    };
+    const temporary =
+      resolved.stat.type === "file" && descriptor === undefined
+        ? bindFileByteAccess(this.#fileBytes(), resolved.mount.storage, resolved.inode)
+        : undefined;
+    try {
+      const stat = (descriptor?.byteAccess ?? temporary)?.stat() ?? resolved.stat;
+      return {
+        ...stat,
+        ino: resolved.inode,
+        dev: resolved.mount.device,
+        ...(posix === undefined ? {} : { posix }),
+      };
+    } finally {
+      temporary?.release();
+    }
   }
 
   #statDescriptor(descriptor: WasiDescriptor): KernelStat {
     const device = deviceInfoForDescriptor(descriptor);
     if (device !== undefined) return deviceStat(device);
     if (descriptor.kind === "stdio") throw kernelError("ENOTSUP", "Stream stat is unsupported");
-    return this.#statResolved(this.resolver.resolvedDescriptor(descriptor));
+    return this.#statResolved(this.resolver.resolvedDescriptor(descriptor), descriptor);
   }
 
   #statMagicLink(fd: number, descriptor: WasiDescriptor): KernelStat {
@@ -440,10 +463,23 @@ export class KernelFileSystemPaths {
     inode: Inode,
     type: WasiResolvedPath["stat"]["type"],
     size: bigint,
+    descriptor?: WasiDescriptor,
   ): void {
     if (type === "directory") throw kernelError("EISDIR");
     if (type !== "file") throw kernelError("EINVAL");
-    runKernelSync(mount.storage.truncate(inode, size));
+    if (size < 0n) throw kernelError("EINVAL");
+    if (size > (1n << 63n) - 1n) throw kernelError("EFBIG");
+    const temporary =
+      descriptor === undefined
+        ? bindFileByteAccess(this.#fileBytes(), mount.storage, inode)
+        : undefined;
+    try {
+      const access = descriptor?.byteAccess ?? temporary;
+      if (access) access.truncate(size);
+      else runKernelSync(mount.storage.truncate(inode, size));
+    } finally {
+      temporary?.release();
+    }
   }
 }
 

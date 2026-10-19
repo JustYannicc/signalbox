@@ -165,6 +165,8 @@ specification {
   tag port { color green }
   // Useful outside Signalbox: its own public repo, published on npm, consumed as a dependency (#1245).
   tag publishable { color sky }
+  // The one gateway for a capability that crosses a boundary; adapters fan out behind it (#1191 addendum).
+  tag funnel { color green }
 }
 
 global {

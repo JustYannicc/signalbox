@@ -54,10 +54,16 @@ export function createKernelWasiDeviceAdapter(
         throw new DevicePath(path, info, parent.mount);
       },
     );
-    const calls = new WasiPathCalls(memory, filesystem.descriptors, paths, {
-      createInode: filesystem.createInode.bind(filesystem),
-      takeCreateMode: filesystem.takeNextCreateMode.bind(filesystem),
-    });
+    const calls = new WasiPathCalls(
+      memory,
+      filesystem.descriptors,
+      paths,
+      {
+        createInode: filesystem.createInode.bind(filesystem),
+        takeCreateMode: filesystem.takeNextCreateMode.bind(filesystem),
+      },
+      () => filesystem.fileBytes,
+    );
     return {
       ...imports,
       path_open: function* (...args): WasiCall<number> {

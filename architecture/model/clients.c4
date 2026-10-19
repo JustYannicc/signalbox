@@ -73,7 +73,7 @@ model {
     technology 'MCP · AuthKit OAuth'
   }
 
-  laptopCli -[model]-> signalbox.gateway 'model wire'
-  laptopCli -[tool]-> signalbox.gateway 'mcp wire'
-  mcpClient -[tool]-> signalbox.gateway 'mcp wire'
+  laptopCli -[model]-> signalbox.gateway.modelGateway 'model wire'
+  laptopCli -[tool]-> signalbox.gateway.toolGateway 'mcp wire'
+  mcpClient -[tool]-> signalbox.gateway.toolGateway 'mcp wire'
 }

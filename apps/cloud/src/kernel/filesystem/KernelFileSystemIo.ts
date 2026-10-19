@@ -53,10 +53,14 @@ export class KernelFileSystemIo {
       this.#requireRight(descriptor, RIGHTS.FD_FILESTAT_SET_SIZE);
       const storage = this.#storageDescriptor(descriptor);
       this.#assertWritable(storage);
-      const stat = runKernelSync(storage.mount.storage.stat(storage.inode));
+      const stat = runKernelSync(
+        storage.byteAccess?.stat() ?? storage.mount.storage.stat(storage.inode),
+      );
       if (stat.type === "directory") throw kernelError("EISDIR");
       if (stat.type !== "file") throw kernelError("EINVAL");
-      runKernelSync(storage.mount.storage.truncate(storage.inode, this.#size(size)));
+      const length = this.#size(size);
+      if (storage.byteAccess) storage.byteAccess.truncate(length);
+      else runKernelSync(storage.mount.storage.truncate(storage.inode, length));
     });
   }
 
@@ -87,11 +91,16 @@ export class KernelFileSystemIo {
     }
     const storage = this.#storageDescriptor(descriptor);
     yield* this.#syncBeforeRead(descriptor);
-    const stat = yield* complete(storage.mount.storage.stat(storage.inode));
+    const stat = yield* complete(
+      storage.byteAccess?.stat() ?? storage.mount.storage.stat(storage.inode),
+    );
     if (stat.type === "directory") throw kernelError("EISDIR");
     if (stat.type !== "file") throw kernelError("EINVAL");
     const offset = position ?? descriptor.offset;
-    const count = yield* complete(storage.mount.storage.readInto(storage.inode, offset, target));
+    const count = yield* complete(
+      storage.byteAccess?.readInto(offset, target) ??
+        storage.mount.storage.readInto(storage.inode, offset, target),
+    );
     this.#count(count, target.byteLength);
     if (position === null) descriptor.offset += BigInt(count);
     return count;
@@ -118,21 +127,28 @@ export class KernelFileSystemIo {
     }
     const storage = this.#storageDescriptor(descriptor);
     this.#assertWritable(storage);
-    const stat = yield* complete(storage.mount.storage.stat(storage.inode));
+    const stat = yield* complete(
+      storage.byteAccess?.stat() ?? storage.mount.storage.stat(storage.inode),
+    );
     if (stat.type === "directory") throw kernelError("EISDIR");
     if (stat.type !== "file") throw kernelError("EINVAL");
     if (source.byteLength === 0) return 0;
 
     let count: number;
     if (position === null && (descriptor.flags & FDFLAGS.APPEND) !== 0) {
-      const appended = yield* complete(storage.mount.storage.append(storage.inode, source));
+      const appended = yield* complete(
+        storage.byteAccess?.append(source) ?? storage.mount.storage.append(storage.inode, source),
+      );
       this.#count(appended.bytesWritten, source.byteLength);
       descriptor.offset = appended.offset + BigInt(appended.bytesWritten);
       count = appended.bytesWritten;
     } else {
       const offset = position ?? descriptor.offset;
       if (offset + BigInt(source.byteLength) > MAX_FILE_SIZE) throw kernelError("EFBIG");
-      count = yield* complete(storage.mount.storage.write(storage.inode, offset, source));
+      count = yield* complete(
+        storage.byteAccess?.write(offset, source) ??
+          storage.mount.storage.write(storage.inode, offset, source),
+      );
       this.#count(count, source.byteLength);
       if (count === 0) throw kernelError("EIO");
       if (position === null) descriptor.offset += BigInt(count);
@@ -158,7 +174,8 @@ export class KernelFileSystemIo {
       return;
     }
     const storage = this.#storageDescriptor(descriptor);
-    yield* complete(storage.mount.storage.sync(storage.inode, dataOnly));
+    if (storage.byteAccess) storage.byteAccess.sync(dataOnly);
+    else yield* complete(storage.mount.storage.sync(storage.inode, dataOnly));
   }
 
   #storageDescriptor(descriptor: WasiDescriptor): StorageDescriptor {

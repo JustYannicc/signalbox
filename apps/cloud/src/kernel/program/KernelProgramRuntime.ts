@@ -65,11 +65,25 @@ export interface KernelWasiRuntimeOptions {
   readonly spawn: (request: AgentOsSpawnRequest) => Promise<KernelResult<KernelHandle<"process">>>;
 }
 
+export interface PreparedKernelWasiRuntime {
+  readonly lifecycle: WasiLifecycle;
+  instantiate(): WebAssembly.Instance;
+}
+
 /** Binds one precompiled module to its descriptor table and exact imports. */
 export function createKernelWasiRuntime(
   module: WebAssembly.Module,
   options: KernelWasiRuntimeOptions,
 ): { readonly lifecycle: WasiLifecycle; readonly instance: WebAssembly.Instance } {
+  const prepared = prepareKernelWasiRuntime(module, options);
+  return { lifecycle: prepared.lifecycle, instance: prepared.instantiate() };
+}
+
+/** Builds imports and checks their names without running a module start section. */
+export function prepareKernelWasiRuntime(
+  module: WebAssembly.Module,
+  options: KernelWasiRuntimeOptions,
+): PreparedKernelWasiRuntime {
   const moduleImports = WebAssembly.Module.imports(module);
   const version = moduleImports.some((item) => item.module === "wasi_unstable")
     ? "unstable"
@@ -155,7 +169,16 @@ export function createKernelWasiRuntime(
     }
   }
 
-  return { lifecycle, instance: new WebAssembly.Instance(module, importObject) };
+  assertKernelWasiImportsAvailable(moduleImports, importObject);
+  let instantiated = false;
+  return {
+    lifecycle,
+    instantiate: () => {
+      if (instantiated) throw new Error("WASI runtime has already been instantiated");
+      instantiated = true;
+      return new WebAssembly.Instance(module, importObject);
+    },
+  };
 }
 
 export function runInlineJavaScript(
@@ -252,6 +275,27 @@ function hostProcessImports(
     );
   }
   return imports;
+}
+
+function assertKernelWasiImportsAvailable(
+  imports: readonly WebAssembly.ModuleImportDescriptor[],
+  importObject: WebAssembly.Imports,
+): void {
+  for (const item of imports) {
+    const namespace = importObject[item.module];
+    if (
+      (typeof namespace !== "object" && typeof namespace !== "function") ||
+      namespace === null ||
+      !Object.prototype.hasOwnProperty.call(namespace, item.name)
+    ) {
+      throw new WebAssembly.LinkError(`Missing WASI runtime import: ${item.module}.${item.name}`);
+    }
+    if (item.kind !== "function") {
+      throw new WebAssembly.LinkError(
+        `Unsupported WASI runtime import kind: ${item.module}.${item.name}`,
+      );
+    }
+  }
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {

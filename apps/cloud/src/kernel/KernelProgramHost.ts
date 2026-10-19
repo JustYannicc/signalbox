@@ -20,6 +20,13 @@ import {
   type KernelProgramPrepareOptions,
 } from "./program/KernelPreparedProgram.ts";
 import {
+  commitKernelProgramFileBytes,
+  prepareKernelProgramFileBytes,
+  resolveKernelProgramFileBytes,
+  type KernelPreparedFileByteSelection,
+  type KernelProgramFileByteSelector,
+} from "./program/KernelProgramFileBytes.ts";
+import {
   preparePipedKernelProgram,
   type KernelPipedProgram,
 } from "./program/KernelProgramPipes.ts";
@@ -48,6 +55,7 @@ export type {
   KernelProgramPrepareOptions,
   KernelPreparedProgram,
 } from "./program/KernelPreparedProgram.ts";
+export type { KernelProgramFileByteSelector } from "./program/KernelProgramFileBytes.ts";
 export { prepareNodeChildStdioKernelProgram } from "./program/KernelProgramPipes.ts";
 export type {
   KernelNodeChildStdio,
@@ -62,9 +70,11 @@ export interface KernelProgramHostOptions {
   readonly wakes: KernelWakeRegistry;
   readonly processes?: KernelProcessTable;
   readonly cpuAccounting?: KernelCpuAccounting;
+  readonly selectFileBytes?: KernelProgramFileByteSelector;
 }
 
 type ProgramRecord = {
+  readonly executable: string;
   readonly binding: KernelProgramBinding;
 };
 
@@ -76,6 +86,11 @@ export class KernelProgramHost {
   readonly #registry: import("./KernelAbi.ts").KernelProgramRegistry;
   readonly #programs: ReadonlyMap<string, ProgramRecord>;
   readonly #resolved = new WeakMap<ResolvedProgram, ProgramRecord>();
+  readonly #selectFileBytes: KernelProgramFileByteSelector | undefined;
+  readonly #preparedSelections = new WeakMap<
+    KernelPreparedProgram,
+    KernelPreparedFileByteSelection
+  >();
   readonly #spawner: KernelProgramSpawner;
   readonly #resolutionBackend: KernelBackend;
 
@@ -87,6 +102,7 @@ export class KernelProgramHost {
       options.cpuAccounting === undefined
         ? undefined
         : new KernelCpuExecution(options.cpuAccounting);
+    this.#selectFileBytes = options.selectFileBytes;
     const programs = new Map<string, ProgramRecord>();
     const registeredVersions = new Set<string>();
     for (const [executable, inputBinding] of options.programs ?? []) {
@@ -97,7 +113,7 @@ export class KernelProgramHost {
         throw new RangeError("A registered program version can have only one executable mapping");
       }
       registeredVersions.add(identity);
-      programs.set(executable, Object.freeze({ binding }));
+      programs.set(executable, Object.freeze({ executable, binding }));
     }
     this.#programs = programs;
     this.#resolutionBackend = {
@@ -114,6 +130,8 @@ export class KernelProgramHost {
       ...(this.cpuExecution === undefined ? {} : { cpuExecution: this.cpuExecution }),
       resolve: (executable) => this.resolve(executable),
       bindingFor: (program) => this.#resolved.get(program)?.binding,
+      executableFor: (program) => this.#resolved.get(program)?.executable,
+      ...(this.#selectFileBytes === undefined ? {} : { selectFileBytes: this.#selectFileBytes }),
     });
   }
 
@@ -142,18 +160,26 @@ export class KernelProgramHost {
     input: KernelProgramPrepareInput,
     options: KernelProgramPrepareOptions = {},
   ): KernelPreparedProgram {
-    return prepareKernelProgram(input, options);
+    const preparedOptions = this.#prepareOptions(input, options);
+    const prepared = prepareKernelProgram(input, preparedOptions.options);
+    if (preparedOptions.target !== undefined)
+      this.#preparedSelections.set(prepared, preparedOptions.target);
+    return prepared;
   }
 
   preparePiped(
     input: KernelProgramPrepareInput,
     options: Omit<KernelProgramPrepareOptions, "stdio"> = {},
   ): KernelPipedProgram {
-    return preparePipedKernelProgram(this.wakes, input, options);
+    const preparedOptions = this.#prepareOptions(input, options);
+    const piped = preparePipedKernelProgram(this.wakes, input, preparedOptions.options);
+    if (preparedOptions.target !== undefined)
+      this.#preparedSelections.set(piped.prepared, preparedOptions.target);
+    return piped;
   }
 
   backend(prepared: KernelPreparedProgram): KernelBackend {
-    return this.#spawner.backend(prepared);
+    return this.#spawner.backend(prepared, this.#preparedSelections.get(prepared));
   }
 
   /** Direct guest spawns use the same admission, actions and attributes as nested programs. */
@@ -203,6 +229,23 @@ export class KernelProgramHost {
     }
     const execute = () => {
       try {
+        const selected = this.#preparedSelections.get(prepared);
+        if (selected?.executable !== undefined && selected.executable !== record.executable) {
+          throw Object.assign(
+            new Error("Prepared program target does not match execution target"),
+            {
+              code: "EINVAL",
+            },
+          );
+        }
+        const fileBytes = resolveKernelProgramFileBytes({
+          executable: record.executable,
+          ...(selected === undefined ? {} : { explicitSelection: selected.selection }),
+          ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
+          filesystem: prepared.filesystem,
+          ...(prepared.parent === undefined ? {} : { parent: prepared.parent }),
+        });
+        commitKernelProgramFileBytes(prepared.filesystem, fileBytes);
         if (implementation.kind === "javascript") {
           return runKernelInlineExecution(prepared.signal, () =>
             runInlineJavaScript(implementation.runInline, prepared, args, withHome(prepared, env)),
@@ -237,6 +280,31 @@ export class KernelProgramHost {
     };
     const root = this.cpuExecution?.root;
     return root ? root.run(execute) : execute();
+  }
+
+  #prepareOptions(
+    input: KernelProgramPrepareInput,
+    options: KernelProgramPrepareOptions,
+  ): {
+    readonly options: KernelProgramPrepareOptions;
+    readonly target: KernelPreparedFileByteSelection | undefined;
+  } {
+    const { executable, fileBytes, ...remainingOptions } = options;
+    const target = prepareKernelProgramFileBytes({
+      ...(executable === undefined ? {} : { executable }),
+      ...(fileBytes === undefined ? {} : { explicitSelection: fileBytes }),
+      ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
+      filesystem: input.filesystem,
+      ...(input.parent === undefined ? {} : { parent: input.parent }),
+      hasOpenActions: options.actions?.some((action) => action.kind === "open") ?? false,
+    });
+    return {
+      options:
+        target === undefined
+          ? remainingOptions
+          : { ...remainingOptions, fileBytes: target.selection },
+      target,
+    };
   }
 }
 

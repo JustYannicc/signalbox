@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { Inode, Stat } from "../storage.ts";
+import type { KernelFileByteAccess, KernelFileByteView } from "../KernelFileBytes.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
 import type { WasiCall } from "./internal_wasi_calls.ts";
 import type { WasiMountedStorage } from "./internal_wasi_paths.ts";
@@ -89,6 +90,8 @@ export interface WasiDescriptorSpec {
   readonly preopen?: boolean | undefined;
   readonly stdio?: WasiStdio | undefined;
   readonly stdioIndex?: 0 | 1 | 2 | undefined;
+  readonly byteAccess?: KernelFileByteAccess | undefined;
+  readonly byteView?: KernelFileByteView | undefined;
   offset: bigint;
   rightsBase: bigint;
   rightsInheriting: bigint;
@@ -111,6 +114,8 @@ export interface WasiDescriptor {
   readonly preopen?: boolean | undefined;
   readonly stdio?: WasiStdio | undefined;
   readonly stdioIndex?: 0 | 1 | 2 | undefined;
+  readonly byteAccess?: KernelFileByteAccess | undefined;
+  readonly byteView?: KernelFileByteView | undefined;
   offset: bigint;
   rightsBase: bigint;
   rightsInheriting: bigint;
@@ -197,6 +202,14 @@ class WasiDescriptorHandle implements WasiDescriptor {
 
   get stdioIndex(): 0 | 1 | 2 | undefined {
     return this.#description.stdioIndex;
+  }
+
+  get byteAccess(): KernelFileByteAccess | undefined {
+    return this.#description.byteAccess;
+  }
+
+  get byteView(): KernelFileByteView | undefined {
+    return this.#description.byteView;
   }
 
   get capabilityRoot(): Inode | undefined {

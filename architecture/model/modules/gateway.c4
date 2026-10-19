@@ -16,13 +16,13 @@ model {
       }
 
       modelGateway = iface 'ModelGateway · model port' {
-        #v1
+        #v1 #funnel
         icon bootstrap:cpu
         description 'port: model wire · grant verify · pin · usage stamp'
         technology 'Worker'
       }
       toolGateway = iface 'ToolGateway · MCP port' {
-        #v1 #publishable #decided
+        #v1 #publishable #decided #funnel
         icon bootstrap:plugin
         description 'port: Executor · every connector; per-tool exposure: search (default) or direct (normal name); built-ins go to Computer'
         technology 'Worker · @modelcontextprotocol/sdk'
@@ -50,6 +50,7 @@ model {
         metadata {
           adapters '2'
           builtins 'working plan (#assumption): built-in tool traffic (curl, git push, npm, gh, WebFetch) from the isolate or a VM; fills from the Connections vault keyed by destination; git push and gh get a short-lived folder GitHub App token, own branch only'
+          funnel 'decided 2026-10-19 (#1191): with ToolGateway this is the connections gateway; it lives on Cloudflare and makes every call to an outside service, wherever the command runs, so endpoint, credentials and outbound identity never depend on placement'
         }
         inProcess = adapter 'In-process filter' {
           icon bootstrap:shield-check
@@ -57,8 +58,13 @@ model {
         }
         egressProxy = adapter 'EgressProxy' {
           icon bootstrap:shield-lock
-          description 'VMs: CONNECT proxy'
-          technology 'process on boxd · machine-bound egress token'
+          description 'VMs: bridge into Gateway · no fill'
+          technology 'process on boxd · terminates TLS for bound hosts only · forwards over HTTPS (Workers take no CONNECT) · unbound allowlisted hosts splice · machine-bound egress token'
+        }
+        fill = part 'Fill · call · scrub' {
+          icon tech:cloudflare-workers-icon
+          description 'every outside call, on Cloudflare'
+          technology 'Worker · re-resolves the host, refuses private IPs'
         }
       }
       transport = part 'Transport seam · 2 adapters' {
@@ -76,6 +82,8 @@ model {
       toolGateway -> grants 'verify'
       toolGateway -> codemode 'execute'
       egress.egressProxy -> grants 'egress token'
+      egress.inProcess -> egress.fill 'fill · call'
+      egress.egressProxy -> egress.fill 'forward over HTTPS (bound hosts)'
     }
 
     gateway.modelGateway -[model]-> signalbox.models.api 'model calls · pin'
@@ -85,8 +93,9 @@ model {
     gateway.toolGateway -> signalbox.search.api 'query'
     gateway.grants -> signalbox.tree.api 'resolve on refresh'
     gateway.grants -> signalbox.identity.api 'mint · verify'
-    gateway.egress.inProcess -> signalbox.connections.api 'fill'
-    gateway.egress.egressProxy -> signalbox.connections.api 'fill'    gateway.codemode -> signalbox.actorhost.api 'host my Dynamic Worker'
+    gateway.egress.fill -> signalbox.connections.api 'fill'
+    gateway.egress.fill -> services.boundHost 'call · scrub response'
+    gateway.codemode -> signalbox.actorhost.api 'host my Dynamic Worker'
 
     // Interface → hidden parts (the only way in)
     gateway.api -> gateway.grants 'grant'
