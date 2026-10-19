@@ -39,20 +39,22 @@ A gateway is the one entry point for one kind of crossing. Every caller goes thr
 
 ## Things behind the gateways
 
-| Term          | Meaning                                                                                                     |
-| ------------- | ----------------------------------------------------------------------------------------------------------- |
-| pool          | An owned set of model accounts (subscriptions and API keys) that answers model requests; placed on a level. |
-| pool account  | One subscription or API key in a pool.                                                                      |
-| connection    | One connected account at one outside service, placed on a level; its tools reach what is below.             |
-| tool exposure | Per tool: `search` (found through the tools gateway's search) or `direct` (shown under its own name).       |
-| vault         | Where secret values live. Agents only ever see placeholders. Avoid: 1Password.                              |
-| computer      | The one machine a thread sees (files, shell, ports). Where it runs is hidden. Avoid: cloudflare/computer.   |
-| machine       | A real virtual machine a command can escalate to. It exists only while needed. Avoid: boxd VM, box.         |
-| Base          | A warm machine snapshot of a repo drive's last green `main`; machines fork it to run commands.              |
-| drive         | A file history with one writer for `main`; a placement kind.                                                |
-| fork          | A thread's own working copy of a drive. Nothing lands until it's accepted. Avoid: Artifacts fork.           |
-| browser       | The agent's browser: checks work, uses the web as the person, hands hard steps to them. Avoid: Kernel.      |
-| merge run     | The run thread that merges an accepted fork when it needs a machine. Avoid: merge executor.                 |
+| Term              | Meaning                                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| pool              | An owned set of model accounts (subscriptions and API keys) that answers model requests; placed on a level. |
+| pool account      | One subscription or API key in a pool.                                                                      |
+| connection        | One connected account at one outside service, placed on a level; its tools reach what is below.             |
+| tool exposure     | Per tool: `search` (found through the tools gateway's search) or `direct` (shown under its own name).       |
+| vault             | Where secret values live. Agents only ever see placeholders. Avoid: 1Password.                              |
+| computer          | The one machine a thread sees (files, shell, ports). Where it runs is hidden. Avoid: cloudflare/computer.   |
+| machine           | A real virtual machine a command can escalate to. It exists only while needed. Avoid: boxd VM, box.         |
+| Base              | A warm machine snapshot of a repo drive's last green `main`; machines fork it to run commands.              |
+| drive             | A file history with one writer for `main`; a placement kind.                                                |
+| fork              | A thread's own working copy of a drive. Nothing lands until it's accepted. Avoid: Artifacts fork.           |
+| browser           | The agent's browser: checks work, uses the web as the person, hands hard steps to them. Avoid: Kernel.      |
+| merge run         | The run thread that merges an accepted fork when it needs a machine. Avoid: merge executor.                 |
+| identity provider | The service that signs people in and holds organizations. Avoid: WorkOS, AuthKit.                           |
+| record storage    | The cheap full record of every drive; any drive can be rebuilt from it alone. Avoid: R2.                    |
 
 ## Modelling terms
 
