@@ -1,4 +1,5 @@
 import { MockHttpSocket } from "./MockHttpSocket.mjs";
+import { createMockHttpReceiver } from "./MockHttpReceive.mjs";
 
 const ERRNO = Object.freeze({
   SUCCESS: 0,
@@ -78,7 +79,7 @@ function descriptorErrno(error) {
   }
 }
 
-export function createMockHttpAdapter({ memory, descriptors, mock }) {
+export function createMockHttpAdapter({ memory, descriptors, mock, handleRequest }) {
   if (typeof memory !== "function") throw new TypeError("memory must be a function");
   if (
     !descriptors ||
@@ -88,7 +89,10 @@ export function createMockHttpAdapter({ memory, descriptors, mock }) {
   ) {
     throw new TypeError("descriptors must expose register, resource, and close");
   }
-  if (!mock || typeof mock.respond !== "function") {
+  if (handleRequest !== undefined && typeof handleRequest !== "function") {
+    throw new TypeError("handleRequest must be a function");
+  }
+  if (handleRequest === undefined && (!mock || typeof mock.respond !== "function")) {
     throw new TypeError("mock must expose respond");
   }
 
@@ -127,6 +131,15 @@ export function createMockHttpAdapter({ memory, descriptors, mock }) {
     }
   }
 
+  const receiver = createMockHttpReceiver({
+    currentMemory,
+    memoryView,
+    writeU32,
+    socketFor,
+    descriptorErrno,
+    errno: ERRNO,
+  });
+
   const imports = Object.freeze({
     net_socket: (domain, sockType, protocol, retFdPointer) =>
       guarded(() => {
@@ -136,7 +149,7 @@ export function createMockHttpAdapter({ memory, descriptors, mock }) {
         if (sockType !== SOCK_STREAM || protocol !== 0) {
           fail(ERRNO.NOTSUP, "Only AgentOS SOCK_STREAM with the default protocol is supported");
         }
-        const resource = new MockHttpSocket();
+        const resource = new MockHttpSocket({ handleRequest });
         let fd;
         try {
           fd = descriptors.register(resource);
@@ -178,18 +191,7 @@ export function createMockHttpAdapter({ memory, descriptors, mock }) {
         return ERRNO.SUCCESS;
       }),
 
-    net_recv: (fd, bufferPointer, bufferLength, flags, retReceivedPointer) =>
-      guarded(() => {
-        const wasmMemory = currentMemory();
-        memoryView(wasmMemory, retReceivedPointer, 4);
-        const { offset, size } = memoryView(wasmMemory, bufferPointer, bufferLength);
-        if (flags !== 0) fail(ERRNO.NOTSUP, "Receive flags are unsupported");
-        writeU32(wasmMemory, retReceivedPointer, 0);
-        const output = new Uint8Array(wasmMemory.buffer, offset, size);
-        const count = socketFor(fd).read(output);
-        writeU32(wasmMemory, retReceivedPointer, count);
-        return ERRNO.SUCCESS;
-      }),
+    net_recv: handleRequest === undefined ? receiver.receiveSync : receiver.receiveAsync,
 
     net_close: (fd) =>
       guarded(() => {
@@ -278,7 +280,20 @@ export function createMockHttpAdapter({ memory, descriptors, mock }) {
   return Object.freeze({
     imports,
     getImportObject() {
-      return { host_net: imports };
+      if (handleRequest === undefined) return { host_net: imports };
+
+      const Suspending = WebAssembly.Suspending;
+      if (typeof Suspending !== "function") {
+        throw Object.assign(new Error("Codex async HTTP receive requires WebAssembly JSPI"), {
+          code: "ERR_CODEX_JSPI_UNAVAILABLE",
+        });
+      }
+      return {
+        host_net: {
+          ...imports,
+          net_recv: new Suspending(imports.net_recv),
+        },
+      };
     },
   });
 }
