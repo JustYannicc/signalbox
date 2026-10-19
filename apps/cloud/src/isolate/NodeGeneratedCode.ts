@@ -4,6 +4,7 @@ export { NodeGeneratedCodeCleanupError } from "./node/generated/invocation-error
 export type {
   NodeGeneratedCodeInvocation,
   NodeGeneratedCodeOpenPort,
+  NodeGeneratedCodeResponseHead,
 } from "./node/generated/invocation.ts";
 import { generatedCodePromise } from "./node/generated/generation-realm.ts";
 import type { NodeGeneratedCodeRetentionLimits } from "./node/generated/retention.ts";

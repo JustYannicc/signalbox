@@ -3,11 +3,11 @@ import {
   ChildWorkerLimitError,
   type ChildWorkerCapacity,
 } from "../computer/ChildWorkerCapacity.ts";
-import type {
-  NodeGeneratedCode,
-  NodeGeneratedCodeInvokeInput,
+import {
+  NodeGeneratedCodeCleanupError,
+  type NodeGeneratedCode,
+  type NodeGeneratedCodeInvokeInput,
 } from "../isolate/NodeGeneratedCode.ts";
-import { NodeGeneratedCodeCleanupError } from "../isolate/node/generated/invocation-errors.ts";
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
 import type {
   HarnessHookCallback,

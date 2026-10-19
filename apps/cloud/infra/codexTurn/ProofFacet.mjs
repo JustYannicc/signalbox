@@ -137,7 +137,13 @@ export function createProofFacet(engine, createHost, options = {}) {
         });
         initializeProofDirectories(filesystem);
         host = createHost
-          ? createHost(wakes, { filesystem, storage, env: this.env, context: this.ctx })
+          ? await createHost(wakes, {
+              filesystem,
+              storage,
+              env: this.env,
+              context: this.ctx,
+              request,
+            })
           : new KernelProgramHost({ registry: new KernelProgramRegistry(), wakes });
         composition = options.configure?.({
           filesystem,

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { createNodeGeneratedCodeFetcher } from "./invocation-fetcher.ts";
-import { NodeGeneratedCodeCleanupError } from "./invocation-errors.ts";
-import type { NodeGeneratedCodeInvocation, NodeGeneratedCodeResponseHead } from "./invocation.ts";
+import {
+  createNodeGeneratedCodeFetcher,
+  NodeGeneratedCodeCleanupError,
+  type NodeGeneratedCodeInvocation,
+  type NodeGeneratedCodeResponseHead,
+} from "../../NodeGeneratedCode.ts";
 
 const envelope = JSON.stringify({
   id: "caller",

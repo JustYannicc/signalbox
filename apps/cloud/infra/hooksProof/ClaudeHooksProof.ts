@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalFetch:off globalDate:off - isolated diagnostic host without an Effect runtime.
 import { DurableObject } from "cloudflare:workers";
 import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerLoaderPort } from "../../src/computer/WorkerLoaderDispatch.ts";
 import * as NodeConstants from "node:constants";
 import { createNodeConstants } from "../../src/isolate/NodeConstants.ts";
 import { createNodeOs } from "../../src/isolate/NodeOs.ts";
@@ -32,8 +33,10 @@ import { terminalSuccess, proofPrompt } from "../claudeTurnProof/proofScenario.t
 import { decodeVerifiedAssetBundle } from "../claudeTurnProof/assetBundle.ts";
 import { verifySeededAssets } from "../claudeTurnProof/proofAssets.ts";
 import type { ClaudeTurnProofConfig } from "../claudeTurnProof/ClaudeTurnProof.ts";
-import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/node/generated/invocation.ts";
-import { createClaudeHookRuntime, type ClaudeHooksDispatchRecord } from "./claudeRuntime.ts";
+import type { HookChildProgramSources } from "./preparePrograms.ts";
+import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/NodeGeneratedCode.ts";
+import { createClaudeHookRuntime } from "./claudeRuntime.ts";
+import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
 import { runClaudeProofLifecycle } from "./claudeLifecycle.ts";
 import {
   claudeToolScript,
@@ -44,9 +47,11 @@ import {
 
 /** Same factory shape as the regular proof, selected by prepareClaudeTurnProof(hostRuntime). */
 export function createClaudeTurnProofClass(
-  config: ClaudeTurnProofConfig,
+  config: Omit<ClaudeTurnProofConfig, "programs"> & {
+    readonly childPrograms: HookChildProgramSources;
+  },
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => DurableObject {
-  const programs = config.programs;
+  const programs = config.childPrograms;
   const programFiles = config.programFiles;
   if (programs === undefined || programFiles === undefined) {
     throw new Error("Claude hooks proof requires the pinned Bash, BusyBox and ripgrep programs");
@@ -164,6 +169,12 @@ export function createClaudeTurnProofClass(
           ...filesystemHost,
           storage: this.ctx.storage,
           programs,
+          loader: {
+            run: (invocation, capability) =>
+              (
+                this.env as Cloudflare.Env & { CHILD_WORKERS: ChildWorkerLoaderPort }
+              ).CHILD_WORKERS.run(invocation, capability),
+          },
           env,
           identity,
           streams,
@@ -270,7 +281,11 @@ export function createClaudeTurnProofClass(
           pins: config.pins,
           assetsSeeded: this.assetsSeeded,
           programsSeeded: this.programSeedHandler().seeded,
-          ok: terminalOk && scenarioResult.ok === true && output.errors.length === 0,
+          ok:
+            terminalOk &&
+            scenarioResult.ok === true &&
+            output.errors.length === 0 &&
+            runtime.capacity.active === 0,
           mock: { requests: mock.requests, denied: mock.deniedRequests, complete: mock.complete },
           process: {
             same: Object.is(globalThis.process, runtime.process),
@@ -281,7 +296,8 @@ export function createClaudeTurnProofClass(
             cwd: filesystemHost.filesystem.cwd,
             workEntries: filesystemHost.fs.fs.readdirSync("/work"),
           },
-          runtimeBoundary: "proof-local Bash binding; child-worker Bash binding remains pending",
+          runtimeBoundary: "child-dynamic-workers",
+          capacity: { active: runtime.capacity.active, limit: runtime.capacity.limit },
         });
       } finally {
         if (!lifecycleOwnsRuntime) {

@@ -1,7 +1,5 @@
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { withOfficialHookContext } from "./officialHookContext.ts";
-import { createNodeGeneratedCodeFetcher } from "../../src/isolate/node/generated/invocation-fetcher.ts";
-import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/node/generated/invocation.ts";
 import type { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import {
@@ -14,12 +12,10 @@ import {
 } from "./codexScenario.ts";
 import {
   createNodeGeneratedCode,
+  createNodeGeneratedCodeFetcher,
   type NodeGeneratedCodeInvokeInput,
+  type NodeGeneratedCodeOpenPort,
 } from "../../src/isolate/NodeGeneratedCode.ts";
-import {
-  createKernelBashProgram,
-  KERNEL_BASH_ARTIFACT,
-} from "../../src/kernel/KernelBashProgram.ts";
 import { KernelFileSystem, KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
 import {
   kernelError,
@@ -82,9 +78,12 @@ export interface CodexHookRuntimeComposition {
   }) => Promise<void>;
 }
 
-/** Registers the interim Bash and host-owned hook dispatcher in the session kernel. */
+/** Registers the owning facet's command bindings and its opaque hook dispatcher. */
 export function createCodexHookRuntime(
-  bashModule: WebAssembly.Module,
+  createPrograms: (registry: KernelProgramRegistry) => {
+    readonly bindings: ReadonlyMap<string, KernelProgramBinding>;
+    readonly drain: () => Promise<void>;
+  },
   wakes: KernelWakeRegistry,
   capacity: ChildWorkerCapacity,
 ) {
@@ -98,30 +97,8 @@ export function createCodexHookRuntime(
   let engineProcess: ReturnType<typeof admitEngineProcess> | undefined;
 
   const registry = new KernelProgramRegistry();
-  const bashManifest = {
-    name: "gnu-bash",
-    version: KERNEL_BASH_ARTIFACT.revision,
-    abiVersion: 1,
-    requiredCapabilities: ["process.spawn", "process.wait", "process.signal"],
-    entrypoint: "/bin/bash",
-  } as const;
-  register(registry, bashManifest);
-
-  const bashBinding: KernelProgramBinding = {
-    manifest: bashManifest,
-    // The parent replaces this interim in-facet binding with its shared child Worker adapter.
-    implementation: createKernelBashProgram({
-      module: bashModule,
-      credentials: {
-        uid: 1000,
-        gid: 1000,
-        euid: 1000,
-        egid: 1000,
-        umask: 0o022,
-        hostname: "codex-hooks-proof",
-      },
-    }),
-  };
+  const commandPrograms = createPrograms(registry);
+  const programs = new Map(commandPrograms.bindings);
 
   const hookPrograms = registerKernelHookProgram(registry, async (id, payload, invocation) => {
     const registration = CODEX_HOOK_REGISTRATIONS.find((candidate) => candidate.id === id);
@@ -154,7 +131,6 @@ export function createCodexHookRuntime(
     }
   });
 
-  const programs = new Map<string, KernelProgramBinding>([["/bin/bash", bashBinding]]);
   for (const [path, binding] of hookPrograms) programs.set(path, binding);
   const host = new KernelProgramHost({ registry, wakes, programs });
 
@@ -280,8 +256,9 @@ export function createCodexHookRuntime(
             call.result = result.status;
             return result;
           },
-          verify: ({ filesystem }) =>
-            verifyCodexHooks({
+          verify: async ({ filesystem }) => {
+            await commandPrograms.drain();
+            const result = await verifyCodexHooks({
               filesystem,
               host,
               parent: engineProcess!.parent,
@@ -291,7 +268,13 @@ export function createCodexHookRuntime(
               signalboxCalls,
               spawnCalls,
               machineAttempts,
-            }),
+            });
+            return {
+              ...result,
+              capacity: { active: capacity.active, limit: capacity.limit },
+              ok: result.ok && capacity.active === 0,
+            };
+          },
           finish: ({ exit, failure }) =>
             engineProcess?.finish({ exit, failure }) ?? Promise.resolve(),
         };
@@ -442,15 +425,6 @@ function asOpenPort(value: unknown): NodeGeneratedCodeOpenPort {
     throw new Error("CODE_GENERATION is not a managed invocation binding");
   }
   return value as NodeGeneratedCodeOpenPort;
-}
-
-function register(
-  registry: KernelProgramRegistry,
-  manifest: Parameters<KernelProgramRegistry["register"]>[0],
-): void {
-  const result = registry.register(manifest);
-  if (result.status !== "ok")
-    throw new Error(`Could not register ${manifest.name}: ${result.status}`);
 }
 
 function readClock(): number | null {

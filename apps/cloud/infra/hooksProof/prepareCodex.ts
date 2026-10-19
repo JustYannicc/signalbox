@@ -6,6 +6,8 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import { build } from "esbuild";
+import { encodeAssetBundle, PROGRAM_BUNDLE_CONTENT_TYPE } from "../claudeTurnProof/assetBundle.ts";
+import { prepareHookChildPrograms } from "./preparePrograms.ts";
 // @ts-expect-error The existing MJS packager has no declaration; the local type below narrows its API.
 import { createCodexFixture as createCodexFixtureUntyped } from "../codexTurn/fixturePackager.mjs";
 
@@ -16,17 +18,6 @@ interface CodexFixturePackagerOptions {
   readonly outputDir: string;
   readonly id: string;
   readonly paths: readonly string[];
-  readonly additionalModules: Readonly<
-    Record<
-      string,
-      {
-        readonly path: string;
-        readonly type: "wasm";
-        readonly bytes: number;
-        readonly sha256: string;
-      }
-    >
-  >;
 }
 
 interface CodexFixturePackage {
@@ -40,10 +31,6 @@ const createCodexFixture = createCodexFixtureUntyped as unknown as (
 ) => Promise<CodexFixturePackage>;
 
 const RELEASE_MANIFEST_SHA256 = "bfa4263733024c07900c856b7ff17a6e6b664fc4dd5eaad54065532f34c1b91b";
-const BASH_ARTIFACT = Object.freeze({
-  bytes: 3_887_571,
-  sha256: "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
-});
 const proofRoot = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const currentKernelRoot = NodePath.resolve(proofRoot, "../../src/kernel");
 const digest = (bytes: Uint8Array | string) =>
@@ -56,16 +43,16 @@ function requiredPath(name: string, value: string | undefined): string {
   return NodePath.resolve(value);
 }
 
-/** Packages the unchanged Codex release with the hook proof entry and pinned Bash bytes. */
+/** Packages the unchanged Codex release with real child program graphs and executable seeds. */
 export async function prepareCodexHooksProof(options: {
   readonly releaseDir: string;
-  readonly bashPath: string;
+  readonly programDir: string;
   readonly kernelRoot?: string;
   readonly outputDir: string;
 }) {
-  if (options == null) throw new Error("Pass --release, --bash and --output");
+  if (options == null) throw new Error("Pass --release, --programs and --output");
   const releaseDir = requiredPath("--release", options.releaseDir);
-  const bashPath = requiredPath("--bash", options.bashPath);
+  const programDir = requiredPath("--programs", options.programDir);
   const outputDir = requiredPath("--output", options.outputDir);
   const kernelRootInput =
     options.kernelRoot === undefined
@@ -78,14 +65,22 @@ export async function prepareCodexHooksProof(options: {
     throw new Error("Codex release manifest does not match the pinned 0.162.1 artifact");
   }
 
+  const children = await prepareHookChildPrograms({ programDir });
+  const programs = {
+    bash: children.bash,
+    busyboxCat: children.busyboxCat,
+    ripgrep: children.ripgrep,
+  };
+  const programBundle = encodeAssetBundle(children.executableFiles);
   const staging = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "1066-codex-hooks-entry-"));
   try {
     const source = [
       'import engine from "./engine.wasm";',
-      'import bash from "./bash.wasm";',
       `import { createProofFacet } from ${JSON.stringify(NodePath.join(proofRoot, "../codexTurn/ProofFacet.mjs"))};`,
       `import { createCodexHooksProofClass } from ${JSON.stringify(NodePath.join(proofRoot, "CodexHooksProof.ts"))};`,
-      "export class ProbeFacet extends createCodexHooksProofClass(engine, bash, createProofFacet) {}",
+      `const programs=${JSON.stringify(programs)};`,
+      `const catalog=${JSON.stringify(children.executableCatalog)};`,
+      "export class ProbeFacet extends createCodexHooksProofClass(engine, programs, catalog, createProofFacet) {}",
       'export default { fetch() { return new Response("Facet only"); } };',
     ].join("\n");
     const sourcePath = NodePath.join(staging, "codex-hooks-entry.mjs");
@@ -98,7 +93,7 @@ export async function prepareCodexHooksProof(options: {
       format: "esm",
       platform: "neutral",
       target: "es2023",
-      external: ["cloudflare:workers", "node:*", "./engine.wasm", "./bash.wasm"],
+      external: ["cloudflare:workers", "node:*", "./engine.wasm"],
       plugins: [
         {
           name: "frozen-kernel",
@@ -123,11 +118,17 @@ export async function prepareCodexHooksProof(options: {
       outputDir,
       id: "codex-hooks-official-proof",
       paths: ["/turn", "/turn"],
-      additionalModules: {
-        "bash.wasm": { path: bashPath, type: "wasm", ...BASH_ARTIFACT },
-      },
     });
 
+    await NodeFSP.writeFile(NodePath.join(outputDir, "programs.bundle"), programBundle, {
+      flag: "wx",
+      mode: 0o444,
+    });
+    await NodeFSP.writeFile(
+      NodePath.join(outputDir, "child-program-source-inventory.json"),
+      JSON.stringify(children.sourceInventory, null, 2) + "\n",
+      { flag: "wx", mode: 0o444 },
+    );
     const proofManifest = await enableProofBindings(outputDir);
     const sources = [];
     for (const name of Object.keys(bundled.metafile.inputs).sort()) {
@@ -145,7 +146,7 @@ export async function prepareCodexHooksProof(options: {
     });
     await NodeFSP.writeFile(
       NodePath.join(outputDir, "sourceInventory.json"),
-      `${JSON.stringify({ kernelRoot, generatedEntrySha256: digest(source), sources }, null, 2)}\n`,
+      `${JSON.stringify({ kernelRoot, generatedEntrySha256: digest(source), programSeed: { bytes: programBundle.byteLength, sha256: digest(programBundle) }, sources }, null, 2)}\n`,
       { flag: "wx", mode: 0o444 },
     );
     return {
@@ -172,7 +173,18 @@ async function enableProofBindings(outputDir: string): Promise<Record<string, un
     ) {
       throw new Error("Prepared Codex hook fixture has an unexpected manifest");
     }
-    const proofManifest = { ...parsed, allowGeneratedCode: true, allowChildWorkers: true };
+    const proofManifest: Record<string, unknown> = {
+      ...parsed,
+      allowGeneratedCode: true,
+      allowChildWorkers: true,
+      requests: ["/turn", "/turn"].map((path) => ({
+        path,
+        method: "POST",
+        bodyFile: "programs.bundle",
+        contentType: PROGRAM_BUNDLE_CONTENT_TYPE,
+      })),
+    };
+    delete proofManifest.paths;
     await NodeFSP.writeFile(path, `${JSON.stringify(proofManifest, null, 2)}\n`);
     return proofManifest;
   } finally {
@@ -192,7 +204,7 @@ if (
     allowPositionals: false,
     options: {
       release: { type: "string" },
-      bash: { type: "string" },
+      programs: { type: "string" },
       "kernel-root": { type: "string" },
       output: { type: "string" },
       help: { type: "boolean", short: "h" },
@@ -200,10 +212,10 @@ if (
   });
   if (values.help) {
     process.stdout.write(
-      "Usage: prepareCodex.ts --release <dir> --bash <file> --output <dir> [--kernel-root <dir>]\n\n" +
+      "Usage: prepareCodex.ts --release <dir> --programs <dir> --output <dir> [--kernel-root <dir>]\n\n" +
         "Required inputs:\n" +
         "  --release <dir>       Pinned Codex 0.162.1 artifact directory\n" +
-        "  --bash <file>         Pinned Bash wasm artifact\n" +
+        "  --programs <dir>         Directory containing pinned bash.wasm, busybox.wasm and rg.wasm\n" +
         "  --output <dir>        Fresh proof output directory\n" +
         "Optional inputs:\n" +
         "  --kernel-root <dir>   Kernel source root (defaults to this checkout)\n",
@@ -211,7 +223,7 @@ if (
   } else {
     const result = await prepareCodexHooksProof({
       releaseDir: requiredPath("--release", values.release),
-      bashPath: requiredPath("--bash", values.bash),
+      programDir: requiredPath("--programs", values.programs),
       ...(values["kernel-root"] === undefined
         ? {}
         : { kernelRoot: requiredPath("--kernel-root", values["kernel-root"]) }),

@@ -1,13 +1,16 @@
 import { withOfficialHookContext } from "./officialHookContext.ts";
 import { createClaudeProofCleanup } from "./claudeLifecycle.ts";
-import { createNodeGeneratedCodeFetcher } from "../../src/isolate/node/generated/invocation-fetcher.ts";
-import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/node/generated/invocation.ts";
 // @effect-diagnostics nodeBuiltinImport:off - this runtime is an isolated proof host.
 import * as NodeProcess from "node:process";
 import type { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerLoaderPort } from "../../src/computer/WorkerLoaderDispatch.ts";
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
-import { createNodeGeneratedCode } from "../../src/isolate/NodeGeneratedCode.ts";
+import {
+  createNodeGeneratedCode,
+  createNodeGeneratedCodeFetcher,
+  type NodeGeneratedCodeOpenPort,
+} from "../../src/isolate/NodeGeneratedCode.ts";
 import { createBunShim, type BunFileTarget } from "../../src/isolate/BunShim.ts";
 import { createNodeBunHost } from "../../src/isolate/NodeBun.ts";
 import { createNodeChildProcess } from "../../src/isolate/NodeChildProcess.ts";
@@ -19,45 +22,19 @@ import {
 } from "../../src/isolate/NodeProcess.ts";
 import type { NodeFsModules } from "../../src/isolate/NodeFs.ts";
 import type { FacetStorage } from "../../src/kernel/FacetSqliteStorage.ts";
-import { ABI_VERSION, KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
+import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
 import { KernelCpuAccounting } from "../../src/kernel/KernelCpuAccounting.ts";
-import { KernelFileSystem, KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
-import {
-  KERNEL_BASH_ARTIFACT,
-  createKernelBashProgram,
-} from "../../src/kernel/KernelBashProgram.ts";
-import { KERNEL_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
-import { registerKernelBusyboxCat } from "../../src/kernel/KernelBusyboxPrograms.ts";
-import {
-  KernelProgramHost,
-  type KernelProgramBinding,
-} from "../../src/kernel/KernelProgramHost.ts";
-import {
-  createKernelRipgrepProgram,
-  KERNEL_RIPGREP_PROGRAM_MANIFEST,
-} from "../../src/kernel/KernelRipgrepProgram.ts";
-import type { KernelCommandExit } from "../../src/kernel/KernelCommandForwarder.ts";
+import type { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
+import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createHookService } from "../../src/hooks/HookService.ts";
 import { registerKernelHookProgram, type KernelHookInvoker } from "../../src/hooks/HookProgram.ts";
-import type { HarnessHookEvent, HarnessHookJson } from "../../src/hooks/HarnessHooks.ts";
-import type { ProofProgramModules } from "../claudeTurnProof/proofPrograms.ts";
-import type { ClaudeHookRoute, ClaudeHookScenario } from "./claudeScenario.ts";
+import { createHookChildPrograms } from "./childPrograms.ts";
+import type { HookChildProgramSources } from "./preparePrograms.ts";
+import type { ClaudeHookScenario } from "./claudeScenario.ts";
+import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
 
 const monotonicNowNs = NodeProcess.hrtime.bigint.bind(NodeProcess.hrtime);
-
-export interface ClaudeHooksDispatchRecord {
-  readonly id: string;
-  readonly event: HarnessHookEvent;
-  readonly route: ClaudeHookRoute;
-  readonly payload: HarnessHookJson;
-  elapsedMs: number | null;
-  timingUnavailableReason?: string;
-  exit?: KernelCommandExit;
-  stdout?: string;
-  stderr?: string;
-  error?: string;
-}
 
 export interface ClaudeHookRuntimeOptions {
   readonly capacity: ChildWorkerCapacity;
@@ -65,7 +42,8 @@ export interface ClaudeHookRuntimeOptions {
   readonly fs: NodeFsModules;
   readonly wakes: KernelWakeRegistry;
   readonly storage: FacetStorage;
-  readonly programs: ProofProgramModules;
+  readonly programs: HookChildProgramSources;
+  readonly loader: ChildWorkerLoaderPort;
   readonly env: NodeProcessEnvironment;
   readonly identity: NodeRuntimeIdentity;
   readonly streams: NodeProcessStreams;
@@ -88,13 +66,16 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     return dispatch(id, payload, invocation);
   };
 
-  const kernelHost = createClaudeHookProgramHost({
+  const commandPrograms = createClaudeHookProgramHost({
     filesystem: options.filesystem,
     wakes: options.wakes,
     programs: options.programs,
+    loader: options.loader,
+    capacity,
     cpuAccounting,
     invoke,
   });
+  const kernelHost = commandPrograms.host;
   const execution = kernelHost.cpuExecution;
   if (!execution) throw new Error("Claude hook proof omitted CPU execution accounting");
   const cpuRoot = execution.root;
@@ -212,7 +193,18 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     }
   };
 
-  const cleanup = createClaudeProofCleanup(kernelHost.processes, cpuRoot);
+  const cleanup = createClaudeProofCleanup(
+    {
+      async dispose() {
+        try {
+          return await kernelHost.processes.dispose();
+        } finally {
+          await commandPrograms.drain();
+        }
+      },
+    },
+    cpuRoot,
+  );
   return {
     kernelHost,
     processContext,
@@ -221,6 +213,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     bun,
     cpuRoot,
     machineCalls,
+    capacity,
     ...cleanup,
     enterUser: () => cpuRoot.enterUser(),
   };
@@ -253,113 +246,31 @@ function elapsedMilliseconds(
 function createClaudeHookProgramHost(options: {
   readonly filesystem: KernelFileSystem;
   readonly wakes: KernelWakeRegistry;
-  readonly programs: ProofProgramModules;
+  readonly programs: HookChildProgramSources;
+  readonly loader: ChildWorkerLoaderPort;
+  readonly capacity: ChildWorkerCapacity;
   readonly cpuAccounting: KernelCpuAccounting;
   readonly invoke: KernelHookInvoker;
-}): KernelProgramHost {
-  assertPinnedBusyboxCat(options.filesystem, options.programs.busyboxCatBase64);
+}) {
   const registry = new KernelProgramRegistry();
-  const bindings = new Map(registerKernelBusyboxCat(registry, options.programs.busybox));
-  const bashManifest = Object.freeze({
-    name: "@nimbus/bash",
-    version: KERNEL_BASH_ARTIFACT.version,
-    abiVersion: ABI_VERSION,
-    requiredCapabilities: Object.freeze([
-      "process.spawn" as const,
-      "process.wait" as const,
-      "process.signal" as const,
-    ]),
-    entrypoint: "nimbus-bash:" + KERNEL_BASH_ARTIFACT.sha256,
+  const children = createHookChildPrograms({
+    registry,
+    filesystem: options.filesystem,
+    programs: options.programs,
+    loader: options.loader,
+    capacity: options.capacity,
   });
-  register(registry, bashManifest.name, bashManifest);
-  // Node child_process.exec defaults to /bin/sh. The host allows one executable
-  // mapping per manifest identity, so give that alias its own manifest name.
-  const shManifest = Object.freeze({ ...bashManifest, name: "@nimbus/sh" });
-  register(registry, shManifest.name, shManifest);
-  const posix = options.filesystem.posixPolicy;
-  if (!posix) throw new Error("Claude hook Bash requires the filesystem POSIX policy");
-  const credentials = posix.credentials;
-  const bash = createKernelBashProgram({
-    module: options.programs.bash,
-    credentials: {
-      uid: credentials.uid,
-      gid: credentials.gid,
-      euid: credentials.euid,
-      egid: credentials.egid,
-      umask: posix.umask,
-      hostname: "signalbox-claude-proof",
-    },
-  });
-  bindings.set("/bin/bash", { manifest: bashManifest, implementation: bash });
-  bindings.set("/bin/sh", { manifest: shManifest, implementation: bash });
-  register(registry, KERNEL_RIPGREP_PROGRAM_MANIFEST.name, KERNEL_RIPGREP_PROGRAM_MANIFEST);
-  bindings.set("/bin/rg", {
-    manifest: KERNEL_RIPGREP_PROGRAM_MANIFEST,
-    implementation: createKernelRipgrepProgram({ module: options.programs.ripgrep }),
-  });
+  const bindings = new Map(children.bindings);
   for (const [path, binding] of registerKernelHookProgram(registry, options.invoke)) {
     bindings.set(path, binding);
   }
-  return new KernelProgramHost({
-    registry,
-    wakes: options.wakes,
-    programs: bindings,
-    cpuAccounting: options.cpuAccounting,
-  });
-}
-
-function register(
-  registry: KernelProgramRegistry,
-  name: string,
-  manifest: KernelProgramBinding["manifest"],
-): void {
-  const result = registry.register(manifest);
-  if (result.status !== "ok") {
-    const detail = result.status === "error" ? result.error.message : "registration blocked";
-    throw new Error("Could not register " + name + ": " + detail);
-  }
-}
-
-function assertPinnedBusyboxCat(filesystem: KernelFileSystem, base64: string): void {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
-    throw new Error("Pinned BusyBox cat bytes are not valid base64");
-  }
-  const decoded = atob(base64);
-  const expected = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
-  const descriptor = filesystem.open("/bin/cat", KernelOpenFlags.O_RDONLY);
-  let actual: Uint8Array;
-  try {
-    const size = Number(filesystem.fstat(descriptor).size);
-    actual = new Uint8Array(size);
-    let offset = 0;
-    while (offset < size) {
-      const count = filesystem.read(descriptor, actual.subarray(offset), null);
-      if (count === 0) break;
-      offset += count;
-    }
-    actual = actual.subarray(0, offset);
-  } finally {
-    filesystem.close(descriptor);
-  }
-  if (!equalBytes(actual, expected) || expected.byteLength !== KERNEL_BUSYBOX_ARTIFACT.bytes) {
-    throw new Error("Seeded /bin/cat is not the pinned BusyBox artifact");
-  }
-  const metadata = filesystem.getPosixMetadata("/bin/cat");
-  const owner = filesystem.posixCredentials;
-  if (
-    (metadata.mode & 0o777) !== 0o755 ||
-    owner === undefined ||
-    metadata.uid !== owner.euid ||
-    metadata.gid !== owner.egid
-  ) {
-    throw new Error("Seeded /bin/cat does not have the proof filesystem executable identity");
-  }
-}
-
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) return false;
-  for (let index = 0; index < left.byteLength; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
+  return {
+    host: new KernelProgramHost({
+      registry,
+      wakes: options.wakes,
+      programs: bindings,
+      cpuAccounting: options.cpuAccounting,
+    }),
+    drain: children.drain,
+  };
 }

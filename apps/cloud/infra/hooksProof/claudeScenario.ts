@@ -15,7 +15,7 @@ import {
   type ConfiguredHarnessHook,
 } from "../../src/hooks/HarnessHookSettings.ts";
 import type { MockToolResult } from "../claudeTurnProof/mockMessages.ts";
-import type { ClaudeHooksDispatchRecord } from "./claudeRuntime.ts";
+import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
 
 export const CLAUDE_HOOK_SETTINGS_PATH = "/home/claude/.claude/settings.json";
 export const CLAUDE_HOOK_COMMAND_LOG = "/work/hook-command-events.jsonl";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
-import { NodeGeneratedCodeCleanupError } from "../../isolate/node/generated/invocation-errors.ts";
+import { NodeGeneratedCodeCleanupError } from "../../isolate/NodeGeneratedCode.ts";
 import { createHookService, type HookServiceOptions } from "../HookService.ts";
 
 const unused = async (): Promise<never> => {

@@ -20,7 +20,7 @@ function fixture() {
   filesystem.mkdir("/workspace");
   const wakes = new KernelWakeRegistry();
   const runtime = createCodexHookRuntime(
-    new WebAssembly.Module(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0)),
+    () => ({ bindings: new Map(), async drain() {} }),
     wakes,
     new ChildWorkerCapacity(),
   );

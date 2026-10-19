@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - this file prepares a local proof artifact.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { prepareClaudeTurnProof } from "../claudeTurnProof/prepare.ts";
+import { prepareHookChildPrograms } from "./preparePrograms.ts";
 
 const RELEASE_MANIFEST_SHA256 = "175b56b1ef0c5339d405549ddfee987a66afee7b63b0bf2f9a8d51ba40e26f38";
 
@@ -31,18 +33,42 @@ export async function prepareClaudeHooksProof(options: PrepareClaudeHooksProofOp
     throw new Error("Claude release manifest does not match the pinned 2.1.302 artifact");
   }
 
-  const summary = await prepareClaudeTurnProof({
-    releaseDir,
-    outputDir,
-    hostRuntime: NodePath.join(import.meta.dirname, "ClaudeHooksProof.ts"),
-    seedAssets: true,
-    scenario: "tools",
-    programArtifacts: {
-      bash: NodePath.join(programDir, "bash.wasm"),
-      busybox: NodePath.join(programDir, "busybox.wasm"),
-      ripgrep: NodePath.join(programDir, "rg.wasm"),
-    },
-  });
+  const children = await prepareHookChildPrograms({ programDir });
+  const programs = {
+    bash: children.bash,
+    busyboxCat: children.busyboxCat,
+    ripgrep: children.ripgrep,
+  };
+  const staging = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "1066-claude-hooks-host-"));
+  let summary: Awaited<ReturnType<typeof prepareClaudeTurnProof>>;
+  try {
+    const hostRuntime = NodePath.join(staging, "host.ts");
+    await NodeFSP.writeFile(
+      hostRuntime,
+      `import {createClaudeTurnProofClass as create} from ${JSON.stringify(NodePath.join(import.meta.dirname, "ClaudeHooksProof.ts"))};\n` +
+        `const childPrograms=${JSON.stringify(programs)};\n` +
+        "export function createClaudeTurnProofClass(config){return create({...config,childPrograms});}\n",
+    );
+    summary = await prepareClaudeTurnProof({
+      releaseDir,
+      outputDir,
+      hostRuntime,
+      seedAssets: true,
+      seedProgramsOnly: true,
+      scenario: "tools",
+      programArtifacts: {
+        bash: NodePath.join(programDir, "bash.wasm"),
+        busybox: NodePath.join(programDir, "busybox.wasm"),
+        ripgrep: NodePath.join(programDir, "rg.wasm"),
+      },
+    });
+    await NodeFSP.writeFile(
+      NodePath.join(outputDir, "child-program-source-inventory.json"),
+      JSON.stringify(children.sourceInventory, null, 2) + "\n",
+    );
+  } finally {
+    await NodeFSP.rm(staging, { recursive: true, force: true });
+  }
   const manifestPath = NodePath.join(outputDir, "manifest.json");
   const proofManifest = JSON.parse(await NodeFSP.readFile(manifestPath, "utf8")) as Record<
     string,
