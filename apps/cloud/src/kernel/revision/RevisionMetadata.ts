@@ -77,7 +77,8 @@ export function remoteContentChanged(
   baseline: TreeEntry | undefined,
   remote: CommitInode,
 ): boolean {
-  if (remote.stat === null || !baseline) return true;
+  // File stats cannot establish byte identity, so every remote file plan replaces its content.
+  if (remote.stat === null || remote.stat.type === "file" || !baseline) return true;
   return (
     baseline.stat.type !== remote.stat.type ||
     baseline.stat.size !== remote.stat.size ||

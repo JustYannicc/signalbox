@@ -222,7 +222,7 @@ describe("facet workspace merge regressions", () => {
     }
   });
 
-  it("keeps a local file write when the VM only changes its POSIX metadata", async () => {
+  it("retains a conflict for a local file write and a VM POSIX-only file plan", async () => {
     const original = new Uint8Array([1, 2]);
     const localBytes = new Uint8Array([7, 8]);
     const fixture = rig([{ path: "/file", bytes: original }]);
@@ -243,20 +243,22 @@ describe("facet workspace merge regressions", () => {
       fixture.filesystem.write(fd, localBytes, 0n);
       fixture.persistence.storage.setTimes(inode, { mtimeNs: baselineStat.mtimeNs + 1n });
 
-      await fixture.workspace.apply({
-        before,
-        after,
-        changedInodes: [remote],
-        hydration: fixture.ports.hydration,
-        signal: signal(),
-      });
+      await expect(
+        fixture.workspace.apply({
+          before,
+          after,
+          changedInodes: [remote],
+          hydration: fixture.ports.hydration,
+          signal: signal(),
+        }),
+      ).rejects.toMatchObject({ code: "LIVE_FILESYSTEM_DIVERGED" });
 
       const actual = new Uint8Array(localBytes.length);
       fixture.persistence.storage.readInto(inode, 0n, actual);
       expect(actual).toEqual(localBytes);
-      expect(fixture.persistence.storage.posix.get(inode).mode).toBe(0o600);
-      await fixture.workspace.checkpoint("file-posix-merge-local-checkpoint", signal());
-      expect(fixture.ports.committedTurns.at(-1)?.tree["/file"]?.data).toEqual(localBytes);
+      expect(fixture.persistence.storage.posix.get(inode).mode).toBe(0o644);
+      expect(fixture.ports.inspectTree(after)?.["/file"]?.data).toEqual(original);
+      expect(fixture.ports.inspectTree(after)?.["/file"]?.posix?.mode).toBe(0o600);
       fixture.filesystem.close(fd);
     } finally {
       fixture.close();
