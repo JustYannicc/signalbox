@@ -1,7 +1,11 @@
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
-import type { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
+import {
+  isChildWorkerReservation,
+  type ChildWorkerCapacity,
+  type ChildWorkerReservation,
+} from "./ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 
@@ -35,6 +39,7 @@ export interface ChildWorkerProgramOptions<Host extends object> {
   readonly executable: string;
   readonly code: ChildWorkerCode;
   readonly capacity: Pick<ChildWorkerCapacity, "run">;
+  readonly reservationFor?: (context: KernelAsyncProgramContext) => ChildWorkerReservation;
   readonly dispatch: ChildWorkerDispatch<Host>;
   /** The adapter supplies an RPC target; its methods retain the process's actual kernel resources. */
   readonly createHost: (context: KernelAsyncProgramContext) => {
@@ -52,6 +57,7 @@ export function createChildWorkerProgram<Host extends object>(
   const {
     executable,
     capacity,
+    reservationFor,
     dispatch,
     createHost,
     code: { mainModule, modules: moduleSource, entrypoint, limits },
@@ -66,7 +72,7 @@ export function createChildWorkerProgram<Host extends object>(
     kind: "async" as const,
     async run(context: KernelAsyncProgramContext) {
       const result = Promise.withResolvers<KernelCommandExit>();
-      const lifetime = capacity.run(context.signal, async () => {
+      const work = async () => {
         context.signal.throwIfAborted();
         const modules = await loadModules();
         context.signal.throwIfAborted();
@@ -107,12 +113,28 @@ export function createChildWorkerProgram<Host extends object>(
           }
         }
         throw failure;
-      });
+      };
+      const lifetime =
+        reservationFor === undefined
+          ? capacity.run(context.signal, work)
+          : runWithReservation(reservationFor, context, work);
       // Observe late dispatch/close failures while capacity remains held through physical teardown.
       void lifetime.then(result.resolve, result.reject);
       return result.promise;
     },
   });
+}
+
+function runWithReservation<T>(
+  reservationFor: (context: KernelAsyncProgramContext) => ChildWorkerReservation,
+  context: KernelAsyncProgramContext,
+  work: () => Promise<T>,
+): Promise<T> {
+  const reservation = reservationFor(context);
+  if (!isChildWorkerReservation(reservation)) {
+    throw new TypeError("Child worker reservation resolver did not return a capacity reservation");
+  }
+  return reservation.run(context.signal, work);
 }
 
 function createModuleLoader(source: ChildWorkerModules | ChildWorkerModulesFactory) {

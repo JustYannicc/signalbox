@@ -161,6 +161,13 @@ export class KernelFileSystem {
     return this.#posix.policy;
   }
 
+  /** Forked process tables share one live mount backing, even after their cwd changes. */
+  sharesBackingWith(other: KernelFileSystem): boolean {
+    this.#assertOpen();
+    other.#assertOpen();
+    return this.#mountedMounts === other.#mountedMounts;
+  }
+
   get fileBytes(): KernelFileByteSelection {
     return this.#fileBytes;
   }
