@@ -148,10 +148,43 @@ function run(child) {
     child.stdin?.end();
   });
 }
-// Short kernel slices can be below the host clock resolution.
-function positive(snapshot) {return snapshot!==undefined&&snapshot.userNs>0n&&snapshot.systemNs>=0n;}
+// Deployed Worker clocks stay fixed during CPU-only execution.
+function readable(snapshot) {return snapshot!==undefined&&snapshot.userNs>=0n&&snapshot.systemNs>=0n;}
+function stopped(cpu) {
+  try {cpu.runUser(()=>undefined);return false;}
+  catch(error) {return error.message==='CPU process execution is stopped';}
+}
 function encodeSnapshot(snapshot) {return snapshot===undefined?null:{userNs:String(snapshot.userNs),systemNs:String(snapshot.systemNs)};}
 function sameBytes(fs,path,expected) {return fs.existsSync(path)&&fs.readFileSync(path).equals(expected);}
+
+function createProofHost(wakes,clock,getCapture) {
+  const registry=new KernelProgramRegistry();
+    const bashManifest={name:'bash',version:KERNEL_BASH_ARTIFACT.version,abiVersion:ABI_VERSION,
+      entrypoint:'bash-async-cpu-proof',requiredCapabilities:[]};
+    if(registry.register(bashManifest).status!=='ok')throw new Error('Bash registration failed');
+    if(registry.register(KERNEL_RIPGREP_PROGRAM_MANIFEST).status!=='ok')throw new Error('ripgrep registration failed');
+    const programs=new Map(registerKernelBusyboxCat(registry,busybox));
+    programs.set('/bin/bash',{manifest:bashManifest,
+      implementation:createKernelBashProgram({module:bash,credentials:{...credentials,umask:0o022}})});
+    programs.set('/bin/rg',{manifest:KERNEL_RIPGREP_PROGRAM_MANIFEST,
+      implementation:createKernelRipgrepProgram({module:ripgrep})});
+    const host=new KernelProgramHost({registry,wakes,programs,
+      cpuAccounting:new KernelCpuAccounting(clock)});
+    const originalSpawn=host.processes.spawn.bind(host.processes);
+    host.processes.spawn=(parent,launch,release,options)=>originalSpawn(parent,identity=>{
+      const child=launch(identity);
+      const capture=getCapture();
+      if(capture) {
+        const parentInfo=host.processes.info(parent),cpu=host.cpuExecution?.forProcess(identity.pid);
+        const record={pid:identity.pid,parentPid:parentInfo.status==='ok'?parentInfo.value.pid:0,cpu,live:undefined};
+        capture.push(record);
+        // Attach before process-table completion handling and return the original child unchanged.
+        const captureLive=()=>{record.live=cpu?.snapshot();};void child.completion.then(captureLive,captureLive);
+      }
+      return child;
+    },release,options);
+  return host;
+}
 
 export class AsyncWasiCpuFacet extends DurableObject {
   constructor(ctx,env) {
@@ -162,30 +195,8 @@ export class AsyncWasiCpuFacet extends DurableObject {
     }
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS async_wasi_cpu_requests(n INTEGER)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS async_wasi_cpu_installs(n INTEGER)');
-    this.wakes=new KernelWakeRegistry();const registry=new KernelProgramRegistry();
-    const bashManifest={name:'bash',version:KERNEL_BASH_ARTIFACT.version,abiVersion:ABI_VERSION,
-      entrypoint:'bash-async-cpu-proof',requiredCapabilities:[]};
-    if(registry.register(bashManifest).status!=='ok')throw new Error('Bash registration failed');
-    if(registry.register(KERNEL_RIPGREP_PROGRAM_MANIFEST).status!=='ok')throw new Error('ripgrep registration failed');
-    const programs=new Map(registerKernelBusyboxCat(registry,busybox));
-    programs.set('/bin/bash',{manifest:bashManifest,
-      implementation:createKernelBashProgram({module:bash,credentials:{...credentials,umask:0o022}})});
-    programs.set('/bin/rg',{manifest:KERNEL_RIPGREP_PROGRAM_MANIFEST,
-      implementation:createKernelRipgrepProgram({module:ripgrep})});
-    this.host=new KernelProgramHost({registry,wakes:this.wakes,programs,
-      cpuAccounting:new KernelCpuAccounting(readClock)});this.capture=undefined;
-    const originalSpawn=this.host.processes.spawn.bind(this.host.processes);
-    this.host.processes.spawn=(parent,launch,release,options)=>originalSpawn(parent,identity=>{
-      const child=launch(identity);
-      if(this.capture) {
-        const parentInfo=this.host.processes.info(parent),cpu=this.host.cpuExecution?.forProcess(identity.pid);
-        const record={pid:identity.pid,parentPid:parentInfo.status==='ok'?parentInfo.value.pid:0,cpu,live:undefined};
-        this.capture.push(record);
-        // Attach before process-table completion handling and return the original child unchanged.
-        const captureLive=()=>{record.live=cpu?.snapshot();};void child.completion.then(captureLive,captureLive);
-      }
-      return child;
-    },release,options);
+    this.wakes=new KernelWakeRegistry();this.capture=undefined;
+    this.host=createProofHost(this.wakes,readClock,()=>this.capture);
     this.serial=Promise.resolve();
   }
 
@@ -214,8 +225,26 @@ export class AsyncWasiCpuFacet extends DurableObject {
       checks.programBytesPersisted=files.every(([file,key])=>
         fs.readFileSync(file).equals(Buffer.from(encoded[key],'base64')));
       filesystem.chdir('/work');
-      if(calls===1&&path==='/status')await this.runInitialProof(fs,filesystem,checks,results,captures);
-      else if(calls===2&&path==='/again') {
+      if(calls===1&&path==='/status') {
+        const before=readClock();
+        await this.runInitialProof(this.host,fs,filesystem,checks,results,captures);
+        results.nativeClock={beforeNs:String(before),afterNs:String(readClock()),
+          note:'Native host clock; zero deltas remain zero, including deployed CPU-only execution.'};
+        const controlledChecks={},controlledResults={},controlledCaptures=[];
+        const controlledWakes=new KernelWakeRegistry();let clockNs=0n;
+        const controlledHost=createProofHost(controlledWakes,()=>++clockNs,()=>controlledCaptures);
+        try {
+          await this.runInitialProof(controlledHost,fs,filesystem,controlledChecks,controlledResults,controlledCaptures);
+          for(const key of ['bash','forkChild']) {
+            const counter=controlledResults.cpu[key].final;
+            controlledChecks[key+'CpuPositive']=!!counter&&BigInt(counter.userNs)>0n&&BigInt(counter.systemNs)>0n;
+          }
+          controlledChecks.resourcesReleased=controlledHost.processes.size===0&&controlledWakes.size===0;
+          checks.deterministicAccounting=Object.values(controlledChecks).every(Boolean);
+          results.accountingControl={clock:'injected one-nanosecond increment per read',
+            checks:controlledChecks,cpu:controlledResults.cpu};
+        } finally {await controlledHost.processes.dispose();controlledWakes.dispose();}
+      } else if(calls===2&&path==='/again') {
         checks.previousCallSucceeded=this.firstRun?.ok===true;
         checks.shellFilePersistedAcrossRequest=sameBytes(fs,shellFile,expectedOutput);
         checks.outputFilePersistedAcrossRequest=sameBytes(fs,outputFile,expectedOutput);
@@ -233,9 +262,9 @@ export class AsyncWasiCpuFacet extends DurableObject {
     }
   }
 
-  async runInitialProof(fs,filesystem,checks,results,captures) {
+  async runInitialProof(host,fs,filesystem,checks,results,captures) {
     const descriptor=fs.openSync(outputFile,'w');filesystem.descriptors.put(302,filesystem.descriptors.take(descriptor));
-    const childProcess=createNodeChildProcess(this.host,{filesystem,env:invocation.env});
+    const childProcess=createNodeChildProcess(host,{filesystem,env:invocation.env});
     const bash=childProcess.spawn('/bin/bash',invocation.argv,
       {cwd:invocation.cwd,env:invocation.env,stdio:['pipe',302,302]});
     results.bash=await run(bash);
@@ -255,12 +284,15 @@ export class AsyncWasiCpuFacet extends DurableObject {
     const bashFinal=bashProcess?.cpu?.snapshot(),childFinal=forkChild?.cpu?.snapshot();
     checks.bashForkChildObserved=!!bashProcess&&!!forkChild&&bashProcess.pid!==forkChild.pid;
     checks.cpuCapturedBeforeStop=!!bashProcess?.live&&!!forkChild?.live;
-    checks.parentCpuPositive=positive(bashFinal);checks.forkChildCpuPositive=positive(childFinal);
+    checks.parentCpuReadable=readable(bashFinal);checks.forkChildCpuReadable=readable(childFinal);
     checks.cpuOwnersDistinct=!!bashProcess?.cpu&&!!forkChild?.cpu&&bashProcess.cpu!==forkChild.cpu;
+    checks.parentCpuStopped=!!bashProcess?.cpu&&stopped(bashProcess.cpu);
+    checks.forkChildCpuStopped=!!forkChild?.cpu&&stopped(forkChild.cpu);
     results.cpu={
       bash:{pid:bashProcess?.pid??null,live:encodeSnapshot(bashProcess?.live),final:encodeSnapshot(bashFinal)},
       forkChild:{pid:forkChild?.pid??null,live:encodeSnapshot(forkChild?.live),final:encodeSnapshot(childFinal)}
     };
+    fs.closeSync(302);
   }
 }
 `;
