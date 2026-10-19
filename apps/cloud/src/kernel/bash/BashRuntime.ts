@@ -4,6 +4,7 @@ import { kernelError, kernelOk } from "../KernelAbi.ts";
 import { createKernelWasiDeviceAdapter } from "../KernelWasiDevices.ts";
 import type { KernelExitStatus } from "../KernelProcessTable.ts";
 import { KernelProgramExecAdmissionError } from "../KernelAsyncProgram.ts";
+import type { KernelAsyncProgramCpu } from "../KernelAsyncProgram.ts";
 import { runKernelExecution } from "../process/KernelExecution.ts";
 import { runAsync } from "../wasi/internal_wasi_calls.ts";
 import { WasiExit } from "../wasi/internal_wasi_memory.ts";
@@ -230,6 +231,7 @@ function fork(module: WebAssembly.Module, parent: BashProcess): number {
   }
   const childFilesystem = filesystem;
   const controller = new AbortController();
+  let childCpu: KernelAsyncProgramCpu | undefined;
   let sentSignal = 0;
   const abort = () => controller.abort();
   context.signal.addEventListener("abort", abort, { once: true });
@@ -237,53 +239,66 @@ function fork(module: WebAssembly.Module, parent: BashProcess): number {
   const spawned = context.processes.spawn(
     context.identity.handle,
     (identity) => {
-      const child = createProcess(
-        module,
-        parent.credentials,
-        {
-          ...context,
-          filesystem: childFilesystem,
-          identity,
-          signal: controller.signal,
-        },
-        parent.preopens,
-      );
-      const source = parent.exports.memory;
-      const target = child.exports.memory;
-      if (target.buffer.byteLength < source.buffer.byteLength)
-        target.grow((source.buffer.byteLength - target.buffer.byteLength) / PAGE);
-      new Uint8Array(target.buffer).set(new Uint8Array(source.buffer));
-      child.exports.__stack_pointer.value = parent.exports.__stack_pointer.value;
-      child.captures = parent.captures.fork();
-      child.resume = 0;
-      rewind(child);
-      const completion = Promise.resolve()
-        .then(() => runKernelExecution(controller.signal, () => execute(module, child)))
-        .then(
-          (value) =>
-            controller.signal.aborted && sentSignal !== 0 ? status(0, sentSignal) : value,
-          (error: unknown) => {
-            if (controller.signal.aborted && sentSignal !== 0) return status(0, sentSignal);
-            throw error;
+      childCpu = context.cpu?.forProcess(identity.pid);
+      const launch = () => {
+        const child = createProcess(
+          module,
+          parent.credentials,
+          {
+            ...context,
+            filesystem: childFilesystem,
+            identity,
+            signal: controller.signal,
+            ...(childCpu === undefined ? {} : { cpu: childCpu }),
           },
+          parent.preopens,
         );
-      return {
-        completion,
-        signal: (signal: number) => {
-          if (signal !== 9 && signal !== 15)
-            return kernelError("UNSUPPORTED", "Bash signal handlers are unavailable");
-          sentSignal = signal;
-          controller.abort();
-          return kernelOk(undefined);
-        },
+        const source = parent.exports.memory;
+        const target = child.exports.memory;
+        if (target.buffer.byteLength < source.buffer.byteLength)
+          target.grow((source.buffer.byteLength - target.buffer.byteLength) / PAGE);
+        new Uint8Array(target.buffer).set(new Uint8Array(source.buffer));
+        child.exports.__stack_pointer.value = parent.exports.__stack_pointer.value;
+        child.captures = parent.captures.fork();
+        child.resume = 0;
+        rewind(child);
+        const completion = Promise.resolve()
+          .then(() => runKernelExecution(controller.signal, () => execute(module, child)))
+          .then(
+            (value) =>
+              controller.signal.aborted && sentSignal !== 0 ? status(0, sentSignal) : value,
+            (error: unknown) => {
+              if (controller.signal.aborted && sentSignal !== 0) return status(0, sentSignal);
+              throw error;
+            },
+          );
+        return {
+          completion,
+          signal: (signal: number) => {
+            if (signal !== 9 && signal !== 15)
+              return kernelError("UNSUPPORTED", "Bash signal handlers are unavailable");
+            sentSignal = signal;
+            controller.abort();
+            return kernelOk(undefined);
+          },
+        };
       };
+      return childCpu === undefined ? launch() : childCpu.run(launch);
     },
     async () => {
       context.signal.removeEventListener("abort", abort);
+      const release = async () => {
+        try {
+          await runAsync(table.closeAll());
+        } finally {
+          childFilesystem.dispose();
+        }
+      };
       try {
-        await runAsync(table.closeAll());
+        if (childCpu === undefined) await release();
+        else await childCpu.run(release);
       } finally {
-        childFilesystem.dispose();
+        childCpu?.stop();
       }
     },
   );
