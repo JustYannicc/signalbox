@@ -334,7 +334,19 @@ export class KernelFileSystemPaths {
   }
 
   #statResolved(resolved: WasiResolvedPath): KernelStat {
-    return { ...resolved.stat, ino: resolved.inode, dev: resolved.mount.device };
+    let posix: PosixMetadata | undefined;
+    try {
+      // Keep inode metadata in the same syscall snapshot so async clients cannot mix replacements.
+      posix = this.#posix.getMetadata(resolved.mount.storage, resolved.inode);
+    } catch (error) {
+      if (!isCode(error, "ENOTSUP")) throw error;
+    }
+    return {
+      ...resolved.stat,
+      ino: resolved.inode,
+      dev: resolved.mount.device,
+      ...(posix === undefined ? {} : { posix }),
+    };
   }
 
   #statDescriptor(descriptor: WasiDescriptor): KernelStat {
