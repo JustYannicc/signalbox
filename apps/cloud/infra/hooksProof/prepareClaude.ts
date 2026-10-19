@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { prepareClaudeTurnProof } from "../claudeTurnProof/prepare.ts";
-import { prepareHookChildPrograms } from "./preparePrograms.ts";
+import { prepareChildPrograms } from "../childPrograms/prepare.ts";
 
 const RELEASE_MANIFEST_SHA256 = "175b56b1ef0c5339d405549ddfee987a66afee7b63b0bf2f9a8d51ba40e26f38";
 
@@ -33,7 +33,7 @@ export async function prepareClaudeHooksProof(options: PrepareClaudeHooksProofOp
     throw new Error("Claude release manifest does not match the pinned 2.1.302 artifact");
   }
 
-  const children = await prepareHookChildPrograms({ programDir });
+  const children = await prepareChildPrograms({ programDir });
   const programs = {
     bash: children.bash,
     busyboxCat: children.busyboxCat,

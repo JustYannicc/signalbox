@@ -26,16 +26,16 @@ const ARTIFACTS = Object.freeze({
 const SOURCE_ROOT = NodePath.resolve(import.meta.dirname, "../..");
 const IMPORT_PATTERN = /\b(?:from\s*|import\s*(?:\(\s*)?)["'](\.{1,2}\/[^"']+)["']/g;
 
-export interface HookChildSourceRecord {
+export interface ChildProgramSourceRecord {
   readonly path: string;
   readonly bytes: number;
   readonly sha256: string;
 }
 
-export interface HookChildSourceInventory {
+export interface ChildProgramSourceInventory {
   readonly format: "signalbox-hook-child-programs-v1";
-  readonly sources: readonly HookChildSourceRecord[];
-  readonly artifacts: readonly HookChildSourceRecord[];
+  readonly sources: readonly ChildProgramSourceRecord[];
+  readonly artifacts: readonly ChildProgramSourceRecord[];
   readonly programs: Readonly<
     Record<
       "bash" | "busyboxCat" | "ripgrep",
@@ -48,48 +48,48 @@ export interface HookChildSourceInventory {
   >;
 }
 
-export type HookChildWorkerCode = Omit<ChildWorkerCode, "modules"> & {
+export type ChildProgramSourceCode = Omit<ChildWorkerCode, "modules"> & {
   readonly modules: Readonly<Record<string, string | { readonly js: string }>>;
 };
 
-export interface HookChildProgramSources {
-  readonly bash: HookChildWorkerCode;
-  readonly busyboxCat: HookChildWorkerCode;
-  readonly ripgrep: HookChildWorkerCode;
+export interface ChildProgramSources {
+  readonly bash: ChildProgramSourceCode;
+  readonly busyboxCat: ChildProgramSourceCode;
+  readonly ripgrep: ChildProgramSourceCode;
 }
 
-export type HookChildExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
+export type ChildProgramExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
 
-export interface HookChildExecutableFile {
-  readonly path: HookChildExecutablePath;
+export interface ChildProgramExecutableFile {
+  readonly path: ChildProgramExecutablePath;
   readonly bytes: Uint8Array;
   readonly sha256: string;
 }
 
-export type HookChildExecutableCatalog = Readonly<
-  Record<HookChildExecutablePath, { readonly bytes: number; readonly sha256: string }>
+export type ChildProgramExecutableCatalog = Readonly<
+  Record<ChildProgramExecutablePath, { readonly bytes: number; readonly sha256: string }>
 >;
 
-export interface PreparedHookChildPrograms extends HookChildProgramSources {
-  readonly executableFiles: readonly HookChildExecutableFile[];
-  readonly executableCatalog: HookChildExecutableCatalog;
-  readonly sourceInventory: HookChildSourceInventory;
+export interface PreparedChildPrograms extends ChildProgramSources {
+  readonly executableFiles: readonly ChildProgramExecutableFile[];
+  readonly executableCatalog: ChildProgramExecutableCatalog;
+  readonly sourceInventory: ChildProgramSourceInventory;
 }
 
-export interface PrepareHookChildProgramsOptions {
+export interface PrepareChildProgramsOptions {
   readonly programDir: string;
   readonly cloudRoot?: string;
 }
 
 /** Builds static Dynamic Worker modules and returns verified WASM bytes for the seed bundle. */
-export async function prepareHookChildPrograms(
-  options: PrepareHookChildProgramsOptions,
-): Promise<PreparedHookChildPrograms> {
+export async function prepareChildPrograms(
+  options: PrepareChildProgramsOptions,
+): Promise<PreparedChildPrograms> {
   if (options == null) throw new Error("Pass the pinned program directory");
   const programDir = NodePath.resolve(options.programDir);
   const cloudRoot = await NodeFSP.realpath(options.cloudRoot ?? SOURCE_ROOT);
-  const sources = new Map<string, HookChildSourceRecord>();
-  const artifacts = new Map<string, HookChildSourceRecord>();
+  const sources = new Map<string, ChildProgramSourceRecord>();
+  const artifacts = new Map<string, ChildProgramSourceRecord>();
 
   const [bashArtifact, busyboxArtifact, ripgrepArtifact] = await Promise.all([
     readArtifact(programDir, ARTIFACTS.bash, artifacts),
@@ -103,13 +103,14 @@ export async function prepareHookChildPrograms(
   ]);
 
   for (const relativePath of [
-    "infra/hooksProof/preparePrograms.ts",
-    "infra/hooksProof/childPrograms.ts",
+    "infra/childPrograms/prepare.ts",
+    "infra/childPrograms/runtime.ts",
+    "src/computer/ChildProgramCatalog.ts",
   ]) {
     await recordFile(cloudRoot, relativePath, sources);
   }
 
-  const inventory: HookChildSourceInventory = Object.freeze({
+  const inventory: ChildProgramSourceInventory = Object.freeze({
     format: "signalbox-hook-child-programs-v1",
     sources: Object.freeze([...sources.values()].sort(byPath)),
     artifacts: Object.freeze([...artifacts.values()].sort(byPath)),
@@ -124,7 +125,7 @@ export async function prepareHookChildPrograms(
     Object.freeze({ path: "/bin/cat" as const, ...busyboxArtifact }),
     Object.freeze({ path: "/bin/rg" as const, ...ripgrepArtifact }),
   ]);
-  const executableCatalog: HookChildExecutableCatalog = Object.freeze({
+  const executableCatalog: ChildProgramExecutableCatalog = Object.freeze({
     "/bin/bash": Object.freeze({
       bytes: bashArtifact.bytes.byteLength,
       sha256: bashArtifact.sha256,
@@ -150,7 +151,7 @@ export async function prepareHookChildPrograms(
 
 interface ProgramGraph {
   readonly entrypoint: string;
-  readonly code: HookChildWorkerCode;
+  readonly code: ChildProgramSourceCode;
 }
 
 async function packageGraph(
@@ -158,7 +159,7 @@ async function packageGraph(
   entrySource: string,
   entrypoint: string,
   mainSource: (entrypoint: string) => string,
-  sources: Map<string, HookChildSourceRecord>,
+  sources: Map<string, ChildProgramSourceRecord>,
 ): Promise<ProgramGraph> {
   const pending = [entrySource];
   const modules = new Map<string, string>();
@@ -203,7 +204,7 @@ async function packageGraph(
       { js: javascript },
     ]),
   );
-  const code: HookChildWorkerCode = Object.freeze({
+  const code: ChildProgramSourceCode = Object.freeze({
     mainModule: "main.js",
     entrypoint,
     modules: Object.freeze({
@@ -234,7 +235,7 @@ function assertKernelSourcePath(sourcePath: string): void {
 async function readArtifact(
   programDir: string,
   artifact: (typeof ARTIFACTS)[keyof typeof ARTIFACTS],
-  inventory: Map<string, HookChildSourceRecord>,
+  inventory: Map<string, ChildProgramSourceRecord>,
 ): Promise<{ readonly bytes: Uint8Array; readonly sha256: string }> {
   const path = NodePath.join(programDir, artifact.file);
   const bytes = await NodeFSP.readFile(path);
@@ -249,14 +250,14 @@ async function readArtifact(
 async function recordFile(
   cloudRoot: string,
   relativePath: string,
-  inventory: Map<string, HookChildSourceRecord>,
+  inventory: Map<string, ChildProgramSourceRecord>,
 ): Promise<void> {
   const bytes = await NodeFSP.readFile(NodePath.join(cloudRoot, relativePath));
   addRecord(inventory, relativePath, bytes);
 }
 
 function addRecord(
-  inventory: Map<string, HookChildSourceRecord>,
+  inventory: Map<string, ChildProgramSourceRecord>,
   path: string,
   bytes: Uint8Array,
 ): void {
@@ -264,7 +265,7 @@ function addRecord(
 }
 
 function addGeneratedRecord(
-  inventory: Map<string, HookChildSourceRecord>,
+  inventory: Map<string, ChildProgramSourceRecord>,
   path: string,
   source: string,
 ): void {
@@ -284,7 +285,7 @@ function javascriptPath(sourcePath: string): string {
   return sourcePath.replace(/\.ts$/, ".js");
 }
 
-function byPath(left: HookChildSourceRecord, right: HookChildSourceRecord): number {
+function byPath(left: ChildProgramSourceRecord, right: ChildProgramSourceRecord): number {
   return left.path.localeCompare(right.path);
 }
 

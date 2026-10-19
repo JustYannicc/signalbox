@@ -6,8 +6,11 @@ import type { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import type { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { decodeVerifiedAssetBundle } from "../claudeTurnProof/assetBundle.ts";
 import { readAssetBody } from "../claudeTurnProof/proofObservation.ts";
-import { createHookChildPrograms } from "./childPrograms.ts";
-import type { HookChildExecutableCatalog, HookChildProgramSources } from "./preparePrograms.ts";
+import { createSeededChildProgramCatalog } from "../childPrograms/runtime.ts";
+import type {
+  ChildProgramExecutableCatalog,
+  ChildProgramSources,
+} from "../childPrograms/prepare.ts";
 import {
   createCodexHookRuntime,
   type CodexHookRuntimeComposition,
@@ -42,8 +45,8 @@ type ProofFacetFactory = (
 /** Supplies a per-request hook runtime to the shared Codex app-server proof facet. */
 export function createCodexHooksProofClass(
   engine: WebAssembly.Module,
-  programs: HookChildProgramSources,
-  catalog: HookChildExecutableCatalog,
+  programs: ChildProgramSources,
+  catalog: ChildProgramExecutableCatalog,
   createProofFacet: ProofFacetFactory,
 ): ProofFacetClass {
   const runtimes = new WeakMap<KernelProgramHost, ReturnType<typeof createCodexHookRuntime>>();
@@ -63,7 +66,8 @@ export function createCodexHooksProofClass(
       };
       const runtime = createCodexHookRuntime(
         (registry) =>
-          createHookChildPrograms({
+          createSeededChildProgramCatalog({
+            hostname: "signalbox-hooks-proof",
             registry,
             filesystem: owner.filesystem,
             programs,
@@ -89,7 +93,7 @@ export function createCodexHooksProofClass(
 async function seedPrograms(
   filesystem: KernelFileSystem,
   request: Request,
-  catalog: HookChildExecutableCatalog,
+  catalog: ChildProgramExecutableCatalog,
   storage: DurableObjectStorage,
 ) {
   const entries = await decodeVerifiedAssetBundle(await readAssetBody(request), catalog);

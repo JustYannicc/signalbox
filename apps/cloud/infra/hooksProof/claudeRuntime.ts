@@ -29,8 +29,8 @@ import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createHookService } from "../../src/hooks/HookService.ts";
 import { registerKernelHookProgram, type KernelHookInvoker } from "../../src/hooks/HookProgram.ts";
-import { createHookChildPrograms } from "./childPrograms.ts";
-import type { HookChildProgramSources } from "./preparePrograms.ts";
+import { createSeededChildProgramCatalog } from "../childPrograms/runtime.ts";
+import type { ChildProgramSources } from "../childPrograms/prepare.ts";
 import type { ClaudeHookScenario } from "./claudeScenario.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
 
@@ -42,7 +42,7 @@ export interface ClaudeHookRuntimeOptions {
   readonly fs: NodeFsModules;
   readonly wakes: KernelWakeRegistry;
   readonly storage: FacetStorage;
-  readonly programs: HookChildProgramSources;
+  readonly programs: ChildProgramSources;
   readonly loader: ChildWorkerLoaderPort;
   readonly env: NodeProcessEnvironment;
   readonly identity: NodeRuntimeIdentity;
@@ -246,14 +246,15 @@ function elapsedMilliseconds(
 function createClaudeHookProgramHost(options: {
   readonly filesystem: KernelFileSystem;
   readonly wakes: KernelWakeRegistry;
-  readonly programs: HookChildProgramSources;
+  readonly programs: ChildProgramSources;
   readonly loader: ChildWorkerLoaderPort;
   readonly capacity: ChildWorkerCapacity;
   readonly cpuAccounting: KernelCpuAccounting;
   readonly invoke: KernelHookInvoker;
 }) {
   const registry = new KernelProgramRegistry();
-  const children = createHookChildPrograms({
+  const children = createSeededChildProgramCatalog({
+    hostname: "signalbox-hooks-proof",
     registry,
     filesystem: options.filesystem,
     programs: options.programs,

@@ -33,7 +33,7 @@ import { terminalSuccess, proofPrompt } from "../claudeTurnProof/proofScenario.t
 import { decodeVerifiedAssetBundle } from "../claudeTurnProof/assetBundle.ts";
 import { verifySeededAssets } from "../claudeTurnProof/proofAssets.ts";
 import type { ClaudeTurnProofConfig } from "../claudeTurnProof/ClaudeTurnProof.ts";
-import type { HookChildProgramSources } from "./preparePrograms.ts";
+import type { ChildProgramSources } from "../childPrograms/prepare.ts";
 import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/NodeGeneratedCode.ts";
 import { createClaudeHookRuntime } from "./claudeRuntime.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
@@ -48,7 +48,7 @@ import {
 /** Same factory shape as the regular proof, selected by prepareClaudeTurnProof(hostRuntime). */
 export function createClaudeTurnProofClass(
   config: Omit<ClaudeTurnProofConfig, "programs"> & {
-    readonly childPrograms: HookChildProgramSources;
+    readonly childPrograms: ChildProgramSources;
   },
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => DurableObject {
   const programs = config.childPrograms;

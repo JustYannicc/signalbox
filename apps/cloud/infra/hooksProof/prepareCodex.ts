@@ -7,7 +7,7 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import { build } from "esbuild";
 import { encodeAssetBundle, PROGRAM_BUNDLE_CONTENT_TYPE } from "../claudeTurnProof/assetBundle.ts";
-import { prepareHookChildPrograms } from "./preparePrograms.ts";
+import { prepareChildPrograms } from "../childPrograms/prepare.ts";
 // @ts-expect-error The existing MJS packager has no declaration; the local type below narrows its API.
 import { createCodexFixture as createCodexFixtureUntyped } from "../codexTurn/fixturePackager.mjs";
 
@@ -65,7 +65,7 @@ export async function prepareCodexHooksProof(options: {
     throw new Error("Codex release manifest does not match the pinned 0.162.1 artifact");
   }
 
-  const children = await prepareHookChildPrograms({ programDir });
+  const children = await prepareChildPrograms({ programDir });
   const programs = {
     bash: children.bash,
     busyboxCat: children.busyboxCat,
