@@ -42,6 +42,12 @@ function bootstrap(model) {
         requires_openai_auth: false,
         supports_websockets: model.supportsWebSockets ?? true,
         stream_idle_timeout_ms: model.streamIdleTimeoutMs ?? 5000,
+        ...(model.maxRetries === undefined
+          ? {}
+          : {
+              request_max_retries: model.maxRetries,
+              stream_max_retries: model.maxRetries,
+            }),
       },
       // The WASI connector requires an explicit proxy decision before opening a host socket.
       "features.respect_system_proxy": true,
@@ -166,7 +172,11 @@ export function createProofFacet(engine, createHost, options = {}) {
         });
         await composition?.prepare?.();
         // HTTP gateway proofs supply only an HTTP port.
-        if (composition?.modelHttp && !options.model) model.supportsWebSockets = false;
+        if (composition?.modelHttp && !options.model) {
+          model.supportsWebSockets = false;
+          model.baseUrl = "http://mock.invalid/v1";
+          model.maxRetries = 0;
+        }
         binding = createKernelAsyncWasi({
           filesystem,
           wakes,
