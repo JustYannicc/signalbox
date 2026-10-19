@@ -60,6 +60,34 @@ cleanup failure marks the file and prevents a blind retry; its message gives the
 exact `--destroy-stage` command for manual recovery. The file contains only the
 stage and cleanup-failure marker, never credentials or the endpoint.
 
+### Verify a full Codex WASI turn
+
+Use a built official-source Codex WASI artifact directory and its manifest SHA-256.
+Packaging verifies the engine and loader against that manifest and copies them
+unchanged. The turn fixture also requires the pinned GNU Bash artifact from
+`infra/kernelPrograms/bash/provenance.json`.
+
+```sh
+node apps/cloud/infra/codexTurn/prepareFixture.mjs \
+  /absolute/codex-artifact <manifest-sha256> \
+  apps/cloud/src/kernel /tmp/codex-turn-fixture turn /absolute/bash.async.wasm
+node apps/cloud/infra/isolateProbe/measure.ts \
+  --fixture /tmp/codex-turn-fixture --output /tmp/codex-turn-local.json
+vp run --filter @signalbox/cloud probe:isolate \
+  --fixture /tmp/codex-turn-fixture --output /tmp/codex-turn-deployed.json
+```
+
+The output directory must not exist. Each measurement runs cold and repeat turns
+on one facet with shared SQLite files. Only Responses model output is mocked:
+Codex executes GNU Bash and its Rust patch implementation through the real
+exec-server, then the fixture checks the resulting file and completed turn.
+An HTTP 200 alone is insufficient; measurement fails if either turn fails.
+Use `startup` instead of `turn` to check bootstrap without Bash or a model turn.
+
+Local workerd does not enforce the deployed heap limit. A deployed pass proves
+fit for that sequence. The reported engine linear-memory sample excludes Bash,
+compiled code, JavaScript and SQLite; total isolate peak memory is unavailable.
+
 ### Run the local cloud environment
 
 ```sh

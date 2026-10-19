@@ -98,6 +98,9 @@
         "infra/codexExecProof/prepare.ts",
         "infra/codexExecProof/prepareExecution.ts",
         "infra/codexExecProof/prepareFileSystem.ts",
+        "infra/codexTurn/prepareFixture.mjs",
+        "infra/codexTurn/ProofFacet.mjs", // Loaded by the generated Codex proof entry.
+        "infra/codexTurn/BashPrograms.mjs", // Loaded by the generated turn proof entry.
         "src/kernel/CodexExecProtocolProof.ts",
         "src/kernel/CodexExecExecutionProof.ts",
         "src/kernel/CodexExecFileSystemProof.ts",
