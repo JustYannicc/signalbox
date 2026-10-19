@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { classifyClaudeNativeTool } from "../Adapters/ClaudeAdapterV2.ts";
+import { classifyClaudeNativeTool } from "@signalbox/provider-claude/ClaudeAdapter";
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";

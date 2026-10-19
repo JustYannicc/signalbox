@@ -23,17 +23,6 @@ const MAX_LOCATE_ATTEMPTS = 40;
 /** Bytes read per poll. A faster writer skips ahead: only the tail is shown anyway. */
 const MAX_READ_BYTES = 256 * 1024;
 
-/** Claude Code's per-user temp root, or none where it has no uid (Windows). */
-export function claudeTaskOutputRoot(
-  environment: Readonly<Record<string, string | undefined>> | undefined,
-  path: Path.Path,
-): string | undefined {
-  const uid = process.getuid?.();
-  if (uid === undefined) return undefined;
-  const base = environment?.CLAUDE_CODE_TMPDIR?.trim() || "/tmp";
-  return path.join(base, `claude-${uid}`);
-}
-
 const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
   readonly root: string;
   readonly sessionId: string;

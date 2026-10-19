@@ -9,7 +9,7 @@ import {
   recordClaudeAgentSdkReplayTranscript,
   CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
 } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
-import { claudeRuntimeQueryPolicyForRuntimePolicy } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { claudeRuntimeQueryPolicyForRuntimePolicy } from "@signalbox/provider-claude/ClaudeAdapter";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../src/orchestration-v2/RuntimePolicy.ts";
 import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";

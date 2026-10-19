@@ -17,7 +17,7 @@ import {
 } from "@t3tools/shared/modelManifest";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
+import { hasValidClaudeManifestAdapters } from "@signalbox/provider-claude/ClaudeModelManifest";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";

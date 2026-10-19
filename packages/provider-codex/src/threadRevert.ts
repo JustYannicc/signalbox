@@ -3,7 +3,14 @@ import type * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as Effect from "effect/Effect";
 
-export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
+export const revertCodexThread: (
+  client: Pick<CodexClient.CodexAppServerClient["Service"], "request">,
+  threadId: string,
+  numTurns: number,
+) => Effect.Effect<
+  CodexSchema.V2ThreadReadResponse | CodexSchema.V2ThreadRevertResponse,
+  CodexErrors.CodexAppServerError
+> = Effect.fn("revertCodexThread")(function* (
   client: Pick<CodexClient.CodexAppServerClient["Service"], "request">,
   threadId: string,
   numTurns: number,

@@ -44,14 +44,14 @@ import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
   recordClaudeUsageResponse,
-} from "./claudeUsageLimits.ts";
+} from "@signalbox/provider-claude/claudeUsageLimits";
 import {
-  BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
-} from "./ClaudeModelCatalog.ts";
+} from "@signalbox/provider-claude/ClaudeModelCatalog";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

@@ -4,7 +4,7 @@ import {
   codexMcpElicitationForm,
   codexMcpElicitationResponse,
   isCodexMcpApproval,
-} from "./signalboxCodexElicitation.ts";
+} from "@signalbox/provider-codex/signalboxElicitation";
 
 const request = {
   mode: "form",

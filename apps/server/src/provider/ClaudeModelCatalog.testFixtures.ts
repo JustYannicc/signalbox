@@ -1,4 +1,4 @@
-import type { ClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
+import type { ClaudeModelCatalog } from "@signalbox/provider-claude/ClaudeModelCatalog";
 
 export const SYNTHETIC_CLAUDE_CAPABLE_MODEL = "claude-synthetic-capable";
 export const SYNTHETIC_CLAUDE_COLLIDING_ALIAS = "synthetic-collision";
