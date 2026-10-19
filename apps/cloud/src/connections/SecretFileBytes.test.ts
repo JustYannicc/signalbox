@@ -20,6 +20,8 @@ interface FixtureOptions {
   readonly canonical?: string;
   readonly bindings?: ReadonlyArray<{ readonly placeholder: string; readonly value: string }>;
   readonly failWrite?: (call: number) => boolean;
+  readonly failReadAt?: { readonly offset: bigint; readonly occurrence: number };
+  readonly shortReadPageBytes?: number;
   readonly syncError?: Error;
   readonly trackReads?: boolean;
 }
@@ -29,8 +31,14 @@ const makeFixture = (options: FixtureOptions = {}) => {
   const base = createFacetSqliteStorage(database.storage, now);
   let writeCall = 0;
   let maximumReadTarget = 0;
+  const readsAtOffset = new Map<bigint, number>();
+  let failReadAt = options.failReadAt;
   const storage =
-    options.failWrite === undefined && options.syncError === undefined && !options.trackReads
+    options.failWrite === undefined &&
+    options.failReadAt === undefined &&
+    options.shortReadPageBytes === undefined &&
+    options.syncError === undefined &&
+    !options.trackReads
       ? base
       : {
           ...base,
@@ -46,7 +54,20 @@ const makeFixture = (options: FixtureOptions = {}) => {
           },
           readInto(inode: bigint, offset: bigint, target: Uint8Array) {
             maximumReadTarget = Math.max(maximumReadTarget, target.byteLength);
-            return base.readInto(inode, offset, target);
+            if (failReadAt !== undefined && failReadAt.offset === offset) {
+              const occurrence = (readsAtOffset.get(offset) ?? 0) + 1;
+              readsAtOffset.set(offset, occurrence);
+              if (occurrence === failReadAt.occurrence) {
+                failReadAt = undefined;
+                return 0;
+              }
+            }
+            const pageBytes = options.shortReadPageBytes;
+            if (pageBytes === undefined || target.byteLength === 0) {
+              return base.readInto(inode, offset, target);
+            }
+            const untilPageBoundary = pageBytes - Number(offset % BigInt(pageBytes));
+            return base.readInto(inode, offset, target.subarray(0, untilPageBoundary));
           },
         };
   const inode = storage.create(storage.root, "secret-file", {
@@ -73,13 +94,27 @@ const makeFixture = (options: FixtureOptions = {}) => {
   const canonicalBytes = () => {
     const size = Number(storage.stat(inode).size);
     const bytes = new Uint8Array(size);
-    expect(storage.readInto(inode, 0n, bytes)).toBe(size);
+    let offset = 0;
+    while (offset < size) {
+      const target = bytes.subarray(offset, Math.min(offset + FILE_CHUNK_BYTES, size));
+      const count = base.readInto(inode, BigInt(offset), target);
+      expect(count).toBeGreaterThan(0);
+      expect(count).toBeLessThanOrEqual(target.byteLength);
+      offset += count;
+    }
     return bytes;
   };
   const rawBytes = () => {
     const size = Number(access.stat().size);
     const bytes = new Uint8Array(size);
-    expect(access.readInto(0n, bytes)).toBe(size);
+    let offset = 0;
+    while (offset < size) {
+      const target = bytes.subarray(offset, Math.min(offset + FILE_CHUNK_BYTES, size));
+      const count = access.readInto(BigInt(offset), target);
+      expect(count).toBeGreaterThan(0);
+      expect(count).toBeLessThanOrEqual(target.byteLength);
+      offset += count;
+    }
     return bytes;
   };
   return {
@@ -333,6 +368,49 @@ describe("SecretFileBytes", () => {
       const tail = new Uint8Array(2);
       expect(fixture.access.readInto(1_048_575n, tail)).toBe(2);
       expect(tail).toEqual(new Uint8Array(2));
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("completes clean mutation scans across legal short canonical reads", () => {
+    const bindings = Array.from({ length: 96 }, (_, index) => ({
+      placeholder: `{{secret:${"A".repeat(43_000)}_${index}}}`,
+      value: "shared7",
+    }));
+    const canonical = "x".repeat(FILE_CHUNK_BYTES * 3 + 123);
+    const fixture = makeFixture({
+      canonical,
+      bindings,
+      shortReadPageBytes: FILE_CHUNK_BYTES,
+    });
+    try {
+      const expected = encoder.encode(canonical);
+      expected[10] = 0x79;
+      fixture.access.write(10n, Uint8Array.of(0x79));
+      expect(fixture.canonicalBytes()).toEqual(expected);
+      expect(fixture.rawBytes()).toEqual(expected);
+      expect(fixture.maximumReadTarget()).toBeLessThanOrEqual(FILE_CHUNK_BYTES);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("returns EIO on early EOF before committing a clean mutation", () => {
+    const bindings = Array.from({ length: 96 }, (_, index) => ({
+      placeholder: `{{secret:${"A".repeat(43_000)}_${index}}}`,
+      value: "shared7",
+    }));
+    const fixture = makeFixture({
+      canonical: "x".repeat(FILE_CHUNK_BYTES * 2),
+      bindings,
+      shortReadPageBytes: FILE_CHUNK_BYTES,
+      failReadAt: { offset: BigInt(FILE_CHUNK_BYTES), occurrence: 1 },
+    });
+    try {
+      const before = fixture.canonicalBytes();
+      expect(() => fixture.access.write(10n, Uint8Array.of(0x79))).toThrow(codeError("EIO"));
+      expect(fixture.canonicalBytes()).toEqual(before);
     } finally {
       fixture.close();
     }
