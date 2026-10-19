@@ -166,4 +166,40 @@ describe("proof executable seed transport fixtures", () => {
       database.close();
     }
   });
+
+  it("rolls back executable files and the durable receipt when its transaction fails", async () => {
+    const database = createProofTestStorage();
+    let host = createProofFilesystemHost(database.storage);
+    database.storage.sql.exec(`CREATE TABLE proof_executable_atomic_receipt (
+      id INTEGER PRIMARY KEY
+    )`);
+    try {
+      const route = createProofExecutableSeedRoute({
+        catalog: programFixtureCatalog,
+        filesystem: () => host.filesystem,
+        storage: database.storage,
+        onSeeded() {
+          database.storage.sql.exec("INSERT INTO proof_executable_atomic_receipt VALUES (1)");
+          throw new Error("receipt transaction failed");
+        },
+      });
+      await expect(
+        route.handle(programRequest(programBundle()), {
+          bootStarted: false,
+          assetsRequired: true,
+          assetsSeeded: true,
+        }),
+      ).rejects.toThrow("receipt transaction failed");
+      expect([
+        ...database.storage.sql.exec("SELECT id FROM proof_executable_atomic_receipt"),
+      ]).toEqual([]);
+
+      closeHost(host);
+      host = createProofFilesystemHost(database.storage);
+      for (const entry of programFixtures) expect(host.fs.fs.existsSync(entry.path)).toBe(false);
+    } finally {
+      closeHost(host);
+      database.close();
+    }
+  });
 });

@@ -15,28 +15,19 @@ import {
   type PreparedAssetModuleCatalog,
 } from "../claudeTurnProof/preparedAssetModules.ts";
 import {
-  createProofExecutableSeedRoute,
-  type ProofExecutableFileCatalog,
-} from "../claudeTurnProof/proofExecutableSeed.ts";
-import {
   createProofProcessEnvironment,
   createProofIdentity,
 } from "../claudeTurnProof/proofEnvironment.ts";
 import { createMockMessagesApi } from "../claudeTurnProof/mockMessages.ts";
 import { getNativeHostModules } from "../claudeTurnProof/proofNativeModules.ts";
-import {
-  createGuestObservation,
-  errorDetail,
-  readAssetBody,
-} from "../claudeTurnProof/proofObservation.ts";
+import { createGuestObservation, errorDetail } from "../claudeTurnProof/proofObservation.ts";
 import { terminalSuccess, proofPrompt } from "../claudeTurnProof/proofScenario.ts";
-import { decodeVerifiedAssetBundle } from "../claudeTurnProof/assetBundle.ts";
-import { verifySeededAssets } from "../claudeTurnProof/proofAssets.ts";
 import type { ClaudeTurnProofConfig } from "../claudeTurnProof/ClaudeTurnProof.ts";
 import type { ChildProgramSources } from "../childPrograms/prepare.ts";
 import type { NodeGeneratedCodeOpenPort } from "../../src/isolate/NodeGeneratedCode.ts";
 import { createClaudeHookRuntime } from "./claudeRuntime.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
+import { createClaudeHooksSeedState, type ClaudeHooksSeedStatus } from "./ClaudeHooksSeedState.ts";
 import { runClaudeProofLifecycle } from "./claudeLifecycle.ts";
 import { createStandardProofAdapter, type StandardProofAdapter } from "./standardProofAdapter.ts";
 import { installStandardProofFiles } from "./standardProofFiles.ts";
@@ -61,12 +52,20 @@ export function createClaudeTurnProofClass(
   return class ClaudeHooksProof extends DurableObject {
     private readonly capacity = new ChildWorkerCapacity();
     private filesystemHost: ReturnType<typeof createProofFilesystemHost> | undefined;
-    private programSeedRoute: ReturnType<typeof createProofExecutableSeedRoute> | undefined;
-    private bootStarted = false;
-    private assetsSeeded = false;
+    private seedState: ReturnType<typeof createClaudeHooksSeedState> | undefined;
 
     private filesystem() {
       return (this.filesystemHost ??= createProofFilesystemHost(this.ctx.storage));
+    }
+
+    private seeding() {
+      return (this.seedState ??= createClaudeHooksSeedState({
+        storage: this.ctx.storage,
+        filesystem: () => this.filesystem(),
+        assets: config.assets,
+        programs: programFiles,
+        requireSeed: config.requireSeed,
+      }));
     }
 
     override async fetch(request: Request) {
@@ -76,19 +75,12 @@ export function createClaudeTurnProofClass(
         if (path === "/seed-programs") return await this.seedPrograms(request);
         if (path === "/verify-assets") {
           if (request.method !== "GET") return new Response("GET required", { status: 405 });
-          if (!this.assetsSeeded) throw new Error("ERR_DIAGNOSTIC_ASSETS_NOT_SEEDED");
-          return Response.json(await verifySeededAssets(this.filesystem().fs, config.assets));
+          return Response.json(await this.seeding().verifyAssets());
         }
         if (path !== "/boot")
           return Response.json({ ok: false, error: "Unknown proof endpoint" }, { status: 404 });
-        if (config.requireSeed && !this.assetsSeeded) {
-          throw new Error("ERR_DIAGNOSTIC_ASSETS_NOT_SEEDED");
-        }
-        if (!this.programSeedHandler().seeded)
-          throw new Error("ERR_DIAGNOSTIC_PROGRAMS_NOT_SEEDED");
-        if (this.bootStarted) throw new Error("ERR_DIAGNOSTIC_BOOT_ALREADY_STARTED");
-        this.bootStarted = true;
-        return await this.boot();
+        const seedStatus = await this.seeding().beginBoot();
+        return await this.boot(seedStatus);
       } catch (error) {
         return Response.json({
           ok: false,
@@ -100,45 +92,14 @@ export function createClaudeTurnProofClass(
     }
 
     private async seedAssets(request: Request) {
-      if (request.method !== "POST") return new Response("POST required", { status: 405 });
-      if (request.headers.get("content-type") !== "application/vnd.signalbox.claude-assets.v1") {
-        return new Response("Wrong asset bundle content type", { status: 415 });
-      }
-      if (this.bootStarted || this.assetsSeeded) throw new Error("ERR_DIAGNOSTIC_ASSET_SEED_ORDER");
-      const entries = await decodeVerifiedAssetBundle(await readAssetBody(request), config.assets);
-      const { fs } = this.filesystem();
-      this.ctx.storage.transactionSync(() => {
-        for (const entry of entries) {
-          fs.fs.mkdirSync(entry.path.slice(0, entry.path.lastIndexOf("/")), { recursive: true });
-          fs.fs.writeFileSync(entry.path, entry.bytes);
-        }
-      });
-      this.assetsSeeded = true;
-      return Response.json({
-        ok: true,
-        seededAssets: entries.length,
-        seededBytes: entries.reduce((sum, entry) => sum + entry.bytes.byteLength, 0),
-      });
-    }
-
-    private programSeedHandler() {
-      const catalog = programFiles as ProofExecutableFileCatalog;
-      return (this.programSeedRoute ??= createProofExecutableSeedRoute({
-        catalog,
-        filesystem: () => this.filesystem().filesystem,
-        storage: this.ctx.storage,
-      }));
+      return await this.seeding().seedAssets(request);
     }
 
     private async seedPrograms(request: Request) {
-      return await this.programSeedHandler().handle(request, {
-        bootStarted: this.bootStarted,
-        assetsRequired: config.requireSeed,
-        assetsSeeded: this.assetsSeeded,
-      });
+      return await this.seeding().seedPrograms(request);
     }
 
-    private async boot() {
+    private async boot(seedStatus: ClaudeHooksSeedStatus) {
       const observation = createGuestObservation();
       const { output, done, complete, guestError, streams } = observation;
       const originalFetch = globalThis.fetch;
@@ -196,7 +157,7 @@ export function createClaudeTurnProofClass(
           identity,
           streams,
           assets: config.assets,
-          isSeeded: () => this.assetsSeeded,
+          isSeeded: () => seedStatus.assetsSeeded,
           onMissing: (member) => output.bunMissing.push(member),
           codeGeneration: (
             this.env as Cloudflare.Env & { CODE_GENERATION: NodeGeneratedCodeOpenPort }
@@ -217,7 +178,7 @@ export function createClaudeTurnProofClass(
           prepared: createPreparedAssetModuleResolver({
             assets: config.assets as PreparedAssetModuleCatalog,
             fs: filesystemHost.fs,
-            isSeeded: () => this.assetsSeeded,
+            isSeeded: () => seedStatus.assetsSeeded,
           }),
         });
         let packageLoad: Awaited<ReturnType<typeof environment.load>> | undefined;
@@ -308,8 +269,8 @@ export function createClaudeTurnProofClass(
             },
           },
           pins: config.pins,
-          assetsSeeded: this.assetsSeeded,
-          programsSeeded: this.programSeedHandler().seeded,
+          assetsSeeded: seedStatus.assetsSeeded,
+          programsSeeded: seedStatus.programsSeeded,
           ok:
             terminalOk &&
             scenarioResult.ok === true &&
