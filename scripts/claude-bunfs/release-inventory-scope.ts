@@ -41,26 +41,28 @@ export class ScopedBindings<T> {
   private declareNode(node: ts.Node, scope: ts.Node, parentScope?: ts.Node): void {
     if (ts.isImportDeclaration(node) && node.importClause) {
       const clause = node.importClause;
-      if (clause.name) this.declare(scope, clause.name);
+      if (clause.name) this.recordDeclaration(scope, clause.name);
       const bindings = clause.namedBindings;
-      if (bindings && ts.isNamespaceImport(bindings)) this.declare(scope, bindings.name);
+      if (bindings && ts.isNamespaceImport(bindings)) this.recordDeclaration(scope, bindings.name);
       else if (bindings && ts.isNamedImports(bindings))
-        for (const element of bindings.elements) this.declare(scope, element.name);
+        for (const element of bindings.elements) this.recordDeclaration(scope, element.name);
     }
     if (ts.isVariableDeclaration(node)) {
       const target =
         node.parent.flags & ts.NodeFlags.BlockScoped ? scope : this.functionScope(scope);
-      for (const identifier of bindingIdentifiers(node.name)) this.declare(target, identifier);
+      for (const identifier of bindingIdentifiers(node.name))
+        this.recordDeclaration(target, identifier);
     }
     if (ts.isParameter(node))
-      for (const identifier of bindingIdentifiers(node.name)) this.declare(scope, identifier);
+      for (const identifier of bindingIdentifiers(node.name))
+        this.recordDeclaration(scope, identifier);
     if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name && parentScope)
-      this.declare(parentScope, node.name);
+      this.recordDeclaration(parentScope, node.name);
     if ((ts.isFunctionExpression(node) || ts.isClassExpression(node)) && node.name)
-      this.declare(scope, node.name);
+      this.recordDeclaration(scope, node.name);
     if (ts.isCatchClause(node) && node.variableDeclaration) {
       for (const identifier of bindingIdentifiers(node.variableDeclaration.name))
-        this.declare(scope, identifier);
+        this.recordDeclaration(scope, identifier);
     }
   }
 
@@ -70,7 +72,7 @@ export class ScopedBindings<T> {
     return current ?? scope;
   }
 
-  private declare(scope: ts.Node, identifier: ts.Identifier): void {
+  private recordDeclaration(scope: ts.Node, identifier: ts.Identifier): void {
     const names = this.declarations.get(scope) ?? new Map<string, ts.Identifier>();
     // A duplicate var/function declaration keeps the first binding identity.
     if (!names.has(identifier.text)) names.set(identifier.text, identifier);
