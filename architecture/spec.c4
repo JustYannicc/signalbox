@@ -86,11 +86,11 @@ specification {
     style { color amber }
   }
   deploymentNode isolate {
-    notation "Isolate (facet or Dynamic Worker)"
+    notation "Isolate (facet or child isolate)"
     style { color secondary }
   }
   deploymentNode container {
-    notation "Cloudflare Container (CPA only)"
+    notation "Container (pool hosts only)"
     style { color red }
   }
   deploymentNode workflow {
@@ -106,7 +106,7 @@ specification {
     style { shape storage; color gray }
   }
   deploymentNode vm {
-    notation "boxd VM or snapshot"
+    notation "Machine or snapshot"
     style { color blue }
   }
   deploymentNode device {

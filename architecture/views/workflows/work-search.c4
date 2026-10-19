@@ -23,7 +23,7 @@ views {
     signalbox.web -> signalbox.funnel 'query op'
     signalbox.funnel -> signalbox.operations 'query(A, text)' {
       notes '''
-        - Funnel only decodes, calls one op, maps errors
+        - Client gateway only decodes, calls one op, maps errors
         - Operations checks authority for actor A
       '''
     }
@@ -151,7 +151,7 @@ views {
     signalbox.funnel -> signalbox.operations 'catalog(A)' {
       notes '''
         - The operations A may invoke here, after Tree.can
-        - The same catalog agents see through ToolGateway
+        - The same catalog agents see through the tools gateway
       '''
     }
     signalbox.web <- signalbox.funnel 'actions'
@@ -198,7 +198,7 @@ views {
         }
         signalbox.web -> signalbox.thread.threadActor 'read pages' {
           notes '''
-            - Bounded pages of the thread\'s items, through the Funnel
+            - Bounded pages of the thread\'s items, through the client gateway
             - No Search index involved: Find never leaves this thread
           '''
         }
@@ -208,7 +208,7 @@ views {
       else 'mobile' {
         personA -> signalbox.mobile 'opens Find'
         signalbox.mobile -> signalbox.thread.threadActor 'read pages' {
-          notes '- Same bounded pages through the Funnel; the phone holds no work'
+          notes '- Same bounded pages through the client gateway; the phone holds no work'
         }
         signalbox.mobile -> signalbox.mobile 'literal match'
         signalbox.mobile -> personA 'reveals occurrence' {
@@ -250,7 +250,7 @@ views {
       signalbox.search -> signalbox.drive 'content search' {
         notes '''
           - Drives and sources placed at levels A reaches (resolved by the hierarchy)
-          - Drive reads its own data: Artifacts hot tier, R2 full record; no computer, no VM
+          - Drive reads its own data: hot tier, R2 full record; no computer, no VM
           - Planned: Drive\'s 7-verb interface has no search verb yet; this needs one
         '''
       }
@@ -288,7 +288,7 @@ views {
         hier.asstA -> signalbox.harness 'turn'
         signalbox.harness -> signalbox.gateway 'signalbox_search' {
           navigateTo work_agenttools_tools_in_turn
-          notes '- Gateway.serve: its ToolGateway is the only MCP endpoint'
+          notes '- Gateway.serve: its tools gateway is the only MCP endpoint'
         }
       }
       when 'Company agent' {
@@ -304,7 +304,7 @@ views {
         mcpClient -> signalbox.gateway 'signalbox_search' {
           navigateTo work_agenttools_outside_agent_connect
           notes '''
-            - A's MCP URL, signed in through AuthKit; works only for A
+            - A's MCP URL, signed in through hosted sign-in; works only for A
             - Subject: agent class acting for A
           '''
         }
@@ -548,7 +548,7 @@ views {
       notes '- e.g. a Team thread A started moves to Work › Company, or out to A\'s Personal'
     }
     signalbox.web -> signalbox.thread.threadActor 'move(to)' {
-      notes '- Through the Funnel and Operations; Tree.can checks A may place it there'
+      notes '- Through the client gateway and Operations; Tree.can checks A may place it there'
     }
     signalbox.thread.threadActor -> signalbox.thread.threadActor 'commit moved' {
       navigateTo work_threads_lifecycle_move_within
@@ -690,7 +690,7 @@ views {
 
   dynamic view work_search_catalog {
     title 'Workflows/Work/Search/Index/Thread catalog per level'
-    description 'W-SRH-13. Each level keeps a catalog of its threads; the Funnel serves it as a live view per level, and each person sees only rows they may read.'
+    description 'W-SRH-13. Each level keeps a catalog of its threads; the client gateway serves it as a live view per level, and each person sees only rows they may read.'
 
     include signalbox.thread.threadActor, signalbox.tree.levelActor, signalbox.funnel, signalbox.web, signalbox.mobile, personA, personB
     include signalbox, signalbox.thread, signalbox.tree
@@ -705,7 +705,7 @@ views {
     signalbox.tree.levelActor -> signalbox.funnel 'live catalog view' {
       navigateTo folders_tree_catalog
       notes '''
-        - One view per level, sharded by levelId (Funnel\'s Lunora adapter)
+        - One view per level, sharded by levelId (client gateway\'s Lunora adapter)
         - Rows a subscriber may not read are filtered per subscriber
       '''
     }

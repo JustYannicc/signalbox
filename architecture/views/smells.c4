@@ -11,14 +11,14 @@ views {
       color red
       opacity 6%
       include signalbox.funnel with {
-        description 'decode · call · map errors. Delete it and clients reach handlers directly: keep, it is the one typed funnel.'
+        description 'decode · call · map errors. Delete it and clients reach handlers directly: keep, it is the one typed gateway.'
         navigateTo m-funnel
       }
       include signalbox.ingress with {
         description 'one route for webhooks and callbacks. Delete it and each module grows its own webhook route: keep.'
       }
       include signalbox.browser with {
-        description 'session · render over two vendors, each behind a one-adapter seam (Kernel, Browser Run). Inline both until a second adapter is real.'
+        description 'session · render over two vendors, each behind a one-adapter seam (hosted browser, hosted render). Inline both until a second adapter is real.'
         navigateTo m-browser
       }
       include signalbox.judge with {
@@ -38,7 +38,7 @@ views {
         navigateTo m-learner
       }
       include signalbox.bases with {
-        description '6 verbs over a thin lease and pointer layer. Its Snapshot seam is real now (None for cold create, boxd snapshots), but lifecycle could still live in Computer.'
+        description '6 verbs over a thin lease and pointer layer. Its Snapshot seam is real now (None for cold create, machine snapshots), but lifecycle could still live in Computer.'
         navigateTo m-bases
       }
     }
@@ -47,7 +47,7 @@ views {
       opacity 6%
       include signalbox.computer.machines with {
         title 'Computer · Machine seam'
-        description 'boxd only. VMs exist only while commands run; inline boxd until a second VM provider is real.'
+        description 'One machine provider only. VMs exist only while commands run; inline it until a second VM provider is real.'
         navigateTo m-computer
       }
     }

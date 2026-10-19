@@ -1,5 +1,5 @@
 // Build layer (logical) and production topology. No container ever hosts a harness or a machine:
-// Containers run CLIProxyAPI only; boxd VMs only execute commands.
+// Containers run pool backends only; machines only execute commands.
 model {
   build = system 'Build & infra' {
     description 'Effect v4 everywhere'
@@ -52,7 +52,8 @@ model {
 
 deployment {
   stage prod 'Production' {
-    zone cloudflare 'Cloudflare (EU jurisdiction)' {
+    zone cloudflare 'Edge platform (EU jurisdiction)' {
+      technology 'Cloudflare'
       worker app 'app script' {
         instanceOf signalbox.funnel
         instanceOf signalbox.ingress
@@ -75,25 +76,28 @@ deployment {
             instanceOf signalbox.harness.agents.codex
             instanceOf signalbox.computer.backend.kernelFs
           }
-          isolate children 'Child Dynamic Workers' {
+          isolate children 'Child isolates' {
+            technology 'Dynamic Workers'
             instanceOf signalbox.computer.childIsolates
           }
         }
       }
       worker poolHost 'pool host script' {
-        durableObject cpaDO 'CPA host DO' {
+        durableObject cpaDO 'Pool host DO' {
           instanceOf signalbox.models.cpaHost
-          container cpa 'CPA container' {
+          container cpa 'Pool backend' {
+            technology 'CLIProxyAPI · Cloudflare Container'
             instanceOf signalbox.models.backend.cpaContainer
           }
         }
       }
-      worker modelGw 'ModelGateway' {
+      worker modelGw 'Model gateway' {
         instanceOf signalbox.gateway.modelGateway
       }
-      worker toolGw 'ToolGateway' {
+      worker toolGw 'Tools gateway' {
         instanceOf signalbox.gateway.toolGateway
-        isolate codemode 'Codemode Dynamic Worker' {
+        isolate codemode 'Codemode isolate' {
+          technology 'Dynamic Worker'
           instanceOf signalbox.gateway.codemode
         }
       }
@@ -103,14 +107,17 @@ deployment {
       queue queues 'Queues' {
         instanceOf signalbox.actorhost.outbox
       }
-      storage driveStore 'Artifacts + R2 (EU)' {
+      storage driveStore 'Drive storage (EU)' {
+        technology 'Artifacts + R2'
         instanceOf signalbox.drive.store.artifactsR2
       }
-      worker browserRun 'Browser Run' {
+      worker browserRun 'Hosted render' {
+        technology 'Browser Run'
         instanceOf signalbox.browser.render.browserRun
       }
     }
-    zone boxdZone 'boxd' {
+    zone boxdZone 'Machines' {
+      technology 'boxd'
       vm threadVm 'Thread VM (forked from Base)' {
         instanceOf signalbox.computer.execDaemon
       }

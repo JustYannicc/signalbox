@@ -63,7 +63,7 @@ views {
         personB -> signalbox.identity "Signs in again" {
           navigateTo identity_identity_add_personal
           notes """
-            - Same WorkOS user, or a personal sign-in linked to it; B finds the folders.
+            - Same identity user, or a personal sign-in linked to it; B finds the folders.
             - End: adding a personal sign-in moves them with the account.
           """
         }
@@ -110,7 +110,7 @@ views {
     personC -> signalbox.identity "Removes B" {
       navigateTo person_leaving_leave_org
       notes """
-        - C (admin of folder Company) removes B's membership; the WorkOS webhook lands in Identity.
+        - C (admin of folder Company) removes B's membership; the identity provider's webhook lands in Identity.
         - Nothing touches the running turn yet.
       """
     }
@@ -401,7 +401,7 @@ views {
         personC -> signalbox.identity "Re-adds B" {
           navigateTo organization_identity_leave
           notes """
-            - Re-invite in WorkOS.
+            - Re-invite in the identity provider.
           """
         }
         signalbox.identity -> signalbox.tree.personActor "Reactivate mount" {
@@ -465,7 +465,7 @@ views {
       navigateTo organization_identity_leave
       notes """
         - Start: B's mount of folder Company inactive, private chats sealed.
-        - Re-invite in WorkOS; the webhook drives the rest.
+        - Re-invite in the identity provider; the webhook drives the rest.
       """
     }
     signalbox.identity -> signalbox.tree.personActor "Reactivate mount" {
@@ -592,7 +592,7 @@ views {
     }
     personC -> signalbox.identity "Removes B" {
       notes """
-        - Through WorkOS; the webhook drives the rest.
+        - Through the identity provider; the webhook drives the rest.
       """
     }
     signalbox.identity -> signalbox.tree.levelActor "B loses Member+" {
@@ -979,7 +979,7 @@ views {
     }
     laptopCli -> signalbox.gateway "Model call" {
       notes """
-        - ModelGateway checks `LocalKeyActor{person, place}`.
+        - Model gateway checks `LocalKeyActor{person, place}`.
       """
     }
     signalbox.gateway -> signalbox.identity "Membership check" {
@@ -997,7 +997,7 @@ views {
     mcpClient -> signalbox.gateway "Tool call" {
       navigateTo work_agenttools_outside_agent_connect
       notes """
-        - ToolGateway runs the same check; a minted grant is denied at its next refresh.
+        - Tools gateway runs the same check; a minted grant is denied at its next refresh.
       """
     }
     mcpClient <- signalbox.gateway "Denied" {
@@ -1092,7 +1092,7 @@ views {
         personC -> signalbox.identity "Revokes membership" {
           navigateTo identity_identity_unlink
           notes """
-            - Through WorkOS.
+            - Through the identity provider.
           """
         }
       }
@@ -1244,7 +1244,7 @@ views {
     #assumption
     variant sequence
     title "Scenarios/Leaving/Removal/IdP Deprovision"
-    description "What happens when the company's identity provider deprovisions an employee? Assumption: revocation is WorkOS membership removal today; Directory Sync later feeds the same webhook, so nothing in Signalbox changes when it arrives (pending #312). Why: #312 Directory Sync is later; #270 revokes on membership removal. SCN-087 · R-IDN-11 · R-IDN-19 · R-ACC-16 · R-IDN-05 · v1 no"
+    description "What happens when the company's identity provider deprovisions an employee? Assumption: revocation is identity membership removal today; Directory Sync later feeds the same webhook, so nothing in Signalbox changes when it arrives (pending #312). Why: #312 Directory Sync is later; #270 revokes on membership removal. SCN-087 · R-IDN-11 · R-IDN-19 · R-ACC-16 · R-IDN-05 · v1 no"
 
     include personC, personB, platform, platform.workos, signalbox, signalbox.ingress, signalbox.identity, signalbox.tree, signalbox.tree.personActor
     style signalbox.tree {
@@ -1257,19 +1257,19 @@ views {
         - Start: B offboarded in the company's own IdP (outside Signalbox).
       """
     }
-    alt "how WorkOS learns" {
+    alt "how the identity provider learns" {
       when "today" {
         personC -> platform.workos "Removes membership" {
           navigateTo organization_identity_company_sso
           notes """
-            - In the Admin Portal; meanwhile SSO already refuses B's sign-in.
+            - In the admin portal; meanwhile SSO already refuses B's sign-in.
           """
         }
       }
       else "with Directory Sync" {
         platform.workos -> platform.workos "Directory event" {
           notes """
-            - `#assumption` (pending #312): WorkOS removes the membership itself.
+            - `#assumption` (pending #312): the identity provider removes the membership itself.
           """
         }
       }
@@ -1415,7 +1415,7 @@ views {
     #assumption
     variant sequence
     title "Scenarios/Leaving/LastAdmin/Last Admin Leaves"
-    description "What happens when the last Admin of folder Company leaves? Assumption: C can't leave in-app without a successor; if WorkOS removes C out of band, the work keeps moving and Company's IT restores an Admin in WorkOS. Why: mirrors #232 Owners can't just leave, #229 d8, #270 the work keeps moving, #225 §11 WorkOS owns management. SCN-090 · R-ACC-19 · P-OUT-11 · R-ACC-01 · P-BLK-07 · v1 no"
+    description "What happens when the last Admin of folder Company leaves? Assumption: C can't leave in-app without a successor; if the identity provider removes C out of band, the work keeps moving and Company's IT restores an Admin there. Why: mirrors #232 Owners can't just leave, #229 d8, #270 the work keeps moving, #225 §11 the identity provider owns management. SCN-090 · R-ACC-19 · P-OUT-11 · R-ACC-01 · P-BLK-07 · v1 no"
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree, signalbox.attention, platform, platform.workos, hier, hier.organization
     style hier {
@@ -1464,7 +1464,7 @@ views {
         hier.organization -> platform.workos "IT restores Admin" {
           navigateTo folders_access_owner_transfer
           notes """
-            - End: Company's IT sets an Admin in the WorkOS Admin Portal (#225 §11).
+            - End: Company's IT sets an Admin in the identity provider's admin portal (#225 §11).
           """
         }
       }

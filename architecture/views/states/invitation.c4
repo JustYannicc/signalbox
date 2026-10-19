@@ -1,7 +1,7 @@
 // State machine for one invitation. The walk through it with people and modules is the dynamic view state_invitation.
 model {
   smInvitation = state 'Invitation lifecycle' {
-    pending = state 'Pending' { description 'WorkOS invitation sent' }
+    pending = state 'Pending' { description 'Identity invitation sent' }
     accepted = state 'Accepted' { description 'Role: Member' }
     declined = state 'Declined'
     cancelled = state 'Cancelled'

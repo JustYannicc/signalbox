@@ -18,16 +18,16 @@ model {
       realWeb = part 'Real-web seam · 1 adapter' {
         #hypothetical-seam
         metadata { adapters '1' }
-        kernelBrowser = adapter 'Kernel + Managed Auth' {
+        kernelBrowser = adapter 'Hosted browser + managed sign-in' {
           icon tech:chrome
           description 'one profile per person'
-          technology 'Kernel API · CDP virtual authenticator'
+          technology 'Kernel API · Managed Auth · CDP virtual authenticator'
         }
       }
       render = part 'Render seam · 1 adapter' {
         #hypothetical-seam
         metadata { adapters '1' }
-        browserRun = adapter 'Browser Run' {
+        browserRun = adapter 'Hosted render' {
           icon tech:cloudflare-icon
           technology 'Cloudflare Browser Run'
         }
@@ -36,23 +36,25 @@ model {
         #planned
         description 'candidates; one gets picked'
         metadata { adapters '3' }
-        testBrowserRun = adapter 'Browser Run (test)' {
+        testBrowserRun = adapter 'Hosted render (test)' {
           #planned
           icon tech:cloudflare-icon
+          technology 'Browser Run'
         }
         vmChromium = adapter 'Chromium on VM' {
           #planned
           icon tech:playwright
           technology 'playwright-core'
         }
-        testKernel = adapter 'Kernel (test)' {
+        testKernel = adapter 'Hosted browser (test)' {
           #planned
           icon tech:chrome
+          technology 'Kernel'
         }
       }
       loginService = part 'Login service' {
         icon bootstrap:box-arrow-in-right
-        description 'signs agents in · Kernel Managed Auth driver'
+        description 'signs agents in · managed sign-in driver'
       }
       signInGrants = part 'Sign-in grants' {
         icon bootstrap:shield-check
@@ -71,9 +73,9 @@ model {
     }
 
     browser.realWeb.kernelBrowser -> platform.kernel 'sessions · sign-ins'
-    browser.realWeb.kernelBrowser -> signalbox.connections.api 'login secrets (1Password ref)'
+    browser.realWeb.kernelBrowser -> signalbox.connections.api 'login secrets (vault ref)'
     browser.loginService -> browser.signInGrants 'grant for site?'
-    browser.loginService -> browser.realWeb.kernelBrowser 'Managed Auth'
+    browser.loginService -> browser.realWeb.kernelBrowser 'Managed sign-in'
     browser.signInGrants -> browser.grantRows 'kept per person'
     browser.mirror -> signalbox.funnel.api 'mirror'
     browser.render -> signalbox.computer.portGateway 'preview a port'

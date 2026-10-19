@@ -1,9 +1,9 @@
 // External services, grouped so the landscape stays readable; drill into a group to see each one.
-// Cloudflare products are the `technology` of the parts that use them.
+// Vendor products are the `technology` of the parts that use them.
 model {
   modelProviders = system 'Model providers' {
     icon bootstrap:cpu
-    description 'reached only through CLIProxyAPI'
+    description 'reached only through the pool backend'
     anthropic = external 'Anthropic' {
       #v1
       icon tech:anthropic-icon
@@ -64,9 +64,9 @@ model {
     gitlab = external 'GitLab' {
       icon tech:gitlab-icon
     }
-    onepassword = external '1Password' {
+    onepassword = external 'Vault' {
       icon bootstrap:key-fill
-      technology 'device link · service account · @1password/sdk'
+      technology '1Password · device link · service account · @1password/sdk'
     }
     smsGateway = external 'SMS gateway' {
       icon bootstrap:chat-left-text
@@ -97,20 +97,20 @@ model {
   platform = system 'Platform services' {
     icon bootstrap:boxes
     description 'identity · VMs · browser · judgments · upstreams'
-    workos = external 'WorkOS' {
+    workos = external 'Identity provider' {
       #v1
       icon tech:workos-icon
       description 'sign-in · organizations · roles'
-      technology 'AuthKit · directory sync · Admin Portal'
-      metadata { stack 'AuthKit · Google Workspace sign-in · directory sync · Admin Portal · Radar · MCP authz' }
+      technology 'WorkOS · AuthKit · directory sync · Admin Portal · Radar'
+      metadata { stack 'Hosted sign-in · Google Workspace sign-in · directory sync · admin portal · bot detection · MCP authz' }
     }
-    boxd = external 'boxd' {
+    boxd = external 'Machine provider' {
       icon bootstrap:pc-display
       description 'VMs · forks · snapshots'
-      technology 'VMs · fork · named snapshots'
+      technology 'boxd · VMs · fork · named snapshots'
       metadata { stack 'machines · fork · named snapshots · egress allowlist · host-bound secrets · deleteAfter · usage API' }
     }
-    kernel = external 'Kernel' {
+    kernel = external 'Browser provider' {
       icon tech:chrome
       description 'real-web browser'
       technology 'Kernel API · Managed Auth'
@@ -124,19 +124,19 @@ model {
       icon tech:git
       technology 'git · releases'
     }
-    cpaUpstream = external 'CLIProxyAPI upstream' {
+    cpaUpstream = external 'Pool backend upstream' {
       icon tech:go
-      technology 'releases · carry patches'
+      technology 'CLIProxyAPI · releases · carry patches'
     }
-    artifacts = external 'Cloudflare Artifacts' {
+    artifacts = external 'Hot git storage' {
       icon tech:cloudflare-icon
       description 'hot git repos · fork per thread'
-      technology 'Artifacts (git over HTTP)'
+      technology 'Cloudflare Artifacts (git over HTTP)'
     }
-    r2 = external 'R2' {
+    r2 = external 'Record storage' {
       icon tech:cloudflare-icon
       description 'full record · objects · chunks'
-      technology 'R2 object storage'
+      technology 'Cloudflare R2 object storage'
     }
     deviceHost = external 'Cloud device host' {
       icon bootstrap:phone
@@ -168,10 +168,10 @@ model {
   upstreams = system 'Distribution and upstreams' {
     icon bootstrap:box-seam
     description 'where builds ship and what we follow'
-    cloudflare = external 'Cloudflare API' {
+    cloudflare = external 'Edge platform API' {
       icon tech:cloudflare-icon
       description 'deploy target'
-      technology 'Workers · DO · Queues · Secrets Store'
+      technology 'Cloudflare API · Workers · DO · Queues · Secrets Store'
     }
     alchemyUpstream = external 'Alchemy upstream' {
       icon tech:github-icon

@@ -38,7 +38,7 @@ model {
       description 'accounts · pins · health · usage ledger'
       technology 'Durable Object · one per pool'
     }
-    cpaHost = actor 'CPA host' {
+    cpaHost = actor 'Pool host' {
       #v1
       icon tech:go
       description 'pipes model bytes'
@@ -73,7 +73,7 @@ model {
   signalbox.models.signIns -> signalbox.models.custody 'sealed accounts'
   signalbox.models.custody -> signalbox.models.cpaHost 'stream'
   signalbox.models.cpaHost -> signalbox.models.backend.cpaContainer 'pipe bytes'
-  signalbox.models.cpaHost -[async]-> signalbox.models.custody 'cpa drain'
+  signalbox.models.cpaHost -[async]-> signalbox.models.custody 'usage drain'
   signalbox.connections.toolSearch -> signalbox.connections.connectionActor 'manifest'
   signalbox.connections.oauth -> signalbox.connections.connectionActor 'tokens'
   signalbox.search.index.doFts -> signalbox.search.shard 'rows'

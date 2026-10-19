@@ -7,7 +7,7 @@ model {
       technology 'WorkOS AuthKit · jose · @noble/curves · @noble/hashes'
       metadata {
         interface '6'
-        deletion 'session logic smears across Funnel'
+        deletion 'session logic smears across the client gateway'
       }
 
       api = iface 'Identity · interface' {
@@ -15,7 +15,7 @@ model {
         technology 'Deletion test: without it, session logic smears across Funnel'
       }
 
-      authkit = part 'AuthKit client' {
+      authkit = part 'Hosted sign-in client' {
         #v1
         icon tech:workos-icon
         description 'no account picker ever'
@@ -23,7 +23,7 @@ model {
       }
       personalOrg = part 'Personal owner' {
         icon bootstrap:person-circle
-        description 'invisible WorkOS organization per person'
+        description 'invisible identity organization per person'
       }
       aliases = part 'Alias map' {
         icon bootstrap:link-45deg
@@ -53,7 +53,7 @@ model {
       membership -> personalOrg 'mounts'
     }
 
-    identity.authkit -> platform.workos 'AuthKit'
+    identity.authkit -> platform.workos 'Hosted sign-in'
     identity.membership -> signalbox.tree.api 'roles'
 
     // Interface → hidden parts (the only way in)

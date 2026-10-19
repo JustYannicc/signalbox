@@ -63,7 +63,7 @@ views {
 
   view model-call {
     title 'Overview/Runtime/How a model call leaves Signalbox'
-    description 'Every model call goes through ModelGateway to the pool placed nearest the thread.'
+    description 'Every model call goes through the model gateway to the pool placed nearest the thread.'
     include laptopCli, signalbox, signalbox.harness, signalbox.gateway, signalbox.models, signalbox.tree, modelProviders
     exclude * -> * where kind is async
     exclude * -> * where kind is tool
@@ -77,7 +77,7 @@ views {
 
   view tool-call {
     title 'Overview/Runtime/How a tool call leaves Signalbox'
-    description 'Every connector tool call goes through Executor (ToolGateway + Connections) to a connection placed above the thread; built-in tools go to Computer instead.'
+    description 'Every connector tool call goes through the tools gateway (Gateway + Connections) to a connection placed above the thread; built-in tools go to Computer instead.'
     include mcpClient, signalbox, signalbox.harness, signalbox.gateway, signalbox.connections, signalbox.tree, services
     exclude * -> * where kind is async
     exclude * -> * where kind is model
@@ -124,8 +124,8 @@ views {
     title 'Overview/Runtime/A turn in a shared thread'
     description '''
       What happens when A sends in the thread A and B share? The turn queues in the one Thread actor, Tree resolves the
-      pool from the thread's position (pool P2 on folder Company), the harness loop runs in an isolate, the one ModelGateway
-      pins an account, and both A and B see the reply live. Modules are black boxes; ModelGateway is Gateway's model port.
+      pool from the thread's position (pool P2 on folder Company), the harness loop runs in an isolate, the one model gateway
+      pins an account, and both A and B see the reply live. Modules are black boxes; model gateway is Gateway's model port.
     '''
 
     include personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.tree, signalbox.harness,
@@ -141,7 +141,7 @@ views {
     signalbox.web -> signalbox.thread 'send(turn)' {
       technology 'Effect RPC over WS'
       notes '''
-        - Funnel → Operations → the one Thread actor
+        - Client gateway → Operations → the one Thread actor
         - If B's turn is running, A's turn queues behind it
       '''
       navigateTo work_threads_multiplayer_live

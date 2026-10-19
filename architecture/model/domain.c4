@@ -56,7 +56,7 @@ model {
     }
     tool = entity 'Tool'
     secretRef = entity 'Secret reference' {
-      description 'value in 1Password'
+      description 'value in the vault'
     }
     source = entity 'Source' {
       description '/sources/<label>/'

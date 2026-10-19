@@ -1,6 +1,6 @@
 // Scenario shard 09: compute (SCN-192 to SCN-202). One question per view, played as a sequence.
-// Binding: Claude Code and Codex always run in the isolate tier (Durable Object + Dynamic Workers);
-// a boxd VM exists only while a real command runs. Placement never shows to a person or the model.
+// Binding: Claude Code and Codex always run in the isolate tier (Durable Object + isolates);
+// a machine exists only while a real command runs. Placement never shows to a person or the model.
 // People: A (folder Personal; Work › folder Company mounted), B (folder Team inside Company),
 // C (admin of folder Company). Steps target module boxes or their named actors.
 
@@ -20,7 +20,7 @@ views {
     signalbox.harness -> signalbox.thread.threadActor "raise Blocker" {
       navigateTo person_pipeline_blocker_raise
       notes '''
-        - **Start:** B's turn in folder Team is running; a boxd VM is up for a test command
+        - **Start:** B's turn in folder Team is running; a machine is up for a test command
         - The agent (Claude Code, in the isolate tier) needs B's answer to continue
       '''
     }
@@ -40,7 +40,7 @@ views {
     signalbox.computer -> platform.boxd "hibernate now" {
       navigateTo state_computer
       notes '''
-        - Explicit hibernate; we never wait for boxd's 4 h auto-hibernate
+        - Explicit hibernate; we never wait for the machine provider's 4 h auto-hibernate
       '''
     }
     signalbox.computer -> signalbox.models "disk-time usage" {
@@ -54,7 +54,7 @@ views {
     personB -> signalbox.mobile "answers"
     signalbox.mobile -> signalbox.thread.threadActor "answer" {
       notes '''
-        - Via the Funnel; the same answer works from the thread itself
+        - Via the client gateway; the same answer works from the thread itself
       '''
     }
     signalbox.thread.threadActor -> signalbox.harness "resume from mirror" {
@@ -96,7 +96,7 @@ views {
     signalbox.web -> signalbox.thread.threadActor "archive" {
       navigateTo work_threads_lifecycle_archive
       notes '''
-        - Via the Funnel; archiving never merges the thread's fork
+        - Via the client gateway; archiving never merges the thread's fork
       '''
     }
     signalbox.thread.threadActor -> signalbox.computer "release machine"
@@ -108,8 +108,8 @@ views {
     }
     signalbox.thread.threadActor -> signalbox.drive "keep fork" {
       notes '''
-        - Fork stays in Artifacts until idle, then lives only in R2
-        - Nothing is left on boxd
+        - Fork stays in the hot tier until idle, then lives only in R2
+        - Nothing is left on a machine
       '''
     }
     personA -> signalbox.web "unarchive" {
@@ -156,7 +156,7 @@ views {
     #decided
     variant sequence
     title "Scenarios/Compute/Machines/Command Needs VM"
-    description "What happens when a command can't run in the isolate? Decided: #1055 (2026-10-18) single-command escalation to boxd is the last memory/compat step. Assumption for the shape: escalation is per command, never a whole-thread move; a VM exists only while a command needs it; placement never shows in output (#1071 per-call contract, design §3.6.1; pending #1071 proof). SCN-195 · not v1 (Computer, Drive and threads come after v1)."
+    description "What happens when a command can't run in the isolate? Decided: #1055 (2026-10-18) single-command escalation to a machine is the last memory/compat step. Assumption for the shape: escalation is per command, never a whole-thread move; a VM exists only while a command needs it; placement never shows in output (#1071 per-call contract, design §3.6.1; pending #1071 proof). SCN-195 · not v1 (Computer, Drive and threads come after v1)."
 
     include personB, signalbox.web, signalbox.harness, signalbox.computer, signalbox.bases, platform.boxd
     include signalbox, platform
@@ -223,7 +223,7 @@ views {
     }
     signalbox.harness -> signalbox.web "streams output" {
       notes '''
-        - Via the Thread actor and the Funnel
+        - Via the Thread actor and the client gateway
       '''
     }
     signalbox.web -> personB "sees output" {
@@ -245,7 +245,7 @@ views {
     #decided
     variant sequence
     title "Scenarios/Compute/Failures/Isolate Out Of Memory"
-    description "What happens when a program in the isolate runs out of memory? Decided: #1055 (2026-10-18) memory is handled by splitting, then pruning, then a single-command escalation to boxd; celld is not on the path. Assumption for recovery: alarm restart, mirror resume, replay only replay-safe calls (design §3.5, W-TRN-21). SCN-194 · not v1 (Computer, Drive and threads come after v1)."
+    description "What happens when a program in the isolate runs out of memory? Decided: #1055 (2026-10-18) memory is handled by splitting, then pruning, then a single-command escalation to a machine; celld is not on the path. Assumption for recovery: alarm restart, mirror resume, replay only replay-safe calls (design §3.5, W-TRN-21). SCN-194 · not v1 (Computer, Drive and threads come after v1)."
 
     include personB, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.attention, signalbox.observability, platform.boxd
     include signalbox, platform
@@ -253,7 +253,7 @@ views {
     signalbox.harness -> signalbox.computer "run program" {
       navigateTo work_computer_kernel_exec
       notes '''
-        - **Start:** B's turn in folder Team; a program runs in a child Dynamic Worker
+        - **Start:** B's turn in folder Team; a program runs in a child isolate
         - It passes the 128 MB isolate budget
       '''
     }
@@ -285,7 +285,7 @@ views {
       signalbox.computer -> platform.boxd "escalate one command" {
         navigateTo work_computer_escalate
         notes '''
-          - Last step: one command on boxd; the agent never leaves the isolate tier
+          - Last step: one command on a machine; the agent never leaves the isolate tier
           - An OOM'd program is surfaced, never replayed blindly: it already ran (#1071)
         '''
       }
@@ -319,7 +319,7 @@ views {
 
     signalbox.computer -> platform.boxd "running command" {
       notes '''
-        - **Start:** an escalated command from B's thread in folder Team runs on a boxd VM
+        - **Start:** an escalated command from B's thread in folder Team runs on a machine
       '''
     }
     platform.boxd -> signalbox.computer "machine lost" {
@@ -462,7 +462,7 @@ views {
     }
     signalbox.web -> signalbox.harness "run turn" {
       notes '''
-        - Via the Funnel and the Thread actor; the agent runs in the isolate tier as usual
+        - Via the client gateway and the Thread actor; the agent runs in the isolate tier as usual
       '''
     }
     signalbox.harness -> signalbox.computer "exec command" {
@@ -502,7 +502,7 @@ views {
     #assumption
     variant sequence
     title "Scenarios/Compute/Limits/Big Push"
-    description "What happens when a push to GitHub is bigger than 100 MB? Assumption: refuse at 95 MB with the Cloudflare plan named; upgrade the plan when it bites; no batching workaround and no credentials on machines. Why: vendor-tier rule (use the plan we have, surface limits plainly), #684 recommendation; pending #684. SCN-198 · not v1 (Computer, Drive and threads come after v1)."
+    description "What happens when a push to GitHub is bigger than 100 MB? Assumption: refuse at 95 MB with the platform plan named; upgrade the plan when it bites; no batching workaround and no credentials on machines. Why: vendor-tier rule (use the plan we have, surface limits plainly), #684 recommendation; pending #684. SCN-198 · not v1 (Computer, Drive and threads come after v1)."
 
     include personB, signalbox.web, signalbox.harness, signalbox.drive, signalbox.gateway, signalbox.observability, services.github
     include signalbox, services
@@ -536,7 +536,7 @@ views {
       else "over 95 MB" {
         signalbox.drive -> signalbox.harness "refused, plan named" {
           notes '''
-            - The refusal names the Cloudflare plan limit; no batching workaround
+            - The refusal names the platform plan limit; no batching workaround
           '''
         }
         signalbox.harness -> signalbox.web "agent explains"
@@ -560,14 +560,14 @@ views {
     #assumption
     variant sequence
     title "Scenarios/Compute/Limits/Drive Past One GB"
-    description "What happens when a drive grows past Artifacts' 1 GB per repo? Assumption: Git LFS keeps big blobs out of Artifacts; a drive whose git content still passes 1 GB lives R2-only with cold reads; no sharding, no visible cap. Why: #119 (2026-10-15) no user-visible limits on saves; #119 (2026-10-18) R2 is the full record and cold reads never wait; pending #1128. SCN-199 · not v1 (Computer, Drive and threads come after v1)."
+    description "What happens when a drive grows past the hot tier's 1 GB per repo? Assumption: Git LFS keeps big blobs out of the hot tier; a drive whose git content still passes 1 GB lives R2-only with cold reads; no sharding, no visible cap. Why: #119 (2026-10-15) no user-visible limits on saves; #119 (2026-10-18) R2 is the full record and cold reads never wait; pending #1128. SCN-199 · not v1 (Computer, Drive and threads come after v1)."
 
     include personA, signalbox.web, signalbox.drive, signalbox.observability
     include signalbox
 
     personA -> signalbox.web "adds media" {
       notes '''
-        - **Start:** A's media-heavy drive in folder Personal nears 1 GB in Artifacts
+        - **Start:** A's media-heavy drive in folder Personal nears 1 GB in the hot tier
       '''
     }
     signalbox.web -> signalbox.drive "save files" {
@@ -576,14 +576,14 @@ views {
     signalbox.drive -> signalbox.drive "LFS to R2" {
       notes '''
         - Files over 32 MB become Git LFS objects in R2
-        - Only pointers enter the Artifacts repo
+        - Only pointers enter the hot repo
       '''
     }
     alt "git content alone near 1 GB?" {
       when "no" {
         signalbox.drive -> signalbox.drive "stay hot" {
           notes '''
-            - Normal Artifacts repo
+            - Normal hot repo
           '''
         }
       }
@@ -713,7 +713,7 @@ views {
     personB -> signalbox.web "new thread in Team"
     signalbox.web -> signalbox.tree "resolve Base" {
       notes '''
-        - Via the Funnel; nearest Base up the chain: Team, then Company
+        - Via the client gateway; nearest Base up the chain: Team, then Company
       '''
     }
     signalbox.tree -> signalbox.bases "nearest Base" {

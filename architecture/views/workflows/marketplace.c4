@@ -864,7 +864,7 @@ views {
     signalbox.marketplace -> signalbox.apps 'New app at Team' {
       navigateTo apps_place
       notes """
-        - Server in a Dynamic Worker, its own SQLite, no outbound network
+        - Server in an isolate, its own SQLite, no outbound network
         - Reaches only granted bindings; UI in a sandboxed frame
       """
     }

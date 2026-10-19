@@ -1,7 +1,7 @@
 // Shard 10: work-harness. The agent loop (Harness: Claude Code and Codex always in the isolate tier,
-// a Thread DO facet plus Dynamic Workers; a boxd VM only ever runs commands), checkpoints on the
+// a Thread DO facet plus isolates; a machine only ever runs commands), checkpoints on the
 // Drive, and attachments. Every module, Thread included, is a black box here.
-// The Drive lane owns attachment state and revisions (Artifacts and R2 behind it stay inside the Drive);
+// The Drive lane owns attachment state and revisions (the hot tier and R2 behind it stay inside the Drive);
 // signed uploads, whose point is bytes landing in R2, go to platform.r2 directly.
 views {
 
@@ -107,14 +107,14 @@ views {
           notes '- Signed upload to R2; the attachment is **pending** until a message claims it'
         }
         signalbox.web -> signalbox.operations 'send with ids' {
-          notes '- Over Funnel; Operations checks A can write in Team'
+          notes '- Over the client gateway; Operations checks A can write in Team'
         }
       }
       when 'an agent sends files' {
         signalbox.harness -> signalbox.gateway 'prepare upload' {
           notes '''
             - The agent calls the attachment tools (W-ATT-03)
-            - The Gateway (ToolGateway) hands back a signed upload; the agent never holds a credential
+            - The Gateway (tools gateway) hands back a signed upload; the agent never holds a credential
           '''
         }
         signalbox.gateway -> platform.r2 'upload bytes'
@@ -252,7 +252,7 @@ views {
     }
     signalbox.drive -> signalbox.drive 'store, then record' {
       navigateTo work_drive_r2_record
-      notes '- Artifacts push (hot tier), R2 keeps the full record'
+      notes '- Push to the hot tier, R2 keeps the full record'
     }
     signalbox.computer <- signalbox.drive 'revision sha' {
       notes '- Durable when save returns'
@@ -284,7 +284,7 @@ views {
       notes '- A opens "changes" on a turn of the shared thread'
     }
     signalbox.web -> signalbox.operations 'diff query' {
-      notes '- Over Funnel; Operations checks A can read in Team'
+      notes '- Over the client gateway; Operations checks A can read in Team'
     }
     signalbox.operations -> signalbox.thread 'turn to revisions' {
       notes '- The thread maps turns to revision shas'
@@ -456,7 +456,7 @@ views {
   dynamic view work_harness_open_session {
     variant sequence
     title 'Workflows/Work/Harness/Open or resume the session facet'
-    description 'W-HAR-01, W-HAR-14, T-TRN-16. How a thread gets a running harness: grant, computer, session facet, then a fresh or resumed session. Claude Code and Codex always run in the isolate tier (Thread DO facet + Dynamic Workers); no VM or container is ever their home.'
+    description 'W-HAR-01, W-HAR-14, T-TRN-16. How a thread gets a running harness: grant, computer, session facet, then a fresh or resumed session. Claude Code and Codex always run in the isolate tier (Thread DO facet + isolates); no VM or container is ever their home.'
 
     include signalbox
     include personA, signalbox.web, signalbox.operations, signalbox.thread, signalbox.gateway, signalbox.computer, signalbox.actorhost, signalbox.harness
@@ -485,13 +485,13 @@ views {
       navigateTo work_computer_escalate
       notes '''
         - Idempotent, one computer per thread: the kernel live FS, **no VM**
-        - A boxd VM (forked from the warm Base) appears later only if a command needs a real machine
+        - A machine (forked from the warm Base) appears later only if a command needs a real machine
       '''
     }
     signalbox.thread -> signalbox.actorhost 'facet(thread)' {
       notes '''
-        - Worker Loader isolate with its own SQLite, a facet of the Thread DO (W-HAR-01)
-        - This is where Claude Code or Codex runs; programs it starts go to child Dynamic Workers
+        - Child isolate with its own SQLite, a facet of the Thread DO (W-HAR-01)
+        - This is where Claude Code or Codex runs; programs it starts go to child isolates
       '''
     }
     signalbox.thread <- signalbox.actorhost 'session facet'
@@ -507,7 +507,7 @@ views {
           navigateTo work_harness_turn_inputs
           notes '''
             - The official CLI build loads into the session facet (isolate tier): Claude Code 2.1.302, Codex 0.162.1 proven
-            - With grant endpoints, instructions, tool profile and an MCP config whose entries all point at Executor
+            - With grant endpoints, instructions, tool profile and an MCP config whose entries all point at the tools gateway
           '''
         }
       }
@@ -567,7 +567,7 @@ views {
           navigateTo work_harness_open_session
         }
         signalbox.thread -> signalbox.computer 'open: exec allowed' {
-          notes '- Exec runs in the kernel; only commands that need a real machine escalate to a boxd VM'
+          notes '- Exec runs in the kernel; only commands that need a real machine escalate to a machine'
         }
       }
       else 'assistant or folder agent' {
@@ -613,7 +613,7 @@ views {
       navigateTo work_computer_builtin_egress
       notes '''
         - Any Bash call the agent makes, from the isolate-tier harness
-        - Runs in the kernel, or on an escalated boxd VM; same env rules on both
+        - Runs in the kernel, or on an escalated machine; same env rules on both
       '''
     }
     signalbox.computer -> signalbox.computer 'env from placeholders' {
@@ -983,8 +983,8 @@ views {
         }
         signalbox.automations -> signalbox.harness 'build and test' {
           notes '''
-            - The build and test commands run on a boxd VM forked from the warm Base
-            - The output is an isolate build (Dynamic Worker code) plus a green parity suite, never a VM image
+            - The build and test commands run on a machine forked from the warm Base
+            - The output is an isolate build (isolate code) plus a green parity suite, never a VM image
           '''
         }
         alt 'CI result' {

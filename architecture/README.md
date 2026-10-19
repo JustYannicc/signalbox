@@ -20,7 +20,7 @@ likec4.config.json   project (name: signalbox)
 spec.c4              element, deployment and relationship kinds; tags; style groups
 model/               people, clients, front-door, external, actors, hierarchy, domain
 model/modules/       one file per module with its parts, seams, adapters and technologies
-deployment.c4        build layer + production topology (Cloudflare, boxd, SaaS, devices)
+deployment.c4        build layer + production topology (edge platform, machines, SaaS, devices)
 views/               landscape, containers (runtime), modules (drill-downs), hierarchy,
                      domain, deployment, smells, v1, packages (publishable vs stays)
 views/states/        state machines: thread, turn, ask, pool account, VM, computer over time, Base, trash, connection
@@ -34,7 +34,7 @@ views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
                      · 7 local model request · 8 local tool call
   computer-gateway.c4 one command gateway and resource budgets (Workflows/Work/Computer/Gateway/...):
                      computer_gateway_same_command, computer_terminal_session, computer_budgets
-views/funnels.c4     every boundary is one funnel (Overview/Decisions/Funnels): funnels, then one drill-down
+views/funnels.c4     every boundary is one gateway (Overview/Decisions/Gateways): funnels, then one drill-down
                      each: funnel_clients, funnel_command, funnel_files, funnel_model, funnel_connections, funnel_port
 views/journeys/      scenario walk-throughs (Scenarios/... in the sidebar)
 CONTEXT.md           glossary and the words that are never kinds
@@ -54,14 +54,15 @@ CONTEXT.md           glossary and the words that are never kinds
 - At least three people (A, B members; C admin). Assistant and pipeline lanes are per person, at the top layer.
 - Generic names only. Nothing private: no real people, companies, repos, hosts or local paths.
 - Every view uses `autoLayout TopBottom`. View titles use folders: `Modules / Models`.
-- Harnesses (Claude Code, Codex) run in the isolate tier. boxd VMs forked from a warm Base only run
+- Harnesses (Claude Code, Codex) run in the isolate tier. Machines forked from a warm Base only run
   commands and the agent's own long-lived processes; they hibernate after 2 minutes without activity and
   are deleted at settle, archive or after H hours. A VM disk is cache only. The model never learns any of
-  this. Containers host CLIProxyAPI only.
-- Executor (Gateway's ToolGateway + Connections) is the one gateway for every connector; built-in tools
+  this. Containers host pool backends only.
+- The tools gateway (Gateway + Connections) is the one gateway for every connector; built-in tools
   (Bash, Read, Edit …) go Harness → Computer, and their network traffic leaves through Gateway's egress filter.
-- Every boundary is one funnel (`#funnel`): Funnel, Command gateway, Files, Model gateway, Connections gateway,
-  Port gateway. Every caller uses it, adapters fan out behind it, and moving work between Cloudflare and boxd
-  never moves it. Every outside call is made from Cloudflare; a VM's EgressProxy is only a bridge into Gateway.
+- Every boundary is one gateway (`#funnel`): client gateway, command gateway, files gateway, model gateway,
+  tools gateway, port gateway. Every caller uses it, adapters fan out behind it, and moving work between the
+  isolate tier and a machine never moves it. Every outside call is made from the edge platform; a VM's
+  EgressProxy is only a bridge into Gateway.
 
 Source of truth for the design lives outside this folder; this model follows it, it does not decide it.

@@ -54,7 +54,7 @@ model {
         isolate = adapter 'Isolate' {
           #decided #publishable
           icon tech:cloudflare-workers-icon
-          description 'prod: Thread DO facet + Dynamic Workers'
+          description 'prod: Thread DO facet + isolates'
           technology 'harness host + release scanner · Worker Loader · DO facets · {wasm} modules · JSPI · #1055 workerd builds'
           metadata {
             proven 'deployed DO, full tool turns, zero release edits: Codex 0.162.1 (#1069), Claude Code 2.1.302 (#1068)'
@@ -80,7 +80,7 @@ model {
         metadata {
           liveFsResidency 'authority until the turn-end commit, then cache; idle live-FS eviction (default automation) drops contents, keeps the manifest, rehydrates from the fork'
           seeding 'seed receipts are durable: a facet reincarnated between seeding and boot resumes from them'
-          programs 'never runs program code: every program runs in its own child Dynamic Worker behind the command gateway, so one command cannot take the DO down (#1255)'
+          programs 'never runs program code: every program runs in its own child isolate behind the command gateway, so one command cannot take the DO down (#1255)'
         }
       }
       shims = part 'Node · Bun shims' {

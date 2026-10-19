@@ -113,7 +113,7 @@ views {
     }
     signalbox.identity -> platform.workos 'create invitation' {
       notes '''
-        - WorkOS owns the invitation state and email
+        - The identity provider owns the invitation state and email
       '''
     }
     platform.workos -> personD 'invitation email'
@@ -223,7 +223,7 @@ views {
         personC -> signalbox.web 'revoke invite' {
           navigateTo state_invitation
           notes '''
-            - The invitation ends in WorkOS; the link stops working
+            - The invitation ends in the identity provider; the link stops working
           '''
         }
       }
@@ -557,7 +557,7 @@ views {
         }
       }
     }
-    signalbox.identity -> platform.workos 'WorkOS invitation' {
+    signalbox.identity -> platform.workos 'Identity invitation' {
       navigateTo state_invitation
     }
     platform.workos -> personD 'email'
@@ -611,7 +611,7 @@ views {
     signalbox.identity -> signalbox.tree 'B joined Company' {
       navigateTo organization_identity_member_join
       notes '''
-        - WorkOS membership arrives; B's mount appears under B's Work
+        - Identity membership arrives; B's mount appears under B's Work
       '''
     }
     alt 'preset' {
@@ -715,7 +715,7 @@ views {
           navigateTo folders_access_owner_transfer
         }
         signalbox.operations -> signalbox.tree 'Role{A, Owner}'
-        signalbox.operations -> signalbox.identity 'mirror to WorkOS'
+        signalbox.operations -> signalbox.identity 'mirror to the identity provider'
         personC -> signalbox.web 'Leave again'
       }
       else 'another Owner exists' {
@@ -921,7 +921,7 @@ views {
         signalbox.tree -> personB 'Team role added'
       }
       else 'D, outside collaborator' {
-        signalbox.operations -> signalbox.identity 'WorkOS invitation' {
+        signalbox.operations -> signalbox.identity 'Identity invitation' {
           navigateTo state_invitation
           notes '''
             - A person invitation, not an organization membership
@@ -950,7 +950,7 @@ views {
     variant sequence
     title "Workflows/Folders/Access/Roles/Hand over the organization's Owner role"
     description '''
-      R-ACC-19. C hands folder Company's Owner role to B; WorkOS mirrors it.
+      R-ACC-19. C hands folder Company's Owner role to B; the identity provider mirrors it.
     '''
     include platform, signalbox, personC, personB, signalbox.web, signalbox.operations, signalbox.tree, signalbox.identity, platform.workos
 
@@ -1473,7 +1473,7 @@ views {
       '''
     }
     signalbox.web -> signalbox.operations 'MakeOrganization'
-    signalbox.operations -> signalbox.identity 'create WorkOS org' {
+    signalbox.operations -> signalbox.identity 'create identity org' {
       navigateTo organization_identity_company_join
       notes '''
         - A becomes its Admin

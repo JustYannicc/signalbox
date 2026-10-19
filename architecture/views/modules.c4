@@ -3,9 +3,9 @@
 // Neighbours stay black boxes. A red dashed seam has one adapter (hypothetical seam).
 views {
   view m-funnel of signalbox.funnel {
-    title 'Modules/Funnel'
+    title 'Modules/Client gateway'
     description '''
-      What does Funnel offer, hide and plug in?
+      What does client gateway offer, hide and plug in?
 
       Verdict: passthrough by design: a stateless front door that only decodes, calls and maps errors. Shallow on purpose; its value is that clients never reach handlers directly.
     '''
@@ -33,7 +33,7 @@ views {
     description '''
       What does Identity offer, hide and plug in?
 
-      Verdict: deep: 6 verbs hide AuthKit, the invisible personal owner, aliases, membership sync, MCP authorization, device code and the token signer. Its WorkOS seam is unnamed (AuthKit is the only implementation).
+      Verdict: deep: 6 verbs hide hosted sign-in, the invisible personal owner, aliases, membership sync, MCP authorization, device code and the token signer. Its identity-provider seam is unnamed (one implementation only).
     '''
     include *
     include * -> signalbox.identity, signalbox.identity -> *
@@ -72,7 +72,7 @@ views {
     description '''
       What does Harness offer, hide and plug in?
 
-      Verdict: deep: 4 verbs hide which agent CLI runs and where. The loop runs in the Thread DO facet plus Dynamic Workers (isolate tier: Claude Code and Codex); LocalProcess is for tests only. Built-in tools go to Computer, connectors to Executor. The harness's own Task subagents stay in-process; Signalbox delegation is a child thread. Seed receipts are durable, so a facet reincarnated before boot resumes from them.
+      Verdict: deep: 4 verbs hide which agent CLI runs and where. The loop runs in the Thread DO facet plus isolates (isolate tier: Claude Code and Codex); LocalProcess is for tests only. Built-in tools go to Computer, connectors to the tools gateway. The harness's own Task subagents stay in-process; Signalbox delegation is a child thread. Seed receipts are durable, so a facet reincarnated before boot resumes from them.
     '''
     include *
     include * -> signalbox.harness, signalbox.harness -> *
@@ -87,7 +87,7 @@ views {
     description '''
       What does Computer offer, hide and plug in?
 
-      Verdict: deep: 5 verbs hide placement. Known kernel programs run in the kernel (child isolates); unknown binaries, apt, docker and native toolchains escalate to a boxd VM, and a process the agent starts there stays on its VM, which hibernates after 2 quiet minutes and resumes on demand. A command is replayed on the VM only when the failure proves nothing ran; anything else is surfaced. No machine classes, no thread moves (#1071). The Machine seam has one adapter (boxd): a hypothetical seam.
+      Verdict: deep: 5 verbs hide placement. Known kernel programs run in the kernel (child isolates); unknown binaries, apt, docker and native toolchains escalate to a machine, and a process the agent starts there stays on its VM, which hibernates after 2 quiet minutes and resumes on demand. A command is replayed on the VM only when the failure proves nothing ran; anything else is surfaced. No machine classes, no thread moves (#1071). The Machine seam has one adapter (hosted machines): a hypothetical seam.
     '''
     include *
     include * -> signalbox.computer, signalbox.computer -> *
@@ -102,7 +102,7 @@ views {
     description '''
       What does Bases offer, hide and plug in?
 
-      Verdict: shallow: 6 verbs over a thin lease and pointer layer. `acquire(drive, recipeHash, operationId)` is idempotent on operationId; the caller persists the intent first and leases expire at the VM's deleteAfter horizon, so no hold is orphaned (#1217). The Snapshot seam has two adapters: None (cold create, ships with #1071) and boxd snapshots.
+      Verdict: shallow: 6 verbs over a thin lease and pointer layer. `acquire(drive, recipeHash, operationId)` is idempotent on operationId; the caller persists the intent first and leases expire at the VM's deleteAfter horizon, so no hold is orphaned (#1217). The Snapshot seam has two adapters: None (cold create, ships with #1071) and machine snapshots.
     '''
     include *
     include * -> signalbox.bases, signalbox.bases -> *
@@ -116,7 +116,7 @@ views {
     description '''
       What does Drive offer, hide and plug in?
 
-      Verdict: deep: 8 verbs (incl. search over file contents) hide the single writer of main (Repo actor), the storage tiers (Artifacts hot, R2 full record), git-only forge sync and source reads. PR and issue APIs go through Connections.
+      Verdict: deep: 8 verbs (incl. search over file contents) hide the single writer of main (Repo actor), the storage tiers (hot repos, R2 full record), git-only forge sync and source reads. PR and issue APIs go through Connections.
     '''
     include *
     include * -> signalbox.drive, signalbox.drive -> *
@@ -133,7 +133,7 @@ views {
     description '''
       What does Models offer, hide and plug in?
 
-      Verdict: deep: 7 verbs (connect · complete · change · view · catalog · serve · meter) hide sign-in flows, pool custody, routing, metering and the CPA host. Pools are placed on folders; the Gateway is the one model gateway in front of it.
+      Verdict: deep: 7 verbs (connect · complete · change · view · catalog · serve · meter) hide sign-in flows, pool custody, routing, metering and the pool host. Pools are placed on folders; the Gateway is the one model gateway in front of it.
     '''
     include *
     include * -> signalbox.models, signalbox.models -> *
@@ -148,7 +148,7 @@ views {
     description '''
       What does Connections offer, hide and plug in?
 
-      Verdict: deep: 6 verbs hide hosted OAuth, one actor per credential, tool search, exposure and the vault. Executor is absorbed here: with Gateway's ToolGateway it is the one gateway for every connector (MCP servers, GitHub, the browser, devices), so 100 Gmail accounts are 100 one-click connections. Servers are sorted by kind: remote HTTP proxied, network-only stdio as a kernel program, native or Python on the thread's VM, device-only through the device gateway. Credentials are keyed by server URL. Connections and exposure are placed on folders and resolve by hierarchy.
+      Verdict: deep: 6 verbs hide hosted OAuth, one actor per credential, tool search, exposure and the vault. With Gateway's tools gateway it is the one gateway for every connector (MCP servers, GitHub, the browser, devices), so 100 Gmail accounts are 100 one-click connections. Servers are sorted by kind: remote HTTP proxied, network-only stdio as a kernel program, native or Python on the thread's VM, device-only through the device gateway. Credentials are keyed by server URL. Connections and exposure are placed on folders and resolve by hierarchy.
     '''
     include *
     include * -> signalbox.connections, signalbox.connections -> *
@@ -164,7 +164,7 @@ views {
     description '''
       What does Gateway offer, hide and plug in?
 
-      Verdict: deep: 3 verbs (grant · serve · fill) plus two ports (ModelGateway: the one model gateway, also for provider-side web search; ToolGateway: Executor's MCP port, per-tool exposure search or direct) hide the grant JWT, codemode and egress filling. Built-in tool traffic (curl, git push, npm, gh, WebFetch) leaves through the egress filter, filled from the same vault keyed by destination. Credentials never leave it.
+      Verdict: deep: 3 verbs (grant · serve · fill) plus two ports (model gateway: the one model gateway, also for provider-side web search; tools gateway: the MCP port, per-tool exposure search or direct) hide the grant JWT, codemode and egress filling. Built-in tool traffic (curl, git push, npm, gh, WebFetch) leaves through the egress filter, filled from the same vault keyed by destination. Credentials never leave it.
     '''
     include *
     include * -> signalbox.gateway, signalbox.gateway -> *
@@ -233,7 +233,7 @@ views {
     description '''
       What does Browser offer, hide and plug in?
 
-      Verdict: passthrough: 2 verbs mostly forward to Kernel and Browser Run. Both real seams have one adapter each (hypothetical); the test-local seam is only candidates.
+      Verdict: passthrough: 2 verbs mostly forward to the hosted browser and hosted render. Both real seams have one adapter each (hypothetical); the test-local seam is only candidates.
     '''
     include *
     include * -> signalbox.browser, signalbox.browser -> *

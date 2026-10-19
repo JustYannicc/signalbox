@@ -1,5 +1,5 @@
 // Shard 13: work-drive. Drive (accept, access, storage), Just Files sources, file journeys and
-// cross-cutting recovery. Lanes: Artifacts (`platform.artifacts`, hot git repos) and R2 (`platform.r2`, full
+// cross-cutting recovery. Lanes: hot git storage (`platform.artifacts`, hot git repos) and R2 (`platform.r2`, full
 // record) appear only in the Drive's own storage and mount flows; a code merge runs on folder Team's run thread
 // `hier.company.team.runThread`; Company's agent asks Team's agent thread `hier.company.team.agentTeam`.
 // A module and its own actor never exchange a step (LikeC4 forbids parent-child steps): verbs go to the
@@ -96,7 +96,7 @@ views {
     signalbox.mobile -> signalbox.thread.threadActor 'read attachment' {
       navigateTo work_attachments_agent_images
       notes '''
-        - The phone holds no work: it asks the thread (through the Funnel) for the bytes.
+        - The phone holds no work: it asks the thread (through the client gateway) for the bytes.
       '''
     }
     signalbox.mobile <- signalbox.thread.threadActor 'bytes' {
@@ -222,7 +222,7 @@ views {
         - Accepts run one at a time per drive.
       '''
     }
-    alt 'merge executor' {
+    alt 'merge run' {
       when 'docs drive' {
         signalbox.drive.repoActor -> signalbox.drive.repoActor 'merge in Worker' {
           notes '''
@@ -524,7 +524,7 @@ views {
     platform.workos -> signalbox.identity 'membership webhook' {
       navigateTo organization_identity_leave
       notes '''
-        - At least once, ordered by WorkOS event time.
+        - At least once, ordered by the identity provider event time.
       '''
     }
     signalbox.identity -> signalbox.tree.levelActor 'drop B role' {
@@ -572,7 +572,7 @@ views {
     }
     signalbox.identity -> signalbox.drive.repoActor 'repo for drive' {
       notes '''
-        - The drive's Repo actor names its Artifacts repo.
+        - The drive's Repo actor names its hot repo.
       '''
     }
     signalbox.desktop <- signalbox.identity 'repo-scoped token' {
@@ -665,7 +665,7 @@ views {
         }
         signalbox.thread.threadActor -> signalbox.drive.repoActor 'create drive' {
           notes '''
-            - A Repo actor and an Artifacts repo, created lazily on first write.
+            - A Repo actor and a hot repo, created lazily on first write.
           '''
         }
         signalbox.drive.repoActor -> signalbox.tree.levelActor 'Place{drive, here}' {
@@ -701,7 +701,7 @@ views {
         }
         signalbox.web -> platform.workos 'create organization' {
           notes '''
-            - WorkOS gets the new organization; the folder's owner changes.
+            - The identity provider gets the new organization; the folder's owner changes.
           '''
         }
         signalbox.web -> signalbox.tree.levelActor 'MakeOrganization' {
@@ -812,7 +812,7 @@ views {
         signalbox.computer -> signalbox.drive 'fetch from fork' {
           navigateTo work_drive_eviction
           notes '''
-            - Served from the hot tier (Artifacts); a cold drive reads from R2.
+            - Served from the hot tier; a cold drive reads from R2.
           '''
         }
         signalbox.computer <- signalbox.drive 'bytes' {
@@ -847,7 +847,7 @@ views {
   dynamic view work_drive_eviction {
     variant sequence
     title 'Workflows/Work/Drive/Storage/Evict an idle drive and promote it back'
-    description 'W-DRV-13 (alias T-GIT-37). Drive storage internals: Artifacts is the hot tier, R2 the full record.'
+    description 'W-DRV-13 (alias T-GIT-37). Drive storage internals: hot repos are the hot tier, R2 the full record.'
 
     include personA, signalbox.web, signalbox.drive.repoActor, signalbox.automations, platform.artifacts, platform.r2
     include signalbox, platform
@@ -869,7 +869,7 @@ views {
       when 'R2 has everything' {
         signalbox.drive.repoActor -> platform.artifacts 'delete hot repo' {
           notes '''
-            - The Artifacts repo is deleted; R2 keeps the record.
+            - The hot repo is deleted; R2 keeps the record.
           '''
         }
       }
@@ -890,7 +890,7 @@ views {
       when 'open, message or mount' {
         signalbox.web -> signalbox.drive.repoActor 'promote' {
           notes '''
-            - The drive is rebuilt into Artifacts from the R2 bundle.
+            - The drive is rebuilt into the hot tier from the R2 bundle.
           '''
         }
         signalbox.drive.repoActor -> platform.artifacts 'rehydrate' {
@@ -967,7 +967,7 @@ views {
   dynamic view work_drive_r2_record {
     variant sequence
     title 'Workflows/Work/Drive/Storage/Keep the full record in R2'
-    description 'W-DRV-05. Drive storage internals: every Artifacts push ends up in an R2 bundle.'
+    description 'W-DRV-05. Drive storage internals: every hot repo push ends up in an R2 bundle.'
 
     include signalbox.ingress, signalbox.drive.repoActor, platform.artifacts, platform.r2
     include signalbox, platform
@@ -975,7 +975,7 @@ views {
 
     platform.artifacts -> signalbox.ingress 'pushed event' {
       notes '''
-        - Artifacts emits a `pushed` event for every push.
+        - The hot tier emits a `pushed` event for every push.
       '''
     }
     signalbox.ingress -> signalbox.drive.repoActor 'enqueue' {
@@ -1217,7 +1217,7 @@ views {
       else 'versioned dispatch' {
         signalbox.funnel -> signalbox.actorhost 'load by version' {
           notes '''
-            - Engine code loads by versioned Worker Loader id, so the stable shell picks the new version.
+            - Engine code loads by versioned isolate id, so the stable shell picks the new version.
           '''
         }
       }
@@ -1270,7 +1270,7 @@ views {
     }
     signalbox.gateway -> signalbox.models 'model bytes' {
       notes '''
-        - The id is stamped into CPA's usage record header.
+        - The id is stamped into the pool backend's usage record header.
       '''
     }
     parallel 'each unit emits one wide event' {

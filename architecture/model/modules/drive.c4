@@ -17,7 +17,7 @@ model {
 
       store = part 'Store seam · 2 adapters' {
         metadata { adapters '2' }
-        artifactsR2 = adapter 'Artifacts + R2' {
+        artifactsR2 = adapter 'Hot repos + record' {
           icon tech:cloudflare-icon
           description 'hot tier + full record'
           technology 'Cloudflare Artifacts · Artifacts events · ArtifactFS · R2 EU (aws4fetch)'
@@ -70,7 +70,7 @@ model {
         icon bootstrap:collection
         description 'synced items per place'
       }
-      mergeExec = part 'Merge executor' {
+      mergeExec = part 'Merge run' {
         icon tech:git
         description 'docs in Worker, code on a VM run'
         technology 'isomorphic-git · git.wasm · native git'

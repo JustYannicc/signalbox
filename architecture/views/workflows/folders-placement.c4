@@ -223,7 +223,7 @@ views {
     }
     mcpClient -> signalbox.operations 'Invoke operation' {
       notes """
-        - Arrives through ToolGateway; Operations checks the operation's class
+        - Arrives through the tools gateway; Operations checks the operation's class
       """
     }
     alt 'operation and caller' {
@@ -238,7 +238,7 @@ views {
       when 'human-only, external session' {
         mcpClient <- signalbox.operations 'HumanOnly{confirmUrl}' {
           notes """
-            - Loan consent, final OAuth step, gate answers, linking 1Password, sign-in grants
+            - Loan consent, final OAuth step, gate answers, linking a vault, sign-in grants
           """
         }
       }
@@ -723,7 +723,7 @@ views {
     }
     signalbox.web -> signalbox.operations 'MakeOrganization'
     signalbox.operations -> signalbox.identity 'Create organization'
-    signalbox.identity -> platform.workos 'Create WorkOS org' {
+    signalbox.identity -> platform.workos 'Create identity org' {
       notes """
         - A becomes its owner; C joins later as admin
       """
@@ -1039,7 +1039,7 @@ views {
   dynamic view folders_placement_kind_secret {
     variant sequence
     title 'Workflows/Folders/Placement/Kinds/Place a secret reference'
-    description 'R-PLC-14 · A secret reference placed on a folder; the value stays in 1Password. Reach default below vs own-folder-only is an open conflict.'
+    description 'R-PLC-14 · A secret reference placed on a folder; the value stays in the vault. Reach default below vs own-folder-only is an open conflict.'
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.gateway, services, services.onepassword
 
@@ -1057,7 +1057,7 @@ views {
         signalbox.web -> signalbox.operations 'Bind folder vault' {
           navigateTo folders_secrets_service_account
           notes """
-            - A folder vault or 1Password Environment binding
+            - A folder vault or a vault environment binding
           """
         }
       }

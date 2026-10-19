@@ -291,7 +291,7 @@ views {
     }
     signalbox.web -> signalbox.funnel 'open folder page' {
       notes """
-        - One query; Funnel fans out to the modules that own each section
+        - One query; client gateway fans out to the modules that own each section
       """
     }
     parallel {
@@ -834,7 +834,7 @@ views {
         }
         signalbox.mobile -> signalbox.funnel -> signalbox.identity 'Identity.signIn' {
           notes """
-            - Starts AuthKit
+            - Starts hosted sign-in
           """
         }
       }
@@ -846,12 +846,12 @@ views {
         }
         signalbox.desktop -> signalbox.funnel -> signalbox.identity 'Identity.signIn' {
           notes """
-            - Starts AuthKit
+            - Starts hosted sign-in
           """
         }
       }
     }
-    signalbox.identity -> platform.workos 'AuthKit' {
+    signalbox.identity -> platform.workos 'Hosted sign-in' {
       notes """
         - No account or organization picker, ever
       """
