@@ -179,3 +179,16 @@ export function nodeDirent(
 ): NodeDirentLike {
   return new NodeFsDirent(entry, parentPath, encoding) as unknown as NodeDirentLike;
 }
+
+export class NodeFsDirentFromStats extends NodeFsDirent {
+  constructor(name: string, stats: NodeStatsLike, parentPath: string) {
+    const type: KernelDirectoryEntry["type"] = stats.isDirectory()
+      ? "directory"
+      : stats.isSymbolicLink()
+        ? "symlink"
+        : stats.isCharacterDevice()
+          ? "character"
+          : "file";
+    super({ name, type }, parentPath, "utf8");
+  }
+}

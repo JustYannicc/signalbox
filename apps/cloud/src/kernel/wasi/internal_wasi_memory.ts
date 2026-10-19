@@ -149,6 +149,20 @@ export class WasiMemory {
   }
 }
 
+const memoryAccessors = new WeakMap<WebAssembly.Memory, WasiMemory>();
+
+/** Reuse a sparse syscall accessor directly or adapt an ordinary Wasm memory once. */
+export function asWasiMemory(memory: WebAssembly.Memory | WasiMemory): WasiMemory {
+  if (memory instanceof WasiMemory) return memory;
+  let accessor = memoryAccessors.get(memory);
+  if (accessor === undefined) {
+    accessor = new WasiMemory();
+    accessor.set(memory);
+    memoryAccessors.set(memory, accessor);
+  }
+  return accessor;
+}
+
 function sizeEncodedStrings(strings: Uint8Array[]): {
   count: number;
   size: number;

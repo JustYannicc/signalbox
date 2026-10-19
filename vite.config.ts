@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
 import { evlogLintOverrides } from "./scripts/lib/evlog-lint.ts";
+import vendoredRoots from "./scripts/boundaries/vendored-roots.json" with { type: "json" };
 import signalboxLint from "./packages/oxlint-plugin-signalbox/config.ts"; // signalbox: fork-owned lint rules
 
 const RESTRICTED_IMPORT_PATHS = [
@@ -83,8 +84,8 @@ export default defineConfig({
       ".repos/**",
       // signalbox: preserve byte-identical upstream workerd Storage contract.
       "apps/cloud/src/kernel/storage.ts",
-      // signalbox: preserve pinned Nimbus interpreter source; verify its prepared runtime separately.
-      "apps/cloud/src/isolate/node/vm/vendor/**",
+      // signalbox: preserve pinned vendor bytes and verify generated runtimes separately.
+      ...vendoredRoots.map((root) => `${root}**`),
       // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
       // it rewrites `*` as `_` and joins lines.
       ".macroscope/ignore.md",
@@ -117,8 +118,8 @@ export default defineConfig({
     ignorePatterns: [
       ".repos",
       ".repos/**",
-      // signalbox: preserve pinned Nimbus interpreter source; verify its prepared runtime separately.
-      "apps/cloud/src/isolate/node/vm/vendor/**",
+      // signalbox: preserve pinned vendor bytes and verify generated runtimes separately.
+      ...vendoredRoots.map((root) => `${root}**`),
       "dist",
       "dist-electron",
       "node_modules",

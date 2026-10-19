@@ -129,9 +129,12 @@ export async function prepareClaudeTurnProof(options: {
   scenario?: "boot" | "tools";
   contextTokenEquivalent?: 50_000 | 200_000;
   programArtifacts?: ProofProgramArtifactPaths;
+  seedProgramsOnly?: boolean;
 }) {
   if (options.assetsOnly && options.packagesOnly)
     throw new Error("Choose assets-only or packages-only");
+  if (options.seedProgramsOnly && (!options.programArtifacts || !options.hostRuntime))
+    throw new Error("Seed-only programs require pinned artifacts and a custom host runtime");
   const artifactRoot = NodePath.resolve(options.releaseDir);
   const outputRoot = NodePath.resolve(options.outputDir);
   // Reserving a fresh directory prevents a failed rerun from mutating prior evidence.
@@ -151,7 +154,8 @@ export async function prepareClaudeTurnProof(options: {
   const programs = options.programArtifacts
     ? await prepareProofProgramModules(options.programArtifacts)
     : undefined;
-  const programInventory = (programs?.modules ?? []).map(({ name, type, bytes, sha256 }) => ({
+  const programModules = options.seedProgramsOnly ? [] : (programs?.modules ?? []);
+  const programInventory = programModules.map(({ name, type, bytes, sha256 }) => ({
     name,
     type,
     bytes: bytes.byteLength,
@@ -182,7 +186,7 @@ export async function prepareClaudeTurnProof(options: {
     sha256: sha256(module.bytes),
   }));
   const reservedNames = new Set(["proof-host.js"]);
-  for (const module of [...environmentModules, ...(programs?.modules ?? [])]) {
+  for (const module of [...environmentModules, ...programModules]) {
     if (reservedNames.has(module.path) || Object.hasOwn(manifest.modules, module.path))
       throw new Error(`Release conflicts with environment module name: ${module.path}`);
     reservedNames.add(module.path);
@@ -198,9 +202,13 @@ export async function prepareClaudeTurnProof(options: {
   const runtime = options.hostRuntime
     ? NodePath.resolve(options.hostRuntime)
     : NodePath.join(import.meta.dirname, "ClaudeTurnProof.ts");
-  const source = `${programs?.imports ?? ""}
+  const programConfiguration =
+    programs === undefined
+      ? ""
+      : `${options.seedProgramsOnly ? "" : `,programs:${programs.configExpression}`},programFiles:${JSON.stringify(programs.executableCatalog)}`;
+  const source = `${options.seedProgramsOnly ? "" : (programs?.imports ?? "")}
 import {createClaudeTurnProofClass} from ${JSON.stringify(runtime)};
-export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},packagesOnly:${options.packagesOnly === true},loadPackages:${loadPackages},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}${programs === undefined ? "" : `,programs:${programs.configExpression},programFiles:${JSON.stringify(programs.executableCatalog)}`}});`;
+export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},packagesOnly:${options.packagesOnly === true},loadPackages:${loadPackages},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}${programConfiguration}});`;
   const bundled = await build({
     stdin: {
       contents: source,
@@ -218,7 +226,7 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     external: [
       "node:*",
       "cloudflare:*",
-      ...(programs?.external ?? []),
+      ...(options.seedProgramsOnly ? [] : (programs?.external ?? [])),
       `./${manifest.mainModule}`,
       ...Object.values(environment?.packageEntrypoints ?? {}).map((path) => `./${path}`),
     ],
@@ -253,7 +261,7 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     await NodeFSP.writeFile(destination, module.bytes);
     modules[module.path] = { path, type: module.type };
   }
-  for (const module of programs?.modules ?? []) {
+  for (const module of programModules) {
     const destination = within(outputRoot, module.path);
     await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
     await NodeFSP.writeFile(destination, module.bytes);

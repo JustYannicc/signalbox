@@ -1,9 +1,10 @@
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import { createKernelNimbusMetadata } from "../KernelNimbusMetadata.ts";
 import { errno, range } from "../bash/BashMemory.ts";
+import type { WasiMemory } from "../wasi/internal_wasi_memory.ts";
 
 const ENOSPC = 68;
-const NIMBUS_IMPORTS = new Set([
+export const KERNEL_BUSYBOX_IMPORT_NAMES = Object.freeze([
   "identity",
   "chown",
   "stat_metadata",
@@ -11,11 +12,12 @@ const NIMBUS_IMPORTS = new Set([
   "fchmod",
   "startup_cwd",
   "account",
-]);
+] as const);
+const NIMBUS_IMPORTS = new Set<string>(KERNEL_BUSYBOX_IMPORT_NAMES);
 
 export interface KernelBusyboxImportOptions {
   readonly module: WebAssembly.Module;
-  readonly memory: () => WebAssembly.Memory;
+  readonly memory: () => WebAssembly.Memory | WasiMemory;
   readonly filesystem: KernelFileSystem;
   readonly pid: number;
   readonly parentPid: number;
@@ -38,6 +40,19 @@ export function createKernelBusyboxImports(
     requested.add(item.name);
   }
 
+  return Object.freeze({
+    nimbus_proc: createKernelBusyboxNamedImports({ ...options, names: [...requested] }),
+  });
+}
+
+/** The facet supplies validated import names without compiling or owning the guest module. */
+export function createKernelBusyboxNamedImports(
+  options: Omit<KernelBusyboxImportOptions, "module"> & { readonly names: readonly string[] },
+): Readonly<Record<string, (...args: number[]) => number>> {
+  for (const name of options.names) {
+    if (!NIMBUS_IMPORTS.has(name))
+      throw new Error(`Unsupported BusyBox import: nimbus_proc.${name}`);
+  }
   const credentials = options.filesystem.posixCredentials;
   if (credentials === undefined) {
     throw Object.assign(new Error("BusyBox requires an explicit POSIX filesystem policy"), {
@@ -54,8 +69,8 @@ export function createKernelBusyboxImports(
     memory: options.memory,
     filesystem: options.filesystem,
   });
-  const imports = Object.create(null) as Record<string, WebAssembly.ImportValue>;
-  for (const name of requested) {
+  const imports = Object.create(null) as Record<string, (...args: number[]) => number>;
+  for (const name of options.names) {
     switch (name) {
       case "identity":
         imports[name] = (field: number) => {
@@ -86,22 +101,22 @@ export function createKernelBusyboxImports(
         };
         break;
       case "stat_metadata":
-        imports[name] = metadata.stat_metadata as WebAssembly.ImportValue;
+        imports[name] = metadata.stat_metadata;
         break;
       case "account":
         // Nimbus uses the same nimbus-libc account record ABI in Bash and BusyBox.
-        imports[name] = metadata.account as WebAssembly.ImportValue;
+        imports[name] = metadata.account;
         break;
       case "chown":
-        imports[name] = metadata.chown as WebAssembly.ImportValue;
+        imports[name] = metadata.chown;
         break;
       case "chmod":
-        imports[name] = metadata.chmod as WebAssembly.ImportValue;
+        imports[name] = metadata.chmod;
         break;
       case "fchmod":
-        imports[name] = metadata.fchmod as WebAssembly.ImportValue;
+        imports[name] = metadata.fchmod;
         break;
     }
   }
-  return Object.freeze({ nimbus_proc: Object.freeze(imports) });
+  return Object.freeze(imports);
 }

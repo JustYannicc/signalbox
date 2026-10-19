@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - Standalone CI guard, run with plain node.
 /**
  * Fails when lines this fork adds over upstream contain personal data. Upstream
- * content never trips it: only lines added between merge-base(HEAD, upstream)
- * and HEAD are scanned, which also covers a pull request's own additions.
+ * content and centrally classified vendor copies are excluded. Remaining lines
+ * added between merge-base(HEAD, upstream) and HEAD cover the fork's own additions.
  *
  *   node scripts/personal-data/check.ts                      against upstream/main
  *   node scripts/personal-data/check.ts --upstream FETCH_HEAD
@@ -20,6 +20,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import vendoredRoots from "../boundaries/vendored-roots.json" with { type: "json" };
 
 export interface AddedLine {
   readonly file: string;
@@ -138,7 +139,7 @@ function git(cwd: string, args: ReadonlyArray<string>): string {
   });
 }
 
-/** Lines HEAD adds over its merge-base with `upstream`. Throws when the merge-base is unresolvable. */
+/** Fork-owned lines HEAD adds over its merge-base with `upstream`; missing refs still throw. */
 export function forkAddedLines(cwd: string, upstream: string): AddedLine[] {
   const base = git(cwd, ["merge-base", "HEAD", upstream]).trim();
   const diff = git(cwd, [
@@ -152,7 +153,9 @@ export function forkAddedLines(cwd: string, upstream: string): AddedLine[] {
     base,
     "HEAD",
   ]);
-  return parseAddedLines(diff);
+  return parseAddedLines(diff).filter(
+    ({ file }) => !vendoredRoots.some((root) => file.startsWith(root)),
+  );
 }
 
 export function formatFinding(finding: Finding): string {

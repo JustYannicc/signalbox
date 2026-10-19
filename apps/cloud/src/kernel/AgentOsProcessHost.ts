@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - guest polling must yield to the host event loop without Effect.
 import {
   decodeAgentOsSpawnRequest,
   writeAgentOsPid,
@@ -130,6 +131,14 @@ export class AgentOsProcessHost {
       return result.error.code === "NOT_FOUND" ? 12 : kernelErrno(result.error.code);
     }
     const value = result.value;
+    if (value.pid === 0) {
+      // Resolved Promises only yield to microtasks. Empty WNOHANG polls must
+      // let child I/O and cancellation tasks run without waiting for child exit.
+      await runCurrentKernelCpuAsyncSystemImport(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+      );
+      if (this.#options.signal?.aborted) return 11;
+    }
     const status = "status" in value ? value.status : undefined;
     const values = [
       status?.exitCode ?? 0,
