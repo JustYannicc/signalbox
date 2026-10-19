@@ -95,6 +95,7 @@ export class ProofOwnership {
 
   async prepareSourceInput() {
     const current = await this.read();
+    if (current.cleanupConfirmed) throw new Error("Proof allocation is closed after cleanup");
     if (current.sourceExpiresAt !== undefined)
       throw new Error("The proof source was already dispatched");
     const expiresAt = Date.now() + 600_000;

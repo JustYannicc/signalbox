@@ -15,6 +15,7 @@ interface Env {
   BOXD_PROOF_OWNER: string;
 }
 
+const ADMISSION_CLOSED = "proof-admission-closed";
 const runInput = Schema.decodeUnknownSync(
   Schema.Struct({
     runnerEndpoint: Schema.optionalKey(Schema.String),
@@ -29,6 +30,8 @@ const evidence = (state: ProofState) => ({
 
 /** Disposable integration proof. This Worker is never part of the product stack. */
 export class ComputerBoxdProof extends DurableObject<Env> {
+  private admissionClosed = false;
+  private recovering: Promise<void> | undefined;
   private seed: Awaited<ReturnType<typeof decodeProofSeed>> | undefined;
   private ownership: Promise<ProofOwnership> | undefined;
   private active: Promise<void> | undefined;
@@ -40,10 +43,13 @@ export class ComputerBoxdProof extends DurableObject<Env> {
     if (!/^sb-computer-boxd-[a-z0-9]{8,20}$/.test(env.BOXD_PROOF_OWNER))
       throw new Error("Invalid proof owner");
     ctx.blockConcurrencyWhile(async () => {
+      this.admissionClosed = (await ctx.storage.get(ADMISSION_CLOSED)) === true;
       const saved = await ctx.storage.get("proof-state");
       if (saved !== undefined) {
         const state = decodeProofState(saved);
         if (state.status === "running") {
+          this.admissionClosed = true;
+          await ctx.storage.put(ADMISSION_CLOSED, true);
           await ctx.storage.put("proof-state", {
             ...state,
             status: "failed",
@@ -90,10 +96,12 @@ export class ComputerBoxdProof extends DurableObject<Env> {
     if (path === "/status" && request.method === "GET")
       return Response.json(evidence(await this.state()));
     if (path === "/seed" && request.method === "POST") {
+      if (this.admissionClosed) return new Response("Admission closed", { status: 409 });
+      const seed = await decodeProofSeed(await request.json());
       const state = await this.state();
-      if (state.status !== "pending" || this.seed !== undefined)
+      if (this.admissionClosed || state.status !== "pending" || this.seed !== undefined)
         return new Response("Already seeded", { status: 409 });
-      this.seed = await decodeProofSeed(await request.json());
+      this.seed = seed;
       await this.ctx.storage.put("proof-state", {
         ...state,
         sourceCommit: this.seed.sourceCommit,
@@ -103,9 +111,7 @@ export class ComputerBoxdProof extends DurableObject<Env> {
       return Response.json(evidence(await this.state()), { status: 202 });
     }
     if (path === "/run" && request.method === "POST") {
-      const state = await this.state();
-      if (state.status !== "pending" || this.active || !this.seed)
-        return new Response("Run unavailable", { status: 409 });
+      if (this.admissionClosed) return new Response("Admission closed", { status: 409 });
       const body = await request.text();
       const options = runInput(body ? JSON.parse(body) : {});
       const endpoint =
@@ -128,11 +134,16 @@ export class ComputerBoxdProof extends DurableObject<Env> {
       ) {
         return new Response("Invalid Runner endpoint", { status: 400 });
       }
+      const state = await this.state();
+      if (this.admissionClosed || state.status !== "pending" || this.active || !this.seed)
+        return new Response("Run unavailable", { status: 409 });
       const seed = this.seed;
+      this.seed = undefined;
       this.controller = new AbortController();
       const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(600_000)]);
-      await this.ctx.storage.put("proof-state", { ...state, status: "running" });
-      this.active = this.run(seed, endpoint.href, signal).finally(() => {
+      const admitted = this.ctx.storage.put("proof-state", { ...state, status: "running" });
+      // Publish the lifetime before yielding so recovery can abort and await this admission.
+      this.active = this.run(seed, endpoint.href, signal, admitted).finally(() => {
         this.active = undefined;
         this.sockets = undefined;
         this.seed = undefined;
@@ -151,9 +162,13 @@ export class ComputerBoxdProof extends DurableObject<Env> {
     seed: Awaited<ReturnType<typeof decodeProofSeed>>,
     endpoint: string,
     signal: AbortSignal,
+    admitted: Promise<void>,
   ) {
     try {
+      await admitted;
+      signal.throwIfAborted();
       const ownership = await this.getOwnership();
+      signal.throwIfAborted();
       await runComputerBoxdProof({
         ownership,
         seed,
@@ -183,10 +198,21 @@ export class ComputerBoxdProof extends DurableObject<Env> {
     }
   }
 
-  private async recover() {
+  private recover() {
+    this.admissionClosed = true;
+    this.seed = undefined;
+    this.recovering ??= this.settleRecovery().finally(() => {
+      this.recovering = undefined;
+    });
+    return this.recovering;
+  }
+
+  private async settleRecovery() {
+    // This permanent fence precedes provider access and survives object eviction.
+    await this.ctx.storage.put(ADMISSION_CLOSED, true);
+    this.controller?.abort(new Error("The proof owner requested cleanup"));
     const state = await this.state();
     if (state.cleanupConfirmed) return;
-    this.controller?.abort(new Error("The proof owner requested cleanup"));
     await this.active;
     try {
       const ownership = await this.getOwnership();
