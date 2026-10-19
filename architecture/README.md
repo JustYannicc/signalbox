@@ -29,6 +29,9 @@ views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
                      lifecycle_tool_needs_vm, lifecycle_long_process, lifecycle_idle_dev_server,
                      lifecycle_wake_after_day, lifecycle_fork_thread, lifecycle_interrupt,
                      lifecycle_park_and_shutdown, lifecycle_file_sync, lifecycle_boxd_data
+  workflows/v1.c4    v1 end to end (Workflows/v1/...): 0 first day (index) · 1 sign in · 2 fill your pool
+                     · 3 share your pool · 4 usage · 5 your own tools · 6 set up this computer
+                     · 7 local model request · 8 local tool call
   computer-gateway.c4 one command gateway and resource budgets (Workflows/Work/Computer/Gateway/...):
                      computer_gateway_same_command, computer_terminal_session, computer_budgets
 views/funnels.c4     every boundary is one funnel (Overview/Decisions/Funnels): funnels, then one drill-down

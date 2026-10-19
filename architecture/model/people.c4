@@ -22,6 +22,7 @@ model {
   personA -> laptopCli 'runs locally'
   personB -> signalbox.mobile 'uses'
   personB -> signalbox.web 'uses'
+  personB -> laptopCli 'runs locally'
   personC -> signalbox.web 'administers Company'
   personC -> mcpClient 'connects'
   personD -> signalbox.web 'uses'
