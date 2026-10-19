@@ -26,6 +26,7 @@ interface Fixture {
   mode?: "facet" | "worker";
   allowOutbound?: boolean;
   allowGeneratedCode?: boolean;
+  allowChildWorkers?: boolean;
   entrypoint: string;
   modules: Record<string, { path: string; type: "js" | "cjs" | "text" | "wasm" }>;
   paths?: string[];
@@ -199,6 +200,7 @@ try {
               mode: fixture.mode ?? "facet",
               allowOutbound: fixture.allowOutbound === true,
               allowGeneratedCode: fixture.allowGeneratedCode === true,
+              allowChildWorkers: fixture.allowChildWorkers === true,
               path,
               mainModule: fixture.mainModule,
               entrypoint: fixture.entrypoint,
@@ -238,6 +240,7 @@ try {
               mode: fixture.mode ?? "facet",
               allowOutbound: fixture.allowOutbound === true,
               allowGeneratedCode: fixture.allowGeneratedCode === true,
+              allowChildWorkers: fixture.allowChildWorkers === true,
               path: request.path,
               ...(request.method !== undefined ? { method: request.method } : {}),
               ...(request.contentType !== undefined ? { contentType: request.contentType } : {}),

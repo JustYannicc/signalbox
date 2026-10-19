@@ -58,6 +58,19 @@
         },
         "overrides": [
           {
+            // signalbox: native infrastructure fixtures and artifact packagers run outside Effect.
+            "include": [
+              "**/apps/cloud/infra/**/*.test.ts",
+              "**/apps/cloud/infra/kernelPrograms/**/*.ts"
+            ],
+            "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          },
+          {
+            // signalbox: these fixtures drive workerd over its native HTTP entry point.
+            "include": ["**/apps/cloud/infra/**/*.test.ts"],
+            "options": { "diagnosticSeverity": { "globalFetch": "off" } }
+          },
+          {
             // signalbox: Lunora emits native engine contexts; their clock runs outside Effect.
             "include": ["**/lunora/_generated/**/*.ts"],
             "options": { "diagnosticSeverity": { "globalDate": "off" } }
