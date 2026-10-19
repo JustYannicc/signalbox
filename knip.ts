@@ -90,6 +90,8 @@ export default {
         "infra/check-plan.ts",
         "infra/nodeProof/*.ts",
         "infra/kernelProof/*.ts",
+        "infra/computerPolicyProof/prepare.mjs", // Standalone exact-policy proof builder.
+        "infra/computerPolicyProof/proof-source.ts", // Loaded by the generated policy proof entry.
         "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
         "infra/claudeTurnProof/ClaudeTurnProof.ts", // signalbox: imported by the generated proof entry.
         "infra/harnessReleases/artifactCli.ts", // signalbox: standalone artifact preparation and publishing CLI.
