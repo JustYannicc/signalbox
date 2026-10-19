@@ -3,6 +3,7 @@ import type { KernelAsyncProgramContext } from "../../kernel/KernelAsyncProgram.
 import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
+import { ChildWorkerDispatchError } from "../ChildWorkerDispatchError.ts";
 import { createChildWorkerProgram, type ChildWorkerInvocation } from "../ChildWorkerProgram.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
 
@@ -52,6 +53,94 @@ async function withContext(run: (context: KernelAsyncProgramContext) => Promise<
 }
 
 describe("ChildWorkerProgram", () => {
+  it("releases a disconnected invocation only after both host cleanup and its late stop ACK", () =>
+    withContext(async (context) => {
+      const capacity = new ChildWorkerCapacity(1);
+      const cleaned = deferred<void>();
+      const stopped = deferred<void>();
+      const failure = new ChildWorkerDispatchError(new Error("RPC disconnected"), {
+        kind: "unconfirmed",
+        stopped: stopped.promise,
+      });
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity,
+        dispatch: {
+          run: async () => {
+            throw failure;
+          },
+        },
+        createHost: () => ({
+          host: {},
+          close() {
+            cleaned.resolve();
+          },
+        }),
+      });
+      await expect(program.run(context)).rejects.toBe(failure);
+      await cleaned.promise;
+      expect(capacity.active).toBe(1);
+      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      stopped.resolve();
+      await drained;
+      expect(capacity.active).toBe(0);
+    }));
+
+  it("retains admission when the stop ACK itself rejects", () =>
+    withContext(async (context) => {
+      const capacity = new ChildWorkerCapacity(1);
+      const stopped = Promise.withResolvers<void>();
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity,
+        dispatch: {
+          run: async () => {
+            throw new ChildWorkerDispatchError("RPC disconnected", {
+              kind: "unconfirmed",
+              stopped: stopped.promise,
+            });
+          },
+        },
+        createHost: () => ({ host: {}, close() {} }),
+      });
+      await expect(program.run(context)).rejects.toMatchObject({ code: "CLEANUP_UNCONFIRMED" });
+      stopped.reject(new Error("ACK transport lost too"));
+      await expect(stopped.promise).rejects.toThrow("ACK transport lost too");
+      expect(capacity.active).toBe(1);
+      expect(capacity.tryAcquire(context.signal)).toBeUndefined();
+    }));
+
+  it("retains admission after a disconnected dispatch even after host cleanup finishes", () =>
+    withContext(async (context) => {
+      const capacity = new ChildWorkerCapacity(1);
+      const closing = deferred<void>();
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity,
+        dispatch: {
+          run: async () => {
+            throw new Error("RPC disconnected");
+          },
+        },
+        createHost: () => ({
+          host: {},
+          close() {
+            closing.resolve();
+          },
+        }),
+      });
+      await expect(program.run(context)).rejects.toMatchObject({
+        code: "CLEANUP_UNCONFIRMED",
+        message: "RPC disconnected",
+      });
+      await closing.promise;
+      expect(capacity.active).toBe(1);
+      expect(capacity.tryAcquire(context.signal)).toBeUndefined();
+    }));
+
   it("returns logical exit while retaining admission through a late dispatch failure and gated close", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1);
@@ -82,7 +171,9 @@ describe("ChildWorkerProgram", () => {
       exited.resolve(status);
       expect(await result).toEqual(status);
       expect(capacity.active).toBe(1);
-      dispatched.reject(new Error("Late dispatch failure"));
+      dispatched.reject(
+        new ChildWorkerDispatchError(new Error("Late dispatch failure"), { kind: "stopped" }),
+      );
       await closing.promise;
       expect(capacity.active).toBe(1);
       const drained = capacity.acquire(context.signal).then((permit) => permit.release());
@@ -103,7 +194,9 @@ describe("ChildWorkerProgram", () => {
       const dispatched = Promise.withResolvers<never>();
       const closing = deferred<void>();
       const closed = Promise.withResolvers<void>();
-      const failure = new Error("Dispatch failed before exit");
+      const failure = new ChildWorkerDispatchError(new Error("Dispatch failed before exit"), {
+        kind: "stopped",
+      });
       const program = createChildWorkerProgram({
         executable: "/bin/tool",
         code: { mainModule: "entry.js", modules: {} },
@@ -247,7 +340,9 @@ describe("ChildWorkerProgram", () => {
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity();
       const close = vi.fn();
-      const failure = new Error("dispatch failed");
+      const failure = new ChildWorkerDispatchError(new Error("dispatch failed"), {
+        kind: "stopped",
+      });
       const program = createChildWorkerProgram({
         executable: "/bin/tool",
         code: { mainModule: "entry.js", modules: {} },
