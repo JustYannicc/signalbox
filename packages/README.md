@@ -14,7 +14,7 @@ Cloud modules use [root-file entry points](../apps/cloud/src/README.md).
 Cycles, including type-only cycles, are checked across the workspace graph.
 
 Byte-preserved third-party code under the vendored roots declared in
-`scripts/boundaries/upstream.mjs` is excluded from boundary checks. Adapters outside
+`scripts/boundaries/vendored-roots.json` is excluded from boundary checks. Adapters outside
 those roots follow the normal ownership rules.
 
 For other code, severity follows the importing file's presence in `git merge-base HEAD upstream/main`:

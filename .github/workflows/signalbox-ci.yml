@@ -521,7 +521,9 @@ jobs:
         with:
           fetch-depth: 0
           filter: blob:none
-          sparse-checkout: scripts/personal-data
+          sparse-checkout: |
+            scripts/personal-data
+            scripts/boundaries
 
       - name: Fetch upstream
         run: git fetch --no-tags --filter=blob:none https://github.com/pingdotgg/t3code main

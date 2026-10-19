@@ -11,7 +11,7 @@ import { checkBaseline, violationKey } from "./baseline.mjs";
 import { cyclicViolations } from "./cycles.mjs";
 import "./cycle-tests.mjs";
 import "./comparison-tests.mjs";
-import { readUpstreamSource, sourceOwnership } from "./upstream.mjs";
+import { readUpstreamSource, sourceOwnership, VENDORED_ROOTS } from "./upstream.mjs";
 import { workspaceAliases, workspaceTarget, workspaceViolations } from "./workspaces.mjs";
 
 NodeTest.test(
@@ -226,7 +226,10 @@ NodeTest.test("upstream deletions cannot reclassify files before the candidate m
 });
 
 NodeTest.test("vendored ownership stops at its root and leaves adapters fork-owned", () => {
-  const root = "apps/cloud/src/isolate/node/vm/vendor/";
+  const root = VENDORED_ROOTS.find((candidate) => candidate.includes("/vm/vendor/"));
+  const globRoot = VENDORED_ROOTS.find((candidate) => candidate.endsWith("/fs/vendor/node/"));
+  NodeAssert.ok(root);
+  NodeAssert.ok(globRoot);
   const upstream = { files: new Set(["upstream.ts"]) };
   NodeAssert.equal(
     sourceOwnership(upstream, `${root}nimbus/core/src/interpreter/runtime.ts`),
@@ -236,6 +239,17 @@ NodeTest.test("vendored ownership stops at its root and leaves adapters fork-own
   NodeAssert.equal(sourceOwnership(upstream, `${root.slice(0, -1)}-adapter/runtime.ts`), "fork");
   NodeAssert.equal(
     sourceOwnership(upstream, "apps/cloud/src/isolate/node/vm/runtime-contract.ts"),
+    "fork",
+  );
+  NodeAssert.equal(sourceOwnership(upstream, `${globRoot}internal/fs/glob.js`), "vendored");
+  NodeAssert.equal(sourceOwnership(upstream, `${globRoot}generated/glob-core.ts`), "vendored");
+  NodeAssert.equal(sourceOwnership(upstream, "apps/cloud/src/isolate/node/fs/glob.ts"), "fork");
+  NodeAssert.equal(
+    sourceOwnership(upstream, "apps/cloud/src/isolate/node/fs/glob-contract.ts"),
+    "fork",
+  );
+  NodeAssert.equal(
+    sourceOwnership(upstream, "apps/cloud/src/isolate/node/fs/generate-glob-wrappers.mjs"),
     "fork",
   );
   NodeAssert.equal(sourceOwnership(upstream, "upstream.ts"), "upstream");
