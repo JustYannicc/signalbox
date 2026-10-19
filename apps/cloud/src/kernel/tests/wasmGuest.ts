@@ -61,11 +61,16 @@ export function wasmImportReactor(
   );
 }
 
-/** Spawn /bin/child and exit with the host's errno, without JS-level import mocks. */
-export function wasmSpawnCommand(flags: number, maskLow: number, maskHigh: number) {
-  const path = [...new TextEncoder().encode("/bin/child")];
-  const args = [0, path.length, 0, 0, 0, 0, 0, 0, 0, 0, flags, 0, 0, maskLow, maskHigh, 0, 64];
-  const body = [0, ...args.flatMap((value) => [65, ...leb(value, true)]), 16, 0, 16, 1, 11];
+export function wasmSignalMaskCommand(how: number, low: number, high: number) {
+  const body = [
+    0,
+    ...[how, low, high, 32, 36].flatMap((value) => [65, ...leb(value, true)]),
+    16,
+    0,
+    16,
+    1,
+    11,
+  ];
   return new WebAssembly.Module(
     new Uint8Array([
       0,
@@ -78,14 +83,14 @@ export function wasmSpawnCommand(flags: number, maskLow: number, maskHigh: numbe
       0,
       ...section(1, [
         3,
-        ...type(Array<ValueType>(17).fill("i32"), ["i32"]),
+        ...type(Array<ValueType>(5).fill("i32"), ["i32"]),
         ...type(["i32"], []),
         ...type([], []),
       ]),
       ...section(2, [
         2,
         ...name("host_process"),
-        ...name("proc_spawn_v3"),
+        ...name("proc_signal_mask_v2"),
         0,
         0,
         ...name("wasi_snapshot_preview1"),
@@ -96,6 +101,87 @@ export function wasmSpawnCommand(flags: number, maskLow: number, maskHigh: numbe
       ...section(3, [1, 2]),
       ...section(5, [1, 0, 1]),
       ...section(7, [2, ...name("memory"), 2, 0, ...name("_start"), 0, 2]),
+      ...section(10, [1, ...leb(body.length), ...body]),
+    ]),
+  );
+}
+
+/** Spawn /bin/child and exit with the host's errno, without JS-level import mocks. */
+export function wasmSpawnCommand(
+  flags: number,
+  maskLow: number,
+  maskHigh: number,
+  queryParentMask = false,
+) {
+  const path = [...new TextEncoder().encode("/bin/child")];
+  const args = [0, path.length, 0, 0, 0, 0, 0, 0, 0, 0, flags, 0, 0, maskLow, maskHigh, 0, 64];
+  const query = queryParentMask
+    ? [
+        ...[3, 0, 0, 96, 100].flatMap((value) => [65, ...leb(value, true)]),
+        16,
+        2,
+        34,
+        0,
+        4,
+        64,
+        32,
+        0,
+        16,
+        1,
+        11,
+      ]
+    : [];
+  const body = [
+    1,
+    1,
+    127,
+    ...query,
+    ...args.flatMap((value, index) =>
+      queryParentMask && (index === 13 || index === 14)
+        ? [65, ...leb(index === 13 ? 96 : 100, true), 40, 2, 0]
+        : [65, ...leb(value, true)],
+    ),
+    16,
+    0,
+    16,
+    1,
+    11,
+  ];
+  return new WebAssembly.Module(
+    new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [
+        4,
+        ...type(Array<ValueType>(17).fill("i32"), ["i32"]),
+        ...type(["i32"], []),
+        ...type([], []),
+        ...type(Array<ValueType>(5).fill("i32"), ["i32"]),
+      ]),
+      ...section(2, [
+        3,
+        ...name("host_process"),
+        ...name("proc_spawn_v3"),
+        0,
+        0,
+        ...name("wasi_snapshot_preview1"),
+        ...name("proc_exit"),
+        0,
+        1,
+        ...name("host_process"),
+        ...name("proc_signal_mask_v2"),
+        0,
+        3,
+      ]),
+      ...section(3, [1, 2]),
+      ...section(5, [1, 0, 1]),
+      ...section(7, [2, ...name("memory"), 2, 0, ...name("_start"), 0, 3]),
       ...section(10, [1, ...leb(body.length), ...body]),
       ...section(11, [1, 0, 65, 0, 11, ...leb(path.length), ...path]),
     ]),

@@ -119,7 +119,10 @@ def build(args):
         module, glue = engine_outputs(Path(environment["CARGO_TARGET_DIR"]), args.target)
         artifact = output / "artifact"
         artifact.mkdir()
-        command([prepare_binaryen(cache), "--all-features", "-Oz", module, "-o", artifact / "engine.wasm"],
+        # Rebuild control flow, then clean up the flattened IR with two size passes.
+        # Custom descriptors can introduce experimental exact reference types.
+        command([prepare_binaryen(cache), "--all-features", "--disable-custom-descriptors",
+                 "--flatten", "--rereloop", "-Oz", "-Oz", module, "-o", artifact / "engine.wasm"],
                 cwd=workspace, env=environment)
         shutil.copy2(workspace / "Cargo.lock", artifact / "Cargo.lock")
         if glue is not None:

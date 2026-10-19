@@ -21,6 +21,7 @@ interface ProcessHostOptions {
   readonly wakes: KernelWakeRegistry;
   readonly parent?: KernelHandle<"process">;
   readonly signal?: AbortSignal;
+  readonly signalMaskSupported?: boolean;
   readonly limits?: AgentOsProcessWireLimits;
   /** Owns prepared descriptors through dispatch failure or the child's final exit. */
   readonly spawn: (request: AgentOsSpawnRequest) => Promise<KernelResult<KernelHandle<"process">>>;
@@ -161,12 +162,24 @@ export class AgentOsProcessHost {
     return pointers.every((pointer) => (pointer >>> 0) + 4 <= length);
   }
 
-  #signalMask(how: number, _setLow: number, _setHigh: number, oldLow: number, oldHigh: number) {
+  #signalMask(how: number, setLow: number, setHigh: number, oldLow: number, oldHigh: number) {
     if (!this.#validOutputs([oldLow, oldHigh])) return EFAULT;
     if (how >>> 0 > 3) return EINVAL;
-    // The process table does not own blocked/pending signals yet. Returning
-    // success with an empty mask would lie about later signal delivery.
-    return ENOTSUP;
+    if (this.#options.signalMaskSupported === false) return ENOTSUP;
+    const result = this.#options.processes.signalMask(this.#options.parent, how >>> 0, {
+      low: setLow >>> 0,
+      high: setHigh >>> 0,
+    });
+    if (result.status === "would_block") {
+      this.#options.wakes.release(result.wakeToken);
+      return EAGAIN;
+    }
+    if (result.status === "error") return kernelErrno(result.error.code);
+    const memory = this.#options.memory();
+    return (
+      writeAgentOsPid(memory, oldLow, result.value.low) ||
+      writeAgentOsPid(memory, oldHigh, result.value.high)
+    );
   }
 
   #kill(pid: number, signal: number) {

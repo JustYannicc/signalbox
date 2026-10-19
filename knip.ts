@@ -97,6 +97,7 @@ export default {
         "src/kernel/KernelRuntimeProof.ts", // Loaded by the static runtime fixture's generated entry.
         "src/kernel/KernelWasi.ts", // Public integration entry for executable personalities.
         "src/kernel/Wasi.ts", // Public preview1 carry API.
+        "src/computer/*.ts", // Public Computer entry points consumed by Harness and generated worker compositions.
         "infra/codexExecProof/prepare.ts",
         "infra/codexExecProof/prepareExecution.ts",
         "infra/codexExecProof/prepareFileSystem.ts",

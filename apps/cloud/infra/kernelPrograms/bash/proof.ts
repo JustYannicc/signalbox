@@ -13,6 +13,7 @@ import {
   KernelProgramHost,
   type KernelProgramBinding,
 } from "../../../src/kernel/KernelProgramHost.ts";
+import { KernelProcessTable } from "../../../src/kernel/KernelProcessTable.ts";
 import { KernelWakeRegistry } from "../../../src/kernel/KernelWakeRegistry.ts";
 import { createFacetSqliteStorage } from "../../../src/kernel/FacetSqliteStorage.ts";
 import { bashSqliteFixture } from "./bashFixture.ts";
@@ -37,6 +38,7 @@ async function run(
   passwd?: string,
   fault?: "missing" | "running",
   candidate?: BashProofArtifact,
+  verifyForkSignals = false,
 ) {
   const bytes = await NodeFSP.readFile(
     candidate?.path ?? new URL("./build/bash.async.wasm", import.meta.url),
@@ -142,10 +144,34 @@ async function run(
       });
     }
   }
+  const forkSignals: Array<{
+    mask: ReturnType<KernelProcessTable["signalMask"]>;
+    delivered: ReturnType<KernelProcessTable["signal"]>;
+    unblocked: ReturnType<KernelProcessTable["signalMask"]>;
+  }> = [];
+  class ForkSignalProofTable extends KernelProcessTable {
+    override spawn(...args: Parameters<KernelProcessTable["spawn"]>) {
+      const spawned = super.spawn(...args);
+      if (args[0] !== undefined && spawned.status === "ok") {
+        const handle = spawned.value.handle;
+        forkSignals.push({
+          mask: this.signalMask(handle, 3),
+          delivered: this.signal(handle, 12),
+          unblocked: this.signalMask(handle, 1, { low: 1 << 11, high: 0 }),
+        });
+      }
+      return spawned;
+    }
+  }
+  const processes = verifyForkSignals ? new ForkSignalProofTable({ wakes }) : undefined;
+  if (processes) {
+    NodeAssert.equal(processes.signalMask(undefined, 2, { low: 1 << 11, high: 0 }).status, "ok");
+  }
   const host = new KernelProgramHost({
     registry,
     wakes,
     programs,
+    ...(processes === undefined ? {} : { processes }),
   });
   const prepared = host.prepare({ filesystem }, { cwd: "/workspace" });
   const resolved = host.resolve("/bin/bash");
@@ -174,6 +200,7 @@ async function run(
       stdout: output.map((chunk) => new TextDecoder().decode(chunk)).join(""),
       stderr: errors.map((chunk) => new TextDecoder().decode(chunk)).join(""),
       descriptorsAtExec,
+      forkSignals,
       file: script.includes("result") ? read("/workspace/result") : undefined,
     };
   } finally {
@@ -297,6 +324,28 @@ export async function proveKernelBashProgram(candidate?: BashProofArtifact) {
     },
   ];
   const checks: string[] = [];
+  const forkSignals = await run(
+    "(printf child); printf parent",
+    undefined,
+    undefined,
+    candidate,
+    true,
+  );
+  NodeAssert.deepStrictEqual(forkSignals.exit, { exitCode: 0, signal: 0, coreDumped: false });
+  NodeAssert.equal(forkSignals.stdout, "childparent");
+  NodeAssert.equal(forkSignals.stderr, "");
+  NodeAssert.ok(forkSignals.forkSignals.length > 0, "Bash must exercise a real fork");
+  for (const observed of forkSignals.forkSignals) {
+    NodeAssert.deepStrictEqual(observed.mask, { status: "ok", value: { low: 1 << 11, high: 0 } });
+    NodeAssert.equal(observed.delivered.status, "error", "blocked unsupported signal must fail");
+    if (observed.delivered.status === "error")
+      NodeAssert.equal(observed.delivered.error.code, "UNSUPPORTED");
+    NodeAssert.deepStrictEqual(observed.unblocked, {
+      status: "ok",
+      value: { low: 1 << 11, high: 0 },
+    });
+  }
+  checks.push("forked Bash rejects unsupported signals even when inherited mask blocks them");
   for (const proof of cases) {
     const result = await runProof(proof.script, proof.passwd);
     NodeAssert.deepStrictEqual(

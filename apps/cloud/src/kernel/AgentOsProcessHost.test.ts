@@ -60,6 +60,35 @@ function fixture() {
 }
 
 describe("AgentOS host_process process imports", () => {
+  it("lets a guest query its signal mask before spawning a command", async () => {
+    const test = fixture();
+    let spawnCalls = 0;
+    const host = new AgentOsProcessHost({
+      memory: () => test.memory,
+      processes: test.processes,
+      wakes: test.wakes,
+      spawn: async () => {
+        spawnCalls++;
+        return kernelOk(test.child.handle);
+      },
+    });
+    new Uint8Array(test.memory.buffer, 32, 9).set(new TextEncoder().encode("/bin/tool"));
+    try {
+      const errno = host.imports.proc_signal_mask_v2(3, 0, 0, 4, 8);
+      expect(errno).toBe(0);
+      const view = new DataView(test.memory.buffer);
+      expect(view.getUint32(4, true)).toBe(0);
+      expect(view.getUint32(8, true)).toBe(0);
+      expect(
+        await host.imports.proc_spawn_v3(32, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 512),
+      ).toBe(0);
+      expect(spawnCalls).toBe(1);
+      expect(view.getUint32(512, true)).toBe(test.child.pid);
+    } finally {
+      await test.dispose();
+    }
+  });
+
   it("charges spawn decode and output but excludes non-wake admission waits", async () => {
     const test = fixture();
     let now = 0n;
@@ -102,20 +131,40 @@ describe("AgentOS host_process process imports", () => {
       await test.dispose();
     }
   });
-  it("returns ENOTSUP for valid signal-mask operations without changing output memory", async () => {
+  it("shares the authoritative root mask and validates all outputs before mutation", async () => {
     const test = fixture();
+    const anotherHost = new AgentOsProcessHost({
+      memory: () => test.memory,
+      processes: test.processes,
+      wakes: test.wakes,
+      spawn: async () => kernelError("UNSUPPORTED", "Unused test spawn"),
+    });
     try {
       const view = new DataView(test.memory.buffer);
+      expect(test.host.imports.proc_signal_mask_v2(0, 0x8000_4000, 0x8000_0001, 4, 8)).toBe(0);
+      expect(view.getUint32(4, true)).toBe(0);
+      expect(view.getUint32(8, true)).toBe(0);
+      expect(anotherHost.imports.proc_signal_mask_v2(3, -1, -1, 4, 8)).toBe(0);
+      expect(view.getUint32(4, true)).toBe(0x8000_4000);
+      expect(view.getUint32(8, true)).toBe(0x8000_0001);
+
       view.setUint32(4, 0xfeed_beef, true);
       view.setUint32(8, 0xcafe_babe, true);
-
-      for (const how of [0, 1, 2, 3]) {
-        expect(test.host.imports.proc_signal_mask_v2(how, 1, 2, 4, 8)).toBe(58);
-      }
       expect(test.host.imports.proc_signal_mask_v2(4, 0, 0, 4, 8)).toBe(28);
-      expect(test.host.imports.proc_signal_mask_v2(3, 0, 0, 65_534, 8)).toBe(21);
+      expect(test.host.imports.proc_signal_mask_v2(2, 0, 0, 4, 65_534)).toBe(21);
+      expect(test.host.imports.proc_signal_mask_v2(2, 0, 0, 65_534, 8)).toBe(21);
       expect(view.getUint32(4, true)).toBe(0xfeed_beef);
       expect(view.getUint32(8, true)).toBe(0xcafe_babe);
+      expect(anotherHost.imports.proc_signal_mask_v2(3, 0, 0, 4, 8)).toBe(0);
+      expect(view.getUint32(4, true)).toBe(0x8000_4000);
+      expect(view.getUint32(8, true)).toBe(0x8000_0001);
+
+      expect(test.host.imports.proc_signal_mask_v2(1, 0x4000, 1, 4, 8)).toBe(0);
+      expect(view.getUint32(4, true)).toBe(0x8000_4000);
+      expect(view.getUint32(8, true)).toBe(0x8000_0001);
+      expect(anotherHost.imports.proc_signal_mask_v2(3, 0, 0, 4, 8)).toBe(0);
+      expect(view.getUint32(4, true)).toBe(0x8000_0000);
+      expect(view.getUint32(8, true)).toBe(0x8000_0000);
     } finally {
       await test.dispose();
     }

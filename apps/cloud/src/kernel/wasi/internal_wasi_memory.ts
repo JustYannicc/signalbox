@@ -46,6 +46,14 @@ export class WasiMemory {
     return this.#memory;
   }
 
+  get byteLength(): number {
+    return this.memory.buffer.byteLength;
+  }
+
+  validateRange(pointer: number, length: number): void {
+    if ((pointer >>> 0) + (length >>> 0) > this.byteLength) throw new WasiError(EFAULT);
+  }
+
   range(pointer: number, length: number): Uint8Array<ArrayBuffer> {
     const start = pointer >>> 0;
     const size = length >>> 0;
@@ -104,7 +112,7 @@ export class WasiMemory {
       const entryOffset = index * 8;
       const entryPointer = table.getUint32(entryOffset, true);
       const entryLength = table.getUint32(entryOffset + 4, true);
-      this.range(entryPointer, entryLength);
+      this.validateRange(entryPointer, entryLength);
       result.push({ pointer: entryPointer, length: entryLength });
     }
     return result;
