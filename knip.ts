@@ -90,6 +90,7 @@ export default {
         "infra/kernelProof/*.ts",
         "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
         "infra/claudeTurnProof/ClaudeTurnProof.ts", // signalbox: imported by the generated proof entry.
+        "infra/harnessReleases/harnessReleaseCloudflare.ts", // signalbox: deployment tooling launches this subprocess by filename.
         "infra/kernelPrograms/*/*.{ts,mjs}",
         "src/kernel/tests/gitProgramProof.ts", // signalbox: standalone real-WASM proof runner.
         "src/kernel/tests/coreutilsProgramProof.mjs", // signalbox: standalone real-WASM proof runner.
