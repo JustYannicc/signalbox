@@ -101,7 +101,7 @@ export async function applyRevision(input: {
         applyId,
         currentPlans,
       );
-      const applied = applyMetadataAndChunks(
+      applyMetadataAndChunks(
         database,
         storage,
         baseline.manifest,
@@ -110,7 +110,8 @@ export async function applyRevision(input: {
         dirtyBeforeApply,
         applyId,
       );
-      const manifest = applyChangesToManifest(baseline.manifest, applied);
+      // Local metadata stays dirty; the manifest must describe the remote revision.
+      const manifest = applyChangesToManifest(baseline.manifest, reconciled);
       database.sql.exec(
         "UPDATE kernel_fs_workspace_state SET commit_id = ?, manifest_json = ?, baseline_epoch = ? WHERE singleton = 1",
         after.commit,
@@ -132,14 +133,10 @@ function applyMetadataAndChunks(
   plans: readonly ApplyPlan[],
   dirty: readonly DirtyInode[],
   applyId: string,
-): ApplyPlan[] {
-  const applied: ApplyPlan[] = [];
+): void {
   const dirtyInodes = new Set(dirty.map((entry) => entry.inode));
   for (const plan of plans) {
-    if (!plan.changed.stat) {
-      applied.push(plan);
-      continue;
-    }
+    if (!plan.changed.stat) continue;
     const localInode = plan.localInode;
     if (localInode === undefined)
       throw new KernelRevisionWorkspaceError("EIO", "The applied inode has no live identity");
@@ -194,10 +191,5 @@ function applyMetadataAndChunks(
         localInode.toString(),
       );
     });
-    applied.push({
-      ...plan,
-      changed: { ...plan.changed, stat, posix, symlinkTarget },
-    });
   }
-  return applied;
 }

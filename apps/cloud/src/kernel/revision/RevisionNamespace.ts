@@ -128,6 +128,14 @@ export function reconcileNamespace(
 
   const filePlans = livePlans.filter((plan) => plan.changed.stat?.type !== "directory");
   for (const plan of filePlans) reconcilePlan(plan);
+  // A parent move can restore a desired hardlink before its parked alias is consumed.
+  for (const [inode, path] of parked) {
+    const entry = safeLstat(filesystem, mountPath, rootRealPath, storage, path);
+    if (!entry) continue;
+    if (entry.ino.toString() !== inode)
+      throw new KernelRevisionWorkspaceError("ESTALE", "A parked inode changed during apply");
+    removePath(filesystem, mountPath, rootRealPath, storage, path);
+  }
   return plans.map((plan) => reconciled.get(plan.changed.inode.toString()) ?? plan);
 }
 
