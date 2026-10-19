@@ -1,0 +1,43 @@
+/** Exact captured spellings. Membership does not register or install an executable. */
+export const COMPUTER_ISOLATE_EXECUTABLES = Object.freeze([
+  "sed",
+  "git",
+  "head",
+  "grep",
+  "rg",
+  "cat",
+  "cd",
+  "tail",
+  "echo",
+  "ls",
+  "mkdir",
+  "rm",
+  "cp",
+  "mv",
+  "touch",
+  "printf",
+  "pwd",
+  "bash",
+  "sh",
+  "/bin/bash",
+  "/bin/sh",
+  "/bin/cat",
+  "/bin/rg",
+  "/bin/echo",
+  "/bin/printf",
+  "/bin/ls",
+  "/bin/mkdir",
+  "/bin/rm",
+  "/bin/cp",
+  "/bin/mv",
+  "/bin/pwd",
+  "/bin/head",
+  "/bin/tail",
+  "/usr/bin/git",
+] as const);
+
+/** Opt in at composition time; unlisted executables default to the machine. */
+export const COMPUTER_ISOLATE_POLICY = Object.freeze({
+  isolateExecutables: COMPUTER_ISOLATE_EXECUTABLES,
+  default: "machine" as const,
+});
