@@ -1,4 +1,11 @@
-import { memo, useEffect, useState, type MouseEventHandler, type PointerEventHandler } from "react";
+import {
+  memo,
+  useEffect,
+  useState,
+  type MouseEventHandler,
+  type PointerEventHandler,
+  type ReactNode,
+} from "react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -78,8 +85,6 @@ const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
-// A stop can take seconds to land. Stop re-enables if it never lands, but a late
-// landing still counts as landed so Resume does not take the Stop slot.
 const STOP_PENDING_MAX_MS = 10_000;
 
 const messageActionPillClassName =
@@ -121,14 +126,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 }: ComposerPrimaryActionsProps) {
   const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const [stopPhase, setStopPhase] = useState<"pending" | "timedOut" | "landed" | null>(null);
-  // canInterrupt includes the operate permission, so only read it as run state while that
-  // permission holds. Once the stop has landed, interruptible again means a new run started.
+  // Losing permission also clears canInterrupt; it does not acknowledge the stop.
   if (canOperateThread) {
     if ((stopPhase === "pending" || stopPhase === "timedOut") && !canInterrupt)
       setStopPhase("landed");
     else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);
   }
-  const isStopping = stopPhase === "pending" || stopPhase === "landed";
+  const isStopDisabled = stopPhase === "pending" || stopPhase === "landed";
+  const stopLabel =
+    stopPhase === "landed" ? "Stopped" : stopPhase === "pending" ? "Stopping" : "Stop generation";
   useEffect(() => {
     if (stopPhase !== "pending") return;
     const timeout = setTimeout(() => setStopPhase("timedOut"), STOP_PENDING_MAX_MS);
@@ -164,15 +170,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               insidePendingAction ? "size-8 sm:size-7" : "size-8 sm:h-8 sm:w-8",
             )}
             {...pointerFocusProps}
-            disabled={!canOperateThread || isStopping}
+            disabled={!canOperateThread || isStopDisabled}
             onClick={() => {
-              if (!canOperateThread || isStopping) return;
+              if (!canOperateThread || isStopDisabled) return;
               setStopPhase("pending");
               onInterrupt();
             }}
-            aria-label={
-              stopPhase === "landed" ? "Stopped" : isStopping ? "Stopping" : "Stop generation"
-            }
+            aria-label={stopLabel}
           />
         }
       >
@@ -181,15 +185,25 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </svg>
       </TooltipTrigger>
       <TooltipPopup>
-        {stopPhase === "landed" ? "Stopped" : isStopping ? "Stopping…" : "Interrupt"}
+        {stopPhase === "pending" ? "Stopping…" : stopPhase === "landed" ? "Stopped" : "Interrupt"}
       </TooltipPopup>
     </Tooltip>
   );
 
+  // Keep the clicked target at the right edge even if typing changes the primary action.
+  const withStopButton = (action: ReactNode) =>
+    stopPhase === null || sendLock?.locked ? ( // signalbox: send lock keeps its single target
+      action
+    ) : (
+      <div className="flex items-center gap-2">
+        {action}
+        {renderStopGenerationButton(false)}
+      </div>
+    );
+
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {canInterrupt ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
             <Button
@@ -232,13 +246,14 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             questionIndex: pendingAction.questionIndex,
           })}
         </button>
+        {canInterrupt || stopPhase !== null ? renderStopGenerationButton(true) : null}
       </div>
     );
   }
 
   if (showPlanFollowUpPrompt && (promptHasText || !canResume)) {
     if (promptHasText) {
-      return (
+      return withStopButton(
         <button
           type="submit"
           className={cn(messageActionPillClassName, "h-9 sm:h-8", compact ? "px-3" : "px-4")}
@@ -246,11 +261,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
-        </button>
+        </button>,
       );
     }
 
-    return (
+    return withStopButton(
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
         <button
           type="submit"
@@ -288,11 +303,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             </MenuItem>
           </MenuPopup>
         </Menu>
-      </div>
+      </div>,
     );
   }
 
-  if (canInterrupt && !hasSendableContent && !isEditingQueuedMessage) {
+  if (
+    (canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") &&
+    !hasSendableContent &&
+    !isEditingQueuedMessage
+  ) {
     return renderStopGenerationButton(false);
   }
 
@@ -351,7 +370,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isSendDisabled ||
         isConnecting ||
         isEnvironmentUnavailable ||
-        (showResume && stopPhase === "pending") ||
         (!hasSendableContent && !showResume)
       }
       aria-label={submitStatus ?? submitLabel}
@@ -391,21 +409,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <TooltipPopup>{submitTooltip}</TooltipPopup>
     </Tooltip>
   );
-  // Repeat Stop clicks can outlast any cooldown, so the stopped button keeps its slot
-  // and Resume or Submit appears beside it.
-  const stopped =
-    stopPhase === "landed" && !sendLock?.locked ? renderStopGenerationButton(false) : null; // signalbox: send lock
-  if (compactTokens === null) {
-    if (!stopped) return submit;
-    return (
-      <div className="flex items-center gap-2">
-        {submit}
-        {stopped}
-      </div>
-    );
-  }
+  if (compactTokens === null) return withStopButton(submit);
 
-  return (
+  return withStopButton(
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
       <Tooltip>
         <TooltipTrigger
@@ -437,7 +443,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </TooltipPopup>
       </Tooltip>
       {submit}
-      {stopped}
-    </div>
+    </div>,
   );
 });
