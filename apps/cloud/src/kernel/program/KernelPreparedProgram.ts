@@ -1,5 +1,6 @@
 import type { KernelHandle } from "../KernelAbi.ts";
 import { KernelFileSystem } from "../KernelFileSystem.ts";
+import { withKernelErrors } from "../filesystem/KernelFileSystemErrors.ts";
 import type { AgentOsSpawnFileAction } from "../process/AgentOsProcessActions.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
 import {
@@ -24,12 +25,18 @@ export interface KernelProgramPrepareInput {
 export interface KernelProgramPrepareOptions {
   readonly cwd?: string;
   readonly actions?: readonly AgentOsSpawnFileAction[];
-  /** Borrowed streams replace child fds 0–2 and remain caller-owned. */
-  readonly stdio?: readonly [WasiStdio, WasiStdio, WasiStdio];
+  /** Borrowed streams replace the child's standard descriptors and remain caller-owned. */
+  readonly stdio?: readonly [WasiStdio | undefined, WasiStdio | undefined, WasiStdio | undefined];
 }
 
 export interface KernelOwnedStdio {
-  readonly descriptors: readonly [WasiDescriptorSpec, WasiDescriptorSpec, WasiDescriptorSpec];
+  readonly descriptors: readonly [
+    WasiDescriptorSpec | undefined,
+    WasiDescriptorSpec | undefined,
+    WasiDescriptorSpec | undefined,
+  ];
+  /** Runs after the child descriptor fork and before standard descriptors are replaced. */
+  readonly prepareActions?: (filesystem: KernelFileSystem) => readonly AgentOsSpawnFileAction[];
   /** Called only when a prepared child is released before ownership transfers. */
   readonly releaseBeforeTransfer?: () => void;
 }
@@ -169,29 +176,35 @@ export function prepareKernelProgram(
   const childTable = parentTable.fork(mappings, { exec: false });
   let childFilesystem: KernelFileSystem | undefined;
   try {
-    childFilesystem = input.filesystem.fork(childTable);
-    const untransferredCleanup = ownedStdio?.releaseBeforeTransfer;
-    if (ownedStdio !== undefined) {
-      for (const [fd, descriptor] of ownedStdio.descriptors.entries()) {
-        installDescriptor(childFilesystem, fd, descriptor);
+    return withKernelErrors(() => {
+      childFilesystem = input.filesystem.fork(childTable);
+      const preparedActions = ownedStdio?.prepareActions?.(childFilesystem) ?? [];
+      const untransferredCleanup = ownedStdio?.releaseBeforeTransfer;
+      if (ownedStdio !== undefined) {
+        for (const [fd, descriptor] of ownedStdio.descriptors.entries()) {
+          if (descriptor !== undefined) installDescriptor(childFilesystem, fd, descriptor);
+        }
       }
-    } else if (options.stdio !== undefined) {
-      for (const [fd, stdio] of options.stdio.entries()) {
-        installDescriptor(childFilesystem, fd, borrowedStdioDescriptor(fd, stdio));
+      if (options.stdio !== undefined) {
+        for (const [fd, stdio] of options.stdio.entries()) {
+          if (stdio !== undefined && ownedStdio?.descriptors[fd] === undefined) {
+            installDescriptor(childFilesystem, fd, borrowedStdioDescriptor(fd, stdio));
+          }
+        }
       }
-    }
-    if (options.cwd !== undefined) childFilesystem.chdir(options.cwd);
-    applyFileActions(childFilesystem, options.actions ?? []);
-    // Spawn mappings include close-on-exec descriptors so file actions can use them.
-    // The sweep happens once, after every ordered action has completed.
-    runSync(childTable.closeOnExecSweep());
-    return new KernelPreparedProgram(
-      childFilesystem,
-      input.parent,
-      input.signal,
-      input.home,
-      untransferredCleanup,
-    );
+      if (options.cwd !== undefined) childFilesystem.chdir(options.cwd);
+      applyFileActions(childFilesystem, [...preparedActions, ...(options.actions ?? [])]);
+      // Spawn mappings include close-on-exec descriptors so file actions can use them.
+      // The sweep happens once, after every ordered action has completed.
+      runSync(childTable.closeOnExecSweep());
+      return new KernelPreparedProgram(
+        childFilesystem,
+        input.parent,
+        input.signal,
+        input.home,
+        untransferredCleanup,
+      );
+    });
   } catch (error) {
     const errors: unknown[] = [error];
     try {

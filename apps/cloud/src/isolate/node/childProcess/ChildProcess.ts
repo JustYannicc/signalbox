@@ -3,10 +3,12 @@ import * as NodeEvents from "node:events";
 import * as NodeStream from "node:stream";
 import type * as NodeStreamWeb from "node:stream/web";
 
-import type {
-  KernelExitStatus,
-  KernelProgramHost,
-  KernelProgramPrepareInput,
+import {
+  prepareNodeChildStdioKernelProgram,
+  type KernelExitStatus,
+  type KernelNodeChildStdioProgram,
+  type KernelProgramHost,
+  type KernelProgramPrepareInput,
 } from "../../../kernel/KernelProgramHost.ts";
 import { callKernel, type KernelHandle, type ResolvedProgram } from "../../../kernel/KernelAbi.ts";
 import type { NodeProcessHostContext } from "../process/context.ts";
@@ -23,11 +25,22 @@ export function getSynchronousSpawnError(child: NodeChildProcess): Error | undef
   return synchronousSpawnErrors.get(child);
 }
 
+export type NodeChildProcessWithPipes = NodeChildProcess & {
+  readonly stdin: NodeStream.PassThrough;
+  readonly stdout: NodeStream.PassThrough;
+  readonly stderr: NodeStream.PassThrough;
+  readonly stdio: readonly [NodeStream.PassThrough, NodeStream.PassThrough, NodeStream.PassThrough];
+};
+
 export class NodeChildProcess extends NodeEvents.EventEmitter {
-  readonly stdin = new NodeStream.PassThrough();
-  readonly stdout = new NodeStream.PassThrough();
-  readonly stderr = new NodeStream.PassThrough();
-  readonly stdio = [this.stdin, this.stdout, this.stderr] as const;
+  readonly stdin: NodeStream.PassThrough | null;
+  readonly stdout: NodeStream.PassThrough | null;
+  readonly stderr: NodeStream.PassThrough | null;
+  readonly stdio: readonly [
+    NodeStream.PassThrough | null,
+    NodeStream.PassThrough | null,
+    NodeStream.PassThrough | null,
+  ];
   readonly spawnfile: string;
   readonly spawnargs: string[];
 
@@ -63,18 +76,24 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
     this.#spawn = spawn;
     this.spawnfile = spawn.spawnfile;
     this.spawnargs = [...spawn.argv];
+    this.stdin = spawn.stdio[0] === "pipe" ? new NodeStream.PassThrough() : null;
+    this.stdout = spawn.stdio[1] === "pipe" ? new NodeStream.PassThrough() : null;
+    this.stderr = spawn.stdio[2] === "pipe" ? new NodeStream.PassThrough() : null;
+    this.stdio = [this.stdin, this.stdout, this.stderr];
+    this.#stdoutClosed = this.stdout === null;
+    this.#stderrClosed = this.stderr === null;
 
-    this.stdout.once("close", () => {
+    this.stdout?.once("close", () => {
       this.#stdoutClosed = true;
       this.#emitCloseIfReady();
     });
-    this.stderr.once("close", () => {
+    this.stderr?.once("close", () => {
       this.#stderrClosed = true;
       this.#emitCloseIfReady();
     });
-    this.stdin.on("error", (error: Error) => this.#onPipeError(error));
-    this.stdout.on("error", (error: Error) => this.#onPipeError(error));
-    this.stderr.on("error", (error: Error) => this.#onPipeError(error));
+    this.stdin?.on("error", (error: Error) => this.#onPipeError(error));
+    this.stdout?.on("error", (error: Error) => this.#onPipeError(error));
+    this.stderr?.on("error", (error: Error) => this.#onPipeError(error));
   }
 
   start(): void {
@@ -129,7 +148,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
   }
 
   #spawnHost(): void {
-    let prepared: ReturnType<KernelProgramHost["preparePiped"]> | undefined;
+    let prepared: KernelNodeChildStdioProgram | undefined;
     try {
       if (this.#hostAbortController.signal.aborted) {
         this.#fail(abortError());
@@ -139,10 +158,26 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
         this.#host.resolve(this.#spawn.executable),
         "spawn",
       ) as ResolvedProgram;
-      prepared = this.#host.preparePiped(
-        { ...this.#context, signal: this.#hostAbortController.signal },
-        { cwd: this.#spawn.cwd },
-      );
+      const input = { ...this.#context, signal: this.#hostAbortController.signal };
+      if (this.#spawn.stdio.every((mode) => mode === "pipe")) {
+        const piped = this.#host.preparePiped(input, { cwd: this.#spawn.cwd });
+        prepared = {
+          prepared: piped.prepared,
+          stdin: piped.stdin,
+          stdout: piped.stdout,
+          stderr: piped.stderr,
+        };
+      } else {
+        if (typeof this.#host.wakes?.register !== "function") {
+          throw new TypeError("child_process stdio requires the kernel wake registry");
+        }
+        prepared = prepareNodeChildStdioKernelProgram(
+          this.#host.wakes,
+          input,
+          { cwd: this.#spawn.cwd },
+          this.#spawn.stdio,
+        );
+      }
       this.#preparedReleased = false;
       this.#connectPipes(prepared);
 
@@ -213,7 +248,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
     });
   }
 
-  #releasePrepared(prepared: ReturnType<KernelProgramHost["preparePiped"]> | undefined): void {
+  #releasePrepared(prepared: KernelNodeChildStdioProgram | undefined): void {
     if (prepared === undefined) return;
     void (async () => {
       try {
@@ -228,31 +263,37 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
     })();
   }
 
-  #connectPipes(prepared: ReturnType<KernelProgramHost["preparePiped"]>): void {
-    const stdout = NodeStream.Readable.fromWeb(
-      prepared.stdout as NodeStreamWeb.ReadableStream<Uint8Array>,
-    );
-    const stderr = NodeStream.Readable.fromWeb(
-      prepared.stderr as NodeStreamWeb.ReadableStream<Uint8Array>,
-    );
-    const stdin = NodeStream.Writable.fromWeb(
-      prepared.stdin as NodeStreamWeb.WritableStream<Uint8Array>,
-    );
-    stdout.once("close", () => {
-      if (!this.stdout.writableEnded) this.stdout.end();
-    });
-    stderr.once("close", () => {
-      if (!this.stderr.writableEnded) this.stderr.end();
-    });
-    this.stdin.once("close", () => stdin.destroy());
-    this.stdout.once("close", () => stdout.destroy());
-    this.stderr.once("close", () => stderr.destroy());
-    stdout.on("error", (error: Error) => this.stdout.destroy(error));
-    stderr.on("error", (error: Error) => this.stderr.destroy(error));
-    stdin.on("error", (error: Error) => this.stdin.destroy(error));
-    this.stdin.pipe(stdin);
-    stdout.pipe(this.stdout);
-    stderr.pipe(this.stderr);
+  #connectPipes(prepared: KernelNodeChildStdioProgram): void {
+    if (this.stdin !== null && prepared.stdin !== undefined) {
+      const stdin = NodeStream.Writable.fromWeb(
+        prepared.stdin as NodeStreamWeb.WritableStream<Uint8Array>,
+      );
+      this.stdin.once("close", () => stdin.destroy());
+      stdin.on("error", (error: Error) => this.stdin?.destroy(error));
+      this.stdin.pipe(stdin);
+    }
+    if (this.stdout !== null && prepared.stdout !== undefined) {
+      const stdout = NodeStream.Readable.fromWeb(
+        prepared.stdout as NodeStreamWeb.ReadableStream<Uint8Array>,
+      );
+      stdout.once("close", () => {
+        if (this.stdout && !this.stdout.writableEnded) this.stdout.end();
+      });
+      this.stdout.once("close", () => stdout.destroy());
+      stdout.on("error", (error: Error) => this.stdout?.destroy(error));
+      stdout.pipe(this.stdout);
+    }
+    if (this.stderr !== null && prepared.stderr !== undefined) {
+      const stderr = NodeStream.Readable.fromWeb(
+        prepared.stderr as NodeStreamWeb.ReadableStream<Uint8Array>,
+      );
+      stderr.once("close", () => {
+        if (this.stderr && !this.stderr.writableEnded) this.stderr.end();
+      });
+      this.stderr.once("close", () => stderr.destroy());
+      stderr.on("error", (error: Error) => this.stderr?.destroy(error));
+      stderr.pipe(this.stderr);
+    }
   }
 
   async #waitForExit(handle: KernelHandle<"process">): Promise<void> {
@@ -274,10 +315,10 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
     this.#removeAbortListeners();
     this.signalCode = signalName(exit.signal);
     this.exitCode = this.signalCode === null ? exit.exitCode : null;
-    this.stdin.end();
+    this.stdin?.end();
     this.#safeEmit("exit", this.exitCode, this.signalCode);
-    this.stdout.resume();
-    this.stderr.resume();
+    this.stdout?.resume();
+    this.stderr?.resume();
     this.#emitCloseIfReady();
   }
 
@@ -296,17 +337,17 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
       this.#exitSeen = true;
       this.#clearTimeout();
       this.#removeAbortListeners();
-      this.stdin.destroy();
-      this.stdout.destroy();
-      this.stderr.destroy();
+      this.stdin?.destroy();
+      this.stdout?.destroy();
+      this.stderr?.destroy();
       this.#emitCloseIfReady();
       return;
     }
 
     this.#clearTimeout();
-    this.stdin.destroy();
-    this.stdout.destroy();
-    this.stderr.destroy();
+    this.stdin?.destroy();
+    this.stdout?.destroy();
+    this.stderr?.destroy();
     try {
       const signal = normalizeSignal("SIGTERM");
       const result =
@@ -326,9 +367,9 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
     this.#clearTimeout();
     this.#removeAbortListeners();
     this.#reportError(asChildProcessError(value));
-    this.stdin.destroy();
-    this.stdout.destroy();
-    this.stderr.destroy();
+    this.stdin?.destroy();
+    this.stdout?.destroy();
+    this.stderr?.destroy();
     this.#emitCloseIfReady();
   }
 

@@ -265,7 +265,9 @@ describe("Node child_process adapter", () => {
       expect(error).toBeNull();
       expect(stdout).toBe("hello world");
     });
-    child.stdout.on("data", () => events.push("data"));
+    const stdout = child.stdout;
+    if (!stdout) throw new Error("exec should capture stdout by default");
+    stdout.on("data", () => events.push("data"));
     child.on("spawn", () => events.push("spawn"));
     child.on("exit", () => events.push("exit"));
     const closed = new Promise<void>((resolve) => {
@@ -703,12 +705,9 @@ describe("Node child_process adapter", () => {
     );
   });
 
-  it("keeps IPC, PTY and non-pipe stdio paths explicitly unsupported", () => {
+  it("keeps IPC and PTY paths explicitly unsupported", () => {
     const host = fixture();
     expect(() => host.childProcess.fork("worker.js")).toThrow(
-      expect.objectContaining({ code: "ENOTSUP" }),
-    );
-    expect(() => host.childProcess.spawn("worker", { stdio: "inherit" })).toThrow(
       expect.objectContaining({ code: "ENOTSUP" }),
     );
     expect(() => host.childProcess.spawn("worker", { agentosPty: true })).toThrow(

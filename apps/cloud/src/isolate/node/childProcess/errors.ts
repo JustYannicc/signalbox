@@ -7,8 +7,8 @@ export interface ChildProcessError extends Error {
   killed?: boolean;
   signal?: string | null;
   cmd?: string;
-  stdout?: Uint8Array | string;
-  stderr?: Uint8Array | string;
+  stdout?: Uint8Array | string | null;
+  stderr?: Uint8Array | string | null;
   status?: number | null;
   syscall?: string;
   path?: string;
@@ -32,6 +32,9 @@ export function abortError(): ChildProcessError {
 }
 
 export function asChildProcessError(error: unknown): ChildProcessError {
+  if (isCode(error, "EBADF")) {
+    return childProcessError("Bad file descriptor", "EBADF", { syscall: "spawn" });
+  }
   if (error instanceof Error) return error as ChildProcessError;
   return childProcessError(String(error));
 }

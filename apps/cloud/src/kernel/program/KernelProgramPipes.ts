@@ -1,6 +1,8 @@
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { KernelPipe } from "../KernelPipe.ts";
 import { currentKernelIoMode, currentKernelSignal } from "../process/KernelExecution.ts";
+import type { AgentOsSpawnFileAction } from "../process/AgentOsProcessActions.ts";
+import { KernelOpenFlags } from "../filesystem/KernelOpenFlags.ts";
 import {
   RIGHTS,
   FDFLAGS,
@@ -8,6 +10,7 @@ import {
   type WasiStdio,
 } from "../wasi/internal_wasi_descriptors.ts";
 import type {
+  KernelOwnedStdio,
   KernelPreparedProgram,
   KernelProgramPrepareInput,
   KernelProgramPrepareOptions,
@@ -22,6 +25,20 @@ export interface KernelPipedProgram {
   readonly stdin: WritableStream<Uint8Array>;
   readonly stdout: ReadableStream<Uint8Array>;
   readonly stderr: ReadableStream<Uint8Array>;
+}
+
+export type KernelNodeChildStdioMode = "pipe" | "ignore" | number;
+export type KernelNodeChildStdio = readonly [
+  KernelNodeChildStdioMode,
+  KernelNodeChildStdioMode,
+  KernelNodeChildStdioMode,
+];
+
+export interface KernelNodeChildStdioProgram {
+  readonly prepared: KernelPreparedProgram;
+  readonly stdin: WritableStream<Uint8Array> | undefined;
+  readonly stdout: ReadableStream<Uint8Array> | undefined;
+  readonly stderr: ReadableStream<Uint8Array> | undefined;
 }
 
 interface PollResult {
@@ -80,6 +97,113 @@ export function preparePipedKernelProgram(
   }
 }
 
+export function prepareNodeChildStdioKernelProgram(
+  wakes: KernelWakeRegistry,
+  input: KernelProgramPrepareInput,
+  options: Pick<KernelProgramPrepareOptions, "cwd">,
+  stdio: KernelNodeChildStdio,
+  borrowedStdio?: NonNullable<KernelProgramPrepareOptions["stdio"]>,
+): KernelNodeChildStdioProgram {
+  if (borrowedStdio !== undefined) {
+    for (const [fd, mode] of stdio.entries()) {
+      if ((mode === "pipe") !== (borrowedStdio[fd] !== undefined)) {
+        throw new TypeError("Borrowed child stdio must be supplied for pipe slots only");
+      }
+    }
+  }
+
+  const createPipe = (mode: KernelNodeChildStdioMode) =>
+    mode === "pipe" && borrowedStdio === undefined
+      ? new KernelPipe(wakes, PIPE_CAPACITY_BYTES)
+      : undefined;
+  const pipes: readonly [KernelPipe | undefined, KernelPipe | undefined, KernelPipe | undefined] = [
+    createPipe(stdio[0]),
+    createPipe(stdio[1]),
+    createPipe(stdio[2]),
+  ];
+  const stdin = pipes[0] === undefined ? undefined : writable(pipes[0], input.signal);
+  const stdout = pipes[1] === undefined ? undefined : readable(pipes[1], input.signal);
+  const stderr = pipes[2] === undefined ? undefined : readable(pipes[2], input.signal);
+  const descriptorFor = (fd: 0 | 1 | 2): WasiDescriptorSpec | undefined => {
+    const pipe = pipes[fd];
+    if (pipe === undefined) return undefined;
+    if (fd === 0) {
+      return pipeDescriptor(readEndpoint(pipe, wakes, input.signal), RIGHTS.FD_READ, () =>
+        pipe.closeReader(),
+      );
+    }
+    return pipeDescriptor(writeEndpoint(pipe, wakes), RIGHTS.FD_WRITE, () => pipe.closeWriter());
+  };
+  const descriptors: KernelOwnedStdio["descriptors"] = [
+    descriptorFor(0),
+    descriptorFor(1),
+    descriptorFor(2),
+  ];
+  const ownedStdio: KernelOwnedStdio = {
+    descriptors,
+    prepareActions(filesystem) {
+      const sourceAliases = new Map<number, number>();
+      // Alias allocation can reuse a closed numeric source, so validate the fork first.
+      for (const mode of stdio) {
+        if (typeof mode === "number") filesystem.descriptors.get(mode);
+      }
+      // Pipe slots replace standard descriptors before the file actions use numeric sources.
+      for (const mode of stdio) {
+        if (typeof mode === "number" && mode <= 2 && !sourceAliases.has(mode)) {
+          sourceAliases.set(mode, filesystem.descriptors.duplicate(mode, { closeOnExec: true }));
+        }
+      }
+
+      return stdio.flatMap((mode, fd): AgentOsSpawnFileAction[] => {
+        if (mode === "ignore") {
+          return [
+            {
+              kind: "open",
+              fd,
+              sourceFd: 0,
+              flags: fd === 0 ? KernelOpenFlags.O_RDONLY : KernelOpenFlags.O_WRONLY,
+              mode: 0,
+              path: "/dev/null",
+            },
+          ];
+        }
+        if (typeof mode === "number") {
+          return [
+            {
+              kind: "dup2",
+              fd,
+              sourceFd: sourceAliases.get(mode) ?? mode,
+              flags: 0,
+              mode: 0,
+            },
+          ];
+        }
+        return [];
+      });
+    },
+    releaseBeforeTransfer() {
+      for (const pipe of pipes) {
+        pipe?.closeReader();
+        pipe?.closeWriter();
+      }
+    },
+  };
+
+  try {
+    const prepared = prepareKernelProgram(
+      input,
+      { ...options, ...(borrowedStdio === undefined ? {} : { stdio: borrowedStdio }) },
+      ownedStdio,
+    );
+    return { prepared, stdin, stdout, stderr };
+  } catch (error) {
+    ownedStdio.releaseBeforeTransfer?.();
+    pipes[1]?.closeReader();
+    pipes[2]?.closeReader();
+    throw error;
+  }
+}
+
 function pipeDescriptor(
   stdio: PollableStdio,
   accessRight: bigint,
@@ -121,6 +245,14 @@ function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): PollableStd
         : pipe.write(source, { signal: currentKernelSignal() }),
     poll: (direction, signal) => pollPipe(pipe, wakes, direction, signal ?? currentKernelSignal()),
   };
+}
+
+function writable(pipe: KernelPipe, signal?: AbortSignal): WritableStream<Uint8Array> {
+  return new WritableStream<Uint8Array>({
+    write: (chunk) => writeAll(pipe, chunk, signal),
+    close: () => pipe.closeWriter(),
+    abort: () => pipe.closeWriter(),
+  });
 }
 
 function readable(pipe: KernelPipe, signal?: AbortSignal): ReadableStream<Uint8Array> {
