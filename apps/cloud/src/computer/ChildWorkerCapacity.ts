@@ -1,3 +1,11 @@
+export class ChildWorkerLimitError extends Error {
+  readonly code = "RESOURCE_LIMIT";
+  constructor() {
+    super("Command capacity is full");
+    this.name = "ChildWorkerLimitError";
+  }
+}
+
 export interface ChildWorkerPermit {
   release(): void;
 }
@@ -52,8 +60,17 @@ export class ChildWorkerCapacity {
     });
   }
 
+  tryAcquire(signal: AbortSignal): ChildWorkerPermit | undefined {
+    signal.throwIfAborted();
+    if (this.#active >= this.limit || this.#waiters.length > 0) return undefined;
+    this.#active++;
+    return this.#makePermit();
+  }
+
   async run<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
-    const permit = await this.acquire(signal);
+    // RPC callbacks can depend on a live worker. Waiting here could require its own ancestor to finish.
+    const permit = this.tryAcquire(signal);
+    if (permit === undefined) throw new ChildWorkerLimitError();
     try {
       return await work();
     } finally {
