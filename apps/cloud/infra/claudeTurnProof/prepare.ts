@@ -4,8 +4,13 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
 import { build, version as esbuildVersion } from "esbuild";
-import { encodeAssetBundle } from "./assetBundle.ts";
+import { encodeAssetBundle, PROGRAM_BUNDLE_CONTENT_TYPE } from "./assetBundle.ts";
 import { prepareProofEnvironment } from "./prepareEnvironment.ts";
+import {
+  prepareProofProgramModules,
+  type ProofProgramArtifactPaths,
+} from "./prepareProgramModules.ts";
+import { createPreparedAssetModuleCatalog } from "./preparedAssetModules.ts";
 import type { ClaudeTurnProofConfig } from "./ClaudeTurnProof.ts";
 import type { ModuleType } from "../isolateProbe/moduleTransport.ts";
 
@@ -17,6 +22,8 @@ interface ArtifactEntry {
   bytes: number;
   sha256: string;
   type?: ModuleType;
+  loader?: number;
+  encoding?: number;
 }
 
 interface ReleaseManifest {
@@ -51,11 +58,24 @@ function entries(value: unknown, modules: boolean): Record<string, ArtifactEntry
     if (modules && type !== "js" && type !== "cjs" && type !== "text" && type !== "wasm") {
       throw new Error(`Invalid release module type: ${name}`);
     }
+    const loader = entry.loader;
+    const encoding = entry.encoding;
+    if (
+      !modules &&
+      ((loader !== undefined &&
+        (typeof loader !== "number" || !Number.isSafeInteger(loader) || loader < 0)) ||
+        (encoding !== undefined &&
+          (typeof encoding !== "number" || !Number.isSafeInteger(encoding) || encoding < 0)))
+    ) {
+      throw new Error(`Invalid release asset text metadata: ${name}`);
+    }
     result[name] = {
       path: entry.path,
       bytes: entry.bytes,
       sha256: entry.sha256,
       ...(modules ? { type: type as ModuleType } : {}),
+      ...(!modules && loader !== undefined ? { loader: loader as number } : {}),
+      ...(!modules && encoding !== undefined ? { encoding: encoding as number } : {}),
     };
   }
   return result;
@@ -107,6 +127,7 @@ export async function prepareClaudeTurnProof(options: {
   packagesOnly?: boolean;
   scenario?: "boot" | "tools";
   contextTokenEquivalent?: 50_000 | 200_000;
+  programArtifacts?: ProofProgramArtifactPaths;
 }) {
   if (options.assetsOnly && options.packagesOnly)
     throw new Error("Choose assets-only or packages-only");
@@ -116,16 +137,32 @@ export async function prepareClaudeTurnProof(options: {
   await NodeFSP.mkdir(outputRoot);
   const manifestBytes = await NodeFSP.readFile(NodePath.join(artifactRoot, "manifest.json"));
   const manifest = releaseManifest(manifestBytes);
-  const assets: ClaudeTurnProofConfig["assets"] = Object.fromEntries(
-    Object.entries(manifest.assets).map(([path, entry]) => [
-      path,
-      { bytes: entry.bytes, sha256: entry.sha256 },
-    ]),
-  );
+  const assets: ClaudeTurnProofConfig["assets"] = createPreparedAssetModuleCatalog(manifest.assets);
+  if (options.programArtifacts && (options.assetsOnly || options.packagesOnly))
+    throw new Error("Programs require a release boot scenario");
+  if (
+    options.scenario === "tools" &&
+    !options.programArtifacts &&
+    !options.assetsOnly &&
+    !options.packagesOnly
+  )
+    throw new Error("Tool scenarios require pinned Bash, BusyBox and ripgrep artifacts");
+  const programs = options.programArtifacts
+    ? await prepareProofProgramModules(options.programArtifacts)
+    : undefined;
+  const programInventory = (programs?.modules ?? []).map(({ name, type, bytes, sha256 }) => ({
+    name,
+    type,
+    bytes: bytes.byteLength,
+    sha256,
+  }));
+  const programBundle =
+    programs === undefined ? undefined : encodeAssetBundle(programs.executableFiles);
   const pins = {
     release: manifest.release,
     releaseManifestSha256: sha256(manifestBytes),
     esbuildVersion,
+    ...(programs === undefined ? {} : { programs: programs.pins }),
   };
   const seedAssets = options.seedAssets === true || options.assetsOnly === true;
   const environment = options.assetsOnly ? undefined : await prepareProofEnvironment();
@@ -144,7 +181,7 @@ export async function prepareClaudeTurnProof(options: {
     sha256: sha256(module.bytes),
   }));
   const reservedNames = new Set(["proof-host.js"]);
-  for (const module of environmentModules) {
+  for (const module of [...environmentModules, ...(programs?.modules ?? [])]) {
     if (reservedNames.has(module.path) || Object.hasOwn(manifest.modules, module.path))
       throw new Error(`Release conflicts with environment module name: ${module.path}`);
     reservedNames.add(module.path);
@@ -158,8 +195,9 @@ export async function prepareClaudeTurnProof(options: {
       ? 'async()=>{throw new Error("ERR_DIAGNOSTIC_ASSETS_ONLY");}'
       : `async()=>{const[yaml,undici]=await Promise.all([import(${JSON.stringify(`./${environment.packageEntrypoints.yaml}`)}),import(${JSON.stringify(`./${environment.packageEntrypoints.undici}`)})]);return {yaml:yaml.default,undici:undici.default};}`;
   const runtime = NodePath.join(import.meta.dirname, "ClaudeTurnProof.ts");
-  const source = `import {createClaudeTurnProofClass} from ${JSON.stringify(runtime)};
-export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},packagesOnly:${options.packagesOnly === true},loadPackages:${loadPackages},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}});`;
+  const source = `${programs?.imports ?? ""}
+import {createClaudeTurnProofClass} from ${JSON.stringify(runtime)};
+export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify(assets)},pins:${JSON.stringify(pins)},requireSeed:${seedAssets},assetsOnly:${options.assetsOnly === true},packagesOnly:${options.packagesOnly === true},loadPackages:${loadPackages},scenario:${JSON.stringify(options.scenario ?? "boot")},contextTokenEquivalent:${options.contextTokenEquivalent ?? "undefined"},loadRelease:${loadRelease}${programs === undefined ? "" : `,programs:${programs.configExpression},programFiles:${JSON.stringify(programs.executableCatalog)}`}});`;
   const bundled = await build({
     stdin: {
       contents: source,
@@ -177,6 +215,7 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     external: [
       "node:*",
       "cloudflare:*",
+      ...(programs?.external ?? []),
       `./${manifest.mainModule}`,
       ...Object.values(environment?.packageEntrypoints ?? {}).map((path) => `./${path}`),
     ],
@@ -188,7 +227,8 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     throw new Error("Release conflicts with proof host module name");
   const releaseBytes = Object.values(manifest.modules).reduce((sum, entry) => sum + entry.bytes, 0);
   const environmentBytes = environmentInventory.reduce((sum, module) => sum + module.bytes, 0);
-  const moduleMapBytes = releaseBytes + host.contents.byteLength + environmentBytes;
+  const programBytes = programInventory.reduce((sum, module) => sum + module.bytes, 0);
+  const moduleMapBytes = releaseBytes + host.contents.byteLength + environmentBytes + programBytes;
   if (moduleMapBytes > MAX_MODULE_MAP_BYTES) {
     throw new Error(
       `Module map requires ${moduleMapBytes} bytes; budget is ${MAX_MODULE_MAP_BYTES}`,
@@ -209,6 +249,12 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
     await NodeFSP.writeFile(destination, module.bytes);
     modules[module.path] = { path, type: module.type };
+  }
+  for (const module of programs?.modules ?? []) {
+    const destination = within(outputRoot, module.path);
+    await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+    await NodeFSP.writeFile(destination, module.bytes);
+    modules[module.name] = { path: module.path, type: module.type };
   }
   for (const module of environment?.raw.workerModules ?? []) {
     const path = within(outputRoot, NodePath.join("environment-raw", module.path));
@@ -235,28 +281,44 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
   }
   const assetBundle = encodeAssetBundle(bundleEntries);
   await NodeFSP.writeFile(NodePath.join(outputRoot, "assets.bundle"), assetBundle);
+  if (programBundle !== undefined) {
+    await NodeFSP.writeFile(NodePath.join(outputRoot, "programs.bundle"), programBundle);
+  }
   await NodeFSP.writeFile(NodePath.join(outputRoot, "proof-host.js"), host.contents);
   modules["proof-host.js"] = { path: "proof-host.js", type: "js" };
-  const requests = seedAssets
-    ? {
-        requests: [
-          {
-            path: "/seed-assets",
-            method: "POST",
-            bodyFile: "assets.bundle",
-            contentType: "application/vnd.signalbox.claude-assets.v1",
-          },
-          {
-            path: options.assetsOnly
-              ? "/verify-assets"
-              : options.packagesOnly
-                ? "/verify-packages"
-                : "/boot",
-            method: "GET",
-          },
-        ],
-      }
-    : { paths: [options.packagesOnly ? "/verify-packages" : "/boot"] };
+  const endpoint = options.assetsOnly
+    ? "/verify-assets"
+    : options.packagesOnly
+      ? "/verify-packages"
+      : "/boot";
+  const requests =
+    seedAssets || programBundle !== undefined
+      ? {
+          requests: [
+            ...(seedAssets
+              ? [
+                  {
+                    path: "/seed-assets",
+                    method: "POST",
+                    bodyFile: "assets.bundle",
+                    contentType: "application/vnd.signalbox.claude-assets.v1",
+                  },
+                ]
+              : []),
+            ...(programBundle === undefined
+              ? []
+              : [
+                  {
+                    path: "/seed-programs",
+                    method: "POST",
+                    bodyFile: "programs.bundle",
+                    contentType: PROGRAM_BUNDLE_CONTENT_TYPE,
+                  },
+                ]),
+            { path: endpoint, method: "GET" },
+          ],
+        }
+      : { paths: [endpoint] };
   await NodeFSP.writeFile(
     NodePath.join(outputRoot, "manifest.json"),
     `${JSON.stringify(
@@ -284,9 +346,18 @@ export const ClaudeTurnProof=createClaudeTurnProofClass({assets:${JSON.stringify
     assetBytes: bundleEntries.reduce((sum, entry) => sum + entry.bytes.byteLength, 0),
     assetBundleBytes: assetBundle.byteLength,
     assetBundleSha256: sha256(assetBundle),
+    ...(programBundle === undefined
+      ? {}
+      : {
+          programSeedBytes: programBundle.byteLength,
+          programSeedSha256: sha256(programBundle),
+        }),
     seeded: seedAssets,
     assetsOnly: options.assetsOnly === true,
     packagesOnly: options.packagesOnly === true,
+    ...(programs === undefined
+      ? {}
+      : { programs: { bytes: programBytes, modules: programInventory } }),
     ...(environment
       ? {
           environment: {
@@ -316,6 +387,9 @@ if (process.argv[1] === import.meta.filename) {
       "packages-only": { type: "boolean", default: false },
       scenario: { type: "string", default: "boot" },
       "context-token-equivalent": { type: "string" },
+      bash: { type: "string" },
+      busybox: { type: "string" },
+      ripgrep: { type: "string" },
     },
   });
   if (!values.release || !values.output)
@@ -326,6 +400,12 @@ if (process.argv[1] === import.meta.filename) {
   const tokens = values["context-token-equivalent"];
   if (tokens !== undefined && tokens !== "50000" && tokens !== "200000")
     throw new Error("context-token-equivalent must be50000 or200000");
+  const artifactPaths = [values.bash, values.busybox, values.ripgrep];
+  if (
+    artifactPaths.some((path) => path !== undefined) &&
+    artifactPaths.some((path) => path === undefined)
+  )
+    throw new Error("Pass all three --bash, --busybox and --ripgrep artifacts");
   process.stdout.write(
     `${JSON.stringify(
       await prepareClaudeTurnProof({
@@ -335,6 +415,15 @@ if (process.argv[1] === import.meta.filename) {
         assetsOnly: values["assets-only"],
         packagesOnly: values["packages-only"],
         scenario,
+        ...(values.bash && values.busybox && values.ripgrep
+          ? {
+              programArtifacts: {
+                bash: values.bash,
+                busybox: values.busybox,
+                ripgrep: values.ripgrep,
+              },
+            }
+          : {}),
         ...(tokens === undefined
           ? {}
           : { contextTokenEquivalent: tokens === "50000" ? 50_000 : 200_000 }),
