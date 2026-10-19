@@ -1,6 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - the counterfactual needs a Node task boundary after promise cleanup.
-import * as NodeTimersPromises from "node:timers/promises";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { Effect } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   ChildWorkerCapacity,
   isChildWorkerReservation,
@@ -235,69 +235,77 @@ describe("ChildWorkerReservation", () => {
       expect(capacity.active).toBe(0);
     }));
 
-  it("holds the reservation through descendants, host close, and unconfirmed stop ACK", () =>
-    withFixture(async (fixture) => {
-      const capacity = new ChildWorkerCapacity(1);
-      const reservation = capacity.tryReserve(fixture.context.signal)!;
-      const descendant = Promise.withResolvers<ReturnType<typeof exited>>();
-      const exitedEarly = deferred<ReturnType<typeof exited>>();
-      const closeStarted = deferred<void>();
-      const closeGate = deferred<void>();
-      const closeFinished = deferred<void>();
-      const stopWaitStarted = deferred<void>();
-      const stopped = deferred<void>();
-      // The termination read marks the point after host.close and before the stop ACK wait.
-      class ObservedDispatchError extends ChildWorkerDispatchError {
-        override get termination() {
-          const termination = super.termination;
-          if (termination.kind === "unconfirmed") stopWaitStarted.resolve(undefined);
-          return termination;
+  it.effect("holds the reservation through descendants, host close, and unconfirmed stop ACK", () =>
+    Effect.gen(function* () {
+      const fixture = childBusyboxFixture();
+      try {
+        const capacity = new ChildWorkerCapacity(1);
+        const reservation = capacity.tryReserve(fixture.context.signal)!;
+        const descendant = Promise.withResolvers<ReturnType<typeof exited>>();
+        const exitedEarly = deferred<ReturnType<typeof exited>>();
+        const closeStarted = deferred<void>();
+        const closeGate = deferred<void>();
+        const closeFinished = deferred<void>();
+        const stopWaitStarted = deferred<void>();
+        const stopped = deferred<void>();
+        // The termination read marks the point after host.close and before the stop ACK wait.
+        class ObservedDispatchError extends ChildWorkerDispatchError {
+          override get termination() {
+            const termination = super.termination;
+            if (termination.kind === "unconfirmed") stopWaitStarted.resolve(undefined);
+            return termination;
+          }
         }
+        const failure = new ObservedDispatchError("RPC disconnected", {
+          kind: "unconfirmed",
+          stopped: stopped.promise,
+        });
+        const program = createChildWorkerProgram({
+          executable: "/bin/tool",
+          code: { mainModule: "entry.js", modules: {} },
+          capacity,
+          reservationFor: () => reservation,
+          dispatch: { run: () => descendant.promise },
+          createHost: () => ({
+            host: {},
+            exited: exitedEarly.promise,
+            async close() {
+              closeStarted.resolve(undefined);
+              await closeGate.promise;
+              closeFinished.resolve(undefined);
+            },
+          }),
+        });
+
+        const result = program.run(fixture.context);
+        const status = exited(17);
+        exitedEarly.resolve(status);
+        yield* Effect.promise(() => expect(result).resolves.toEqual(status));
+        expect(capacity.active).toBe(1);
+
+        const draining = expect(program.drain()).rejects.toBe(failure);
+        descendant.reject(failure);
+        yield* Effect.promise(() => closeStarted.promise);
+        expect(capacity.active).toBe(1);
+        expect(capacity.tryAcquire(fixture.context.signal)).toBeUndefined();
+        closeGate.resolve(undefined);
+        yield* Effect.promise(() => closeFinished.promise);
+        yield* Effect.promise(() => stopWaitStarted.promise);
+        // Let an early release's promise-finally chain run before probing capacity.
+        yield* Effect.yieldNow;
+        expect(capacity.active).toBe(1);
+        expect(capacity.tryAcquire(fixture.context.signal)).toBeUndefined();
+
+        stopped.resolve(undefined);
+        const next = capacity.acquire(fixture.context.signal);
+        const permit = yield* Effect.promise(() => next);
+        permit.release();
+        yield* Effect.promise(() => draining);
+        expect(capacity.active).toBe(0);
+        expect(yield* Effect.promise(() => result)).toEqual(status);
+      } finally {
+        yield* Effect.promise(() => fixture.close());
       }
-      const failure = new ObservedDispatchError("RPC disconnected", {
-        kind: "unconfirmed",
-        stopped: stopped.promise,
-      });
-      const program = createChildWorkerProgram({
-        executable: "/bin/tool",
-        code: { mainModule: "entry.js", modules: {} },
-        capacity,
-        reservationFor: () => reservation,
-        dispatch: { run: () => descendant.promise },
-        createHost: () => ({
-          host: {},
-          exited: exitedEarly.promise,
-          async close() {
-            closeStarted.resolve(undefined);
-            await closeGate.promise;
-            closeFinished.resolve(undefined);
-          },
-        }),
-      });
-
-      const result = program.run(fixture.context);
-      const status = exited(17);
-      exitedEarly.resolve(status);
-      await expect(result).resolves.toEqual(status);
-      expect(capacity.active).toBe(1);
-
-      descendant.reject(failure);
-      await closeStarted.promise;
-      expect(capacity.active).toBe(1);
-      expect(capacity.tryAcquire(fixture.context.signal)).toBeUndefined();
-      closeGate.resolve(undefined);
-      await closeFinished.promise;
-      await stopWaitStarted.promise;
-      // Let an early release's promise-finally chain run before probing capacity.
-      await NodeTimersPromises.scheduler.yield();
-      expect(capacity.active).toBe(1);
-      expect(capacity.tryAcquire(fixture.context.signal)).toBeUndefined();
-
-      stopped.resolve(undefined);
-      const next = capacity.acquire(fixture.context.signal);
-      const permit = await next;
-      permit.release();
-      expect(capacity.active).toBe(0);
-      expect(await result).toEqual(status);
-    }));
+    }),
+  );
 });

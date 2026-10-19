@@ -8,6 +8,7 @@ import {
 } from "./ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
+import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
 
 export type ChildWorkerModule =
   | string
@@ -40,6 +41,9 @@ export interface ChildWorkerProgramOptions<Host extends object> {
   readonly code: ChildWorkerCode;
   readonly capacity: Pick<ChildWorkerCapacity, "run">;
   readonly reservationFor?: (context: KernelAsyncProgramContext) => ChildWorkerReservation;
+  /** Derive child-only environment values after the original context has claimed admission. */
+  readonly childEnv?: (context: KernelAsyncProgramContext) => Readonly<Record<string, string>>;
+  readonly lifetimes?: ChildWorkerLifetimes;
   readonly dispatch: ChildWorkerDispatch<Host>;
   /** The adapter supplies an RPC target; its methods retain the process's actual kernel resources. */
   readonly createHost: (context: KernelAsyncProgramContext) => {
@@ -50,14 +54,20 @@ export interface ChildWorkerProgramOptions<Host extends object> {
   };
 }
 
+export type ChildWorkerProgram = Extract<
+  KernelProgramImplementation,
+  { readonly kind: "async" }
+> & { readonly drain: () => Promise<void> };
+
 /** Keep kernel admission and fd ownership in the facet while the program body runs in a child. */
 export function createChildWorkerProgram<Host extends object>(
   options: ChildWorkerProgramOptions<Host>,
-): Extract<KernelProgramImplementation, { readonly kind: "async" }> {
+): ChildWorkerProgram {
   const {
     executable,
     capacity,
     reservationFor,
+    childEnv,
     dispatch,
     createHost,
     code: { mainModule, modules: moduleSource, entrypoint, limits },
@@ -68,6 +78,7 @@ export function createChildWorkerProgram<Host extends object>(
     limits: resolveChildWorkerLimits(limits),
   });
   const loadModules = createModuleLoader(moduleSource);
+  const lifetimes = options.lifetimes ?? new ChildWorkerLifetimes();
   return Object.freeze({
     kind: "async" as const,
     async run(context: KernelAsyncProgramContext) {
@@ -76,7 +87,10 @@ export function createChildWorkerProgram<Host extends object>(
         context.signal.throwIfAborted();
         const modules = await loadModules();
         context.signal.throwIfAborted();
-        const owner = createHost(context);
+        const env = Object.freeze({
+          ...(childEnv === undefined ? context.env : childEnv(context)),
+        });
+        const owner = createHost(childEnv === undefined ? context : { ...context, env });
         if (owner.exited !== undefined) void owner.exited.then(result.resolve, result.reject);
         let failure: ChildWorkerDispatchError | undefined;
         try {
@@ -88,7 +102,7 @@ export function createChildWorkerProgram<Host extends object>(
                 executable,
                 argv: [...context.args],
                 cwd: context.filesystem.cwd,
-                env: { ...context.env },
+                env,
               },
             }),
             owner.host,
@@ -118,10 +132,12 @@ export function createChildWorkerProgram<Host extends object>(
         reservationFor === undefined
           ? capacity.run(context.signal, work)
           : runWithReservation(reservationFor, context, work);
-      // Observe late dispatch/close failures while capacity remains held through physical teardown.
+      lifetimes.track(lifetime);
+      // Logical exit can precede dispatch completion and physical teardown on either admission path.
       void lifetime.then(result.resolve, result.reject);
       return result.promise;
     },
+    drain: () => lifetimes.drain(),
   });
 }
 
