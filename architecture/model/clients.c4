@@ -63,7 +63,7 @@ model {
   laptopCli = client 'Local Claude Code · Codex' {
     #v1
     icon tech:claude-icon
-    description 'uses a pool via a local key'
+    description 'models and tools via a personal key'
     technology 'official CLIs · sbk_ key'
   }
   mcpClient = client 'Any MCP client' {
@@ -73,6 +73,7 @@ model {
     technology 'MCP · AuthKit OAuth'
   }
 
-  laptopCli -[model]-> signalbox.gateway 'model wire'
-  mcpClient -[tool]-> signalbox.gateway 'mcp wire'
+  laptopCli -[model]-> signalbox.gateway.modelGateway 'model wire'
+  laptopCli -[tool]-> signalbox.gateway.toolGateway 'mcp wire'
+  mcpClient -[tool]-> signalbox.gateway.toolGateway 'mcp wire'
 }

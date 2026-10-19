@@ -78,7 +78,9 @@ model {
         description 'harness heap + live FS · durable seed receipts'
         technology 'Worker Loader isolate + SQLite'
         metadata {
+          liveFsResidency 'authority until the turn-end commit, then cache; idle live-FS eviction (default automation) drops contents, keeps the manifest, rehydrates from the fork'
           seeding 'seed receipts are durable: a facet reincarnated between seeding and boot resumes from them'
+          programs 'never runs program code: every program runs in its own child Dynamic Worker behind the command gateway, so one command cannot take the DO down (#1255)'
         }
       }
       shims = part 'Node · Bun shims' {
@@ -127,9 +129,10 @@ model {
 
     harness.fetchShim -[model]-> signalbox.gateway.modelGateway 'model wire'
     harness.fetchShim -[tool]-> signalbox.gateway.toolGateway 'mcp wire'
-    harness.sessionFacet -> signalbox.computer.api 'built-in tools: exec · files'
+    harness.sessionFacet -> signalbox.computer.commandGateway 'Bash (exec)'
+    harness.sessionFacet -> signalbox.computer.filesGateway 'Read · Write · Edit'
     harness.fetchShim -> signalbox.gateway.egress.inProcess 'WebFetch (egress)'
-    harness.hooks -> signalbox.computer.api 'command hooks (exec)'
+    harness.hooks -> signalbox.computer.commandGateway 'command hooks (exec)'
     harness.hooks -> signalbox.thread.api 'status note'
     harness.mirror -[async]-> signalbox.thread.api 'harness events · session rows'
 

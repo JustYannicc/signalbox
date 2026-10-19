@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { Inode, DirectoryEntry } from "../storage.ts";
+import type { KernelFileByteAccess, KernelFileByteView } from "../KernelFileBytes.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
 import type { WasiStdio } from "./internal_wasi_stdio.ts";
@@ -17,6 +18,8 @@ export interface WasiOpenDescriptionOptions {
   readonly inode?: Inode | undefined;
   readonly stdio?: WasiStdio | undefined;
   readonly stdioIndex?: 0 | 1 | 2 | undefined;
+  readonly byteAccess?: KernelFileByteAccess | undefined;
+  readonly byteView?: KernelFileByteView | undefined;
   readonly offset: bigint;
   readonly flags: number;
   readonly directorySnapshot?: DirectoryEntry[] | undefined;
@@ -36,6 +39,8 @@ export class WasiOpenDescription {
   readonly inode: Inode | undefined;
   readonly stdio: WasiStdio | undefined;
   readonly stdioIndex: 0 | 1 | 2 | undefined;
+  readonly byteAccess: KernelFileByteAccess | undefined;
+  readonly byteView: KernelFileByteView | undefined;
 
   #offset: bigint;
   #flags: number;
@@ -55,6 +60,8 @@ export class WasiOpenDescription {
     this.inode = options.inode;
     this.stdio = options.stdio;
     this.stdioIndex = options.stdioIndex;
+    this.byteAccess = options.byteAccess;
+    this.byteView = options.byteView;
     this.#offset = options.offset;
     this.#flags = options.flags;
     this.#directorySnapshot = options.directorySnapshot;
@@ -114,21 +121,25 @@ export class WasiOpenDescription {
     // must never restore a reference whose Storage.release() already ran.
     this.#released = true;
     const errors: unknown[] = [];
-    try {
-      if (this.mount !== undefined && this.inode !== undefined) {
-        try {
-          yield* complete(this.mount.storage.release(this.inode));
-        } catch (error) {
-          errors.push(error);
-        }
+    if (this.byteAccess !== undefined) {
+      try {
+        this.byteAccess.release();
+      } catch (error) {
+        errors.push(error);
       }
-    } finally {
-      if (this.#onLastClose !== undefined) {
-        try {
-          yield* complete(this.#onLastClose());
-        } catch (error) {
-          errors.push(error);
-        }
+    }
+    if (this.mount !== undefined && this.inode !== undefined) {
+      try {
+        yield* complete(this.mount.storage.release(this.inode));
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (this.#onLastClose !== undefined) {
+      try {
+        yield* complete(this.#onLastClose());
+      } catch (error) {
+        errors.push(error);
       }
     }
     if (errors.length === 1) throw errors[0];

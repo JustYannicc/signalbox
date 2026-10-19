@@ -20,6 +20,7 @@ import {
 } from "./internal_wasi_paths.ts";
 import { WasiFdCalls } from "./internal_wasi_fd_calls.ts";
 import { WasiPathCalls, type WasiCreationPolicy } from "./internal_wasi_path_calls.ts";
+import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 
 export { complete, type WasiCall } from "./internal_wasi_calls.ts";
 export { WasiDescriptorTable } from "./internal_wasi_descriptors.ts";
@@ -34,6 +35,7 @@ export interface WasiDescriptorContext {
   readonly ownership: "owned" | "borrowed";
   readonly creation?: WasiCreationPolicy;
   readonly pathCheck?: WasiPathCheck;
+  readonly fileBytes?: () => KernelFileByteSelection;
 }
 
 /** Composes the preview1 descriptor, file, and path syscall adapters. */
@@ -65,6 +67,7 @@ export class WasiFileSystem {
       this.descriptors,
       this.#paths,
       descriptorContext?.creation,
+      descriptorContext?.fileBytes,
     );
     this.imports = Object.assign(
       Object.create(null) as Record<string, unknown>,

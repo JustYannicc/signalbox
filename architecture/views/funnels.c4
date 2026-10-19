@@ -1,0 +1,166 @@
+// Every boundary is one funnel (#1191 addendum, owner, 2026-10-19). Each capability that crosses a boundary
+// has exactly one gateway; adapters fan out behind it. Callers never know which adapter served them, and
+// moving work between Cloudflare and boxd never moves a funnel. A second path to a capability is a bug.
+views {
+
+  view funnels {
+    title 'Overview/Decisions/Funnels'
+    description '''
+      Which one gateway does each capability cross? Six funnels: Funnel (clients), Command gateway
+      (`Computer.exec` / `attach`), Files (`Computer.files` / Drive), Model gateway, Connections gateway
+      (Executor plus egress) and Port gateway (`Computer.port`). Callers sit above, adapters below, and the
+      kernel on Cloudflare and a boxd VM sit behind the same three Computer funnels. Click a funnel for its
+      callers and adapters. Decided 2026-10-19 (#1191).
+    '''
+
+    include
+      signalbox.web with { title 'Clients'; description 'web · desktop · mobile · CLI · API' },
+      signalbox.harness with { title 'Agents'; description 'model tool calls · hooks' },
+      signalbox.automations,
+      signalbox.funnel with { navigateTo funnel_clients },
+      signalbox.computer.commandGateway with { navigateTo funnel_command },
+      signalbox.computer.filesGateway with { navigateTo funnel_files },
+      signalbox.computer.portGateway with { navigateTo funnel_port },
+      signalbox.gateway.modelGateway with { title 'Model gateway'; navigateTo funnel_model },
+      signalbox.gateway.toolGateway with { title 'Connections gateway'; description 'Executor + egress'; navigateTo funnel_connections },
+      signalbox.computer.childIsolates with { title 'Kernel program'; description 'Cloudflare · child Dynamic Worker' },
+      signalbox.computer.execDaemon with { title 'boxd VM'; description 'exec daemon · node-pty' }
+
+    style signalbox.funnel, signalbox.computer.commandGateway, signalbox.computer.filesGateway, signalbox.computer.portGateway, signalbox.gateway.modelGateway, signalbox.gateway.toolGateway {
+      color green
+    }
+    style signalbox.computer.childIsolates, signalbox.computer.execDaemon { color muted }
+    rank source { signalbox.web, signalbox.harness, signalbox.automations }
+    autoLayout TopBottom
+  }
+
+  // ───────────────────────────── One drill-down per funnel ─────────────────────────────
+
+  view funnel_clients {
+    title 'Overview/Decisions/Funnels/Funnel'
+    description '''
+      Who reaches Signalbox through Funnel, and what is behind it? Every client (web, desktop, mobile, CLI,
+      extension) speaks one typed RPC to Funnel; Funnel decodes, calls one module and maps errors. The terminal,
+      files and port URLs go on into Computer's own funnels.
+    '''
+    include
+      signalbox.web,
+      signalbox.desktop,
+      signalbox.mobile,
+      signalbox.cli,
+      signalbox.browserExtension,
+      signalbox.funnel,
+      signalbox.operations,
+      signalbox.identity,
+      signalbox.computer.commandGateway,
+      signalbox.computer.filesGateway,
+      signalbox.computer.portGateway
+    style signalbox.funnel { color green }
+    autoLayout TopBottom
+  }
+
+  view funnel_command {
+    title 'Overview/Decisions/Funnels/Command gateway'
+    description '''
+      Who runs commands, and where do they run? Every caller goes through `Computer.exec` / `attach`: the
+      model's tool calls and hooks, the person's terminal and API agents (through Funnel), automations and stdio
+      MCP servers. One routing table decides from argv and evidence, never from the caller, and every command
+      runs under a budget in a child Dynamic Worker or on a boxd VM. Decided 2026-10-19 (#1071, #1255).
+    '''
+    include
+      signalbox.funnel with { description 'terminal · API agents' },
+      signalbox.harness with { description 'model tool calls · hooks' },
+      signalbox.automations,
+      signalbox.connections with { description 'stdio MCP servers' },
+      signalbox.computer.commandGateway,
+      signalbox.computer.escalation,
+      signalbox.computer.budgets,
+      signalbox.computer.childIsolates with { title 'Kernel program' },
+      signalbox.computer.execDaemon with { title 'boxd VM' }
+    exclude signalbox.automations -> signalbox.connections
+    style signalbox.computer.commandGateway { color green }
+    autoLayout TopBottom
+  }
+
+  view funnel_files {
+    title 'Overview/Decisions/Funnels/Files'
+    description '''
+      Who reads and writes files, and where do the bytes live? The harness, the terminal, the renderer and
+      laptops all use `Computer.files`. Behind it: the live FS in the kernel, the thread's Artifacts fork and
+      R2 through Drive, and a VM disk that is only ever a cache.
+    '''
+    include
+      signalbox.harness,
+      signalbox.funnel with { description 'terminal · renderer · laptops' },
+      signalbox.computer.filesGateway,
+      signalbox.computer.backend.kernelFs with { title 'Live FS'; description 'kernel · inode store' },
+      signalbox.drive with { description 'Artifacts fork · R2' },
+      signalbox.computer.execDaemon with { title 'VM disk'; description 'cache only' }
+    style signalbox.computer.filesGateway { color green }
+    autoLayout TopBottom
+  }
+
+  view funnel_model {
+    title 'Overview/Decisions/Funnels/Model gateway'
+    description '''
+      Who calls a model, and who answers? The harness in the isolate and a person's local Claude Code or Codex
+      both use the one model gateway. Behind it the folder's pool picks an account, then the provider answers.
+    '''
+    include
+      signalbox.harness,
+      laptopCli,
+      signalbox.gateway.modelGateway,
+      signalbox.models with { description 'pools, then providers' },
+      modelProviders.anthropic,
+      modelProviders.openai,
+      modelProviders.openrouter
+    style signalbox.gateway.modelGateway { color green }
+    autoLayout TopBottom
+  }
+
+  view funnel_connections {
+    title 'Overview/Decisions/Funnels/Connections gateway'
+    description '''
+      Who calls an outside service, and from where? MCP calls enter at ToolGateway (Executor); every outbound
+      request from the isolate or a VM enters at egress. Both end on Cloudflare: the gateway fills the
+      credential, makes the call and scrubs the response, wherever the command ran. A VM's EgressProxy is only
+      a bridge: it terminates TLS for bound hosts and forwards over HTTPS; unbound allowlisted hosts splice.
+    '''
+    include
+      signalbox.harness,
+      mcpClient,
+      signalbox.computer.childIsolates with { title 'Kernel program' },
+      signalbox.computer.execDaemon with { title 'boxd VM' },
+      signalbox.gateway.toolGateway with { title 'ToolGateway · Executor' },
+      signalbox.gateway.egress,
+      signalbox.gateway.egress.inProcess,
+      signalbox.gateway.egress.egressProxy with { title 'EgressProxy bridge' },
+      signalbox.gateway.egress.fill,
+      signalbox.connections,
+      services.boundHost,
+      services.toolService
+    style signalbox.gateway.toolGateway, signalbox.gateway.egress.fill { color green }
+    style signalbox.gateway.egress { color muted; opacity 10% }
+    autoLayout TopBottom
+  }
+
+  view funnel_port {
+    title 'Overview/Decisions/Funnels/Port gateway'
+    description '''
+      Who opens a port on the thread's computer, and what serves it? The person through Funnel's authenticated
+      URL, and the renderer, use `Computer.port`. Behind it a kernel program or a VM's tunnel answers, and the
+      URL never changes when the server moves.
+    '''
+    include
+      personA,
+      signalbox.web,
+      signalbox.funnel with { title 'Funnel · port URLs'; description 'one authenticated URL per port' },
+      signalbox.browser with { description 'renderer' },
+      signalbox.computer.portGateway,
+      signalbox.computer.childIsolates with { title 'Kernel program' },
+      signalbox.computer.execDaemon with { title "VM's tunnel" }
+    exclude signalbox.browser -> signalbox.funnel
+    style signalbox.computer.portGateway { color green }
+    autoLayout TopBottom
+  }
+}

@@ -7,6 +7,7 @@ import type {
 } from "../../kernel/KernelCommandForwarder.ts";
 import { KernelProgramHost, type KernelInlineProgram } from "../../kernel/KernelProgramHost.ts";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
+import { COMPUTER_ISOLATE_POLICY } from "../EscalationPolicy.ts";
 import { createComputerCommands, type ComputerCommandOptions } from "../ComputerCommands.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
 
@@ -281,8 +282,63 @@ describe("createComputerCommands", () => {
     },
   );
 
+  it("keeps an allowed but unbound exact executable on the normal NOT_FOUND machine fallback", async () => {
+    let localRuns = 0;
+    const { context, commands, child, machine } = computerHarness(
+      () => {
+        localRuns++;
+        return 0;
+      },
+      { escalation: new ComputerEscalationTable([], COMPUTER_ISOLATE_POLICY) },
+    );
+    context.filesystem.mkdir("/workspace");
+    const command = {
+      executable: "sed",
+      argv: ["captured-sed", "-n", "1p", "file"],
+      cwd: "/workspace",
+      env: { PATH: "/bin", TOKEN: "exact" },
+    };
+    const signal = new AbortController().signal;
+
+    await expect(commands.exec(command, signal)).resolves.toBe(child);
+
+    expect(machine.spawn).toHaveBeenCalledExactlyOnceWith(command, signal);
+    expect(localRuns).toBe(0);
+  });
+
+  it("sends a registered executable outside the exact policy to the machine before local start", async () => {
+    let localRuns = 0;
+    const escalation = new ComputerEscalationTable([], {
+      isolateExecutables: ["sed"],
+      default: "machine",
+    });
+    const { commands, child, machine } = computerHarness(
+      () => {
+        localRuns++;
+        return 0;
+      },
+      { escalation },
+    );
+    const command = probeCommand();
+    const signal = new AbortController().signal;
+
+    expect(escalation.decide(command)).toEqual({
+      kind: "machine",
+      reason: "unsupported-executable",
+    });
+    await expect(commands.exec(command, signal)).resolves.toBe(child);
+
+    expect(machine.spawn).toHaveBeenCalledExactlyOnceWith(command, signal);
+    expect(localRuns).toBe(0);
+  });
+
   it("rejects unregistered commands on the isolate-only entry point", async () => {
-    const { commands, machine } = computerHarness(() => 0);
+    const { commands, machine } = computerHarness(() => 0, {
+      escalation: new ComputerEscalationTable([], {
+        isolateExecutables: ["/bin/missing"],
+        default: "machine",
+      }),
+    });
     await expect(
       commands.isolate.exec(
         { ...probeCommand(), executable: "/bin/missing", argv: ["missing"] },

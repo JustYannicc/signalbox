@@ -24,6 +24,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
   const filesystem = new WasiFileSystem(memory, [], [], {
     table: options.filesystem.descriptors,
     ownership: "borrowed",
+    fileBytes: () => options.filesystem.fileBytes,
     pathCheck: options.filesystem.assertWasiPathVisible.bind(options.filesystem),
     creation: {
       createInode: options.filesystem.createInode.bind(options.filesystem),

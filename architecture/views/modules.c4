@@ -87,7 +87,7 @@ views {
     description '''
       What does Computer offer, hide and plug in?
 
-      Verdict: deep: 5 verbs hide placement. Known kernel programs run in the kernel (child isolates); unknown binaries, apt, docker and native toolchains escalate to a boxd VM, and a process behind `port` stays there for its lifetime. A command is replayed on the VM only when the failure proves nothing ran; anything else is surfaced. No machine classes, no thread moves (#1071). The Machine seam has one adapter (boxd): a hypothetical seam.
+      Verdict: deep: 5 verbs hide placement. Known kernel programs run in the kernel (child isolates); unknown binaries, apt, docker and native toolchains escalate to a boxd VM, and a process the agent starts there stays on its VM, which hibernates after 2 quiet minutes and resumes on demand. A command is replayed on the VM only when the failure proves nothing ran; anything else is surfaced. No machine classes, no thread moves (#1071). The Machine seam has one adapter (boxd): a hypothetical seam.
     '''
     include *
     include * -> signalbox.computer, signalbox.computer -> *

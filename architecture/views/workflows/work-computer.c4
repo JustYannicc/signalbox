@@ -43,15 +43,20 @@ views {
         - Until confirmed, exec returns `Busy` (same error as the kernel path)
       '''
     }
-    smVm.attached -> smVm.hibernated '2-min idle' {
+    smVm.attached -> smVm.hibernated '2 min no activity' {
+      navigateTo lifecycle_tool_needs_vm
       notes '''
+        - Activity: a command, an edit streaming to the agent's own process, its output, or a port request
+        - A final pull first, so nothing but regenerable state is on the disk
         - Computer hibernates explicitly: boxd's own idle clock only sees network
-        - `deleteAfter` is set to the horizon H while hibernated
+        - A running dev server is frozen, not killed; `deleteAfter` is set to the horizon H
       '''
     }
-    smVm.hibernated -> smVm.attached 'next escalation' {
+    smVm.hibernated -> smVm.attached 'next command or request' {
+      navigateTo lifecycle_idle_dev_server
       notes '''
-        - Wakes for the next command burst; the tool result shape never changes
+        - A command, an edit to a running process, or a port request held at the gateway while it resumes
+        - The tool result shape never changes
       '''
     }
 
@@ -69,7 +74,8 @@ views {
         smVm.hibernated -> smVm.deleted 'archive' {
           navigateTo work_threads_lifecycle_archive
           notes '''
-            - Archive deletes the VM; unarchive starts with No VM and forks again on demand
+            - Archive deletes the VM at once; nothing needs saving because everything was already pulled
+            - Unarchive starts with No VM and forks again from the Base on demand
           '''
         }
       }
@@ -223,6 +229,7 @@ views {
           notes '''
             - Egress unconfirmed, file not hydrated, isolates full (W-CMP-07)
             - The one transient error, identical on kernel and VM paths, so placement never leaks
+            - It never reaches the model: the tool call just takes longer, as on one machine
           '''
         }
       }
@@ -460,7 +467,7 @@ views {
         signalbox.computer.escalation -> signalbox.computer.vmLifecycle 'escalate argv' {
           notes '''
             - Unknown binary, apt, docker or a native toolchain; known kernel programs never get here
-            - A long-lived process behind `port` stays on the VM for its whole lifetime
+            - A long-lived process behind `port` stays on that VM; the VM still hibernates after 2 quiet minutes (process frozen) and resumes on the next request (lifecycle_idle_dev_server)
           '''
         }
       }
@@ -496,7 +503,7 @@ views {
     }
     signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'push delta' {
       notes '''
-        - Source and kept-local changes since the last sync, incl. a synced `.git`
+        - Source and kept-local changes since the last sync; `.git` arrives read-only
         - The daemon dialed out to the Thread; it holds no agent, model token or grant
       '''
     }
@@ -510,15 +517,18 @@ views {
     signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'pull changes' {
       notes '''
         - Source + kept-local changes and a regenerable manifest delta
-        - VM-side git writes (hooks, `git commit`) come back as source changes (W-CMP-14)
+        - `.git` is never pulled back: git always runs in the kernel on the canonical view (W-CMP-14)
       '''
     }
-    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply to live FS'
+    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply to live FS' {
+      navigateTo lifecycle_file_sync
+      notes '- Last write per path wins, by write time, as on one machine; the agent is never told about a conflict'
+    }
     signalbox.computer.api -> signalbox.harness 'Process' {
-      navigateTo work_computer_kernel_exec
+      navigateTo lifecycle_tool_needs_vm
       notes '''
         - Same tool result shape as a kernel program; escalation is invisible
-        - The VM idles into hibernation (2 min) and is deleted on settle
+        - The VM idles 2 min, gets a final pull, hibernates, and is deleted on settle (lifecycle_tool_needs_vm)
         - No machine classes, and the thread never moves
       '''
     }
@@ -609,7 +619,7 @@ views {
       }
     }
     signalbox.computer.api -> signalbox.harness 'content' {
-      notes '- Never forks a VM; `Busy` while a chunk is still hydrating'
+      notes '- Never forks a VM; while a chunk hydrates the read just waits, and the model never sees `Busy`'
     }
     opt 'after each pull' {
       signalbox.computer.backend.kernelFs -> signalbox.computer.backend.kernelFs 'prefetch small files' {
@@ -724,14 +734,16 @@ views {
     variant sequence
     title 'Workflows/Work/Computer/Egress/VM egress with tenant secrets'
     description '''
-      W-CMP-16, W-CMP-18, W-CMP-19. A command on the VM calls out: boxd's allowlist is the floor,
-      Gateway (its EgressProxy) fills tenant secrets against a machine-bound egress token, and a
-      tool that skips the proxy fails closed.
+      W-CMP-16, W-CMP-18, W-CMP-19. A command on the VM calls out. boxd's allowlist is the floor. For a bound
+      host, the EgressProxy on boxd is only a bridge: it terminates TLS and forwards over HTTPS to the gateway
+      on Cloudflare, which fills the credential, makes the call and scrubs the response (#1191). A tool that
+      skips the proxy fails closed.
     '''
 
     include
       signalbox.computer.execDaemon,
-      signalbox.gateway,
+      signalbox.gateway.egress.egressProxy with { title 'EgressProxy bridge (boxd)' },
+      signalbox.gateway.egress.fill with { title 'Gateway fill (Cloudflare)' },
       signalbox.connections,
       platform.boxd,
       services.onepassword,
@@ -740,49 +752,61 @@ views {
 
     alt 'does the tool honor HTTPS_PROXY' {
       when 'yes' {
-        signalbox.computer.execDaemon -> platform.boxd 'CONNECT via proxy' {
+        signalbox.computer.execDaemon -> signalbox.gateway.egress.egressProxy 'CONNECT host:443' {
           navigateTo folders_placement_kind_setting
           notes '''
-            - Allowlist: recipe destinations, the folder `egress` placements, relay, EgressProxy
+            - Allowlist: recipe destinations, the folder `egress` placements, relay, the bridge
             - Set from outside, root cannot change it, fails closed
           '''
         }
-        platform.boxd -> signalbox.gateway 'CONNECT host:443'
         alt 'is the host bound to a tenant placeholder' {
           when 'unbound host' {
-            signalbox.gateway -> services.github 'splice' {
-              notes '- TLS untouched; the proxy never sees the bytes'
+            signalbox.gateway.egress.egressProxy -> services.github 'splice' {
+              notes '- Allowlisted only; TLS untouched, the bridge never sees the bytes'
             }
           }
           else 'bound host' {
-            signalbox.gateway -> signalbox.gateway 'terminate TLS' {
+            signalbox.gateway.egress.egressProxy -> signalbox.gateway.egress.egressProxy 'terminate TLS' {
               notes '''
-                - Gateway's EgressProxy adapter; Signalbox CA is baked into the Base
-                - Re-resolve the host, refuse private IPs
+                - Bound hosts only; Signalbox CA is baked into the Base
+                - No fill of its own: it holds no secret
               '''
             }
-            signalbox.gateway -> signalbox.gateway 'verify egress token' {
+            signalbox.gateway.egress.egressProxy -> signalbox.gateway.egress.fill 'forward over HTTPS' {
+              notes '''
+                - Workers take no CONNECT tunnels, so the request travels as plain HTTPS
+                - Carries the machine-bound egress token
+              '''
+            }
+            signalbox.gateway.egress.fill -> signalbox.gateway.egress.fill 'verify egress token' {
               notes '- `{aud: egress, machine, gen, thread}`, valid for `fill` only, rotated with `deleteAfter`'
             }
             alt 'where the token comes from' {
               when 'its own machine' {
-                signalbox.gateway -> signalbox.connections 'fill(placeholder, host)' {
+                signalbox.gateway.egress.fill -> signalbox.connections 'fill(placeholder, host)' {
                   navigateTo folders_secrets_placeholder_fill
-                  notes '- Per request; the proxy holds no long-lived secret'
+                  notes '- Per request; nothing on boxd ever holds the value'
                 }
                 signalbox.connections -> services.onepassword 'resolve reference'
-                signalbox.gateway <- signalbox.connections 'value'
-                signalbox.gateway -> services.boundHost 'forward'
-                signalbox.gateway <- services.boundHost 'response'
-                signalbox.computer.execDaemon <- signalbox.gateway 'scrubbed response' {
+                signalbox.gateway.egress.fill <- signalbox.connections 'value'
+                signalbox.gateway.egress.fill -> services.boundHost 'call' {
+                  notes '''
+                    - From Cloudflare: re-resolves the host, refuses private IPs
+                    - Same endpoint, credentials and outbound identity as from the isolate
+                  '''
+                }
+                signalbox.gateway.egress.fill <- services.boundHost 'response'
+                signalbox.gateway.egress.egressProxy <- signalbox.gateway.egress.fill 'scrubbed response' {
                   navigateTo work_approvals_secret_destination
                   notes '- A new destination asks once, as in the kernel path'
                 }
+                signalbox.computer.execDaemon <- signalbox.gateway.egress.egressProxy 'response'
               }
               else 'replayed from another machine (W-CMP-19)' {
-                signalbox.computer.execDaemon <- signalbox.gateway 'Denied' {
+                signalbox.gateway.egress.egressProxy <- signalbox.gateway.egress.fill 'Denied' {
                   notes '- Token is bound to the machine address on the shared network'
                 }
+                signalbox.computer.execDaemon <- signalbox.gateway.egress.egressProxy 'Denied'
               }
             }
           }
@@ -828,7 +852,7 @@ views {
       when 'curl · npm in Bash' {
         signalbox.computer -> signalbox.gateway 'Egress' {
           navigateTo work_computer_egress_vm
-          notes '- In-process filter from the isolate, EgressProxy from a VM'
+          notes '- In-process filter from the isolate, the EgressProxy bridge from a VM; the fill and the call happen on Cloudflare either way'
         }
         signalbox.gateway -> signalbox.connections 'fill(destination)' {
           navigateTo folders_secrets_placeholder_fill
@@ -900,16 +924,16 @@ views {
         signalbox.mobile -> signalbox.funnel 'open terminal'
       }
     }
-    signalbox.funnel -> signalbox.computer 'exec shell with PTY'
-    alt 'where the PTY lives' {
-      when 'kernel' {
-        signalbox.computer -> signalbox.computer 'kernel PTY handle'
-      }
-      else 'escalated' {
-        signalbox.computer -> signalbox.computer 'node-pty in exec daemon' {
-          navigateTo state_computer
-          notes '- Same session from the client side; placement is hidden'
-        }
+    signalbox.funnel -> signalbox.computer 'exec login shell with PTY' {
+      notes '''
+        - Through the one command gateway, like every other caller
+        - GNU Bash in the kernel; kernel PTY handles do the line discipline; no banner
+      '''
+    }
+    opt 'an escalated interactive program (vim, dev server, docker)' {
+      signalbox.computer -> signalbox.computer 'node-pty on the VM, PTY bridged' {
+        navigateTo computer_terminal_session
+        notes '- Bytes, resize and signals cross the bridge; job control works; placement is hidden'
       }
     }
     opt 'events and metadata (T-TRM-06)' {
@@ -1026,7 +1050,7 @@ views {
   dynamic view work_computer_background_service {
     variant sequence
     title 'Workflows/Work/Computer/Terminals/Background service outlives a turn'
-    description 'W-CMP-23. Lease held → keep-alive past turn end → stop on settle.'
+    description 'W-CMP-23. The agent\'s dev server outlives its turn; the VM is awake only while something happens, hibernates frozen after 2 quiet minutes, wakes on the next request, and is deleted on settle.'
 
     include
       personA,
@@ -1041,31 +1065,43 @@ views {
       notes '- The agent stays in the isolate tier; only the dev server process runs on the VM'
     }
     signalbox.computer -> platform.boxd 'escalate' {
-      navigateTo state_computer
+      navigateTo lifecycle_long_process
       notes '''
         - Dev servers match the recipe `machine` patterns
-        - A long-lived process behind `port` stays on this VM for its whole lifetime (#1071)
+        - The process lives on this VM; the VM is awake only while something happens (#1071)
       '''
     }
-    signalbox.thread <- signalbox.computer 'lease held'
     signalbox.thread <- signalbox.harness 'turn ends' {
-      notes '- The turn is done; the service is not'
+      navigateTo work_turns_keepalive_mirror
+      notes '''
+        - The turn is done; the service is not
+        - Keep-alive clears as usual: a running process alone is not active work
+      '''
     }
-    loop 'while the lease is held' {
-      signalbox.thread -> signalbox.thread 'keep-alive job' {
-        navigateTo work_turns_keepalive_mirror
+    loop 'while something happens' {
+      signalbox.computer -> platform.boxd 'stay warm' {
         notes '''
-          - Keeps the thread host alive only during active work
+          - A preview request through the port gateway, an edit streaming in, output, or a command
           - A or B can open the preview meanwhile
         '''
       }
-      signalbox.computer -> platform.boxd 'refresh deleteAfter'
     }
-    signalbox.thread -> signalbox.computer 'thread settles: stop' {
+    signalbox.computer -> platform.boxd 'final pull, hibernate' {
+      navigateTo lifecycle_idle_dev_server
+      notes '''
+        - After 2 quiet minutes; the dev server is frozen, not killed
+        - The next preview request is held at the port gateway while the VM resumes
+      '''
+    }
+    signalbox.thread -> signalbox.computer 'thread settles' {
       navigateTo state_thread
     }
-    signalbox.computer -> platform.boxd 'hibernate, then delete' {
-      notes '- Only regenerable state is lost'
+    signalbox.computer -> platform.boxd 'delete' {
+      navigateTo lifecycle_boxd_data
+      notes '''
+        - Only regenerable state is lost
+        - A later preview request reruns the agent\'s start command on a fresh VM
+      '''
     }
 
     include signalbox, platform
@@ -1479,12 +1515,19 @@ views {
       }
     }
     opt 'machine asleep' {
-      signalbox.thread -> signalbox.computer 'open + restore'
-      signalbox.computer -> platform.boxd 'wake or fork VM' {
-        navigateTo state_computer
+      signalbox.funnel.portGateway -> signalbox.funnel.portGateway 'hold request' {
+        navigateTo lifecycle_idle_dev_server
+        notes '- No "starting" page: the browser just waits, like a slow first request'
       }
-      signalbox.computer -> signalbox.computer 'start declared dev server'
-      signalbox.web <- signalbox.funnel.portGateway 'Starting preview…'
+      signalbox.thread -> signalbox.computer 'wake for port'
+      signalbox.computer -> platform.boxd 'resume, or fork VM' {
+        navigateTo state_computer
+        notes '''
+          - Hibernated: the dev server resumes frozen as it was
+          - Deleted: fork from the Base and rerun the agent\'s own start command; the model never sees it
+          - **Open question:** processes that can\'t be rerun faithfully
+        '''
+      }
     }
     signalbox.funnel.portGateway -> signalbox.computer 'proxy to port' {
       navigateTo work_previews_port_url

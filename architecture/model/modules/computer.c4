@@ -11,8 +11,35 @@ model {
       }
 
       api = iface 'Computer · interface' {
-        description '5 verbs: open · exec · files · port · save'
+        description '5 verbs: open · exec · files · port · save (exec, files and port enter at their three funnels)'
         technology 'Deletion test: without it, placement and path classes leak into Thread, Harness and prompts'
+      }
+
+      // The three funnels into Computer (#1191 addendum). Moving work between Cloudflare and boxd never moves one.
+      commandGateway = iface 'Command gateway' {
+        #port #funnel #decided
+        icon bootstrap:terminal-fill
+        description 'Computer.exec · attach: every caller, one routing table'
+        technology 'model tool calls · terminal · hooks · automations · API agents'
+        metadata {
+          routing 'one routing table, one live FS; routing never looks at the caller (argv, program registry, recipe, workspace evidence); the caller only decides whether it may exec (grant and role on the level)'
+          invisible 'same paths, prompt, hostname t-{threadId}, uname, env and errors for the person and the model; no banner; placement shows only in the trace (Thread details, developer mode)'
+          terminal 'one long-lived exec of the login shell (GNU Bash in the kernel) with a PTY; kernel PTY handles do the line discipline; attach(id) reconnects from any client; each person gets their own session'
+          interactive 'an escalated interactive program (vim, a dev server, docker) runs under node-pty on the VM, its PTY bridged through the exec daemon (bytes, SIGWINCH, signals); a proxy entry in the kernel process table keeps jobs, kill %1, ps, Ctrl-C and Ctrl-Z working; idle rules as for any VM process'
+          decided '2026-10-19 (#1071)'
+        }
+      }
+      filesGateway = iface 'Files' {
+        #port #funnel
+        icon bootstrap:folder2-open
+        description 'Computer.files · Drive'
+        technology 'harness · terminal · renderer · laptops'
+      }
+      portGateway = iface 'Port gateway' {
+        #port #funnel
+        icon bootstrap:door-open
+        description 'Computer.port: one URL per port'
+        technology 'person · agent · renderer'
       }
 
       backend = part 'Computer seam · 2 adapters' {
@@ -35,7 +62,7 @@ model {
         metadata { adapters '1' }
         boxdMachines = adapter 'boxd' {
           icon bootstrap:pc-display
-          technology '@boxd-sh/sdk/web · grpc-web :9443'
+          technology '@boxd-sh/sdk/web · grpc-web on a Cloudflare HTTPS port (443 · 2053 · 2083 · 2087 · 2096 · 8443; not :9443)'
         }
       }
 
@@ -49,8 +76,8 @@ model {
         description 'per program at kernel exec; small isolate set, rest to the VM'
         metadata {
           routing 'chosen per program at kernel exec (EscalationTable, #1071, #1247); the unchanged harness Bash tool has no backend choice and placement is invisible'
-          isolate 'kept tight (Yannic, 2026-10-19): file edits, cat, ls, grep/rg and basic plumbing'
-          vm 'by design: typecheck, builds, installs, tests, unknown programs, apt, docker, native toolchains; a long-lived process behind port stays on the VM for its lifetime'
+          isolate 'kept tight (owner, 2026-10-19): file edits, cat, ls, grep/rg and basic plumbing'
+          vm 'by design: typecheck, builds, installs, tests, unknown programs, apt, docker, native toolchains; an agent-started long-lived process stays on its VM, which still hibernates after 2 min without activity (process frozen) and resumes on the next request, edit or command'
           measured 'the isolate set is measured from real sessions (#1250); #1250 also evaluates a pre-routing parser so a whole command goes to the VM when any program in it needs one'
           replay 'replayed on the VM only when the failure proves nothing ran (missing program, or ENOSYS before any side effect); anything else is surfaced, never retried blindly'
           noClasses 'no machine classes and no thread moves'
@@ -61,6 +88,9 @@ model {
         metadata {
           secretViews 'canonical view (placeholders) for every record, revision and git object; raw view in memory only, for live exec and VM materialization (#1242)'
           git 'always in the kernel on the canonical view; never escalated; VMs get .git read-only and it is never pulled back'
+          concurrentWrites 'while an escalated exec runs, the last write per path wins, by write time, as on one machine'
+          attachedProcess 'a long-lived VM process gets kernel source writes as a debounced delta stream until it exits; an edit to a hibernated VM\'s process resumes it'
+          noVmOnlyData 'source and kept-local changes are pulled right after every command and before every hibernate; a VM disk is cache only'
         }
       }
       childIsolates = part 'Child Dynamic Workers' {
@@ -77,7 +107,29 @@ model {
       vmLifecycle = part 'VM lifecycle' {
         description 'create · adopt · hibernate · delete'
       }
+      budgets = part 'Resource budgets' {
+        #decided
+        icon bootstrap:speedometer2
+        description 'memory · CPU · wall · processes · handles · output rate'
+        technology 'enforced in the command gateway for every caller · recorded on every exec trace (#1255)'
+        metadata {
+          isolation 'every program runs in a child Dynamic Worker with its own memory and cpuMs; the session facet never runs program code, so one command cannot take the DO down'
+          streaming 'pipes have fixed buffers with backpressure, file I/O is chunked, exec output is a stream; a bounded tool result spills the full output to a file in the live FS; output is never truncated silently'
+          prediction 'the escalation table escalates up front from evidence: a program known to be heavy, input sizes in the manifest'
+          exhausted 'nothing observable yet: replay the same argv on the VM, invisibly; otherwise kill and return what a real machine gives (exit 137 memory, 152 CPU), no Signalbox error; record (program, evidence) so it escalates up front next time'
+          open 'harness reads in the session facet heap against the 128 MB isolate limit; the deployed CPU limit (about 44 s) needs a raised cpu_ms or turns split across invocations (#1244, #1255); values come from measurement'
+        }
+      }
 
+      commandGateway -> escalation 'route (one table)'
+      commandGateway -> budgets 'per-command budget'
+      commandGateway -> childIsolates 'kernel program'
+      commandGateway -> execDaemon 'boxd VM'
+      budgets -> escalation 'record (program, evidence)'
+      filesGateway -> backend.kernelFs 'live FS'
+      filesGateway -> execDaemon 'VM disk (cache)'
+      portGateway -> childIsolates 'kernel program'
+      portGateway -> execDaemon "VM's tunnel"
       backend.kernelFs -> childIsolates 'run program'
       backend.kernelFs -> escalation 'needs a machine?'
       escalation -> vmLifecycle 'escalate argv'
@@ -89,12 +141,13 @@ model {
     computer.machines.boxdMachines -> platform.boxd 'vm control'
     computer.vmLifecycle -> signalbox.bases.api 'base lease (idempotent on operationId)'
     computer.backend.kernelFs -> signalbox.drive.api 'revisions'
-    computer.execDaemon -> signalbox.gateway.api 'egress (EgressProxy)'
-    computer.childIsolates -> signalbox.gateway.api 'egress (EgressFilter)'
+    computer.filesGateway -> signalbox.drive.api 'Artifacts fork · R2'
+    computer.execDaemon -> signalbox.gateway.egress.egressProxy 'egress (bridge into Gateway)'
+    computer.childIsolates -> signalbox.gateway.egress.inProcess 'egress (EgressFilter)'
     computer.childIsolates -> signalbox.actorhost.api 'isolates'
 
     // Interface → hidden parts (the only way in)
-    computer.api -> computer.backend 'open · exec · files · save'
-    computer.api -> computer.liveView 'port · watch'
+    computer.api -> computer.backend 'open · save'
+    computer.api -> computer.liveView 'watch'
   }
 }

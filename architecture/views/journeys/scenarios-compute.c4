@@ -158,7 +158,7 @@ views {
     title "Scenarios/Compute/Machines/Command Needs VM"
     description "What happens when a command can't run in the isolate? Decided: #1055 (2026-10-18) single-command escalation to boxd is the last memory/compat step. Assumption for the shape: escalation is per command, never a whole-thread move; a VM exists only while a command needs it; placement never shows in output (#1071 per-call contract, design §3.6.1; pending #1071 proof). SCN-195 · not v1 (Computer, Drive and threads come after v1)."
 
-    include personB, signalbox.web, signalbox.harness, signalbox.computer, signalbox.bases, signalbox.drive, platform.boxd
+    include personB, signalbox.web, signalbox.harness, signalbox.computer, signalbox.bases, platform.boxd
     include signalbox, platform
 
     signalbox.harness -> signalbox.computer "exec command" {
@@ -182,9 +182,11 @@ views {
           navigateTo work_bases_lease
         }
         signalbox.computer -> platform.boxd "fork VM"
-        signalbox.computer -> signalbox.drive "sync revision" {
+        signalbox.computer -> platform.boxd "push live-FS delta" {
+          navigateTo lifecycle_file_sync
           notes '''
-            - The VM sees the thread's current Drive revision
+            - Source and kept-local changes from the session facet's live FS, not a Drive revision
+            - `.git` arrives read-only
           '''
         }
         signalbox.computer -> platform.boxd "forward command" {
@@ -198,9 +200,10 @@ views {
             - Streamed back unchanged
           '''
         }
-        signalbox.computer -> signalbox.drive "write back changes" {
+        signalbox.computer <- platform.boxd "pull changes" {
           notes '''
-            - VM-side file changes land in the Drive revision
+            - VM-side source changes land in the live FS right away; the turn-end commit takes them to the Drive
+            - Last write per path wins, as on one machine; `.git` is never pulled back
           '''
         }
         signalbox.computer -> signalbox.harness "same result shape" {
@@ -210,10 +213,10 @@ views {
         }
       }
       else "not ready yet" {
-        signalbox.computer -> signalbox.harness "typed not-ready" {
+        signalbox.computer -> signalbox.harness "held until ready" {
           notes '''
-            - `WORKSPACE_NOT_READY` / `POLICY_NOT_READY`
-            - Never runs against another workspace
+            - The command waits until the workspace and egress policy are confirmed; it never runs against another workspace
+            - The model sees a slower command, never a not-ready error
           '''
         }
       }
@@ -309,7 +312,7 @@ views {
     #assumption
     variant sequence
     title "Scenarios/Compute/Failures/VM Lost Mid Command"
-    description "What happens when the VM disappears mid-command? Assumption: the agent gets a typed Lost error and decides whether to rerun; we never auto-replay and nothing durable is lost. Why: #915 'the provider's disk is never the durable copy', design §3.6 ExecError(Lost), unknown-outcome rule (W-TRN-21). SCN-196 · not v1 (Computer, Drive and threads come after v1)."
+    description "What happens when the VM disappears mid-command? Assumption: Computer reports a typed Lost to the Harness, the model sees an ordinary killed process and decides whether to rerun; we never auto-replay and nothing durable is lost. Why: #915 'the provider's disk is never the durable copy', design §3.6 ExecError(Lost), unknown-outcome rule (W-TRN-21). SCN-196 · not v1 (Computer, Drive and threads come after v1)."
 
     include personB, signalbox.web, signalbox.harness, signalbox.computer, signalbox.bases, signalbox.drive, signalbox.observability, platform.boxd
     include signalbox, platform
@@ -327,19 +330,20 @@ views {
     }
     signalbox.computer -> signalbox.harness "ExecError(Lost)" {
       notes '''
-        - A typed error, never a fake exit 127
+        - Typed between Computer and Harness, never a fake exit 127
       '''
     }
-    signalbox.harness -> signalbox.harness "tell the agent" {
+    signalbox.harness -> signalbox.harness "result: process killed" {
       navigateTo work_turns_crash_resume
       notes '''
-        - "The machine was lost, the command may not have finished"
-        - The call is never silently replayed
+        - The model sees what an ordinary machine shows when a process is killed: output so far, ended by a signal
+        - No word about machines; the call is never silently replayed
       '''
     }
     signalbox.harness -> signalbox.drive "files intact" {
       notes '''
-        - Safe up to the last Drive revision; the live FS in the session DO is untouched
+        - Source and kept-local changes were pulled after every earlier command; the live FS in the session DO is untouched
+        - Only this command's unpulled writes and regenerable state are gone, as if it had been killed
       '''
     }
     signalbox.harness -> signalbox.web "agent explains"
@@ -359,7 +363,7 @@ views {
     }
     signalbox.computer -> signalbox.observability "alert us" {
       notes '''
-        - **End:** clear error, no replay, no saved work lost
+        - **End:** an ordinary killed process for the model, no replay, no saved work lost
         - **#assumption** typed Lost + agent decides (#915, design §3.6)
       '''
     }

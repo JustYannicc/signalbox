@@ -2,32 +2,57 @@ views {
   view v1 {
     title 'Overview/Decisions/v1'
     description '''
-      What exactly ships in v1? Three things, nothing more: sign in, a pool, and connections usable as tools (Executor
-      absorbed into Connections). Green = sign in, red = a pool, indigo = connections. Pools and connections are
-      placed on folders, so Tree ships too, and both wires pass the one Gateway. No threads, harness,
-      computer, drive, assistant or automations: local Claude Code and Codex use the pool, any MCP client uses the tools.
-      Final interfaces, subset live.
+      What exactly ships in v1? A pool you can invite people to, plus your own accounts connected. Nothing more.
+      Everything is yours by default: you can share a pool, and your tools always stay yours.
+      Green = sign in, red = pools, indigo = your connections. A and B each sign in to a personal top level and an
+      own empty pool. A fills A's pool with one click per account and shares it like a doc (link, member list,
+      remove), which lends it into B's top level; B picks A's pool or B's own per computer. The owner sees usage
+      per member, per model and over time; each member sees their own. Each person connects their own Google and
+      Confluence; those act as that person and are never shared. One click on "Set up this computer" points local
+      Claude Code and Codex at the one Gateway for models and tools. Placements, lending and resolution are the
+      final interfaces; v1 shows that much of them.
+      Not in v1: folders, organizations, admin roles, shared tools, threads, harness runtime, computer, drive,
+      assistant, automations.
+
+      Walk it end to end in `Workflows / v1` (click a box or wire here to open its step):
+      0 First day (Person A) · 1 Sign in (Identity) · 2 Fill your pool (Models) · 3 Share your pool (Person B) ·
+      4 Usage (Web) · 5 Your own tools (Connections) · 6 Set up this computer (local Claude Code · Codex) ·
+      7 Local model request (Gateway → Models) · 8 Local tool call (Gateway → Connections).
     '''
-    include personA, personB, personC
-    // Colour = which of the three v1 things an element serves: green sign in, red pool, indigo connections.
-    include signalbox.web, signalbox.funnel, signalbox.identity, platform.workos
-    include laptopCli, signalbox.models, modelProviders.anthropic, modelProviders.openai
-    include mcpClient, signalbox.connections, services.google, services.atlassian
+    include personA with {
+      navigateTo v1_overview_journey
+      description 'shares a pool'
+    }
+    include personB with {
+      navigateTo v1_invite
+      description "uses A's shared pool"
+    }
+    // Colour = which v1 thing an element serves: green sign in, red pools, indigo your connections.
+    include signalbox.funnel, platform.workos
+    include signalbox.web with { navigateTo v1_usage }
+    include signalbox.identity with { navigateTo v1_sign_in }
+    include modelProviders.anthropic, modelProviders.openai
+    include laptopCli with { navigateTo v1_set_up_this_computer }
+    include signalbox.models with { navigateTo v1_pool_one_click }
+    include services.google, services.atlassian
+    include signalbox.connections with { navigateTo v1_connections_one_click }
     include signalbox.gateway, signalbox.tree
     // Only the wiring that tells the v1 story; everything else is in Modules/All modules.
     exclude * -> *
-    include personA -> signalbox.web, personB -> signalbox.web, personC -> signalbox.web
-    include personA -> laptopCli, personC -> mcpClient
+    include personA -> signalbox.web, personB -> signalbox.web
+    include personA -> laptopCli, personB -> laptopCli
     include signalbox.web -> signalbox.funnel, signalbox.funnel -> signalbox.identity, signalbox.identity -> platform.workos
-    include laptopCli -> signalbox.gateway, signalbox.gateway -> signalbox.models, signalbox.models -> modelProviders.anthropic, signalbox.models -> modelProviders.openai
-    include mcpClient -> signalbox.gateway, signalbox.gateway -> signalbox.connections, signalbox.connections -> services.google, signalbox.connections -> services.atlassian
+    include laptopCli -> signalbox.gateway, signalbox.models -> modelProviders.anthropic, signalbox.models -> modelProviders.openai
+    include signalbox.connections -> services.google, signalbox.connections -> services.atlassian
     include signalbox.tree -> signalbox.models, signalbox.tree -> signalbox.connections
-    style personA, personB, personC { color green }
+    include signalbox.gateway -> signalbox.models with { navigateTo v1_local_model_request }
+    include signalbox.gateway -> signalbox.connections with { navigateTo v1_local_tool_call }
+    style personA, personB { color green }
     style signalbox.web, signalbox.funnel, signalbox.identity, platform.workos { color green }
     style laptopCli, signalbox.models, modelProviders.anthropic, modelProviders.openai { color red }
-    style mcpClient, signalbox.connections, services.google, services.atlassian { color indigo }
+    style signalbox.connections, services.google, services.atlassian { color indigo }
     style signalbox.gateway, signalbox.tree { color primary }
-    rank source { personA, personB, personC }
+    rank source { personA, personB }
     autoLayout TopBottom 80 60
   }
 }

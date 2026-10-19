@@ -1,3 +1,9 @@
+import {
+  canonicalFileByteSelection,
+  bindFileByteAccess,
+  type KernelFileByteAccess,
+  type KernelFileByteSelection,
+} from "../KernelFileBytes.ts";
 import { WasiDescriptorTable, type WasiDescriptor } from "../wasi/internal_wasi_descriptors.ts";
 import type { Stat } from "../storage.ts";
 import { FDFLAGS, RIGHTS } from "../wasi/internal_wasi_descriptors.ts";
@@ -20,10 +26,16 @@ import {
 export class KernelFileSystemOpen {
   readonly #descriptors: WasiDescriptorTable;
   readonly #paths: KernelFileSystemPaths;
+  readonly #fileBytes: () => KernelFileByteSelection;
 
-  constructor(descriptors: WasiDescriptorTable, paths: KernelFileSystemPaths) {
+  constructor(
+    descriptors: WasiDescriptorTable,
+    paths: KernelFileSystemPaths,
+    fileBytes: () => KernelFileByteSelection = () => canonicalFileByteSelection,
+  ) {
     this.#descriptors = descriptors;
     this.#paths = paths;
+    this.#fileBytes = fileBytes;
   }
 
   open(path: string, flags: number, mode = 0o666): number {
@@ -114,7 +126,14 @@ export class KernelFileSystemOpen {
         : this.#openDevice(device.name, parsed);
     }
     const resolved = this.#resolvedAliasTarget(source, parsed);
-    return this.#openResolved(resolved, parsed, false);
+    return this.#openResolved(
+      resolved,
+      parsed,
+      false,
+      source.byteView === undefined
+        ? { kind: "canonical" }
+        : { kind: "view", view: source.byteView },
+    );
   }
 
   #duplicateStream(source: WasiDescriptor, parsed: ParsedOpenFlags): number {
@@ -149,10 +168,16 @@ export class KernelFileSystemOpen {
     return this.#paths.resolver.resolveFromAnchor(anchor, target, true);
   }
 
-  #openResolved(resolved: WasiResolvedPath, parsed: ParsedOpenFlags, retained: boolean): number {
+  #openResolved(
+    resolved: WasiResolvedPath,
+    parsed: ParsedOpenFlags,
+    retained: boolean,
+    selection: KernelFileByteSelection = this.#fileBytes(),
+  ): number {
     const mount = resolved.mount;
     const inode = resolved.inode;
     let ownsPin = retained;
+    let byteAccess: KernelFileByteAccess | undefined;
     try {
       if (!ownsPin) {
         runKernelSync(mount.storage.retain(inode));
@@ -176,11 +201,15 @@ export class KernelFileSystemOpen {
       if (resolved.stat.type === "symlink" && !(parsed.pathOnly && parsed.noFollow)) {
         throw kernelError("ELOOP");
       }
+      if (parsed.truncate && resolved.stat.type !== "file") {
+        throw kernelError(resolved.stat.type === "directory" ? "EISDIR" : "EINVAL");
+      }
+      if (resolved.stat.type === "file") {
+        byteAccess = bindFileByteAccess(selection, mount.storage, inode);
+      }
       if (parsed.truncate) {
-        if (mount.readOnly) throw kernelError("EROFS");
-        if (resolved.stat.type === "directory") throw kernelError("EISDIR");
-        if (resolved.stat.type !== "file") throw kernelError("EINVAL");
-        runKernelSync(mount.storage.truncate(inode, 0n));
+        if (byteAccess) byteAccess.truncate(0n);
+        else runKernelSync(mount.storage.truncate(inode, 0n));
       }
       const rights = descriptorRights(parsed, resolved.stat.type, mount.readOnly);
       const fd = this.#descriptors.allocate({
@@ -195,11 +224,32 @@ export class KernelFileSystemOpen {
         rightsInheriting: rights.inheriting,
         flags: parsed.pathOnly ? 0 : parsed.statusFlags,
         closeOnExec: parsed.closeOnExec,
+        ...(byteAccess === undefined
+          ? {}
+          : {
+              byteAccess,
+              byteView: selection.kind === "view" ? selection.view : undefined,
+            }),
       });
+      byteAccess = undefined;
       ownsPin = false;
       return fd;
     } catch (error) {
-      if (ownsPin) runKernelSync(mount.storage.release(inode));
+      const failures: unknown[] = [error];
+      try {
+        byteAccess?.release();
+      } catch (failure) {
+        failures.push(failure);
+      }
+      if (ownsPin) {
+        try {
+          runKernelSync(mount.storage.release(inode));
+        } catch (failure) {
+          failures.push(failure);
+        }
+      }
+      if (failures.length > 1)
+        throw new AggregateError(failures, "File open and cleanup failed", { cause: error });
       throw error;
     }
   }

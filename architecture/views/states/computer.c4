@@ -1,26 +1,46 @@
-// State machine for the boxd VM behind one thread's computer. The walk through it with people and modules is the dynamic view state_computer.
+// State machines for one thread's computer: the boxd VM that escalation attaches (smVm) and the computer
+// as a whole over time (smComputer). The walk through smVm with people and modules is the dynamic view
+// state_computer; smComputer is drawn with smVm in lifecycle_overview (views/workflows/lifecycle.c4).
 model {
   smVm = state 'VM lifecycle (boxd)' {
-    none = state 'No VM' { description 'harness runs in its isolate · no machine' }
+    none = state 'No VM' { description 'harness and files in the session facet · no machine' }
     creating = state 'Creating' { description 'forking the warm Base · idempotent by name' }
-    configuring = state 'Configuring' { description 'isolated · egress allowlist · auto-delete timer' }
-    attached = state 'Attached' { description 'runs commands only' }
-    hibernated = state 'Hibernated'
+    configuring = state 'Configuring' { description 'isolated · egress allowlist · deleteAfter' }
+    attached = state 'Warm' { description 'one command, or the agent\'s own process while it is active' }
+    hibernated = state 'Hibernated' { description 'memory on disk · process frozen · disk billed only' }
     deleted = state 'Deleted' { description 'only regenerable state lost · next command forks anew' }
 
     none -[transition]-> creating 'command needs a machine'
     creating -[transition]-> configuring 'fork ready'
     configuring -[transition]-> attached 'ready'
-    attached -[transition]-> hibernated '2-min idle'
-    hibernated -[transition]-> attached 'next command'
-    hibernated -[transition]-> deleted 'thread settled · archived · timer'
-    attached -[transition]-> deleted 'orphan reconciled'
+    attached -[transition]-> hibernated '2 min no activity · final pull first'
+    hibernated -[transition]-> attached 'command · edit to its process · port request'
+    hibernated -[transition]-> deleted 'settle · archive · H hours'
+    attached -[transition]-> deleted 'archive · trash · no record'
+  }
+
+  smComputer = state 'Thread computer over time' {
+    active = state 'Active turn' { description 'runs: harness + kernel in the session facet, keep-alive on · VM warm per command · stores: live FS (authority) · fork · R2' }
+    idle = state 'Idle' { description 'turn committed · runs: nothing resident · stores: live FS (cache) · fork · R2 · VM hibernates · a send wakes it' }
+    settled = state 'Settled' { description 'runs: nothing · VM deleted · stores: live FS (cache) · fork · R2 · reopen wakes it' }
+    dormant = state 'Dormant' { description 'live FS: manifest only · no VM · stores: fork in Artifacts · R2 · a message wakes it, files hydrate on read' }
+    cold = state 'Cold' { description 'live FS: manifest only · no VM · stores: R2 only · a message brings the fork back' }
+
+    active -[transition]-> idle 'turn ends · commit'
+    idle -[transition]-> active 'send'
+    idle -[transition]-> settled 'settle · VM deleted'
+    idle -[transition]-> dormant 'idle live-FS eviction'
+    settled -[transition]-> active 'reopen · send'
+    settled -[transition]-> dormant 'idle live-FS eviction'
+    dormant -[transition]-> cold 'idle-drive eviction · R2 confirmed'
+    dormant -[transition]-> active 'message · hydrate on read'
+    cold -[transition]-> active 'message · fork back from R2'
   }
 }
 views {
   view state-vm of smVm {
     title 'States/Computer/State machine'
-    description 'When does a thread get a boxd VM and when does it go away? The harness never lives here; a VM exists only while commands run. Start: green. End: gray. Click the frame for the walk with people and modules (state_computer).'
+    description 'When does a thread get a boxd VM and when does it go away? The harness never lives here; a VM is warm only while a command or the agent\'s own process is active, and hibernates after 2 minutes without activity. Start: green. End: gray. Click the frame for the walk with people and modules (state_computer).'
     include *
     include smVm with { navigateTo state_computer }
     style smVm.none { color green }
