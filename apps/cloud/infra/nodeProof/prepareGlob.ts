@@ -77,6 +77,15 @@ export async function check(host,kernel,calls,leafCount) {
   checks.nodeValidation=JSON.stringify(invalid)===JSON.stringify(['ERR_INVALID_ARG_TYPE','ERR_INVALID_ARG_TYPE',null,'ERR_INVALID_ARG_TYPE']);
   checks.asyncKernelOperations=leafCount()>before;
   checks.persistedFixture=fs.readFileSync(cwd+'/persistent','utf8')==='SQL glob fixture';
+  const gone='/work/gone-'+calls;
+  fs.mkdirSync(gone);
+  kernel.chdir(gone);
+  fs.rmdirSync(gone);
+  try {
+    checks.absoluteCwdAfterRemoval=same(await collect(glob('*.js',{cwd:cwd+'/src',exclude:[]})),['a.js']);
+    checks.absoluteUrlCwdAfterRemoval=same(await collect(glob('*.js',{cwd:new URL('file:///work/tree/src/'),exclude:[]})),['a.js']);
+    checks.absoluteMissingCwdAfterRemoval=(await collect(glob('no-match',{cwd:cwd+'/src'}))).length===0;
+  } finally {kernel.chdir(cwd);}
   return {checks,rows};
 }`,
     },

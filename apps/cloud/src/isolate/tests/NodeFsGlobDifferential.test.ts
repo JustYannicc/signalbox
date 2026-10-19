@@ -240,6 +240,52 @@ describe("Node fs/promises glob differential behavior", () => {
     }
   });
 
+  it("resolves absolute cwd without reading a removed current directory", async () => {
+    const fixture = await nodeFsGlobOracleFixture();
+    try {
+      await fixture.promises.mkdir("/gone");
+      fixture.kernelFs.chdir("/gone");
+      fixture.kernelFs.rmdir("/gone");
+      const native = NodeChildProcess.execFileSync(
+        NodeProcess.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import {glob,mkdir,rmdir} from 'node:fs/promises';
+const root=process.argv[1];
+await mkdir(root+'/gone');
+process.chdir(root+'/gone');
+await rmdir(root+'/gone');
+const matches=[];
+for await(const match of glob('*.js',{cwd:root+'/src',exclude:[]}))matches.push(match);
+const missing=[];
+for await(const match of glob('no-match',{cwd:root+'/src'}))missing.push(match);
+process.stdout.write(JSON.stringify({matches:matches.toSorted(),missing}));`,
+          fixture.nativeRoot,
+        ],
+        { encoding: "utf8" },
+      );
+      const glob = globApi(fixture.promises.glob);
+      const missing = await collect(glob("no-match", { cwd: "/work/src" }));
+      expect(
+        JSON.stringify({
+          matches: (await collect(glob("*.js", { cwd: "/work/src", exclude: [] }))).toSorted(),
+          missing,
+        }),
+      ).toEqual(native);
+      expect(
+        JSON.stringify({
+          matches: (
+            await collect(glob("*.js", { cwd: new URL("file:///work/src/"), exclude: [] }))
+          ).toSorted(),
+          missing,
+        }),
+      ).toEqual(native);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("keeps generated wrappers byte-identical to the pinned source recipe", () => {
     const generator = NodeURL.fileURLToPath(
       new URL("../node/fs/generate-glob-wrappers.mjs", import.meta.url),

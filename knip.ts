@@ -1,30 +1,32 @@
-{
-  "$schema": "https://unpkg.com/knip@6/schema.json",
+import type { KnipConfig } from "knip";
+import vendoredRoots from "./scripts/boundaries/vendored-roots.json" with { type: "json" };
+
+export default {
   // Exported types are part of our contracts even before they have consumers.
-  "rules": { "types": "off", "nsTypes": "off" },
+  rules: { types: "off", nsTypes: "off" },
   // These executables are supplied by the OS or installed separately from npm.
-  "ignoreBinaries": ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
-  "workspaces": {
+  ignoreBinaries: ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
+  workspaces: {
     ".": {
       // Keep vendored reference repositories outside the root project.
-      "project": ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
-      "entry": [
+      project: ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
+      entry: [
         ".dependency-cruiser.cjs",
         // CodeRabbit loads its configuration by filename.
         ".coderabbit.config.ts",
         ".github/scripts/thread-transfer-report.cjs",
       ],
-      "vite": { "entry": [".github/**/*.test.cjs"] },
-      "vitest": { "entry": [".github/**/*.test.cjs"] },
+      vite: { entry: [".github/**/*.test.cjs"] },
+      vitest: { entry: [".github/**/*.test.cjs"] },
     },
     "packages/shared": {
-      "includeEntryExports": true,
-      "entry": ["src/agentProcesses/cli.ts", "src/agentProcesses/preload.ts"], // Lifecycle hooks and Node's --import.
+      includeEntryExports: true,
+      entry: ["src/agentProcesses/cli.ts", "src/agentProcesses/preload.ts"], // Lifecycle hooks and Node's --import.
     },
-    "scripts": {
+    scripts: {
       // Knip loads its preprocessor through a CLI option; native verification and
       // worktree setup (from t3.json) run directly.
-      "entry": [
+      entry: [
         "knip-schemas.ts",
         "knip-declarations.ts",
         "claude-bunfs/prepare-bun-proof.ts", // signalbox: standalone isolate proof builder
@@ -41,14 +43,14 @@
         "claude-bunfs/prove.ts",
       ],
       // The `t3` npm package's files: copied into the package, never imported.
-      "ignore": [
+      ignore: [
         "npm-launcher/**",
         "upstream-sync/automations/**", // signalbox: prod automation sources, run by the cloud, never imported
       ],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
-      "entry": [
+      entry: [
         "src/bin.ts!",
         "src/signalbox/runner/main.ts!", // Started through the process cleanup wrapper.
         "src/claude-history-worker.ts!",
@@ -66,7 +68,7 @@
       // Native and disk-loaded provider packages stay external to the bundle; the
       // CLI archive and desktop sidecar stage them from this manifest.
       // oxc is the automation compiler's (@signalbox/automation-compiler), loaded the same way.
-      "ignoreDependencies": [
+      ignoreDependencies: [
         "@effect/platform-node-shared",
         "@t3tools/web",
         "@napi-rs/keyring",
@@ -77,7 +79,7 @@
     },
     "apps/cloud": {
       // Workers and Alchemy stacks load these entries by filename.
-      "entry": [
+      entry: [
         "src/models/gatewayWorker.ts!",
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
@@ -111,10 +113,12 @@
         "infra/isolateProbe/worker.ts!",
         "infra/syncProbe/lunora/identity.ts",
       ],
-      // Prepared by the VM builder from pinned source paths rather than runtime imports.
-      "ignore": ["src/isolate/node/vm/vendor/**"],
+      // signalbox: source preparation reads pinned vendor files instead of importing them.
+      ignore: vendoredRoots
+        .filter((root) => root.startsWith("apps/cloud/"))
+        .map((root) => `${root.slice("apps/cloud/".length)}**`),
       // `cloudflare:workers` is a Workers runtime module, not a package.
-      "ignoreDependencies": [
+      ignoreDependencies: [
         "cloudflare",
         "wrangler", // Wrangler runs through the process cleanup wrapper.
         "punycode", // The web package builder resolves punycode/ to select npm over the Node builtin.
@@ -122,7 +126,7 @@
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
-      "entry": [
+      entry: [
         "scripts/start-electron.mjs", // Started through the process cleanup wrapper.
         "gnome-extension/extension.js!",
         "src/electron/WindowsForegroundFocusWorker.ts!",
@@ -140,16 +144,16 @@
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
       // electron-builder from this workspace, outside its package scripts.
-      "ignoreDependencies": ["playwright-core", "electron-builder"],
+      ignoreDependencies: ["playwright-core", "electron-builder"],
     },
     "apps/web": {
       // Vitest loads this through the per-file @vitest-environment directive.
-      "ignoreDependencies": ["jsdom"],
+      ignoreDependencies: ["jsdom"],
       // Worktree setup (scripts/setup-worktree.ts) runs this directly.
       // signalbox: agent browser; the mirror page is a second Vite entry (vite.config.ts).
       // signalbox: upstream's flat sidebar stays in the tree, unmounted, so upstream merges apply (#683).
       // signalbox: upstream's store-links row too: T3 Code's store app can't sign in to Signalbox Cloud.
-      "entry": [
+      entry: [
         "scripts/warm-dep-cache.ts",
         "src/agentBrowser/mirror/main.ts!",
         "src/components/Sidebar.tsx",
@@ -158,11 +162,11 @@
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
-      "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+      ignoreIssues: { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
     },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.
-      "entry": [
+      entry: [
         "index.ts!",
         "fingerprint.config.js",
         "plugins/*.cjs",
@@ -171,7 +175,7 @@
         "src/features/browser/preview-stream.browser.ts!",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
-      "ignoreDependencies": [
+      ignoreDependencies: [
         "@expo-google-fonts/dm-sans",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
@@ -179,43 +183,43 @@
     },
     "apps/mobile/modules/t3-source-text": {
       // React Native codegen discovers component specifications by filename.
-      "entry": ["src/*NativeComponent.ts!"],
+      entry: ["src/*NativeComponent.ts!"],
     },
     "infra/relay": {
-      "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!"],
+      entry: ["alchemy.run.ts!", "src/persistence/schema.ts!"],
     },
     "packages/*": {
       // These workspace packages are private to this monorepo.
-      "includeEntryExports": true,
+      includeEntryExports: true,
     },
     "packages/client-runtime": {
       // signalbox: retain upstream's lifecycle adapter so its patches merge cleanly.
-      "ignore": ["src/state/threadLifecycle.ts"],
+      ignore: ["src/state/threadLifecycle.ts"],
     },
     "packages/sync": {
-      "entry": [
+      entry: [
         "codegen-proof/lunora/{schema,counters}.ts",
         "codegen-proof/src/api-contract.ts",
         "type-tests/**/*.ts",
       ],
       // The generated shard uses Workers globals from the proof's own tsconfig.
-      "ignoreDependencies": ["@cloudflare/workers-types"],
+      ignoreDependencies: ["@cloudflare/workers-types"],
     },
     "packages/effect-acp": {
-      "includeEntryExports": true,
-      "entry": ["test/fixtures/*.ts"],
+      includeEntryExports: true,
+      entry: ["test/fixtures/*.ts"],
       // Generated upstream protocol definitions are retained as a complete set.
-      "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+      ignoreIssues: { "src/_generated/**": ["exports", "types"] },
     },
     "packages/effect-codex-app-server": {
-      "includeEntryExports": true,
-      "entry": ["test/fixtures/*.ts"],
-      "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+      includeEntryExports: true,
+      entry: ["test/fixtures/*.ts"],
+      ignoreIssues: { "src/_generated/**": ["exports", "types"] },
     },
     "packages/source-control-github": {
       // graphqlgen reads its config; the generated operations export every selection's class.
-      "entry": ["graphql.config.ts"],
-      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
+      entry: ["graphql.config.ts"],
+      ignoreIssues: { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
     },
   },
-}
+} satisfies KnipConfig;

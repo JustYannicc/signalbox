@@ -138,7 +138,12 @@ function createNodeGlobRuntime(
   const operations = createAsyncOperations(kernelFs, runLeaf);
   const pathModule = {
     join: NodePath.posix.join,
-    resolve: (...paths: string[]) => NodePath.posix.resolve(kernelFs.cwd, ...paths),
+    resolve: (...paths: string[]) => {
+      for (let index = paths.length - 1; index >= 0; index--) {
+        if (NodePath.posix.isAbsolute(paths[index]!)) return NodePath.posix.resolve(...paths);
+      }
+      return NodePath.posix.resolve(kernelFs.cwd, ...paths);
+    },
     basename: NodePath.posix.basename,
     isAbsolute: NodePath.posix.isAbsolute,
     dirname: NodePath.posix.dirname,
