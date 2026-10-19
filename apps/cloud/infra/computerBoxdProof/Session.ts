@@ -10,8 +10,25 @@ import { createProofBases } from "./Bases.ts";
 import { proofKernel } from "./Kernel.ts";
 import { ProofOwnership } from "./Ownership.ts";
 import { proofProvider, WORKSPACE_RECEIPT } from "./Provider.ts";
+import type { SourcePreparationDiagnostic, SourcePreparationStep } from "./SourcePreparation.ts";
 import { PROOF_COMMAND, runProofCommand } from "./Command.ts";
 import type { decodeProofSeed } from "./SeedProtocol.ts";
+
+const SOURCE_PHASE_CHECKS = {
+  directoriesExec: "sourceDirectoriesExec",
+  runnerUpload: "sourceRunnerUpload",
+  installExec: "sourceArtifactInstallExec",
+} satisfies Record<SourcePreparationStep, string>;
+const SAFE_CHECK_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
+
+function sourceDiagnosticCheckName(
+  step: SourcePreparationStep,
+  diagnostic: SourcePreparationDiagnostic,
+) {
+  const name = `src_${step}_${diagnostic.kind}_${diagnostic.value}`;
+  if (!SAFE_CHECK_NAME.test(name)) throw new Error("Invalid source diagnostic check name");
+  return name;
+}
 
 export async function runComputerBoxdProof(input: {
   readonly ownership: ProofOwnership;
@@ -31,9 +48,42 @@ export async function runComputerBoxdProof(input: {
     signal.throwIfAborted();
     await ownership.check("warmSourcePrepared", "pending");
     const sourceInput = await ownership.prepareSourceInput();
-    const source = await ownership.source.create(sourceInput, signal);
-    await ownership.verifySource(source.id);
-    await provider.prepareSource(source.id, seed.runner.bytes, signal);
+    await ownership.check("sourceAllocated", "pending");
+    let source: Awaited<ReturnType<typeof ownership.source.create>>;
+    try {
+      source = await ownership.source.create(sourceInput, signal);
+    } catch (error) {
+      try {
+        await ownership.check("sourceAllocated", "failed");
+      } catch {
+        // Keep the source creation rejection as the failure reported to the worker.
+      }
+      throw error;
+    }
+    await ownership.check("sourceAllocated", "passed");
+    await ownership.check("sourceRetention", "pending");
+    try {
+      await ownership.verifySource(source.id);
+    } catch (error) {
+      try {
+        await ownership.check("sourceRetention", "failed");
+      } catch {
+        // Keep the retention readback rejection as the failure reported to the worker.
+      }
+      throw error;
+    }
+    await ownership.check("sourceRetention", "passed");
+    await provider.prepareSource(
+      source.id,
+      seed.runner.bytes,
+      signal,
+      async (step, outcome, diagnostics) => {
+        await ownership.check(SOURCE_PHASE_CHECKS[step], outcome);
+        for (const diagnostic of diagnostics ?? []) {
+          await ownership.check(sourceDiagnosticCheckName(step, diagnostic), "failed");
+        }
+      },
+    );
     await ownership.check("warmSourcePrepared", "passed");
 
     const leases = createProofBases({

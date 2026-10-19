@@ -43,3 +43,9 @@ exit status. The VM pass forks one run-owned prepared source and applies the
 result into an already-open kernel inode. This covers the proof's one-file
 workspace adapter; it does not establish a general native mount or production
 Bases lifecycle.
+
+The provider credential stays in the Worker. The VM receives only the scoped
+Runner callback token, never tenant connection credentials. This probe makes no
+tenant-service requests and does not prove the egress bridge. Bound-host egress
+must bridge to the Cloudflare connections gateway, which owns credential fill
+and response scrubbing.

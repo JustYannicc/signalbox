@@ -9,6 +9,11 @@ import { boxdMachineClient } from "../../src/computer/BoxdMachines.ts";
 import type { MachineRunnerOwner } from "../../src/computer/RunnerMachineRuntime.ts";
 import type { BoxdProofVmPort } from "./Workspace.ts";
 import { BOXD_PROOF_LAUNCH_FENCE } from "./LaunchFence.ts";
+import {
+  runSourceStep,
+  sourcePreparationCommandFailure,
+  type SourcePreparationReporter,
+} from "./SourcePreparation.ts";
 
 const session = Schema.decodeUnknownSync(Schema.Struct({ token: Schema.String }));
 const closure = Schema.decodeUnknownSync(
@@ -33,6 +38,19 @@ const ARTIFACT = "/opt/signalbox-command/command-runner.mjs";
 export const WORKSPACE_RECEIPT = `${RUN_ROOT}/workspace.json`;
 const CONFIG = `${RUN_ROOT}/runner.json`;
 
+export interface ProofProviderSdkPort {
+  readonly machines: {
+    readonly exec: (
+      id: string,
+      input: { readonly command: string[]; readonly timeout: number; readonly cwd?: string },
+    ) => Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }>;
+    readonly files: {
+      readonly upload: (id: string, path: string, bytes: Uint8Array) => Promise<number>;
+      readonly download: (id: string, path: string) => Promise<Uint8Array>;
+    };
+  };
+}
+
 export async function openProofProvider(apiKey: string) {
   const response = await fetch("https://app.boxd.sh/api/v1/auth/token", {
     method: "POST",
@@ -49,8 +67,14 @@ export async function openProofProvider(apiKey: string) {
 }
 
 /** Setup, transfers and closure only. The tested user command goes through the Runner socket. */
-export function proofProvider(client: ReturnType<typeof boxdMachineClient>, owner: string) {
-  const python = async (id: string, args: readonly string[], signal: AbortSignal, cwd?: string) => {
+export function proofProvider(client: ProofProviderSdkPort, owner: string) {
+  const python = async (
+    id: string,
+    args: readonly string[],
+    signal: AbortSignal,
+    cwd?: string,
+    diagnoseSourceFailure = false,
+  ) => {
     signal.throwIfAborted();
     const result = await client.machines.exec(id, {
       command: ["sudo", "-n", "/usr/bin/python3", ...args],
@@ -58,7 +82,11 @@ export function proofProvider(client: ReturnType<typeof boxdMachineClient>, owne
       ...(cwd === undefined ? {} : { cwd }),
     });
     signal.throwIfAborted();
-    if (result.exitCode !== 0) throw new Error("Proof provider setup or closure failed");
+    if (result.exitCode !== 0) {
+      throw diagnoseSourceFailure
+        ? sourcePreparationCommandFailure(result.exitCode, result.stderr)
+        : new Error("Proof provider setup or closure failed");
+    }
     return result;
   };
   const upload = async (id: string, path: string, bytes: Uint8Array, signal: AbortSignal) => {
@@ -88,24 +116,37 @@ export function proofProvider(client: ReturnType<typeof boxdMachineClient>, owne
   return {
     vm,
     cgroupPath: group,
-    async prepareSource(id: string, artifact: Uint8Array, signal: AbortSignal) {
-      await python(
-        id,
-        [
-          "-c",
-          `import os\nos.makedirs("/opt/signalbox-command", mode=0o755, exist_ok=True)\nos.makedirs(${JSON.stringify(RUN_ROOT)}, mode=0o755, exist_ok=True)`,
-        ],
-        signal,
+    async prepareSource(
+      id: string,
+      artifact: Uint8Array,
+      signal: AbortSignal,
+      reporter?: SourcePreparationReporter,
+    ) {
+      await runSourceStep(reporter, "directoriesExec", () =>
+        python(
+          id,
+          [
+            "-c",
+            `import os\nos.makedirs("/opt/signalbox-command", mode=0o755, exist_ok=True)\nos.makedirs(${JSON.stringify(RUN_ROOT)}, mode=0o755, exist_ok=True)`,
+          ],
+          signal,
+          undefined,
+          reporter !== undefined,
+        ),
       );
       const staging = `/tmp/${owner}-runner.mjs`;
-      await upload(id, staging, artifact, signal);
-      await python(
-        id,
-        [
-          "-c",
-          `import os\nos.replace(${JSON.stringify(staging)}, ${JSON.stringify(ARTIFACT)})\nos.chmod(${JSON.stringify(ARTIFACT)}, 0o644)\nwith open("/opt/signalbox-command/base-marker", "w") as marker:\n    marker.write(${JSON.stringify(owner)})`,
-        ],
-        signal,
+      await runSourceStep(reporter, "runnerUpload", () => upload(id, staging, artifact, signal));
+      await runSourceStep(reporter, "installExec", () =>
+        python(
+          id,
+          [
+            "-c",
+            `import os\nos.replace(${JSON.stringify(staging)}, ${JSON.stringify(ARTIFACT)})\nos.chmod(${JSON.stringify(ARTIFACT)}, 0o644)\nwith open("/opt/signalbox-command/base-marker", "w") as marker:\n    marker.write(${JSON.stringify(owner)})`,
+          ],
+          signal,
+          undefined,
+          reporter !== undefined,
+        ),
       );
     },
     async assertInheritedSource(id: string, signal: AbortSignal) {

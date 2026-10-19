@@ -1,0 +1,126 @@
+export type SourcePreparationStep = "directoriesExec" | "runnerUpload" | "installExec";
+export type SourcePreparationOutcome = "pending" | "passed" | "failed";
+
+const SOURCE_ERROR_NAMES = [
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "URIError",
+  "EvalError",
+  "AggregateError",
+  "AbortError",
+  "BoxdError",
+  "AuthenticationError",
+  "PermissionDeniedError",
+  "NotFoundError",
+  "ConflictError",
+  "RateLimitError",
+  "APIStatusError",
+  "APIConnectionError",
+] as const;
+type SourceErrorName = (typeof SOURCE_ERROR_NAMES)[number];
+
+const SOURCE_STDERR_CATEGORIES = [
+  { value: "SyntaxError", pattern: /(?:^|\n)SyntaxError(?::|\s)/ },
+  { value: "PermissionError", pattern: /(?:^|\n)PermissionError(?::|\s)/ },
+  { value: "FileNotFoundError", pattern: /(?:^|\n)FileNotFoundError(?::|\s)/ },
+  { value: "ModuleNotFoundError", pattern: /(?:^|\n)ModuleNotFoundError(?::|\s)/ },
+  { value: "sudo", pattern: /(?:^|\n)sudo:\s/ },
+  { value: "read-only", pattern: /\b(?:read-only file system|EROFS)\b/i },
+  { value: "no-space", pattern: /\b(?:no space left on device|ENOSPC)\b/i },
+] as const;
+type SourceStderrCategory = (typeof SOURCE_STDERR_CATEGORIES)[number]["value"];
+
+export type SourcePreparationDiagnostic =
+  | { readonly kind: "errorName"; readonly value: SourceErrorName }
+  | { readonly kind: "grpcCode"; readonly value: number }
+  | { readonly kind: "status"; readonly value: number }
+  | { readonly kind: "exitCode"; readonly value: number }
+  | { readonly kind: "stderrCategory"; readonly value: SourceStderrCategory };
+
+export type SourcePreparationReporter = (
+  step: SourcePreparationStep,
+  outcome: SourcePreparationOutcome,
+  diagnostics?: readonly SourcePreparationDiagnostic[],
+) => Promise<void>;
+
+function numericProperty(
+  error: unknown,
+  name: "grpcCode" | "status",
+  minimum: number,
+  maximum: number,
+) {
+  try {
+    if (typeof error !== "object" || error === null) return undefined;
+    const value = Reflect.get(error, name);
+    return typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= minimum &&
+      value <= maximum
+      ? value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+class SourcePreparationCommandFailure extends Error {
+  readonly exitCode: number;
+  readonly stderrCategories: readonly SourceStderrCategory[];
+
+  constructor(exitCode: number, stderr: string) {
+    super("Proof provider setup or closure failed");
+    this.exitCode = exitCode;
+    this.stderrCategories = SOURCE_STDERR_CATEGORIES.filter(({ pattern }) =>
+      pattern.test(stderr),
+    ).map(({ value }) => value);
+  }
+}
+
+export function sourcePreparationCommandFailure(exitCode: number, stderr: string) {
+  return new SourcePreparationCommandFailure(exitCode, stderr);
+}
+
+function sourceFailureDiagnostics(error: unknown): readonly SourcePreparationDiagnostic[] {
+  const diagnostics: SourcePreparationDiagnostic[] = [];
+  if (error instanceof Error) {
+    const name = SOURCE_ERROR_NAMES.find((candidate) => candidate === error.name);
+    if (name !== undefined) diagnostics.push({ kind: "errorName", value: name });
+  }
+  const grpcCode = numericProperty(error, "grpcCode", 0, 16);
+  if (grpcCode !== undefined) diagnostics.push({ kind: "grpcCode", value: grpcCode });
+  const status = numericProperty(error, "status", 100, 599);
+  if (status !== undefined) diagnostics.push({ kind: "status", value: status });
+  if (error instanceof SourcePreparationCommandFailure) {
+    if (Number.isSafeInteger(error.exitCode) && error.exitCode >= 1 && error.exitCode <= 255) {
+      diagnostics.push({ kind: "exitCode", value: error.exitCode });
+    }
+    for (const value of error.stderrCategories) diagnostics.push({ kind: "stderrCategory", value });
+  }
+  return diagnostics;
+}
+
+export async function runSourceStep<A>(
+  reporter: SourcePreparationReporter | undefined,
+  step: SourcePreparationStep,
+  action: () => Promise<A>,
+): Promise<A> {
+  await reporter?.(step, "pending");
+  let result: A;
+  try {
+    result = await action();
+  } catch (error) {
+    if (reporter !== undefined) {
+      try {
+        await reporter(step, "failed", sourceFailureDiagnostics(error));
+      } catch {
+        // Preserve the provider or command rejection that failed this step.
+      }
+    }
+    throw error;
+  }
+  await reporter?.(step, "passed");
+  return result;
+}
