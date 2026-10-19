@@ -21,16 +21,13 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.actor == github.repository_owner
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     environment:
       name: cloud-preview
     concurrency:
       group: computer-boxd-proof
       cancel-in-progress: false
     env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
       SOURCE_COMMIT: ${{ inputs.sourceCommit }}
     steps:
       - name: Checkout trusted workflow source
@@ -71,6 +68,10 @@ jobs:
 
       - name: Run deployed proof
         timeout-minutes: 22
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
         run: >-
           node --experimental-strip-types apps/cloud/infra/computerBoxdProof/run.ts
           --program-dir "$RUNNER_TEMP/computer-boxd-programs"
@@ -79,7 +80,11 @@ jobs:
 
       - name: Recover interrupted proof
         if: always()
-        timeout-minutes: 5
+        timeout-minutes: 10
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
         shell: bash
         run: |
           if [[ -e "$RUNNER_TEMP/computer-boxd-stage" || -L "$RUNNER_TEMP/computer-boxd-stage" ]]; then
@@ -92,8 +97,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: computer-boxd-proof
-          path: |
-            ${{ runner.temp }}/computer-boxd-deployed.json
-            ${{ runner.temp }}/computer-boxd-stage
+          path: ${{ runner.temp }}/computer-boxd-deployed.json
           if-no-files-found: warn
           retention-days: 14

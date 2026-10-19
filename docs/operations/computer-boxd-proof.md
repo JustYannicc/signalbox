@@ -15,8 +15,9 @@ The workflow downloads the existing hash-pinned kernel program release inputs.
 Its runner owns the unique deployment stage and VM names, and records ownership
 before allocation. It must confirm provider cleanup before destroying the Worker
 that owns recovery. The final step retries interrupted cleanup using the exact
-stage file. A retained stage file means cleanup still needs recovery; keep the
-stage deployed and follow the runner's failure receipt.
+stage file. The recovery file stays in the job temporary directory and is never
+uploaded. If recovery fails, keep the stage deployed and follow the safe failure
+receipt to recover its owned resources.
 
 The uploaded receipt records the candidate, checks and confirmed cleanup without
 credentials, endpoints or command configuration. This workflow enables proof
