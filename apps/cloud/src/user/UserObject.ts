@@ -11,6 +11,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { harnessReleaseLedgerLayer } from "../harnessReleases/HarnessReleaseLedgerService.ts";
 import * as Evlog from "../observability/Evlog.ts";
 import * as ClientActionTimings from "../observability/ClientActionTimings.ts";
 import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
@@ -268,6 +269,7 @@ const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
           layerWorkflows(env.AUTOMATION_RUNS),
           layerAutomationAlarm(storage),
           modelCompletion,
+          harnessReleaseLedgerLayer(storage),
           Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
         ),
       ),
