@@ -21,6 +21,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadKind } from "../../state/signalboxThreadKinds";
+import { TaskOutcomeText } from "./TaskOutcomeText";
 
 const codeTaskCondition = {
   summary: "Merged and live",
@@ -287,7 +288,7 @@ export function TaskLifecycleControl(props: {
       {displayedOutcome || error ? (
         <View className="gap-1 bg-screen px-4 pb-2">
           {displayedOutcome ? (
-            <Text className="text-xs text-foreground-muted">{displayedOutcome}</Text>
+            <TaskOutcomeText className="text-xs text-foreground-muted" text={displayedOutcome} />
           ) : null}
           {error ? <Text className="text-xs text-danger-foreground">{error}</Text> : null}
         </View>

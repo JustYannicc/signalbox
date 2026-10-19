@@ -44,6 +44,7 @@ import * as CloudModelSteps from "./cloudModelSteps.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
 import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
+import * as DeploymentEvidenceModule from "./deploymentEvidence.ts";
 import * as CloudIngress from "./cloudIngress.ts";
 import * as HookStoreModule from "./hookStore.ts";
 
@@ -136,8 +137,16 @@ const make = Effect.gen(function* () {
   const merges = yield* PullRequestMergesModule.PullRequestMerges;
   const changedFiles = yield* makeChangedFiles;
   const folders = yield* UserFolders.UserFolders;
+  const deployments = yield* DeploymentEvidenceModule.DeploymentEvidenceReader;
   yield* engine.registerBuiltinTools(
-    makeCloudBuiltinTools({ threads, service, owner, merges, folders }),
+    makeCloudBuiltinTools({
+      threads,
+      service,
+      owner,
+      merges,
+      folders,
+      deploymentEvidence: deployments.read,
+    }),
   );
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
@@ -453,6 +462,7 @@ export const layer = Layer.effect(CloudAutomations, make).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CloudThreads.layer,
+      DeploymentEvidenceModule.layer.pipe(Layer.provide(CloudThreads.layer)),
       CloudCompilerModule.layer,
       CloudModelSteps.layer,
       PullRequestReadsModule.layer,

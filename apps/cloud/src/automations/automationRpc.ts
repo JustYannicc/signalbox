@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import { CloudAutomations } from "./CloudAutomations.ts";
 import { acceptCompiled, COMPILE_WHERE } from "./cloudCompiler.ts";
 import { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
+import { DeploymentEvidenceReader } from "./deploymentEvidence.ts";
 
 /**
  * The automation RPCs a client calls on the user's object: the same contract
@@ -67,6 +68,7 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
   const automations = yield* CloudAutomations;
   const threads = yield* AutomationThreads;
   const github = yield* GitHubWebhooks;
+  const deployments = yield* DeploymentEvidenceReader;
   const flushed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.tap(() => automations.flush));
   /** Spans name the automation or run, never what's in them. */
@@ -74,6 +76,9 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
     Effect.annotateCurrentSpan(attributes);
 
   return {
+    [METHODS.automationsDeploymentEvidence]: (
+      input: Payload<typeof METHODS.automationsDeploymentEvidence>,
+    ) => deployments.read(input),
     [METHODS.automationsSubscribe]: (_input: Payload<typeof METHODS.automationsSubscribe>) =>
       engine.subscribeList().pipe(Stream.map((list) => ({ automations: list }))),
     [METHODS.automationsSubscribeNotices]: (

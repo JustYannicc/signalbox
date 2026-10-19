@@ -33,4 +33,5 @@ export const automationRpcHandlers = () => ({
   [AUTOMATION_WS_METHODS.automationsConnect]: failed,
   [AUTOMATION_WS_METHODS.automationsDisconnect]: failed,
   [AUTOMATION_WS_METHODS.automationsTaskLifecycle]: failed,
+  [AUTOMATION_WS_METHODS.automationsDeploymentEvidence]: failed,
 });

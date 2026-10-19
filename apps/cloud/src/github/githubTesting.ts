@@ -103,6 +103,7 @@ export const makeFakeGitHub = (options: {
     html_url: pullUrl(pull.number),
     state: pull.state,
     merged_at: pull.merged ? "2026-10-08T00:00:00Z" : null,
+    merge_commit_sha: pull.merged ? pull.headOid : null,
     draft: pull.draft === true,
     updated_at: pull.updatedAt ?? "2026-10-08T00:00:00Z",
     base: { ref: pull.base },
@@ -395,6 +396,11 @@ export const makeFakeGitHub = (options: {
     };
     if (method === "GET" && path === "/user/repos") return json([repositoryJson]);
     if (method === "GET" && path === `/repos/${options.repository}`) return json(repositoryJson);
+    const pullRead = new RegExp(`^/repos/${options.repository}/pulls/(\\d+)$`).exec(path);
+    if (method === "GET" && pullRead !== null) {
+      const pull = pulls.find((candidate) => candidate.number === Number(pullRead[1]));
+      return pull === undefined ? json({ message: "Not Found" }, 404) : json(pullJson(pull));
+    }
     if (method === "POST" && path === "/graphql") {
       if (settings.rateLimited) {
         return new Response(JSON.stringify({ message: "API rate limit exceeded" }), {

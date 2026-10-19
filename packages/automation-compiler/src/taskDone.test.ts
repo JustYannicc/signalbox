@@ -84,7 +84,11 @@ function fixture(
     unsettledAt?: string | null;
     otherThreads?: Record<string, { archivedAt?: string | null; unsettledAt?: string | null }>;
     recordCondition?: { summary: string; input?: unknown } | null;
-    verification?: Array<{ state: string; evidence?: string; commit?: string }>;
+    verification?: Array<{ state: string; evidence?: string; commit?: string; runId?: string }>;
+    deployment?: { status: "pending" | "failed" | "succeeded"; commit?: string };
+    deploymentUrl?: string;
+    deploymentRead?: (args: Record<string, unknown>) => void;
+    onAgent?: () => void;
     wait?: (label: string, args: Record<string, unknown>) => unknown;
     staleAfterVerification?: "generation" | "message";
     modelSteps?: boolean;
@@ -132,6 +136,7 @@ function fixture(
   const w = {
     $arm: () => {},
     $frame: () => w,
+    eventCursor: async () => ({ runId: "run-1", sequence: 0 }),
     call: async (...args: Array<unknown>) => {
       const operationIndex = args.findIndex(
         (arg) => typeof arg === "string" && String(arg).includes("."),
@@ -143,6 +148,23 @@ function fixture(
       calls.push({ operation, args: actionArgs });
       timeline.push(`call:${action}`);
 
+      if (operation === "signalbox.pull_request_deployment") {
+        options.deploymentRead?.(actionArgs);
+        return {
+          commit: COMMIT,
+          baseBranch: "main",
+          run:
+            actionArgs.runId === undefined
+              ? null
+              : {
+                  id: String(actionArgs.runId),
+                  url:
+                    options.deploymentUrl ?? "https://github.com/example/project/actions/runs/123",
+                  status: options.deployment?.status ?? "succeeded",
+                  commit: options.deployment?.commit ?? COMMIT,
+                },
+        };
+      }
       if (operation !== "signalbox.task_lifecycle") return { applied: true };
       if (action === "read") {
         if (threadId === "verification-1") return verifierState();
@@ -176,6 +198,7 @@ function fixture(
       const request = args.at(-1) as Record<string, unknown>;
       agents.push(request);
       timeline.push("agent");
+      options.onAgent?.();
       const reply = verificationReplies.shift() ?? {
         state: "live",
         evidence: "Production smoke check passed.",
@@ -185,6 +208,7 @@ function fixture(
         state: reply.state,
         evidence: reply.evidence ?? `Observed ${reply.state} deployment state.`,
         commit: reply.commit ?? COMMIT,
+        runId: reply.runId ?? "123",
       });
       return { threadId: `verification-${agents.length}`, text: verificationText };
     },
@@ -220,7 +244,7 @@ function fixture(
     llmCalls,
     timeline,
     setVerificationText: (text: string) => {
-      verificationText = text;
+      verificationText = JSON.stringify({ runId: "123", ...JSON.parse(text) });
     },
     setPullRequests: (value: PullRequest[]) => {
       pullRequests = value;
@@ -257,6 +281,152 @@ describe("Task done automation", () => {
     }
   });
 
+  it("archives long PR stacks with intact deployment links within the outcome limit", async () => {
+    for (const count of [7, 40]) {
+      const test = fixture({
+        pullRequests: Array.from({ length: count }, (_, index) => ({
+          ...mergedPullRequest,
+          number: index + 1,
+          url: `https://github.com/example/project/pull/${index + 1}`,
+        })),
+      });
+      await test.run({ threadId: "task-1", event: "thread.created" });
+
+      const outcome = test.calls.find((call) => call.args.action === "complete")?.args.outcome;
+      expect(typeof outcome).toBe("string");
+      const text = String(outcome);
+      const linkPattern =
+        /\[Live at [a-f0-9]{12}\]\((https:\/\/github\.com\/example\/project\/actions\/runs\/\d+)\)/g;
+      const links = Array.from(text.matchAll(linkPattern));
+      expect(test.agents).toHaveLength(count);
+      expect(text.length).toBeLessThanOrEqual(2000);
+      expect(links.length).toBeGreaterThanOrEqual(7);
+      if (count === 7) expect(links).toHaveLength(count);
+      const remainder = count - links.length;
+      expect(text.replace(linkPattern, "").replaceAll("; ", "")).toBe(
+        remainder > 0 ? `+${remainder} more` : "",
+      );
+      for (const link of links)
+        expect(link[1]).toBe("https://github.com/example/project/actions/runs/123");
+    }
+  });
+
+  it.each([
+    { entryLength: 999, kept: 2, length: 2000 },
+    { entryLength: 1991, kept: 1, length: 2000 },
+    { entryLength: 1992, kept: 0, length: 7 },
+  ])(
+    "keeps whole links and the omitted count at the outcome boundary: $entryLength",
+    async ({ entryLength, kept, length }) => {
+      const prefix = `[Live at ${COMMIT.slice(0, 12)}](`;
+      const url = "https://github.com/".padEnd(entryLength - prefix.length - 1, "x");
+      const entry = `${prefix}${url})`;
+      const test = fixture({
+        deploymentUrl: url,
+        pullRequests: [
+          mergedPullRequest,
+          { ...mergedPullRequest, url: mergedPullRequest.url + "0" },
+        ],
+      });
+      await test.run({ threadId: "task-1", event: "thread.created" });
+      const outcome = test.calls.find((call) => call.args.action === "complete")?.args.outcome;
+      const expected = Array.from({ length: kept }, () => entry);
+      if (kept < 2) expected.push(`+${2 - kept} more`);
+      expect(outcome).toBe(expected.join("; "));
+      expect(String(outcome)).toHaveLength(length);
+    },
+  );
+
+  it.each(["missing connection", "GitHub API unavailable"])(
+    "recovers an initial merge read after %s",
+    async (failure) => {
+      let attempts = 0;
+      const test = fixture({
+        deploymentRead: () => {
+          if (++attempts <= 2) throw new Error(failure);
+        },
+        wait: (label, args) => {
+          expect(label).toBe("Wait for merge evidence access");
+          expect(args.timeout).toEqual({ minutes: 2 ** (test.waits.length - 1) });
+          expect(test.agents).toHaveLength(0);
+          expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+          return null;
+        },
+      });
+      await test.run({ threadId: "task-1", event: "thread.created" });
+      expect(test.waits).toHaveLength(2);
+      expect(test.agents).toHaveLength(1);
+      expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
+    },
+  );
+
+  it("caps merge-read backoff at an hour and resets after a successful read", async () => {
+    const attempts = new Map<string, number>();
+    const test = fixture({
+      pullRequests: [mergedPullRequest, { ...mergedPullRequest, url: mergedPullRequest.url + "0" }],
+      deploymentRead: (args) => {
+        if (args.runId !== undefined) return;
+        const url = String(args.url);
+        const attempt = (attempts.get(url) ?? 0) + 1;
+        attempts.set(url, attempt);
+        if (attempt <= 9) throw new Error("GitHub is unavailable");
+      },
+      wait: (label, args) => {
+        expect(label).toBe("Wait for merge evidence access");
+        expect(args).toMatchObject({
+          on: ["pr.updated", "turn.finished", "thread.archived"],
+          where: { threadId: "task-1" },
+        });
+        return test.waits.length === 1 ? { event: "pr.updated", threadId: "task-1" } : null;
+      },
+    });
+    await test.run({ threadId: "task-1", event: "thread.created" });
+    const delays = [1, 2, 4, 8, 16, 32, 60, 60, 60].map((minutes) => ({ minutes }));
+    expect(test.waits.map((wait) => wait.args.timeout)).toEqual([...delays, ...delays]);
+    expect(test.agents).toHaveLength(2);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(true);
+  });
+
+  it.each(["during verification", "while waiting"])(
+    "drops an unlinked PR %s and completes from the remaining proof",
+    async (when) => {
+      const second = {
+        ...mergedPullRequest,
+        number: 43,
+        url: "https://github.com/example/project/pull/43",
+      };
+      const stop = new Error("unlink did not restart verification");
+      let removed = false;
+      const unlink = () => {
+        removed = true;
+        test.setPullRequests([mergedPullRequest]);
+      };
+      const test = fixture({
+        pullRequests: [mergedPullRequest, second],
+        verification: [{ state: "live" }, { state: "unknown" }],
+        onAgent: () => {
+          if (when === "during verification" && test.agents.length === 2) unlink();
+        },
+        deploymentRead: (args) => {
+          if (removed && args.url === second.url) throw new Error("PR no longer linked");
+        },
+        wait: (label, args) => {
+          if (removed) throw stop;
+          expect(label).toBe("Wait for deployment evidence");
+          expect(args.on).toContain("pr.updated");
+          expect(args.where).toEqual({ threadId: ["task-1", "verification-2"] });
+          unlink();
+          return { event: "pr.updated", threadId: "task-1" };
+        },
+      });
+      await test.run({ threadId: "task-1", event: "thread.created" });
+      expect(test.agents).toHaveLength(2);
+      expect(test.calls.find((call) => call.args.action === "complete")?.args.outcome).toBe(
+        `[Live at ${COMMIT.slice(0, 12)}](https://github.com/example/project/actions/runs/123)`,
+      );
+    },
+  );
+
   it("keeps an unknown deployment proof waiting on the verifier thread", async () => {
     const waiting = new Error("expected workflow wait");
     const test = fixture({
@@ -270,10 +440,51 @@ describe("Task done automation", () => {
     expect(test.waits).toEqual([
       {
         label: "Wait for deployment evidence",
-        args: { on: "turn.finished", where: { threadId: "verification-1" } },
+        args: {
+          on: ["turn.finished", "pr.updated", "thread.archived"],
+          where: { threadId: ["task-1", "verification-1"] },
+          after: { runId: "run-1", sequence: 0 },
+        },
       },
     ]);
     expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+  });
+
+  it("rejects a verifier's live claim for another commit and requests corrected proof", async () => {
+    const waiting = new Error("waiting for exact commit proof");
+    const test = fixture({
+      verification: [{ state: "live", commit: "b".repeat(40) }],
+      wait: () => {
+        throw waiting;
+      },
+    });
+    await expect(test.run({ threadId: "task-1", event: "thread.created" })).rejects.toBe(waiting);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+    expect(
+      test.calls.find((call) => call.operation === "signalbox.t3_thread_send")?.args,
+    ).toMatchObject({
+      threadId: "verification-1",
+      message: expect.stringContaining(COMMIT),
+    });
+  });
+
+  it("keeps a premature live claim waiting while the actual deployment is pending", async () => {
+    const waiting = new Error("waiting for deploy");
+    const test = fixture({
+      deployment: { status: "pending" },
+      verification: [{ state: "live" }],
+      wait: () => {
+        throw waiting;
+      },
+    });
+    await expect(test.run({ threadId: "task-1", event: "thread.created" })).rejects.toBe(waiting);
+    expect(test.calls.some((call) => call.args.action === "complete")).toBe(false);
+    expect(
+      test.calls.find((call) => call.operation === "signalbox.t3_thread_send")?.args,
+    ).toMatchObject({
+      threadId: "verification-1",
+      message: expect.stringContaining("still pending"),
+    });
   });
 
   it("reports a failed deployment, waits for the task repair, then verifies again", async () => {
@@ -285,7 +496,10 @@ describe("Task done automation", () => {
       wait: (label, args) => {
         if (label !== "Wait for the deployment repair")
           throw new Error(`Unexpected wait: ${label}`);
-        expect(args).toMatchObject({ on: "turn.finished", where: { threadId: "task-1" } });
+        expect(args).toMatchObject({
+          on: ["turn.finished", "pr.updated", "thread.archived"],
+          where: { threadId: "task-1" },
+        });
         test.setUpdatedAt("2026-10-17T09:30:00.000Z");
         return { event: "turn.finished", threadId: "task-1" };
       },

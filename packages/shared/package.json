@@ -612,6 +612,10 @@
       "types": "./src/poolUsageRecording.ts",
       "import": "./src/poolUsageRecording.ts"
     },
+    "./taskOutcome": {
+      "types": "./src/taskOutcome.ts",
+      "import": "./src/taskOutcome.ts"
+    },
     "./textSourceMap": {
       "types": "./src/textSourceMap.ts",
       "import": "./src/textSourceMap.ts"

@@ -31,6 +31,10 @@
       "types": "./src/taskLifecycle.ts",
       "import": "./src/taskLifecycle.ts"
     },
+    "./deploymentEvidence": {
+      "types": "./src/deploymentEvidence.ts",
+      "import": "./src/deploymentEvidence.ts"
+    },
     "./settings": {
       "types": "./src/settings.ts",
       "import": "./src/settings.ts"

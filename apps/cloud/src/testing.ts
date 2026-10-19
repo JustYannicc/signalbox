@@ -635,6 +635,8 @@ export const makeMemoryCloud = (
     ) => Effect.promise(() => threadFor(threadId).run(effect)),
     /** The runs' Workflow instances: `idle` lets them run until they block, `advance` moves time. */
     workflows,
+    /** Drain turns while a Workflow host call is deliberately held by a race test. */
+    settleThreads,
     /** When a user object's alarm would fire next; what fired clears it. */
     alarmAt: (userId: string) => alarms.get(userId),
     /** Fires a user object's alarm, as workerd does when it's due. */

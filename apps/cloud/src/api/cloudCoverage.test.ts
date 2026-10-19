@@ -6,6 +6,15 @@ import { descriptor } from "../environment.ts";
 import { CLOUD_UNSERVED, cloudServes, cloudUnserved, coverageKeyMatches } from "./cloudCoverage.ts";
 
 describe("cloud API coverage", () => {
+  it("serves deployment evidence as a read available to agents", () => {
+    const operation = operations.find(
+      (candidate) => candidate.name === "automations.deploymentEvidence",
+    )!;
+    expect(operation).toMatchObject({ access: "read", humanOnly: false });
+    expect(cloudServes(operation)).toBe(true);
+    expect(cloudUnserved(operation)).toBeUndefined();
+  });
+
   it("serves provider auth actions while keeping responses human-only", () => {
     for (const name of ["provider.auth.respond", "provider.auth.logout"]) {
       const operation = operations.find((entry) => entry.name === name)!;

@@ -16,6 +16,7 @@ import {
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { WorkflowDiagnostic, WorkflowGraph, WorkflowMeta } from "./workflow.ts";
 import { TaskLifecycleInput, TaskLifecycleResult } from "./taskLifecycle.ts";
+import { DeploymentEvidenceInput, DeploymentEvidence } from "./deploymentEvidence.ts";
 
 /**
  * WebSocket methods for automations. Spread into `WS_METHODS` and `WsRpcGroup`
@@ -45,6 +46,7 @@ export const AUTOMATION_WS_METHODS = {
   automationsValidate: "automations.validate",
   automationsSave: "automations.save",
   automationsTaskLifecycle: "automations.taskLifecycle",
+  automationsDeploymentEvidence: "automations.deploymentEvidence",
 } as const;
 
 const AutomationId = TrimmedNonEmptyString;
@@ -339,6 +341,12 @@ const TaskLifecycleRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsTaskLifecycle
   error,
 });
 
+const DeploymentEvidenceRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsDeploymentEvidence, {
+  payload: DeploymentEvidenceInput,
+  success: DeploymentEvidence,
+  error,
+});
+
 export const AutomationRpcs = [
   SubscribeRpc,
   SubscribeOneRpc,
@@ -363,4 +371,5 @@ export const AutomationRpcs = [
   ValidateRpc,
   SaveRpc,
   TaskLifecycleRpc,
+  DeploymentEvidenceRpc,
 ] as const;
