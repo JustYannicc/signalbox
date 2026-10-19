@@ -194,7 +194,14 @@ export async function requestProofWorker(input: {
   const length = Number(response.headers.get("content-length") ?? "0");
   if (length > 1024 * 1024)
     throw new ProofLauncherFailure(`Worker ${input.route} returned an oversized response.`);
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    if (input.signal.aborted)
+      throw new ProofLauncherFailure(`Worker ${input.route} was interrupted.`);
+    throw new ProofLauncherFailure(`Worker ${input.route} failed (network error).`);
+  }
   if (Buffer.byteLength(text) > 1024 * 1024) {
     throw new ProofLauncherFailure(`Worker ${input.route} returned an oversized response.`);
   }

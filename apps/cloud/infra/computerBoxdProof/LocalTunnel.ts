@@ -42,6 +42,7 @@ export async function openLocalProofTunnel(origin: string) {
         output = (output + bytes.toString("utf8")).slice(-32_768);
         const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/u);
         if (match) advertised = new URL(match[0]);
+        // cloudflared prints the URL before its edge connection registers.
         if (advertised && output.includes("Registered tunnel connection"))
           finish(undefined, advertised);
       };

@@ -17,7 +17,10 @@ const input = (signal = new AbortController().signal) => ({
 });
 
 describe("dev tunnel readiness", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it("waits through unavailable DNS and HTTP until the same pending proof responds", async () => {
     vi.useFakeTimers();
@@ -36,6 +39,45 @@ describe("dev tunnel readiness", () => {
     await waiting;
     expect(ready).toBe(true);
     expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    { name: "connection reset", error: new TypeError("connection reset") },
+    { name: "body timeout", error: new DOMException("body timed out", "TimeoutError") },
+  ])("retries a $name after receiving response headers", async ({ error }) => {
+    vi.useFakeTimers();
+    const fetchWorker = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(error);
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockImplementation(async () => new Response(JSON.stringify(evidence), { status: 200 }));
+    vi.stubGlobal("fetch", fetchWorker);
+    const waiting = waitForDevTunnel(input());
+    const outcome = waiting.then(
+      () => "ready",
+      () => "failed",
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(await outcome).toBe("ready");
+    expect(fetchWorker).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { name: "invalid JSON", response: () => new Response("{", { status: 200 }) },
+    { name: "unauthorized response", response: () => new Response("", { status: 401 }) },
+  ])("does not retry $name from the dev server", async ({ response }) => {
+    const fetchWorker = vi.fn<typeof fetch>().mockImplementation(async () => response());
+    vi.stubGlobal("fetch", fetchWorker);
+    await expect(waitForDevTunnel(input())).rejects.toBeInstanceOf(ProofLauncherFailure);
+    expect(fetchWorker).toHaveBeenCalledOnce();
   });
 
   it.each([
