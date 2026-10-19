@@ -37,7 +37,11 @@
     },
     {
       "file": "internal_wasi_lifecycle.ts",
-      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands before JSPI wrappers; public WASI defaults remain unchanged."
+      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands before JSPI wrappers. Configured kernel CPU scopes charge WASM exports as user work and synchronous import steps as system work, pausing the user scope during suspension. Reactor entry and exit always release the active flag even when the accounting clock fails; unconfigured WASI behavior remains unchanged."
+    },
+    {
+      "file": "internal_wasi_calls.ts",
+      "reason": "An optional synchronous step wrapper lets kernel CPU accounting measure generator work without charging the Promises yielded for I/O. Yielded operations stay owned across step-wrapper failures, and iterator cleanup finishes before the original failure propagates. The default step runner preserves generic WASI behavior."
     },
     {
       "file": "internal_wasi_path_calls.ts",

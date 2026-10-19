@@ -134,6 +134,34 @@ function nodeFsFixture() {
 }
 
 describe("Node fs modules backed by KernelFileSystem", () => {
+  it("opens real SQL files and directories with the official numeric nonblocking flags", async () => {
+    const fixture = nodeFsFixture();
+    const fs = createNodeFs(fixture.kernelFs).fs;
+    try {
+      fs.mkdirSync("/work");
+      fs.writeFileSync("/work/source.txt", "source bytes");
+      const directory = fs.openSync("/work", KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY);
+      const file = await fs.promises.open(`/proc/self/fd/${directory}/source.txt`, 657664);
+      try {
+        expect(await file.readFile("utf8")).toBe("source bytes");
+      } finally {
+        await file.close();
+      }
+      await expect(
+        fs.promises.open(`/proc/self/fd/${directory}/new.txt`, 657664),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      const directoryHandle = await fs.promises.open("/work", 2048);
+      try {
+        expect((await directoryHandle.stat()).isDirectory()).toBe(true);
+      } finally {
+        await directoryHandle.close();
+      }
+      fs.closeSync(directory);
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("exposes own named exports and shares one promises module", () => {
     const fixture = nodeFsFixture();
     try {

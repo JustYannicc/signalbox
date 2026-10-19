@@ -1,4 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off globalTimers:off - request-owned host notifications run without an Effect runtime.
+import { captureKernelCpuExecution } from "./KernelCpuExecution.ts";
+
 export interface WakeToken {
   readonly id: string;
 }
@@ -98,11 +100,22 @@ export class KernelWakeRegistry {
     const entry = this.#entries.get(token.id);
     if (!entry) return Promise.resolve(failure("INVALID_HANDLE", "Unknown or consumed wake token"));
     if (entry.waiter) return Promise.resolve(failure("ALREADY_WAITING", "Wake token has a waiter"));
-    return new Promise((resolve) => {
+    const cpuContext = captureKernelCpuExecution();
+    const resumeCpu = cpuContext?.pause();
+    return new Promise((resolve, reject) => {
       const abort = () => this.cancel(token);
       entry.waiter = (result) => {
         signal?.removeEventListener("abort", abort);
-        resolve(result);
+        const complete = () => {
+          try {
+            resumeCpu?.();
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        };
+        if (cpuContext) queueMicrotask(() => cpuContext.run(complete));
+        else complete();
       };
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) this.cancel(token);

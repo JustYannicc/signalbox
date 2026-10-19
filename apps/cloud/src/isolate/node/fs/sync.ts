@@ -2,8 +2,9 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import type { AsyncLeafRunner } from "./operations.ts";
-import { callFs, unsupportedFs } from "./errors.ts";
+import { runSync, type AsyncLeafRunner } from "./operations.ts";
+import { accessOperation } from "./permission-ops.ts";
+import { unsupportedFs } from "./errors.ts";
 import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from "./files.ts";
 import {
   linkSync,
@@ -87,9 +88,7 @@ export function writeSyncOverload(
 }
 
 export function accessSync(kernelFs: KernelFileSystem, path: PathLike, mode = 0): void {
-  const name = pathString(path);
-  if (mode !== 0) throw unsupportedFs("access", name);
-  callFs("access", name, () => kernelFs.stat(name));
+  runSync(accessOperation(kernelFs, path, mode));
 }
 
 export function existsSync(kernelFs: KernelFileSystem, path: PathLike): boolean {

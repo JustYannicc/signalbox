@@ -5,6 +5,7 @@ export type KernelStat = Omit<Stat, "type"> & {
   type: Stat["type"] | "character";
   ino: Inode;
   dev: bigint;
+  readonly posix?: PosixMetadata;
 };
 
 export interface KernelPosixCredentials {

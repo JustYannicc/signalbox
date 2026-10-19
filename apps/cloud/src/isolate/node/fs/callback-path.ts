@@ -34,6 +34,17 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem, runLeaf?: Asyn
   };
 
   return {
+    access: (
+      path: PathLike,
+      modeOrCallback: number | FsCallback,
+      optionalCallback?: FsCallback,
+    ) => {
+      const callback = typeof modeOrCallback === "function" ? modeOrCallback : optionalCallback;
+      if (!callback) throw new TypeError("The callback argument is required");
+      const mode = typeof modeOrCallback === "number" ? modeOrCallback : 0;
+      const name = pathString(path);
+      schedule<[]>(callback, async () => (await operations.access(name, mode), []), "access", name);
+    },
     stat: (
       path: PathLike,
       optionsOrCallback: { bigint?: boolean } | FsCallback<[ReturnType<typeof statSync>]>,

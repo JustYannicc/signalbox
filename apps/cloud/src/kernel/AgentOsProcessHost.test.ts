@@ -4,6 +4,11 @@ import { kernelError, kernelOk } from "./KernelAbi.ts";
 import { AgentOsProcessHost } from "./AgentOsProcessHost.ts";
 import { KernelProcessTable, type KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
+import { KernelCpuAccounting } from "./KernelCpuAccounting.ts";
+import {
+  KernelCpuExecution,
+  runCurrentKernelCpuAwaitableSystemImport,
+} from "./KernelCpuExecution.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -55,6 +60,48 @@ function fixture() {
 }
 
 describe("AgentOS host_process process imports", () => {
+  it("charges spawn decode and output but excludes non-wake admission waits", async () => {
+    const test = fixture();
+    let now = 0n;
+    let reads = 0;
+    const execution = new KernelCpuExecution(new KernelCpuAccounting(() => now));
+    const admission = deferred<void>();
+    new Uint8Array(test.memory.buffer, 32, 9).set(new TextEncoder().encode("/bin/tool"));
+    const host = new AgentOsProcessHost({
+      memory: () => {
+        now += reads++ === 0 ? 2n : 3n;
+        return test.memory;
+      },
+      processes: test.processes,
+      wakes: test.wakes,
+      spawn: (request) => {
+        expect(request.execPath).toBe("/bin/tool");
+        now += 5n;
+        return admission.promise.then(() => kernelOk(test.child.handle));
+      },
+    });
+    try {
+      const spawning = execution.root.run(() => {
+        const leave = execution.root.enterUser();
+        now += 1n;
+        return runCurrentKernelCpuAwaitableSystemImport(() =>
+          host.imports.proc_spawn_v3(32, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 512),
+        ).then((errno) => {
+          now += 7n;
+          leave();
+          return errno;
+        });
+      });
+      now += 100_000n;
+      admission.resolve();
+      expect(await spawning).toBe(0);
+      expect(new DataView(test.memory.buffer).getUint32(512, true)).toBe(test.child.pid);
+      expect(test.wakes.size).toBe(0);
+      expect(execution.root.stop()).toEqual({ userNs: 8n, systemNs: 10n });
+    } finally {
+      await test.dispose();
+    }
+  });
   it("returns ENOTSUP for valid signal-mask operations without changing output memory", async () => {
     const test = fixture();
     try {

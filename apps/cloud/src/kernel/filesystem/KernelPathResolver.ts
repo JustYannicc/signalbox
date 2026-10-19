@@ -13,6 +13,7 @@ import {
 } from "../wasi/internal_wasi_paths.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
 import { deviceInfoForDescriptor, virtualDevicePath } from "./KernelVirtualDevices.ts";
+import { descriptorPathSuffix } from "./KernelPathAliases.ts";
 
 export interface ResolveOptions {
   readonly followFinal?: boolean;
@@ -268,6 +269,15 @@ export class KernelPathResolver {
 
   #context(path: string, cwdOverride?: string): { anchor: WasiPathAnchor; relative: string } {
     if (typeof path !== "string") throw kernelError("EINVAL");
+    const descriptorSuffix = descriptorPathSuffix(path);
+    if (descriptorSuffix !== undefined) {
+      const descriptor = this.#descriptorForSuffix(descriptorSuffix.fd);
+      if (descriptor.kind !== "directory") throw kernelError("ENOTDIR");
+      // Keep the fd's mount as the capability root so shadow mounts remain hidden.
+      const anchor = this.#validateAnchor(this.#descriptorAnchor(descriptor));
+      return { anchor, relative: descriptorSuffix.relativePath };
+    }
+
     const absolute = path.startsWith("/");
     if (absolute) {
       const mount = this.#mountFor(path);
@@ -282,6 +292,15 @@ export class KernelPathResolver {
     }
     const mount = this.#mountFor(cwdOverride);
     return this.#relativeMountContext(this.#anchorAt(mount, cwdOverride), path);
+  }
+
+  #descriptorForSuffix(fd: number): WasiDescriptor {
+    try {
+      return withKernelErrors(() => this.#descriptors.get(fd));
+    } catch (error) {
+      if (isKernelError(error, "EBADF")) throw kernelError("ENOENT");
+      throw error;
+    }
   }
 
   #relativeMountContext(
@@ -377,4 +396,8 @@ function copyAnchor(anchor: WasiPathAnchor): WasiPathAnchor {
 
 function mountPathParts(path: string): string[] {
   return path.split("/").filter((part) => part !== "");
+}
+
+function isKernelError(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
