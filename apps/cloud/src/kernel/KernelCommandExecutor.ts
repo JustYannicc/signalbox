@@ -20,7 +20,7 @@ export interface KernelCommandExecutorOptions {
   readonly filesystem: KernelFileSystem;
   readonly forwarder: KernelCommandForwarder;
   readonly parent?: KernelHandle<"process">;
-  /** Canonical guest home. It is used only when the complete command env already carries it. */
+  /** Admitted execution passes context home without filling HOME; legacy execution requires a matching HOME. */
   readonly home?: string;
   /** Trusted command binding; guest arguments cannot choose the file representation. */
   readonly fileBytes?: KernelFileByteSelection;
