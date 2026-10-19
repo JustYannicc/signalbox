@@ -91,6 +91,7 @@ export default {
         "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
         "infra/claudeTurnProof/ClaudeTurnProof.ts", // signalbox: imported by the generated proof entry.
         "infra/harnessReleases/artifactCli.ts", // signalbox: standalone artifact preparation and publishing CLI.
+        "infra/harnessReleases/harnessReleaseCloudflare.ts", // signalbox: deployment tooling launches this subprocess by filename.
         "infra/hooksProof/prepareClaude.ts", // Standalone hook proof builders.
         "infra/hooksProof/prepareCodex.ts",
         "infra/hooksProof/ClaudeHooksProof.ts", // Loaded by the generated proof entries.
