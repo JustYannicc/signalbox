@@ -49,6 +49,7 @@ export function createTestFilesystem(stdio?: readonly [WasiStdio, WasiStdio, Was
 
   return {
     filesystem,
+    storage,
     close() {
       filesystem.dispose();
       database.close();
