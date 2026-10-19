@@ -20,6 +20,7 @@ import type {
   KernelAsyncProgramExecRequest,
 } from "../KernelAsyncProgram.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
+import type { KernelCommand } from "../KernelCommandForwarder.ts";
 import { KernelProcessSignal } from "../KernelProcessSignal.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import {
@@ -32,7 +33,13 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { KernelCpuExecution, type KernelCpuProcessExecution } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
-import { prepareKernelProgram, type KernelPreparedProgram } from "./KernelPreparedProgram.ts";
+import {
+  prepareKernelProgram,
+  type KernelPreparedProgram,
+  type KernelProgramPrepareInput,
+  type KernelProgramPrepareOptions,
+} from "./KernelPreparedProgram.ts";
+import { spawnKernelCommandPiped } from "./KernelProgramCommandSpawn.ts";
 import {
   assertKernelFileByteSelectionCompatible,
   commitKernelProgramFileBytes,
@@ -129,6 +136,37 @@ export class KernelProgramSpawner {
     admission?: object,
   ): Promise<KernelResult<KernelHandle<"process">>> {
     return this.#spawnNested(filesystem, parent, signal, home, request, admission);
+  }
+
+  spawnCommandPiped(
+    input: KernelProgramPrepareInput,
+    command: KernelCommand,
+    options: Pick<KernelProgramPrepareOptions, "fileBytes">,
+  ) {
+    return spawnKernelCommandPiped(input, command, options, {
+      processes: this.#processes,
+      wakes: this.#wakes,
+      resolve: this.#resolve,
+      bindingFor: this.#bindingFor,
+      ...(this.#selectFileBytes === undefined ? {} : { selectFileBytes: this.#selectFileBytes }),
+      ...(this.#admit === undefined ? {} : { admit: this.#admit }),
+      launch: (prepared, implementation, captured, ticket) =>
+        this.#spawnWithFactory(
+          prepared.parent,
+          () => {
+            commitKernelProgramFileBytes(prepared.filesystem, prepared.filesystem.fileBytes);
+            return prepared;
+          },
+          implementation,
+          captured.argv,
+          captured.env,
+          undefined,
+          true,
+          undefined,
+          ticket,
+          true,
+        ),
+    });
   }
 
   #spawnPrepared(

@@ -41,7 +41,7 @@ export function assertComputerForwardingSupported(request: KernelProgramAdmissio
   if (process.value.processGroupId !== root.value.processGroupId) {
     throw new KernelProgramExecAdmissionError("ENOTSUP", "Machine process groups are unavailable");
   }
-  if (request.kind === "exec") {
+  if (request.kind !== "spawn") {
     const mask = request.processes.signalMask(handle, 3);
     if (mask.status !== "ok") {
       throw new KernelProgramExecAdmissionError("ESRCH", "Machine signal mask is unavailable");
@@ -56,6 +56,11 @@ export function assertComputerForwardingSupported(request: KernelProgramAdmissio
       { preopen: descriptor.preopen === true, closeOnExec: descriptor.closeOnExec },
     ]),
   );
+  if (request.kind === "command") {
+    for (const fd of [0, 1, 2]) {
+      descriptors.set(fd, { preopen: false, closeOnExec: false });
+    }
+  }
   for (const action of request.actions) {
     switch (action.kind) {
       case "close":

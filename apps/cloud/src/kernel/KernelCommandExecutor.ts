@@ -24,9 +24,11 @@ export interface KernelCommandExecutorOptions {
   readonly home?: string;
   /** Trusted command binding; guest arguments cannot choose the file representation. */
   readonly fileBytes?: KernelFileByteSelection;
+  /** The host's admission resolver owns placement for every command. */
+  readonly admitted?: true;
 }
 
-/** Runs registered programs in the kernel and sends only unknown executables to the runner. */
+/** Adapts kernel program processes to the command stream contract. */
 export class KernelCommandExecutor implements KernelCommandForwarder {
   readonly #host: KernelProgramHost;
   readonly #filesystem: KernelFileSystem;
@@ -34,6 +36,7 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
   readonly #parent: KernelHandle<"process"> | undefined;
   readonly #home: string | undefined;
   readonly #fileBytes: KernelFileByteSelection | undefined;
+  readonly #admitted: boolean;
 
   constructor(options: KernelCommandExecutorOptions) {
     this.#host = options.host;
@@ -42,6 +45,7 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
     this.#parent = options.parent;
     this.#home = options.home;
     this.#fileBytes = options.fileBytes;
+    this.#admitted = options.admitted === true;
   }
 
   readonly spawn = async (
@@ -49,6 +53,23 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
     signal: AbortSignal,
   ): Promise<KernelCommandChild> => {
     throwIfAborted(signal);
+    if (this.#admitted) {
+      const input = {
+        filesystem: this.#filesystem,
+        signal,
+        ...(this.#parent === undefined ? {} : { parent: this.#parent }),
+        ...(this.#home === undefined ? {} : { home: this.#home }),
+      };
+      const options = this.#fileBytes === undefined ? {} : { fileBytes: this.#fileBytes };
+      let result = await this.#host.spawnCommandPiped(input, command, options);
+      while (result.status === "would_block") {
+        await waitForWake(this.#host, result.wakeToken, signal);
+        throwIfAborted(signal);
+        result = await this.#host.spawnCommandPiped(input, command, options);
+      }
+      const { handle, piped } = resultValue(result, "run admitted command");
+      return makeLocalChild(this.#host, piped, handle);
+    }
     const resolution = await resolveProgram(this.#host, command.executable, signal);
     throwIfAborted(signal);
     if (resolution.status === "error" && resolution.error.code === "NOT_FOUND") {
