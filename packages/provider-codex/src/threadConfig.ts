@@ -18,6 +18,7 @@ export const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 
 export function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
+  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): {
@@ -31,19 +32,25 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
-      ...(mcpSession === undefined
-        ? {}
-        : {
-            mcp_servers: {
-              "t3-code": {
-                url: mcpSession.endpoint,
-                tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
-                http_headers: {
-                  Authorization: mcpSession.authorizationHeader,
+      ...(input.mcpServers !== undefined
+        ? {
+            mcp_servers: Object.fromEntries(
+              Object.entries(input.mcpServers).map(([name, server]) => [name, { url: server.url }]),
+            ),
+          }
+        : mcpSession === undefined
+          ? {}
+          : {
+              mcp_servers: {
+                "t3-code": {
+                  url: mcpSession.endpoint,
+                  tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
+                  http_headers: {
+                    Authorization: mcpSession.authorizationHeader,
+                  },
                 },
               },
-            },
-          }),
+            }),
     },
   };
 }

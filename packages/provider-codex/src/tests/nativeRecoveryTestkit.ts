@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
+import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { recoveryTurn } from "./nativeRecoveryTestData.ts";
@@ -51,16 +52,22 @@ export function fixture(
     delayedStart?: boolean;
     earlyStart?: boolean;
     earlyGoalCompletion?: boolean;
+    delayGoalPause?: boolean;
+    delayAcceptanceReply?: boolean;
     rejectReceipt?: CodexNativeReceipt["status"];
   } = {},
 ) {
   return Effect.gen(function* () {
+    const scope = yield* Scope.Scope;
     const turn = recoveryTurn();
     const inbound = yield* Queue.unbounded<Uint8Array>();
     const continued = yield* Deferred.make<void>();
     const completionHandled = yield* Deferred.make<Exit.Exit<void, unknown>>();
     const goalReleased = yield* Deferred.make<Exit.Exit<void, unknown>>();
     const goalContinued = yield* Deferred.make<Exit.Exit<void, unknown>>();
+    const goalPauseRequested = yield* Deferred.make<void>();
+    const goalPauseReply = yield* Deferred.make<void>();
+    const acceptanceReply = yield* Deferred.make<void>();
     const receipts: CodexNativeReceipt[] = [];
     const receiptAttempts: CodexNativeReceipt[] = [];
     const receiptFailure = new Error("receipt write rejected");
@@ -98,7 +105,7 @@ export function fixture(
                   result: { thread: { id: "native-session", updatedAt: 1 } },
                 });
               } else if (request.method === "turn/start") {
-                if (options.earlyGoalCompletion)
+                if (options.earlyGoalCompletion || options.delayGoalPause)
                   yield* send({
                     method: "thread/goal/updated",
                     params: {
@@ -131,12 +138,22 @@ export function fixture(
                   });
                   yield* Deferred.await(completionHandled);
                 }
-                yield* send(
+                const reply = send(
                   options.loseReply
                     ? { id: request.id, error: { code: -1, message: "reply lost after dispatch" } }
                     : { id: request.id, result: { turn: nativeTurn } },
                 );
+                if (options.delayAcceptanceReply)
+                  yield* Deferred.await(acceptanceReply).pipe(
+                    Effect.andThen(reply),
+                    Effect.forkIn(scope),
+                  );
+                else yield* reply;
               } else if (request.method === "thread/goal/set") {
+                if (options.delayGoalPause) {
+                  yield* Deferred.succeed(goalPauseRequested, undefined);
+                  yield* Deferred.await(goalPauseReply);
+                }
                 yield* send({
                   id: request.id,
                   result: {
@@ -271,6 +288,9 @@ export function fixture(
       order,
       continued,
       completionHandled,
+      goalPauseRequested: Deferred.await(goalPauseRequested),
+      replyToGoalPause: Deferred.succeed(goalPauseReply, undefined),
+      replyToStart: Deferred.succeed(acceptanceReply, undefined),
       releaseGoal: send({
         method: "thread/goal/cleared",
         params: { threadId: "native-session" },
