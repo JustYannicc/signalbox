@@ -65,7 +65,7 @@ export function createProofFacet(engine, createHost, options = {}) {
         execTranscript = [],
         importCalls = [],
         memoryMilestones = [];
-      const mock = createMockResponses();
+      const mock = createMockResponses(options.mockResponses);
       const execution = { pending: false, enteredAt: null };
       const model =
         options.model?.({ mock, request, context: this.ctx, execution }) ??
@@ -159,14 +159,27 @@ export function createProofFacet(engine, createHost, options = {}) {
           host,
           wakes,
           env: this.env,
+          modelForward: async (modelRequest) =>
+            new Response(mock.respond(await modelRequest.json()), {
+              headers: { "content-type": "text/event-stream" },
+            }),
         });
+        await composition?.prepare?.();
+        // HTTP gateway proofs supply only an HTTP port.
+        if (composition?.modelHttp && !options.model) model.supportsWebSockets = false;
         binding = createKernelAsyncWasi({
           filesystem,
           wakes,
           agentOsPreopens: true,
           options: { version: "preview1", args: ["/bin/codex"], env: proofEnvironment },
         });
-        sessions = createProofExec({ filesystem, host, transcript: execTranscript, cleanupErrors });
+        sessions = createProofExec({
+          filesystem: composition?.commandFilesystem ?? filesystem,
+          host,
+          transcript: execTranscript,
+          cleanupErrors,
+          wrapCommands: composition?.commands,
+        });
         const fsHost = new AgentOsFileSystemHost({
           memory: () => memory,
           fileSystem: filesystem,
@@ -201,7 +214,9 @@ export function createProofFacet(engine, createHost, options = {}) {
           memory: () => memory,
           descriptors: binding.descriptors,
           mock,
-          ...(model.http === undefined ? {} : { handleRequest: model.http }),
+          ...((composition?.modelHttp ?? model.http) === undefined
+            ? {}
+            : { handleRequest: composition?.modelHttp ?? model.http }),
         });
         const imports = {
           ...binding.wasi.getImportObject(),
@@ -281,7 +296,7 @@ export function createProofFacet(engine, createHost, options = {}) {
           modelResult = await model.inspect?.();
           if ((modelResult?.phase ?? mock.phase) !== "complete")
             throw new Error("Mock Responses sequence did not complete");
-          if (model.metrics) {
+          if (model.metrics && model.supportsWebSockets !== false) {
             model.metrics.httpFallbacks = mock.requests.length - model.metrics.mockCalls;
             if (model.metrics.opens < 1 || model.metrics.httpFallbacks !== 0)
               throw new Error("Default Responses proof did not stay on WebSockets");
@@ -298,7 +313,8 @@ export function createProofFacet(engine, createHost, options = {}) {
             if (!messages.some((entry) => entry.message.params.item.text === "CPU proof complete."))
               throw new Error("CPU proof did not deliver its complete native message");
             proofContent = "CPU proof complete.";
-          } else proofContent = verifyPatchResult(filesystem);
+          } else
+            proofContent = composition?.proofContent?.(filesystem) ?? verifyPatchResult(filesystem);
         }
         compositionResult = await composition?.verify?.({ filesystem, turnResult, mock, driver });
       } catch (error) {
@@ -308,8 +324,9 @@ export function createProofFacet(engine, createHost, options = {}) {
         if (watchdog) clearTimeout(watchdog);
         sample();
         closeInput();
-        await cleanup("proof-composition", () => composition?.finish?.({ exit, failure }));
+        // Exec sessions must release the composition-owned command filesystem first.
         await cleanup("exec-sessions", () => sessions?.dispose());
+        await cleanup("proof-composition", () => composition?.finish?.({ exit, failure }));
         await cleanup("process-table", async () => {
           if (!host) return;
           const result = await host.processes.dispose();
@@ -322,7 +339,7 @@ export function createProofFacet(engine, createHost, options = {}) {
       }
       stdout += stdoutDecoder.decode();
       stderr += stderrDecoder.decode();
-      return Response.json({
+      const result = {
         ok:
           ready &&
           exit === 0 &&
@@ -349,7 +366,8 @@ export function createProofFacet(engine, createHost, options = {}) {
         modelTransport: modelResult ?? model.metrics ?? model.diagnostics?.(),
         proofContent,
         ...(compositionResult === undefined ? {} : { compositionResult }),
-      });
+      };
+      return Response.json(composition?.scrubRecord?.(result) ?? result);
     }
   };
 }

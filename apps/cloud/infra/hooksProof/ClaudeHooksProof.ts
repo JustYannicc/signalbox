@@ -29,10 +29,15 @@ import { createClaudeHookRuntime } from "./claudeRuntime.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
 import { createClaudeHooksSeedState, type ClaudeHooksSeedStatus } from "./ClaudeHooksSeedState.ts";
 import { runClaudeProofLifecycle } from "./claudeLifecycle.ts";
-import { createStandardProofAdapter, type StandardProofAdapter } from "./standardProofAdapter.ts";
-import { installStandardProofFiles } from "./standardProofFiles.ts";
 import {
-  claudeToolScript,
+  createStandardProofAdapter,
+  scrubStandardProofRecord,
+  type StandardProofAdapter,
+} from "./standardProofAdapter.ts";
+import type { ProofNativeFileRead } from "./standardProofOutput.ts";
+import { captureStandardProofSessions } from "./standardProofRecords.ts";
+import {
+  claudeToolScripts,
   createClaudeHookScenario,
   seedClaudeHookScenario,
   verifyClaudeHookScenario,
@@ -82,12 +87,14 @@ export function createClaudeTurnProofClass(
         const seedStatus = await this.seeding().beginBoot();
         return await this.boot(seedStatus);
       } catch (error) {
-        return Response.json({
-          ok: false,
-          phase: "host-error",
-          error: errorDetail(error),
-          pins: config.pins,
-        });
+        return Response.json(
+          scrubStandardProofRecord({
+            ok: false,
+            phase: "host-error",
+            error: errorDetail(error),
+            pins: config.pins,
+          }),
+        );
       }
     }
 
@@ -105,14 +112,14 @@ export function createClaudeTurnProofClass(
       const originalFetch = globalThis.fetch;
       let runtime: ReturnType<typeof createClaudeHookRuntime> | undefined;
       let standard: StandardProofAdapter | undefined;
-      let restoreFiles: (() => void) | undefined;
       let lifecycleOwnsRuntime = false;
+      let nativeFileRead: ProofNativeFileRead | undefined;
       const restore = () => {
         try {
           globalThis.fetch = originalFetch;
         } finally {
           try {
-            restoreFiles?.();
+            nativeFileRead ??= standard?.output.takeFileRead("/work/official-write.txt");
             standard?.close();
           } finally {
             observation.restore();
@@ -121,19 +128,23 @@ export function createClaudeTurnProofClass(
       };
       try {
         const filesystemHost = this.filesystem();
+        const sessionBaseline = captureStandardProofSessions(
+          filesystemHost.filesystem,
+          "/home/claude/.claude/projects",
+        );
         const mock = createMockMessagesApi({
           bootText: "mock",
           finalText: "mock",
           recordRequestBodies: true,
-          tools: [claudeToolScript()],
+          tools: claudeToolScripts(),
         });
         standard = createStandardProofAdapter(
           this.ctx.storage,
           "claude-standard-hooks",
           (request) => mock.fetch(request),
+          filesystemHost.persistence.storage,
         );
         await standard.prepare();
-        restoreFiles = installStandardProofFiles(filesystemHost.fs, standard);
         const scenario = createClaudeHookScenario(standard.callback);
         seedClaudeHookScenario(filesystemHost, scenario.settings);
         const modelGateway = standard;
@@ -229,69 +240,76 @@ export function createClaudeTurnProofClass(
             ),
         });
         if (lifecycle.deadlineExceeded) {
-          return Response.json({
-            ...output,
-            packageLoad,
-            scenario: "official-claude-hooks",
-            pins: config.pins,
-            phase: "deadline",
-            lifecycle,
-            ok: false,
-            mock: { requests: mock.requests, denied: mock.deniedRequests, complete: mock.complete },
-          });
+          return Response.json(
+            standard.scrubRecord({
+              ...output,
+              packageLoad,
+              scenario: "official-claude-hooks",
+              pins: config.pins,
+              phase: "deadline",
+              lifecycle,
+              ok: false,
+              mock: {
+                requests: mock.requests,
+                denied: mock.deniedRequests,
+                complete: mock.complete,
+              },
+            }),
+          );
         }
         const scenarioResult = await verifyClaudeHookScenario({
           ...filesystemHost,
+          sessionBaseline,
           dispatches,
           rpcCalls: scenario.rpcCalls,
           stdout: output.stdout,
           mockComplete: mock.complete,
           toolResults: mock.toolResults,
           machineCalls: runtime.machineCalls.count,
+          nativeFileRead,
         });
         const terminalOk = terminalSuccess(output);
         const standardResult = standard.inspect();
-        return Response.json({
-          ...output,
-          lifecycle,
-          packageLoad,
-          scenario: "official-claude-hooks",
-          prompt: { estimatedTokens: prompt.estimatedTokens, paddingBytes: prompt.paddingBytes },
-          scenarioResult,
-          standard: {
-            ...standardResult,
-            nativeWrite: {
-              kind: "whole-utf8-workspace-write-test-adapter",
-              writes: standardResult.gateway.writes,
-              sameByteLengthValues: true,
-              variableLengthFill: "unproved",
-              arbitraryFileReadScrubbing: "unproved",
+        return Response.json(
+          standard.scrubRecord({
+            ...output,
+            lifecycle,
+            packageLoad,
+            scenario: "official-claude-hooks",
+            prompt: { estimatedTokens: prompt.estimatedTokens, paddingBytes: prompt.paddingBytes },
+            scenarioResult,
+            standard: {
+              ...standardResult,
+              nativeWrite: {
+                kind: "canonical-harness-files-with-selected-execution-byte-view",
+                files: standardResult.gateway.files,
+              },
             },
-          },
-          pins: config.pins,
-          assetsSeeded: seedStatus.assetsSeeded,
-          programsSeeded: seedStatus.programsSeeded,
-          ok:
-            terminalOk &&
-            scenarioResult.ok === true &&
-            standardResult.ok &&
-            standardResult.gateway.writes === 1 &&
-            standardResult.modelGateway?.nativeForwardCount === mock.requests.length &&
-            output.errors.length === 0 &&
-            runtime.capacity.active === 0,
-          mock: { requests: mock.requests, denied: mock.deniedRequests, complete: mock.complete },
-          process: {
-            same: Object.is(globalThis.process, runtime.process),
-            cwd: runtime.process.cwd(),
-            filesystemCwd: filesystemHost.filesystem.cwd,
-          },
-          filesystem: {
-            cwd: filesystemHost.filesystem.cwd,
-            workEntries: filesystemHost.fs.fs.readdirSync("/work"),
-          },
-          runtimeBoundary: "child-dynamic-workers",
-          capacity: { active: runtime.capacity.active, limit: runtime.capacity.limit },
-        });
+            pins: config.pins,
+            assetsSeeded: seedStatus.assetsSeeded,
+            programsSeeded: seedStatus.programsSeeded,
+            ok:
+              terminalOk &&
+              scenarioResult.ok === true &&
+              standardResult.ok &&
+              standardResult.gateway.files.some((files) => files.bytesRead > 0) &&
+              standardResult.modelGateway?.nativeForwardCount === mock.requests.length &&
+              output.errors.length === 0 &&
+              runtime.capacity.active === 0,
+            mock: { requests: mock.requests, denied: mock.deniedRequests, complete: mock.complete },
+            process: {
+              same: Object.is(globalThis.process, runtime.process),
+              cwd: runtime.process.cwd(),
+              filesystemCwd: filesystemHost.filesystem.cwd,
+            },
+            filesystem: {
+              cwd: filesystemHost.filesystem.cwd,
+              workEntries: filesystemHost.fs.fs.readdirSync("/work"),
+            },
+            runtimeBoundary: "child-dynamic-workers",
+            capacity: { active: runtime.capacity.active, limit: runtime.capacity.limit },
+          }),
+        );
       } finally {
         if (!lifecycleOwnsRuntime) {
           try {

@@ -1,5 +1,6 @@
 const EXEC_CALL_ID = "call-1069-exec";
 const PATCH_CALL_ID = "call-1069-apply-patch";
+const SECRET_READ_CALL_ID = "call-1242-secret-read";
 
 const EXEC_ARGUMENTS = Object.freeze({
   cmd: "printf '%s\\n' codex-exec-proof",
@@ -15,8 +16,14 @@ const PATCH_INPUT =
   "+codex-patch-proof\n" +
   "*** End Patch\n";
 
+const CODEX_SECRET_FILE_PATH = "/workspace/proof.txt";
+const CODEX_SECRET_READ_COMMAND = `cat ${CODEX_SECRET_FILE_PATH}`;
+const CODEX_SECRET_READ_ARGUMENTS = Object.freeze({
+  ...EXEC_ARGUMENTS,
+  cmd: CODEX_SECRET_READ_COMMAND,
+});
+
 const EXEC_OUTPUT_MARKER = "codex-exec-proof";
-const PATCH_OUTPUT_PATH = "A /workspace/proof.txt";
 const FINAL_MESSAGE = "Codex turn complete.";
 
 function responseCreated(id) {
@@ -98,6 +105,21 @@ function outputText(item, description) {
   throw new Error(`${description} output must be a string or one input_text item`);
 }
 
+export function createSecretPatchInput(path, content) {
+  if (typeof path !== "string" || !path.startsWith("/")) {
+    throw new TypeError("secret file path must be absolute");
+  }
+  if (typeof content !== "string") throw new TypeError("secret file content must be a string");
+  const lines = content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
+  return [
+    "*** Begin Patch",
+    `*** Add File: ${path}`,
+    ...lines.map((line) => `+${line}`),
+    "*** End Patch",
+    "",
+  ].join("\n");
+}
+
 function assertExecCallAndOutput(body) {
   const call = inputItem(body, "function_call", EXEC_CALL_ID);
   if (call.name !== "exec_command" || typeof call.arguments !== "string") {
@@ -134,9 +156,9 @@ function assertExecCallAndOutput(body) {
   }
 }
 
-function assertPatchCallAndOutput(body) {
+function assertPatchCallAndOutput(body, patchInput, outputPath) {
   const call = inputItem(body, "custom_tool_call", PATCH_CALL_ID);
-  if (call.name !== "apply_patch" || call.input !== PATCH_INPUT) {
+  if (call.name !== "apply_patch" || call.input !== patchInput) {
     throw new Error("apply_patch custom_tool_call did not match the forced patch");
   }
 
@@ -152,8 +174,44 @@ function assertPatchCallAndOutput(body) {
     throw new Error("apply_patch output did not include Codex's success summary");
   }
   const changes = text.split("\n").filter((line) => /^[AMD] /.test(line));
-  if (changes.length !== 1 || changes[0] !== PATCH_OUTPUT_PATH) {
-    throw new Error("apply_patch output did not confirm /workspace/proof.txt");
+  if (changes.length !== 1 || changes[0] !== `A ${outputPath}`) {
+    throw new Error(`apply_patch output did not confirm ${outputPath}`);
+  }
+}
+
+function assertSecretReadCallAndOutput(body, secretFile) {
+  const call = inputItem(body, "function_call", SECRET_READ_CALL_ID);
+  if (call.name !== "exec_command" || typeof call.arguments !== "string") {
+    throw new Error("secret read exec_command function_call did not match the forced call");
+  }
+  let argumentsValue;
+  try {
+    argumentsValue = JSON.parse(call.arguments);
+  } catch {
+    throw new Error("secret read exec_command arguments were not valid JSON");
+  }
+  const expectedArguments = { ...CODEX_SECRET_READ_ARGUMENTS, cmd: secretFile.readCommand };
+  const argumentKeys = Object.keys(argumentsValue ?? {}).sort();
+  const expectedKeys = Object.keys(expectedArguments).sort();
+  if (
+    JSON.stringify(argumentKeys) !== JSON.stringify(expectedKeys) ||
+    Object.entries(expectedArguments).some(([key, value]) => argumentsValue[key] !== value)
+  ) {
+    throw new Error("secret read exec_command arguments did not match the forced command");
+  }
+
+  const output = inputItem(body, "function_call_output", SECRET_READ_CALL_ID);
+  const text = outputText(output, "secret read exec_command");
+  const exitCodes = [...text.matchAll(/^Process exited with code (-?\d+)$/gm)];
+  const expectedContent = secretFile.expectedReadOutput ?? secretFile.placeholderText;
+  const stdout = text.match(/(?:^|\r?\n)Output:\r?\n([\s\S]*)$/)?.[1];
+  if (
+    exitCodes.length !== 1 ||
+    exitCodes[0][1] !== "0" ||
+    /^Process running with session ID /m.test(text) ||
+    stdout !== expectedContent
+  ) {
+    throw new Error("secret read exec_command output differed from the placeholder-only wire text");
   }
 }
 
@@ -161,18 +219,45 @@ function emptyStartupRequest(body) {
   return Array.isArray(body.input) && body.input.length === 0;
 }
 
+function requestForLog(body, secretFile) {
+  if (!secretFile) return body;
+  const copy = structuredClone(body);
+  if (Array.isArray(copy.input)) {
+    for (const item of copy.input) {
+      if (item?.type === "function_call_output" || item?.type === "custom_tool_call_output") {
+        item.output = "[tool output omitted from secret proof log]";
+      }
+    }
+  }
+  return copy;
+}
+
 /**
  * Creates a local, deterministic Responses API fixture. It performs no I/O and
  * has no network client; callers pass decoded request bodies to respond().
  */
-export function createMockResponses() {
+export function createMockResponses(options = {}) {
+  const secretFile = options.secretFile;
+  if (
+    secretFile !== undefined &&
+    (typeof secretFile !== "object" ||
+      typeof secretFile.path !== "string" ||
+      typeof secretFile.placeholderText !== "string" ||
+      typeof secretFile.readCommand !== "string" ||
+      secretFile.readCommand.length === 0)
+  ) {
+    throw new TypeError("secretFile requires path, placeholderText, and readCommand strings");
+  }
+  const patchInput = secretFile
+    ? createSecretPatchInput(secretFile.path, secretFile.placeholderText)
+    : PATCH_INPUT;
   const requests = [];
   let phase = "awaiting-exec-request";
   let startupRequestConsumed = false;
 
   function respond(requestBody) {
     const body = asRequestBody(requestBody);
-    requests.push(body);
+    requests.push(requestForLog(body, secretFile));
 
     if (phase === "awaiting-exec-request" && !startupRequestConsumed && emptyStartupRequest(body)) {
       startupRequestConsumed = true;
@@ -197,12 +282,35 @@ export function createMockResponses() {
         type: "custom_tool_call",
         call_id: PATCH_CALL_ID,
         name: "apply_patch",
-        input: PATCH_INPUT,
+        input: patchInput,
       });
     }
 
     if (phase === "awaiting-patch-output") {
-      assertPatchCallAndOutput(body);
+      assertPatchCallAndOutput(body, patchInput, secretFile?.path ?? "/workspace/proof.txt");
+      if (secretFile) {
+        phase = "awaiting-secret-read-output";
+        return response("resp-1242-secret-read", {
+          type: "function_call",
+          call_id: SECRET_READ_CALL_ID,
+          name: "exec_command",
+          arguments: JSON.stringify({
+            ...CODEX_SECRET_READ_ARGUMENTS,
+            cmd: secretFile.readCommand,
+          }),
+        });
+      }
+      phase = "complete";
+      return response("resp-1069-final", {
+        type: "message",
+        id: "msg-1069-final",
+        role: "assistant",
+        content: [{ type: "output_text", text: FINAL_MESSAGE }],
+      });
+    }
+
+    if (phase === "awaiting-secret-read-output") {
+      assertSecretReadCallAndOutput(body, secretFile);
       phase = "complete";
       return response("resp-1069-final", {
         type: "message",
@@ -227,4 +335,12 @@ export function createMockResponses() {
   };
 }
 
-export { EXEC_ARGUMENTS, FINAL_MESSAGE, PATCH_INPUT };
+export {
+  CODEX_SECRET_FILE_PATH,
+  CODEX_SECRET_READ_ARGUMENTS,
+  CODEX_SECRET_READ_COMMAND,
+  EXEC_ARGUMENTS,
+  FINAL_MESSAGE,
+  PATCH_INPUT,
+  SECRET_READ_CALL_ID,
+};

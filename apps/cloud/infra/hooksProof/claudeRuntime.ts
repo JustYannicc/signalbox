@@ -13,7 +13,7 @@ import {
 } from "../../src/isolate/NodeGeneratedCode.ts";
 import { createBunShim, type BunFileTarget } from "../../src/isolate/BunShim.ts";
 import { createNodeBunHost } from "../../src/isolate/NodeBun.ts";
-import { createNodeChildProcess } from "../../src/isolate/NodeChildProcess.ts";
+import { createClaudeNativeCommands } from "./claudeNativeCommands.ts";
 import {
   createNodeProcess,
   type NodeProcessEnvironment,
@@ -25,6 +25,7 @@ import type { FacetStorage } from "../../src/kernel/FacetSqliteStorage.ts";
 import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
 import { KernelCpuAccounting } from "../../src/kernel/KernelCpuAccounting.ts";
 import type { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
+import { canonicalFileByteSelection } from "../../src/kernel/KernelFileBytes.ts";
 import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createHookService } from "../../src/hooks/HookService.ts";
@@ -76,6 +77,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     capacity,
     cpuAccounting,
     invoke,
+    selectFileBytes: options.standard.selectFileBytes,
   });
   const kernelHost = commandPrograms.host;
   const execution = kernelHost.cpuExecution;
@@ -102,10 +104,11 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     cpuAccounting: cpuRoot,
   };
   const process = createNodeProcess(processContext);
-  const childProcess = createNodeChildProcess(kernelHost, {
-    filesystem: options.filesystem,
-    env: options.env,
-  });
+  const childProcess = createClaudeNativeCommands(
+    kernelHost,
+    { filesystem: options.filesystem, env: options.env },
+    options.standard,
+  );
   const bunHost = createNodeBunHost({
     filesystem: options.fs,
     process,
@@ -120,6 +123,30 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
   if (!files) throw new Error("Claude hook proof omitted its Bun file adapter");
   const bun = createBunShim({
     ...bunHost,
+    spawn(command, spawnOptions) {
+      if (!bunHost.spawn) throw new Error("Claude proof has no command runtime");
+      const child = bunHost.spawn(command, spawnOptions);
+      const identity = { executable: command[0]!, argv: command };
+      return {
+        ...child,
+        get exitCode() {
+          return child.exitCode;
+        },
+        get signalCode() {
+          return child.signalCode;
+        },
+        ...(child.stdout === undefined
+          ? {}
+          : {
+              stdout: options.standard.output.stdout(identity, child.stdout),
+            }),
+        ...(child.stderr === undefined
+          ? {}
+          : {
+              stderr: options.standard.output.stderr(child.stderr),
+            }),
+      };
+    },
     files: {
       ...files,
       async readFile(target: BunFileTarget) {
@@ -152,6 +179,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     kernel: {
       host: kernelHost,
       filesystem: options.filesystem,
+      fileBytes: canonicalFileByteSelection,
       ...(options.env.HOME === undefined ? {} : { home: options.env.HOME }),
     },
     escalation: new ComputerEscalationTable([
@@ -253,6 +281,7 @@ function createClaudeHookProgramHost(options: {
   readonly capacity: ChildWorkerCapacity;
   readonly cpuAccounting: KernelCpuAccounting;
   readonly invoke: KernelHookInvoker;
+  readonly selectFileBytes: StandardProofAdapter["selectFileBytes"];
 }) {
   const registry = new KernelProgramRegistry();
   const children = createSeededChildProgramCatalog({
@@ -273,6 +302,7 @@ function createClaudeHookProgramHost(options: {
       wakes: options.wakes,
       programs: bindings,
       cpuAccounting: options.cpuAccounting,
+      selectFileBytes: options.selectFileBytes,
     }),
     drain: children.drain,
   };

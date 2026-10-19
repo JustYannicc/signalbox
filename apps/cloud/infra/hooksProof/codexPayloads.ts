@@ -1,17 +1,23 @@
-import { secretPlaceholder } from "@signalbox/runner-protocol/SecretScrubber";
 // @ts-expect-error The shared MJS fixture has no declaration.
-import { EXEC_ARGUMENTS, PATCH_INPUT } from "../codexTurn/MockResponses.mjs";
+import * as mockResponses from "../codexTurn/MockResponses.mjs";
+
+const {
+  CODEX_SECRET_FILE_PATH,
+  CODEX_SECRET_READ_COMMAND,
+  createSecretPatchInput,
+  EXEC_ARGUMENTS,
+  SECRET_READ_CALL_ID,
+} = mockResponses;
 import {
   CODEX_HOOK_IDS,
   CODEX_HOOK_REGISTRATIONS,
   CODEX_STANDARD_HOOK_REGISTRATIONS,
   CODEX_STANDARD_HOOK_IDS,
 } from "./codexScenario.ts";
-import {
-  STANDARD_PROOF_NAMED_SECRET,
-  STANDARD_PROOF_VAULT_SECRET,
-  type StandardProofAdapter,
-} from "./standardProofAdapter.ts";
+import { STANDARD_PROOF_WRITE, type StandardProofAdapter } from "./standardProofAdapter.ts";
+import { STANDARD_PROOF_WIRE_TEXT } from "./standardProofEvidence.ts";
+
+export { CODEX_SECRET_FILE_PATH, CODEX_SECRET_READ_COMMAND };
 
 type StandardInspection = ReturnType<StandardProofAdapter["inspect"]>;
 export type CodexStandardHookInspection = Pick<StandardInspection, "ok"> & {
@@ -27,12 +33,56 @@ export const CODEX_STANDARD_DISPATCH_IDS = new Set<string>([
   CODEX_HOOK_IDS.stop,
 ]);
 
+export const CODEX_SECRET_PROOF_WIRE_TEXT = STANDARD_PROOF_WIRE_TEXT;
+export const CODEX_SECRET_PATCH_INPUT = createSecretPatchInput(
+  CODEX_SECRET_FILE_PATH,
+  STANDARD_PROOF_WRITE,
+);
+
 const expected = [
   { event: "session-start" },
-  { event: "pre-tool-use", tool: "Bash", id: "call-1069-exec" },
-  { event: "post-tool-use", tool: "Bash", id: "call-1069-exec" },
-  { event: "pre-tool-use", tool: "apply_patch", id: "call-1069-apply-patch" },
-  { event: "post-tool-use", tool: "apply_patch", id: "call-1069-apply-patch" },
+  {
+    event: "pre-tool-use",
+    tool: "Bash",
+    id: "call-1069-exec",
+    command: EXEC_ARGUMENTS.cmd,
+    response: "codex-exec-proof",
+  },
+  {
+    event: "post-tool-use",
+    tool: "Bash",
+    id: "call-1069-exec",
+    command: EXEC_ARGUMENTS.cmd,
+    response: "codex-exec-proof",
+  },
+  {
+    event: "pre-tool-use",
+    tool: "apply_patch",
+    id: "call-1069-apply-patch",
+    command: CODEX_SECRET_PATCH_INPUT,
+    response: `A ${CODEX_SECRET_FILE_PATH}`,
+  },
+  {
+    event: "post-tool-use",
+    tool: "apply_patch",
+    id: "call-1069-apply-patch",
+    command: CODEX_SECRET_PATCH_INPUT,
+    response: `A ${CODEX_SECRET_FILE_PATH}`,
+  },
+  {
+    event: "pre-tool-use",
+    tool: "Bash",
+    id: SECRET_READ_CALL_ID,
+    command: CODEX_SECRET_READ_COMMAND,
+    response: CODEX_SECRET_PROOF_WIRE_TEXT,
+  },
+  {
+    event: "post-tool-use",
+    tool: "Bash",
+    id: SECRET_READ_CALL_ID,
+    command: CODEX_SECRET_READ_COMMAND,
+    response: CODEX_SECRET_PROOF_WIRE_TEXT,
+  },
   { event: "stop" },
 ] as const;
 
@@ -65,7 +115,7 @@ export function verifyCodexHookPayloads(
       payload?.tool_name !== wanted.tool ||
       payload.tool_use_id !== wanted.id ||
       typeof input?.command !== "string" ||
-      input.command !== (wanted.tool === "Bash" ? EXEC_ARGUMENTS.cmd : PATCH_INPUT)
+      input.command !== wanted.command
     )
       failures.push(`${entry.id} lost the expected native tool call`);
     if (entry.event === "post-tool-use") {
@@ -73,10 +123,7 @@ export function verifyCodexHookPayloads(
       if (JSON.stringify(pre?.tool_input) !== JSON.stringify(payload?.tool_input))
         failures.push(`${entry.id} changed tool_input between PreToolUse and PostToolUse`);
       const response = payload?.tool_response;
-      if (
-        typeof response !== "string" ||
-        !response.includes(wanted.tool === "Bash" ? "codex-exec-proof" : "A /workspace/proof.txt")
-      )
+      if (typeof response !== "string" || !response.includes(wanted.response))
         failures.push(`${entry.id} lost the real tool_response`);
     }
   }
@@ -89,6 +136,8 @@ export function verifyCodexStandardHookPayloads(
   const failures: string[] = [];
   const standardIds = [
     CODEX_HOOK_IDS.sessionStart,
+    CODEX_STANDARD_HOOK_IDS.preToolUse,
+    CODEX_STANDARD_HOOK_IDS.postToolUse,
     CODEX_STANDARD_HOOK_IDS.preToolUse,
     CODEX_STANDARD_HOOK_IDS.postToolUse,
     CODEX_STANDARD_HOOK_IDS.preToolUse,
@@ -125,7 +174,7 @@ export function verifyCodexStandardHookPayloads(
       payload?.tool_name !== wanted.tool ||
       payload.tool_use_id !== wanted.id ||
       typeof input?.command !== "string" ||
-      input.command !== (wanted.tool === "Bash" ? EXEC_ARGUMENTS.cmd : PATCH_INPUT)
+      input.command !== wanted.command
     )
       failures.push(`${entry.id} lost the expected standard tool payload`);
     if (entry.event === "post-tool-use") {
@@ -133,10 +182,7 @@ export function verifyCodexStandardHookPayloads(
       if (JSON.stringify(pre?.tool_input) !== JSON.stringify(payload?.tool_input))
         failures.push(`${entry.id} changed tool_input between standard pre and post hooks`);
       const response = payload?.tool_response;
-      if (
-        typeof response !== "string" ||
-        !response.includes(wanted.tool === "Bash" ? "codex-exec-proof" : "A /workspace/proof.txt")
-      )
+      if (typeof response !== "string" || !response.includes(wanted.response))
         failures.push(`${entry.id} lost the real standard tool_response`);
     }
 
@@ -184,27 +230,6 @@ export function verifyCodexStandardHookResults(
       failures.push(`${invocation.id} returned something other than the neutral standard result`);
   }
   return failures;
-}
-
-export function redactCodexProofText(value: string): string {
-  return value
-    .replaceAll(
-      STANDARD_PROOF_NAMED_SECRET.value,
-      secretPlaceholder(STANDARD_PROOF_NAMED_SECRET.name),
-    )
-    .replaceAll(
-      STANDARD_PROOF_VAULT_SECRET.value,
-      secretPlaceholder(STANDARD_PROOF_VAULT_SECRET.name),
-    );
-}
-
-export function redactCodexProofValue(value: unknown): unknown {
-  if (typeof value === "string") return redactCodexProofText(value);
-  if (Array.isArray(value)) return value.map(redactCodexProofValue);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, redactCodexProofValue(entry)]),
-  );
 }
 
 function parseJson(value: string | undefined): unknown {

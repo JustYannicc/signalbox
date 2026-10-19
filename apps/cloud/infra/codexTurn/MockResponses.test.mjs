@@ -1,7 +1,15 @@
 import * as NodeAssert from "node:assert/strict";
 import { test } from "vite-plus/test";
 
-import { createMockResponses, FINAL_MESSAGE, PATCH_INPUT } from "./MockResponses.mjs";
+import {
+  CODEX_SECRET_READ_ARGUMENTS,
+  CODEX_SECRET_READ_COMMAND,
+  createMockResponses,
+  createSecretPatchInput,
+  FINAL_MESSAGE,
+  PATCH_INPUT,
+  SECRET_READ_CALL_ID,
+} from "./MockResponses.mjs";
 
 const EXEC_CALL_ID = "call-1069-exec";
 const PATCH_CALL_ID = "call-1069-apply-patch";
@@ -50,28 +58,28 @@ function outputFor(type, callId, output, name) {
   };
 }
 
-function execContinuation(output = EXEC_OUTPUT) {
+function execContinuation(output = EXEC_OUTPUT, argumentsValue = EXEC_ARGUMENTS) {
   return {
     input: [
       {
         type: "function_call",
         call_id: EXEC_CALL_ID,
         name: "exec_command",
-        arguments: JSON.stringify(EXEC_ARGUMENTS),
+        arguments: JSON.stringify(argumentsValue),
       },
       outputFor("function_call_output", EXEC_CALL_ID, output),
     ],
   };
 }
 
-function patchContinuation(output = PATCH_OUTPUT, includeName = true) {
+function patchContinuation(output = PATCH_OUTPUT, includeName = true, patchInput = PATCH_INPUT) {
   return {
     input: [
       {
         type: "custom_tool_call",
         call_id: PATCH_CALL_ID,
         name: "apply_patch",
-        input: PATCH_INPUT,
+        input: patchInput,
       },
       outputFor(
         "custom_tool_call_output",
@@ -79,6 +87,24 @@ function patchContinuation(output = PATCH_OUTPUT, includeName = true) {
         output,
         includeName ? "apply_patch" : undefined,
       ),
+    ],
+  };
+}
+
+function secretReadContinuation(stdout) {
+  const details =
+    "Chunk ID: exec-1242\nWall time: 0.0001 seconds\n" +
+    "Process exited with code 0\nOriginal token count: 10\nOutput:\n" +
+    stdout;
+  return {
+    input: [
+      {
+        type: "function_call",
+        call_id: SECRET_READ_CALL_ID,
+        name: "exec_command",
+        arguments: JSON.stringify(CODEX_SECRET_READ_ARGUMENTS),
+      },
+      outputFor("function_call_output", SECRET_READ_CALL_ID, details),
     ],
   };
 }
@@ -209,4 +235,77 @@ test("requires the exact patch result before returning assistant done", () => {
     parseSse(mock.respond(patchContinuation(PATCH_OUTPUT, false)))[1].payload.item.content[0].text,
     FINAL_MESSAGE,
   );
+});
+
+test("proof mode writes placeholder text, then requires the scrubbed native cat result", () => {
+  const path = "/workspace/proof.txt";
+  const placeholderText = "official write: {{secret:API_TOKEN}} {{op://proof/item/password}}\n";
+  const expectedReadOutput = "official write: {{secret:API_TOKEN}} {{secret:VAULT_TOKEN}}\n";
+  const readCommand = `cat ${path}`;
+  const patchInput = createSecretPatchInput(path, placeholderText);
+  const mock = createMockResponses({
+    secretFile: { path, placeholderText, readCommand, expectedReadOutput },
+  });
+
+  mock.respond({ input: [{ type: "message", role: "user", content: [] }] });
+  const patch = parseSse(mock.respond(execContinuation()))[1].payload.item;
+  NodeAssert.equal(patch.input, patchInput);
+  NodeAssert.equal(mock.phase, "awaiting-patch-output");
+
+  const read = parseSse(
+    mock.respond(
+      patchContinuation(
+        "Exit code: 0\nOutput:\nSuccess. Updated the following files:\nA /workspace/proof.txt\n",
+        true,
+        patchInput,
+      ),
+    ),
+  )[1].payload.item;
+  NodeAssert.equal(read.name, "exec_command");
+  NodeAssert.deepEqual(JSON.parse(read.arguments), {
+    ...CODEX_SECRET_READ_ARGUMENTS,
+    cmd: CODEX_SECRET_READ_COMMAND,
+  });
+  NodeAssert.equal(mock.phase, "awaiting-secret-read-output");
+
+  const final = parseSse(mock.respond(secretReadContinuation(expectedReadOutput)));
+  NodeAssert.equal(final[1].payload.item.content[0].text, FINAL_MESSAGE);
+  NodeAssert.equal(mock.phase, "complete");
+  NodeAssert.equal(mock.requests.length, 4);
+  NodeAssert.ok(
+    !JSON.stringify(mock.requests).includes(expectedReadOutput),
+    "secret proof request logs must not retain tool output bytes",
+  );
+});
+
+test("proof mode rejects a native read result that differs from the placeholder-only wire", () => {
+  const path = "/workspace/proof.txt";
+  const placeholderText = "official write: {{secret:API_TOKEN}} {{op://proof/item/password}}\n";
+  const expectedReadOutput = "official write: {{secret:API_TOKEN}} {{secret:VAULT_TOKEN}}\n";
+  const patchInput = createSecretPatchInput(path, placeholderText);
+  const mock = createMockResponses({
+    secretFile: {
+      path,
+      placeholderText,
+      readCommand: `cat ${path}`,
+      expectedReadOutput,
+    },
+  });
+  mock.respond({ input: [{ type: "message", role: "user", content: [] }] });
+  mock.respond(execContinuation());
+  mock.respond(
+    patchContinuation(
+      "Exit code: 0\nOutput:\nSuccess. Updated the following files:\nA /workspace/proof.txt\n",
+      true,
+      patchInput,
+    ),
+  );
+
+  NodeAssert.throws(
+    () => mock.respond(secretReadContinuation("raw secret or changed file\n")),
+    /placeholder-only wire/,
+  );
+  NodeAssert.equal(mock.phase, "awaiting-secret-read-output");
+  mock.respond(secretReadContinuation(expectedReadOutput));
+  NodeAssert.ok(!JSON.stringify(mock.requests).includes("raw secret or changed file"));
 });
