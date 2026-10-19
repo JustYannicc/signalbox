@@ -113,6 +113,7 @@ export function childBashFixture(
     controller,
     wakes,
     stdout: () => new TextDecoder().decode(concat(output)),
+    stdoutBytes: () => concat(output),
     stderr: () => new TextDecoder().decode(concat(errors)),
     write(path: string, value: string, mode = 0o644) {
       const fd = filesystem.open(
