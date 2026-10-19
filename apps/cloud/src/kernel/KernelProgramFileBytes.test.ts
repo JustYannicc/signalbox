@@ -434,6 +434,7 @@ describe("KernelProgramHost file byte selection", () => {
         run: async (program) => {
           const firstFd = program.filesystem.open("/data", KernelOpenFlags.O_RDONLY);
           const secondFd = program.filesystem.open("/data", KernelOpenFlags.O_RDONLY);
+          expect(firstFd).toBe(4);
           program.filesystem.descriptors.get(firstFd).closeOnExec = true;
           program.filesystem.descriptors.get(secondFd).closeOnExec = true;
           try {
