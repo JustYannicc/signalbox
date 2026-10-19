@@ -1,5 +1,18 @@
 export type SourcePreparationStep = "directoriesExec" | "runnerUpload" | "installExec";
 export type SourcePreparationOutcome = "pending" | "passed" | "failed";
+export type ProofCommandStage =
+  | "workspacePrepare"
+  | "runtimeConnect"
+  | "inheritedSourceCheck"
+  | "runnerConfigUpload"
+  | "runnerReceiptUpload"
+  | "runnerBootstrapInstall"
+  | "runnerLaunchFence"
+  | "workspaceNativePrepare"
+  | "workspaceNativeFinalize"
+  | "workspaceNativeScan"
+  | "workspaceNativeCwd"
+  | "workspaceNativeFileUpload";
 
 const SOURCE_ERROR_NAMES = [
   "Error",
@@ -12,6 +25,7 @@ const SOURCE_ERROR_NAMES = [
   "AggregateError",
   "AbortError",
   "BoxdError",
+  "BoxdProofWorkspaceError",
   "AuthenticationError",
   "PermissionDeniedError",
   "NotFoundError",
@@ -23,6 +37,10 @@ const SOURCE_ERROR_NAMES = [
 type SourceErrorName = (typeof SOURCE_ERROR_NAMES)[number];
 
 const SOURCE_STDERR_CATEGORIES = [
+  {
+    value: "workspace-not-empty",
+    pattern: /(?:^|\n)RuntimeError: proof workspace must be empty before hydration(?:\n|$)/,
+  },
   { value: "OSError", pattern: /(?:^|\n)OSError(?::|\s)/ },
   { value: "cross-device", pattern: /\b(?:invalid cross-device link|EXDEV)\b/i },
   { value: "SyntaxError", pattern: /(?:^|\n)SyntaxError(?::|\s)/ },
@@ -45,6 +63,11 @@ export type SourcePreparationDiagnostic =
 
 export type SourcePreparationReporter = (
   step: SourcePreparationStep,
+  outcome: SourcePreparationOutcome,
+  diagnostics?: readonly SourcePreparationDiagnostic[],
+) => Promise<void>;
+export type ProofCommandReporter = (
+  step: ProofCommandStage,
   outcome: SourcePreparationOutcome,
   diagnostics?: readonly SourcePreparationDiagnostic[],
 ) => Promise<void>;
@@ -133,5 +156,28 @@ export async function runSourceStep<A>(
     throw error;
   }
   await reporter?.(step, "passed");
+  return result;
+}
+
+/** Keeps phase persistence required while preserving a provider error if its failure report fails. */
+export async function runProofCommandStage<A>(
+  reporter: ProofCommandReporter | undefined,
+  step: ProofCommandStage,
+  action: () => Promise<A>,
+): Promise<A> {
+  if (reporter === undefined) return action();
+  await reporter(step, "pending");
+  let result: A;
+  try {
+    result = await action();
+  } catch (error) {
+    try {
+      await reporter(step, "failed", sourceFailureDiagnostics(error));
+    } catch {
+      // Keep the provider or workspace rejection as the failure reported to the worker.
+    }
+    throw error;
+  }
+  await reporter(step, "passed");
   return result;
 }

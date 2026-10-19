@@ -11,8 +11,11 @@ import type { BoxdProofVmPort } from "./Workspace.ts";
 import { BOXD_PROOF_LAUNCH_FENCE } from "./LaunchFence.ts";
 import { BOXD_PROOF_SOURCE_INSTALL, BOXD_PROOF_BOOTSTRAP_INSTALL } from "./NativeInstall.ts";
 import {
+  runProofCommandStage,
   runSourceStep,
   sourcePreparationCommandFailure,
+  type ProofCommandReporter,
+  type ProofCommandStage,
   type SourcePreparationReporter,
 } from "./SourcePreparation.ts";
 
@@ -38,6 +41,18 @@ const RUN_ROOT = "/run/signalbox-command";
 const ARTIFACT = "/opt/signalbox-command/command-runner.mjs";
 export const WORKSPACE_RECEIPT = `${RUN_ROOT}/workspace.json`;
 const CONFIG = `${RUN_ROOT}/runner.json`;
+const WORKSPACE_NATIVE_STAGES = [
+  { prefix: "# BOXD_PROOF:prepare", step: "workspaceNativePrepare" },
+  { prefix: "# BOXD_PROOF:finalize", step: "workspaceNativeFinalize" },
+  { prefix: "# BOXD_PROOF:scan", step: "workspaceNativeScan" },
+  { prefix: "# BOXD_PROOF:canonical-cwd", step: "workspaceNativeCwd" },
+] as const satisfies readonly { readonly prefix: string; readonly step: ProofCommandStage }[];
+
+function workspaceNativeStage(args: readonly string[]): ProofCommandStage | undefined {
+  if (args[0] !== "-c") return undefined;
+  const script = args[1];
+  return WORKSPACE_NATIVE_STAGES.find(({ prefix }) => script?.startsWith(prefix))?.step;
+}
 
 export interface ProofProviderSdkPort {
   readonly machines: {
@@ -68,13 +83,17 @@ export async function openProofProvider(apiKey: string) {
 }
 
 /** Setup, transfers and closure only. The tested user command goes through the Runner socket. */
-export function proofProvider(client: ProofProviderSdkPort, owner: string) {
+export function proofProvider(
+  client: ProofProviderSdkPort,
+  owner: string,
+  commandReporter?: ProofCommandReporter,
+) {
   const python = async (
     id: string,
     args: readonly string[],
     signal: AbortSignal,
     cwd?: string,
-    diagnoseSourceFailure = false,
+    diagnoseFailure = false,
   ) => {
     signal.throwIfAborted();
     const result = await client.machines.exec(id, {
@@ -84,7 +103,7 @@ export function proofProvider(client: ProofProviderSdkPort, owner: string) {
     });
     signal.throwIfAborted();
     if (result.exitCode !== 0) {
-      throw diagnoseSourceFailure
+      throw diagnoseFailure
         ? sourcePreparationCommandFailure(result.exitCode, result.stderr)
         : new Error("Proof provider setup or closure failed");
     }
@@ -97,8 +116,18 @@ export function proofProvider(client: ProofProviderSdkPort, owner: string) {
     if (written !== bytes.length) throw new Error("Proof upload was incomplete");
   };
   const vm: BoxdProofVmPort = {
-    exec: (id, args, cwd, signal) => python(id, args, signal, cwd),
-    upload,
+    exec: (id, args, cwd, signal) => {
+      const step = workspaceNativeStage(args);
+      const action = () =>
+        python(id, args, signal, cwd, step !== undefined && commandReporter !== undefined);
+      return step === undefined ? action() : runProofCommandStage(commandReporter, step, action);
+    },
+    upload: (id, path, bytes, signal) => {
+      const action = () => upload(id, path, bytes, signal);
+      return commandReporter === undefined
+        ? action()
+        : runProofCommandStage(commandReporter, "workspaceNativeFileUpload", action);
+    },
     async download(id, path, signal) {
       signal.throwIfAborted();
       const bytes = await client.machines.files.download(id, path);
@@ -148,13 +177,17 @@ export function proofProvider(client: ProofProviderSdkPort, owner: string) {
       );
     },
     async assertInheritedSource(id: string, signal: AbortSignal) {
-      const result = await python(
-        id,
-        ["-c", 'print(open("/opt/signalbox-command/base-marker").read(), end="")'],
-        signal,
-      );
-      if (result.stdout !== owner)
-        throw new Error("Fork did not inherit the owned warm Base marker");
+      await runProofCommandStage(commandReporter, "inheritedSourceCheck", async () => {
+        const result = await python(
+          id,
+          ["-c", 'print(open("/opt/signalbox-command/base-marker").read(), end="")'],
+          signal,
+          undefined,
+          commandReporter !== undefined,
+        );
+        if (result.stdout !== owner)
+          throw new Error("Fork did not inherit the owned warm Base marker");
+      });
     },
     async launch(config: RunnerCommandConfig, signal: AbortSignal) {
       const input = {
@@ -176,41 +209,53 @@ export function proofProvider(client: ProofProviderSdkPort, owner: string) {
       });
       const stagedConfig = `/tmp/${config.operationId}-config.json`;
       const stagedReceipt = `/tmp/${config.operationId}-receipt.json`;
-      await upload(
-        config.machineId,
-        stagedConfig,
-        new TextEncoder().encode(RunnerCommandConfigJson.encode(config)),
-        signal,
-      );
-      await upload(config.machineId, stagedReceipt, new TextEncoder().encode(receipt), signal);
-      await python(
-        config.machineId,
-        [
-          "-c",
-          BOXD_PROOF_BOOTSTRAP_INSTALL,
+      await runProofCommandStage(commandReporter, "runnerConfigUpload", () =>
+        upload(
+          config.machineId,
           stagedConfig,
-          CONFIG,
-          stagedReceipt,
-          WORKSPACE_RECEIPT,
-        ],
-        signal,
+          new TextEncoder().encode(RunnerCommandConfigJson.encode(config)),
+          signal,
+        ),
       );
-      const result = await python(
-        config.machineId,
-        [
-          "-c",
-          BOXD_PROOF_LAUNCH_FENCE,
-          "launch",
-          fence(input),
-          cgroup,
-          "/usr/local/bin/node",
-          ARTIFACT,
-          "--config",
-          CONFIG,
-        ],
-        signal,
+      await runProofCommandStage(commandReporter, "runnerReceiptUpload", () =>
+        upload(config.machineId, stagedReceipt, new TextEncoder().encode(receipt), signal),
       );
-      launched(result.stdout);
+      await runProofCommandStage(commandReporter, "runnerBootstrapInstall", async () => {
+        await python(
+          config.machineId,
+          [
+            "-c",
+            BOXD_PROOF_BOOTSTRAP_INSTALL,
+            stagedConfig,
+            CONFIG,
+            stagedReceipt,
+            WORKSPACE_RECEIPT,
+          ],
+          signal,
+          undefined,
+          commandReporter !== undefined,
+        );
+      });
+      await runProofCommandStage(commandReporter, "runnerLaunchFence", async () => {
+        const result = await python(
+          config.machineId,
+          [
+            "-c",
+            BOXD_PROOF_LAUNCH_FENCE,
+            "launch",
+            fence(input),
+            cgroup,
+            "/usr/local/bin/node",
+            ARTIFACT,
+            "--config",
+            CONFIG,
+          ],
+          signal,
+          undefined,
+          commandReporter !== undefined,
+        );
+        launched(result.stdout);
+      });
     },
     async quiesce(input: MachineRunnerOwner, signal: AbortSignal) {
       const result = await python(

@@ -10,7 +10,13 @@ import { createProofBases } from "./Bases.ts";
 import { proofKernel } from "./Kernel.ts";
 import { ProofOwnership } from "./Ownership.ts";
 import { proofProvider, WORKSPACE_RECEIPT } from "./Provider.ts";
-import type { SourcePreparationDiagnostic, SourcePreparationStep } from "./SourcePreparation.ts";
+import { runProofCommandStage } from "./SourcePreparation.ts";
+import type {
+  ProofCommandReporter,
+  ProofCommandStage,
+  SourcePreparationDiagnostic,
+  SourcePreparationStep,
+} from "./SourcePreparation.ts";
 import { PROOF_COMMAND, runProofCommand } from "./Command.ts";
 import type { decodeProofSeed } from "./SeedProtocol.ts";
 
@@ -19,6 +25,20 @@ const SOURCE_PHASE_CHECKS = {
   runnerUpload: "sourceRunnerUpload",
   installExec: "sourceArtifactInstallExec",
 } satisfies Record<SourcePreparationStep, string>;
+const COMMAND_PHASE_CHECKS = {
+  workspacePrepare: "commandWorkspacePrepare",
+  runtimeConnect: "commandRuntimeConnect",
+  inheritedSourceCheck: "runnerInheritedSourceCheck",
+  runnerConfigUpload: "runnerConfigUpload",
+  runnerReceiptUpload: "runnerReceiptUpload",
+  runnerBootstrapInstall: "runnerBootstrapInstall",
+  runnerLaunchFence: "runnerLaunchFence",
+  workspaceNativePrepare: "workspaceNativePrepare",
+  workspaceNativeFinalize: "workspaceNativeFinalize",
+  workspaceNativeScan: "workspaceNativeScan",
+  workspaceNativeCwd: "workspaceNativeCwd",
+  workspaceNativeFileUpload: "workspaceNativeFileUpload",
+} satisfies Record<ProofCommandStage, string>;
 const SAFE_CHECK_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 
 function sourceDiagnosticCheckName(
@@ -27,6 +47,15 @@ function sourceDiagnosticCheckName(
 ) {
   const name = `src_${step}_${diagnostic.kind}_${diagnostic.value}`;
   if (!SAFE_CHECK_NAME.test(name)) throw new Error("Invalid source diagnostic check name");
+  return name;
+}
+
+function commandDiagnosticCheckName(
+  step: ProofCommandStage,
+  diagnostic: SourcePreparationDiagnostic,
+) {
+  const name = `cmd_${step}_${diagnostic.kind}_${diagnostic.value}`;
+  if (!SAFE_CHECK_NAME.test(name)) throw new Error("Invalid command diagnostic check name");
   return name;
 }
 
@@ -40,7 +69,13 @@ export async function runComputerBoxdProof(input: {
 }) {
   const { ownership, seed, signal } = input;
   const kernel = proofKernel(ownership.storage, input.loader, seed);
-  const provider = proofProvider(ownership.client, ownership.owner);
+  const commandReporter: ProofCommandReporter = async (step, outcome, diagnostics) => {
+    await ownership.check(COMMAND_PHASE_CHECKS[step], outcome);
+    for (const diagnostic of diagnostics ?? []) {
+      await ownership.check(commandDiagnosticCheckName(step, diagnostic), "failed");
+    }
+  };
+  const provider = proofProvider(ownership.client, ownership.owner, commandReporter);
   try {
     await ownership.check("childDynamicWorkerControl", "pending");
     await kernel.localControl(signal);
@@ -107,7 +142,20 @@ export async function runComputerBoxdProof(input: {
       },
     });
     input.publishSockets(sockets);
-    const workspace = kernel.workspace(provider.vm);
+    const workspacePort = kernel.workspace(provider.vm);
+    const workspace = {
+      ...workspacePort,
+      prepare: (...args: Parameters<typeof workspacePort.prepare>) =>
+        runProofCommandStage(commandReporter, "workspacePrepare", () =>
+          workspacePort.prepare(...args),
+        ),
+    };
+    const runtimePort = createRunnerMachineRuntime(sockets);
+    const runtime = {
+      ...runtimePort,
+      attach: (...args: Parameters<typeof runtimePort.attach>) =>
+        runProofCommandStage(commandReporter, "runtimeConnect", () => runtimePort.attach(...args)),
+    };
     const machine = new MachineCommands({
       drive: ownership.drive,
       recipeHash: ownership.recipeHash,
@@ -118,7 +166,7 @@ export async function runComputerBoxdProof(input: {
       },
       machines: ownership.commands,
       workspace,
-      runtime: createRunnerMachineRuntime(sockets),
+      runtime,
       ports: kernel.ports,
       journal: ownership.journal,
       nextOperationId: () => ownership.commandOperation,
