@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import type { ProviderReplayEntry } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import {
@@ -6,15 +7,116 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "./replayTranscript.ts";
 
-const header = JSON.stringify({
+const headerRecord = {
   type: "transcript_start",
   provider: "codex",
   protocol: "codex.app-server",
   version: "0.156.1",
   scenario: "simple",
-});
+};
+const header = JSON.stringify(headerRecord);
 
 describe("decodeProviderReplayNdjson", () => {
+  it.effect("updates legacy Codex startup expectations across restarts", () =>
+    Effect.gen(function* () {
+      const initialize = {
+        type: "expect_outbound",
+        label: "initialize/source",
+        frame: {
+          id: 1,
+          method: "initialize",
+          params: {
+            clientInfo: { version: "recorded-version" },
+            capabilities: {
+              experimentalApi: true,
+              extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html"] } },
+            },
+          },
+        },
+      } satisfies ProviderReplayEntry;
+      const start = {
+        type: "expect_outbound",
+        frame: { id: 2, method: "thread/start", params: { cwd: "<workspace>" } },
+      } satisfies ProviderReplayEntry;
+      const records = [initialize, start, initialize, start];
+      const input = [header, ...records.map((record) => JSON.stringify(record))].join("\n");
+      const transcript = yield* decodeProviderReplayNdjson(input);
+      const expectedInitialize = {
+        ...initialize,
+        frame: {
+          ...initialize.frame,
+          params: {
+            ...initialize.frame.params,
+            capabilities: {
+              ...initialize.frame.params.capabilities,
+              extensions: {
+                ...initialize.frame.params.capabilities.extensions,
+                "openai/standard-form-input": {},
+              },
+            },
+          },
+        },
+      };
+      const expectedStart = {
+        ...start,
+        frame: { ...start.frame, params: { ...start.frame.params, threadSource: "user" } },
+      };
+      assert.deepStrictEqual(transcript.entries, [
+        expectedInitialize,
+        expectedStart,
+        expectedInitialize,
+        expectedStart,
+      ]);
+    }),
+  );
+
+  it.effect("preserves explicit startup values, inbound frames and other methods", () =>
+    Effect.gen(function* () {
+      const records = [
+        {
+          type: "expect_outbound",
+          frame: {
+            method: "initialize",
+            params: { capabilities: { extensions: { "openai/standard-form-input": null } } },
+          },
+        },
+        {
+          type: "expect_outbound",
+          frame: { method: "thread/start", params: { threadSource: "exec" } },
+        },
+        { type: "emit_inbound", frame: { method: "thread/start", params: {} } },
+        { type: "expect_outbound", frame: { method: "thread/resume", params: {} } },
+        { type: "expect_outbound", frame: { method: "thread/fork", params: {} } },
+        {
+          type: "expect_outbound",
+          frame: { method: "tool/call", params: { method: "thread/start", params: {} } },
+        },
+      ] satisfies ProviderReplayEntry[];
+      const transcript = yield* decodeProviderReplayNdjson(
+        [header, ...records.map((record) => JSON.stringify(record))].join("\n"),
+      );
+      assert.deepStrictEqual(transcript.entries, records);
+    }),
+  );
+
+  it.effect("leaves other providers and protocols unchanged", () =>
+    Effect.gen(function* () {
+      const record = {
+        type: "expect_outbound",
+        frame: { method: "thread/start", params: {} },
+      } satisfies ProviderReplayEntry;
+      for (const metadata of [
+        { provider: "claude", protocol: "claude.agent-sdk" },
+        { provider: "codex", protocol: "other.protocol" },
+      ]) {
+        const transcript = yield* decodeProviderReplayNdjson(
+          [JSON.stringify({ ...headerRecord, ...metadata }), JSON.stringify(record)].join("\n"),
+        );
+        assert.deepStrictEqual(transcript.entries, [record]);
+      }
+    }),
+  );
+
   it.effect("reads the header and entries, skipping blank lines", () =>
     Effect.gen(function* () {
       const transcript = yield* decodeProviderReplayNdjson(
