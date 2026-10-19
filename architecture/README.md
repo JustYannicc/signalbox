@@ -25,8 +25,9 @@ views/               landscape, containers (runtime), modules (drill-downs), hie
                      domain, deployment, smells, v1, packages (publishable vs stays)
 views/states/        state machines: thread, turn, ask, pool account, VM, Base, trash, connection
 views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
-  workflows/v1.c4    v1 end to end (Workflows/v1/...): 0 first day (index) · 1 sign in · 2 pool on Company
-                     · 3 Google and Confluence · 4 set up this computer · 5 local model request · 6 local tool call
+  workflows/v1.c4    v1 end to end (Workflows/v1/...): 0 first day (index) · 1 sign in · 2 create a pool
+                     · 3 invite B · 4 your own Google and Confluence · 5 set up this computer
+                     · 6 local model request · 7 local tool call
 views/journeys/      scenario walk-throughs (Scenarios/... in the sidebar)
 CONTEXT.md           glossary and the words that are never kinds
 ```
