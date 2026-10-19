@@ -387,7 +387,7 @@ export class WasiFdCalls {
   ): WasiCall<number> {
     const descriptor = this.#requireDirectory(fd, RIGHTS.FD_READDIR);
     const length = bufferLen >>> 0;
-    this.#memory.range(buffer, length);
+    this.#memory.validateRange(buffer, length);
     const capacity = Math.min(length, MAX_TRANSFER_BYTES);
     this.#memory.range(bufused, 4);
     const entries = yield* this.#getDirectoryEntries(descriptor);

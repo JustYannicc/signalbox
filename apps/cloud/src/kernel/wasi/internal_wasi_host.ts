@@ -74,12 +74,13 @@ export class WasiHost {
     env: string[],
     asyncMode: boolean,
     descriptors?: WasiDescriptorTable,
+    signal?: AbortSignal,
   ) {
     this.#memory = memory;
     this.#args = args;
     this.#env = env;
     this.#asyncMode = asyncMode;
-    this.#poller = new WasiPoller(memory, asyncMode, descriptors, this.#clock);
+    this.#poller = new WasiPoller(memory, asyncMode, descriptors, this.#clock, signal);
   }
 
   *#argsSizesGet(countPointer: number, sizePointer: number): WasiCall<number> {
