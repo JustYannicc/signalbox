@@ -1,24 +1,33 @@
-import { WasiError } from "../wasi/internal_wasi_memory.ts";
+import { WasiError, asWasiMemory, type WasiMemory } from "../wasi/internal_wasi_memory.ts";
 import { mapErrno } from "../wasi/internal_wasi_calls.ts";
 import type { KernelResult } from "../KernelAbi.ts";
 
-export function range(memory: WebAssembly.Memory, pointer: number, length: number): Uint8Array {
-  const start = pointer >>> 0;
-  const size = length >>> 0;
-  if (start + size > memory.buffer.byteLength) throw new WasiError(21);
-  return new Uint8Array(memory.buffer, start, size);
+export function range(
+  memory: WebAssembly.Memory | WasiMemory,
+  pointer: number,
+  length: number,
+): Uint8Array {
+  return asWasiMemory(memory).range(pointer, length);
 }
 
-export function string(memory: WebAssembly.Memory, pointer: number, length?: number): string {
+export function string(
+  memory: WebAssembly.Memory | WasiMemory,
+  pointer: number,
+  length?: number,
+): string {
   if (length !== undefined)
     return new TextDecoder("utf-8", { fatal: true }).decode(range(memory, pointer, length));
-  const bytes = range(memory, pointer, memory.buffer.byteLength - (pointer >>> 0));
+  const bytes = range(memory, pointer, asWasiMemory(memory).byteLength - (pointer >>> 0));
   const end = bytes.indexOf(0);
   if (end < 0 || end > 65_536) throw new WasiError(37);
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end));
 }
 
-export function flatStrings(memory: WebAssembly.Memory, pointer: number, length: number): string[] {
+export function flatStrings(
+  memory: WebAssembly.Memory | WasiMemory,
+  pointer: number,
+  length: number,
+): string[] {
   if (length >>> 0 > 65_536) throw new WasiError(1);
   const bytes = range(memory, pointer, length);
   if (bytes.length === 0) return [];
