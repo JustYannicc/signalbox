@@ -27,14 +27,7 @@ export const PRE_TOOL_USE_CAPTURE_PATH = "/workspace/codex-hook-inputs/pre-tool-
 // Codex's native hook runner uses this SHELL path when no explicit hook shell is configured.
 export const CODEX_NATIVE_HOOK_SHELL = "/bin/bash";
 
-export const CODEX_HOOK_PROGRAM_FACADE = [
-  "signalbox-kernel-program-facade",
-  "name=signalbox-hook",
-  "version=1.0.0",
-  "abiVersion=1",
-  "entrypoint=signalbox-hook-v1",
-  "",
-].join("\n");
+export { HOOK_PROGRAM_FACADE as CODEX_HOOK_PROGRAM_FACADE } from "./hookProgramFacade.ts";
 
 const preToolUseOutput = JSON.stringify({
   hookSpecificOutput: {
@@ -51,7 +44,7 @@ export const CODEX_PRE_TOOL_USE_COMMAND = Object.freeze({
     "-c",
     [
       "IFS= read -r hook_input || exit 1",
-      `printf '%s\\n' "$hook_input" > ${PRE_TOOL_USE_CAPTURE_PATH}`,
+      `printf '%s\\n' "$hook_input" >> ${PRE_TOOL_USE_CAPTURE_PATH}`,
       `printf '%s\\n' '${preToolUseOutput}'`,
     ].join("\n"),
   ],

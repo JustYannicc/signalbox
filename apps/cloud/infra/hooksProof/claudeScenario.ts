@@ -1,3 +1,4 @@
+import { HOOK_PROGRAM_FACADE as CLAUDE_HOOK_PROGRAM_FACADE } from "./hookProgramFacade.ts";
 import type { MemoryFilePersistenceFixture } from "../../src/kernel/MemoryFilePersistencePorts.ts";
 import type { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
 import type { NodeFsModules } from "../../src/isolate/NodeFs.ts";
@@ -8,10 +9,7 @@ import type {
 import type { createFacetFilePersistence } from "../../src/kernel/FacetFilePersistence.ts";
 import type { HarnessHookEvent, HarnessHookRequest } from "../../src/hooks/HarnessHooks.ts";
 import type { HookRegistration } from "../../src/hooks/HookService.ts";
-import {
-  KERNEL_HOOK_EXECUTABLE,
-  KERNEL_HOOK_PROGRAM_MANIFEST,
-} from "../../src/hooks/HookProgram.ts";
+import { KERNEL_HOOK_EXECUTABLE } from "../../src/hooks/HookProgram.ts";
 import {
   claudeHarnessHookSettings,
   type ConfiguredHarnessHook,
@@ -24,14 +22,7 @@ export const CLAUDE_HOOK_COMMAND_LOG = "/work/hook-command-events.jsonl";
 export const CLAUDE_TOOL_FILE = "/work/official-write.txt";
 export const CLAUDE_TOOL_CONTENT = "written by Claude through the official CLI\n";
 export const CLAUDE_HOOK_SESSION_ID = "claude-hooks-proof-session";
-export const CLAUDE_HOOK_PROGRAM_FACADE = [
-  "signalbox-kernel-program-facade",
-  "name=" + KERNEL_HOOK_PROGRAM_MANIFEST.name,
-  "version=" + KERNEL_HOOK_PROGRAM_MANIFEST.version,
-  "abiVersion=" + KERNEL_HOOK_PROGRAM_MANIFEST.abiVersion,
-  "entrypoint=" + KERNEL_HOOK_PROGRAM_MANIFEST.entrypoint,
-  "",
-].join("\n");
+export { HOOK_PROGRAM_FACADE as CLAUDE_HOOK_PROGRAM_FACADE } from "./hookProgramFacade.ts";
 
 export const CLAUDE_HOOK_EVENTS = [
   { event: "session-start", officialName: "SessionStart" },

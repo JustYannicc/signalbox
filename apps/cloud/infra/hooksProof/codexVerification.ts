@@ -1,3 +1,4 @@
+import { HOOK_PROGRAM_FACADE } from "./hookProgramFacade.ts";
 import type { HookExecutionResult } from "../../src/hooks/HookService.ts";
 import type { HarnessHookJson, HarnessHookRequest } from "../../src/hooks/HarnessHooks.ts";
 import type { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
@@ -6,6 +7,7 @@ import type { KernelHandle } from "../../src/kernel/KernelAbi.ts";
 import type { KernelCommandExit } from "../../src/kernel/KernelCommandForwarder.ts";
 import type { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import type { NodeGeneratedCodeInvokeInput } from "../../src/isolate/NodeGeneratedCode.ts";
+import { verifyCodexHookPayloads } from "./codexPayloads.ts";
 import {
   CODEX_HOOK_EXECUTABLE,
   CODEX_HOOK_REGISTRATIONS,
@@ -88,7 +90,6 @@ export interface CodexHookVerificationInput {
   readonly filesystem: KernelFileSystem;
   readonly host: KernelProgramHost;
   readonly parent: KernelHandle<"process">;
-  readonly childWorkersBindingAvailable: boolean;
   readonly invocations: readonly HookInvocationRecord[];
   readonly isolateCalls: readonly IsolateCallRecord[];
   readonly generatedCalls: readonly GeneratedCallRecord[];
@@ -102,20 +103,11 @@ export interface CodexHookVerificationInput {
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
-const executableFacade = encoder.encode(
-  [
-    "signalbox-kernel-program-facade",
-    "name=signalbox-hook",
-    "version=1.0.0",
-    "abiVersion=1",
-    "entrypoint=signalbox-hook-v1",
-    "",
-  ].join("\n"),
-);
+const executableFacade = encoder.encode(HOOK_PROGRAM_FACADE);
 
 /** Checks official event results and the process paths the unchanged CLI actually used. */
 export async function verifyCodexHooks(input: CodexHookVerificationInput) {
-  const failures: string[] = [];
+  const failures = verifyCodexHookPayloads(input.invocations);
   const hookFile = inspectFile(input.filesystem, CODEX_HOOK_EXECUTABLE);
   const settingsFile = inspectFile(input.filesystem, CODEX_HOOK_REQUIREMENTS_PATH);
   const settingsText = settingsFile.text ?? "";
@@ -148,7 +140,7 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
       failures.push(`Unexpected ${event.event} invocation count: ${event.invocationCount}`);
     if (!event.observed) failures.push(`Missing ${event.event} handler invocation`);
     if (!event.inputPreserved) failures.push(`${event.event} input did not retain hook_event_name`);
-    if (event.exit?.exitCode !== 0)
+    if (!successfulExit(event.exit))
       failures.push(`${event.event} handler did not exit successfully`);
     if (event.error) failures.push(`${event.event} handler failed: ${event.error}`);
   }
@@ -161,10 +153,33 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   for (const record of input.invocations) {
     if (readRecord(record.input)?.hook_event_name !== officialEventNames[record.event])
       failures.push(`${record.id} received the wrong official event payload`);
-    if (record.exit?.exitCode !== 0 || record.error)
+    if (!successfulExit(record.exit) || record.error)
       failures.push(`${record.id} did not complete successfully`);
-    if (record.event === "post-tool-use" && parseObject(record.stdout)?.continue !== true)
-      failures.push(`${record.id} did not validate its PostToolUse payload`);
+    const result = parseObject(record.stdout);
+    if (!result) {
+      failures.push(`${record.id} did not return a JSON object`);
+    } else if (record.event === "stop") {
+      if (Object.keys(result).length !== 0)
+        failures.push(`${record.id} returned an invalid Stop result`);
+    } else {
+      if (
+        readNestedString(result, ["hookSpecificOutput", "hookEventName"]) !==
+        officialEventNames[record.event]
+      )
+        failures.push(`${record.id} returned the wrong result event`);
+      if (
+        record.event === "pre-tool-use" &&
+        readNestedString(result, ["hookSpecificOutput", "permissionDecision"]) !== "allow"
+      )
+        failures.push(`${record.id} did not return an allow decision`);
+      if (
+        record.event === "post-tool-use" &&
+        (result.continue !== true ||
+          readNestedString(result, ["hookSpecificOutput", "additionalContext"]) !==
+            `PostToolUse payload: ${JSON.stringify(record.input)}`)
+      )
+        failures.push(`${record.id} did not validate its PostToolUse payload`);
+    }
   }
 
   const sessionStart = outputFor(input.invocations, CODEX_HOOK_REGISTRATIONS[0]!.id);
@@ -195,10 +210,13 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   } catch (error) {
     failures.push(`PreToolUse command did not save its stdin: ${String(error)}`);
   }
-  const preInvocation = input.invocations.findLast(
+  const preInvocations = input.invocations.filter(
     (record) => record.id === CODEX_HOOK_REGISTRATIONS[1]!.id,
   );
-  if (preInvocation && capturedPreToolUse !== `${JSON.stringify(preInvocation.input)}\n`)
+  if (
+    capturedPreToolUse !==
+    preInvocations.map((record) => `${JSON.stringify(record.input)}\n`).join("")
+  )
     failures.push("PreToolUse command stdin did not preserve the official JSON payload");
 
   const generatedCalls = input.generatedCalls.filter(
@@ -218,22 +236,24 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   const rpcEvents = input.signalboxCalls.map(({ request }) => request.event).sort();
   if (rpcEvents.join(",") !== "session-start,stop")
     failures.push("Signalbox callback did not receive SessionStart and Stop");
+  if (
+    input.signalboxCalls.some(
+      ({ request }) => request.sessionId !== readRecord(request.payload)?.session_id,
+    )
+  )
+    failures.push("Signalbox callback sessionId differs from the official payload");
   const isolateCall = input.isolateCalls[0];
   if (
     input.isolateCalls.length !== expectedInvocations["pre-tool-use"] ||
     isolateCall?.executable !== "/bin/bash" ||
-    input.isolateCalls.some((call) => call.executable !== "/bin/bash" || call.exit?.exitCode !== 0)
+    input.isolateCalls.some((call) => call.executable !== "/bin/bash" || !successfulExit(call.exit))
   )
     failures.push("PreToolUse command did not use ComputerCommands.isolate.exec");
   if (input.machineAttempts.length !== 0)
     failures.push("A hook command attempted machine execution");
-  if (!input.childWorkersBindingAvailable)
-    failures.push("The fixture did not receive the child worker binding");
 
   const officialHookSpawns = input.spawnCalls.filter(isOfficialHookCommandSpawn);
   const expectedNativeShell = CODEX_NATIVE_HOOK_SHELL;
-  if (expectedNativeShell !== "/bin/bash")
-    failures.push("The Codex hook proof expected shell path changed from its registered Bash");
   if (officialHookSpawns.length !== expectedInvocationCount)
     failures.push("Codex did not launch each registered hook through its native command runner");
   if (officialHookSpawns.some(({ executable }) => executable !== expectedNativeShell))
@@ -357,6 +377,10 @@ function outputFor(
   id: string,
 ): Record<string, unknown> | null {
   return parseObject(invocations.find((invocation) => invocation.id === id)?.stdout);
+}
+
+function successfulExit(exit: KernelCommandExit | undefined | null): boolean {
+  return exit?.exitCode === 0 && exit.signal === 0 && !exit.coreDumped;
 }
 
 function parseObject(value: string | undefined): Record<string, unknown> | null {

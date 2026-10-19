@@ -197,39 +197,37 @@ export function createClaudeTurnProofClass(
         output.milestones.push("hook-host-ready");
         observation.startDeadline();
         try {
-          await Promise.race([
-            runtime.cpuRoot.run(() => {
-              leaveCpuUser = runtime!.enterUser();
-              return bootNodeRelease(
-                { modules, globals: { Bun: runtime!.bun, process: runtime!.process } },
-                async (installed) => {
-                  bridge = installed;
-                  output.milestones.push("package-load-start");
-                  packageLoad = await environment.load();
-                  output.milestones.push("package-load-returned");
-                  output.milestones.push("release-import-start");
-                  const release = await config.loadRelease();
-                  output.milestones.push("release-import-returned");
-                  if (
-                    !release ||
-                    typeof release !== "object" ||
-                    typeof Reflect.get(release, "launch") !== "function"
-                  ) {
-                    throw new Error("ERR_DIAGNOSTIC_RELEASE_LAUNCH_MISSING");
-                  }
-                  output.milestones.push("release-launch-start");
-                  await Reflect.apply(Reflect.get(release, "launch"), release, []);
-                  output.milestones.push("release-launch-returned");
-                  return release;
-                },
-              );
-            }),
-            done,
-          ]);
+          await runtime.cpuRoot.run(() => {
+            leaveCpuUser = runtime!.enterUser();
+            return bootNodeRelease(
+              { modules, globals: { Bun: runtime!.bun, process: runtime!.process } },
+              async (installed) => {
+                bridge = installed;
+                output.milestones.push("package-load-start");
+                packageLoad = await environment.load();
+                output.milestones.push("package-load-returned");
+                output.milestones.push("release-import-start");
+                const release = await config.loadRelease();
+                output.milestones.push("release-import-returned");
+                if (
+                  !release ||
+                  typeof release !== "object" ||
+                  typeof Reflect.get(release, "launch") !== "function"
+                ) {
+                  throw new Error("ERR_DIAGNOSTIC_RELEASE_LAUNCH_MISSING");
+                }
+                output.milestones.push("release-launch-start");
+                await Reflect.apply(Reflect.get(release, "launch"), release, []);
+                output.milestones.push("release-launch-returned");
+                return release;
+              },
+            );
+          });
         } catch (error) {
           guestError("release-error", error);
         }
         await done;
+        await runtime.close();
         const scenarioResult = await verifyClaudeHookScenario({
           ...filesystemHost,
           dispatches,
@@ -264,7 +262,7 @@ export function createClaudeTurnProofClass(
         });
       } finally {
         leaveCpuUser?.();
-        runtime?.close();
+        await runtime?.close();
         globalThis.fetch = originalFetch;
         observation.restore();
       }

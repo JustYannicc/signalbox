@@ -1,4 +1,5 @@
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
+import { withOfficialHookContext } from "./officialHookContext.ts";
 import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import {
@@ -161,7 +162,7 @@ export function createCodexHookRuntime(bashModule: WebAssembly.Module, wakes: Ke
         throw new Error("Codex hook facade path differs from its kernel registration");
 
       seedCodexSettings(configuration.filesystem);
-      const childWorkers = getBinding(configuration.env, "CHILD_WORKERS");
+      getBinding(configuration.env, "CHILD_WORKERS");
       const codeGeneration = asFetcher(getBinding(configuration.env, "CODE_GENERATION"));
 
       const generatedService = createNodeGeneratedCode({
@@ -182,7 +183,9 @@ export function createCodexHookRuntime(bashModule: WebAssembly.Module, wakes: Ke
             parent: engineProcess.parent,
             home: "/home/codex",
           },
-          escalation: new ComputerEscalationTable(),
+          escalation: new ComputerEscalationTable([
+            { id: "would-escalate-hook-bash", executable: "/bin/bash" },
+          ]),
           machine: {
             async spawn(command: KernelCommand) {
               machineAttempts.push({ executable: command.executable, argv: [...command.argv] });
@@ -229,7 +232,18 @@ export function createCodexHookRuntime(bashModule: WebAssembly.Module, wakes: Ke
             );
           },
         };
-        hookService = createHookService({ registrations, commands, generated, capacity });
+        hookService = {
+          invoke(id, payload, invocation) {
+            const registration = registrations.get(id);
+            if (!registration) throw new Error("Unknown Codex hook registration");
+            return createHookService({
+              registrations: new Map([[id, withOfficialHookContext(registration, payload)]]),
+              commands,
+              generated,
+              capacity,
+            }).invoke(id, payload, invocation);
+          },
+        };
 
         return {
           bootstrap: (input) => ({
@@ -265,7 +279,6 @@ export function createCodexHookRuntime(bashModule: WebAssembly.Module, wakes: Ke
               filesystem,
               host,
               parent: engineProcess!.parent,
-              childWorkersBindingAvailable: childWorkers !== undefined && childWorkers !== null,
               invocations,
               isolateCalls,
               generatedCalls,

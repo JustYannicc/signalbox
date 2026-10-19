@@ -39,32 +39,39 @@ const createCodexFixture = createCodexFixtureUntyped as unknown as (
   options: CodexFixturePackagerOptions,
 ) => Promise<CodexFixturePackage>;
 
-const RELEASE_DIR = "/tmp/issue-1066/codex-release-0.162.1";
 const RELEASE_MANIFEST_SHA256 = "bfa4263733024c07900c856b7ff17a6e6b664fc4dd5eaad54065532f34c1b91b";
-const BASH_PATH = "/tmp/issue-1066/programs/bash.wasm";
 const BASH_ARTIFACT = Object.freeze({
   bytes: 3_887_571,
   sha256: "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
 });
-const DEFAULT_OUTPUT_DIR = "/tmp/issue-1066/codex-work/prepared-hooks-r1";
 const proofRoot = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const currentKernelRoot = NodePath.resolve(proofRoot, "../../src/kernel");
 const digest = (bytes: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
+function requiredPath(name: string, value: string | undefined): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`Missing required input ${name}`);
+  }
+  return NodePath.resolve(value);
+}
+
 /** Packages the unchanged Codex release with the hook proof entry and pinned Bash bytes. */
-export async function prepareCodexHooksProof(
-  options: {
-    readonly releaseDir?: string;
-    readonly bashPath?: string;
-    readonly kernelRoot?: string;
-    readonly outputDir?: string;
-  } = {},
-) {
-  const releaseDir = NodePath.resolve(options.releaseDir ?? RELEASE_DIR);
-  const bashPath = NodePath.resolve(options.bashPath ?? BASH_PATH);
-  const kernelRoot = await NodeFSP.realpath(options.kernelRoot ?? currentKernelRoot);
-  const outputDir = NodePath.resolve(options.outputDir ?? DEFAULT_OUTPUT_DIR);
+export async function prepareCodexHooksProof(options: {
+  readonly releaseDir: string;
+  readonly bashPath: string;
+  readonly kernelRoot?: string;
+  readonly outputDir: string;
+}) {
+  if (options == null) throw new Error("Pass --release, --bash and --output");
+  const releaseDir = requiredPath("--release", options.releaseDir);
+  const bashPath = requiredPath("--bash", options.bashPath);
+  const outputDir = requiredPath("--output", options.outputDir);
+  const kernelRootInput =
+    options.kernelRoot === undefined
+      ? currentKernelRoot
+      : requiredPath("--kernel-root", options.kernelRoot);
+  const kernelRoot = await NodeFSP.realpath(kernelRootInput);
   const manifestBytes = await NodeFSP.readFile(NodePath.join(releaseDir, "manifest.json"));
   const manifestSha256 = digest(manifestBytes);
   if (manifestSha256 !== RELEASE_MANIFEST_SHA256) {
@@ -182,23 +189,34 @@ if (
   NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 ) {
   const { values } = NodeUtil.parseArgs({
+    allowPositionals: false,
     options: {
       release: { type: "string" },
       bash: { type: "string" },
       "kernel-root": { type: "string" },
       output: { type: "string" },
+      help: { type: "boolean", short: "h" },
     },
   });
-  process.stdout.write(
-    JSON.stringify(
-      await prepareCodexHooksProof({
-        ...(values.release === undefined ? {} : { releaseDir: values.release }),
-        ...(values.bash === undefined ? {} : { bashPath: values.bash }),
-        ...(values["kernel-root"] === undefined ? {} : { kernelRoot: values["kernel-root"] }),
-        ...(values.output === undefined ? {} : { outputDir: values.output }),
-      }),
-      null,
-      2,
-    ) + "\n",
-  );
+  if (values.help) {
+    process.stdout.write(
+      "Usage: prepareCodex.ts --release <dir> --bash <file> --output <dir> [--kernel-root <dir>]\n\n" +
+        "Required inputs:\n" +
+        "  --release <dir>       Pinned Codex 0.162.1 artifact directory\n" +
+        "  --bash <file>         Pinned Bash wasm artifact\n" +
+        "  --output <dir>        Fresh proof output directory\n" +
+        "Optional inputs:\n" +
+        "  --kernel-root <dir>   Kernel source root (defaults to this checkout)\n",
+    );
+  } else {
+    const result = await prepareCodexHooksProof({
+      releaseDir: requiredPath("--release", values.release),
+      bashPath: requiredPath("--bash", values.bash),
+      ...(values["kernel-root"] === undefined
+        ? {}
+        : { kernelRoot: requiredPath("--kernel-root", values["kernel-root"]) }),
+      outputDir: requiredPath("--output", values.output),
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  }
 }

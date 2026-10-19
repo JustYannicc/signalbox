@@ -1,3 +1,4 @@
+import { withOfficialHookContext } from "./officialHookContext.ts";
 // @effect-diagnostics nodeBuiltinImport:off - this runtime is an isolated proof host.
 import * as NodeProcess from "node:process";
 import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
@@ -37,7 +38,7 @@ import {
 } from "../../src/kernel/KernelRipgrepProgram.ts";
 import type { KernelCommandExit } from "../../src/kernel/KernelCommandForwarder.ts";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
-import { createHookService, type HookRegistration } from "../../src/hooks/HookService.ts";
+import { createHookService } from "../../src/hooks/HookService.ts";
 import { registerKernelHookProgram, type KernelHookInvoker } from "../../src/hooks/HookProgram.ts";
 import type { HarnessHookEvent, HarnessHookJson } from "../../src/hooks/HarnessHooks.ts";
 import type { ProofProgramModules } from "../claudeTurnProof/proofPrograms.ts";
@@ -187,7 +188,7 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     options.dispatches.push(record);
     const startedAt = readMonotonicNs();
     try {
-      const contextual = withOfficialSession(registration, payload);
+      const contextual = withOfficialHookContext(registration, payload);
       const service = createHookService({
         registrations: new Map([[id, contextual]]),
         commands: computer.isolate,
@@ -210,6 +211,17 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     }
   };
 
+  let closing: Promise<void> | undefined;
+  const close = () =>
+    (closing ??= (async () => {
+      try {
+        const result = await kernelHost.processes.dispose();
+        if (result.status !== "ok")
+          throw new Error(`Claude hook process cleanup failed: ${JSON.stringify(result)}`);
+      } finally {
+        cpuRoot.stop();
+      }
+    })());
   return {
     kernelHost,
     processContext,
@@ -218,25 +230,8 @@ export function createClaudeHookRuntime(options: ClaudeHookRuntimeOptions) {
     bun,
     cpuRoot,
     machineCalls,
-    close: () => cpuRoot.stop(),
+    close,
     enterUser: () => cpuRoot.enterUser(),
-  };
-}
-
-function withOfficialSession(
-  registration: HookRegistration,
-  payload: HarnessHookJson,
-): HookRegistration {
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    return registration;
-  }
-  const sessionId = Reflect.get(payload, "session_id");
-  if (typeof sessionId !== "string" || sessionId.length === 0) return registration;
-  const toolCallId = Reflect.get(payload, "tool_use_id");
-  return {
-    ...registration,
-    sessionId,
-    ...(typeof toolCallId === "string" ? { toolCallId } : {}),
   };
 }
 
