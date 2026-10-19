@@ -399,8 +399,7 @@ function virtualRangeReader(
         Number(oldCanonicalSize - position),
       );
       if (count === 0) throw secretFileError("EIO");
-      const read = storage.readInto(inode, position, target.subarray(cursor, cursor + count));
-      if (read !== count) throw secretFileError("EIO");
+      readStorageRange(storage, inode, position, target.subarray(cursor, cursor + count));
       cursor += count;
     }
     return available;
@@ -434,7 +433,23 @@ function needsProjection(
 }
 
 function storageReader(storage: Storage, inode: Inode): ByteRangeReader {
-  return (offset, target) => storage.readInto(inode, offset, target);
+  return (offset, target) => readStorageRange(storage, inode, offset, target);
+}
+
+function readStorageRange(
+  storage: Storage,
+  inode: Inode,
+  offset: bigint,
+  target: Uint8Array,
+): number {
+  let read = 0;
+  while (read < target.byteLength) {
+    const remaining = target.subarray(read);
+    const count = storage.readInto(inode, offset + BigInt(read), remaining);
+    if (count <= 0 || count > remaining.byteLength) throw secretFileError("EIO");
+    read += count;
+  }
+  return read;
 }
 
 function publish(storage: Storage, inode: Inode, bytes: Uint8Array): void {
