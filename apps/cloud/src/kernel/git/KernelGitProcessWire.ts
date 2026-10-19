@@ -1,4 +1,6 @@
 import type { KernelResult } from "../KernelAbi.ts";
+import { KERNEL_GIT_MAX_BUFFER_BYTES } from "../KernelGitMemoryPlan.ts";
+import { asWasiMemory, WasiError, type WasiMemory } from "../wasi/internal_wasi_memory.ts";
 
 export const GIT_ERRNO = Object.freeze({
   again: 6,
@@ -13,21 +15,27 @@ export const GIT_ERRNO = Object.freeze({
   unsupported: 58,
 });
 
-const MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const MAX_STRINGS = 65_536;
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
+export type KernelGitMemory = WebAssembly.Memory | WasiMemory;
+
 export function decodeGitStrings(
-  memory: WebAssembly.Memory,
+  memory: KernelGitMemory,
   pointer: number,
   length: number,
 ): string[] | number {
   const start = pointer >>> 0;
   const size = length >>> 0;
-  if (size > MAX_BUFFER_BYTES) return GIT_ERRNO.invalidArgument;
-  if (!validRange(memory, start, size)) return GIT_ERRNO.fault;
+  if (size > KERNEL_GIT_MAX_BUFFER_BYTES) return GIT_ERRNO.invalidArgument;
+  if (!validGitMemoryRange(memory, start, size)) return GIT_ERRNO.fault;
   if (size === 0) return [];
-  const bytes = new Uint8Array(memory.buffer, start, size);
+  let bytes: Uint8Array<ArrayBuffer>;
+  try {
+    bytes = gitMemoryRange(memory, start, size);
+  } catch {
+    return GIT_ERRNO.fault;
+  }
   const result: string[] = [];
   let offset = 0;
   while (offset < bytes.length) {
@@ -45,15 +53,20 @@ export function decodeGitStrings(
 }
 
 export function decodeGitBytes(
-  memory: WebAssembly.Memory,
+  memory: KernelGitMemory,
   pointer: number,
   length: number,
 ): string | number {
   const start = pointer >>> 0;
   const size = length >>> 0;
-  if (size > MAX_BUFFER_BYTES) return GIT_ERRNO.invalidArgument;
-  if (!validRange(memory, start, size)) return GIT_ERRNO.fault;
-  const bytes = new Uint8Array(memory.buffer, start, size);
+  if (size > KERNEL_GIT_MAX_BUFFER_BYTES) return GIT_ERRNO.invalidArgument;
+  if (!validGitMemoryRange(memory, start, size)) return GIT_ERRNO.fault;
+  let bytes: Uint8Array<ArrayBuffer>;
+  try {
+    bytes = gitMemoryRange(memory, start, size);
+  } catch {
+    return GIT_ERRNO.fault;
+  }
   if (bytes.includes(0)) return GIT_ERRNO.invalidArgument;
   try {
     return decoder.decode(bytes);
@@ -86,12 +99,33 @@ export function gitCloseInheritedPipeAction(fd: number) {
 }
 
 export function validGitMemoryRange(
-  memory: WebAssembly.Memory,
+  memory: KernelGitMemory,
   pointer: number,
   length: number,
 ): boolean {
   const start = pointer >>> 0;
-  return Number.isSafeInteger(length) && length >= 0 && start <= memory.buffer.byteLength - length;
+  return (
+    Number.isSafeInteger(length) && length >= 0 && start <= asWasiMemory(memory).byteLength - length
+  );
+}
+
+export function gitMemoryRange(
+  memory: KernelGitMemory,
+  pointer: number,
+  length: number,
+): Uint8Array<ArrayBuffer> {
+  if (!validGitMemoryRange(memory, pointer, length)) throw new WasiError(GIT_ERRNO.fault);
+  try {
+    return asWasiMemory(memory).range(pointer, length);
+  } catch (error) {
+    if (error instanceof WasiError) throw error;
+    throw new WasiError(GIT_ERRNO.fault);
+  }
+}
+
+export function gitMemoryView(memory: KernelGitMemory, pointer: number, length: number): DataView {
+  const bytes = gitMemoryRange(memory, pointer, length);
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 export function gitErrnoOf(
@@ -130,9 +164,4 @@ export function encodeGitWaitStatus(status: {
 }): number {
   if (status.signal !== 0) return status.signal | (status.coreDumped ? 0x80 : 0);
   return (status.exitCode & 0xff) << 8;
-}
-
-function validRange(memory: WebAssembly.Memory, pointer: number, length: number): boolean {
-  const start = pointer >>> 0;
-  return start <= memory.buffer.byteLength - length;
 }

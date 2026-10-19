@@ -10,6 +10,20 @@ export interface ChildWorkerPermit {
   release(): void;
 }
 
+const childWorkerReservationBrand: unique symbol = Symbol("ChildWorkerReservation");
+const childWorkerReservationIssuer = Symbol("ChildWorkerReservationIssuer");
+const childWorkerReservations = new WeakSet<object>();
+
+export interface ChildWorkerReservation {
+  readonly [childWorkerReservationBrand]: typeof childWorkerReservationBrand;
+  run<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T>;
+  cancel(): void;
+}
+
+export function isChildWorkerReservation(value: unknown): value is ChildWorkerReservation {
+  return typeof value === "object" && value !== null && childWorkerReservations.has(value);
+}
+
 interface Waiter {
   readonly signal: AbortSignal;
   readonly resolve: (permit: ChildWorkerPermit) => void;
@@ -61,21 +75,32 @@ export class ChildWorkerCapacity {
   }
 
   tryAcquire(signal: AbortSignal): ChildWorkerPermit | undefined {
-    signal.throwIfAborted();
-    if (this.#active >= this.limit || this.#waiters.length > 0) return undefined;
-    this.#active++;
-    return this.#makePermit();
+    return this.#tryAcquire(signal);
+  }
+
+  tryReserve(signal: AbortSignal): ChildWorkerReservation | undefined {
+    const permit = this.#tryAcquire(signal);
+    return permit === undefined
+      ? undefined
+      : new ChildWorkerReservationImpl(childWorkerReservationIssuer, permit);
   }
 
   async run<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
     // RPC callbacks can depend on a live worker. Waiting here could require its own ancestor to finish.
-    const permit = this.tryAcquire(signal);
+    const permit = this.#tryAcquire(signal);
     if (permit === undefined) throw new ChildWorkerLimitError();
     try {
       return await work();
     } finally {
       permit.release();
     }
+  }
+
+  #tryAcquire(signal: AbortSignal): ChildWorkerPermit | undefined {
+    signal.throwIfAborted();
+    if (this.#active >= this.limit || this.#waiters.length > 0) return undefined;
+    this.#active++;
+    return this.#makePermit();
   }
 
   #drain(): void {
@@ -107,5 +132,61 @@ export class ChildWorkerCapacity {
         this.#drain();
       },
     };
+  }
+}
+
+class ChildWorkerReservationImpl implements ChildWorkerReservation {
+  readonly [childWorkerReservationBrand]: typeof childWorkerReservationBrand =
+    childWorkerReservationBrand;
+  #state: "unconsumed" | "consumed" | "cancelled" | "settled" = "unconsumed";
+  #released = false;
+  readonly #permit: ChildWorkerPermit;
+
+  constructor(issuer: typeof childWorkerReservationIssuer, permit: ChildWorkerPermit) {
+    if (issuer !== childWorkerReservationIssuer) {
+      throw new TypeError("Child worker reservations can only be issued by capacity");
+    }
+    this.#permit = permit;
+    childWorkerReservations.add(this);
+    Object.freeze(this);
+  }
+
+  readonly run = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> => {
+    if (this.#state !== "unconsumed") {
+      return Promise.reject(new Error("Child worker reservation is no longer available"));
+    }
+    this.#state = "consumed";
+
+    try {
+      signal.throwIfAborted();
+    } catch (error) {
+      this.#settle();
+      return Promise.reject(error);
+    }
+
+    let result: Promise<T>;
+    try {
+      result = Promise.resolve(work());
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    return result.finally(() => this.#settle());
+  };
+
+  readonly cancel = (): void => {
+    if (this.#state !== "unconsumed") return;
+    this.#state = "cancelled";
+    this.#release();
+  };
+
+  #settle(): void {
+    this.#state = "settled";
+    this.#release();
+  }
+
+  #release(): void {
+    if (this.#released) return;
+    this.#released = true;
+    this.#permit.release();
   }
 }

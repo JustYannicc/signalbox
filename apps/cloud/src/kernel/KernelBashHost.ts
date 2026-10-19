@@ -10,6 +10,7 @@ import { assertBashPosixCredentials } from "./bash/BashEnvironment.ts";
 import { errno, resultErrno } from "./bash/BashMemory.ts";
 import { BashPreopens } from "./bash/BashPreopens.ts";
 import { KernelProcessCancelledError } from "./process/KernelProcessCancellation.ts";
+import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import { SyscallMemory } from "./syscall/SyscallMemory.ts";
 import { runAsync } from "./wasi/internal_wasi_calls.ts";
 
@@ -44,7 +45,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
   ): BashHostNode {
     assertBashPosixCredentials(inherited, supplied.filesystem);
     const controller = new AbortController();
-    const abort = () => controller.abort();
+    const abort = () => controller.abort(supplied.signal.reason);
     supplied.signal.addEventListener("abort", abort, { once: true });
     if (supplied.signal.aborted) abort();
     const context = { ...supplied, signal: controller.signal };
@@ -239,7 +240,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
         if (signal !== 9 && signal !== 15)
           return kernelError("UNSUPPORTED", "Bash signal handlers are unavailable");
         sentSignal = signal;
-        abort();
+        controller.abort(new KernelProcessSignal(signal));
         return kernelOk(undefined);
       },
       async close() {

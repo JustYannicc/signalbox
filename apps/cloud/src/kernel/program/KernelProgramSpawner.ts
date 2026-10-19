@@ -8,11 +8,20 @@ import {
   type ResolvedProgram,
 } from "../KernelAbi.ts";
 import type { AgentOsSpawnRequest } from "../AgentOsProcessWire.ts";
+import {
+  captureKernelProgramSpawnAdmission,
+  createKernelProgramSpawnAdmissionRequest,
+  type KernelProgramAdmissionDecision,
+  type KernelProgramAdmissionRequest,
+  type KernelProgramSpawnAdmissionCapture,
+} from "../KernelProgramAdmission.ts";
 import type {
   KernelAsyncProgramCpu,
   KernelAsyncProgramExecRequest,
 } from "../KernelAsyncProgram.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
+import type { KernelCommand } from "../KernelCommandForwarder.ts";
+import { KernelProcessSignal } from "../KernelProcessSignal.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import {
   KernelProcessTable,
@@ -24,7 +33,13 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { KernelCpuExecution, type KernelCpuProcessExecution } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
-import { prepareKernelProgram, type KernelPreparedProgram } from "./KernelPreparedProgram.ts";
+import {
+  prepareKernelProgram,
+  type KernelPreparedProgram,
+  type KernelProgramPrepareInput,
+  type KernelProgramPrepareOptions,
+} from "./KernelPreparedProgram.ts";
+import { spawnKernelCommandPiped } from "./KernelProgramCommandSpawn.ts";
 import {
   assertKernelFileByteSelectionCompatible,
   commitKernelProgramFileBytes,
@@ -37,7 +52,9 @@ import {
   createKernelWasiRuntime,
   runInlineJavaScript,
   type KernelProgramBinding,
+  type KernelProgramImplementation,
 } from "./KernelProgramRuntime.ts";
+import { KernelProgramAdmissionTicket } from "./KernelProgramAdmissionTicket.ts";
 
 interface KernelProgramSpawnerOptions {
   readonly processes: KernelProcessTable;
@@ -47,6 +64,9 @@ interface KernelProgramSpawnerOptions {
   readonly bindingFor: (program: ResolvedProgram) => KernelProgramBinding | undefined;
   readonly executableFor: (program: ResolvedProgram) => string | undefined;
   readonly selectFileBytes?: KernelProgramFileByteSelector;
+  readonly admit?: (
+    request: KernelProgramAdmissionRequest,
+  ) => Promise<KernelProgramAdmissionDecision>;
 }
 
 type LaunchContext = {
@@ -66,6 +86,7 @@ export class KernelProgramSpawner {
   readonly #bindingFor: KernelProgramSpawnerOptions["bindingFor"];
   readonly #executableFor: KernelProgramSpawnerOptions["executableFor"];
   readonly #selectFileBytes: KernelProgramFileByteSelector | undefined;
+  readonly #admit: KernelProgramSpawnerOptions["admit"];
 
   constructor(options: KernelProgramSpawnerOptions) {
     this.#processes = options.processes;
@@ -75,6 +96,7 @@ export class KernelProgramSpawner {
     this.#bindingFor = options.bindingFor;
     this.#executableFor = options.executableFor;
     this.#selectFileBytes = options.selectFileBytes;
+    this.#admit = options.admit;
   }
 
   backend(
@@ -116,6 +138,37 @@ export class KernelProgramSpawner {
     return this.#spawnNested(filesystem, parent, signal, home, request, admission);
   }
 
+  spawnCommandPiped(
+    input: KernelProgramPrepareInput,
+    command: KernelCommand,
+    options: Pick<KernelProgramPrepareOptions, "fileBytes">,
+  ) {
+    return spawnKernelCommandPiped(input, command, options, {
+      processes: this.#processes,
+      wakes: this.#wakes,
+      resolve: this.#resolve,
+      bindingFor: this.#bindingFor,
+      ...(this.#selectFileBytes === undefined ? {} : { selectFileBytes: this.#selectFileBytes }),
+      ...(this.#admit === undefined ? {} : { admit: this.#admit }),
+      launch: (prepared, implementation, captured, ticket) =>
+        this.#spawnWithFactory(
+          prepared.parent,
+          () => {
+            commitKernelProgramFileBytes(prepared.filesystem, prepared.filesystem.fileBytes);
+            return prepared;
+          },
+          implementation,
+          captured.argv,
+          captured.env,
+          undefined,
+          true,
+          undefined,
+          ticket,
+          true,
+        ),
+    });
+  }
+
   #spawnPrepared(
     prepared: KernelPreparedProgram,
     executable: string,
@@ -149,11 +202,12 @@ export class KernelProgramSpawner {
         commitKernelProgramFileBytes(prepared.filesystem, fileBytes);
         return prepared;
       },
-      binding,
+      binding.implementation,
       args,
       withHome(prepared.home, env),
       undefined,
       false,
+      undefined,
     );
   }
 
@@ -165,64 +219,186 @@ export class KernelProgramSpawner {
     request: AgentOsSpawnRequest,
     admission?: object,
   ): Promise<KernelResult<KernelHandle<"process">>> {
+    const capture = captureKernelProgramSpawnAdmission({
+      filesystem: parentFilesystem,
+      processes: this.#processes,
+      parent,
+      signal,
+      home,
+      request,
+      admission,
+    });
     // AgentOS passes the authoritative mask even without SETSIGMASK. Default
     // disposition and identity changes still have no host implementation.
-    if ((request.attributes.flags & ~(2 | 8)) !== 0) {
+    if ((capture.attributes.flags & ~(2 | 8)) !== 0) {
       return Promise.resolve(
         kernelError("UNSUPPORTED", "Requested spawn attributes are unavailable"),
       );
     }
-    const resolved = this.#resolve(request.execPath);
-    if (resolved.status !== "ok") return Promise.resolve(resolved);
-    const binding = this.#bindingFor(resolved.value);
-    if (!binding)
-      return Promise.resolve(
-        kernelError("INVALID_ARGUMENT", "Resolved executable lost its mapping"),
+    if (this.#admit && signal.aborted) {
+      return Promise.resolve(kernelError("CANCELLED", "Process spawn cancelled"));
+    }
+    const resolved = this.#resolve(capture.command.executable);
+    if (resolved.status === "would_block") return Promise.resolve(resolved);
+    let target: KernelProgramAdmissionRequest["target"];
+    if (resolved.status === "ok") {
+      const binding = this.#bindingFor(resolved.value);
+      if (!binding) {
+        return Promise.resolve(
+          kernelError("INVALID_ARGUMENT", "Resolved executable lost its mapping"),
+        );
+      }
+      target = Object.freeze({ kind: "resolved", program: resolved.value, binding });
+    } else if (
+      this.#admit &&
+      (resolved.error.code === "NOT_FOUND" || resolved.error.code === "UNSUPPORTED")
+    ) {
+      target = Object.freeze({
+        kind: "unsupported",
+        code: resolved.error.code,
+        message: resolved.error.message,
+      });
+    } else {
+      return Promise.resolve(resolved);
+    }
+    const admissionRequest = createKernelProgramSpawnAdmissionRequest(capture, target);
+    const launchCapture: CapturedSpawnRequest = Object.freeze({
+      ...admissionRequest,
+      attributes: capture.attributes,
+      parent: capture.parent,
+      pidPointer: capture.pidPointer,
+      ...(capture.requestedCwd === undefined ? {} : { requestedCwd: capture.requestedCwd }),
+    });
+
+    const launch = (
+      implementation: KernelProgramImplementation,
+      selectedAdmission: object | undefined,
+      route: "local" | "forward",
+      ticket: KernelProgramAdmissionTicket | undefined,
+    ) =>
+      this.#launchAdmittedSpawn(
+        parentFilesystem,
+        launchCapture,
+        implementation,
+        selectedAdmission,
+        route,
+        ticket,
       );
+
+    if (this.#admit) {
+      let ticket: KernelProgramAdmissionTicket | undefined;
+      return this.#admit(admissionRequest)
+        .then((candidate) => {
+          ticket = KernelProgramAdmissionTicket.from(admissionRequest, candidate);
+          const selection = ticket.resume();
+          if (selection.kind === "unsupported") {
+            ticket.throwCancelFailure();
+            return kernelError(selection.code, selection.message);
+          }
+          if (signal.aborted) {
+            ticket.cancel();
+            ticket.throwCancelFailure();
+            return kernelError("CANCELLED", "Process spawn cancelled");
+          }
+          ticket.assertCurrent();
+          return launch(selection.implementation, selection.admission, selection.route, ticket);
+        })
+        .catch((error: unknown) => {
+          ticket?.cancel();
+          ticket?.throwCancelFailure();
+          throw error;
+        });
+    }
+
+    if (target.kind === "unsupported") {
+      return Promise.resolve(kernelError(target.code, target.message));
+    }
+    return launch(target.binding.implementation, capture.admission, "local", undefined);
+  }
+
+  #launchAdmittedSpawn(
+    parentFilesystem: KernelFileSystem,
+    capture: CapturedSpawnRequest,
+    implementation: KernelProgramImplementation,
+    admission: object | undefined,
+    route: "local" | "forward",
+    ticket: KernelProgramAdmissionTicket | undefined,
+  ): Promise<KernelResult<KernelHandle<"process">>> {
     let fileBytes: KernelFileByteSelection;
     try {
       fileBytes = resolveKernelProgramFileBytes({
-        executable: request.execPath,
+        executable: capture.command.executable,
         ...(this.#selectFileBytes === undefined ? {} : { selector: this.#selectFileBytes }),
         filesystem: parentFilesystem,
-        parent,
+        parent: capture.parent,
       });
     } catch (error) {
+      ticket?.cancel();
+      ticket?.throwCancelFailure();
       return Promise.resolve(fileByteSelectionError(error));
     }
+    // Admission can wait while the parent changes cwd. Relative requests retain their captured base.
+    const cwd = ticket === undefined ? capture.requestedCwd : capture.baseCwd;
+    const actions =
+      ticket !== undefined && capture.requestedCwd !== undefined
+        ? [
+            {
+              kind: "chdir" as const,
+              fd: 0,
+              sourceFd: 0,
+              flags: 0,
+              mode: 0,
+              path: capture.requestedCwd,
+            },
+            ...capture.actions,
+          ]
+        : capture.actions;
+    const launch = (args: readonly string[], env: Readonly<Record<string, string>>) =>
+      this.#spawnWithFactory(
+        capture.parent,
+        () =>
+          prepareKernelProgram(
+            {
+              filesystem: parentFilesystem,
+              parent: capture.parent,
+              signal: capture.signal,
+              ...(capture.home === undefined ? {} : { home: capture.home }),
+              ...(admission === undefined ? {} : { admission }),
+            },
+            {
+              ...(cwd === undefined ? {} : { cwd }),
+              actions,
+              fileBytes,
+            },
+          ),
+        implementation,
+        args,
+        ticket === undefined ? withHome(capture.home, env) : env,
+        (capture.attributes.flags & 2) !== 0 ? capture.attributes.processGroup : undefined,
+        true,
+        capture.attributes.signalMask,
+        ticket,
+        ticket !== undefined,
+      );
+
+    if (ticket !== undefined) {
+      return Promise.resolve(launch(capture.command.argv, capture.command.env));
+    }
+    if (capture.target.kind !== "resolved") {
+      return Promise.resolve(kernelError(capture.target.code, capture.target.message));
+    }
+    const resolvedTarget = capture.target;
+    if (route === "forward") throw new TypeError("Forwarded program requires an admission ticket");
     const backend: KernelBackend = {
       "process.spawn": ({ program, args, env }) => {
-        if (program !== resolved.value)
+        if (program !== resolvedTarget.program)
           return kernelError("INVALID_ARGUMENT", "Nested spawn changed its resolved program");
         if (!hasOnlyStringValues(env))
           return kernelError(
             "UNSUPPORTED",
             "Secret environment values are not supported by local WASI",
           );
-        return this.#spawnWithFactory(
-          parent,
-          () =>
-            prepareKernelProgram(
-              {
-                filesystem: parentFilesystem,
-                parent,
-                signal,
-                ...(home === undefined ? {} : { home }),
-                ...(admission === undefined ? {} : { admission }),
-              },
-              {
-                ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-                actions: request.actions,
-                fileBytes,
-              },
-            ),
-          binding,
-          args,
-          withHome(home, env),
-          (request.attributes.flags & 2) !== 0 ? request.attributes.processGroup : undefined,
-          true,
-          request.attributes.signalMask,
-        );
+        return launch(args, env);
       },
       "process.wait": ({ handle }) => this.#processes.wait(handle),
       "process.signal": ({ handle, signal: requested }) =>
@@ -230,9 +406,9 @@ export class KernelProgramSpawner {
     };
     return Promise.resolve(
       callKernel(backend, "process.spawn", {
-        program: resolved.value,
-        args: request.argv,
-        env: request.env,
+        program: resolvedTarget.program,
+        args: capture.command.argv,
+        env: capture.command.env,
       }),
     );
   }
@@ -240,12 +416,14 @@ export class KernelProgramSpawner {
   #spawnWithFactory(
     parent: KernelHandle<"process"> | undefined,
     prepare: () => KernelPreparedProgram,
-    binding: KernelProgramBinding,
+    implementation: KernelProgramImplementation,
     args: readonly string[],
     env: Readonly<Record<string, string>>,
     processGroupId: number | undefined,
     releaseOnRejectedLaunch: boolean,
     signalMask?: KernelSignalMask,
+    ticket?: KernelProgramAdmissionTicket,
+    preserveEnvIdentity = false,
   ): KernelResult<KernelHandle<"process">> {
     const launch: LaunchContext = {
       prepared: undefined,
@@ -280,6 +458,12 @@ export class KernelProgramSpawner {
           errors.push(error);
         } finally {
           try {
+            ticket?.cancel();
+            ticket?.throwCancelFailure();
+          } catch (error) {
+            errors.push(error);
+          }
+          try {
             launch.cpuProcess?.stop();
           } catch (error) {
             errors.push(error);
@@ -306,18 +490,20 @@ export class KernelProgramSpawner {
         launch.cpuProcess = cpuProcess;
         const controller = new AbortController();
         const parentSignal = prepared.signal;
-        const abortFromParent = () => controller.abort();
-        if (parentSignal?.aborted) controller.abort();
+        const abortFromParent = () => controller.abort(parentSignal?.reason);
+        if (parentSignal?.aborted) controller.abort(parentSignal.reason);
         else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
         launch.detachSignal = () => parentSignal?.removeEventListener("abort", abortFromParent);
         const child = this.#launchPrepared(
           prepared,
-          binding,
+          implementation,
           args,
           env,
           identity,
           cpuProcess,
           controller,
+          ticket,
+          preserveEnvIdentity,
           (request) =>
             this.#spawnNested(
               prepared.filesystem,
@@ -337,6 +523,8 @@ export class KernelProgramSpawner {
       },
     );
     if (spawned.status !== "ok") {
+      ticket?.cancel();
+      ticket?.throwCancelFailure();
       return preparationFailure === undefined
         ? spawned
         : processPreparationError(preparationFailure);
@@ -355,30 +543,33 @@ export class KernelProgramSpawner {
 
   #launchPrepared(
     prepared: KernelPreparedProgram,
-    binding: KernelProgramBinding,
+    implementation: KernelProgramImplementation,
     args: readonly string[],
     env: Readonly<Record<string, string>>,
     identity: KernelProcessIdentity,
     cpuProcess: KernelCpuProcessExecution | undefined,
     controller: AbortController,
+    ticket: KernelProgramAdmissionTicket | undefined,
+    preserveEnvIdentity: boolean,
     spawn: (request: AgentOsSpawnRequest) => Promise<KernelResult<KernelHandle<"process">>>,
   ): {
     readonly process: KernelLaunchedChild;
     readonly lifecycle?: import("../wasi/internal_wasi_lifecycle.ts").WasiLifecycle;
   } {
     let sentSignal = 0;
-    const implementation = binding.implementation;
+    const beginBody = () =>
+      ticket === undefined ? !controller.signal.aborted : ticket.beginBody(controller.signal);
     const signal = (number: number): KernelResult<void> => {
       if (number !== 9 && number !== 15)
         return kernelError("UNSUPPORTED", "Only terminate and kill are supported");
       sentSignal = number;
-      controller.abort();
+      controller.abort(new KernelProcessSignal(number));
       return kernelOk(undefined);
     };
     if (implementation.kind === "javascript") {
       const start = () =>
         Promise.resolve().then(() => {
-          if (controller.signal.aborted) return terminatedStatus(sentSignal);
+          if (!beginBody()) return terminatedStatus(sentSignal);
           try {
             const exitCode = runKernelInlineExecution(controller.signal, () => {
               const runInline = () =>
@@ -416,8 +607,8 @@ export class KernelProgramSpawner {
       const context = {
         filesystem: prepared.filesystem,
         home: prepared.home,
-        args: Object.freeze([...args]),
-        env: Object.freeze({ ...env }),
+        args: preserveEnvIdentity ? args : Object.freeze([...args]),
+        env: preserveEnvIdentity ? env : Object.freeze({ ...env }),
         identity,
         signal: controller.signal,
         processes: this.#processes,
@@ -436,7 +627,7 @@ export class KernelProgramSpawner {
       const start = () =>
         runKernelExecution(controller.signal, () =>
           Promise.resolve().then(async () => {
-            if (controller.signal.aborted) return terminatedStatus(sentSignal);
+            if (!beginBody()) return terminatedStatus(sentSignal);
             try {
               const exit = await runKernelAsyncProgram(implementation.run, context, {
                 resolve: this.#resolve,
@@ -447,6 +638,7 @@ export class KernelProgramSpawner {
                 ...(this.#selectFileBytes === undefined
                   ? {}
                   : { selectFileBytes: this.#selectFileBytes }),
+                ...(this.#admit === undefined ? {} : { admit: this.#admit }),
               });
               return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
             } catch (error) {
@@ -474,8 +666,11 @@ export class KernelProgramSpawner {
       wakes: this.#wakes,
       spawn,
     });
-    const start = () =>
-      runKernelExecution(controller.signal, () =>
+    const start = () => {
+      if (ticket !== undefined && !beginBody()) {
+        return Promise.resolve(terminatedStatus(sentSignal));
+      }
+      return runKernelExecution(controller.signal, () =>
         runtime.lifecycle.startAsync(runtime.instance),
       ).then(
         (exitCode) =>
@@ -487,6 +682,7 @@ export class KernelProgramSpawner {
           throw error;
         },
       );
+    };
     const completion = cpuProcess ? cpuProcess.run(start) : start();
     return {
       process: { completion, signal, supportedSignals: [9, 15] },
@@ -494,6 +690,9 @@ export class KernelProgramSpawner {
     };
   }
 }
+
+type CapturedSpawnRequest = KernelProgramAdmissionRequest &
+  Pick<KernelProgramSpawnAdmissionCapture, "attributes" | "parent" | "pidPointer" | "requestedCwd">;
 
 function withHome(
   home: string | undefined,

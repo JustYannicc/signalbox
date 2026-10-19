@@ -1,4 +1,5 @@
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
+import type { GnuCommandQualification } from "./GnuCommandCompatibility.ts";
 
 export interface ComputerEscalationRule {
   readonly id: string;
@@ -19,7 +20,8 @@ export interface ComputerEscalationPolicy {
 export type ComputerEscalationDecision =
   | { readonly kind: "isolate" }
   | { readonly kind: "machine"; readonly ruleId: string }
-  | { readonly kind: "machine"; readonly reason: "unsupported-executable" };
+  | { readonly kind: "machine"; readonly reason: "unsupported-executable" }
+  | Extract<GnuCommandQualification, { readonly kind: "machine" }>;
 
 export class ComputerEscalationEvidenceNotReadyError extends Error {
   readonly code = "EVIDENCE_NOT_READY";
@@ -36,8 +38,14 @@ export class ComputerEscalationEvidenceNotReadyError extends Error {
 export class ComputerEscalationTable {
   readonly rules: readonly ComputerEscalationRule[];
   readonly #policy: ComputerEscalationPolicy | undefined;
+  readonly #qualify: ((command: KernelCommand) => GnuCommandQualification) | undefined;
 
-  constructor(rules: readonly ComputerEscalationRule[] = [], policy?: ComputerEscalationPolicy) {
+  constructor(
+    rules: readonly ComputerEscalationRule[] = [],
+    policy?: ComputerEscalationPolicy,
+    qualify?: (command: KernelCommand) => GnuCommandQualification,
+  ) {
+    this.#qualify = qualify;
     if (!Array.isArray(rules)) {
       throw new TypeError("Computer escalation rules must be an array");
     }
@@ -151,9 +159,11 @@ export class ComputerEscalationTable {
     }
 
     if (this.#policy === undefined) return { kind: "isolate" };
-    return this.#policy.isolateExecutables.includes(command.executable)
-      ? { kind: "isolate" }
-      : { kind: "machine", reason: "unsupported-executable" };
+    if (!this.#policy.isolateExecutables.includes(command.executable)) {
+      return { kind: "machine", reason: "unsupported-executable" };
+    }
+    const qualification = this.#qualify?.(command);
+    return qualification?.kind === "machine" ? qualification : { kind: "isolate" };
   }
 }
 
