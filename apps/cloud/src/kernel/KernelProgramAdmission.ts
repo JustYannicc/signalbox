@@ -10,8 +10,7 @@ import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelProcessIdentity, KernelProcessTable } from "./KernelProcessTable.ts";
 import type { KernelProgramBinding } from "./program/KernelProgramRuntime.ts";
 
-export interface KernelProgramAdmissionRequest {
-  readonly kind: "spawn" | "exec";
+interface KernelProgramAdmissionInput {
   readonly command: KernelCommand;
   /** Filesystem cwd before this request's cwd or file actions are applied. */
   readonly baseCwd: string;
@@ -37,6 +36,12 @@ export interface KernelProgramAdmissionRequest {
       };
 }
 
+export type KernelProgramAdmissionRequest = KernelProgramAdmissionInput &
+  (
+    | { readonly kind: "command"; readonly stdio: "piped" }
+    | { readonly kind: "spawn" | "exec"; readonly stdio?: never }
+  );
+
 export type KernelProgramAdmissionDecision =
   | {
       readonly kind: "local";
@@ -59,8 +64,9 @@ export type KernelProgramAdmissionDecision =
 
 export type KernelProgramSpawnAdmissionCapture = Omit<
   KernelProgramAdmissionRequest,
-  "target" | "attributes" | "parent"
+  "target" | "attributes" | "parent" | "kind" | "stdio"
 > & {
+  readonly kind: "spawn";
   readonly attributes: AgentOsSpawnRequest["attributes"];
   readonly parent: KernelHandle<"process">;
   readonly requestedCwd?: string;
@@ -131,7 +137,7 @@ export function createKernelProgramSpawnAdmissionRequest(
 export function captureKernelProgramExecAdmission(
   request: KernelAsyncProgramExecRequest,
   processes: KernelProcessTable,
-): Omit<KernelProgramAdmissionRequest, "target"> {
+): Omit<KernelProgramAdmissionRequest, "target" | "kind" | "stdio"> & { readonly kind: "exec" } {
   const baseCwd = request.filesystem.cwd;
   const command = Object.freeze({
     executable: request.path,
@@ -155,7 +161,7 @@ export function captureKernelProgramExecAdmission(
 }
 
 export function createKernelProgramExecAdmissionRequest(
-  capture: Omit<KernelProgramAdmissionRequest, "target">,
+  capture: ReturnType<typeof captureKernelProgramExecAdmission>,
   target: KernelProgramAdmissionRequest["target"],
 ): KernelProgramAdmissionRequest {
   return Object.freeze({ ...capture, target });
