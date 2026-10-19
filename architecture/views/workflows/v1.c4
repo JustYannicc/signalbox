@@ -18,9 +18,9 @@ views {
     variant sequence
     title 'Workflows/v1/0 · First day with Signalbox v1'
     description '''
-      What does a company's first day on Signalbox v1 look like? Six steps, each opening its own sequence:
-      sign in, a pool on Company, connections on Company, set up this computer, then a local model request
-      and a local tool call. Exactly sign in, a pool and connections (#1192).
+      What does the first day on Signalbox v1 look like? It works for A alone, with no admin step: sign in,
+      connect A's own Google and Confluence, set up this computer, then a local model request and a local tool
+      call. An admin can add the same top-down for folder Company. Exactly sign in, a pool and connections (#1192).
     '''
 
     include personA, personB, personC, laptopCli, signalbox, signalbox.identity, signalbox.models, signalbox.connections, signalbox.gateway
@@ -37,35 +37,55 @@ views {
         - Same verified domain, same folder, nothing to set up
       """
     }
-    personC -> signalbox.models 'Pool on Company' {
-      navigateTo v1_pool_one_click
-      notes """
-        - One click per subscription; an API key works too
-        - Members use it and never see a credential
-      """
+    alt 'who brings the pool' {
+      when 'A alone' {
+        personA -> signalbox.models 'Pool on my top level' {
+          navigateTo folders_pools_add_account
+          notes """
+            - A's own subscription, placed on A's top level; reaches Company in A's tree
+          """
+        }
+      }
+      else 'C for Company' {
+        personC -> signalbox.models 'Pool on Company' {
+          navigateTo v1_pool_one_click
+          notes """
+            - One click per subscription; an API key works too
+            - Members use it and never see a credential
+          """
+        }
+      }
     }
-    personC -> signalbox.connections 'Google · Confluence' {
+    personA -> signalbox.connections 'My Google · Confluence' {
       navigateTo v1_connections_one_click
       notes """
-        - One click each, placed on Company; hosted OAuth
+        - Bottom-up, one click each, no admin; acts as A, placed on A's top level
       """
+    }
+    opt 'top-down, C admin of Company' {
+      personC -> signalbox.connections 'Connect for Company' {
+        navigateTo v1_connections_one_click
+        notes """
+          - Reaches everyone below Company
+        """
+      }
     }
     personA -> laptopCli 'Set up this computer' {
       navigateTo v1_set_up_this_computer
       notes """
-        - One click: a key bound to Company, then Claude Code and Codex config written
+        - One click: a folder-bound key, then Claude Code and Codex config written
       """
     }
     laptopCli -[model]-> signalbox.gateway 'Model request' {
       navigateTo v1_local_model_request
       notes """
-        - Company's pool serves it; usage on Company with A's identity
+        - The nearest pool serves it; usage recorded with A's identity
       """
     }
     laptopCli -[tool]-> signalbox.gateway 'Tool call' {
       navigateTo v1_local_tool_call
       notes """
-        - Company's connections, found by search or called directly
+        - Connections that reach the key's folder, found by search or called directly
       """
     }
 
@@ -236,64 +256,97 @@ views {
     variant sequence
     title 'Workflows/v1/3 · Connect Google and Confluence'
     description '''
-      How do Company's tools appear for everyone in it? C connects Google and Confluence in one click each,
-      placed on folder Company. The hosted service brings the OAuth apps. The tools are served at Company's
-      MCP endpoint, which is Executor: Gateway's ToolGateway plus Connections. Exposure is `search` by
-      default and `direct` for chosen tools.
+      Who can connect Google and Confluence, and whom does a connection reach? Anyone, in one click each; an
+      admin is never required. Bottom-up: A connects A's own work Google and Confluence; they act as A, sit on
+      A's top level by default and reach everything under it in A's tree, Company included. Top-down: C (admin
+      of Company) connects a service for folder Company, and it reaches everyone below. The hosted service
+      brings the OAuth apps. Tools are served at a folder's MCP endpoint, which is Executor (Gateway's
+      ToolGateway plus Connections); exposure is `search` by default and `direct` for chosen tools.
     '''
 
-    include personC, personA, signalbox, signalbox.web, signalbox.ingress, signalbox.gateway.toolGateway, signalbox.connections, signalbox.tree, services, services.google, services.atlassian
+    include personA, personC, signalbox, signalbox.web, signalbox.ingress, signalbox.gateway.toolGateway, signalbox.connections, signalbox.tree, services, services.google, services.atlassian
 
-    personC -> signalbox.web 'Connect Google' {
-      navigateTo folders_connections_oauth_connect
-      notes """
-        - On folder Company's page, Connections section
-      """
+    alt 'who connects' {
+      when 'bottom-up: A, no admin' {
+        personA -> signalbox.web 'Connect my Google' {
+          navigateTo folders_connections_first_connection
+          notes """
+            - A's own work Google account, one click, nobody else involved
+            - Placed where A may place: A's top level by default
+          """
+        }
+        signalbox.web -> signalbox.connections 'connect(Google, A top level)' {
+          notes """
+            - Hosted OAuth: the Signalbox-hosted service provides the OAuth app
+            - Nobody creates their own OAuth client
+          """
+        }
+        signalbox.web -> services.google 'Consent' {
+          notes """
+            - A's one human click
+            - Whether the company's Google Workspace admin lets our OAuth client in
+              is the customer's app-access setting, outside Signalbox
+          """
+        }
+        services.google -> signalbox.ingress 'OAuth callback'
+        signalbox.ingress -> signalbox.connections 'complete' {
+          navigateTo state_connection
+          notes """
+            - Tokens sealed in the vault; no client ever holds them
+            - The connection acts as A, so it serves only A's turns
+          """
+        }
+        signalbox.connections -> signalbox.tree 'Place at A top level' {
+          navigateTo folders_placement_kind_pool_connection
+          notes """
+            - Resolves by hierarchy: A's threads and A's keys under A's top level,
+              including folder Company mounted in A's tree
+          """
+        }
+        personA -> signalbox.web 'Connect my Confluence' {
+          notes """
+            - Same one click: steps 2 to 6 with Atlassian
+          """
+        }
+        signalbox.web -> services.atlassian 'Consent'
+        signalbox.connections -> signalbox.tree 'Place at A top level'
+      }
+      else 'top-down: C for Company' {
+        personC -> signalbox.web 'Connect for Company' {
+          navigateTo folders_connections_oauth_connect
+          notes """
+            - C is admin of Company; same one click per service
+          """
+        }
+        signalbox.web -> signalbox.connections 'connect(service, Company)'
+        signalbox.connections -> signalbox.tree 'Place at Company' {
+          notes """
+            - Reaches everyone below Company: A, B and every folder inside
+          """
+        }
+      }
     }
-    signalbox.web -> signalbox.connections 'connect(Google, Company)' {
-      notes """
-        - Hosted OAuth: the Signalbox-hosted service provides the OAuth app
-        - Nobody creates their own OAuth client
-      """
-    }
-    signalbox.web -> services.google 'Consent' {
-      notes """
-        - C's one human click
-      """
-    }
-    services.google -> signalbox.ingress 'OAuth callback'
-    signalbox.ingress -> signalbox.connections 'complete' {
-      navigateTo state_connection
-      notes """
-        - Tokens sealed in the vault; no client ever holds them
-      """
-    }
-    signalbox.connections -> signalbox.tree 'Place at Company' {
-      navigateTo folders_placement_kind_pool_connection
-    }
-    personC -> signalbox.web 'Connect Confluence' {
-      notes """
-        - Same one click: steps 2 to 6 with Atlassian
-      """
-    }
-    signalbox.web -> services.atlassian 'Consent'
-    signalbox.connections -> signalbox.tree 'Place at Company'
-    opt 'a tool C wants native' {
-      personC -> signalbox.web 'Set exposure: direct' {
+    opt 'a tool someone wants native' {
+      personA -> signalbox.web 'Set exposure: direct' {
         notes """
-          - Exposure is a placement too, nearest wins
+          - Exposure is a placement too, nearest wins, set where you may place
           - Default is `search`: found through tool search, run through execute
         """
       }
-      signalbox.web -> signalbox.tree 'Place exposure at Company'
+      signalbox.web -> signalbox.tree 'Place exposure'
     }
     personA -> signalbox.gateway.toolGateway "Company's MCP endpoint" {
       navigateTo folders_connections_mcp_url
       notes """
-        - Any member's agent, through its own key or MCP sign-in
+        - From A's own key or MCP sign-in
       """
     }
-    signalbox.gateway.toolGateway -> signalbox.tree 'Resolve Company'
+    signalbox.gateway.toolGateway -> signalbox.tree 'Resolve Company for A' {
+      notes """
+        - Company's own placements plus A's top level above it in A's tree
+        - B asking at Company gets Company's connections and B's own, never A's
+      """
+    }
     signalbox.gateway.toolGateway -> signalbox.connections 'toolbox' {
       notes """
         - search + execute, plus each `direct` tool under its normal name
@@ -301,7 +354,7 @@ views {
     }
     personA <- signalbox.gateway.toolGateway 'Google · Confluence tools' {
       notes """
-        - Same tools for A and B; credentials never leave Signalbox
+        - Credentials never leave Signalbox
       """
     }
 
@@ -320,8 +373,8 @@ views {
       What does one click on "Set up this computer" change on A's machine? It mints a key bound to a folder
       (default: A's nearest folder with a pool, here Company) and writes Claude Code's and Codex's own config
       so their models and tools go through Signalbox. The desktop app writes it, or a served command does in
-      a terminal (#403). The apps stay signed in (#449). Undo removes exactly what was written; revoking the
-      key stops the next request.
+      a terminal (#403). Codex runs on the Signalbox key alone, with no OpenAI sign-in (#assumption, see its
+      step). Undo removes exactly what was written; revoking the key stops the next request.
     '''
 
     include personA, signalbox, signalbox.desktop, signalbox.cli, signalbox.tree, signalbox.gateway, signalbox.identity, laptopCli
@@ -334,7 +387,7 @@ views {
     signalbox.desktop -> signalbox.tree 'Default folder' {
       navigateTo folders_placement_resolve
       notes """
-        - A's nearest folder with a pool: Company
+        - A's nearest folder with a pool: Company, or A's top level when only A has one
         - A can pick another folder before confirming
       """
     }
@@ -357,10 +410,11 @@ views {
         }
         signalbox.desktop -> laptopCli 'Write Codex' {
           notes """
-            - `~/.codex/config.toml`: a `model_providers` entry with `requires_openai_auth = true`,
-              the Signalbox endpoint and the key in `http_headers`; `model_provider` selects it
+            - `~/.codex/config.toml`: a `model_providers` entry with `requires_openai_auth = false`,
+              the Signalbox endpoint and the key in `http_headers` (or `env_key`); `model_provider` selects it
+            - So Codex runs on the Signalbox key alone, with no OpenAI sign-in
+            - `#assumption`: what turning OpenAI auth off disables is being checked separately
             - An `mcp_servers` entry → Company's MCP endpoint
-            - `auth.json` is left alone, so the Codex app stays signed in
           """
         }
       }
@@ -456,7 +510,7 @@ views {
     laptopCli -[model]-> signalbox.gateway.modelGateway 'Responses call + key' {
       notes """
         - Same key, same steps 3 to 8
-        - The gateway drops `ChatGPT-Account-ID` (#449)
+        - Key only: `requires_openai_auth = false`, no OpenAI sign-in (`#assumption`)
       """
     }
     signalbox.gateway.modelGateway -[model]-> signalbox.models 'serve (same pool)'
@@ -475,8 +529,9 @@ views {
     variant sequence
     title 'Workflows/v1/6 · Local tool call'
     description '''
-      How does A's local Codex reach Company's Confluence and Google? Through Company's MCP endpoint
-      (Executor: ToolGateway plus Connections). Confluence is found by search (exposure `search`), a Google
+      How does A's local Codex reach Confluence and Google from Company? Through Company's MCP endpoint
+      (Executor: ToolGateway plus Connections), which serves the connections that reach Company in A's tree:
+      A's own (bottom-up, on A's top level) and Company's (top-down). Confluence is found by search (exposure `search`), a Google
       tool is called by its normal name (exposure `direct`). Executor resolves the connections on the key's
       folder and fills credentials from the vault at egress.
     '''
@@ -493,7 +548,8 @@ views {
     signalbox.gateway.toolGateway -> signalbox.tree 'Resolve Company' {
       navigateTo folders_placement_resolve
       notes """
-        - Connections and exposure placed on Company's chain; nothing from outside it
+        - Connections and exposure on Company's chain in A's tree: Company, then A's top level
+        - A's own connections act as A and serve only A; nothing from outside the chain
       """
     }
     signalbox.gateway.toolGateway -> signalbox.connections 'toolbox (search)'

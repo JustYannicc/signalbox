@@ -8,9 +8,13 @@ views {
       computer, drive, assistant or automations: local Claude Code and Codex use the pool and the tools through one
       click on "Set up this computer"; any MCP client uses the tools. Final interfaces, subset live.
 
+      v1 works for A alone, with no admin step: A brings a pool and connects A's own Google and Confluence
+      (bottom-up: they act as A, sit on A's top level and reach Company in A's tree). An admin such as C can add
+      a pool and connections for folder Company (top-down: they reach everyone below). Neither path needs the other.
+
       Walk it end to end in `Workflows / v1` (click a box or wire here to open its step):
-      0 First day (Person A) · 1 Sign in (Identity) · 2 Pool on Company (Models) · 3 Google and Confluence
-      (Connections) · 4 Set up this computer (local Claude Code · Codex) · 5 Local model request (Gateway → Models)
+      0 First day (Person A) · 1 Sign in (Identity) · 2 Pool on Company (Models) · 3 Google and Confluence,
+      bottom-up or top-down (Connections) · 4 Set up this computer (local Claude Code · Codex) · 5 Local model request (Gateway → Models)
       · 6 Local tool call (Gateway → Connections).
     '''
     include personA with { navigateTo v1_overview_journey }
