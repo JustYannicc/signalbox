@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeModule from "node:module";
+import * as NodeUtil from "node:util";
 
 import type { Plugin } from "vite-plus";
 
@@ -557,24 +558,57 @@ async function collectProductionDependencyPackages(
   return collection;
 }
 
-// signalbox: workspace ownership follows resolved dependency edges, independent of package names.
+// signalbox: ownership follows local dependency relationships, independent of package names.
 async function collectWorkspacePackageRoots(
   packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>,
 ): Promise<ReadonlySet<string>> {
   const roots = new Set<string>();
-  const visitManifest = async (packageJsonPath: string): Promise<void> => {
+  const visited = new Set<string>();
+  const visitManifest = async (
+    packageJsonPath: string,
+    installedPackageJsonPath = packageJsonPath,
+  ): Promise<void> => {
     const packageRoot = await NodeFSP.realpath(NodePath.dirname(packageJsonPath));
-    if (roots.has(packageRoot)) return;
+    const installedRoot = await NodeFSP.realpath(NodePath.dirname(installedPackageJsonPath));
+    const visitKey = JSON.stringify([packageRoot, installedRoot]);
+    if (visited.has(visitKey)) return;
+    visited.add(visitKey);
     roots.add(packageRoot);
+    roots.add(installedRoot);
     const packageJson = await readPackageJson(packageJsonPath);
     for (const dependencyName of dependencyNames(packageJson)) {
       const specifier =
         packageJson.optionalDependencies?.[dependencyName] ??
         packageJson.dependencies?.[dependencyName];
-      if (!specifier?.startsWith("workspace:")) continue;
-      const resolved = await resolveDependencyPackage(dependencyName, packageJsonPath);
-      if (!resolved || resolved.packageRoot.split(NodePath.sep).includes("node_modules")) continue;
-      await visitManifest(NodePath.join(resolved.packageRoot, "package.json"));
+      if (!specifier?.startsWith("workspace:") && !specifier?.startsWith("file:")) continue;
+      const resolved = await resolveDependencyPackage(dependencyName, installedPackageJsonPath);
+      if (!resolved) continue;
+      const resolvedManifest = NodePath.join(resolved.packageRoot, "package.json");
+      if (specifier.startsWith("workspace:")) {
+        if (resolved.packageRoot.split(NodePath.sep).includes("node_modules")) continue;
+        await visitManifest(resolvedManifest);
+        continue;
+      }
+
+      // signalbox: pnpm can install a local directory as a copy inside its dependency store.
+      try {
+        const sourceRoot = await NodeFSP.realpath(
+          NodePath.resolve(NodePath.dirname(packageJsonPath), specifier.slice("file:".length)),
+        );
+        if (sourceRoot.split(NodePath.sep).includes("node_modules")) continue;
+        const sourceManifest = NodePath.join(sourceRoot, "package.json");
+        const sourcePackageJson = await readPackageJson(sourceManifest);
+        if (
+          sourcePackageJson.name !== dependencyName ||
+          !NodeUtil.isDeepStrictEqual(sourcePackageJson, resolved.packageJson)
+        ) {
+          continue;
+        }
+        await visitManifest(sourceManifest, resolvedManifest);
+      } catch (error) {
+        const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+      }
     }
   };
   for (const manifest of packageManifests) {

@@ -111,6 +111,47 @@ async function createWorkspaceFixture() {
   };
 }
 
+async function createLocalFileFixture(
+  edge: "dependencies" | "optionalDependencies" = "dependencies",
+  layout: "symlink" | "pnpm" = "pnpm",
+) {
+  const fixture = await createFixture();
+  const sourceRoot = NodePath.join(fixture.root, "modules/local-runtime");
+  const installedLink = NodePath.join(fixture.root, "node_modules/local-runtime");
+  const installedRoot =
+    layout === "symlink"
+      ? sourceRoot
+      : NodePath.join(
+          fixture.root,
+          "node_modules/.pnpm/local-runtime@file+modules+local-runtime/node_modules/local-runtime",
+        );
+  await writeJson(fixture.appManifest, {
+    name: "fixture-app",
+    [edge]: { "local-runtime": "file:./modules/local-runtime" },
+  });
+  await writeJson(NodePath.join(sourceRoot, "package.json"), {
+    name: "local-runtime",
+    version: "0.0.0",
+    private: true,
+    main: "index.js",
+    dependencies: { "demo-dependency": "1.2.3" },
+  });
+  await NodeFSP.writeFile(NodePath.join(sourceRoot, "index.js"), "export {};\n");
+  if (layout === "pnpm") {
+    await NodeFSP.cp(sourceRoot, installedRoot, { recursive: true });
+  }
+  await NodeFSP.symlink(installedRoot, installedLink, "junction");
+  return {
+    ...fixture,
+    sourceRoot,
+    installedRoot,
+    bundledModuleIds: [
+      NodePath.join(installedLink, "index.js"),
+      NodePath.join(fixture.dependencyRoot, "index.js"),
+    ],
+  };
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirectories
@@ -120,6 +161,171 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
+  it.each([
+    ["dependencies", "symlink"],
+    ["optionalDependencies", "symlink"],
+    ["dependencies", "pnpm"],
+    ["optionalDependencies", "pnpm"],
+  ] as const)(
+    "excludes owned file: %s with a %s install and retains external runtime notices",
+    async (edge, layout) => {
+      const fixture = await createLocalFileFixture(edge, layout);
+      const manifest = await generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle: "mobile", path: fixture.appManifest }],
+        bundledModuleIds: fixture.bundledModuleIds,
+        bundleName: "desktop",
+      });
+
+      expect(manifest.entries.filter((entry) => entry.kind === "package")).toEqual([
+        expect.objectContaining({
+          name: "demo-dependency",
+          bundles: ["desktop", "mobile"],
+          license: "MIT",
+          noticeText: "Demo MIT license text",
+        }),
+      ]);
+    },
+  );
+
+  it.each(["license", "notice"])(
+    "requires the external transitive dependency's %s through an owned file: install",
+    async (missing) => {
+      const fixture = await createLocalFileFixture();
+      if (missing === "license") {
+        await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {
+          name: "demo-dependency",
+          version: "1.2.3",
+          main: "index.js",
+        });
+      } else {
+        await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
+      }
+
+      await expect(
+        generateThirdPartyLicenseManifest({
+          configFile: fixture.configFile,
+          packageManifests: [{ bundle: "mobile", path: fixture.appManifest }],
+        }),
+      ).rejects.toThrow(
+        missing === "license"
+          ? "demo-dependency@1.2.3 does not declare a distributable license"
+          : "demo-dependency@1.2.3 does not include a license or notice file",
+      );
+    },
+  );
+
+  it.each(["missing source", "installed directory", "archive", "name", "version", "metadata"])(
+    "does not grant file: ownership with %s instead of a matching local source manifest",
+    async (invalid) => {
+      const fixture = await createLocalFileFixture();
+      if (invalid === "missing source") {
+        await NodeFSP.rm(fixture.sourceRoot, { recursive: true });
+      } else if (invalid === "installed directory" || invalid === "archive") {
+        const specifier =
+          invalid === "installed directory"
+            ? "file:./node_modules/local-runtime"
+            : "file:./local-runtime.tgz";
+        await NodeFSP.writeFile(NodePath.join(fixture.root, "local-runtime.tgz"), "archive");
+        await writeJson(fixture.appManifest, {
+          name: "fixture-app",
+          dependencies: { "local-runtime": specifier },
+        });
+      } else {
+        const sourceManifest = NodePath.join(fixture.sourceRoot, "package.json");
+        const source = JSON.parse(await NodeFSP.readFile(sourceManifest, "utf8")) as Record<
+          string,
+          unknown
+        >;
+        await writeJson(sourceManifest, {
+          ...source,
+          ...(invalid === "name"
+            ? { name: "another-runtime" }
+            : invalid === "version"
+              ? { version: "1.0.0" }
+              : { dependencies: {} }),
+        });
+      }
+
+      await expect(
+        generateThirdPartyLicenseManifest({
+          configFile: fixture.configFile,
+          packageManifests: [{ bundle: "mobile", path: fixture.appManifest }],
+          bundledModuleIds: fixture.bundledModuleIds,
+          bundleName: "mobile",
+        }),
+      ).rejects.toThrow("local-runtime@0.0.0 does not declare a distributable license");
+    },
+  );
+
+  it("does not let a third-party file: dependency confer ownership", async () => {
+    const fixture = await createLocalFileFixture();
+    const externalManifest = NodePath.join(fixture.dependencyRoot, "package.json");
+    const external = JSON.parse(await NodeFSP.readFile(externalManifest, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    await writeJson(externalManifest, {
+      ...external,
+      dependencies: { "local-runtime": "file:../../modules/local-runtime" },
+    });
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { "demo-dependency": "1.2.3" },
+    });
+
+    await expect(
+      generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle: "mobile", path: fixture.appManifest }],
+      }),
+    ).rejects.toThrow("local-runtime@0.0.0 does not declare a distributable license");
+  });
+
+  it("resolves nested file: sources separately from installed copies and terminates cycles", async () => {
+    const fixture = await createLocalFileFixture();
+    const nestedSource = NodePath.join(fixture.sourceRoot, "nested-runtime");
+    const nestedInstalled = NodePath.join(
+      fixture.root,
+      "node_modules/.pnpm/nested-runtime@file+modules+local-runtime+nested-runtime/node_modules/nested-runtime",
+    );
+    const parentPackageJson = {
+      name: "local-runtime",
+      version: "0.0.0",
+      optionalDependencies: { "nested-runtime": "file:./nested-runtime" },
+    };
+    const nestedPackageJson = {
+      name: "nested-runtime",
+      version: "0.0.0",
+      dependencies: { "local-runtime": "file:..", "demo-dependency": "1.2.3" },
+    };
+    for (const root of [fixture.sourceRoot, fixture.installedRoot]) {
+      await writeJson(NodePath.join(root, "package.json"), parentPackageJson);
+    }
+    for (const root of [nestedSource, nestedInstalled]) {
+      await writeJson(NodePath.join(root, "package.json"), nestedPackageJson);
+      await NodeFSP.writeFile(NodePath.join(root, "index.js"), "export {};\n");
+    }
+    const nestedLink = NodePath.join(fixture.installedRoot, "node_modules/nested-runtime");
+    await NodeFSP.mkdir(NodePath.dirname(nestedLink), { recursive: true });
+    await NodeFSP.symlink(nestedInstalled, nestedLink, "junction");
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "mobile", path: fixture.appManifest }],
+      bundledModuleIds: [NodePath.join(nestedLink, "index.js"), ...fixture.bundledModuleIds],
+      bundleName: "desktop",
+    });
+
+    expect(manifest.entries.filter((entry) => entry.kind === "package")).toEqual([
+      expect.objectContaining({
+        name: "demo-dependency",
+        bundles: ["desktop", "mobile"],
+        noticeText: "Demo MIT license text",
+      }),
+    ]);
+  });
+
   it("excludes resolved scoped and unscoped workspaces while collecting their external dependencies", async () => {
     const fixture = await createWorkspaceFixture();
     const manifest = await generateThirdPartyLicenseManifest({
