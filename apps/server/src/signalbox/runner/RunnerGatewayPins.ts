@@ -1,5 +1,7 @@
 import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 
+export { routesHarness } from "@signalbox/runner-protocol/HarnessSecretPolicy";
+
 import type { MachineLayout } from "./RunnerModelAccess.ts";
 
 /**
@@ -32,31 +34,6 @@ const cliQuote = (value: string) => `"${value.replaceAll(/["\\$`]/g, "\\$&")}"`;
 
 /** The harness versions the pins below were checked against; the image test holds them to the Dockerfile's. */
 export const GATEWAY_PINS_CHECKED_ON = { claudeCode: "2.1.292", codex: "0.160.1" } as const;
-
-const ROUTING_PREFIXES = [
-  // The harnesses' own settings: base URLs, other providers, sockets, keys, telemetry.
-  "ANTHROPIC_",
-  "CLAUDE_",
-  "CODEX_",
-  "OTEL_",
-  // The adapter's Codex launch arguments, which would replace the overrides below.
-  "T3CODE_",
-  // Code loaded into a harness as it starts.
-  "LD_",
-  "DYLD_",
-];
-// Codex reads no other OPENAI_ variable for the gateway's provider, so an app's own OPENAI_API_KEY still loads.
-const ROUTING_NAMES: ReadonlySet<string> = new Set([
-  "NODE_OPTIONS",
-  "BUN_OPTIONS",
-  "OPENAI_BASE_URL",
-]);
-
-/** Each name a folder secret may never set: it moves a harness's model requests, copies them, or loads code into it. */
-export const routesHarness = (name: string) =>
-  ROUTING_PREFIXES.some((prefix) => name.startsWith(prefix)) ||
-  ROUTING_NAMES.has(name) ||
-  name.toUpperCase().endsWith("_PROXY");
 
 /** Where Claude Code's model requests go; the machine's environment and its flag settings both set it. */
 export const claudeGateway = (gatewayUrl: string) => ({

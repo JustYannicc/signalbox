@@ -8,6 +8,7 @@ import { createProofTestStorage } from "../claudeTurnProof/proofTestStorage.ts";
 import { createCodexHookRuntime } from "./codexRuntime.ts";
 import {
   CODEX_HOOK_REGISTRATIONS,
+  CODEX_STANDARD_HOOK_IDS,
   PRE_TOOL_USE_CAPTURE_PATH,
   codexHookRequirements,
 } from "./codexScenario.ts";
@@ -99,6 +100,8 @@ describe("Codex hook fixture setup", () => {
     expect(JSON.stringify(hooks)).toContain(CODEX_HOOK_REGISTRATIONS[1]!.id);
     expect(JSON.stringify(hooks)).toContain(CODEX_HOOK_REGISTRATIONS[2]!.id);
     expect(JSON.stringify(hooks)).toContain(CODEX_HOOK_REGISTRATIONS[3]!.id);
+    for (const id of Object.values(CODEX_STANDARD_HOOK_IDS))
+      expect(JSON.stringify(hooks)).toContain(id);
   });
 
   it("creates generated-code tables in raw facet storage and drains its engine identity", async () => {
@@ -116,6 +119,18 @@ describe("Codex hook fixture setup", () => {
       await test.close();
     }
     expect(test.runtime.host.processes.size).toBe(0);
+  });
+
+  it("includes the standard adapter result after the engine has joined", async () => {
+    const test = fixture();
+    try {
+      const configured = test.runtime.configure(test.input);
+      await configured.finish({ exit: 0, failure: undefined });
+      const result = await configured.verify({ filesystem: test.input.filesystem });
+      expect(result).toMatchObject({ ok: false, standard: { ok: false } });
+    } finally {
+      await test.close();
+    }
   });
 
   it("does not leave a live engine identity when generated storage setup fails", async () => {

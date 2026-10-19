@@ -7,7 +7,11 @@ import type {
   FilePersistenceResult,
 } from "../../src/kernel/FilePersistencePorts.ts";
 import type { createFacetFilePersistence } from "../../src/kernel/FacetFilePersistence.ts";
-import type { HarnessHookEvent, HarnessHookRequest } from "../../src/hooks/HarnessHooks.ts";
+import type {
+  HarnessHookCallback,
+  HarnessHookEvent,
+  HarnessHookRequest,
+} from "../../src/hooks/HarnessHooks.ts";
 import type { HookRegistration } from "../../src/hooks/HookService.ts";
 import { KERNEL_HOOK_EXECUTABLE } from "../../src/hooks/HookProgram.ts";
 import {
@@ -16,11 +20,12 @@ import {
 } from "../../src/hooks/HarnessHookSettings.ts";
 import type { MockToolResult } from "../claudeTurnProof/mockMessages.ts";
 import type { ClaudeHooksDispatchRecord } from "./claudeEvidence.ts";
+import { STANDARD_PROOF_WRITE, STANDARD_PROOF_FILLED_WRITE } from "./standardProofAdapter.ts";
 
 export const CLAUDE_HOOK_SETTINGS_PATH = "/home/claude/.claude/settings.json";
 export const CLAUDE_HOOK_COMMAND_LOG = "/work/hook-command-events.jsonl";
 export const CLAUDE_TOOL_FILE = "/work/official-write.txt";
-export const CLAUDE_TOOL_CONTENT = "written by Claude through the official CLI\n";
+export const CLAUDE_TOOL_CONTENT = STANDARD_PROOF_WRITE;
 export const CLAUDE_HOOK_SESSION_ID = "claude-hooks-proof-session";
 export { HOOK_PROGRAM_FACADE as CLAUDE_HOOK_PROGRAM_FACADE } from "./hookProgramFacade.ts";
 
@@ -50,7 +55,9 @@ const BASE = Object.freeze({
   commit: "fixture-base",
 });
 
-export function createClaudeHookScenario(): ClaudeHookScenario {
+export function createClaudeHookScenario(
+  callback: HarnessHookCallback = async () => ({}),
+): ClaudeHookScenario {
   const registrations = new Map<string, HookRegistration>();
   const configuredHooks: ConfiguredHarnessHook[] = [];
   const rpcCalls: HarnessHookRequest[] = [];
@@ -59,7 +66,7 @@ export function createClaudeHookScenario(): ClaudeHookScenario {
     for (const kind of CLAUDE_HOOK_ROUTES) {
       const id = hookId(event, kind);
       configuredHooks.push({ id, event });
-      registrations.set(id, registration(event, kind, rpcCalls));
+      registrations.set(id, registration(event, kind, rpcCalls, callback));
     }
   }
 
@@ -79,6 +86,7 @@ function registration(
   event: HarnessHookEvent,
   kind: ClaudeHookRoute,
   rpcCalls: HarnessHookRequest[],
+  callback: HarnessHookCallback,
 ): HookRegistration {
   const context = {
     harness: "claude-code" as const,
@@ -91,7 +99,15 @@ function registration(
       kind,
       command: {
         executable: "/bin/bash",
-        argv: ["/bin/bash", "-c", "cat >> " + CLAUDE_HOOK_COMMAND_LOG],
+        argv: [
+          "/bin/bash",
+          "-c",
+          [
+            "cat >> " + CLAUDE_HOOK_COMMAND_LOG,
+            `printf '%s\\n' "$PROOF_API_TOKEN" >&2`,
+            `printf '%s\\n' "$PROOF_VAULT_TOKEN" >&2`,
+          ].join("\n"),
+        ],
       },
     };
   }
@@ -102,7 +118,7 @@ function registration(
       callback: async (request, options) => {
         options.signal.throwIfAborted();
         rpcCalls.push(request);
-        return { continue: true };
+        return callback(request, options);
       },
     };
   }
@@ -199,6 +215,15 @@ export async function verifyClaudeHookScenario(input: {
     }
     verifyOfficialPayload(call.payload, target.event, errors);
     if (target.route === "script") verifyGeneratedOutput(call.stdout, target.event, errors);
+    if (target.route === "signalbox" && call.stdout?.trim() !== "{}") {
+      errors.push(id + " did not return a neutral standard hook result");
+    }
+    if (
+      target.route === "command" &&
+      call.stderr !== "{{secret:API_TOKEN}}\n{{secret:VAULT_TOKEN}}\n"
+    ) {
+      errors.push(id + " did not scrub the real command environment output before the harness");
+    }
   }
 
   for (const { event, officialName } of CLAUDE_HOOK_EVENTS) {
@@ -229,7 +254,7 @@ export async function verifyClaudeHookScenario(input: {
     [CLAUDE_TOOL_FILE]: readText(input.fs, CLAUDE_TOOL_FILE),
     [CLAUDE_HOOK_COMMAND_LOG]: readText(input.fs, CLAUDE_HOOK_COMMAND_LOG),
   };
-  if (actualFiles[CLAUDE_TOOL_FILE] !== CLAUDE_TOOL_CONTENT) {
+  if (actualFiles[CLAUDE_TOOL_FILE] !== STANDARD_PROOF_FILLED_WRITE) {
     errors.push("official Claude Write did not produce the expected file");
   }
 
@@ -273,7 +298,7 @@ export async function verifyClaudeHookScenario(input: {
     ok: errors.length === 0,
     errors,
     officialEventRecords: input.dispatches,
-    rpcRouting: { kind: "fixture-callback", calls: input.rpcCalls },
+    rpcRouting: { kind: "standard-hooks-with-restart-module-test-adapters", calls: input.rpcCalls },
     timing: hookTiming(input.dispatches),
     machineCalls: input.machineCalls,
     settingsPath: CLAUDE_HOOK_SETTINGS_PATH,
@@ -282,7 +307,8 @@ export async function verifyClaudeHookScenario(input: {
     files: [
       {
         path: CLAUDE_TOOL_FILE,
-        expected: CLAUDE_TOOL_CONTENT,
+        input: CLAUDE_TOOL_CONTENT,
+        expected: STANDARD_PROOF_FILLED_WRITE,
         actual: actualFiles[CLAUDE_TOOL_FILE],
         committed: committed[CLAUDE_TOOL_FILE],
       },

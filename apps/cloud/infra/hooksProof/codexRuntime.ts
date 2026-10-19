@@ -4,9 +4,9 @@ import type { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import {
   createCodexHookServiceRegistrations,
+  CODEX_ALL_HOOK_REGISTRATIONS,
   CODEX_HOOK_EXECUTABLE,
   CODEX_HOOK_PROGRAM_FACADE,
-  CODEX_HOOK_REGISTRATIONS,
   CODEX_HOOK_REQUIREMENTS_PATH,
   PRE_TOOL_USE_CAPTURE_PATH,
   codexHookRequirements,
@@ -33,8 +33,8 @@ import type { KernelExitStatus } from "../../src/kernel/KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createHookService } from "../../src/hooks/HookService.ts";
 import { KERNEL_HOOK_EXECUTABLE, registerKernelHookProgram } from "../../src/hooks/HookProgram.ts";
+import { createStandardProofAdapter, type StandardProofAdapter } from "./standardProofAdapter.ts";
 import {
-  CODEX_HOOK_MODES,
   verifyCodexHooks,
   type GeneratedCallRecord,
   type HookInvocationRecord,
@@ -95,19 +95,18 @@ export function createCodexHookRuntime(
   const spawnCalls: SpawnCallRecord[] = [];
   const machineAttempts: { readonly executable: string; readonly argv: readonly string[] }[] = [];
   let hookService: ReturnType<typeof createHookService> | undefined;
-  let engineProcess: ReturnType<typeof admitEngineProcess> | undefined;
 
   const registry = new KernelProgramRegistry();
   const commandPrograms = createPrograms(registry);
   const programs = new Map(commandPrograms.bindings);
 
   const hookPrograms = registerKernelHookProgram(registry, async (id, payload, invocation) => {
-    const registration = CODEX_HOOK_REGISTRATIONS.find((candidate) => candidate.id === id);
+    const registration = CODEX_ALL_HOOK_REGISTRATIONS.find((candidate) => candidate.id === id);
     if (!registration || !hookService) throw new Error("Codex hook runtime was not configured");
     const record: HookInvocationRecord = {
       id,
       event: registration.event,
-      kind: CODEX_HOOK_MODES[registration.event],
+      kind: registration.kind,
       input: structuredClone(payload),
       startedAtMs: readClock(),
       elapsedMs: null,
@@ -154,16 +153,21 @@ export function createCodexHookRuntime(
         fetcher: codeGeneration,
       });
       const generated = instrumentGeneratedCode(generatedService, generatedCalls);
-      const registrations = createCodexHookServiceRegistrations((request) => {
-        signalboxCalls.push({ request: structuredClone(request) });
-      });
-      engineProcess = admitEngineProcess(host);
+      let standard: StandardProofAdapter | undefined;
+      let engineProcess: ReturnType<typeof admitEngineProcess> | undefined;
       try {
+        standard = createStandardProofAdapter(configuration.facetStorage, "codex-standard-hooks");
+        const activeStandard = standard;
+        const registrations = createCodexHookServiceRegistrations((request) => {
+          signalboxCalls.push({ request: structuredClone(request) });
+        }, activeStandard.callback);
+        engineProcess = admitEngineProcess(host);
+        const activeEngine = engineProcess;
         const computer = createComputerCommands({
           kernel: {
             host,
             filesystem: configuration.filesystem,
-            parent: engineProcess.parent,
+            parent: activeEngine.parent,
             home: "/home/codex",
           },
           escalation: new ComputerEscalationTable([
@@ -176,6 +180,7 @@ export function createCodexHookRuntime(
             },
           },
         });
+        const isolateCommands = activeStandard.commands(computer.isolate);
 
         const commands = {
           exec: (command: KernelCommand, signal: AbortSignal) => {
@@ -187,7 +192,7 @@ export function createCodexHookRuntime(
               elapsedMs: null,
             };
             isolateCalls.push(call);
-            return computer.isolate.exec(command, signal).then(
+            return isolateCommands.exec(command, signal).then(
               (child) => ({
                 stdin: child.stdin,
                 stdout: child.stdout,
@@ -233,8 +238,8 @@ export function createCodexHookRuntime(
             ...input,
             overrides: { ...input.overrides, "features.hooks": true },
           }),
-          parent: engineProcess.parent,
-          signal: engineProcess.signal,
+          parent: activeEngine.parent,
+          signal: activeEngine.signal,
           async spawn(request) {
             const call: SpawnCallRecord = {
               executable: request.execPath,
@@ -247,8 +252,8 @@ export function createCodexHookRuntime(
             const result = await host.spawn(
               {
                 filesystem: configuration.filesystem,
-                parent: engineProcess!.parent,
-                signal: engineProcess!.signal,
+                parent: activeEngine.parent,
+                signal: activeEngine.signal,
                 home: "/home/codex",
               },
               request,
@@ -259,30 +264,43 @@ export function createCodexHookRuntime(
           },
           verify: async ({ filesystem }) => {
             await commandPrograms.drain();
+            const standardResult = activeStandard.inspect();
             const result = await verifyCodexHooks({
               filesystem,
               host,
-              parent: engineProcess!.parent,
+              parent: activeEngine.parent,
               invocations,
               isolateCalls,
               generatedCalls,
               signalboxCalls,
               spawnCalls,
               machineAttempts,
+              standard: standardResult,
             });
             return {
               ...result,
+              standard: standardResult,
               capacity: { active: capacity.active, limit: capacity.limit },
-              ok: result.ok && capacity.active === 0,
+              ok: result.ok && standardResult.ok && capacity.active === 0,
             };
           },
-          finish: ({ exit, failure }) =>
-            engineProcess?.finish({ exit, failure }) ?? Promise.resolve(),
+          async finish({ exit, failure }) {
+            try {
+              await activeEngine.finish({ exit, failure });
+            } finally {
+              activeStandard.close();
+            }
+          },
         };
       } catch (error) {
-        void engineProcess
-          .finish({ exit: undefined, failure: String(error) })
-          .catch(() => undefined);
+        if (engineProcess) {
+          void engineProcess
+            .finish({ exit: undefined, failure: String(error) })
+            .catch(() => undefined)
+            .finally(() => standard?.close());
+        } else {
+          standard?.close();
+        }
         throw error;
       }
     },

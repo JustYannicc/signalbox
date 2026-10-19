@@ -14,6 +14,7 @@ export interface ProofExecutableSeedState {
   readonly bootStarted: boolean;
   readonly assetsRequired: boolean;
   readonly assetsSeeded: boolean;
+  readonly programsSeeded?: boolean;
 }
 
 /** Validates and writes pinned executable bytes through the proof's shared kernel filesystem. */
@@ -21,6 +22,7 @@ export function createProofExecutableSeedRoute(options: {
   readonly catalog: ProofExecutableFileCatalog;
   readonly filesystem: () => KernelFileSystem;
   readonly storage: Pick<FacetStorage, "transactionSync">;
+  readonly onSeeded?: () => void;
 }) {
   validateCatalog(options.catalog);
   let seeded = false;
@@ -35,7 +37,13 @@ export function createProofExecutableSeedRoute(options: {
       if (request.headers.get("content-type") !== PROGRAM_BUNDLE_CONTENT_TYPE) {
         return new Response("Wrong program bundle content type", { status: 415 });
       }
-      if (state.bootStarted || seeded || seeding || (state.assetsRequired && !state.assetsSeeded)) {
+      if (
+        state.bootStarted ||
+        seeded ||
+        state.programsSeeded ||
+        seeding ||
+        (state.assetsRequired && !state.assetsSeeded)
+      ) {
         throw new Error("ERR_DIAGNOSTIC_PROGRAM_SEED_ORDER");
       }
 
@@ -48,6 +56,7 @@ export function createProofExecutableSeedRoute(options: {
         const filesystem = options.filesystem();
         options.storage.transactionSync(() => {
           for (const entry of entries) writeExecutable(filesystem, entry.path, entry.bytes);
+          options.onSeeded?.();
         });
         seeded = true;
         return Response.json({

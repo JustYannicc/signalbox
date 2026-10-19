@@ -7,23 +7,27 @@ import type { KernelHandle } from "../../src/kernel/KernelAbi.ts";
 import type { KernelCommandExit } from "../../src/kernel/KernelCommandForwarder.ts";
 import type { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import type { NodeGeneratedCodeInvokeInput } from "../../src/isolate/NodeGeneratedCode.ts";
-import { verifyCodexHookPayloads } from "./codexPayloads.ts";
+import { STANDARD_PROOF_NAMED_SECRET } from "./standardProofAdapter.ts";
 import {
+  CODEX_STANDARD_DISPATCH_IDS,
+  redactCodexProofText,
+  redactCodexProofValue,
+  verifyCodexHookPayloads,
+  verifyCodexStandardHookPayloads,
+  verifyCodexStandardHookResults,
+  type CodexStandardHookInspection,
+} from "./codexPayloads.ts";
+import {
+  CODEX_ALL_HOOK_REGISTRATIONS,
   CODEX_HOOK_EXECUTABLE,
   CODEX_HOOK_REGISTRATIONS,
   CODEX_HOOK_REQUIREMENTS_PATH,
   CODEX_NATIVE_HOOK_SHELL,
   CODEX_POST_TOOL_USE_PROGRAM,
+  CODEX_STANDARD_HOOK_REGISTRATIONS,
   codexHookRequirements,
   PRE_TOOL_USE_CAPTURE_PATH,
 } from "./codexScenario.ts";
-
-export const CODEX_HOOK_MODES = Object.freeze({
-  "session-start": "signalbox",
-  "pre-tool-use": "command",
-  "post-tool-use": "script",
-  stop: "signalbox",
-} as const);
 
 const officialEventNames = Object.freeze({
   "session-start": "SessionStart",
@@ -34,12 +38,11 @@ const officialEventNames = Object.freeze({
 
 // The shared turn executes Bash and apply_patch, so each tool event fires twice.
 const expectedInvocations = { "session-start": 1, "pre-tool-use": 2, "post-tool-use": 2, stop: 1 };
-
-export type CodexHookKind = (typeof CODEX_HOOK_MODES)[keyof typeof CODEX_HOOK_MODES];
+export type CodexHookKind = (typeof CODEX_ALL_HOOK_REGISTRATIONS)[number]["kind"];
 
 export interface HookInvocationRecord {
   readonly id: string;
-  readonly event: keyof typeof CODEX_HOOK_MODES;
+  readonly event: (typeof CODEX_ALL_HOOK_REGISTRATIONS)[number]["event"];
   readonly kind: CodexHookKind;
   readonly input: HarnessHookJson;
   readonly startedAtMs: number | null;
@@ -99,6 +102,7 @@ export interface CodexHookVerificationInput {
     readonly executable: string;
     readonly argv: readonly string[];
   }[];
+  readonly standard: CodexStandardHookInspection;
 }
 
 const decoder = new TextDecoder();
@@ -107,14 +111,19 @@ const executableFacade = encoder.encode(HOOK_PROGRAM_FACADE);
 
 /** Checks official event results and the process paths the unchanged CLI actually used. */
 export async function verifyCodexHooks(input: CodexHookVerificationInput) {
-  const failures = verifyCodexHookPayloads(input.invocations);
+  const originalIds = new Set<string>(CODEX_HOOK_REGISTRATIONS.map(({ id }) => id));
+  const originalInvocations = input.invocations.filter((record) => originalIds.has(record.id));
+  const failures = [
+    ...verifyCodexHookPayloads(input.invocations),
+    ...verifyCodexStandardHookPayloads(input.invocations),
+    ...verifyCodexStandardHookResults(input.invocations, input.standard),
+  ];
   const hookFile = inspectFile(input.filesystem, CODEX_HOOK_EXECUTABLE);
   const settingsFile = inspectFile(input.filesystem, CODEX_HOOK_REQUIREMENTS_PATH);
   const settingsText = settingsFile.text ?? "";
   const expectedIds = CODEX_HOOK_REGISTRATIONS.map(({ id }) => id);
-  const events = CODEX_HOOK_REGISTRATIONS.map(({ id, event }) => {
-    const kind = CODEX_HOOK_MODES[event];
-    const records = input.invocations.filter((invocation) => invocation.id === id);
+  const events = CODEX_HOOK_REGISTRATIONS.map(({ id, event, kind }) => {
+    const records = originalInvocations.filter((invocation) => invocation.id === id);
     const record = records[0];
     const expectedEventName = officialEventNames[event];
     const inputEventName = readRecord(record?.input)?.hook_event_name;
@@ -129,9 +138,9 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
       elapsedMs: record?.elapsedMs ?? null,
       timingUnavailableReason: record?.timingUnavailableReason ?? null,
       exit: record?.exit ?? null,
-      stdout: record?.stdout ?? null,
-      stderr: record?.stderr ?? null,
-      error: record?.error ?? null,
+      stdout: record?.stdout === undefined ? null : redactCodexProofText(record.stdout),
+      stderr: record?.stderr === undefined ? null : redactCodexProofText(record.stderr),
+      error: record?.error === undefined ? null : redactCodexProofText(record.error),
     };
   });
 
@@ -148,9 +157,15 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
     (sum, count) => sum + count,
     0,
   );
-  if (input.invocations.length !== expectedInvocationCount)
-    failures.push(`Expected ${expectedInvocationCount} native hook invocations`);
-  for (const record of input.invocations) {
+  const expectedHookSpawnCount =
+    expectedInvocationCount +
+    CODEX_STANDARD_HOOK_REGISTRATIONS.reduce(
+      (sum, { event }) => sum + expectedInvocations[event],
+      0,
+    );
+  if (input.invocations.length !== expectedHookSpawnCount)
+    failures.push(`Expected ${expectedHookSpawnCount} native hook invocations`);
+  for (const record of originalInvocations) {
     if (readRecord(record.input)?.hook_event_name !== officialEventNames[record.event])
       failures.push(`${record.id} received the wrong official event payload`);
     if (!successfulExit(record.exit) || record.error)
@@ -181,7 +196,6 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
         failures.push(`${record.id} did not validate its PostToolUse payload`);
     }
   }
-
   const sessionStart = outputFor(input.invocations, CODEX_HOOK_REGISTRATIONS[0]!.id);
   if (readNestedString(sessionStart, ["hookSpecificOutput", "hookEventName"]) !== "SessionStart")
     failures.push("SessionStart callback returned the wrong official result event");
@@ -222,7 +236,9 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   const generatedCalls = input.generatedCalls.filter(
     (call) => call.id === CODEX_POST_TOOL_USE_PROGRAM.id,
   );
-  const postInvocations = input.invocations.filter((record) => record.event === "post-tool-use");
+  const postInvocations = originalInvocations.filter(
+    (record) => record.id === CODEX_HOOK_REGISTRATIONS[2]!.id,
+  );
   if (
     generatedCalls.length !== expectedInvocations["post-tool-use"] ||
     generatedCalls.some(
@@ -233,9 +249,18 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   )
     failures.push("PostToolUse event JSON did not reach the NodeGeneratedCode child");
 
-  const rpcEvents = input.signalboxCalls.map(({ request }) => request.event).sort();
-  if (rpcEvents.join(",") !== "session-start,stop")
+  const originalRpcEvents = input.signalboxCalls
+    .map(({ request }) => request.event)
+    .filter((event) => event === "session-start" || event === "stop")
+    .sort();
+  if (originalRpcEvents.join(",") !== "session-start,stop")
     failures.push("Signalbox callback did not receive SessionStart and Stop");
+  const standardRpcEvents = input.signalboxCalls
+    .map(({ request }) => request.event)
+    .filter((event) => event === "pre-tool-use" || event === "post-tool-use")
+    .sort();
+  if (standardRpcEvents.join(",") !== "post-tool-use,post-tool-use,pre-tool-use,pre-tool-use")
+    failures.push("Standard RPC hooks did not receive both native tool events");
   if (
     input.signalboxCalls.some(
       ({ request }) => request.sessionId !== readRecord(request.payload)?.session_id,
@@ -249,13 +274,38 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
     input.isolateCalls.some((call) => call.executable !== "/bin/bash" || !successfulExit(call.exit))
   )
     failures.push("PreToolUse command did not use ComputerCommands.isolate.exec");
+  const expectedCommandStderr = "{{secret:API_TOKEN}}\n";
+  const proofSecret = STANDARD_PROOF_NAMED_SECRET.value;
+  const preCommandInvocations = originalInvocations.filter(
+    (record) => record.id === CODEX_HOOK_REGISTRATIONS[1]!.id,
+  );
+  for (const record of preCommandInvocations) {
+    if (record.stderr !== expectedCommandStderr)
+      failures.push(`${record.id} did not scrub the command environment from stderr`);
+    if (record.stdout?.includes(proofSecret) || record.stderr?.includes(proofSecret))
+      failures.push(`${record.id} exposed a filled secret in hook output`);
+  }
   if (input.machineAttempts.length !== 0)
     failures.push("A hook command attempted machine execution");
 
+  const hookRunnerSpawns = input.spawnCalls.filter(({ argv }) =>
+    argv.some((argument) => argument.includes(CODEX_HOOK_EXECUTABLE)),
+  );
   const officialHookSpawns = input.spawnCalls.filter(isOfficialHookCommandSpawn);
   const expectedNativeShell = CODEX_NATIVE_HOOK_SHELL;
-  if (officialHookSpawns.length !== expectedInvocationCount)
-    failures.push("Codex did not launch each registered hook through its native command runner");
+  if (hookRunnerSpawns.length !== expectedHookSpawnCount)
+    failures.push(
+      `Codex launched ${hookRunnerSpawns.length} hook processes instead of ${expectedHookSpawnCount}`,
+    );
+  if (officialHookSpawns.length !== expectedHookSpawnCount)
+    failures.push(
+      `Codex launched ${officialHookSpawns.length} native hook processes instead of ${expectedHookSpawnCount}`,
+    );
+  for (const { id, event } of CODEX_ALL_HOOK_REGISTRATIONS) {
+    const count = hookRunnerSpawns.filter(({ argv }) => argv.join("\n").includes(id)).length;
+    if (count !== expectedInvocations[event])
+      failures.push(`${id} launched ${count} times instead of ${expectedInvocations[event]}`);
+  }
   if (officialHookSpawns.some(({ executable }) => executable !== expectedNativeShell))
     failures.push("Codex's native hook command runner did not use the selected Bash path");
 
@@ -268,6 +318,9 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   for (const id of expectedIds) {
     if (!settingsText.includes(id)) failures.push(`Codex requirements omit registration ${id}`);
   }
+  for (const { id } of CODEX_STANDARD_HOOK_REGISTRATIONS) {
+    if (!settingsText.includes(id)) failures.push(`Codex requirements omit registration ${id}`);
+  }
   const parentInfo = input.host.processes.info(input.parent);
   if (parentInfo.status !== "ok") failures.push("Codex engine has no admitted process handle");
 
@@ -275,37 +328,56 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
     ok: failures.length === 0,
     failures,
     officialEvents: events,
-    invocations: input.invocations,
-    registrations: CODEX_HOOK_REGISTRATIONS.map(({ id, event }) => ({
+    standardEvents: input.invocations
+      .filter((record) => CODEX_STANDARD_DISPATCH_IDS.has(record.id))
+      .map(({ id, event, kind, elapsedMs, timingUnavailableReason }) => ({
+        id,
+        event,
+        kind,
+        elapsedMs,
+        timingUnavailableReason: timingUnavailableReason ?? null,
+      })),
+    invocations: input.invocations.map((record) => ({
+      ...record,
+      input: redactCodexProofValue(record.input),
+      ...(record.stdout === undefined ? {} : { stdout: redactCodexProofText(record.stdout) }),
+      ...(record.stderr === undefined ? {} : { stderr: redactCodexProofText(record.stderr) }),
+      ...(record.error === undefined ? {} : { error: redactCodexProofText(record.error) }),
+    })),
+    registrations: CODEX_HOOK_REGISTRATIONS.map(({ id, event, kind }) => ({
       id,
       event,
-      kind: CODEX_HOOK_MODES[event],
+      kind,
     })),
+    standardRegistrations: CODEX_STANDARD_HOOK_REGISTRATIONS,
+    nativeFileFill: "unproved: this Codex fixture covers command-hook environment fill only",
     preservedInput: {
       preToolUse: capturedPreToolUse,
-      signalboxEvents: input.signalboxCalls.map(({ request }) => ({
-        event: request.event,
-        payload: request.payload,
-      })),
-      generatedPostToolUse: generatedCalls.map((call) => call.input),
+      signalboxEvents: redactCodexProofValue(
+        input.signalboxCalls.map(({ request }) => ({
+          event: request.event,
+          payload: request.payload,
+        })),
+      ),
+      generatedPostToolUse: redactCodexProofValue(generatedCalls.map((call) => call.input)),
     },
-    outputDecisions: {
+    outputDecisions: redactCodexProofValue({
       sessionStart,
       preToolUse,
       postToolUse,
       stop,
-    },
-    isolateCalls: input.isolateCalls,
-    generatedCalls: input.generatedCalls,
-    signalboxCalls: input.signalboxCalls,
-    officialSpawnCalls: input.spawnCalls,
+    }),
+    isolateCalls: redactCodexProofValue(input.isolateCalls),
+    generatedCalls: redactCodexProofValue(input.generatedCalls),
+    signalboxCalls: redactCodexProofValue(input.signalboxCalls),
+    officialSpawnCalls: redactCodexProofValue(input.spawnCalls),
     officialHookShell: {
       selectedBy: "Codex hook command runner using the proof SHELL path",
       expectedExecutable: expectedNativeShell,
       observedExecutables: officialHookSpawns.map(({ executable }) => executable),
-      calls: officialHookSpawns,
+      calls: redactCodexProofValue(officialHookSpawns),
     },
-    machineAttempts: input.machineAttempts,
+    machineAttempts: redactCodexProofValue(input.machineAttempts),
     executableFacade: hookFile,
     requirementsPath: CODEX_HOOK_REQUIREMENTS_PATH,
     engineProcessPid: parentInfo.status === "ok" ? parentInfo.value.pid : null,
@@ -319,6 +391,15 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
         elapsedMs,
         timingUnavailableReason,
       })),
+      perInvocation: input.invocations.map(
+        ({ id, event, kind, elapsedMs, timingUnavailableReason }) => ({
+          id,
+          event,
+          kind,
+          elapsedMs,
+          timingUnavailableReason: timingUnavailableReason ?? null,
+        }),
+      ),
       isolateCommands: input.isolateCalls.map(({ elapsedMs, timingUnavailableReason }) => ({
         elapsedMs,
         timingUnavailableReason: timingUnavailableReason ?? null,
@@ -335,7 +416,7 @@ function isOfficialHookCommandSpawn(call: SpawnCallRecord): boolean {
   const args = call.argv.join("\n");
   return (
     args.includes(CODEX_HOOK_EXECUTABLE) &&
-    CODEX_HOOK_REGISTRATIONS.some(({ id }) => args.includes(id))
+    CODEX_ALL_HOOK_REGISTRATIONS.some(({ id }) => args.includes(id))
   );
 }
 

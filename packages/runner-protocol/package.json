@@ -83,6 +83,10 @@
       "types": "./src/SecretScrubber.ts",
       "import": "./src/SecretScrubber.ts"
     },
+    "./HarnessSecretPolicy": {
+      "types": "./src/HarnessSecretPolicy.ts",
+      "import": "./src/HarnessSecretPolicy.ts"
+    },
     "./FeedbackProtocol": {
       "types": "./src/FeedbackProtocol.ts",
       "import": "./src/FeedbackProtocol.ts"
