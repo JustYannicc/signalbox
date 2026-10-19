@@ -185,6 +185,7 @@ function validateContext(
   if (
     context.processes !== request.processes ||
     !context.filesystem.sharesBackingWith(request.filesystem) ||
+    (request.kind === "command" && context.filesystem.cwd !== command.cwd) ||
     context.home !== request.home ||
     context.args.length !== command.argv.length ||
     !context.args.every((value, index) => value === command.argv[index]) ||
