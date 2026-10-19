@@ -19,6 +19,8 @@ import {
 } from "./Deployment.ts";
 import { openLocalProofTunnel } from "./LocalTunnel.ts";
 import { prepareProofSeed } from "./Seed.ts";
+import { prepareProofWorker } from "./PrepareWorker.ts";
+import { waitForDevTunnel } from "./DevTunnelReadiness.ts";
 
 const options = NodeUtil.parseArgs({
   options: {
@@ -26,8 +28,12 @@ const options = NodeUtil.parseArgs({
     "stage-file": { type: "string" },
     "recover-stage-file": { type: "string" },
     output: { type: "string" },
+    mode: { type: "string" },
   },
 }).values;
+const mode = options.mode ?? "direct";
+if (mode !== "direct" && mode !== "nested" && mode !== "nested-recovery")
+  throw new Error("Mode must be direct, nested, or nested-recovery");
 const stagePath = options["recover-stage-file"] ?? options["stage-file"];
 if (!stagePath || !options.output || (!options["recover-stage-file"] && !options["program-dir"])) {
   throw new Error(
@@ -65,6 +71,29 @@ const seed = options["recover-stage-file"]
       await stage.update("failed-before-deploy");
       throw new Error("Proof seed preparation failed");
     });
+const workerDirectory = NodePath.resolve(
+  NodePath.dirname(stagePath),
+  `${stage.record.stage}-worker`,
+);
+const entryPoint = NodePath.join(workerDirectory, "worker.js");
+if (seed !== undefined) {
+  try {
+    const prepared = await prepareProofWorker({ seed, outputDirectory: workerDirectory });
+    if (prepared.entryPoint !== entryPoint) throw new Error("Unexpected proof Worker entrypoint");
+    receipt = { ...receipt, checks: { ...receipt.checks, workerPreparation: "passed" } };
+    await save();
+  } catch {
+    receipt = {
+      ...receipt,
+      checks: { ...receipt.checks, workerPreparation: "failed", localProof: "failed" },
+    };
+    await save();
+    await stage.update("failed-before-deploy");
+    throw new Error("Proof Worker preparation failed");
+  }
+} else if (!(await NodeFSP.stat(entryPoint).catch(() => undefined))?.isFile()) {
+  throw new Error("The original generated proof Worker bundle is required for recovery");
+}
 const stateDir = NodePath.resolve(NodePath.dirname(stagePath), `${stage.record.stage}-local-state`);
 await NodeFSP.mkdir(stateDir, { recursive: true, mode: 0o700 });
 const config = NodePath.resolve(stateDir, "wrangler.json");
@@ -72,7 +101,8 @@ await NodeFSP.writeFile(
   config,
   JSON.stringify({
     name: proofOwner(stage.record.stage),
-    main: NodePath.resolve(import.meta.dirname, "worker.ts"),
+    main: entryPoint,
+    no_bundle: true,
     compatibility_date: "2026-06-04",
     compatibility_flags: ["nodejs_compat", "legacy_module_registry"],
     worker_loaders: [{ binding: "CHILD_WORKERS" }],
@@ -82,8 +112,9 @@ await NodeFSP.writeFile(
   { mode: 0o600 },
 );
 const token = deriveProofToken(apiKey, stage.record.stage);
-const worker = await unstable_dev(NodePath.resolve(import.meta.dirname, "worker.ts"), {
+const worker = await unstable_dev(entryPoint, {
   config,
+  bundle: false,
   ip: "127.0.0.1",
   port: 0,
   inspectorPort: 0,
@@ -100,7 +131,10 @@ const worker = await unstable_dev(NodePath.resolve(import.meta.dirname, "worker.
   experimental: { watch: false, disableDevRegistry: true, disableExperimentalWarning: true },
 });
 const origin = new URL(`http://127.0.0.1:${worker.port}`);
-const request = async (route: "/status" | "/seed" | "/run" | "/recover", body?: unknown) => {
+const request = async (
+  route: "/status" | "/seed" | "/run" | "/resume" | "/recover",
+  body?: unknown,
+) => {
   const result = await requestProofWorker({
     url: origin,
     token,
@@ -127,15 +161,40 @@ try {
     await stage.update("seeding");
     await request("/seed", seed);
     tunnel = await openLocalProofTunnel(origin.href);
+    receipt = { ...receipt, checks: { ...receipt.checks, devTunnelReachable: "pending" } };
+    await save();
+    try {
+      await waitForDevTunnel({
+        url: tunnel.url,
+        token,
+        stage: stage.record.stage,
+        signal: AbortSignal.timeout(120_000),
+      });
+      receipt = { ...receipt, checks: { ...receipt.checks, devTunnelReachable: "passed" } };
+    } catch {
+      receipt = { ...receipt, checks: { ...receipt.checks, devTunnelReachable: "failed" } };
+      throw new Error("The dev tunnel is not reachable; no machine was started");
+    } finally {
+      await save();
+    }
     const callback = new URL("/api/computer/runner", tunnel.url);
     callback.protocol = "wss:";
     await stage.update("running");
-    let state = await request("/run", { runnerEndpoint: callback.href, seed });
+    let state = await request("/run", { runnerEndpoint: callback.href, seed, mode });
+    let resumed = false;
     const deadline = Date.now() + 600_000;
     while (state.status === "pending" || state.status === "running") {
       if (Date.now() > deadline) throw new Error("Local VM proof timed out");
       await new Promise((done) => setTimeout(done, 2_000));
       state = await request("/status");
+      if (
+        !resumed &&
+        state.status === "running" &&
+        state.checks.worker_ownerConstructorReplaced === "passed"
+      ) {
+        state = await request("/resume");
+        resumed = true;
+      }
     }
     failed = state.status !== "passed" || Object.values(state.checks).includes("failed");
     receipt = { ...receipt, checks: { ...receipt.checks, proofRun: failed ? "failed" : "passed" } };

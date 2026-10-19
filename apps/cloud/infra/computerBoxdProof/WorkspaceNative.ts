@@ -5,6 +5,7 @@ import {
   BOXD_PROOF_WORKSPACE_ROOT,
   BoxdProofWorkspaceError,
   type BoxdProofNativeFileMetadata,
+  type BoxdProofNativeResumeBaseline,
   type BoxdProofNativeScan,
   type BoxdProofNativeWorkspace,
   type BoxdProofVmPort,
@@ -126,6 +127,36 @@ export async function prepareBoxdProofNativeWorkspace(
   const baseline = await readTrackedNativeFile(vm, machineId, signal, "record baseline");
   assertFileSize(baseline, initialBytes.byteLength, "hydrated proof file");
 
+  return createNativeWorkspace(vm, machineId, initialBytes, baseline, sameNativeMetadata);
+}
+
+/** Reopens the existing workspace without preparing, finalizing, or uploading any bytes. */
+export async function resumeBoxdProofNativeWorkspace(
+  vm: BoxdProofVmPort,
+  machineId: string,
+  beforeBytes: Uint8Array,
+  beforeMetadata: BoxdProofNativeResumeBaseline,
+  signal: AbortSignal,
+): Promise<BoxdProofNativeWorkspace> {
+  const current = await readTrackedNativeFile(vm, machineId, signal, "validate resumed workspace");
+  const currentBytes = Uint8Array.from(
+    await vm.download(machineId, BOXD_PROOF_TRACKED_VM_PATH, signal),
+  );
+  signal.throwIfAborted();
+  assertFileSize(current, currentBytes.byteLength, "resumed proof file");
+
+  return createNativeWorkspace(vm, machineId, beforeBytes, beforeMetadata, sameResumedMetadata);
+}
+
+function createNativeWorkspace<
+  TBaseline extends BoxdProofNativeFileMetadata | BoxdProofNativeResumeBaseline,
+>(
+  vm: BoxdProofVmPort,
+  machineId: string,
+  baselineBytes: Uint8Array,
+  baselineMetadata: TBaseline,
+  sameMetadata: (left: BoxdProofNativeFileMetadata, right: TBaseline) => boolean,
+): BoxdProofNativeWorkspace {
   return Object.freeze({
     async validateCwd(requested: string, cwdSignal: AbortSignal) {
       await runPython(
@@ -151,7 +182,7 @@ export async function prepareBoxdProofNativeWorkspace(
       changesSignal.throwIfAborted();
       assertFileSize(current, detachedBytes.byteLength, "post-command proof file");
 
-      if (sameBytes(initialBytes, detachedBytes) && sameNativeMetadata(baseline, current)) {
+      if (sameBytes(baselineBytes, detachedBytes) && sameMetadata(current, baselineMetadata)) {
         return undefined;
       }
 
@@ -266,6 +297,20 @@ function sameNativeMetadata(
     left.mode === right.mode &&
     left.uid === right.uid &&
     left.gid === right.gid
+  );
+}
+
+function sameResumedMetadata(
+  current: BoxdProofNativeFileMetadata,
+  baseline: BoxdProofNativeResumeBaseline,
+): boolean {
+  return (
+    current.size === baseline.size &&
+    current.nlink === baseline.nlink &&
+    current.mtimeNs === baseline.mtimeNs &&
+    current.mode === baseline.mode &&
+    (baseline.uid === null || current.uid === baseline.uid) &&
+    (baseline.gid === null || current.gid === baseline.gid)
   );
 }
 
