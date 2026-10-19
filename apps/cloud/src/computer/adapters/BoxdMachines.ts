@@ -1,5 +1,6 @@
 import { Boxd, NotFoundError } from "@boxd-sh/sdk/web";
 import type { Machine as BoxdSdkMachine, MachineForkParams } from "@boxd-sh/sdk/web";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
   MachineCreationError,
@@ -188,24 +189,14 @@ const awaitWithSignal = <A>(promise: Promise<A>, signal: AbortSignal): Promise<A
     );
   });
 
-const sleep = (milliseconds: number, signal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    const cleanup = () => signal.removeEventListener("abort", onAbort);
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, milliseconds);
-    const onAbort = () => {
-      clearTimeout(timer);
-      cleanup();
-      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
+const sleep = async (milliseconds: number, signal: AbortSignal) => {
+  try {
+    await Effect.runPromise(Effect.sleep(milliseconds), { signal });
+  } catch (error) {
+    if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    throw error;
+  }
+};
 
 type TimeoutSignalFactory = (milliseconds: number) => AbortSignal;
 

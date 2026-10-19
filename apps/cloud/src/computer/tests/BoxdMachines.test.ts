@@ -258,13 +258,9 @@ describe("BoxdMachines", () => {
   });
 
   it("bounds a hung status lookup without releasing its reservation", async () => {
-    vi.useFakeTimers();
+    const deadline = new AbortController();
     const f = fixture(undefined, (milliseconds) => {
-      const deadline = new AbortController();
-      setTimeout(
-        () => deadline.abort(new DOMException("Readiness timed out", "TimeoutError")),
-        milliseconds,
-      );
+      expect(milliseconds).toBe(90_000);
       return deadline.signal;
     });
     let signalLookupStarted!: () => void;
@@ -293,7 +289,7 @@ describe("BoxdMachines", () => {
       (error: unknown) => ({ status: "rejected" as const, error }),
     );
     await lookupStarted;
-    await vi.advanceTimersByTimeAsync(90_000);
+    deadline.abort(new DOMException("Readiness timed out", "TimeoutError"));
     const result = await creationResult;
     expect(result.status).toBe("rejected");
     if (result.status !== "rejected") throw new Error("Readiness probe unexpectedly resolved");
