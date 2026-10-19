@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - isolated fixture host without an Effect runtime.
 import type { FacetStorage } from "../../src/kernel/FacetSqliteStorage.ts";
 import type { PreparedAssetModuleCatalog } from "../claudeTurnProof/preparedAssetModules.ts";
 import { decodeVerifiedAssetBundle } from "../claudeTurnProof/assetBundle.ts";
