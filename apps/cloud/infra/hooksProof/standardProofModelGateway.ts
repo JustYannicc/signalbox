@@ -173,6 +173,16 @@ export async function createStandardProofModelGateway(input: {
       const scrubbed =
         secrets.every((secret) => secret.value.length === 0 || !body.includes(secret.value)) &&
         binding.placeholderNames.every((name) => body.includes(secretPlaceholder(name)));
+      try {
+        binding.signal.throwIfAborted();
+        input.assertActive(binding.signal);
+        const current = input.authority.activeAttempt();
+        if (current === null || !sameAttempt(current, binding.attempt)) {
+          return { _tag: "denied" as const, reason: "Standard proof attempt ended" };
+        }
+      } catch {
+        return { _tag: "denied" as const, reason: "Standard proof attempt ended" };
+      }
       const response = scrubbed
         ? binding.purpose === "status" && binding.model === STANDARD_PROOF_MODEL_ID
           ? Response.json(input.completeResponse)
