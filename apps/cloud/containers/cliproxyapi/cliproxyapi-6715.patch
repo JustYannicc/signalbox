@@ -1,8 +1,8 @@
 diff --git a/docs/management-api-v8.md b/docs/management-api-v8.md
-index bc5647fa7d3..a7ca9298c6b 100644
+index c7d53a3b2c6..4bbf5645e69 100644
 --- a/docs/management-api-v8.md
 +++ b/docs/management-api-v8.md
-@@ -130,6 +130,43 @@ Keep any provider-specific login parameters in the query string. The login
+@@ -131,6 +131,43 @@ Keep any provider-specific login parameters in the query string. The login
  response includes the authorization URL and a session `state`. Use that state
  for status queries and cancellation.
  
@@ -486,10 +486,10 @@ index 00000000000..a9f589e5101
 +	}
 +}
 diff --git a/internal/api/handlers/management/handler.go b/internal/api/handlers/management/handler.go
-index c186e75f472..dac06bb8301 100644
+index 78dde7ac7ad..b70dd0fe5ca 100644
 --- a/internal/api/handlers/management/handler.go
 +++ b/internal/api/handlers/management/handler.go
-@@ -38,29 +38,30 @@ const attemptMaxIdleTime = 2 * time.Hour
+@@ -38,31 +38,32 @@ const attemptMaxIdleTime = 2 * time.Hour
  
  // Handler aggregates config reference, persistence path and helpers.
  type Handler struct {
@@ -516,6 +516,8 @@ index c186e75f472..dac06bb8301 100644
 -	pluginStoreHTTPClient   pluginstore.HTTPDoer
 -	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 -	pluginReleases          pluginReleaseCache
+-	siwcOAuthFactory        func(*config.Config) siwcOAuthService
+-	siwcCommitMu            sync.Mutex
 +	cfg                      *config.Config
 +	configFilePath           string
 +	mu                       sync.Mutex
@@ -540,22 +542,24 @@ index c186e75f472..dac06bb8301 100644
 +	pluginStoreHTTPClient    pluginstore.HTTPDoer
 +	pluginStoreRateLimiter   *pluginstore.GitHubRateLimiter
 +	pluginReleases           pluginReleaseCache
++	siwcOAuthFactory         func(*config.Config) siwcOAuthService
++	siwcCommitMu             sync.Mutex
  }
  
  type configReloadSnapshot struct {
 diff --git a/internal/api/handlers/management/oauth_sessions.go b/internal/api/handlers/management/oauth_sessions.go
-index 336f9bbcdd7..77e5319ae75 100644
+index 2b010efec9f..9b96aa837b0 100644
 --- a/internal/api/handlers/management/oauth_sessions.go
 +++ b/internal/api/handlers/management/oauth_sessions.go
-@@ -38,6 +38,7 @@ type oauthSession struct {
- 	Source    string
- 	Metadata  map[string]any
- 	Completed bool
-+	Saving    bool
- 	CreatedAt time.Time
- 	ExpiresAt time.Time
+@@ -43,6 +43,7 @@ type oauthSession struct {
+ 	SIWC           *siwcBindSession
+ 	SIWCCommitting bool
+ 	Completed      bool
++	Saving         bool
+ 	CreatedAt      time.Time
+ 	ExpiresAt      time.Time
  }
-@@ -243,13 +244,39 @@ func (s *oauthSessionStore) Cancel(state string) bool {
+@@ -259,7 +260,7 @@ func (s *oauthSessionStore) Cancel(state string) bool {
  
  	s.purgeExpiredLocked(now)
  	session, ok := s.sessions[state]
@@ -563,7 +567,8 @@ index 336f9bbcdd7..77e5319ae75 100644
 +	if !ok || session.Completed || session.Saving || session.Status != "" {
  		return false
  	}
- 	delete(s.sessions, state)
+ 	if session.SIWC != nil {
+@@ -270,6 +271,32 @@ func (s *oauthSessionStore) Cancel(state string) bool {
  	return true
  }
  
@@ -597,7 +602,7 @@ index 336f9bbcdd7..77e5319ae75 100644
  	if len(in) == 0 {
  		return nil
 diff --git a/sdk/auth/codex.go b/sdk/auth/codex.go
-index 53b9cab1f21..765f0ef5a13 100644
+index 2d56fa07919..d65e8b21046 100644
 --- a/sdk/auth/codex.go
 +++ b/sdk/auth/codex.go
 @@ -19,7 +19,8 @@ import (
