@@ -5,19 +5,20 @@
 import type * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
-import {
-  encodedPath,
-  nodeStats,
-  type BigIntStats,
-  type NodeStats,
-  type NodeStatsLike,
-} from "./metadata.ts";
+import { encodedPath } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
 
 export type TimeLike = Date | number | string;
-export interface StatOptions {
-  bigint?: boolean;
-}
+
+export {
+  fstatOperation,
+  fstatSync,
+  lstatOperation,
+  lstatSync,
+  statOperation,
+  statSync,
+} from "./stat-ops.ts";
+export type { StatOptions } from "./stat-ops.ts";
 
 function timeNs(value: TimeLike): bigint {
   const milliseconds =
@@ -37,53 +38,6 @@ function timeNs(value: TimeLike): bigint {
     });
   }
   return BigInt(Math.trunc(nanoseconds));
-}
-
-export function* statOperation(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): FsOperation<NodeStatsLike> {
-  const name = pathString(path);
-  return nodeStats(
-    yield* fsOperation(
-      "stat",
-      name,
-      leaf(() => kernelFs.stat(name)),
-    ),
-    options?.bigint,
-  );
-}
-
-export function* lstatOperation(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): FsOperation<NodeStatsLike> {
-  const name = pathString(path);
-  return nodeStats(
-    yield* fsOperation(
-      "lstat",
-      name,
-      leaf(() => kernelFs.lstat(name)),
-    ),
-    options?.bigint,
-  );
-}
-
-export function* fstatOperation(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options?: StatOptions,
-): FsOperation<NodeStatsLike> {
-  return nodeStats(
-    yield* fsOperation(
-      "fstat",
-      undefined,
-      leaf(() => kernelFs.fstat(fd)),
-    ),
-    options?.bigint,
-  );
 }
 
 export function* realpathOperation(
@@ -195,75 +149,6 @@ export function* fsyncOperation(
     undefined,
     leaf(() => kernelFs.sync(fd, dataOnly)),
   );
-}
-
-export function statSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options: { bigint: true },
-): BigIntStats;
-export function statSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: { bigint?: false },
-): NodeStats;
-export function statSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): NodeStatsLike;
-export function statSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): NodeStatsLike {
-  return runSync(statOperation(kernelFs, path, options));
-}
-
-export function lstatSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options: { bigint: true },
-): BigIntStats;
-export function lstatSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: { bigint?: false },
-): NodeStats;
-export function lstatSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): NodeStatsLike;
-export function lstatSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  options?: StatOptions,
-): NodeStatsLike {
-  return runSync(lstatOperation(kernelFs, path, options));
-}
-
-export function fstatSync(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options: { bigint: true },
-): BigIntStats;
-export function fstatSync(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options?: { bigint?: false },
-): NodeStats;
-export function fstatSync(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options?: StatOptions,
-): NodeStatsLike;
-export function fstatSync(
-  kernelFs: KernelFileSystem,
-  fd: number,
-  options?: StatOptions,
-): NodeStatsLike {
-  return runSync(fstatOperation(kernelFs, fd, options));
 }
 
 export const realpathSync = (...args: Parameters<typeof realpathOperation>) =>

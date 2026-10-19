@@ -40,6 +40,10 @@ export class NodeFileHandle {
     return await this.#lifetime.run(() => this.#operations.fstat(this.fd, options));
   }
 
+  async chmod(mode: number | string): Promise<void> {
+    await this.#lifetime.run(() => this.#operations.fchmod(this.fd, mode));
+  }
+
   async truncate(length = 0): Promise<void> {
     await this.#lifetime.run(() => this.#operations.ftruncate(this.fd, length));
   }

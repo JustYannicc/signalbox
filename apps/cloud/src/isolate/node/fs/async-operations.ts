@@ -1,6 +1,5 @@
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { withNodeAbort } from "./abort.ts";
-import { unsupportedFs } from "./errors.ts";
 import {
   appendFileOperation,
   copyFileOperation,
@@ -34,14 +33,8 @@ import {
   truncateOperation,
   utimesOperation,
 } from "./metadata-ops.ts";
-import {
-  fsOperation,
-  leaf,
-  runAsync,
-  type AsyncLeafRunner,
-  type FsOperation,
-} from "./operations.ts";
-import { pathString, type PathLike } from "./path.ts";
+import { runAsync, type AsyncLeafRunner, type FsOperation } from "./operations.ts";
+import { accessOperation, fchmodOperation } from "./permission-ops.ts";
 
 export function createAsyncOperations(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
   const bind =
@@ -58,19 +51,8 @@ export function createAsyncOperations(kernelFs: KernelFileSystem, runLeaf?: Asyn
     };
 
   return {
-    access: (path: PathLike, mode = 0) =>
-      runAsync(
-        (function* () {
-          const name = pathString(path);
-          if (mode !== 0) throw unsupportedFs("access", name);
-          yield* fsOperation(
-            "access",
-            name,
-            leaf(() => kernelFs.stat(name)),
-          );
-        })(),
-        runLeaf,
-      ),
+    access: bind(accessOperation),
+    fchmod: bind(fchmodOperation),
     openFd: bind(openFdOperation),
     closeFd: bind(closeFdOperation),
     read: bind(readOperation),
