@@ -57,25 +57,18 @@ export async function applyRevision(input: {
       scanTree(storage, rootInode),
       readDirty(database),
       changedInodes,
-      rootInode,
     );
     await stageFiles(database, hydration, after, applyId, plans, signal);
     signal.throwIfAborted();
     const stagedTree = scanTree(storage, rootInode);
     const stagedDirty = readDirty(database);
-    assertNoRevisionConflict(baseline.manifest, stagedTree, stagedDirty, changedInodes, rootInode);
+    assertNoRevisionConflict(baseline.manifest, stagedTree, stagedDirty, changedInodes);
     const retired = findRetiredInodes(baseline.manifest, stagedTree, plans);
     const resolved = resolveLocalInodes(baseline.manifest, stagedTree, plans, retired, storage);
     await hydratePendingCandidates(storage, persistence, resolved, signal);
     signal.throwIfAborted();
     const hydratedTree = scanTree(storage, rootInode);
-    assertNoRevisionConflict(
-      baseline.manifest,
-      hydratedTree,
-      readDirty(database),
-      changedInodes,
-      rootInode,
-    );
+    assertNoRevisionConflict(baseline.manifest, hydratedTree, readDirty(database), changedInodes);
     database.transactionSync(() => {
       const latest = readState(database);
       if (!sameCommit(latest.at, before))
@@ -85,13 +78,7 @@ export async function applyRevision(input: {
         );
       const current = scanTree(storage, rootInode);
       const dirtyBeforeApply = readDirty(database);
-      assertNoRevisionConflict(
-        baseline.manifest,
-        current,
-        dirtyBeforeApply,
-        changedInodes,
-        rootInode,
-      );
+      assertNoRevisionConflict(baseline.manifest, current, dirtyBeforeApply, changedInodes);
       const currentRetired = findRetiredInodes(baseline.manifest, current, plans);
       const currentPlans = resolveLocalInodes(
         baseline.manifest,

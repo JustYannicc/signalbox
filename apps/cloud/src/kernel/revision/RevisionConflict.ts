@@ -1,5 +1,4 @@
 import type { CommitInode } from "../FilePersistencePorts.ts";
-import type { Inode } from "../storage.ts";
 import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
 import { diffTrees } from "./RevisionTree.ts";
 import type { DirtyInode, TreeEntry } from "./RevisionTypes.ts";
@@ -9,54 +8,44 @@ export function assertNoRevisionConflict(
   current: ReadonlyMap<string, TreeEntry>,
   dirty: readonly DirtyInode[],
   remote: readonly CommitInode[],
-  rootInode: Inode,
 ): void {
   const baselinePaths = pathsByName(baseline);
-  const rootIsDirty = dirty.some((entry) => entry.inode === rootInode.toString());
-  if (
-    rootIsDirty &&
-    remote.some((change) =>
-      [...change.removedPaths, ...change.paths].some(
-        (path) =>
-          !path.slice(1).includes("/") &&
-          (change.removedPaths.includes(path) ||
-            !baselinePaths.has(path) ||
-            baselinePaths.get(path)?.stat.type !== change.stat?.type),
-      ),
-    )
-  ) {
-    throw revisionConflict();
-  }
-
   const local = diffTrees(baseline, current, new Set(dirty.map((entry) => entry.inode)));
   if (local.length === 0) return;
 
   const currentPaths = pathsByName(current);
   const localInodes = new Set(local.map((entry) => entry.inode.toString()));
+  const localByInode = new Map(local.map((entry) => [entry.inode.toString(), entry]));
 
   for (const change of remote) {
     const remotePaths = [...change.paths, ...change.removedPaths];
     for (const path of remotePaths) {
       for (const entry of [baselinePaths.get(path), currentPaths.get(path)]) {
-        if (entry && localInodes.has(entry.inode)) throw revisionConflict();
+        if (!entry || !localInodes.has(entry.inode)) continue;
+        const localChange = localByInode.get(entry.inode)!;
+        if (isDirectoryMetadataOverlap(localChange, change, path, baseline, current, baselinePaths))
+          continue;
+        throw revisionConflict();
       }
     }
 
-    const remoteDirectoryPaths = remotePaths.filter(
-      (path) =>
-        change.stat?.type === "directory" ||
-        baselinePaths.get(path)?.stat.type === "directory" ||
-        currentPaths.get(path)?.stat.type === "directory",
-    );
+    const remoteDirectoryPaths = remoteDirectoryTopologyPaths(change, baselinePaths);
     for (const localChange of local) {
       const localPaths = [...localChange.paths, ...localChange.removedPaths];
-      const localDirectoryPaths = localPaths.filter(
-        (path) =>
-          baselinePaths.get(path)?.stat.type === "directory" ||
-          currentPaths.get(path)?.stat.type === "directory",
-      );
+      const localDirectoryPaths = localDirectoryTopologyPaths(localChange, baseline, current);
       if (
-        localPaths.some((localPath) => remotePaths.includes(localPath)) ||
+        localPaths.some(
+          (localPath) =>
+            remotePaths.includes(localPath) &&
+            !isDirectoryMetadataOverlap(
+              localChange,
+              change,
+              localPath,
+              baseline,
+              current,
+              baselinePaths,
+            ),
+        ) ||
         localDirectoryPaths.some((directory) =>
           remotePaths.some((path) => isDescendant(path, directory)),
         ) ||
@@ -68,6 +57,82 @@ export function assertNoRevisionConflict(
       }
     }
   }
+}
+
+function isDirectoryMetadataOverlap(
+  localChange: ReturnType<typeof diffTrees>[number],
+  remoteChange: CommitInode,
+  path: string,
+  baseline: ReadonlyMap<string, TreeEntry>,
+  current: ReadonlyMap<string, TreeEntry>,
+  baselinePaths: ReadonlyMap<string, TreeEntry>,
+): boolean {
+  return (
+    isRemoteDirectoryMetadataOnly(remoteChange, path, baselinePaths) &&
+    isLocalDirectoryMetadataOnly(localChange, baseline, current)
+  );
+}
+
+function remoteDirectoryTopologyPaths(
+  change: CommitInode,
+  baselinePaths: ReadonlyMap<string, TreeEntry>,
+): string[] {
+  const paths = new Set([...change.paths, ...change.removedPaths]);
+  return [...paths].filter((path) => {
+    const beforeDirectory = baselinePaths.get(path)?.stat.type === "directory";
+    const afterDirectory = change.paths.includes(path) && change.stat?.type === "directory";
+    return beforeDirectory !== afterDirectory;
+  });
+}
+
+function localDirectoryTopologyPaths(
+  change: ReturnType<typeof diffTrees>[number],
+  baseline: ReadonlyMap<string, TreeEntry>,
+  current: ReadonlyMap<string, TreeEntry>,
+): string[] {
+  const before = baseline.get(change.inode.toString());
+  const after = current.get(change.inode.toString());
+  const paths = new Set([...change.paths, ...change.removedPaths]);
+  return [...paths].filter((path) => {
+    const beforeDirectory = before?.stat.type === "directory" && before.paths.includes(path);
+    const afterDirectory = after?.stat.type === "directory" && after.paths.includes(path);
+    return beforeDirectory !== afterDirectory;
+  });
+}
+
+function isRemoteDirectoryMetadataOnly(
+  change: CommitInode,
+  path: string,
+  baselinePaths: ReadonlyMap<string, TreeEntry>,
+): boolean {
+  const before = baselinePaths.get(path);
+  return (
+    before?.stat.type === "directory" &&
+    change.stat?.type === "directory" &&
+    change.paths.includes(path) &&
+    change.removedPaths.length === 0 &&
+    samePaths(before.paths, change.paths)
+  );
+}
+
+function isLocalDirectoryMetadataOnly(
+  change: ReturnType<typeof diffTrees>[number],
+  baseline: ReadonlyMap<string, TreeEntry>,
+  current: ReadonlyMap<string, TreeEntry>,
+): boolean {
+  const before = baseline.get(change.inode.toString());
+  const after = current.get(change.inode.toString());
+  return (
+    before?.stat.type === "directory" &&
+    after?.stat.type === "directory" &&
+    change.removedPaths.length === 0 &&
+    samePaths(before.paths, after.paths) &&
+    samePaths(change.paths, after.paths)
+  );
+}
+
+function samePaths(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((path, index) => path === right[index]);
 }
 
 function pathsByName(tree: ReadonlyMap<string, TreeEntry>): Map<string, TreeEntry> {

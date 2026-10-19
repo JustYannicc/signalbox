@@ -116,28 +116,15 @@ export function reconcileNamespace(
     reconciled.set(change.inode.toString(), plan);
   };
 
-  // Move or create directories first so child path lookups see their final parents.
-  for (const plan of livePlans) {
-    if (plan.changed.stat?.type === "directory") reconcilePlan(plan);
-  }
-
-  const filePlans = livePlans.filter((plan) => plan.changed.stat?.type !== "directory");
+  // Park displaced inodes before a shallow replacement can remove a deeper rename source.
   const toPark = new Set<string>();
-  for (const plan of filePlans) {
-    if (plan.localInode === undefined) continue;
+  for (const plan of livePlans) {
     const destination = plan.changed.paths[0]!;
     const destinationEntry = safeLstat(filesystem, mountPath, rootRealPath, storage, destination);
     if (!destinationEntry || destinationEntry.ino === plan.localInode) continue;
     const blocker = byLocalInode.get(destinationEntry.ino.toString());
-    if (blocker && blocker.changed.paths[0] !== destination) {
-      if (blocker.changed.stat?.type === "directory") {
-        throw new KernelRevisionWorkspaceError(
-          "ENOTSUP",
-          "Directory rename cycles cannot be applied safely",
-        );
-      }
+    if (blocker && blocker.changed.paths[0] !== destination)
       toPark.add(destinationEntry.ino.toString());
-    }
   }
   let parkIndex = 0;
   for (const inode of toPark) {
@@ -161,6 +148,12 @@ export function reconcileNamespace(
     parked.set(inode, temp);
   }
 
+  // Parent directories must settle first so descendants resolve in the final namespace.
+  for (const plan of livePlans) {
+    if (plan.changed.stat?.type === "directory") reconcilePlan(plan);
+  }
+
+  const filePlans = livePlans.filter((plan) => plan.changed.stat?.type !== "directory");
   for (const plan of filePlans) reconcilePlan(plan);
   for (const deletion of deletedDirectories.sort(
     (left, right) => depth(right.path) - depth(left.path),
