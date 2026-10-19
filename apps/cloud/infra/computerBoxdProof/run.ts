@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - this private CLI owns proof deployment and recovery.
+import { proofInputEvidence } from "./InputEvidence.ts";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
@@ -315,11 +316,7 @@ async function runProof(options: RunOptions, signal: AbortSignal) {
     const seed = await seedFor(NodePath.resolve(options.programDir));
     await save(context, {
       ...context.receipt,
-      inputs: {
-        runnerSha256: seed.runner.sha256,
-        runnerBytes: Buffer.byteLength(seed.runner.source),
-        executableSha256s: seed.executables.map((file) => file.sha256),
-      },
+      inputs: proofInputEvidence(seed),
     });
     await check(context, "seedPreparation", "passed");
     activeCheck = "workerDeployment";

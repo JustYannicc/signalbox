@@ -38,6 +38,7 @@ export interface ProofReceipt {
   readonly cleanup: CleanupState;
   readonly inputs?: {
     readonly runnerSha256: string;
+    readonly runnerWithoutRegionCommentsSha256?: string;
     readonly runnerBytes: number;
     readonly executableSha256s: readonly string[];
   };

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable local workerd proof with persistent owned state.
+import { proofInputEvidence } from "./InputEvidence.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
@@ -120,11 +121,7 @@ try {
     if (seed === undefined) throw new Error("Proof seed was not prepared");
     receipt = {
       ...receipt,
-      inputs: {
-        runnerSha256: seed.runner.sha256,
-        runnerBytes: Buffer.byteLength(seed.runner.source),
-        executableSha256s: seed.executables.map((file) => file.sha256),
-      },
+      inputs: proofInputEvidence(seed),
     };
     await save();
     await stage.update("seeding");

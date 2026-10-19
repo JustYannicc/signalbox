@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { prepareChildPrograms } from "../childPrograms/prepare.ts";
+import { preflightTrustedRunnerArtifact } from "./privateRunnerArtifact.ts";
 import type { ProofSeed } from "./SeedProtocol.ts";
 
 export async function prepareProofSeed(programDir: string): Promise<ProofSeed> {
@@ -24,6 +25,7 @@ export async function prepareProofSeed(programDir: string): Promise<ProofSeed> {
   const runner = await NodeFSP.readFile(
     NodePath.resolve(root, "apps/server/dist/command-runner/command-runner.mjs"),
   );
+  await preflightTrustedRunnerArtifact(runner, root);
   return {
     sourceCommit,
     runner: {
