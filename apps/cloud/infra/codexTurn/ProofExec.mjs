@@ -62,12 +62,14 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors })
   });
 }
 
-export function createProofWebSocket({ memory, binding, sessions, context }) {
+export function createProofWebSocket({ memory, binding, sessions, context, modelRoute }) {
   return new KernelWebSocketHost({
     memory,
     descriptors: binding.descriptors,
-    route({ request }) {
+    route(input) {
+      const { request } = input;
       if (request.url !== proofEnvironment.CODEX_EXEC_SERVER_URL) {
+        if (modelRoute) return modelRoute(input);
         throw new Error("Unexpected WebSocket route");
       }
       const response = acceptCodexExecWebSocket(request, sessions, context);

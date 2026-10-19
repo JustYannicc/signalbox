@@ -7,11 +7,13 @@ import { kernelError, KernelProgramRegistry } from "../../src/kernel/KernelAbi.t
 import { KernelFileSystem } from "../../src/kernel/KernelFileSystem.ts";
 import { KernelPipe } from "../../src/kernel/KernelPipe.ts";
 import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
+import { readProofModelCpu } from "./ProofModelCpu.mjs";
 import { KernelWakeRegistry } from "../../src/kernel/KernelWakeRegistry.ts";
 import { createKernelAsyncWasi } from "../../src/kernel/KernelWasi.ts";
 import { createAppServerDriver, proofModel } from "./AppServerDriver.mjs";
 import { createMockHttpAdapter } from "./MockHttpAdapter.mjs";
 import { createMockResponses } from "./MockResponses.mjs";
+import { createLocalProofModel } from "./ProofModelTransport.mjs";
 import { createProofExec, createProofWebSocket } from "./ProofExec.mjs";
 import {
   initializeProofDirectories,
@@ -22,7 +24,7 @@ import {
   verifyPatchResult,
 } from "./ProofWorkspace.mjs";
 
-function bootstrap() {
+function bootstrap(model) {
   return {
     type: "bootstrap",
     codex_home: "/home/codex",
@@ -35,12 +37,10 @@ function bootstrap() {
       model_provider: "mock",
       "model_providers.mock": {
         name: "Mock",
-        base_url: "http://mock.invalid/v1",
+        base_url: model.baseUrl ?? "http://localhost/v1",
         wire_api: "responses",
         requires_openai_auth: false,
-        supports_websockets: false,
-        request_max_retries: 0,
-        stream_max_retries: 0,
+        supports_websockets: model.supportsWebSockets ?? true,
         stream_idle_timeout_ms: 5000,
       },
       // The WASI connector requires an explicit proxy decision before opening a host socket.
@@ -55,6 +55,8 @@ export function createProofFacet(engine, createHost, options = {}) {
   return class extends DurableObject {
     async fetch(request) {
       const path = new URL(request.url).pathname;
+      if (path === "/model-proof-records")
+        return Response.json({ records: readProofModelCpu(this.ctx) });
       if (path !== "/startup" && path !== "/turn")
         return new Response("Not found", { status: 404 });
       const turnMode = path === "/turn";
@@ -64,6 +66,10 @@ export function createProofFacet(engine, createHost, options = {}) {
         importCalls = [],
         memoryMilestones = [];
       const mock = createMockResponses();
+      const execution = { pending: false, enteredAt: null };
+      const model =
+        options.model?.({ mock, request, context: this.ctx, execution }) ??
+        createLocalProofModel({ mock, request });
       const stdoutDecoder = new TextDecoder(),
         stderrDecoder = new TextDecoder();
       let filesystem, binding, wakes, pipe, host, sessions, memory, driver, watchdog, composition;
@@ -76,6 +82,7 @@ export function createProofFacet(engine, createHost, options = {}) {
         turnResult,
         proofContent,
         compositionResult;
+      let modelResult;
       const sample = () => {
         if (memory) peak = Math.max(peak, memory.buffer.byteLength);
       };
@@ -187,11 +194,13 @@ export function createProofFacet(engine, createHost, options = {}) {
           binding,
           sessions,
           context: this.ctx,
+          modelRoute: model.route,
         });
         const http = createMockHttpAdapter({
           memory: () => memory,
           descriptors: binding.descriptors,
           mock,
+          ...(model.http === undefined ? {} : { handleRequest: model.http }),
         });
         const imports = {
           ...binding.wasi.getImportObject(),
@@ -224,7 +233,7 @@ export function createProofFacet(engine, createHost, options = {}) {
               return value(...args);
             };
         }
-        const initial = bootstrap();
+        const initial = bootstrap(model);
         const configuredInitial = composition?.bootstrap?.(initial) ?? initial;
         driver.transcript.push({ direction: "to-engine", message: configuredInitial });
         const bytes = new TextEncoder().encode(JSON.stringify(configuredInitial) + "\n");
@@ -250,14 +259,26 @@ export function createProofFacet(engine, createHost, options = {}) {
         const instance = new WebAssembly.Instance(engine, imports);
         memory = instance.exports.memory;
         milestone("after-instance");
-        exit = await binding.wasi.start(instance);
+        execution.enteredAt = Date.now();
+        execution.pending = true;
+        try {
+          exit = await binding.wasi.start(instance);
+        } finally {
+          execution.pending = false;
+        }
         milestone("after-start");
         if (!ready) driver.fail(new Error("Engine exited before signalbox/ready"));
         await driven;
         if (driver.failure) throw driver.failure;
         if (turnMode && turnResult) {
-          if (mock.phase !== "complete")
+          modelResult = await model.inspect?.();
+          if ((modelResult?.phase ?? mock.phase) !== "complete")
             throw new Error("Mock Responses sequence did not complete");
+          if (model.metrics) {
+            model.metrics.httpFallbacks = mock.requests.length - model.metrics.mockCalls;
+            if (model.metrics.opens < 1 || model.metrics.httpFallbacks !== 0)
+              throw new Error("Default Responses proof did not stay on WebSockets");
+          }
           proofContent = verifyPatchResult(filesystem);
         }
         compositionResult = await composition?.verify?.({ filesystem, turnResult, mock, driver });
@@ -306,6 +327,7 @@ export function createProofFacet(engine, createHost, options = {}) {
         importCalls,
         mockPhase: mock.phase,
         modelRequests: mock.requests,
+        modelTransport: modelResult ?? model.metrics ?? model.diagnostics?.(),
         proofContent,
         ...(compositionResult === undefined ? {} : { compositionResult }),
       });

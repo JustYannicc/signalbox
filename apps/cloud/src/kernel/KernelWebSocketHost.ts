@@ -48,7 +48,7 @@ export interface KernelWebSocketImports {
   readonly ws_drop: (fd: number) => number;
 }
 
-/** Synchronous WASI errno imports for the request-scoped loopback WebSocket router. */
+/** Synchronous WASI errno imports; the injected route owns network policy and TLS. */
 export class KernelWebSocketHost {
   readonly imports: KernelWebSocketImports;
   readonly #options: KernelWebSocketHostOptions;
