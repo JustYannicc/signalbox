@@ -1,10 +1,12 @@
 import type { KernelHandle } from "../KernelAbi.ts";
+import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import { KernelFileSystem } from "../KernelFileSystem.ts";
 import { withKernelErrors } from "../filesystem/KernelFileSystemErrors.ts";
 import type { AgentOsSpawnFileAction } from "../process/AgentOsProcessActions.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
 import {
   RIGHTS,
+  type WasiDescriptor,
   type WasiDescriptorSpec,
   type WasiStdio,
 } from "../wasi/internal_wasi_descriptors.ts";
@@ -23,11 +25,21 @@ export interface KernelProgramPrepareInput {
 }
 
 export interface KernelProgramPrepareOptions {
+  /** Optional target lets the host select the process view before file actions. */
+  readonly executable?: string;
   readonly cwd?: string;
   readonly actions?: readonly AgentOsSpawnFileAction[];
+  /** Process-local default used by ordinary opens before its ordered file actions run. */
+  readonly fileBytes?: KernelFileByteSelection;
   /** Borrowed streams replace the child's standard descriptors and remain caller-owned. */
   readonly stdio?: readonly [WasiStdio | undefined, WasiStdio | undefined, WasiStdio | undefined];
 }
+
+export type KernelProgramFileByteSelector = (input: {
+  readonly executable: string;
+  readonly filesystem: KernelFileSystem;
+  readonly parent?: KernelHandle<"process">;
+}) => KernelFileByteSelection;
 
 export interface KernelOwnedStdio {
   readonly descriptors: readonly [
@@ -177,7 +189,10 @@ export function prepareKernelProgram(
   let childFilesystem: KernelFileSystem | undefined;
   try {
     return withKernelErrors(() => {
-      childFilesystem = input.filesystem.fork(childTable);
+      childFilesystem = input.filesystem.fork(
+        childTable,
+        options.fileBytes === undefined ? {} : { fileBytes: options.fileBytes },
+      );
       const preparedActions = ownedStdio?.prepareActions?.(childFilesystem) ?? [];
       const untransferredCleanup = ownedStdio?.releaseBeforeTransfer;
       if (ownedStdio !== undefined) {
@@ -194,6 +209,9 @@ export function prepareKernelProgram(
       }
       if (options.cwd !== undefined) childFilesystem.chdir(options.cwd);
       applyFileActions(childFilesystem, [...preparedActions, ...(options.actions ?? [])]);
+      assertKernelFileByteSelectionCompatible(childTable.entries(), childFilesystem.fileBytes, {
+        survivingOnly: true,
+      });
       // Spawn mappings include close-on-exec descriptors so file actions can use them.
       // The sweep happens once, after every ordered action has completed.
       runSync(childTable.closeOnExecSweep());
@@ -226,6 +244,25 @@ export function prepareKernelProgram(
       throw new AggregateError(errors, "Program preparation and cleanup failed", { cause: error });
     }
     throw error;
+  }
+}
+
+export function assertKernelFileByteSelectionCompatible(
+  descriptors: Iterable<[number, WasiDescriptor]>,
+  selection: KernelFileByteSelection,
+  options: { readonly survivingOnly?: boolean } = {},
+): void {
+  for (const [, descriptor] of descriptors) {
+    if (descriptor.kind !== "file" || (options.survivingOnly && descriptor.closeOnExec)) continue;
+    const compatible =
+      selection.kind === "canonical"
+        ? descriptor.byteView === undefined
+        : descriptor.byteView === selection.view;
+    if (!compatible) {
+      throw Object.assign(new Error("A surviving regular descriptor uses a different file view"), {
+        code: "ENOTSUP",
+      });
+    }
   }
 }
 

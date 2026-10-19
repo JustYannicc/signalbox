@@ -20,6 +20,13 @@ import {
   WasiPathResolver,
 } from "./internal_wasi_paths.ts";
 import { readTimes, writeFilestat } from "./internal_wasi_fd_calls.ts";
+import {
+  bindFileByteAccess,
+  canonicalFileByteSelection,
+  type KernelFileByteAccess,
+  type KernelFileByteSelection,
+  type KernelFileByteView,
+} from "../KernelFileBytes.ts";
 
 type WasiPathDirectoryDescriptor = WasiDescriptor & {
   readonly kind: "directory";
@@ -62,6 +69,7 @@ export class WasiPathCalls {
   readonly #descriptors: WasiDescriptorTable;
   readonly #paths: WasiPathResolver;
   readonly #creation: WasiCreationPolicy | undefined;
+  readonly #fileBytes: (() => KernelFileByteSelection) | undefined;
 
   readonly imports = {
     path_create_directory: (fd: number, path: number, pathLen: number): WasiCall<number> =>
@@ -149,11 +157,13 @@ export class WasiPathCalls {
     descriptors: WasiDescriptorTable,
     paths: WasiPathResolver,
     creation?: WasiCreationPolicy,
+    fileBytes?: () => KernelFileByteSelection,
   ) {
     this.#memory = memory;
     this.#descriptors = descriptors;
     this.#paths = paths;
     this.#creation = creation;
+    this.#fileBytes = fileBytes;
   }
 
   *pathCreateDirectory(fd: number, pathPointer: number, pathLength: number): WasiCall<number> {
@@ -194,7 +204,18 @@ export class WasiPathCalls {
       path,
       (flags & DIRFLAGS_SYMLINK_FOLLOW) !== 0,
     );
-    writeFilestat(this.#memory, output, resolved.mount.device, resolved.inode, resolved.stat);
+    let stat = resolved.stat;
+    if (stat.type === "file") {
+      const access = bindFileByteAccess(this.#selection(), resolved.mount.storage, resolved.inode);
+      if (access !== undefined) {
+        try {
+          stat = { ...stat, size: access.stat().size };
+        } finally {
+          access.release();
+        }
+      }
+    }
+    writeFilestat(this.#memory, output, resolved.mount.device, resolved.inode, stat);
     return 0;
   }
 
@@ -292,6 +313,8 @@ export class WasiPathCalls {
     const lookup = yield* this.#paths.resolveOrCreate(this.#anchor(directory), path, follow);
     let retained: { mount: WasiMountedStorage; inode: Inode } | undefined;
     let childFd: number | undefined;
+    let byteAccess: KernelFileByteAccess | undefined;
+    let byteView: KernelFileByteView | undefined;
     let resolved: WasiResolvedPath | undefined;
     try {
       let inode: Inode;
@@ -336,12 +359,24 @@ export class WasiPathCalls {
         retained = { mount: resolved.mount, inode };
       }
 
-      if ((oflags & OFLAGS.TRUNCATE) !== 0) {
+      const truncate = (oflags & OFLAGS.TRUNCATE) !== 0;
+      if (truncate) {
         this.#requireWritable(resolved.mount);
         if (resolved.stat.type !== "file") {
           throw new WasiError(resolved.stat.type === "directory" ? EISDIR : EINVAL);
         }
-        yield* complete(resolved.mount.storage.truncate(inode, 0n));
+      }
+      if (resolved.stat.type === "file") {
+        const selection = this.#selection();
+        byteAccess = bindFileByteAccess(selection, resolved.mount.storage, inode);
+        if (byteAccess !== undefined && selection.kind === "view") byteView = selection.view;
+      }
+      if (truncate) {
+        if (byteAccess !== undefined) {
+          byteAccess.truncate(0n);
+        } else {
+          yield* complete(resolved.mount.storage.truncate(inode, 0n));
+        }
       }
       childFd = this.#descriptors.allocate({
         kind: resolved.stat.type,
@@ -354,6 +389,8 @@ export class WasiPathCalls {
         rightsBase: baseRights,
         rightsInheriting: inheritingRights,
         flags: fdflags,
+        ...(byteAccess === undefined ? {} : { byteAccess }),
+        ...(byteView === undefined ? {} : { byteView }),
       });
       retained = undefined;
       this.#memory.u32(openedFd, childFd);
@@ -366,15 +403,26 @@ export class WasiPathCalls {
         } catch (cleanupError) {
           cleanupErrors.push(cleanupError);
         }
-      } else if (retained !== undefined) {
-        try {
-          yield* complete(retained.mount.storage.release(retained.inode));
-        } catch (cleanupError) {
-          cleanupErrors.push(cleanupError);
+      } else {
+        if (byteAccess !== undefined) {
+          try {
+            byteAccess.release();
+          } catch (cleanupError) {
+            cleanupErrors.push(cleanupError);
+          }
+        }
+        if (retained !== undefined) {
+          try {
+            yield* complete(retained.mount.storage.release(retained.inode));
+          } catch (cleanupError) {
+            cleanupErrors.push(cleanupError);
+          }
         }
       }
       if (cleanupErrors.length > 0) {
-        throw new AggregateError([error, ...cleanupErrors], "WASI open and cleanup failed");
+        throw new AggregateError([error, ...cleanupErrors], "WASI open and cleanup failed", {
+          cause: error,
+        });
       }
       throw error;
     }
@@ -500,6 +548,10 @@ export class WasiPathCalls {
     return this.#creation === undefined
       ? mount.storage.create(parent, name, options)
       : this.#creation.createInode(mount, parent, name, options, mode);
+  }
+
+  #selection(): KernelFileByteSelection {
+    return this.#fileBytes?.() ?? canonicalFileByteSelection;
   }
 
   #anchor(descriptor: WasiPathDirectoryDescriptor): WasiPathAnchor {

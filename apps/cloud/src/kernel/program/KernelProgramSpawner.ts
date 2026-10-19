@@ -12,6 +12,7 @@ import type {
   KernelAsyncProgramCpu,
   KernelAsyncProgramExecRequest,
 } from "../KernelAsyncProgram.ts";
+import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import {
   KernelProcessTable,
@@ -23,7 +24,12 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { KernelCpuExecution, type KernelCpuProcessExecution } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
-import { prepareKernelProgram, type KernelPreparedProgram } from "./KernelPreparedProgram.ts";
+import {
+  assertKernelFileByteSelectionCompatible,
+  prepareKernelProgram,
+  type KernelPreparedProgram,
+  type KernelProgramFileByteSelector,
+} from "./KernelPreparedProgram.ts";
 import { runKernelAsyncProgram } from "./KernelProgramExec.ts";
 import {
   createKernelWasiRuntime,
@@ -37,6 +43,8 @@ interface KernelProgramSpawnerOptions {
   readonly cpuExecution?: KernelCpuExecution;
   readonly resolve: (executable: string) => KernelResult<ResolvedProgram>;
   readonly bindingFor: (program: ResolvedProgram) => KernelProgramBinding | undefined;
+  readonly executableFor: (program: ResolvedProgram) => string | undefined;
+  readonly selectFileBytes?: KernelProgramFileByteSelector;
 }
 
 type LaunchContext = {
@@ -54,6 +62,8 @@ export class KernelProgramSpawner {
   readonly #cpuExecution: KernelCpuExecution | undefined;
   readonly #resolve: KernelProgramSpawnerOptions["resolve"];
   readonly #bindingFor: KernelProgramSpawnerOptions["bindingFor"];
+  readonly #executableFor: KernelProgramSpawnerOptions["executableFor"];
+  readonly #selectFileBytes: KernelProgramFileByteSelector | undefined;
 
   constructor(options: KernelProgramSpawnerOptions) {
     this.#processes = options.processes;
@@ -61,9 +71,14 @@ export class KernelProgramSpawner {
     this.#cpuExecution = options.cpuExecution;
     this.#resolve = options.resolve;
     this.#bindingFor = options.bindingFor;
+    this.#executableFor = options.executableFor;
+    this.#selectFileBytes = options.selectFileBytes;
   }
 
-  backend(prepared: KernelPreparedProgram): KernelBackend {
+  backend(
+    prepared: KernelPreparedProgram,
+    preselected?: { readonly executable: string; readonly selection: KernelFileByteSelection },
+  ): KernelBackend {
     return {
       "process.spawn": ({ program, args, env }) => {
         if (!prepared.canTransfer)
@@ -71,13 +86,16 @@ export class KernelProgramSpawner {
         const binding = this.#bindingFor(program);
         if (!binding)
           return kernelError("INVALID_ARGUMENT", "Spawn program was not resolved by this host");
+        const executable = this.#executableFor(program);
+        if (executable === undefined)
+          return kernelError("INVALID_ARGUMENT", "Spawn program lost its executable mapping");
         if (!hasOnlyStringValues(env)) {
           return kernelError(
             "UNSUPPORTED",
             "Secret environment values are not supported by local WASI",
           );
         }
-        return this.#spawnPrepared(prepared, binding, args, env);
+        return this.#spawnPrepared(prepared, executable, binding, args, env, preselected);
       },
       "process.wait": ({ handle }) => this.#processes.wait(handle),
       "process.signal": ({ handle, signal }) =>
@@ -97,10 +115,32 @@ export class KernelProgramSpawner {
 
   #spawnPrepared(
     prepared: KernelPreparedProgram,
+    executable: string,
     binding: KernelProgramBinding,
     args: readonly string[],
     env: Readonly<Record<string, string>>,
+    preselected?: { readonly executable: string; readonly selection: KernelFileByteSelection },
   ): KernelResult<KernelHandle<"process">> {
+    try {
+      if (preselected !== undefined && preselected.executable !== executable) {
+        return kernelError(
+          "INVALID_ARGUMENT",
+          "Prepared program target does not match spawn target",
+        );
+      }
+      const fileBytes =
+        preselected?.selection ??
+        this.#selectFileBytes?.({
+          executable,
+          filesystem: prepared.filesystem,
+          ...(prepared.parent === undefined ? {} : { parent: prepared.parent }),
+        }) ??
+        prepared.filesystem.fileBytes;
+      assertKernelFileByteSelectionCompatible(prepared.filesystem.descriptors.entries(), fileBytes);
+      prepared.filesystem.setFileBytes(fileBytes);
+    } catch (error) {
+      return fileByteSelectionError(error);
+    }
     return this.#spawnWithFactory(
       prepared.parent,
       () => prepared,
@@ -133,6 +173,17 @@ export class KernelProgramSpawner {
       return Promise.resolve(
         kernelError("INVALID_ARGUMENT", "Resolved executable lost its mapping"),
       );
+    let fileBytes: KernelFileByteSelection;
+    try {
+      fileBytes =
+        this.#selectFileBytes?.({
+          executable: request.execPath,
+          filesystem: parentFilesystem,
+          parent,
+        }) ?? parentFilesystem.fileBytes;
+    } catch (error) {
+      return Promise.resolve(fileByteSelectionError(error));
+    }
     const backend: KernelBackend = {
       "process.spawn": ({ program, args, env }) => {
         if (program !== resolved.value)
@@ -155,6 +206,7 @@ export class KernelProgramSpawner {
               {
                 ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
                 actions: request.actions,
+                fileBytes,
               },
             ),
           binding,
@@ -230,12 +282,19 @@ export class KernelProgramSpawner {
       };
       return launch.cpuProcess ? launch.cpuProcess.run(finish) : finish();
     };
+    let preparationFailure: unknown;
 
     const spawned = this.#processes.spawn(
       parent,
       (identity) => {
-        const prepared = prepare();
-        launch.prepared = prepared;
+        let prepared: KernelPreparedProgram;
+        try {
+          prepared = prepare();
+          launch.prepared = prepared;
+        } catch (error) {
+          preparationFailure = error;
+          throw error;
+        }
         const cpuProcess = this.#cpuExecution?.forProcess(identity.pid);
         launch.cpuProcess = cpuProcess;
         const controller = new AbortController();
@@ -270,7 +329,11 @@ export class KernelProgramSpawner {
         ...(signalMask === undefined ? {} : { signalMask }),
       },
     );
-    if (spawned.status !== "ok") return spawned;
+    if (spawned.status !== "ok") {
+      return preparationFailure === undefined
+        ? spawned
+        : fileByteSelectionError(preparationFailure);
+    }
     const prepared = launch.prepared;
     if (!prepared)
       return kernelError("IO_ERROR", "Process admission completed without prepared descriptors");
@@ -373,6 +436,9 @@ export class KernelProgramSpawner {
                 processes: this.#processes,
                 wakes: this.#wakes,
                 spawnFor,
+                ...(this.#selectFileBytes === undefined
+                  ? {}
+                  : { selectFileBytes: this.#selectFileBytes }),
               });
               return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
             } catch (error) {
@@ -454,6 +520,15 @@ function hasOnlyStringValues(
   env: Readonly<Record<string, string | KernelHandle<"secret">>>,
 ): env is Readonly<Record<string, string>> {
   return Object.values(env).every((value) => typeof value === "string");
+}
+
+function fileByteSelectionError(error: unknown): KernelResult<KernelHandle<"process">> {
+  const code =
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  const message = error instanceof Error ? error.message : "Process preparation failed";
+  return kernelError(code === "ENOTSUP" ? "UNSUPPORTED" : "IO_ERROR", message);
 }
 
 function throwCleanupErrors(errors: readonly unknown[]): void {
