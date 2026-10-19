@@ -6,6 +6,7 @@ import { createFacetFilePersistence } from "../../kernel/FacetFilePersistence.ts
 import { createMemoryFilePersistencePorts } from "../../kernel/MemoryFilePersistencePorts.ts";
 import type { FacetStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelAbi.ts";
+import type { Inode } from "../../kernel/storage.ts";
 import { createFacetWorkspace } from "../FacetWorkspace.ts";
 import type { MachineWorkspace } from "../MachineWorkspace.ts";
 
@@ -98,6 +99,68 @@ export function makeLocalFile(
   storage.write(inode, 0n, bytes);
   storage.posix.initialize(inode, { mode: 0o644, uid: 1000, gid: 1000 });
   return inode;
+}
+
+export function makeLocalPath(
+  storage: ReturnType<typeof createFacetFilePersistence>["storage"],
+  path: string,
+  bytes: Uint8Array,
+): Inode {
+  const parts = path.slice(1).split("/");
+  let parent = storage.root;
+  for (const name of parts.slice(0, -1)) {
+    try {
+      parent = storage.lookup(parent, name);
+    } catch (error) {
+      if (
+        typeof error !== "object" ||
+        error === null ||
+        !("code" in error) ||
+        error.code !== "ENOENT"
+      )
+        throw error;
+      parent = storage.create(parent, name, { type: "directory", exclusive: true });
+    }
+  }
+  const inode = storage.create(parent, parts.at(-1)!, { type: "file", exclusive: true });
+  storage.write(inode, 0n, bytes);
+  storage.posix.initialize(inode, { mode: 0o644, uid: 1000, gid: 1000 });
+  return inode;
+}
+
+export function directoryChange(
+  inode: bigint,
+  path: string,
+  removedPaths: readonly string[],
+): CommitInode {
+  return {
+    inode,
+    paths: [path],
+    removedPaths,
+    stat: {
+      type: "directory",
+      size: 0n,
+      nlink: 2n,
+      atimeNs: 20n,
+      mtimeNs: 21n,
+      ctimeNs: 22n,
+    },
+    symlinkTarget: null,
+    posix: null,
+    async *readChunks() {},
+  };
+}
+
+export function directoryDeletion(inode: bigint, path: string): CommitInode {
+  return {
+    inode,
+    paths: [],
+    removedPaths: [path],
+    stat: null,
+    symlinkTarget: null,
+    posix: null,
+    async *readChunks() {},
+  };
 }
 
 export function fileChange(

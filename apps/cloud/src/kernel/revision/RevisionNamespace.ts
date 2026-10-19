@@ -1,13 +1,13 @@
-import type { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
-import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
-import type { CommitInode } from "../../kernel/FilePersistencePorts.ts";
-import type { Inode } from "../../kernel/storage.ts";
-import type { ApplyPlan } from "./FacetWorkspaceState.ts";
-import { errorCode, FacetWorkspaceError } from "./FacetWorkspaceState.ts";
+import type { KernelFileSystem } from "../KernelFileSystem.ts";
+import { KernelOpenFlags } from "../KernelFileSystem.ts";
+import type { CommitInode } from "../FilePersistencePorts.ts";
+import type { Inode } from "../storage.ts";
+import { KernelRevisionWorkspaceError, errorCode } from "./RevisionErrors.ts";
+import type { ApplyPlan } from "./RevisionTypes.ts";
 
 export function normalizeMountPath(path: string): string {
   if (!path.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) {
-    throw new FacetWorkspaceError(
+    throw new KernelRevisionWorkspaceError(
       "EINVAL",
       "The revision mount path must be an absolute workspace path",
     );
@@ -27,7 +27,12 @@ export function reconcileNamespace(
     .filter((plan) => plan.changed.stat === null)
     .flatMap((plan) => plan.changed.removedPaths)
     .sort((left, right) => depth(right) - depth(left));
-  for (const path of deletions) removePath(filesystem, mountPath, rootRealPath, path);
+  const deletedDirectories: string[] = [];
+  for (const path of deletions) {
+    const entry = safeLstat(filesystem, mountPath, rootRealPath, path);
+    if (entry?.type === "directory") deletedDirectories.push(path);
+    else if (entry) removePath(filesystem, mountPath, rootRealPath, path);
+  }
 
   const livePlans = plans
     .filter((plan) => plan.changed.stat !== null)
@@ -42,41 +47,9 @@ export function reconcileNamespace(
     ),
   );
   const parked = new Map<string, string>();
-  const toPark = new Set<string>();
-  for (const plan of livePlans) {
-    if (plan.localInode === undefined) continue;
-    const destination = plan.changed.paths[0]!;
-    const destinationEntry = safeLstat(filesystem, mountPath, rootRealPath, destination);
-    if (!destinationEntry || destinationEntry.ino === plan.localInode) continue;
-    const blocker = byLocalInode.get(destinationEntry.ino.toString());
-    if (blocker && blocker.changed.paths[0] !== destination)
-      toPark.add(destinationEntry.ino.toString());
-  }
-  let parkIndex = 0;
-  for (const inode of toPark) {
-    const plan = byLocalInode.get(inode)!;
-    if (plan.changed.stat?.type === "directory")
-      throw new FacetWorkspaceError("ENOTSUP", "Directory rename cycles cannot be applied safely");
-    const source = findLivePath(
-      filesystem,
-      mountPath,
-      rootRealPath,
-      plan.localInode!,
-      plan.sourcePaths,
-      plan.changed.paths,
-    );
-    if (!source) continue;
-    let temp: string;
-    do {
-      temp = `/.signalbox-apply-${hash(applyId)}-${parkIndex++}`;
-    } while (safeLstat(filesystem, mountPath, rootRealPath, temp));
-    assertParentInside(filesystem, mountPath, rootRealPath, temp);
-    filesystem.rename(guestPath(mountPath, source), guestPath(mountPath, temp));
-    parked.set(inode, temp);
-  }
-
   const reconciled = new Map<string, ApplyPlan>();
-  for (const sourcePlan of livePlans) {
+
+  const reconcilePlan = (sourcePlan: ApplyPlan) => {
     const plan = { ...sourcePlan };
     const change = plan.changed;
     const primary = change.paths[0]!;
@@ -112,11 +85,11 @@ export function reconcileNamespace(
       const aliasEntry = safeLstat(filesystem, mountPath, rootRealPath, alias);
       const primaryEntry = safeLstat(filesystem, mountPath, rootRealPath, primary);
       if (primaryEntry === undefined)
-        throw new FacetWorkspaceError("EIO", "The applied inode lost its primary path");
+        throw new KernelRevisionWorkspaceError("EIO", "The applied inode lost its primary path");
       if (aliasEntry?.ino === primaryEntry.ino) continue;
       if (aliasEntry) removePath(filesystem, mountPath, rootRealPath, alias);
       if (change.stat!.type === "directory")
-        throw new FacetWorkspaceError("EPERM", "Directories cannot have hard links");
+        throw new KernelRevisionWorkspaceError("EPERM", "Directories cannot have hard links");
       assertParentInside(filesystem, mountPath, rootRealPath, alias);
       filesystem.link(guestPath(mountPath, primary), guestPath(mountPath, alias));
     }
@@ -131,11 +104,60 @@ export function reconcileNamespace(
     }
     plan.localInode = filesystem.lstat(guestPath(mountPath, primary)).ino;
     reconciled.set(change.inode.toString(), plan);
+  };
+
+  // Move or create directories first so child path lookups see their final parents.
+  for (const plan of livePlans) {
+    if (plan.changed.stat?.type === "directory") reconcilePlan(plan);
+  }
+
+  const filePlans = livePlans.filter((plan) => plan.changed.stat?.type !== "directory");
+  const toPark = new Set<string>();
+  for (const plan of filePlans) {
+    if (plan.localInode === undefined) continue;
+    const destination = plan.changed.paths[0]!;
+    const destinationEntry = safeLstat(filesystem, mountPath, rootRealPath, destination);
+    if (!destinationEntry || destinationEntry.ino === plan.localInode) continue;
+    const blocker = byLocalInode.get(destinationEntry.ino.toString());
+    if (blocker && blocker.changed.paths[0] !== destination) {
+      if (blocker.changed.stat?.type === "directory") {
+        throw new KernelRevisionWorkspaceError(
+          "ENOTSUP",
+          "Directory rename cycles cannot be applied safely",
+        );
+      }
+      toPark.add(destinationEntry.ino.toString());
+    }
+  }
+  let parkIndex = 0;
+  for (const inode of toPark) {
+    const plan = byLocalInode.get(inode)!;
+    const source = findLivePath(
+      filesystem,
+      mountPath,
+      rootRealPath,
+      plan.localInode!,
+      plan.sourcePaths,
+      plan.changed.paths,
+    );
+    if (!source) continue;
+    let temp: string;
+    do {
+      temp = `/.signalbox-apply-${hash(applyId)}-${parkIndex++}`;
+    } while (safeLstat(filesystem, mountPath, rootRealPath, temp));
+    assertParentInside(filesystem, mountPath, rootRealPath, temp);
+    filesystem.rename(guestPath(mountPath, source), guestPath(mountPath, temp));
+    parked.set(inode, temp);
+  }
+
+  for (const plan of filePlans) reconcilePlan(plan);
+  for (const path of deletedDirectories.sort((left, right) => depth(right) - depth(left))) {
+    removePath(filesystem, mountPath, rootRealPath, path);
   }
   return plans.map((plan) => reconciled.get(plan.changed.inode.toString()) ?? plan);
 }
 
-export function createPath(
+function createPath(
   filesystem: KernelFileSystem,
   mountPath: string,
   path: string,
@@ -162,7 +184,7 @@ export function createPath(
   }
 }
 
-export function removePath(
+function removePath(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
@@ -175,7 +197,7 @@ export function removePath(
   else filesystem.unlink(guest);
 }
 
-export function ensureParents(
+function ensureParents(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
@@ -191,14 +213,14 @@ export function ensureParents(
   assertParentInside(filesystem, mountPath, rootRealPath, path);
 }
 
-export function safeLstat(
+function safeLstat(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
   path: string,
 ) {
-  assertParentInside(filesystem, mountPath, rootRealPath, path);
   try {
+    assertParentInside(filesystem, mountPath, rootRealPath, path);
     return filesystem.lstat(guestPath(mountPath, path));
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
@@ -206,7 +228,7 @@ export function safeLstat(
   }
 }
 
-export function assertParentInside(
+function assertParentInside(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
@@ -220,10 +242,13 @@ export function assertParentInside(
       ? realParent.startsWith("/")
       : realParent === rootRealPath || realParent.startsWith(`${rootRealPath}/`);
   if (!within)
-    throw new FacetWorkspaceError("EACCES", "A workspace path resolves outside the revision root");
+    throw new KernelRevisionWorkspaceError(
+      "EACCES",
+      "A workspace path resolves outside the revision root",
+    );
 }
 
-export function findLivePath(
+function findLivePath(
   filesystem: KernelFileSystem,
   mountPath: string,
   rootRealPath: string,
@@ -238,15 +263,15 @@ export function findLivePath(
   return undefined;
 }
 
-export function guestPath(mountPath: string, workspacePath: string): string {
+function guestPath(mountPath: string, workspacePath: string): string {
   return mountPath === "/" ? workspacePath : `${mountPath}${workspacePath}`;
 }
 
-export function depth(path: string): number {
+function depth(path: string): number {
   return path.split("/").length;
 }
 
-export function hash(value: string): string {
+function hash(value: string): string {
   let result = 2166136261;
   for (const char of value) result = Math.imul(result ^ char.charCodeAt(0), 16777619);
   return (result >>> 0).toString(36);

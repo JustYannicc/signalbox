@@ -1,25 +1,18 @@
-import type {
-  CommitInode,
-  FileHydrationPort,
-  ForkCommit,
-} from "../../kernel/FilePersistencePorts.ts";
-import { isPosixMetadata } from "../../kernel/PosixStorage.ts";
-import type { Inode } from "../../kernel/storage.ts";
-import type { FacetStorage } from "../../kernel/FacetSqliteStorage.ts";
-import type { createFacetFilePersistence } from "../../kernel/FacetFilePersistence.ts";
-import type { ApplyPlan, Persistence, TreeEntry, WorkspaceState } from "./FacetWorkspaceState.ts";
+import type { CommitInode, FileHydrationPort, ForkCommit } from "../FilePersistencePorts.ts";
+import { isPosixMetadata } from "../PosixStorage.ts";
+import type { Inode } from "../storage.ts";
+import type { FacetStorage } from "../FacetSqliteStorage.ts";
+import type { createFacetFilePersistence } from "../FacetFilePersistence.ts";
+import type { ApplyPlan, Persistence, TreeEntry, WorkspaceState } from "./RevisionTypes.ts";
 import {
   assertUnchanged,
-  encodeManifest,
-  FacetWorkspaceError,
+  KernelRevisionWorkspaceError,
   persistenceError,
-  readEpoch,
-  readState,
-  sameCommit,
-  scanTree,
-} from "./FacetWorkspaceState.ts";
-import { reconcileNamespace } from "./FacetWorkspaceNamespace.ts";
-import type { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
+} from "./RevisionErrors.ts";
+import { readEpoch, readState } from "./RevisionJournal.ts";
+import { encodeManifest, sameCommit, scanTree } from "./RevisionTree.ts";
+import { reconcileNamespace } from "./RevisionNamespace.ts";
+import type { KernelFileSystem } from "../KernelFileSystem.ts";
 
 export async function applyRevision(input: {
   readonly database: FacetStorage;
@@ -33,6 +26,7 @@ export async function applyRevision(input: {
   readonly changedInodes: readonly CommitInode[];
   readonly hydration: FileHydrationPort;
   readonly baseline: WorkspaceState;
+  readonly applyId: string;
   readonly signal: AbortSignal;
 }): Promise<void> {
   const {
@@ -47,9 +41,9 @@ export async function applyRevision(input: {
     changedInodes,
     hydration,
     baseline,
+    applyId,
     signal,
   } = input;
-  const applyId = `${before.repository}:${before.fork}:${before.commit}->${after.commit}`;
   const storage = persistence.storage;
   try {
     assertUnchanged(baseline.epoch, readEpoch(database));
@@ -64,7 +58,10 @@ export async function applyRevision(input: {
     database.transactionSync(() => {
       const latest = readState(database);
       if (!sameCommit(latest.at, before))
-        throw new FacetWorkspaceError("ESTALE", "The live workspace revision changed during apply");
+        throw new KernelRevisionWorkspaceError(
+          "ESTALE",
+          "The live workspace revision changed during apply",
+        );
       assertUnchanged(baseline.epoch, readEpoch(database));
       const reconciled = reconcileNamespace(filesystem, mountPath, rootRealPath, applyId, resolved);
       applyMetadataAndChunks(database, reconciled, applyId);
@@ -82,7 +79,7 @@ export async function applyRevision(input: {
   }
 }
 
-export function validateWorkspacePath(path: string): void {
+function validateWorkspacePath(path: string): void {
   if (
     !path.startsWith("/") ||
     path.includes("\0") ||
@@ -92,54 +89,63 @@ export function validateWorkspacePath(path: string): void {
       .slice(1)
       .some((part) => !part || part === "." || part === "..")
   ) {
-    throw new FacetWorkspaceError(
+    throw new KernelRevisionWorkspaceError(
       "EINVAL",
       "The persistence port returned a path outside the revision root",
     );
   }
 }
 
-export function validatePlans(changed: readonly CommitInode[]): ApplyPlan[] {
+function validatePlans(changed: readonly CommitInode[]): ApplyPlan[] {
   const seenInodes = new Set<string>();
   const desiredPaths = new Set<string>();
   return changed.map((entry) => {
     const remoteInode = entry.inode.toString();
     if (seenInodes.has(remoteInode))
-      throw new FacetWorkspaceError("EINVAL", "The VM returned a duplicate changed inode");
+      throw new KernelRevisionWorkspaceError("EINVAL", "The VM returned a duplicate changed inode");
     seenInodes.add(remoteInode);
     for (const path of [...entry.paths, ...entry.removedPaths]) validateWorkspacePath(path);
     if (entry.stat) {
       if (entry.stat.size < 0n || entry.stat.nlink < 0n)
-        throw new FacetWorkspaceError("EINVAL", "The VM returned invalid inode metadata");
+        throw new KernelRevisionWorkspaceError("EINVAL", "The VM returned invalid inode metadata");
       if (entry.paths.length === 0)
-        throw new FacetWorkspaceError("EINVAL", "A live inode needs at least one path");
+        throw new KernelRevisionWorkspaceError("EINVAL", "A live inode needs at least one path");
       if (entry.stat.type === "symlink" && entry.symlinkTarget === null)
-        throw new FacetWorkspaceError("EINVAL", "A symlink needs a target");
+        throw new KernelRevisionWorkspaceError("EINVAL", "A symlink needs a target");
       if (entry.stat.nlink > BigInt(Number.MAX_SAFE_INTEGER))
-        throw new FacetWorkspaceError("EOVERFLOW", "The VM returned an unsupported link count");
+        throw new KernelRevisionWorkspaceError(
+          "EOVERFLOW",
+          "The VM returned an unsupported link count",
+        );
       if (entry.stat.type === "directory" && entry.paths.length !== 1)
-        throw new FacetWorkspaceError("EPERM", "Directories cannot have hard links");
+        throw new KernelRevisionWorkspaceError("EPERM", "Directories cannot have hard links");
       if (entry.stat.type === "symlink" && entry.symlinkTarget !== null) {
         if (
           entry.symlinkTarget.includes("\0") ||
           BigInt(new TextEncoder().encode(entry.symlinkTarget).byteLength) !== entry.stat.size
         ) {
-          throw new FacetWorkspaceError("EINVAL", "The VM returned invalid symlink metadata");
+          throw new KernelRevisionWorkspaceError(
+            "EINVAL",
+            "The VM returned invalid symlink metadata",
+          );
         }
       }
       if (entry.posix != null && !isPosixMetadata(entry.posix))
-        throw new FacetWorkspaceError("EINVAL", "The VM returned invalid POSIX metadata");
+        throw new KernelRevisionWorkspaceError("EINVAL", "The VM returned invalid POSIX metadata");
     }
     for (const path of entry.paths) {
       if (desiredPaths.has(path))
-        throw new FacetWorkspaceError("EINVAL", "The VM returned more than one inode for a path");
+        throw new KernelRevisionWorkspaceError(
+          "EINVAL",
+          "The VM returned more than one inode for a path",
+        );
       desiredPaths.add(path);
     }
     return { changed: entry, sourcePaths: [] };
   });
 }
 
-export async function stageFiles(
+async function stageFiles(
   database: FacetStorage,
   hydration: FileHydrationPort,
   after: ForkCommit,
@@ -154,41 +160,66 @@ export async function stageFiles(
   const result = await hydration.fetch({ at: after, paths, signal });
   if (result.status === "error") throw persistenceError(result);
   if (result.value.length !== paths.length)
-    throw new FacetWorkspaceError("IO_ERROR", "Hydration did not return every changed file");
+    throw new KernelRevisionWorkspaceError(
+      "IO_ERROR",
+      "Hydration did not return every changed file",
+    );
   const byPath = new Map(files.map((plan) => [plan.changed.paths[0]!, plan.changed]));
   const seen = new Set<string>();
   for (const file of result.value) {
     const entry = byPath.get(file.path);
     if (!entry || seen.has(file.path))
-      throw new FacetWorkspaceError("IO_ERROR", "Hydration returned an unexpected changed path");
+      throw new KernelRevisionWorkspaceError(
+        "IO_ERROR",
+        "Hydration returned an unexpected changed path",
+      );
     seen.add(file.path);
     let received = 0n;
     let part = 0;
+    let buffered = 0;
+    const block = new Uint8Array(64 * 1024);
+    const persistBlock = (bytes: Uint8Array) => {
+      const blob = bytes.slice().buffer as ArrayBuffer;
+      database.sql.exec(
+        "INSERT INTO kernel_fs_workspace_apply_chunk VALUES (?, ?, ?, ?)",
+        applyId,
+        entry.inode.toString(),
+        part++,
+        blob,
+      );
+    };
     for await (const chunk of file.chunks) {
       signal.throwIfAborted();
       if (!(chunk instanceof Uint8Array))
-        throw new FacetWorkspaceError("IO_ERROR", "Hydration returned a non-byte chunk");
+        throw new KernelRevisionWorkspaceError("IO_ERROR", "Hydration returned a non-byte chunk");
       received += BigInt(chunk.byteLength);
       if (received > entry.stat!.size)
-        throw new FacetWorkspaceError("IO_ERROR", "Hydration exceeded the declared file size");
-      for (let offset = 0; offset < chunk.byteLength; offset += 64 * 1024) {
-        const blob = chunk.subarray(offset, Math.min(offset + 64 * 1024, chunk.byteLength)).slice()
-          .buffer as ArrayBuffer;
-        database.sql.exec(
-          "INSERT INTO kernel_fs_workspace_apply_chunk VALUES (?, ?, ?, ?)",
-          applyId,
-          entry.inode.toString(),
-          part++,
-          blob,
+        throw new KernelRevisionWorkspaceError(
+          "IO_ERROR",
+          "Hydration exceeded the declared file size",
         );
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const copied = Math.min(block.byteLength - buffered, chunk.byteLength - offset);
+        block.set(chunk.subarray(offset, offset + copied), buffered);
+        buffered += copied;
+        offset += copied;
+        if (buffered === block.byteLength) {
+          persistBlock(block);
+          buffered = 0;
+        }
       }
     }
+    if (buffered > 0) persistBlock(block.subarray(0, buffered));
     if (received !== entry.stat!.size)
-      throw new FacetWorkspaceError("IO_ERROR", "Hydration did not match the declared file size");
+      throw new KernelRevisionWorkspaceError(
+        "IO_ERROR",
+        "Hydration did not match the declared file size",
+      );
   }
 }
 
-export function findRetiredInodes(
+function findRetiredInodes(
   before: ReadonlyMap<string, TreeEntry>,
   current: ReadonlyMap<string, TreeEntry>,
   plans: readonly ApplyPlan[],
@@ -204,7 +235,7 @@ export function findRetiredInodes(
   return retired;
 }
 
-export function resolveLocalInodes(
+function resolveLocalInodes(
   before: ReadonlyMap<string, TreeEntry>,
   current: ReadonlyMap<string, TreeEntry>,
   plans: readonly ApplyPlan[],
@@ -244,7 +275,7 @@ export function resolveLocalInodes(
   });
 }
 
-export async function hydratePendingCandidates(
+async function hydratePendingCandidates(
   storage: Persistence["storage"],
   persistence: Persistence,
   plans: readonly ApplyPlan[],
@@ -267,7 +298,7 @@ export async function hydratePendingCandidates(
   }
 }
 
-export function applyMetadataAndChunks(
+function applyMetadataAndChunks(
   database: FacetStorage,
   plans: readonly ApplyPlan[],
   applyId: string,
@@ -276,7 +307,7 @@ export function applyMetadataAndChunks(
     if (!plan.changed.stat) continue;
     const localInode = plan.localInode;
     if (localInode === undefined)
-      throw new FacetWorkspaceError("EIO", "The applied inode has no live identity");
+      throw new KernelRevisionWorkspaceError("EIO", "The applied inode has no live identity");
     const stat = plan.changed.stat;
     database.transactionSync(() => {
       // Descriptors point at the local inode number, so replace its rows instead of swapping in a copy.
