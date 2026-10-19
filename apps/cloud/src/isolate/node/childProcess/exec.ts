@@ -16,10 +16,11 @@ export type ExecCallback = (
   stderr: NodeBuffer.Buffer | string,
 ) => void;
 
-export interface ChildProcessSpawner {
-  (file: string, options?: NodeChildProcessOptions): NodeChildProcess;
-  (file: string, args: readonly string[], options?: NodeChildProcessOptions): NodeChildProcess;
-}
+export type ChildProcessSpawner = (
+  file: string,
+  argsOrOptions?: readonly string[] | NodeChildProcessOptions,
+  options?: NodeChildProcessOptions,
+) => NodeChildProcess;
 
 export type ShellCommandSpawner = (
   command: string,
@@ -198,8 +199,8 @@ function collectResult(
   };
   stdout.onLimit = stopOnce;
   stderr.onLimit = stopOnce;
-  child.stdout.on("data", (chunk: unknown) => stdout.append(chunk));
-  child.stderr.on("data", (chunk: unknown) => stderr.append(chunk));
+  child.stdout?.on("data", (chunk: unknown) => stdout.append(chunk));
+  child.stderr?.on("data", (chunk: unknown) => stderr.append(chunk));
   child.on("error", (error: unknown) => {
     processError = asChildProcessError(error);
   });

@@ -47,7 +47,13 @@ export type {
   KernelProgramPrepareOptions,
   KernelPreparedProgram,
 } from "./program/KernelPreparedProgram.ts";
-export type { KernelPipedProgram } from "./program/KernelProgramPipes.ts";
+export { prepareNodeChildStdioKernelProgram } from "./program/KernelProgramPipes.ts";
+export type {
+  KernelNodeChildStdio,
+  KernelNodeChildStdioMode,
+  KernelNodeChildStdioProgram,
+  KernelPipedProgram,
+} from "./program/KernelProgramPipes.ts";
 
 export interface KernelProgramHostOptions {
   readonly registry: import("./KernelAbi.ts").KernelProgramRegistry;

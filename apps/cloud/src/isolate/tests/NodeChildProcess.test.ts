@@ -265,7 +265,9 @@ describe("Node child_process adapter", () => {
       expect(error).toBeNull();
       expect(stdout).toBe("hello world");
     });
-    child.stdout.on("data", () => events.push("data"));
+    const stdout = child.stdout;
+    if (!stdout) throw new Error("exec should capture stdout by default");
+    stdout.on("data", () => events.push("data"));
     child.on("spawn", () => events.push("spawn"));
     child.on("exit", () => events.push("exit"));
     const closed = new Promise<void>((resolve) => {

@@ -1,8 +1,9 @@
 import * as NodeBuffer from "node:buffer";
 
-import type {
-  KernelProgramHost,
-  KernelProgramPrepareOptions,
+import {
+  prepareNodeChildStdioKernelProgram,
+  type KernelProgramHost,
+  type KernelProgramPrepareOptions,
 } from "../../../kernel/KernelProgramHost.ts";
 import type { ResolvedProgram } from "../../../kernel/KernelAbi.ts";
 import { abortError, asChildProcessError, childProcessError, unwrapHostResult } from "./errors.ts";
@@ -21,9 +22,13 @@ type SyncStdio = NonNullable<KernelProgramPrepareOptions["stdio"]>;
 export interface NodeSpawnSyncResult {
   /** runInline executes without creating a KernelProcessTable identity. */
   readonly pid: undefined;
-  readonly output: readonly [null, NodeBuffer.Buffer | string, NodeBuffer.Buffer | string];
-  readonly stdout: NodeBuffer.Buffer | string;
-  readonly stderr: NodeBuffer.Buffer | string;
+  readonly output: readonly [
+    null,
+    NodeBuffer.Buffer | string | null,
+    NodeBuffer.Buffer | string | null,
+  ];
+  readonly stdout: NodeBuffer.Buffer | string | null;
+  readonly stderr: NodeBuffer.Buffer | string | null;
   readonly status: number | null;
   readonly signal: string | null;
   readonly error?: Error;
@@ -74,7 +79,7 @@ export function createSyncMethods(
       execOptions,
       command,
     );
-    return outputOrThrow(result, command);
+    return outputOrThrow(result, command, normalizeOutputOptions(execOptions, null).encoding);
   }
 
   function execFileSync(file: string, options?: NodeSyncOptions): NodeBuffer.Buffer | string;
@@ -94,6 +99,7 @@ export function createSyncMethods(
     return outputOrThrow(
       runInline(host, context, resolveExecutable(host, normalized, defaults), execOptions, command),
       command,
+      normalizeOutputOptions(execOptions, null).encoding,
     );
   }
 
@@ -129,10 +135,10 @@ function runInline(
   const stdout = new ByteCollector(outputOptions.maxBuffer);
   const stderr = new ByteCollector(outputOptions.maxBuffer);
   const input = normalizeInput(options.input, options.inputEncoding);
-  const stdio = createSyncStdio(input, stdout, stderr);
+  const stdio = createSyncStdio(input, stdout, stderr, spawn.stdio);
   const emptyResult = (error?: Error, status: number | null = null): NodeSpawnSyncResult => {
-    const out = stdout.output(outputOptions.encoding);
-    const err = stderr.output(outputOptions.encoding);
+    const out = spawn.stdio[1] === "pipe" ? stdout.output(outputOptions.encoding) : null;
+    const err = spawn.stdio[2] === "pipe" ? stderr.output(outputOptions.encoding) : null;
     return {
       pid: undefined,
       output: [null, out, err],
@@ -160,7 +166,17 @@ function runInline(
   let error: Error | undefined;
   try {
     const program = unwrapHostResult(host.resolve(spawn.executable), "spawn") as ResolvedProgram;
-    prepared = host.prepare(context, { cwd: spawn.cwd, stdio });
+    if (spawn.stdio.every((mode) => mode === "pipe")) {
+      prepared = host.prepare(context, { cwd: spawn.cwd, stdio });
+    } else {
+      prepared = prepareNodeChildStdioKernelProgram(
+        host.wakes,
+        context,
+        { cwd: spawn.cwd },
+        spawn.stdio,
+        stdio,
+      ).prepared;
+    }
     status = host.runInline(prepared, program, spawn.argv, spawn.env);
   } catch (value) {
     error = asChildProcessError(value);
@@ -199,29 +215,36 @@ function createSyncStdio(
   input: NodeBuffer.Buffer,
   stdout: ByteCollector,
   stderr: ByteCollector,
+  modes: ReturnType<typeof normalizeSpawn>["stdio"],
 ): SyncStdio {
   let inputOffset = 0;
   return [
-    {
-      readInto(target) {
-        const bytesRead = Math.min(target.byteLength, input.byteLength - inputOffset);
-        target.set(input.subarray(inputOffset, inputOffset + bytesRead));
-        inputOffset += bytesRead;
-        return bytesRead;
-      },
-    },
-    {
-      write(source) {
-        stdout.append(source);
-        return source.byteLength;
-      },
-    },
-    {
-      write(source) {
-        stderr.append(source);
-        return source.byteLength;
-      },
-    },
+    modes[0] === "pipe"
+      ? {
+          readInto(target) {
+            const bytesRead = Math.min(target.byteLength, input.byteLength - inputOffset);
+            target.set(input.subarray(inputOffset, inputOffset + bytesRead), 0);
+            inputOffset += bytesRead;
+            return bytesRead;
+          },
+        }
+      : undefined,
+    modes[1] === "pipe"
+      ? {
+          write(source) {
+            stdout.append(source);
+            return source.byteLength;
+          },
+        }
+      : undefined,
+    modes[2] === "pipe"
+      ? {
+          write(source) {
+            stderr.append(source);
+            return source.byteLength;
+          },
+        }
+      : undefined,
   ];
 }
 
@@ -239,7 +262,11 @@ function normalizeInput(
   return NodeBuffer.Buffer.from(input, selected);
 }
 
-function outputOrThrow(result: NodeSpawnSyncResult, command: string): NodeBuffer.Buffer | string {
+function outputOrThrow(
+  result: NodeSpawnSyncResult,
+  command: string,
+  encoding: BufferEncoding | null,
+): NodeBuffer.Buffer | string {
   if (result.error) {
     throw addCommand(result.error, command, result.stdout, result.stderr, result.status);
   }
@@ -252,14 +279,14 @@ function outputOrThrow(result: NodeSpawnSyncResult, command: string): NodeBuffer
       signal: result.signal,
     });
   }
-  return result.stdout;
+  return result.stdout ?? (encoding === null ? NodeBuffer.Buffer.alloc(0) : "");
 }
 
 function addCommand(
   error: Error,
   command: string | undefined,
-  stdout: NodeBuffer.Buffer | string,
-  stderr: NodeBuffer.Buffer | string,
+  stdout: NodeBuffer.Buffer | string | null,
+  stderr: NodeBuffer.Buffer | string | null,
   status: number | null,
 ): Error {
   const details = {

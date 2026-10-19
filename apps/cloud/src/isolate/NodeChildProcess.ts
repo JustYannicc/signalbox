@@ -4,6 +4,7 @@ import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
 import {
   NodeChildProcess,
   type NodeChildProcessContext,
+  type NodeChildProcessWithPipes,
 } from "./node/childProcess/ChildProcess.ts";
 import {
   isArgumentList,
@@ -14,7 +15,11 @@ import {
   type NodeExecOptions,
   type NodeSyncOptions,
 } from "./node/childProcess/arguments.ts";
-import { createExecMethods, type ExecCallback } from "./node/childProcess/exec.ts";
+import {
+  createExecMethods,
+  type ChildProcessSpawner,
+  type ExecCallback,
+} from "./node/childProcess/exec.ts";
 import { createSyncMethods } from "./node/childProcess/sync.ts";
 import { resolveGuestExecutable } from "./node/childProcess/resolveExecutable.ts";
 
@@ -24,8 +29,13 @@ import { resolveGuestExecutable } from "./node/childProcess/resolveExecutable.ts
  */
 
 export { NodeChildProcess as ChildProcess, NodeChildProcess };
+export type { NodeChildProcessWithPipes };
 export type { NodeChildProcessOptions, NodeExecOptions, NodeSyncOptions, ExecCallback };
 export type { NodeChildProcessContext };
+
+type DefaultPipedNodeChildProcessOptions = NodeChildProcessOptions & {
+  readonly stdio?: "pipe" | null | undefined;
+};
 
 export function createNodeChildProcess(host: KernelProgramHost, process: NodeChildProcessContext) {
   if (
@@ -51,11 +61,21 @@ export function createNodeChildProcess(host: KernelProgramHost, process: NodeChi
     cwd: () => process.filesystem.cwd,
   };
 
-  function spawn(file: string, options?: NodeChildProcessOptions): NodeChildProcess;
+  function spawn(
+    file: string,
+    options?: DefaultPipedNodeChildProcessOptions,
+  ): NodeChildProcessWithPipes;
+  function spawn(file: string, options: NodeChildProcessOptions): NodeChildProcess;
+  function spawn(file: string, args: readonly string[]): NodeChildProcessWithPipes;
   function spawn(
     file: string,
     args: readonly string[],
-    options?: NodeChildProcessOptions,
+    options?: DefaultPipedNodeChildProcessOptions,
+  ): NodeChildProcessWithPipes;
+  function spawn(
+    file: string,
+    args: readonly string[],
+    options: NodeChildProcessOptions,
   ): NodeChildProcess;
   function spawn(
     file: string,
@@ -83,7 +103,11 @@ export function createNodeChildProcess(host: KernelProgramHost, process: NodeChi
     return child;
   }
 
-  const asyncMethods = createExecMethods(spawn, spawnShell);
+  const execSpawner: ChildProcessSpawner = (file, argsOrOptions, options) =>
+    isArgumentList(argsOrOptions)
+      ? spawn(file, argsOrOptions, options ?? {})
+      : spawn(file, argsOrOptions ?? {});
+  const asyncMethods = createExecMethods(execSpawner, spawnShell);
   const syncMethods = createSyncMethods(host, process, defaults);
   const fork = (..._args: unknown[]): never => unsupportedNodeOperation("child_process.fork IPC");
 

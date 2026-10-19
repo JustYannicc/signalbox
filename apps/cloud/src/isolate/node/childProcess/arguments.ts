@@ -30,12 +30,15 @@ export interface NodeChildProcessDefaults {
   readonly cwd: () => string;
 }
 
+export type NodeChildProcessStdio = "pipe" | "ignore" | number;
+
 export interface NormalizedSpawn {
   readonly spawnfile: string;
   readonly executable: string;
   readonly argv: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly cwd: string;
+  readonly stdio: readonly [NodeChildProcessStdio, NodeChildProcessStdio, NodeChildProcessStdio];
   readonly signal?: AbortSignal;
   readonly timeout: number;
   readonly killSignal: number;
@@ -58,7 +61,7 @@ export function normalizeSpawn(
       throw new TypeError('The "args" argument must contain only strings');
   }
   if (options.agentosPty) unsupportedNodeOperation("child_process.pty");
-  validateStdio(options.stdio);
+  const stdio = normalizeStdio(options.stdio);
   const shell = normalizeShell(options.shell);
   const argv0 = options.argv0 === undefined ? (shell ?? file) : String(options.argv0);
   const argv = shell ? [argv0, "-c", [file, ...args].join(" ")] : [argv0, ...args];
@@ -70,6 +73,7 @@ export function normalizeSpawn(
     argv,
     env: normalizeEnvironment(options.env, defaults.env),
     cwd,
+    stdio,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     timeout: normalizeTimeout(options.timeout),
     killSignal: normalizeSignal(options.killSignal),
@@ -105,10 +109,32 @@ export function normalizeEnvironment(
   return environment;
 }
 
-function validateStdio(stdio: unknown): void {
-  if (stdio === undefined || stdio === "pipe") return;
-  if (Array.isArray(stdio) && stdio.length === 3 && stdio.every((entry) => entry === "pipe"))
-    return;
+function normalizeStdio(
+  stdio: unknown,
+): readonly [NodeChildProcessStdio, NodeChildProcessStdio, NodeChildProcessStdio] {
+  if (stdio === undefined || stdio === null) return ["pipe", "pipe", "pipe"];
+  if (typeof stdio === "string") {
+    const mode = normalizeStdioEntry(stdio);
+    return [mode, mode, mode];
+  }
+  if (!Array.isArray(stdio)) unsupportedNodeOperation("child_process.stdio mode");
+  if (stdio.length > 3) unsupportedNodeOperation("child_process.stdio mode");
+  return [
+    normalizeStdioEntry(stdio[0]),
+    normalizeStdioEntry(stdio[1]),
+    normalizeStdioEntry(stdio[2]),
+  ];
+}
+
+function normalizeStdioEntry(value: unknown): NodeChildProcessStdio {
+  if (value === undefined || value === null || value === "pipe") return "pipe";
+  if (value === "ignore") return value;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new TypeError('The "stdio" option must contain non-negative integer file descriptors');
+    }
+    return value;
+  }
   unsupportedNodeOperation("child_process.stdio mode");
 }
 
