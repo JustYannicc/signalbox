@@ -1,5 +1,6 @@
 import { createAgentOsWasiArgumentTransform } from "./AgentOsWasi.ts";
 import { KernelDescriptors } from "./KernelDescriptors.ts";
+import { createKernelWasiDeviceAdapter } from "./KernelWasiDevices.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import type { AsyncWASIOptions } from "./Wasi.ts";
@@ -33,6 +34,7 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
       },
     },
     input.agentOsPreopens ? createAgentOsWasiArgumentTransform(input.filesystem) : undefined,
+    createKernelWasiDeviceAdapter(input.filesystem),
   );
   return {
     descriptors: new KernelDescriptors(input.filesystem.descriptors, input.wakes),
