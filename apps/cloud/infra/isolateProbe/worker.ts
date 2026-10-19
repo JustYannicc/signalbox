@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off - measure the workerd wall clock without adding runtime overhead.
 import { DurableObject } from "cloudflare:workers";
 import { codeGenerationBinding } from "./codeGeneration.ts";
+import { childWorkerDispatchBinding } from "./childWorkerDispatch.ts";
 import { FACET_SOURCE } from "./facetSource.ts";
 import { JSPI_WASM } from "./wasmFixture.ts";
 import { probe } from "./generated/runtime.js";
@@ -11,6 +12,7 @@ import {
 import { ModuleUploadStore } from "./moduleUpload.ts";
 
 export { CodeGeneration } from "./codeGeneration.ts";
+export { ChildWorkerDispatch } from "./childWorkerDispatch.ts";
 
 interface ProbeInput {
   id: string;
@@ -24,6 +26,7 @@ interface ProbeInput {
   generatedValue?: number;
   allowOutbound?: unknown;
   allowGeneratedCode?: boolean;
+  allowChildWorkers?: boolean;
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -173,13 +176,18 @@ export class ProbeSession extends DurableObject<Env> {
           return new Response("Invalid generated value", { status: 400 });
         }
         const generatedCode = input.allowGeneratedCode === true;
+        const childWorkers = input.allowChildWorkers === true;
         const namespace = JSON.stringify([
           this.ctx.id.toString(),
           input.id,
           input.mode ?? "facet",
           input.entrypoint ?? null,
         ]);
-        const fixtureId = generatedCode ? `code-generation-fixture:${namespace}` : input.id;
+        const fixtureId = generatedCode
+          ? `code-generation-fixture:${JSON.stringify([namespace, childWorkers])}`
+          : childWorkers
+            ? `child-workers-fixture:${namespace}`
+            : input.id;
         const worker = this.env.LOADER.get(upload ? `staged:${fixtureId}` : fixtureId, async () => {
           const modules =
             input.generatedValue !== undefined
@@ -208,8 +216,13 @@ export class ProbeSession extends DurableObject<Env> {
             compatibilityFlags: ["nodejs_compat"],
             mainModule: input.mainModule ?? "main.js",
             modules: decodedModules,
-            ...(generatedCode
-              ? { env: { CODE_GENERATION: codeGenerationBinding(namespace) } }
+            ...(generatedCode || childWorkers
+              ? {
+                  env: {
+                    ...(generatedCode ? { CODE_GENERATION: codeGenerationBinding(namespace) } : {}),
+                    ...(childWorkers ? { CHILD_WORKERS: childWorkerDispatchBinding() } : {}),
+                  },
+                }
               : {}),
             ...(input.allowOutbound === true ? {} : { globalOutbound: null }),
           };
