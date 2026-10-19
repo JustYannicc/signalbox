@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "probe:isolate": "node --experimental-strip-types infra/isolateProbe/run.ts",
     "dev": "mkdir -p ../web/dist && node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",
     "dev:gateway": "node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev -c wrangler.model-gateway.jsonc --port 8788 --inspector-port 9230",
     "typecheck": "node infra/syncProbe/prepare.mjs && node --experimental-strip-types infra/isolateProbe/prepare.ts && tsc-rs --noEmit && tsc-rs --noEmit -p tsconfig.infra.json",
@@ -30,6 +31,7 @@
     "fractional-indexing": "4.0.0",
     "fzstd": "0.1.1",
     "ignore": "7.0.12",
+    "isomorphic-git": "npm:@ashishkumar472/cf-git@1.0.5",
     "jose": "catalog:",
     "lunorash": "1.0.0-alpha.398",
     "re2js": "2.8.6",
@@ -54,9 +56,12 @@
     "acorn": "8.16.0",
     "alchemy": "2.0.0-beta.80",
     "esbuild": "0.28.2",
+    "node-fetch": "2.7.0",
+    "punycode": "2.3.1",
     "typescript": "catalog:",
     "undici": "catalog:",
     "vite-plus": "catalog:",
-    "wrangler": "^4.147.0"
+    "wrangler": "^4.147.0",
+    "ws": "catalog:"
   }
 }

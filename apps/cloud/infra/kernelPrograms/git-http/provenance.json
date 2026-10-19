@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "importAlias": "isomorphic-git",
+  "package": {
+    "name": "@ashishkumar472/cf-git",
+    "version": "1.0.5",
+    "gitHead": "afc985db1068700c928bb2da1e7d04e5ea1e06d4",
+    "repository": "https://github.com/AshishKumar4/cf-git",
+    "license": "MIT",
+    "integrity": "sha512-89+6PVvewx4ap9ZctVEkGA5SEspYOpJMXfa1btDFV3xuERsRfCZJR+sB4JRRkbEdA8ppFKpvsVAzZ3h77miClw=="
+  },
+  "designReference": {
+    "repository": "https://github.com/AshishKumar4/Nimbus",
+    "revision": "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
+    "files": [
+      "packages/worker/src/git/commands.ts",
+      "packages/worker/src/git/routing.ts",
+      "packages/worker/src/git/git-fs.ts"
+    ]
+  },
+  "transport": "Signalbox Fetch adapter with caller-owned auth and AbortSignal"
+}

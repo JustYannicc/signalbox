@@ -3,6 +3,11 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import cffs from "./native.ts";
+import {
+  enterCurrentKernelCpuUser,
+  runCurrentKernelCpuAsyncSystemImport,
+  runCurrentKernelCpuSystemImport,
+} from "../KernelCpuExecution.ts";
 import { ERR_INVALID_ARG_TYPE, ERR_INVALID_ARG_VALUE } from "./compat.ts";
 import { validateObject } from "./compat.ts";
 import { WasiFileSystem, type WasiDescriptorContext } from "./internal_wasi_fs.ts";
@@ -15,6 +20,15 @@ import type { ValidatedOptions } from "./internal_wasi_options.ts";
 type WasmArgument = number | bigint;
 type WasmFunction = (...args: WasmArgument[]) => unknown;
 type ImportFunction = (...args: WasmArgument[]) => WasiCall<number>;
+export type WasiImportArgumentTransform = (
+  name: string,
+  args: readonly WasmArgument[],
+) => readonly WasmArgument[];
+// signalbox: kernel virtual devices adapt raw syscalls inside the existing accounting/JSPI boundary.
+export type WasiFileSystemImportAdapter = (
+  memory: WasiMemory,
+  imports: WasiFileSystem["imports"],
+) => WasiFileSystem["imports"];
 interface Instance {
   exports: Record<string, unknown>;
 }
@@ -60,6 +74,8 @@ export class WasiLifecycle {
     options: ValidatedOptions,
     asyncMode: boolean,
     descriptorContext?: WasiDescriptorContext,
+    transformArguments?: WasiImportArgumentTransform,
+    adaptFileSystemImports?: WasiFileSystemImportAdapter,
   ) {
     this.#async = asyncMode;
     this.#returnOnExit = options.returnOnExit;
@@ -86,7 +102,8 @@ export class WasiLifecycle {
     );
     const imports = {
       ...host.imports,
-      ...this.filesystem.imports,
+      ...(adaptFileSystemImports?.(this.memory, this.filesystem.imports) ??
+        this.filesystem.imports),
     } as unknown as Record<string, ImportFunction>;
     for (const [name, handler] of Object.entries(imports)) {
       // The suspending wrapper sits directly on the Wasm import. An async JS
@@ -96,18 +113,24 @@ export class WasiLifecycle {
         ? new (getJSPI().Suspending)(async (...args): Promise<number> => {
             try {
               if (this.#closed) throw stateError("WASI has been closed");
-              return await runAsync(handler(...args));
+              return await runCurrentKernelCpuAsyncSystemImport((runSystem) =>
+                runAsync(handler(...(transformArguments?.(name, args) ?? args)), runSystem).catch(
+                  (error: unknown) => runSystem(() => mapErrno(error)),
+                ),
+              );
             } catch (error) {
-              return mapErrno(error);
+              return runCurrentKernelCpuSystemImport(() => mapErrno(error));
             }
           })
         : (...args: WasmArgument[]): number => {
-            try {
-              if (this.#closed) throw stateError("WASI has been closed");
-              return runSync(handler(...args));
-            } catch (error) {
-              return mapErrno(error);
-            }
+            return runCurrentKernelCpuSystemImport(() => {
+              try {
+                if (this.#closed) throw stateError("WASI has been closed");
+                return runSync(handler(...(transformArguments?.(name, args) ?? args)));
+              } catch (error) {
+                return mapErrno(error);
+              }
+            });
           };
     }
   }
@@ -168,11 +191,14 @@ export class WasiLifecycle {
   start(instance: object): number {
     this.finalizeBindings(instance);
     let code = 0;
+    const leaveUser = enterCurrentKernelCpuUser();
     try {
       this.#entry(true)();
     } catch (error) {
       if (error instanceof WasiExit && this.#returnOnExit) code = error.code;
       else this.#fail(error);
+    } finally {
+      leaveUser();
     }
     this.close();
     return code;
@@ -194,10 +220,13 @@ export class WasiLifecycle {
 
   initialize(instance: object): void {
     this.finalizeBindings(instance);
+    const leaveUser = enterCurrentKernelCpuUser();
     try {
       this.#entry(false)?.();
     } catch (error) {
       this.#fail(error);
+    } finally {
+      leaveUser();
     }
   }
 
@@ -220,10 +249,16 @@ export class WasiLifecycle {
       throw new ERR_INVALID_ARG_VALUE("fn", fn, "must be an export of the bound instance");
     }
     this.#active = true;
+    let leaveUser: (() => void) | undefined;
     try {
+      leaveUser = enterCurrentKernelCpuUser();
       return await getJSPI().promising(fn)(...args);
     } finally {
-      this.#active = false;
+      try {
+        leaveUser?.();
+      } finally {
+        this.#active = false;
+      }
     }
   }
 

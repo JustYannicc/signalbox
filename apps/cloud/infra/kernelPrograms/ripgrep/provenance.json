@@ -1,0 +1,256 @@
+{
+  "schemaVersion": 1,
+  "program": "ripgrep",
+  "artifact": {
+    "path": "bin/rg.wasm",
+    "bytes": 2208556,
+    "sha256": "791b862a433f1a5a9b6a7ce982546d33f4146dcb019dba5da1e78be7bffc7ca7",
+    "builtFrom": "target-stock-std/wasm32-wasip1/release/rg.wasm"
+  },
+  "source": {
+    "name": "ripgrep",
+    "version": "15.1.0",
+    "origin": "crates.io",
+    "archive": "ripgrep-15.1.0.crate",
+    "archiveSha256": "f388c4955f85477c28a8667355819844a06614b083c23517f0e86bd1d6d82b73",
+    "cargoLockChecksum": "f388c4955f85477c28a8667355819844a06614b083c23517f0e86bd1d6d82b73",
+    "cargoLockFile": {
+      "path": "Cargo.lock",
+      "sha256": "2a3dbce9bd47b85d3f27aaf5e300420c0f4117f1c5f3a77e0ef657f247ac1224"
+    },
+    "appliedAgentOsPatches": [
+      {
+        "file": "toolchain/std-patches/crates/ripgrep/0001-bin-only-workspace.patch",
+        "sha256": "083441a2a50eb607ff001f6cf9e502420c731f572d2fdb9ff7296195e2abf963"
+      },
+      {
+        "file": "toolchain/std-patches/crates/ripgrep/0002-standalone-workspace.patch",
+        "sha256": "809fc46e543a121adb7125ef0dd75a3cb1fa18da01ea8b46610db5b98704934e"
+      },
+      {
+        "file": "toolchain/std-patches/crates/ripgrep/0003-disable-pcre2-workspace-edge.patch",
+        "sha256": "79a78308e0ebed36f88fc5b7fc49cc0c59c232f3cdcadebfde369b61dfc605ee"
+      }
+    ],
+    "licenses": [
+      {
+        "path": "LICENSE-MIT",
+        "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+      },
+      {
+        "path": "UNLICENSE",
+        "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
+      }
+    ],
+    "verifiedUpstreamTag": {
+      "annotatedTag": "dd0b4f5477d2962eea82dd6d2864f987d574934a",
+      "commit": "af60c2de9d85e7f3d81c78601669468cf02dabab"
+    },
+    "localPatches": [
+      {
+        "file": "patches/0001-probe-sort-timestamps-on-search-roots.patch",
+        "sha256": "e91b39ece16e1d30836352b00ce61526056fbf45be5ab3e7b6295b761c741c80"
+      }
+    ]
+  },
+  "wasiLibc": {
+    "repository": "https://github.com/WebAssembly/wasi-libc",
+    "baseCommit": "574b88da481569b65a237cb80daf9a2d5aeaf82d",
+    "targetTriple": "wasm32-wasi",
+    "appliedAgentOsPatches": [
+      {
+        "file": "toolchain/std-patches/wasi-libc/0014-initialize-cwd-from-pwd.patch",
+        "sha256": "2cad8f9288dfda518ad522feb1c36a6666a90f6f890e24a146377a21b3a57b05"
+      },
+      {
+        "file": "toolchain/std-patches/wasi-libc/0015-always-link-cwd-relative-path-resolution.patch",
+        "sha256": "6a0578ce7fee175ae14c51e2f3638bc537f13cb8ded2c17aab0e25933760e416"
+      }
+    ],
+    "compiledArchives": [
+      {
+        "path": "sysroot/lib/wasm32-wasi/libc.a",
+        "bytes": 976916,
+        "sha256": "666978aa66b44e8f2436f62bb51438a3115e80903a96d1c39122d0d0fee2db91"
+      },
+      {
+        "path": "sysroot/lib/wasm32-wasi/libwasi-emulated-pthread.a",
+        "bytes": 926,
+        "sha256": "79abac0bcc747f545a203d4a71f6159dbd6a0baf1fd6a943c44f0cb293473e70"
+      }
+    ]
+  },
+  "toolchain": {
+    "agentOsRepository": "https://github.com/rivet-dev/agentos",
+    "agentOsCommit": "63ae3b256749d47c7b3a7c463128d5deda57d1bb",
+    "rustChannel": "nightly-2026-03-01",
+    "rustc": "1.96.0-nightly (38c0de8dc 2026-02-28)",
+    "rustcCommit": "38c0de8dcb14d42290042521be9958d37f3fa390",
+    "cargo": "1.96.0-nightly (f298b8c82 2026-02-24)",
+    "target": "wasm32-wasip1",
+    "installedFromFreshRustupHome": true,
+    "rustlibArchives": [
+      {
+        "path": "lib/rustlib/wasm32-wasip1/lib/libstd-9551e213d7d8de0c.rlib",
+        "bytes": 3531236,
+        "sha256": "89237be148294252a55aef63e64f862eb7cd8090246e3ab92a770e6b8f7fbc26"
+      },
+      {
+        "path": "lib/rustlib/wasm32-wasip1/lib/libcore-f01ba3786aa763d6.rlib",
+        "bytes": 2429362,
+        "sha256": "6e4a571fa36476eed393a11c45c02fcd41f886df7e337e11e391175bc9605421"
+      },
+      {
+        "path": "lib/rustlib/wasm32-wasip1/lib/libpanic_abort-5a4cd4742f814428.rlib",
+        "bytes": 6946,
+        "sha256": "57512ecc9732205a8f9f8ce51c691a0f863cf77326940d950120572d34d372f0"
+      }
+    ],
+    "wasiSdk": {
+      "cacheId": "wasi-toolchain-0d9b98feaf9eb139",
+      "clang": "19.1.5-wasi-sdk",
+      "llvmCommit": "ab4b5a2db582958af1ee308a790cfdb42bd24720",
+      "distribution": "wasi-sdk-25.0-arm64-macos",
+      "archive": {
+        "url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-arm64-macos.tar.gz",
+        "bytes": 104133504,
+        "sha256": "e1e529ea226b1db0b430327809deae9246b580fa3cae32d31c82dfe770233587"
+      }
+    }
+  },
+  "build": {
+    "script": "build-rg-stock-std.sh",
+    "scriptSha256": "bff2078c1cd9e595817f427376df5e2472b50dcb1a9bf711d368252336202da0",
+    "command": "cargo build --manifest-path $RIPGREP_SOURCE/Cargo.toml --target-dir $TARGET_DIR --target wasm32-wasip1 --release --no-default-features --bin rg --locked --jobs 2",
+    "cargoHome": "a fresh isolated Cargo home per build",
+    "rustupHome": "a fresh isolated Rustup home per build",
+    "sourcePatch": {
+      "file": "patches/0001-probe-sort-timestamps-on-search-roots.patch",
+      "sha256": "e91b39ece16e1d30836352b00ce61526056fbf45be5ab3e7b6295b761c741c80"
+    },
+    "result": "success",
+    "reproducible": {
+      "byteIdentical": true,
+      "builds": [
+        {
+          "label": "a",
+          "artifact": {
+            "bytes": 2208556,
+            "sha256": "791b862a433f1a5a9b6a7ce982546d33f4146dcb019dba5da1e78be7bffc7ca7"
+          },
+          "manifestSha256": "4b7594dc972b9585bc2d2a24f2ddc31d781e927d592135a9f1becf651fc2cd19",
+          "buildLogSha256": "d1f5acb7e8cc56499f30aaff5d3f283fa4dd15414d55779437553a7a542d6c71",
+          "exit": 0
+        },
+        {
+          "label": "b",
+          "artifact": {
+            "bytes": 2208556,
+            "sha256": "791b862a433f1a5a9b6a7ce982546d33f4146dcb019dba5da1e78be7bffc7ca7"
+          },
+          "manifestSha256": "355f69161f1cec899dd6807a05ee0c3bb1dd3d66efa278ec59608e02a42cdaa7",
+          "buildLogSha256": "caeb70e85e0229dbc7a9d61edae99f84861f52506aef4d2c66d25d03881b1c52",
+          "exit": 0
+        }
+      ]
+    },
+    "canonicalBuildRoot": "/signalbox/ripgrep-build",
+    "gitRevision": null,
+    "sourceDateEpoch": 0
+  },
+  "rebuildRecipe": {
+    "script": "build-rg-stock-std.sh",
+    "scriptSha256": "bff2078c1cd9e595817f427376df5e2472b50dcb1a9bf711d368252336202da0",
+    "invocation": "WASI_SDK_ROOT=/path/to/wasi-sdk apps/cloud/infra/kernelPrograms/ripgrep/build-rg-stock-std.sh",
+    "buildRoot": "RIPGREP_BUILD_ROOT, defaulting to the package-local ignored .build directory",
+    "artifactDestination": "bin/rg.wasm, ignored by Git",
+    "cargoLockSha256": "2a3dbce9bd47b85d3f27aaf5e300420c0f4117f1c5f3a77e0ef657f247ac1224",
+    "canonicalBuildRoot": "/signalbox/ripgrep-build",
+    "gitRevision": "Disabled by GIT_CEILING_DIRECTORIES at the fresh run root",
+    "preservesBuiltArtifactSha256": true,
+    "wasiLibcArchiveSha256": "7d11a801570972e7f32639eed3f8f7d0e997f276b3c85b7aa03283e1265e4b8e",
+    "localSourcePatches": [
+      {
+        "file": "patches/0001-probe-sort-timestamps-on-search-roots.patch",
+        "sha256": "e91b39ece16e1d30836352b00ce61526056fbf45be5ab3e7b6295b761c741c80"
+      }
+    ],
+    "wasiSdkArchive": {
+      "url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-arm64-macos.tar.gz",
+      "bytes": 104133504,
+      "sha256": "e1e529ea226b1db0b430327809deae9246b580fa3cae32d31c82dfe770233587"
+    }
+  },
+  "imports": [
+    "wasi_snapshot_preview1.args_get",
+    "wasi_snapshot_preview1.args_sizes_get",
+    "wasi_snapshot_preview1.clock_time_get",
+    "wasi_snapshot_preview1.environ_get",
+    "wasi_snapshot_preview1.environ_sizes_get",
+    "wasi_snapshot_preview1.fd_close",
+    "wasi_snapshot_preview1.fd_fdstat_get",
+    "wasi_snapshot_preview1.fd_fdstat_set_flags",
+    "wasi_snapshot_preview1.fd_filestat_get",
+    "wasi_snapshot_preview1.fd_prestat_dir_name",
+    "wasi_snapshot_preview1.fd_prestat_get",
+    "wasi_snapshot_preview1.fd_readdir",
+    "wasi_snapshot_preview1.fd_read",
+    "wasi_snapshot_preview1.fd_seek",
+    "wasi_snapshot_preview1.fd_write",
+    "wasi_snapshot_preview1.path_filestat_get",
+    "wasi_snapshot_preview1.path_open",
+    "wasi_snapshot_preview1.path_readlink",
+    "wasi_snapshot_preview1.poll_oneoff",
+    "wasi_snapshot_preview1.proc_exit",
+    "wasi_snapshot_preview1.random_get",
+    "wasi_snapshot_preview1.sched_yield"
+  ],
+  "publicNodeBridgeProof": {
+    "runtime": "Node v24.18.0 with WASI Preview 1 and JSPI",
+    "pass": true,
+    "mode": "candidate",
+    "checks": 22,
+    "sourceTreeManifestSha256": "9c1e04d4011ae6c8aa33e6790eb6572a8212ab3115823dca993e1f663aa54a82",
+    "limits": "Public child-process bridge proof only; native workerd and deployed proofs are separate."
+  },
+  "historical": {
+    "previousArtifact": {
+      "path": "bin/rg.wasm",
+      "bytes": 2207817,
+      "sha256": "5c88ecb6dd08b1952585efc3523b397621b62db54e60572449c784c886a17006",
+      "builtFrom": "target-stock-std/wasm32-wasip1/release/rg.wasm"
+    },
+    "previousBuild": {
+      "script": "build-rg-stock-std.sh",
+      "scriptSha256": "db81f524399c9071afce099a3d2be0da33ddb736e809ece38b166369934596ac",
+      "command": "cargo build --manifest-path $RUN_ROOT/inputs/ripgrep-15.1.0/Cargo.toml --target-dir $RUN_ROOT/target-stock-std --target wasm32-wasip1 --release --no-default-features --bin rg --locked --jobs 2",
+      "cargoHome": "isolated task-local Cargo home",
+      "rustc": "the nightly-2026-03-01 wasm32-wasip1 toolchain installed into a fresh task-local Rustup home",
+      "rustFlags": [
+        "-C link-self-contained=no",
+        "-C link-arg=$WASI_LIBC_SYSROOT/lib/wasm32-wasi/crt1-command.o",
+        "-C link-arg=$WASI_LIBC_SYSROOT/lib/wasm32-wasi/libc.a",
+        "-C link-arg=$WASI_LIBC_SYSROOT/lib/wasm32-wasi/libwasi-emulated-pthread.a",
+        "-C link-arg=-L$WASI_LIBC_SYSROOT/lib/wasm32-wasi",
+        "-C metadata=agentos-libc-666978aa66b44e8f",
+        "--cfg tokio_unstable",
+        "--remap-path-prefix=$RUN_ROOT=/signalbox/ripgrep-build",
+        "--remap-path-prefix=$WASI_SDK_ROOT=/signalbox/wasi-sdk"
+      ],
+      "result": "success",
+      "canonicalBuildRoot": "/signalbox/ripgrep-build",
+      "gitRevision": null,
+      "sourceDateEpoch": 0
+    },
+    "previousPureWasiProof": {
+      "runtime": "Node v24.18.0 WASI Preview 1",
+      "pass": true,
+      "cases": [
+        "PWD=/work selects work/search.txt despite a root search.txt decoy",
+        "absolute /outside/absolute.txt remains absolute",
+        "--version reports ripgrep 15.1.0"
+      ],
+      "outputSha256": "0ae456240b9cdc93863272845733d52a7f05db2c2ea9acdfee350e729ec2cc45"
+    }
+  }
+}

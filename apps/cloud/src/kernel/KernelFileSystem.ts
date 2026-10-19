@@ -1,4 +1,5 @@
 import type { Mount, Storage, Times } from "./storage.ts";
+import type { CreateOptions, Inode } from "./storage.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
 import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { runSync } from "./wasi/internal_wasi_calls.ts";
@@ -9,6 +10,7 @@ import type {
   WasiResolvedPath,
 } from "./wasi/internal_wasi_paths.ts";
 import { KernelFileSystemIo } from "./filesystem/KernelFileSystemIo.ts";
+import { runCurrentKernelCpuSystem } from "./KernelCpuExecution.ts";
 import { KernelFileSystemOpen } from "./filesystem/KernelFileSystemOpen.ts";
 import { KernelFileSystemPaths } from "./filesystem/KernelFileSystemPaths.ts";
 import {
@@ -22,10 +24,16 @@ import {
   withKernelErrors,
 } from "./filesystem/KernelFileSystemErrors.ts";
 import { KernelOpenFlags } from "./filesystem/KernelOpenFlags.ts";
-import type { KernelStat } from "./filesystem/KernelFileSystemTypes.ts";
+import { KernelPosix } from "./filesystem/KernelPosix.ts";
+import type {
+  KernelPosixCredentials,
+  KernelPosixMetadata,
+  KernelPosixOptions,
+  KernelStat,
+} from "./filesystem/KernelFileSystemTypes.ts";
 
 export { KernelOpenFlags };
-export type { KernelStat };
+export type { KernelPosixCredentials, KernelPosixMetadata, KernelPosixOptions, KernelStat };
 export type { WasiStdio } from "./wasi/internal_wasi_descriptors.ts";
 
 export interface KernelFileSystemConfig {
@@ -33,6 +41,7 @@ export interface KernelFileSystemConfig {
   readonly stdio?: readonly [WasiStdio, WasiStdio, WasiStdio];
   readonly cwd?: string;
   readonly descriptors?: WasiDescriptorTable;
+  readonly posix?: KernelPosixOptions;
 }
 
 const forkContextSymbol: unique symbol = Symbol("KernelFileSystem.forkContext");
@@ -40,6 +49,7 @@ const forkContextSymbol: unique symbol = Symbol("KernelFileSystem.forkContext");
 interface KernelFileSystemForkContext {
   readonly mounts: readonly WasiMountedStorage[];
   readonly cwdAnchor?: WasiPathAnchor;
+  readonly posix?: KernelPosixOptions;
 }
 
 type KernelFileSystemInternalConfig = KernelFileSystemConfig & {
@@ -53,6 +63,7 @@ export class KernelFileSystem {
   readonly #paths: KernelFileSystemPaths;
   readonly #open: KernelFileSystemOpen;
   readonly #io: KernelFileSystemIo;
+  readonly #posix: KernelPosix;
   readonly #mounts: Mount<Storage>[];
   readonly #mountedMounts: readonly WasiMountedStorage[];
   readonly #ownsDescriptors: boolean;
@@ -62,6 +73,7 @@ export class KernelFileSystem {
   constructor(config: KernelFileSystemConfig) {
     const forkContext = (config as KernelFileSystemInternalConfig)[forkContextSymbol];
     this.#mounts = config.mounts.map((mount) => ({ ...mount }));
+    this.#posix = new KernelPosix(forkContext?.posix ?? config.posix);
     this.#ownsDescriptors = config.descriptors === undefined;
     this.#wasi = new WasiFileSystem(
       new WasiMemory(),
@@ -82,7 +94,7 @@ export class KernelFileSystem {
         this.descriptors,
         forkContext?.cwdAnchor,
       );
-      this.#paths = new KernelFileSystemPaths(resolver, this.descriptors);
+      this.#paths = new KernelFileSystemPaths(resolver, this.descriptors, this.#posix);
       this.#open = new KernelFileSystemOpen(this.descriptors, this.#paths);
       this.#io = new KernelFileSystemIo(this.descriptors);
       if (forkContext?.cwdAnchor !== undefined) {
@@ -123,185 +135,359 @@ export class KernelFileSystem {
   }
 
   get cwd(): string {
-    this.#assertOpen();
-    const anchor = this.#paths.resolver.validatedCwdAnchor();
-    if (anchor === undefined) return this.#paths.cwd;
-    this.#cwdAnchor = copyAnchor(anchor);
-    return joinGuestPath(anchor.mount.path, anchor.pathComponents);
+    return this.#system(() => {
+      this.#assertOpen();
+      const anchor = this.#paths.resolver.validatedCwdAnchor();
+      if (anchor === undefined) return this.#paths.cwd;
+      this.#cwdAnchor = copyAnchor(anchor);
+      return joinGuestPath(anchor.mount.path, anchor.pathComponents);
+    });
+  }
+
+  get posixCredentials(): KernelPosixCredentials | undefined {
+    return this.#posix.credentials;
+  }
+
+  get posixPolicy(): KernelPosixOptions | undefined {
+    return this.#posix.policy;
   }
 
   fork(descriptors: WasiDescriptorTable): KernelFileSystem {
-    this.#assertOpen();
-    const cwdAnchor = this.#cwdAnchor;
-    const config: KernelFileSystemInternalConfig = {
-      mounts: this.#mounts,
-      descriptors,
-      [forkContextSymbol]: {
-        mounts: this.#mountedMounts,
-        ...(cwdAnchor === undefined ? {} : { cwdAnchor: copyAnchor(cwdAnchor) }),
-      },
-    };
-    return new KernelFileSystem(config);
+    return this.#system(() => {
+      this.#assertOpen();
+      const cwdAnchor = this.#cwdAnchor;
+      const config: KernelFileSystemInternalConfig = {
+        mounts: this.#mounts,
+        descriptors,
+        [forkContextSymbol]: {
+          mounts: this.#mountedMounts,
+          ...(cwdAnchor === undefined ? {} : { cwdAnchor: copyAnchor(cwdAnchor) }),
+          ...(this.#posix.policy === undefined ? {} : { posix: this.#posix.policy }),
+        },
+      };
+      return new KernelFileSystem(config);
+    });
   }
 
   resolve(path: string, options: { followFinal?: boolean; cwd?: string } = {}): WasiResolvedPath {
-    this.#assertOpen();
-    return this.#paths.resolve(path, options);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.resolve(path, options);
+    });
+  }
+
+  assertWasiPathVisible(mount: WasiMountedStorage, pathComponents: readonly string[]): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.resolver.assertPathVisible(mount, pathComponents);
+    });
   }
 
   open(path: string, flags: number, mode?: number): number {
-    this.#assertOpen();
-    return this.#open.open(path, flags, mode);
+    let allocated: number | undefined;
+    try {
+      return this.#system(() => {
+        this.#assertOpen();
+        allocated = this.#open.open(path, flags, mode);
+        return allocated;
+      });
+    } catch (error) {
+      if (allocated !== undefined) {
+        try {
+          this.#open.close(allocated);
+        } catch {
+          // Closing consumes the mapping before its release hook. Keep the original failure.
+        }
+      }
+      throw error;
+    }
+  }
+
+  createInode(
+    mount: WasiMountedStorage,
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): Inode {
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#posix.createInode(mount, parent, name, options, mode);
+    });
+  }
+
+  /** Returns and replaces this process's current umask. */
+  setUmask(mask: number): number {
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#posix.setUmask(mask);
+    });
+  }
+
+  /** Supplies the mode hint consumed by the next WASI creation call. */
+  setNextCreateMode(mode: number): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#posix.setNextCreateMode(mode);
+    });
+  }
+
+  /** Called at WASI creation-call entry so errors or existing paths cannot leak the hint. */
+  takeNextCreateMode(): number | undefined {
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#posix.takeNextCreateMode();
+    });
+  }
+
+  getPosixMetadata(path: string, follow = true): KernelPosixMetadata {
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.getPosixMetadata(path, follow);
+    });
+  }
+
+  getPosixMetadataForFd(fd: number): KernelPosixMetadata {
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.getPosixMetadataForFd(fd);
+    });
+  }
+
+  chmod(path: string, mode: number, follow = true): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.chmod(path, mode, follow);
+    });
+  }
+
+  fchmod(fd: number, mode: number): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.fchmod(fd, mode);
+    });
+  }
+
+  chown(path: string, uid: number, gid: number, follow = true): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.chown(path, uid, gid, follow);
+    });
+  }
+
+  fchown(fd: number, uid: number, gid: number): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.fchown(fd, uid, gid);
+    });
+  }
+
+  /** Checks pathname access using the process's real or effective credentials. */
+  access(path: string, mode: number, effectiveIds = false): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.access(path, mode, effectiveIds);
+    });
   }
 
   close(fd: number): void {
-    this.#assertOpen();
-    this.#open.close(fd);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#open.close(fd);
+    });
   }
 
   read(fd: number, target: Uint8Array, position: bigint | null): number {
-    this.#assertOpen();
-    return this.#io.read(fd, target, position);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#io.read(fd, target, position);
+    });
   }
 
   write(fd: number, source: Uint8Array, position: bigint | null): number {
-    this.#assertOpen();
-    return this.#io.write(fd, source, position);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#io.write(fd, source, position);
+    });
   }
 
   stat(path: string): KernelStat {
-    this.#assertOpen();
-    return this.#paths.stat(path);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.stat(path);
+    });
   }
 
   lstat(path: string): KernelStat {
-    this.#assertOpen();
-    return this.#paths.lstat(path);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.lstat(path);
+    });
   }
 
   fstat(fd: number): KernelStat {
-    this.#assertOpen();
-    return this.#paths.fstat(fd);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.fstat(fd);
+    });
   }
 
   truncate(path: string, size: bigint): void {
-    this.#assertOpen();
-    this.#paths.truncate(path, size);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.truncate(path, size);
+    });
   }
 
   ftruncate(fd: number, size: bigint): void {
-    this.#assertOpen();
-    this.#io.ftruncate(fd, size);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#io.ftruncate(fd, size);
+    });
   }
 
-  mkdir(path: string): void {
-    this.#assertOpen();
-    this.#paths.mkdir(path);
+  mkdir(path: string, mode = 0o777): void {
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.mkdir(path, mode);
+    });
   }
 
   readdir(path: string): string[] {
-    this.#assertOpen();
-    return this.#paths.readdir(path);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.readdir(path);
+    });
   }
 
   readlink(path: string): string {
-    this.#assertOpen();
-    return this.#paths.readlink(path);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.readlink(path);
+    });
   }
 
   symlink(target: string, path: string): void {
-    this.#assertOpen();
-    this.#paths.symlink(target, path);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.symlink(target, path);
+    });
   }
 
   link(sourcePath: string, targetPath: string): void {
-    this.#assertOpen();
-    this.#paths.link(sourcePath, targetPath);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.link(sourcePath, targetPath);
+    });
   }
 
   rename(sourcePath: string, targetPath: string): void {
-    this.#assertOpen();
-    this.#paths.rename(sourcePath, targetPath);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.rename(sourcePath, targetPath);
+    });
   }
 
   unlink(path: string): void {
-    this.#assertOpen();
-    this.#paths.unlink(path);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.unlink(path);
+    });
   }
 
   rmdir(path: string): void {
-    this.#assertOpen();
-    this.#paths.rmdir(path);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.rmdir(path);
+    });
   }
 
   setTimes(path: string, times: Times, follow = true): void {
-    this.#assertOpen();
-    this.#paths.setTimes(path, times, follow);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.setTimes(path, times, follow);
+    });
   }
 
   fsetTimes(fd: number, times: Times): void {
-    this.#assertOpen();
-    this.#paths.fsetTimes(fd, times);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#paths.fsetTimes(fd, times);
+    });
   }
 
   sync(fd: number, dataOnly = false): void {
-    this.#assertOpen();
-    this.#io.sync(fd, dataOnly);
+    this.#system(() => {
+      this.#assertOpen();
+      this.#io.sync(fd, dataOnly);
+    });
   }
 
   realpath(path: string): string {
-    this.#assertOpen();
-    return this.#paths.realpath(path);
+    return this.#system(() => {
+      this.#assertOpen();
+      return this.#paths.realpath(path);
+    });
   }
 
   chdir(path: string): void {
-    this.#assertOpen();
-    const resolved = this.#paths.resolve(path);
-    this.#setCwdAnchor(anchorFromResolved(resolved));
+    this.#system(() => {
+      this.#assertOpen();
+      const resolved = this.#paths.resolve(path);
+      this.#setCwdAnchor(anchorFromResolved(resolved));
+    });
   }
 
   fchdir(fd: number): void {
-    this.#assertOpen();
-    const descriptor = withKernelErrors(() => this.descriptors.get(fd));
-    if (
-      descriptor.kind !== "directory" ||
-      descriptor.mount === undefined ||
-      descriptor.inode === undefined ||
-      descriptor.ancestors === undefined ||
-      descriptor.pathComponents === undefined
-    ) {
-      throw kernelError("ENOTDIR");
-    }
-    this.#setCwdAnchor({
-      mount: descriptor.mount,
-      inode: descriptor.inode,
-      ancestors: descriptor.ancestors,
-      pathComponents: descriptor.pathComponents,
+    this.#system(() => {
+      this.#assertOpen();
+      const descriptor = withKernelErrors(() => this.descriptors.get(fd));
+      if (
+        descriptor.kind !== "directory" ||
+        descriptor.mount === undefined ||
+        descriptor.inode === undefined ||
+        descriptor.ancestors === undefined ||
+        descriptor.pathComponents === undefined
+      ) {
+        throw kernelError("ENOTDIR");
+      }
+      this.#setCwdAnchor({
+        mount: descriptor.mount,
+        inode: descriptor.inode,
+        ancestors: descriptor.ancestors,
+        pathComponents: descriptor.pathComponents,
+      });
     });
   }
 
   dispose(): void {
-    if (this.#disposed) return;
-    this.#disposed = true;
-    const errors: unknown[] = [];
-    if (this.#ownsDescriptors) {
-      try {
-        withKernelErrors(() => runSync(this.#wasi.close()));
-      } catch (error) {
-        errors.push(error);
+    this.#system(() => {
+      if (this.#disposed) return;
+      this.#disposed = true;
+      const errors: unknown[] = [];
+      if (this.#ownsDescriptors) {
+        try {
+          withKernelErrors(() => runSync(this.#wasi.close()));
+        } catch (error) {
+          errors.push(error);
+        }
       }
-    }
-    const cwdAnchor = this.#cwdAnchor;
-    this.#cwdAnchor = undefined;
-    if (cwdAnchor !== undefined) {
-      try {
-        runKernelSync(cwdAnchor.mount.storage.release(cwdAnchor.inode));
-      } catch (error) {
-        errors.push(error);
+      const cwdAnchor = this.#cwdAnchor;
+      this.#cwdAnchor = undefined;
+      if (cwdAnchor !== undefined) {
+        try {
+          runKernelSync(cwdAnchor.mount.storage.release(cwdAnchor.inode));
+        } catch (error) {
+          errors.push(error);
+        }
       }
-    }
-    if (errors.length === 1) throw errors[0];
-    if (errors.length > 1) throw new AggregateError(errors, "Kernel filesystem disposal failed");
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "Kernel filesystem disposal failed");
+    });
+  }
+
+  #system<T>(run: () => T): T {
+    return runCurrentKernelCpuSystem(run);
   }
 
   #assertOpen(): void {

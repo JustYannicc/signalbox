@@ -18,6 +18,11 @@ export interface KernelAsyncProgramExecRequest {
   readonly home?: string;
 }
 
+export interface KernelAsyncProgramCpu {
+  /** Runs one synchronous user-code slice; async waits stay outside the scope. */
+  runUser<T>(run: () => T): T;
+}
+
 export interface KernelAsyncProgramContext {
   readonly filesystem: KernelFileSystem;
   readonly home: string | undefined;
@@ -27,6 +32,7 @@ export interface KernelAsyncProgramContext {
   readonly signal: AbortSignal;
   readonly processes: KernelProcessTable;
   readonly wakes: KernelWakeRegistry;
+  readonly cpu?: KernelAsyncProgramCpu;
   readonly spawn: (request: AgentOsSpawnRequest) => Promise<KernelResult<KernelHandle<"process">>>;
   readonly exec: (request: KernelAsyncProgramExecRequest) => Promise<KernelExitStatus>;
 }

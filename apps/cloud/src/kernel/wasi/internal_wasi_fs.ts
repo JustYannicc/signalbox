@@ -16,9 +16,10 @@ import {
   normalizeMounts,
   type WasiMountedStorage,
   WasiPathResolver,
+  type WasiPathCheck,
 } from "./internal_wasi_paths.ts";
 import { WasiFdCalls } from "./internal_wasi_fd_calls.ts";
-import { WasiPathCalls } from "./internal_wasi_path_calls.ts";
+import { WasiPathCalls, type WasiCreationPolicy } from "./internal_wasi_path_calls.ts";
 
 export { complete, type WasiCall } from "./internal_wasi_calls.ts";
 export { WasiDescriptorTable } from "./internal_wasi_descriptors.ts";
@@ -31,6 +32,8 @@ const EINVAL = 28;
 export interface WasiDescriptorContext {
   readonly table: WasiDescriptorTable;
   readonly ownership: "owned" | "borrowed";
+  readonly creation?: WasiCreationPolicy;
+  readonly pathCheck?: WasiPathCheck;
 }
 
 /** Composes the preview1 descriptor, file, and path syscall adapters. */
@@ -55,9 +58,14 @@ export class WasiFileSystem {
     this.#mounts = descriptorContext === undefined ? normalizeMounts(mounts) : [];
     this.descriptors = descriptorContext?.table ?? new WasiDescriptorTable(stdio);
     this.#ownsDescriptors = descriptorContext?.ownership !== "borrowed";
-    this.#paths = new WasiPathResolver(complete);
+    this.#paths = new WasiPathResolver(complete, descriptorContext?.pathCheck);
     this.#fdCalls = new WasiFdCalls(memory, this.descriptors);
-    this.#pathCalls = new WasiPathCalls(memory, this.descriptors, this.#paths);
+    this.#pathCalls = new WasiPathCalls(
+      memory,
+      this.descriptors,
+      this.#paths,
+      descriptorContext?.creation,
+    );
     this.imports = Object.assign(
       Object.create(null) as Record<string, unknown>,
       this.#fdCalls.imports,

@@ -1,3 +1,5 @@
+import { createAgentOsWasiArgumentTransform } from "../AgentOsWasi.ts";
+import { createKernelWasiDeviceAdapter } from "../KernelWasiDevices.ts";
 import type { KernelCapability, KernelHandle, KernelResult } from "../KernelAbi.ts";
 import type { KernelAsyncProgram } from "../KernelAsyncProgram.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
@@ -7,6 +9,11 @@ import { AgentOsProcessHost } from "../AgentOsProcessHost.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import type { KernelProcessIdentity, KernelProcessTable } from "../KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
+import {
+  enterCurrentKernelCpuUser,
+  runCurrentKernelCpuAwaitableSystemImport,
+  runCurrentKernelCpuSystemImport,
+} from "../KernelCpuExecution.ts";
 import { currentKernelSignal } from "../process/KernelExecution.ts";
 import { validateOptions } from "../wasi/internal_wasi_options.ts";
 import { WasiLifecycle } from "../wasi/internal_wasi_lifecycle.ts";
@@ -22,7 +29,12 @@ export interface KernelInlineProgramContext {
 export type KernelInlineProgram = (context: KernelInlineProgramContext) => number;
 
 export type KernelProgramImplementation =
-  | { readonly kind: "wasm"; readonly module: WebAssembly.Module }
+  | {
+      readonly kind: "wasm";
+      readonly module: WebAssembly.Module;
+      readonly agentOsPreopens?: boolean;
+      readonly cwdEnvironment?: "PWD";
+    }
   | { readonly kind: "javascript"; readonly runInline: KernelInlineProgram }
   | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] };
 
@@ -43,7 +55,9 @@ export interface KernelWasiRuntimeOptions {
   readonly descriptorOwnership?: "owned" | "borrowed";
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  readonly cwdEnvironment?: "PWD";
   readonly asyncMode: boolean;
+  readonly agentOsPreopens?: boolean;
   readonly identity: KernelProcessIdentity | undefined;
   readonly signal: AbortSignal | undefined;
   readonly processes: KernelProcessTable;
@@ -64,7 +78,10 @@ export function createKernelWasiRuntime(
     validateOptions({
       version,
       args: [...options.args],
-      env: { ...options.env },
+      env:
+        options.cwdEnvironment === "PWD"
+          ? { ...options.env, PWD: options.prepared.filesystem.cwd }
+          : { ...options.env },
       returnOnExit: true,
       mounts: [],
     }),
@@ -72,7 +89,20 @@ export function createKernelWasiRuntime(
     {
       table: options.prepared.filesystem.descriptors,
       ownership: options.descriptorOwnership ?? "owned",
+      pathCheck: options.prepared.filesystem.assertWasiPathVisible.bind(
+        options.prepared.filesystem,
+      ),
+      creation: {
+        createInode: options.prepared.filesystem.createInode.bind(options.prepared.filesystem),
+        takeCreateMode: options.prepared.filesystem.takeNextCreateMode.bind(
+          options.prepared.filesystem,
+        ),
+      },
     },
+    options.agentOsPreopens
+      ? createAgentOsWasiArgumentTransform(options.prepared.filesystem)
+      : undefined,
+    createKernelWasiDeviceAdapter(options.prepared.filesystem),
   );
 
   const importObject = Object.create(null) as WebAssembly.Imports;
@@ -109,6 +139,7 @@ export function createKernelWasiRuntime(
       const fileSystemHost = new AgentOsFileSystemHost({
         memory: () => lifecycle.memory.memory,
         fileSystem: options.prepared.filesystem,
+        ...(options.agentOsPreopens ? { agentOsPreopens: true } : {}),
       });
       const requested = new Set(
         moduleImports.filter((item) => item.module === namespace).map((item) => item.name),
@@ -130,14 +161,25 @@ export function runInlineJavaScript(
   args: readonly string[],
   env: Readonly<Record<string, string>>,
 ): number {
-  const result: unknown = runInline({
-    filesystem: prepared.filesystem,
-    home: prepared.home,
-    args: Object.freeze([...args]),
-    env: Object.freeze({ ...env }),
-  });
-  if (isPromiseLike(result)) {
-    void Promise.resolve(result).catch(() => undefined);
+  const leaveUser = enterCurrentKernelCpuUser();
+  let result: unknown;
+  let returnedAsync = false;
+  try {
+    result = runInline({
+      filesystem: prepared.filesystem,
+      home: prepared.home,
+      args: Object.freeze([...args]),
+      env: Object.freeze({ ...env }),
+    });
+    returnedAsync = isPromiseLike(result);
+    if (returnedAsync) {
+      // Inline work is invalid, but a failed leave must still observe its rejection.
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } finally {
+    leaveUser();
+  }
+  if (returnedAsync) {
     throw Object.assign(new Error("Inline program returned asynchronous work"), {
       code: "ERR_KERNEL_INLINE_ASYNC_UNSUPPORTED",
     });
@@ -188,7 +230,8 @@ function hostProcessImports(
     if (handler === undefined) continue;
     const suspending = processSuspending.has(name) || descriptorSuspending.has(name);
     if (!suspending) {
-      imports[name] = handler as WebAssembly.ImportValue;
+      imports[name] = ((...args: number[]) =>
+        runCurrentKernelCpuSystemImport(() => handler(...args))) as WebAssembly.ImportValue;
       continue;
     }
     if (!asyncMode) {
@@ -201,7 +244,9 @@ function hostProcessImports(
         code: "ERR_KERNEL_JSPI_UNAVAILABLE",
       });
     }
-    imports[name] = new wasm.Suspending(handler as (...args: number[]) => unknown);
+    imports[name] = new wasm.Suspending((...args: number[]) =>
+      runCurrentKernelCpuAwaitableSystemImport(() => handler(...args)),
+    );
   }
   return imports;
 }

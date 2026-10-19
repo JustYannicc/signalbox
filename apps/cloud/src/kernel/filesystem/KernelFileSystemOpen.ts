@@ -1,6 +1,6 @@
 import { WasiDescriptorTable, type WasiDescriptor } from "../wasi/internal_wasi_descriptors.ts";
 import type { Stat } from "../storage.ts";
-import { RIGHTS } from "../wasi/internal_wasi_descriptors.ts";
+import { FDFLAGS, RIGHTS } from "../wasi/internal_wasi_descriptors.ts";
 import type { WasiResolvedPath } from "../wasi/internal_wasi_paths.ts";
 import { descriptorPathAlias } from "./KernelPathAliases.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
@@ -26,7 +26,7 @@ export class KernelFileSystemOpen {
     this.#paths = paths;
   }
 
-  open(path: string, flags: number, _mode?: number): number {
+  open(path: string, flags: number, mode = 0o666): number {
     return withKernelErrors(() => {
       const parsed = parseOpenFlags(flags);
       const device = virtualDevice(path);
@@ -40,11 +40,15 @@ export class KernelFileSystemOpen {
         if (!parsed.create) throw kernelError("ENOENT");
         if (parsed.directory) throw kernelError("EINVAL");
         if (lookup.parent.mount.readOnly) throw kernelError("EROFS");
-        const inode = runKernelSync(
-          lookup.parent.mount.storage.create(lookup.parent.parent, lookup.parent.name, {
+        const inode = this.#paths.createInode(
+          lookup.parent.mount,
+          lookup.parent.parent,
+          lookup.parent.name,
+          {
             type: "file",
             exclusive: true,
-          }),
+          },
+          mode,
         );
         let stat: Stat;
         try {
@@ -78,6 +82,9 @@ export class KernelFileSystemOpen {
   }
 
   #openDevice(name: "null" | "zero" | "random", parsed: ParsedOpenFlags): number {
+    if ((parsed.statusFlags & FDFLAGS.NONBLOCK) !== 0) {
+      throw kernelError("ENOTSUP", "Nonblocking stream and device opens are unsupported");
+    }
     if (parsed.directory) throw kernelError("ENOTDIR");
     if (parsed.create && parsed.exclusive) throw kernelError("EEXIST");
     const stdio = virtualDeviceStdio(name);
@@ -111,6 +118,9 @@ export class KernelFileSystemOpen {
   }
 
   #duplicateStream(source: WasiDescriptor, parsed: ParsedOpenFlags): number {
+    if ((parsed.statusFlags & FDFLAGS.NONBLOCK) !== 0) {
+      throw kernelError("ENOTSUP", "Nonblocking stream and device opens are unsupported");
+    }
     if (parsed.pathOnly && parsed.noFollow) {
       throw kernelError("ENOTSUP", "Opening a proc magic link itself is unsupported");
     }

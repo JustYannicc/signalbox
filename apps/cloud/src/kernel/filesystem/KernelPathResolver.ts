@@ -6,16 +6,19 @@ import {
   type WasiMountedStorage,
   type WasiPathAnchor,
   type WasiPathLookup,
+  type WasiPathSearchCheck,
   type WasiResolvedParent,
   type WasiResolvedPath,
   WasiPathResolver,
 } from "../wasi/internal_wasi_paths.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
 import { deviceInfoForDescriptor, virtualDevicePath } from "./KernelVirtualDevices.ts";
+import { descriptorPathSuffix } from "./KernelPathAliases.ts";
 
 export interface ResolveOptions {
   readonly followFinal?: boolean;
   readonly cwd?: string;
+  readonly checkSearch?: WasiPathSearchCheck;
 }
 
 export function mountedStorageForTable(
@@ -120,7 +123,12 @@ export class KernelPathResolver {
   resolve(path: string, options: ResolveOptions = {}): WasiResolvedPath {
     const context = this.#context(path, options.cwd);
     const resolved = this.#run(
-      this.#resolver.resolve(context.anchor, context.relative, options.followFinal ?? true),
+      this.#resolver.resolve(
+        context.anchor,
+        context.relative,
+        options.followFinal ?? true,
+        this.#searchCheck(path, context.relative, options.checkSearch),
+      ),
     );
     this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
     return resolved;
@@ -135,7 +143,12 @@ export class KernelPathResolver {
   resolveOrCreate(path: string, options: ResolveOptions = {}): WasiPathLookup {
     const context = this.#context(path, options.cwd);
     const lookup = this.#run(
-      this.#resolver.resolveOrCreate(context.anchor, context.relative, options.followFinal ?? true),
+      this.#resolver.resolveOrCreate(
+        context.anchor,
+        context.relative,
+        options.followFinal ?? true,
+        this.#searchCheck(path, context.relative, options.checkSearch),
+      ),
     );
     if (lookup.kind === "existing") {
       this.#assertResolvedMount(lookup.path.mount, lookup.path.pathComponents);
@@ -143,6 +156,15 @@ export class KernelPathResolver {
       this.#assertResolvedMount(lookup.parent.mount, lookup.parent.pathComponents);
     }
     return lookup;
+  }
+
+  #searchCheck(
+    path: string,
+    relative: string,
+    check?: WasiPathSearchCheck,
+  ): WasiPathSearchCheck | undefined {
+    // A mount root becomes "." internally, but does not traverse a literal dot entry.
+    return relative === "." && !/(^|\/)\.$/.test(path) ? undefined : check;
   }
 
   resolveParent(
@@ -183,6 +205,10 @@ export class KernelPathResolver {
 
   mountForPath(path: string): WasiMountedStorage {
     return this.#mountFor(path);
+  }
+
+  assertPathVisible(mount: WasiMountedStorage, pathComponents: readonly string[]): void {
+    this.#assertResolvedMount(mount, pathComponents);
   }
 
   resolvedDescriptor(descriptor: WasiDescriptor): WasiResolvedPath {
@@ -243,6 +269,15 @@ export class KernelPathResolver {
 
   #context(path: string, cwdOverride?: string): { anchor: WasiPathAnchor; relative: string } {
     if (typeof path !== "string") throw kernelError("EINVAL");
+    const descriptorSuffix = descriptorPathSuffix(path);
+    if (descriptorSuffix !== undefined) {
+      const descriptor = this.#descriptorForSuffix(descriptorSuffix.fd);
+      if (descriptor.kind !== "directory") throw kernelError("ENOTDIR");
+      // Keep the fd's mount as the capability root so shadow mounts remain hidden.
+      const anchor = this.#validateAnchor(this.#descriptorAnchor(descriptor));
+      return { anchor, relative: descriptorSuffix.relativePath };
+    }
+
     const absolute = path.startsWith("/");
     if (absolute) {
       const mount = this.#mountFor(path);
@@ -257,6 +292,15 @@ export class KernelPathResolver {
     }
     const mount = this.#mountFor(cwdOverride);
     return this.#relativeMountContext(this.#anchorAt(mount, cwdOverride), path);
+  }
+
+  #descriptorForSuffix(fd: number): WasiDescriptor {
+    try {
+      return withKernelErrors(() => this.#descriptors.get(fd));
+    } catch (error) {
+      if (isKernelError(error, "EBADF")) throw kernelError("ENOENT");
+      throw error;
+    }
   }
 
   #relativeMountContext(
@@ -352,4 +396,8 @@ function copyAnchor(anchor: WasiPathAnchor): WasiPathAnchor {
 
 function mountPathParts(path: string): string[] {
   return path.split("/").filter((part) => part !== "");
+}
+
+function isKernelError(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

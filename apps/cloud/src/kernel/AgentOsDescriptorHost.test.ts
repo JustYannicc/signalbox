@@ -2,6 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { AgentOsDescriptorHost } from "./AgentOsDescriptorHost.ts";
 import { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
+import { KernelCpuAccounting } from "./KernelCpuAccounting.ts";
+import {
+  KernelCpuExecution,
+  runCurrentKernelCpuAwaitableSystemImport,
+} from "./KernelCpuExecution.ts";
 import type { WasiStdio } from "./Wasi.ts";
 
 const NONBLOCK_FLAG = 4;
@@ -238,6 +243,216 @@ describe("AgentOS host_process descriptor imports", () => {
     } finally {
       synchronous.dispose();
       asynchronous.dispose();
+    }
+  });
+
+  it.each(["sync", "fulfilled"] as const)(
+    "unwinds an already %s close before a failed wrapper can publish dup2",
+    async (outcome) => {
+      let reads = 0;
+      let failAt = 0;
+      const expected = new Error("wrapper clock failure");
+      const execution = new KernelCpuExecution(
+        new KernelCpuAccounting(() => {
+          if (++reads === failAt) throw expected;
+          return 0n;
+        }),
+      );
+      const test = fixture(true);
+      let sourceCloses = 0;
+      let targetCloses = 0;
+      const spec = {
+        kind: "stdio",
+        offset: 0n,
+        rightsBase: 0n,
+        rightsInheriting: 0n,
+        flags: 0,
+      } as const;
+      const source = test.fileSystem.descriptors.allocate({
+        ...spec,
+        onLastClose: () => {
+          sourceCloses++;
+        },
+      });
+      const target = test.fileSystem.descriptors.allocate({
+        ...spec,
+        onLastClose: () => {
+          targetCloses++;
+          failAt = reads + 2;
+          return outcome === "fulfilled" ? Promise.resolve() : undefined;
+        },
+      });
+      try {
+        const result = await execution.root.run(async () => {
+          const leave = execution.root.enterUser();
+          try {
+            return await runCurrentKernelCpuAwaitableSystemImport(() =>
+              test.host.imports.fd_dup2(source, target),
+            );
+          } catch (error) {
+            return error;
+          } finally {
+            leave();
+          }
+        });
+        expect(result).toBe(expected);
+        expect(test.fileSystem.descriptors.has(target)).toBe(false);
+        expect(await test.host.imports.fd_dup2(source, target)).toBe(0);
+        expect(await test.host.imports.proc_closefrom(source)).toBe(0);
+        expect([sourceCloses, targetCloses]).toEqual([1, 1]);
+        execution.root.stop();
+      } finally {
+        test.dispose();
+      }
+    },
+  );
+
+  it.each(
+    (["fd_dup2", "proc_closefrom"] as const).flatMap((operation) =>
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].flatMap((boundary) =>
+        (["resolve", "reject"] as const).map((outcome) => [operation, boundary, outcome] as const),
+      ),
+    ),
+  )("preserves %s clock failure at boundary %i (%s)", async (operation, boundary, outcome) => {
+    const expected = Object.assign(new Error("clock failure"), { code: "EIO" });
+    let reads = 0;
+    let failAt = 0;
+    const execution = new KernelCpuExecution(
+      new KernelCpuAccounting(() => {
+        if (++reads === failAt) throw expected;
+        return 0n;
+      }),
+    );
+    const test = fixture(true);
+    const gate = Promise.withResolvers<void>();
+    let sourceCloses = 0;
+    let targetCloses = 0;
+    const spec = {
+      kind: "stdio",
+      offset: 0n,
+      rightsBase: 0n,
+      rightsInheriting: 0n,
+      flags: 0,
+    } as const;
+    const source = test.fileSystem.descriptors.allocate({
+      ...spec,
+      onLastClose: () => {
+        sourceCloses++;
+      },
+    });
+    const target = test.fileSystem.descriptors.allocate({
+      ...spec,
+      onLastClose: () => {
+        targetCloses++;
+        return gate.promise;
+      },
+    });
+    try {
+      const pending = execution.root.run(async () => {
+        const leave = execution.root.enterUser();
+        try {
+          return await runCurrentKernelCpuAwaitableSystemImport(() => {
+            // Initial pause/entry, step entry/leave, wrapper leave, resumed step
+            // entry/leave, completion entry/leave, and final resume are all fallible.
+            failAt = reads + boundary;
+            return operation === "fd_dup2"
+              ? test.host.imports.fd_dup2(source, target)
+              : test.host.imports.proc_closefrom(target);
+          });
+        } finally {
+          leave();
+        }
+      });
+      const observed = pending.catch((error: unknown) => error);
+      if (outcome === "resolve" || targetCloses === 0) gate.resolve();
+      else gate.reject(Object.assign(new Error("backend failure"), { code: "ECANCELED" }));
+      expect(await observed).toBe(expected);
+      expect(await test.host.imports.fd_dup2(source, target)).toBe(0);
+      expect(await test.host.imports.proc_closefrom(source)).toBe(0);
+      expect([sourceCloses, targetCloses]).toEqual([1, 1]);
+      expect(test.fileSystem.descriptors.has(target)).toBe(false);
+      execution.root.stop();
+    } finally {
+      test.dispose();
+    }
+  });
+
+  it.each([
+    ["fd_dup2", "resolve"],
+    ["fd_dup2", "error"],
+    ["fd_dup2", "cancel"],
+    ["proc_closefrom", "resolve"],
+    ["proc_closefrom", "error"],
+    ["proc_closefrom", "cancel"],
+  ] as const)("excludes async %s backend waits (%s)", async (operation, outcome) => {
+    let now = 0n;
+    const execution = new KernelCpuExecution(new KernelCpuAccounting(() => now));
+    const gate = Promise.withResolvers<void>();
+    const test = fixture(true);
+    let closing = false;
+    const targetFd = test.fileSystem.descriptors.allocate({
+      kind: "stdio",
+      offset: 0n,
+      rightsBase: 0n,
+      rightsInheriting: 0n,
+      flags: 0,
+      onLastClose: () => {
+        closing = true;
+        now += 11n;
+        return gate.promise;
+      },
+    });
+    if (operation === "proc_closefrom") {
+      test.fileSystem.descriptors.allocate({
+        kind: "stdio",
+        offset: 0n,
+        rightsBase: 0n,
+        rightsInheriting: 0n,
+        flags: 0,
+        onLastClose: () => {
+          now += 5n;
+        },
+      });
+    }
+
+    try {
+      const pending = execution.root.run(() => {
+        const leaveUser = execution.root.enterUser();
+        now += 7n;
+        return runCurrentKernelCpuAwaitableSystemImport(() =>
+          operation === "fd_dup2"
+            ? test.host.imports.fd_dup2(1, targetFd)
+            : test.host.imports.proc_closefrom(targetFd),
+        ).then(
+          (errno) => {
+            now += 13n;
+            leaveUser();
+            return errno;
+          },
+          (error: unknown) => {
+            leaveUser();
+            throw error;
+          },
+        );
+      });
+
+      expect(closing).toBe(true);
+      now += 100_000n;
+      if (outcome === "resolve") gate.resolve();
+      else
+        gate.reject(
+          Object.assign(new Error(outcome), {
+            code: outcome === "cancel" ? "ECANCELED" : "EIO",
+          }),
+        );
+
+      expect(await pending).toBe(outcome === "resolve" ? 0 : outcome === "cancel" ? 11 : 29);
+      expect(execution.root.stop()).toEqual({
+        userNs: 20n,
+        systemNs: operation === "proc_closefrom" ? 16n : 11n,
+      });
+    } finally {
+      test.dispose();
     }
   });
 });

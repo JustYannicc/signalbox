@@ -1,0 +1,16 @@
+--- a/serial2/src/sys/unix/mod.rs
++++ b/serial2/src/sys/unix/mod.rs
+@@ -339,6 +339,13 @@
+ 		read_pin(&self.file, libc::TIOCM_CD)
+ 	}
+ 
++	#[cfg(target_os = "emscripten")]
++	pub fn set_break(&self, _enable: bool) -> std::io::Result<()> {
++		// Emscripten has no serial break ioctl implementation.
++		Err(std::io::ErrorKind::Unsupported.into())
++	}
++
++	#[cfg(not(target_os = "emscripten"))]
+ 	pub fn set_break(&self, enable: bool) -> std::io::Result<()> {
+ 		unsafe {
+ 			if enable {

@@ -1,12 +1,14 @@
 import { type KernelHandle, type KernelResult, type ResolvedProgram } from "../KernelAbi.ts";
 import type {
   KernelAsyncProgramContext,
+  KernelAsyncProgramCpu,
   KernelAsyncProgramExecRequest,
 } from "../KernelAsyncProgram.ts";
 import { KernelProgramExecAdmissionError } from "../KernelAsyncProgram.ts";
 import type { AgentOsSpawnRequest } from "../AgentOsProcessWire.ts";
 import type { KernelExitStatus, KernelProcessTable } from "../KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
+import { enterCurrentKernelCpuUser } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
@@ -35,15 +37,26 @@ export function runKernelAsyncProgram(
 ): Promise<KernelExitStatus> {
   const completeContext: KernelAsyncProgramContext = Object.freeze({
     ...context,
-    exec: (request: KernelAsyncProgramExecRequest) => execKernelProgram(request, options),
+    exec: (request: KernelAsyncProgramExecRequest) =>
+      execKernelProgram(request, options, context.cpu),
   });
-  return Promise.resolve(run(completeContext)).then(validateStatus);
+  const leaveUser = enterCurrentKernelCpuUser();
+  let result: Promise<KernelExitStatus>;
+  try {
+    result = Promise.resolve(run(completeContext));
+    // Accounting cleanup can fail before the process can await its result.
+    void result.catch(() => undefined);
+  } finally {
+    leaveUser();
+  }
+  return result.then(validateStatus);
 }
 
 /** Replaces the current program while retaining its PID and descriptor table. */
 export function execKernelProgram(
   request: KernelAsyncProgramExecRequest,
   options: KernelProgramExecOptions,
+  cpu?: KernelAsyncProgramCpu,
 ): Promise<KernelExitStatus> {
   return runKernelExecution(request.signal, async () => {
     if (request.signal.aborted)
@@ -74,6 +87,10 @@ export function execKernelProgram(
       // Validate every import before CLOEXEC descriptors are removed.
       const runtime = beforeExecCommit(() =>
         createKernelWasiRuntime(implementation.module, {
+          ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
+          ...(implementation.cwdEnvironment === undefined
+            ? {}
+            : { cwdEnvironment: implementation.cwdEnvironment }),
           prepared,
           descriptorOwnership: "borrowed",
           args: request.args,
@@ -126,6 +143,7 @@ export function execKernelProgram(
         signal: request.signal,
         processes: options.processes,
         wakes: options.wakes,
+        ...(cpu === undefined ? {} : { cpu }),
         spawn,
       });
       return runKernelAsyncProgram(implementation.run, context, options);

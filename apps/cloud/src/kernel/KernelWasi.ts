@@ -1,4 +1,6 @@
+import { createAgentOsWasiArgumentTransform } from "./AgentOsWasi.ts";
 import { KernelDescriptors } from "./KernelDescriptors.ts";
+import { createKernelWasiDeviceAdapter } from "./KernelWasiDevices.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import type { AsyncWASIOptions } from "./Wasi.ts";
@@ -8,6 +10,8 @@ import { validateOptions } from "./wasi/internal_wasi_options.ts";
 export interface KernelAsyncWasiOptions {
   readonly filesystem: KernelFileSystem;
   readonly wakes: KernelWakeRegistry;
+  /** Enables the pinned agentOS guest ABI for hidden preopen descriptor operands. */
+  readonly agentOsPreopens?: boolean;
   /** Mounts and streams already belong to filesystem; this host borrows its table. */
   readonly options?: Omit<
     AsyncWASIOptions,
@@ -20,7 +24,17 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
   const lifecycle = new WasiLifecycle(
     validateOptions(input.options ?? { version: "preview1" }),
     true,
-    { table: input.filesystem.descriptors, ownership: "borrowed" },
+    {
+      table: input.filesystem.descriptors,
+      ownership: "borrowed",
+      pathCheck: input.filesystem.assertWasiPathVisible.bind(input.filesystem),
+      creation: {
+        createInode: input.filesystem.createInode.bind(input.filesystem),
+        takeCreateMode: input.filesystem.takeNextCreateMode.bind(input.filesystem),
+      },
+    },
+    input.agentOsPreopens ? createAgentOsWasiArgumentTransform(input.filesystem) : undefined,
+    createKernelWasiDeviceAdapter(input.filesystem),
   );
   return {
     descriptors: new KernelDescriptors(input.filesystem.descriptors, input.wakes),

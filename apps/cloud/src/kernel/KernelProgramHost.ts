@@ -1,4 +1,6 @@
 import { ABI_VERSION } from "./KernelAbi.ts";
+import type { KernelCpuAccounting } from "./KernelCpuAccounting.ts";
+import { KernelCpuExecution } from "./KernelCpuExecution.ts";
 import {
   kernelError,
   type KernelBackend,
@@ -31,6 +33,7 @@ export type { KernelExitStatus } from "./KernelProcessTable.ts";
 export type {
   KernelAsyncProgram,
   KernelAsyncProgramContext,
+  KernelAsyncProgramCpu,
   KernelAsyncProgramExecRequest,
 } from "./KernelAsyncProgram.ts";
 export type {
@@ -44,13 +47,20 @@ export type {
   KernelProgramPrepareOptions,
   KernelPreparedProgram,
 } from "./program/KernelPreparedProgram.ts";
-export type { KernelPipedProgram } from "./program/KernelProgramPipes.ts";
+export { prepareNodeChildStdioKernelProgram } from "./program/KernelProgramPipes.ts";
+export type {
+  KernelNodeChildStdio,
+  KernelNodeChildStdioMode,
+  KernelNodeChildStdioProgram,
+  KernelPipedProgram,
+} from "./program/KernelProgramPipes.ts";
 
 export interface KernelProgramHostOptions {
   readonly registry: import("./KernelAbi.ts").KernelProgramRegistry;
   readonly programs?: ReadonlyMap<string, KernelProgramBinding>;
   readonly wakes: KernelWakeRegistry;
   readonly processes?: KernelProcessTable;
+  readonly cpuAccounting?: KernelCpuAccounting;
 }
 
 type ProgramRecord = {
@@ -61,6 +71,7 @@ type ProgramRecord = {
 export class KernelProgramHost {
   readonly processes: KernelProcessTable;
   readonly wakes: KernelWakeRegistry;
+  readonly cpuExecution: KernelCpuExecution | undefined;
   readonly #registry: import("./KernelAbi.ts").KernelProgramRegistry;
   readonly #programs: ReadonlyMap<string, ProgramRecord>;
   readonly #resolved = new WeakMap<ResolvedProgram, ProgramRecord>();
@@ -71,6 +82,10 @@ export class KernelProgramHost {
     this.#registry = options.registry;
     this.wakes = options.wakes;
     this.processes = options.processes ?? new KernelProcessTable({ wakes: options.wakes });
+    this.cpuExecution =
+      options.cpuAccounting === undefined
+        ? undefined
+        : new KernelCpuExecution(options.cpuAccounting);
     const programs = new Map<string, ProgramRecord>();
     const registeredVersions = new Set<string>();
     for (const [executable, inputBinding] of options.programs ?? []) {
@@ -95,6 +110,7 @@ export class KernelProgramHost {
     this.#spawner = new KernelProgramSpawner({
       processes: this.processes,
       wakes: this.wakes,
+      ...(this.cpuExecution === undefined ? {} : { cpuExecution: this.cpuExecution }),
       resolve: (executable) => this.resolve(executable),
       bindingFor: (program) => this.#resolved.get(program)?.binding,
     });
@@ -173,34 +189,42 @@ export class KernelProgramHost {
         code: "EINVAL",
       });
     }
-    try {
-      if (implementation.kind === "javascript") {
-        return runKernelInlineExecution(prepared.signal, () =>
-          runInlineJavaScript(implementation.runInline, prepared, args, withHome(prepared, env)),
-        );
-      }
-      if (implementation.kind === "async") {
-        throw Object.assign(new Error("Asynchronous programs require process execution"), {
-          code: "ENOTSUP",
+    const execute = () => {
+      try {
+        if (implementation.kind === "javascript") {
+          return runKernelInlineExecution(prepared.signal, () =>
+            runInlineJavaScript(implementation.runInline, prepared, args, withHome(prepared, env)),
+          );
+        }
+        if (implementation.kind === "async") {
+          throw Object.assign(new Error("Asynchronous programs require process execution"), {
+            code: "ENOTSUP",
+          });
+        }
+        const runtime = createKernelWasiRuntime(implementation.module, {
+          ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
+          ...(implementation.cwdEnvironment === undefined
+            ? {}
+            : { cwdEnvironment: implementation.cwdEnvironment }),
+          prepared,
+          args,
+          env: withHome(prepared, env),
+          asyncMode: false,
+          identity: undefined,
+          signal: prepared.signal,
+          processes: this.processes,
+          wakes: this.wakes,
+          spawn: async () => kernelError("UNSUPPORTED", "Inline process spawn is asynchronous"),
         });
+        return runKernelInlineExecution(prepared.signal, () =>
+          runtime.lifecycle.start(runtime.instance),
+        );
+      } finally {
+        prepared.releaseSync();
       }
-      const runtime = createKernelWasiRuntime(implementation.module, {
-        prepared,
-        args,
-        env: withHome(prepared, env),
-        asyncMode: false,
-        identity: undefined,
-        signal: prepared.signal,
-        processes: this.processes,
-        wakes: this.wakes,
-        spawn: async () => kernelError("UNSUPPORTED", "Inline process spawn is asynchronous"),
-      });
-      return runKernelInlineExecution(prepared.signal, () =>
-        runtime.lifecycle.start(runtime.instance),
-      );
-    } finally {
-      prepared.releaseSync();
-    }
+    };
+    const root = this.cpuExecution?.root;
+    return root ? root.run(execute) : execute();
   }
 }
 

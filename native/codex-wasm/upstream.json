@@ -4,7 +4,7 @@
   "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
   "repository": "https://github.com/openai/codex.git",
   "rust": "nightly-2026-03-01",
-  "targets": ["wasm32-wasip1"],
+  "targets": ["wasm32-wasip1", "wasm32-unknown-emscripten"],
   "references": {
     "codex-wasi-agentos": {
       "repository": "https://github.com/DigiBugCat/codex-wasi-agentos.git",

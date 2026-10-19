@@ -5,7 +5,7 @@ import tempfile
 import tomllib
 import unittest
 
-from workspace import patch_lock_updates, prepare_workspace, verify_engine_graph, write_toml
+from workspace import patch_entries, patch_lock_updates, prepare_workspace, verify_engine_graph, write_toml
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -47,6 +47,28 @@ class WorkspaceTests(unittest.TestCase):
                 '[[package]]\nname="socket2"\nversion="0.5.10"\nsource="registry+test"\n')
             self.assertEqual(patch_lock_updates(root, {"socket2": patch}),
                              [("socket2@0.6.3", "0.6.5")])
+
+    def test_patch_aliases_retain_actual_package_names(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = {}
+            for alias, package, version in (("nix", "nix", "0.28.0"),
+                                            ("nix_031", "nix", "0.31.3"),
+                                            ("socket2_05", "socket2", "0.5.10"),
+                                            ("future_alias", "another-package", "1.0.0")):
+                path = root / alias
+                path.mkdir()
+                (path / "Cargo.toml").write_text(
+                    f'[package]\nname="{package}"\nversion="{version}"\n')
+                paths[alias] = path
+            manifest = root / "patches.toml"
+            write_toml(manifest, {"patch": {"crates-io": patch_entries(paths)}})
+            self.assertEqual(tomllib.loads(manifest.read_text())["patch"]["crates-io"], {
+                "nix": {"path": str(paths["nix"].resolve())},
+                "nix_031": {"path": str(paths["nix_031"].resolve()), "package": "nix"},
+                "socket2_05": {"path": str(paths["socket2_05"].resolve()), "package": "socket2"},
+                "future_alias": {"path": str(paths["future_alias"].resolve()), "package": "another-package"},
+            })
 
     def test_two_socket2_lines_keep_their_package_identity_and_lock_updates(self):
         with tempfile.TemporaryDirectory() as temporary:

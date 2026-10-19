@@ -2,6 +2,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeBuffer from "node:buffer";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeUtil from "node:util";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import type { FacetStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
@@ -133,6 +134,34 @@ function nodeFsFixture() {
 }
 
 describe("Node fs modules backed by KernelFileSystem", () => {
+  it("opens real SQL files and directories with the official numeric nonblocking flags", async () => {
+    const fixture = nodeFsFixture();
+    const fs = createNodeFs(fixture.kernelFs).fs;
+    try {
+      fs.mkdirSync("/work");
+      fs.writeFileSync("/work/source.txt", "source bytes");
+      const directory = fs.openSync("/work", KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY);
+      const file = await fs.promises.open(`/proc/self/fd/${directory}/source.txt`, 657664);
+      try {
+        expect(await file.readFile("utf8")).toBe("source bytes");
+      } finally {
+        await file.close();
+      }
+      await expect(
+        fs.promises.open(`/proc/self/fd/${directory}/new.txt`, 657664),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      const directoryHandle = await fs.promises.open("/work", 2048);
+      try {
+        expect((await directoryHandle.stat()).isDirectory()).toBe(true);
+      } finally {
+        await directoryHandle.close();
+      }
+      fs.closeSync(directory);
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("exposes own named exports and shares one promises module", () => {
     const fixture = nodeFsFixture();
     try {
@@ -218,6 +247,71 @@ describe("Node fs modules backed by KernelFileSystem", () => {
       } catch (error) {
         expect(error).toMatchObject({ code: "ENOENT", syscall: "readFile", path: "/missing" });
       }
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("exposes promisifiable realpath.native over the current kernel filesystem", async () => {
+    const fixture = nodeFsFixture();
+    try {
+      const { fs } = createNodeFs(fixture.kernelFs);
+      fs.mkdirSync("/work/target", { recursive: true });
+      fs.symlinkSync("target", "/work/link");
+      fixture.kernelFs.chdir("/work");
+
+      let inCall = true;
+      let callbackCalls = 0;
+      const callbackResult = new Promise<string | NodeBuffer.Buffer>((resolve, reject) => {
+        fs.realpath.native("link", (error, resolvedPath) => {
+          callbackCalls++;
+          try {
+            expect(inCall).toBe(false);
+            expect(error).toBeNull();
+            resolve(resolvedPath);
+          } catch (cause) {
+            reject(cause);
+          }
+        });
+      });
+      inCall = false;
+      expect(await callbackResult).toBe("/work/target");
+      expect(callbackCalls).toBe(1);
+
+      const promisifiedRealpath = NodeUtil.promisify(fs.realpath.native);
+      expect(await promisifiedRealpath("link")).toBe("/work/target");
+      const bufferPath = await new Promise<string | NodeBuffer.Buffer>((resolve, reject) => {
+        fs.realpath.native("link", { encoding: "buffer" }, (error, resolvedPath) => {
+          if (error) reject(error);
+          else resolve(resolvedPath);
+        });
+      });
+      expect(NodeBuffer.Buffer.isBuffer(bufferPath)).toBe(true);
+      expect(bufferPath).toEqual(NodeBuffer.Buffer.from("/work/target"));
+
+      const callbackError = await new Promise<unknown>((resolve) => {
+        fs.realpath.native("missing", (error) => resolve(error));
+      });
+      expect(callbackError).toMatchObject({
+        code: "ENOENT",
+        path: "missing",
+        syscall: "realpath",
+      });
+
+      const promiseError = await promisifiedRealpath("missing").catch((error: unknown) => error);
+      expect(promiseError).toMatchObject({
+        code: "ENOENT",
+        path: "missing",
+        syscall: "realpath",
+      });
+
+      const regularCallback = await new Promise<string | NodeBuffer.Buffer>((resolve, reject) => {
+        fs.realpath("link", (error, resolvedPath) => {
+          if (error) reject(error);
+          else resolve(resolvedPath);
+        });
+      });
+      expect(regularCallback).toBe("/work/target");
     } finally {
       fixture.close();
     }

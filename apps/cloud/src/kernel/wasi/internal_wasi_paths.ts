@@ -38,6 +38,16 @@ export interface WasiPathAnchor {
   readonly pathComponents: readonly string[];
 }
 
+export type WasiPathSearchCheck = (mount: WasiMountedStorage, directory: Inode) => void;
+export type WasiPathCheck = (mount: WasiMountedStorage, components: readonly string[]) => void;
+// signalbox: a kernel device can terminate a missing lookup without inventing a storage inode.
+export type WasiMissingPathCheck = (
+  parent: WasiPathAnchor,
+  name: string,
+  remaining: readonly string[],
+  requireDirectory: boolean,
+) => void;
+
 export interface WasiResolvedPath {
   readonly mount: WasiMountedStorage;
   readonly inode: Inode;
@@ -83,16 +93,17 @@ export function normalizeMounts(mounts: Mount<WasiStorage>[]): WasiMountedStorag
 export class WasiPathResolver {
   readonly #complete: typeof complete;
   // signalbox: personality mount overlays must reject hidden entries before traversal.
-  readonly #checkPath:
-    | ((mount: WasiMountedStorage, components: readonly string[]) => void)
-    | undefined;
+  readonly #checkPath: WasiPathCheck | undefined;
+  readonly #missingPath: WasiMissingPathCheck | undefined;
 
   constructor(
     completeCall: typeof complete,
-    checkPath?: (mount: WasiMountedStorage, components: readonly string[]) => void,
+    checkPath?: WasiPathCheck,
+    missingPath?: WasiMissingPathCheck,
   ) {
     this.#complete = completeCall;
     this.#checkPath = checkPath;
+    this.#missingPath = missingPath;
   }
 
   /** Validates the recorded parent chain and returns its current names. */
@@ -137,8 +148,9 @@ export class WasiPathResolver {
     base: WasiPathAnchor,
     path: string,
     followFinalSymlink: boolean,
+    checkSearch?: WasiPathSearchCheck,
   ): WasiCall<WasiResolvedPath> {
-    const result = yield* this.resolveOrCreate(base, path, followFinalSymlink);
+    const result = yield* this.resolveOrCreate(base, path, followFinalSymlink, checkSearch);
     if (result.kind === "missing") throw new WasiError(ENOENT);
     return result.path;
   }
@@ -148,6 +160,7 @@ export class WasiPathResolver {
     base: WasiPathAnchor,
     path: string,
     followFinalSymlink: boolean,
+    checkSearch?: WasiPathSearchCheck,
   ): WasiCall<WasiPathLookup> {
     const pending = parseRelativePath(path);
     let requireDirectory = pathRequiresDirectory(path);
@@ -162,9 +175,14 @@ export class WasiPathResolver {
 
     while (index < pending.length) {
       const name = pending[index++];
-      if (name === undefined || name === "") continue;
-      if (name === ".") continue;
+      if (name === undefined) continue;
+      if (name === "") continue;
+      if (name === ".") {
+        checkSearch?.(base.mount, current);
+        continue;
+      }
       if (name === "..") {
+        checkSearch?.(base.mount, current);
         if (pathComponents.length === 0 || ancestors.length <= 1) {
           throw new WasiError(ENOTCAPABLE);
         }
@@ -184,6 +202,7 @@ export class WasiPathResolver {
 
       const parentStat = yield* this.#complete(base.mount.storage.stat(current));
       if (parentStat.type !== "directory") throw new WasiError(ENOTDIR);
+      checkSearch?.(base.mount, current);
 
       const isLast = index === pending.length;
       this.#checkPath?.(base.mount, [...pathComponents, name]);
@@ -191,6 +210,14 @@ export class WasiPathResolver {
       try {
         inode = yield* this.#complete(base.mount.storage.lookup(current, name));
       } catch (error) {
+        if (isErrno(error, ENOENT)) {
+          this.#missingPath?.(
+            { mount: base.mount, inode: current, ancestors, pathComponents },
+            name,
+            pending.slice(index),
+            requireDirectory,
+          );
+        }
         if (isLast && !requireDirectory && isErrno(error, ENOENT)) {
           return {
             kind: "missing",

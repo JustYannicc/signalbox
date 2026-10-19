@@ -3,6 +3,7 @@ import * as NodeStream from "node:stream";
 import { describe, expect, it } from "@effect/vitest";
 
 import { kernelError, kernelOk } from "../../kernel/KernelAbi.ts";
+import { KernelCpuAccounting } from "../../kernel/KernelCpuAccounting.ts";
 import { createNodePath } from "../NodePath.ts";
 import {
   createNodeProcess,
@@ -41,6 +42,16 @@ function host(pid: number, initialCwd = "/work/one"): NodeProcessHostContext {
       stdin: new NodeStream.PassThrough(),
       stdout: new NodeStream.PassThrough(),
       stderr: new NodeStream.PassThrough(),
+    },
+  };
+}
+
+function monotonicClock(startNs: bigint) {
+  let nowNs = startNs;
+  return {
+    now: () => nowNs,
+    advanceBy: (durationNs: bigint) => {
+      nowNs += durationNs;
     },
   };
 }
@@ -111,9 +122,11 @@ describe("Node process facet", () => {
   });
 
   it("exports own bound methods that remain callable after destructuring", async () => {
+    const clock = monotonicClock(9_000_000_000_000_000_000n);
     let killCall: { parentProcessHandle: unknown; selector: number; signal: number } | undefined;
     const context: NodeProcessHostContext = {
       ...host(45),
+      monotonicNowNs: clock.now,
       processes: {
         signalPid: (parentProcessHandle, selector, signal) => {
           killCall = { parentProcessHandle, selector, signal };
@@ -122,7 +135,7 @@ describe("Node process facet", () => {
       },
     };
     const process = createNodeProcess(context);
-    const { cwd, chdir, nextTick, kill } = process;
+    const { cwd, chdir, nextTick, kill, uptime } = process;
 
     expect(Object.hasOwn(process, "cwd")).toBe(true);
     expect(Object.hasOwn(process, "chdir")).toBe(true);
@@ -132,14 +145,32 @@ describe("Node process facet", () => {
     expect(Object.hasOwn(process, "exit")).toBe(true);
     expect(Object.hasOwn(process, "exitCode")).toBe(true);
     expect(Object.hasOwn(process, "hrtime")).toBe(true);
+    expect(Object.hasOwn(process, "uptime")).toBe(true);
     expect(Object.keys(process)).toContain("cwd");
     expect(Object.keys(process)).toContain("exitCode");
+    expect(Object.keys(process)).toContain("uptime");
     expect(cwd()).toBe("/work/one");
     chdir("/work/destructured");
     expect(cwd()).toBe("/work/destructured");
     expect(kill(45)).toBe(true);
     expect(killCall).toEqual({ parentProcessHandle: undefined, selector: 45, signal: 15 });
+    clock.advanceBy(1_234_567_890n);
+    expect(uptime()).toBe(1.23456789);
     await new Promise<void>((resolve) => nextTick(() => resolve()));
+  });
+
+  it("measures each logical process lifetime from its own captured monotonic start", () => {
+    const clock = monotonicClock(9_000_000_000_000_000_000n);
+    const first = createNodeProcess({ ...host(47), monotonicNowNs: clock.now });
+    clock.advanceBy(4_000_000_000n);
+    const second = createNodeProcess({ ...host(48), monotonicNowNs: clock.now });
+
+    clock.advanceBy(1_234_567_890n);
+
+    expect(first.uptime()).toBe(5.23456789);
+    expect(second.uptime()).toBe(1.23456789);
+    first.hrtime.bigint = () => 0n;
+    expect(first.uptime()).toBe(5.23456789);
   });
 
   it("reads cwd from the host resolver each time and preserves fail-closed ESTALE", () => {
@@ -237,7 +268,95 @@ describe("Node process facet", () => {
     expect(missingKillError).toMatchObject({ code: "ENOTSUP" });
   });
 
-  it("reports process telemetry as unsupported instead of returning fake host measurements", () => {
+  it("reports logical kernel CPU time in microseconds and supports previous differences", () => {
+    let nowNs = 0n;
+    const core = new KernelCpuAccounting(() => nowNs);
+    const accounting = core.forProcess(71);
+    const process = createNodeProcess({ ...host(71), cpuAccounting: accounting });
+    const initial = process.cpuUsage();
+    expect(initial).toEqual({ user: 0, system: 0 });
+
+    const leaveUser = accounting.enterUser();
+    nowNs = 15_500n;
+    const beforeSyscall = process.cpuUsage();
+    expect(beforeSyscall).toEqual({ user: 15, system: 0 });
+    const leaveSystem = accounting.enterSystem();
+    nowNs += 2_500n;
+    expect(process.cpuUsage(beforeSyscall)).toEqual({ user: 0, system: 2 });
+    leaveSystem();
+    nowNs += 3_000n;
+    leaveUser();
+    const beforeWait = process.cpuUsage();
+    nowNs += 1_000_000n;
+    expect(process.cpuUsage()).toEqual(beforeWait);
+    expect(process.cpuUsage(initial)).toEqual({ user: 18, system: 2 });
+    expect(initial).toEqual({ user: 0, system: 0 });
+
+    nowNs = 0n;
+    const leaveRegressed = accounting.enterUser();
+    expect(process.cpuUsage()).toEqual(beforeWait);
+    leaveRegressed();
+    accounting.dispose();
+  });
+
+  it("keeps logical CPU counters separate and validates previous values", () => {
+    let nowNs = 0n;
+    const core = new KernelCpuAccounting(() => nowNs);
+    const firstCpu = core.forProcess(72);
+    const secondCpu = core.forProcess(73);
+    const first = createNodeProcess({ ...host(72), cpuAccounting: firstCpu });
+    const second = createNodeProcess({ ...host(73), cpuAccounting: secondCpu });
+    firstCpu.runUser(() => {
+      nowNs += 4_000n;
+      secondCpu.runSystem(() => {
+        nowNs += 7_000n;
+      });
+      nowNs += 2_000n;
+    });
+    expect(first.cpuUsage()).toEqual({ user: 6, system: 0 });
+    expect(second.cpuUsage()).toEqual({ user: 0, system: 7 });
+
+    for (const previous of [undefined, null, 0, false, "", Number.NaN]) {
+      expect(Reflect.apply(first.cpuUsage, first, [previous])).toEqual({ user: 6, system: 0 });
+    }
+    const callablePrevious = Object.assign(() => {}, { user: 1, system: 0 });
+    expect(first.cpuUsage(callablePrevious)).toEqual({ user: 5, system: 0 });
+    expect(first.cpuUsage({ user: 7.5, system: 0.25 })).toEqual({ user: -1.5, system: -0.25 });
+
+    for (const previous of [1, {}, { user: "0", system: 0 }, { user: 0, system: null }]) {
+      expect(thrownBy(() => Reflect.apply(first.cpuUsage, first, [previous]))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+      });
+    }
+    for (const previous of [
+      { user: -1, system: 0 },
+      { user: 0, system: Number.NaN },
+      { user: Number.POSITIVE_INFINITY, system: 0 },
+      { user: Number.MAX_SAFE_INTEGER + 1, system: 0 },
+      { user: 0, system: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expect(thrownBy(() => Reflect.apply(first.cpuUsage, first, [previous]))).toMatchObject({
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+    }
+    let reads = 0;
+    const previous = {
+      get user() {
+        reads++;
+        return 1;
+      },
+      get system() {
+        reads++;
+        return 0;
+      },
+    };
+    expect(first.cpuUsage(previous)).toEqual({ user: 5, system: 0 });
+    expect(reads).toBe(2);
+    firstCpu.dispose();
+    secondCpu.dispose();
+  });
+
+  it("requires kernel CPU accounting while other host telemetry remains unsupported", () => {
     const process = createNodeProcess(host(71));
     expect(thrownBy(() => process.memoryUsage())).toMatchObject({ code: "ENOTSUP" });
     expect(thrownBy(() => process.memoryUsage.rss())).toMatchObject({ code: "ENOTSUP" });

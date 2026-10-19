@@ -34,8 +34,8 @@ const modeByType: Readonly<Record<KernelStat["type"], number>> = {
 };
 
 /**
- * The kernel models inode type and timestamps, not ownership or permissions.
- * mode carries only known type bits; -1 sentinels mark absent owner/block data.
+ * The kernel stat supplies inode type and timestamps. POSIX storage supplies mode and ownership.
+ * Missing POSIX metadata keeps type-only mode bits and -1 owner/block sentinels.
  */
 class NodeFsStats {
   readonly dev: number | bigint;
@@ -63,13 +63,14 @@ class NodeFsStats {
   readonly #type: KernelStat["type"];
 
   constructor(stat: KernelStat, bigint: boolean) {
+    const posix = stat.posix;
     this.#type = stat.type;
     this.dev = convert(stat.dev, bigint);
     this.ino = convert(stat.ino, bigint);
-    this.mode = convert(BigInt(modeByType[stat.type]), bigint);
+    this.mode = convert(BigInt(modeByType[stat.type] | (posix?.mode ?? 0)), bigint);
     this.nlink = convert(stat.nlink, bigint);
-    this.uid = bigint ? -1n : -1;
-    this.gid = bigint ? -1n : -1;
+    this.uid = convert(BigInt(posix?.uid ?? -1), bigint);
+    this.gid = convert(BigInt(posix?.gid ?? -1), bigint);
     this.rdev = bigint ? -1n : -1;
     this.size = convert(stat.size, bigint);
     this.blksize = bigint ? -1n : Number.NaN;

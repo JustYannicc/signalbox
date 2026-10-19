@@ -16,6 +16,80 @@ The permanent cleanup cascade is tracked in #474 and ships separately.
 
 ## Local development
 
+### Run an isolated deployed probe
+
+From your own checkout with dependencies installed and Alchemy's Cloudflare auth
+already configured, run from the repository root:
+
+```sh
+vp run --filter @signalbox/cloud probe:isolate --fixture /absolute/fixture --output /tmp/proof.json
+```
+
+Each invocation claims its own random `isolate-probe-<hex>` stage, Worker and SQL
+Durable Object namespace. Owners can run concurrently without reserving a shared
+host. It deploys this checkout's prebuilt probe graph, so merge the capabilities
+your fixture needs first. Omit `--fixture` for the standard capability probe.
+The per-PR CI probe workflow uses this same wrapper with the existing
+`cloud-preview` credentials.
+
+The command logs the stage, keeps its fresh credential and endpoint in child
+process environments, measures, then destroys that exact Alchemy stage even
+after a failed proof or partial deployment. `--output` retains measurement JSON
+on proof failure. Without it, measurement JSON goes to stdout. Failures include
+bounded stdout/stderr excerpts with configured credentials and endpoints redacted.
+
+SIGINT and SIGTERM stop the owned subprocess group and still attempt cleanup.
+Cleanup has a two-minute deadline, then up to five seconds for SIGTERM before
+SIGKILL and one second to confirm the owned process group has exited.
+SIGKILL, host loss or failed cleanup can leave resources behind. Use the exact
+stage printed by the command, from the same checkout and Alchemy account:
+
+```sh
+node apps/cloud/infra/isolateProbe/run.ts --destroy-stage isolate-probe-<hex>
+```
+
+Recovery uses Alchemy's existing state; it does not need the old probe credential.
+Cleanup does not retry automatically. Fix the reported operating condition before
+retrying recovery. Never substitute another owner's stage.
+
+For runner cancellation recovery, pass `--stage-file /tmp/unique-probe-stage`.
+The command exclusively creates an owned mode-0600 file before deployment and
+removes it after successful cleanup. CI's `always()` step uses
+`--recover-stage-file /tmp/unique-probe-stage` if the file remains. A handled
+cleanup failure marks the file and prevents a blind retry; its message gives the
+exact `--destroy-stage` command for manual recovery. The file contains only the
+stage and cleanup-failure marker, never credentials or the endpoint.
+
+### Verify a full Codex WASI turn
+
+Use a built official-source Codex WASI artifact directory and its manifest SHA-256.
+Packaging verifies the engine and loader against that manifest and copies them
+unchanged. The turn fixture also requires the pinned GNU Bash artifact from
+`infra/kernelPrograms/bash/provenance.json`.
+
+```sh
+node apps/cloud/infra/codexTurn/prepareFixture.mjs \
+  /absolute/codex-artifact <manifest-sha256> \
+  apps/cloud/src/kernel /tmp/codex-turn-fixture turn /absolute/bash.async.wasm
+node apps/cloud/infra/isolateProbe/measure.ts \
+  --fixture /tmp/codex-turn-fixture --output /tmp/codex-turn-local.json
+vp run --filter @signalbox/cloud probe:isolate \
+  --fixture /tmp/codex-turn-fixture --output /tmp/codex-turn-deployed.json
+```
+
+The output directory must not exist. Each measurement runs cold and repeat turns
+on one facet with shared SQLite files. Only Responses model output is mocked:
+Codex executes GNU Bash and its Rust patch implementation through the real
+exec-server, then the fixture checks the resulting file and completed turn.
+An HTTP 200 alone is insufficient; measurement fails if either turn fails.
+Use `startup` instead of `turn` to check bootstrap without Bash or a model turn.
+
+Local workerd does not enforce the deployed heap limit. A deployed pass proves
+fit for that sequence. The reported engine linear-memory sample excludes Bash,
+compiled code, JavaScript and SQLite; total isolate peak memory is unavailable.
+
+### Run the local cloud environment
+
 ```sh
 cd apps/cloud
 cp .dev.vars.example .dev.vars   # fill in; gitignored

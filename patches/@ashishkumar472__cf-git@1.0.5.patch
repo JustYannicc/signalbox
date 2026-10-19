@@ -1,0 +1,761 @@
+diff --git a/index.d.ts b/index.d.ts
+index 4785f13ca6536bc201ad3fb207f5b34d4a0acec9..65894e1bf9a559086e84383a2e0988568273dad5 100644
+--- a/index.d.ts
++++ b/index.d.ts
+@@ -1120,6 +1120,10 @@ export function clone({ fs, http, onProgress, onMessage, onAuth, onAuthSuccess,
+     cache?: object;
+     nonBlocking?: boolean | undefined;
+     batchSize?: number | undefined;
++    /** Maximum inflated or reconstructed Git object size in bytes. */
++    maxObjectBytes?: number | undefined;
++    /** Maximum combined pack and reconstructed object bytes in bytes. */
++    maxTotalObjectBytes?: number | undefined;
+ }): Promise<void>;
+ /**
+  * Create a new commit
+@@ -1496,6 +1500,10 @@ export function fetch({ fs, http, onProgress, onMessage, onAuth, onAuthSuccess,
+         [x: string]: string;
+     } | undefined;
+     cache?: object;
++    /** Maximum inflated or reconstructed Git object size in bytes. */
++    maxObjectBytes?: number | undefined;
++    /** Maximum combined pack and reconstructed object bytes in bytes. */
++    maxTotalObjectBytes?: number | undefined;
+ }): Promise<FetchResult>;
+ /**
+  * Find the merge base for a set of commits
+diff --git a/index.js b/index.js
+index 80a5167f19ea0dcca162905ec0a63c97949e0c1d..5c7e4e9f3f537ea0e69ee970bf44305a73b9fc44 100644
+--- a/index.js
++++ b/index.js
+@@ -2676,7 +2676,7 @@ async function readObjectLoose({ fs, gitdir, oid }) {
+  * @param {Buffer} source
+  * @returns {Buffer}
+  */
+-function applyDelta(delta, source) {
++function applyDelta(delta, source, maxTargetBytes = Number.MAX_SAFE_INTEGER) {
+   const reader = new BufferCursor(delta);
+   const sourceSize = readVarIntLE(reader);
+ 
+@@ -2686,6 +2686,9 @@ function applyDelta(delta, source) {
+     )
+   }
+   const targetSize = readVarIntLE(reader);
++  if (!Number.isSafeInteger(targetSize) || targetSize < 0 || targetSize > maxTargetBytes) {
++    throw new InternalError(`Pack object exceeds configured ${maxTargetBytes}-byte limit`)
++  }
+   let target;
+ 
+   // Handle empty target (no operations)
+@@ -2926,7 +2929,13 @@ function lengthBuffers(buffers) {
+ 
+ // My version of git-list-pack - roughly 15x faster than the original
+ 
+-async function listpack(stream, onData) {
++async function listpack(
++  stream,
++  onData,
++  budget = {}
++) {
++  const maxObjectBytes = budget.maxObjectBytes ?? Number.MAX_SAFE_INTEGER;
++  const maxTotalObjectBytes = budget.maxTotalObjectBytes ?? Number.MAX_SAFE_INTEGER;
+   const reader = new StreamReader(stream);
+   let PACK = await reader.read(4);
+   PACK = PACK.toString('utf8');
+@@ -2942,22 +2951,48 @@ async function listpack(stream, onData) {
+ 
+   let numObjects = await reader.read(4);
+   numObjects = numObjects.readUInt32BE(0);
+-  // If (for some godforsaken reason) this is an empty packfile, abort now.
+-  if (numObjects < 1) return
++  const declaredObjectCount = numObjects;
++  let declaredObjectBytes = budget.used ?? 0;
+ 
+-  while (!reader.eof() && numObjects--) {
++  let parsedObjectCount = 0;
++  while (parsedObjectCount < declaredObjectCount) {
++    if (reader.eof()) {
++      throw new InternalError(
++        `Packfile ended after ${parsedObjectCount} of ${declaredObjectCount} declared objects`
++      )
++    }
+     const offset = reader.tell();
+     const { type, length, ofs, reference } = await parseHeader(reader);
+-    const inflator = new pako.Inflate();
+-    while (!inflator.result) {
++    if (!Number.isSafeInteger(length) || length < 0 || length > maxObjectBytes) {
++      throw new InternalError(`Pack object exceeds configured ${maxObjectBytes}-byte limit`)
++    }
++    declaredObjectBytes += length;
++    if (!Number.isSafeInteger(declaredObjectBytes) || declaredObjectBytes > maxTotalObjectBytes) {
++      throw new InternalError(`Pack exceeds configured ${maxTotalObjectBytes}-byte object budget`)
++    }
++    budget.used = declaredObjectBytes;
++    let inflatedBytes = 0;
++    const inflatedChunks = [];
++    const inflator = new pako.Inflate({
++      chunkSize: Math.max(1024, Math.min(64 * 1024, maxObjectBytes)),
++    });
++    inflator.onData = chunk => {
++      inflatedBytes += chunk.byteLength;
++      if (inflatedBytes > maxObjectBytes) {
++        throw new InternalError(`Pack object exceeds configured ${maxObjectBytes}-byte limit`)
++      }
++      inflatedChunks.push(chunk);
++    };
++    while (!inflator.ended) {
+       const chunk = await reader.chunk();
+       if (!chunk) break
+       inflator.push(chunk, false);
+       if (inflator.err) {
+         throw new InternalError(`Pako error: ${inflator.msg}`)
+       }
+-      if (inflator.result) {
+-        if (inflator.result.length !== length) {
++      if (inflator.ended) {
++        const data = Buffer.concat(inflatedChunks, inflatedBytes);
++        if (data.length !== length) {
+           throw new InternalError(
+             `Inflated object size is different from that stated in packfile.`
+           )
+@@ -2968,9 +3003,9 @@ async function listpack(stream, onData) {
+         await reader.read(chunk.length - inflator.strm.avail_in);
+         const end = reader.tell();
+         await onData({
+-          data: inflator.result,
++          data,
+           type,
+-          num: numObjects,
++          num: declaredObjectCount - parsedObjectCount,
+           offset,
+           end,
+           reference,
+@@ -2978,7 +3013,13 @@ async function listpack(stream, onData) {
+         });
+       }
+     }
++    if (!inflator.ended) {
++      throw new InternalError('Pack object ended before its deflate stream completed')
++    }
++    parsedObjectCount++;
+   }
++
++  return { objectCount: parsedObjectCount, endOffset: reader.tell() }
+ }
+ 
+ async function parseHeader(reader) {
+@@ -3024,7 +3065,25 @@ async function parseHeader(reader) {
+ 
+ let supportsDecompressionStream = false;
+ 
+-async function inflate(buffer) {
++async function inflate(buffer, maxOutputBytes = Number.MAX_SAFE_INTEGER) {
++  if (maxOutputBytes < Number.MAX_SAFE_INTEGER) {
++    let inflatedBytes = 0;
++    const chunks = [];
++    const inflator = new pako.Inflate({
++      chunkSize: Math.max(1024, Math.min(64 * 1024, maxOutputBytes)),
++    });
++    inflator.onData = chunk => {
++      inflatedBytes += chunk.byteLength;
++      if (inflatedBytes > maxOutputBytes) {
++        throw new InternalError(`Pack object exceeds configured ${maxOutputBytes}-byte limit`)
++      }
++      chunks.push(chunk);
++    };
++    inflator.push(buffer, true);
++    if (inflator.err) throw new InternalError(`Pako error: ${inflator.msg}`);
++    if (!inflator.ended) throw new InternalError('Pack object ended before its deflate stream completed');
++    return Buffer.concat(chunks, inflatedBytes)
++  }
+   if (supportsDecompressionStream === null) {
+     supportsDecompressionStream = testDecompressionStream();
+   }
+@@ -3086,6 +3145,7 @@ class GitPackIndex {
+   constructor(stuff) {
+     Object.assign(this, stuff);
+     this.offsetCache = {};
++    this.materializedOffsets = new Set();
+   }
+ 
+   static async fromIdx({ idx, getExternalRefDelta }) {
+@@ -3132,7 +3192,14 @@ class GitPackIndex {
+     })
+   }
+ 
+-  static async fromPack({ pack, getExternalRefDelta, onProgress }) {
++  static async fromPack({
++    pack,
++    getExternalRefDelta,
++    onProgress,
++    maxObjectBytes = Number.MAX_SAFE_INTEGER,
++    maxTotalObjectBytes = Number.MAX_SAFE_INTEGER,
++  }) {
++    const packBudget = { maxObjectBytes, maxTotalObjectBytes, used: 0 };
+     const listpackTypes = {
+       1: 'commit',
+       2: 'tree',
+@@ -3143,10 +3210,15 @@ class GitPackIndex {
+     };
+     const offsetToObject = {};
+ 
+-    // Older packfiles do NOT use the shasum of the pack itself,
+-    // so it is recommended to just use whatever bytes are in the trailer.
+-    // Source: https://github.com/git/git/commit/1190a1acf800acdcfd7569f87ac1560e2d077414
++    if (pack.byteLength < 32) {
++      throw new InternalError('Packfile is truncated before its checksum trailer')
++    }
++    const packBody = pack.slice(0, -20);
+     const packfileSha = pack.slice(-20).toString('hex');
++    if ((await shasum(packBody)) !== packfileSha) {
++      throw new InternalError('Packfile checksum does not match its trailer')
++    }
++    const declaredObjectCount = pack.readUInt32BE(8);
+ 
+     const hashes = [];
+     const crcs = {};
+@@ -3154,7 +3226,7 @@ class GitPackIndex {
+     let totalObjectCount = null;
+     let lastPercent = null;
+ 
+-    await listpack([pack], async ({ data, type, reference, offset, num }) => {
++    const parsedPack = await listpack([pack], async ({ data, type, reference, offset, num }) => {
+       if (totalObjectCount === null) totalObjectCount = num;
+       const percent = Math.floor(
+         ((totalObjectCount - num) * 100) / totalObjectCount
+@@ -3170,7 +3242,11 @@ class GitPackIndex {
+       }
+       lastPercent = percent;
+       // Change type from a number to a meaningful string
+-      type = listpackTypes[type];
++      const objectType = listpackTypes[type];
++      if (objectType === undefined) {
++        throw new InternalError(`Unsupported pack object type: ${type}`)
++      }
++      type = objectType;
+ 
+       if (['commit', 'tree', 'blob', 'tag'].includes(type)) {
+         offsetToObject[offset] = {
+@@ -3188,7 +3264,20 @@ class GitPackIndex {
+           offset,
+         };
+       }
+-    });
++    }, packBudget);
++    if (parsedPack.objectCount !== declaredObjectCount) {
++      throw new InternalError(
++        `Packfile declared ${declaredObjectCount} objects but parsed ${parsedPack.objectCount}`
++      )
++    }
++    if (Object.keys(offsetToObject).length !== declaredObjectCount) {
++      throw new InternalError(
++        `Packfile indexed ${Object.keys(offsetToObject).length} of ${declaredObjectCount} declared objects`
++      )
++    }
++    if (parsedPack.endOffset !== pack.byteLength - 20) {
++      throw new InternalError('Packfile object count does not match its body length')
++    }
+ 
+     // We need to know the lengths of the slices to compute the CRCs.
+     const offsetArray = Object.keys(offsetToObject).map(Number);
+@@ -3209,42 +3298,53 @@ class GitPackIndex {
+       hashes,
+       offsets,
+       getExternalRefDelta,
++      packBudget,
+     });
+ 
+-    // Resolve deltas and compute the oids
++    // Resolve deltas and compute the oids. REF_DELTA bases may appear later in the pack.
+     lastPercent = null;
+     let count = 0;
+     const objectsByDepth = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+-    for (let offset in offsetToObject) {
+-      offset = Number(offset);
+-      const percent = Math.floor((count * 100) / totalObjectCount);
+-      if (percent !== lastPercent) {
+-        if (onProgress) {
+-          await onProgress({
+-            phase: 'Resolving deltas',
+-            loaded: count,
+-            total: totalObjectCount,
+-          });
++    let unresolvedOffsets = Object.keys(offsetToObject).map(Number);
++    while (unresolvedOffsets.length > 0) {
++      const retryOffsets = [];
++      let resolvedThisPass = 0;
++      for (const offset of unresolvedOffsets) {
++        const percent = Math.floor((count * 100) / totalObjectCount);
++        if (percent !== lastPercent) {
++          if (onProgress) {
++            await onProgress({
++              phase: 'Resolving deltas',
++              loaded: count,
++              total: totalObjectCount,
++            });
++          }
+         }
+-      }
+-      count++;
+-      lastPercent = percent;
++        count++;
++        lastPercent = percent;
+ 
+-      const o = offsetToObject[offset];
+-      if (o.oid) continue
+-      try {
+-        p.readDepth = 0;
+-        p.externalReadDepth = 0;
+-        const { type, object } = await p.readSlice({ start: offset });
+-        objectsByDepth[p.readDepth] += 1;
+-        const oid = await shasum(GitObject.wrap({ type, object }));
+-        o.oid = oid;
+-        hashes.push(oid);
+-        offsets.set(oid, offset);
+-        crcs[oid] = o.crc;
+-      } catch (err) {
+-        continue
++        const o = offsetToObject[offset];
++        if (o.oid) continue
++        try {
++          p.readDepth = 0;
++          p.externalReadDepth = 0;
++          const { type, object } = await p.readSlice({ start: offset });
++          objectsByDepth[p.readDepth] += 1;
++          const oid = await shasum(GitObject.wrap({ type, object }));
++          o.oid = oid;
++          hashes.push(oid);
++          offsets.set(oid, offset);
++          crcs[oid] = o.crc;
++          resolvedThisPass++;
++        } catch (err) {
++          if (!(err instanceof NotFoundError)) throw err
++          retryOffsets.push(offset);
++        }
++      }
++      if (retryOffsets.length > 0 && resolvedThisPass === 0) {
++        throw new InternalError(`Could not resolve ${retryOffsets.length} packfile delta object(s)`)
+       }
++      unresolvedOffsets = retryOffsets;
+     }
+ 
+     hashes.sort();
+@@ -3368,7 +3468,7 @@ class GitPackIndex {
+     }
+     // Handle undeltified objects
+     const buffer = raw.slice(reader.tell());
+-    object = Buffer.from(await inflate(buffer));
++    object = Buffer.from(await inflate(buffer, this.packBudget?.maxObjectBytes));
+     // Assert that the object length is as expected.
+     if (object.byteLength !== length) {
+       throw new InternalError(
+@@ -3376,7 +3476,26 @@ class GitPackIndex {
+       )
+     }
+     if (base) {
+-      object = Buffer.from(applyDelta(object, base));
++      object = Buffer.from(
++        applyDelta(object, base, this.packBudget?.maxObjectBytes ?? Number.MAX_SAFE_INTEGER),
++      );
++    }
++    if (this.packBudget && !this.materializedOffsets.has(start)) {
++      if (object.byteLength > this.packBudget.maxObjectBytes) {
++        throw new InternalError(
++          `Pack object exceeds configured ${this.packBudget.maxObjectBytes}-byte limit`,
++        )
++      }
++      this.packBudget.used += object.byteLength;
++      if (
++        !Number.isSafeInteger(this.packBudget.used) ||
++        this.packBudget.used > this.packBudget.maxTotalObjectBytes
++      ) {
++        throw new InternalError(
++          `Pack exceeds configured ${this.packBudget.maxTotalObjectBytes}-byte object budget`,
++        )
++      }
++      this.materializedOffsets.add(start);
+     }
+     // Cache the result based on depth.
+     if (this.readDepth > 3) {
+@@ -6915,7 +7034,7 @@ async function _checkout({
+       await GitIndexManager.acquire(
+         { fs, gitdir, cache, allowUnmerged: true },
+         async function(index) {
+-          await Promise.all(
++          const checkoutResults = await Promise.allSettled(
+             ops
+               .filter(
+                 ([method]) =>
+@@ -6926,66 +7045,63 @@ async function _checkout({
+               )
+               .map(async function([method, fullpath, oid, mode, chmod]) {
+                 const filepath = `${dir}/${fullpath}`;
+-                try {
+-                  if (method !== 'create-index' && method !== 'mkdir-index') {
+-                    const { object } = await _readObject({
+-                      fs,
+-                      cache,
+-                      gitdir,
+-                      oid,
+-                    });
+-                    if (chmod) {
+-                      // Note: the mode option of fs.write only works when creating files,
+-                      // not updating them. Since the `fs` plugin doesn't expose `chmod` this
+-                      // is our only option.
+-                      await fs.rm(filepath);
+-                    }
+-                    if (mode === 0o100644) {
+-                      // regular file
+-                      await fs.write(filepath, object);
+-                    } else if (mode === 0o100755) {
+-                      // executable file
+-                      await fs.write(filepath, object, { mode: 0o777 });
+-                    } else if (mode === 0o120000) {
+-                      // symlink
+-                      await fs.writelink(filepath, object);
+-                    } else {
+-                      throw new InternalError(
+-                        `Invalid mode 0o${mode.toString(
+-                          8
+-                        )} detected in blob ${oid}`
+-                      )
+-                    }
+-                  }
+-
+-                  const stats = await fs.lstat(filepath);
+-                  // We can't trust the executable bit returned by lstat on Windows,
+-                  // so we need to preserve this value from the TREE.
+-                  // TODO: Figure out how git handles this internally.
+-                  if (mode === 0o100755) {
+-                    stats.mode = 0o755;
+-                  }
+-                  // Submodules are present in the git index but use a unique mode different from trees
+-                  if (method === 'mkdir-index') {
+-                    stats.mode = 0o160000;
+-                  }
+-                  index.insert({
+-                    filepath: fullpath,
+-                    stats,
++                if (method !== 'create-index' && method !== 'mkdir-index') {
++                  const { object } = await _readObject({
++                    fs,
++                    cache,
++                    gitdir,
+                     oid,
+                   });
+-                  if (onProgress) {
+-                    await onProgress({
+-                      phase: 'Updating workdir',
+-                      loaded: ++count,
+-                      total,
+-                    });
++                  if (chmod) {
++                    // Note: the mode option of fs.write only works when creating files,
++                    // not updating them. Since the `fs` plugin doesn't expose `chmod` this
++                    // is our only option.
++                    await fs.rm(filepath);
++                  }
++                  if (mode === 0o100644) {
++                    // regular file
++                    await fs.write(filepath, object);
++                  } else if (mode === 0o100755) {
++                    // executable file
++                    await fs.write(filepath, object, { mode: 0o777 });
++                  } else if (mode === 0o120000) {
++                    // symlink
++                    await fs.writelink(filepath, object);
++                  } else {
++                    throw new InternalError(
++                      `Invalid mode 0o${mode.toString(
++                        8
++                      )} detected in blob ${oid}`
++                    )
+                   }
+-                } catch (e) {
+-                  console.log(e);
++                }
++
++                const stats = await fs.lstat(filepath);
++                // We can't trust the executable bit returned by lstat on Windows,
++                // so we must preserve this value from the TREE.
++                if (mode === 0o100755) {
++                  stats.mode = 0o755;
++                }
++                // Submodules are present in the git index but use a unique mode different from trees
++                if (method === 'mkdir-index') {
++                  stats.mode = 0o160000;
++                }
++                index.insert({
++                  filepath: fullpath,
++                  stats,
++                  oid,
++                });
++                if (onProgress) {
++                  await onProgress({
++                    phase: 'Updating workdir',
++                    loaded: ++count,
++                    total,
++                  });
+                 }
+               })
+           );
++          const checkoutFailure = checkoutResults.find(result => result.status === 'rejected');
++          if (checkoutFailure) throw checkoutFailure.reason
+         }
+       );
+     }
+@@ -8196,15 +8312,6 @@ async function hasObject({
+   return result
+ }
+ 
+-// TODO: make a function that just returns obCount. then emptyPackfile = () => sizePack(pack) === 0
+-function emptyPackfile(pack) {
+-  const pheader = '5041434b';
+-  const version = '00000002';
+-  const obCount = '00000000';
+-  const header = pheader + version + obCount;
+-  return pack.slice(0, 12).toString('hex') === header
+-}
+-
+ function filterCapabilities(server, client) {
+   const serverNames = server.map(cap => cap.split('=', 1)[0]);
+   return client.filter(cap => {
+@@ -8605,6 +8712,8 @@ async function _fetch({
+   headers = {},
+   prune = false,
+   pruneTags = false,
++  maxObjectBytes = Number.MAX_SAFE_INTEGER,
++  maxTotalObjectBytes = Number.MAX_SAFE_INTEGER,
+ }) {
+   const ref = _ref || (await _currentBranch({ fs, gitdir, test: true }));
+   const config = await GitConfigManager.get({ fs, gitdir });
+@@ -8746,80 +8855,66 @@ async function _fetch({
+   if (raw.headers) {
+     response.headers = raw.headers;
+   }
+-  // Apply all the 'shallow' and 'unshallow' commands
+-  for (const oid of response.shallows) {
+-    if (!oids.has(oid)) {
+-      // this is in a try/catch mostly because my old test fixtures are missing objects
+-      try {
+-        // server says it's shallow, but do we have the parents?
+-        const { object } = await _readObject({ fs, cache, gitdir, oid });
+-        const commit = new GitCommit(object);
+-        const hasParents = await Promise.all(
+-          commit
+-            .headers()
+-            .parent.map(oid => hasObject({ fs, cache, gitdir, oid }))
+-        );
+-        const haveAllParents =
+-          hasParents.length === 0 || hasParents.every(has => has);
+-        if (!haveAllParents) {
++  const publishRemoteState = async () => {
++    // Do not publish shallow state or refs until the complete pack has been indexed.
++    for (const oid of response.shallows) {
++      if (!oids.has(oid)) {
++        try {
++          const { object } = await _readObject({ fs, cache, gitdir, oid });
++          const commit = new GitCommit(object);
++          const hasParents = await Promise.all(
++            commit
++              .headers()
++              .parent.map(oid => hasObject({ fs, cache, gitdir, oid }))
++          );
++          const haveAllParents =
++            hasParents.length === 0 || hasParents.every(has => has);
++          if (!haveAllParents) oids.add(oid);
++        } catch (err) {
+           oids.add(oid);
+         }
+-      } catch (err) {
+-        oids.add(oid);
+       }
+     }
+-  }
+-  for (const oid of response.unshallows) {
+-    oids.delete(oid);
+-  }
+-  await GitShallowManager.write({ fs, gitdir, oids });
+-  // Update local remote refs
+-  if (singleBranch) {
+-    const refs = new Map([[fullref, oid]]);
+-    // But wait, maybe it was a symref, like 'HEAD'!
+-    // We need to save all the refs in the symref chain (sigh).
+-    const symrefs = new Map();
+-    let bail = 10;
+-    let key = fullref;
+-    while (bail--) {
+-      const value = remoteHTTP.symrefs.get(key);
+-      if (value === undefined) break
+-      symrefs.set(key, value);
+-      key = value;
+-    }
+-    // final value must not be a symref but a real ref
+-    const realRef = remoteRefs.get(key);
+-    // There may be no ref at all if we've fetched a specific commit hash
+-    if (realRef) {
+-      refs.set(key, realRef);
+-    }
+-    const { pruned } = await GitRefManager.updateRemoteRefs({
+-      fs,
+-      gitdir,
+-      remote,
+-      refs,
+-      symrefs,
+-      tags,
+-      prune,
+-    });
+-    if (prune) {
+-      response.pruned = pruned;
+-    }
+-  } else {
+-    const { pruned } = await GitRefManager.updateRemoteRefs({
+-      fs,
+-      gitdir,
+-      remote,
+-      refs: remoteRefs,
+-      symrefs: remoteHTTP.symrefs,
+-      tags,
+-      prune,
+-      pruneTags,
+-    });
+-    if (prune) {
+-      response.pruned = pruned;
++    for (const oid of response.unshallows) oids.delete(oid);
++    await GitShallowManager.write({ fs, gitdir, oids });
++
++    if (singleBranch) {
++      const refs = new Map([[fullref, oid]]);
++      const symrefs = new Map();
++      let bail = 10;
++      let key = fullref;
++      while (bail--) {
++        const value = remoteHTTP.symrefs.get(key);
++        if (value === undefined) break
++        symrefs.set(key, value);
++        key = value;
++      }
++      const realRef = remoteRefs.get(key);
++      if (realRef) refs.set(key, realRef);
++      const { pruned } = await GitRefManager.updateRemoteRefs({
++        fs,
++        gitdir,
++        remote,
++        refs,
++        symrefs,
++        tags,
++        prune,
++      });
++      if (prune) response.pruned = pruned;
++    } else {
++      const { pruned } = await GitRefManager.updateRemoteRefs({
++        fs,
++        gitdir,
++        remote,
++        refs: remoteRefs,
++        symrefs: remoteHTTP.symrefs,
++        tags,
++        prune,
++        pruneTags,
++      });
++      if (prune) response.pruned = pruned;
+     }
+-  }
++  };
+   // We need this value later for the `clone` command.
+   response.HEAD = remoteHTTP.symrefs.get('HEAD');
+   // AWS CodeCommit doesn't list HEAD as a symref, but we can reverse engineer it
+@@ -8861,6 +8956,7 @@ async function _fetch({
+     });
+   }
+   const packfile = Buffer.from(await collect(response.packfile));
++  if (response.packfile.error) throw response.packfile.error
+   if (raw.body.error) throw raw.body.error
+   const packfileSha = packfile.slice(-20).toString('hex');
+   const res = {
+@@ -8874,24 +8970,22 @@ async function _fetch({
+   if (prune) {
+     res.pruned = response.pruned;
+   }
+-  // This is a quick fix for the empty .git/objects/pack/pack-.pack file error,
+-  // which due to the way `git-list-pack` works causes the program to hang when it tries to read it.
+-  // TODO: Longer term, we should actually:
+-  // a) NOT concatenate the entire packfile into memory (line 78),
+-  // b) compute the SHA of the stream except for the last 20 bytes, using the same library used in push.js, and
+-  // c) compare the computed SHA with the last 20 bytes of the stream before saving to disk, and throwing a "packfile got corrupted during download" error if the SHA doesn't match.
+-  if (packfileSha !== '' && !emptyPackfile(packfile)) {
++  if (packfileSha !== '') {
+     res.packfile = `objects/pack/pack-${packfileSha}.pack`;
+     const fullpath = join(gitdir, res.packfile);
+-    await fs.write(fullpath, packfile);
+     const getExternalRefDelta = oid => _readObject({ fs, cache, gitdir, oid });
+     const idx = await GitPackIndex.fromPack({
+       pack: packfile,
+       getExternalRefDelta,
+       onProgress,
++      maxObjectBytes,
++      maxTotalObjectBytes,
+     });
+-    await fs.write(fullpath.replace(/\.pack$/, '.idx'), await idx.toBuffer());
++    const index = await idx.toBuffer();
++    await fs.write(fullpath, packfile);
++    await fs.write(fullpath.replace(/\.pack$/, '.idx'), index);
+   }
++  await publishRemoteState();
+   return res
+ }
+ 
+@@ -9003,6 +9097,8 @@ async function _clone({
+   headers,
+   nonBlocking,
+   batchSize = 100,
++  maxObjectBytes = Number.MAX_SAFE_INTEGER,
++  maxTotalObjectBytes = Number.MAX_SAFE_INTEGER,
+ }) {
+   try {
+     await _init({ fs, gitdir });
+@@ -9032,6 +9128,8 @@ async function _clone({
+       singleBranch,
+       headers,
+       tags: !noTags,
++      maxObjectBytes,
++      maxTotalObjectBytes,
+     });
+     if (fetchHead === null) return
+     ref = ref || defaultBranch;
+@@ -9134,6 +9232,8 @@ async function clone({
+   cache = {},
+   nonBlocking = false,
+   batchSize = 100,
++  maxObjectBytes = Number.MAX_SAFE_INTEGER,
++  maxTotalObjectBytes = Number.MAX_SAFE_INTEGER,
+ }) {
+   try {
+     assertParameter('fs', fs);
+@@ -9170,6 +9270,8 @@ async function clone({
+       headers,
+       nonBlocking,
+       batchSize,
++      maxObjectBytes,
++      maxTotalObjectBytes,
+     })
+   } catch (err) {
+     err.caller = 'git.clone';
+@@ -10651,6 +10753,8 @@ async function fetch({
+   prune = false,
+   pruneTags = false,
+   cache = {},
++  maxObjectBytes = Number.MAX_SAFE_INTEGER,
++  maxTotalObjectBytes = Number.MAX_SAFE_INTEGER,
+ }) {
+   try {
+     assertParameter('fs', fs);
+@@ -10681,6 +10785,8 @@ async function fetch({
+       headers,
+       prune,
+       pruneTags,
++      maxObjectBytes,
++      maxTotalObjectBytes,
+     })
+   } catch (err) {
+     err.caller = 'git.fetch';

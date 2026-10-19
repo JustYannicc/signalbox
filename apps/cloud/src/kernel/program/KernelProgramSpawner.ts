@@ -8,7 +8,10 @@ import {
   type ResolvedProgram,
 } from "../KernelAbi.ts";
 import type { AgentOsSpawnRequest } from "../AgentOsProcessWire.ts";
-import type { KernelAsyncProgramExecRequest } from "../KernelAsyncProgram.ts";
+import type {
+  KernelAsyncProgramCpu,
+  KernelAsyncProgramExecRequest,
+} from "../KernelAsyncProgram.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import {
   KernelProcessTable,
@@ -16,6 +19,7 @@ import {
   type KernelProcessIdentity,
 } from "../KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
+import { KernelCpuExecution, type KernelCpuProcessExecution } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
 import { prepareKernelProgram, type KernelPreparedProgram } from "./KernelPreparedProgram.ts";
@@ -29,6 +33,7 @@ import {
 interface KernelProgramSpawnerOptions {
   readonly processes: KernelProcessTable;
   readonly wakes: KernelWakeRegistry;
+  readonly cpuExecution?: KernelCpuExecution;
   readonly resolve: (executable: string) => KernelResult<ResolvedProgram>;
   readonly bindingFor: (program: ResolvedProgram) => KernelProgramBinding | undefined;
 }
@@ -36,6 +41,7 @@ interface KernelProgramSpawnerOptions {
 type LaunchContext = {
   prepared: KernelPreparedProgram | undefined;
   lifecycle: import("../wasi/internal_wasi_lifecycle.ts").WasiLifecycle | undefined;
+  cpuProcess: KernelCpuProcessExecution | undefined;
   detachSignal: (() => void) | undefined;
   accepted: boolean;
 };
@@ -44,12 +50,14 @@ type LaunchContext = {
 export class KernelProgramSpawner {
   readonly #processes: KernelProcessTable;
   readonly #wakes: KernelWakeRegistry;
+  readonly #cpuExecution: KernelCpuExecution | undefined;
   readonly #resolve: KernelProgramSpawnerOptions["resolve"];
   readonly #bindingFor: KernelProgramSpawnerOptions["bindingFor"];
 
   constructor(options: KernelProgramSpawnerOptions) {
     this.#processes = options.processes;
     this.#wakes = options.wakes;
+    this.#cpuExecution = options.cpuExecution;
     this.#resolve = options.resolve;
     this.#bindingFor = options.bindingFor;
   }
@@ -178,32 +186,44 @@ export class KernelProgramSpawner {
     const launch: LaunchContext = {
       prepared: undefined,
       lifecycle: undefined,
+      cpuProcess: undefined,
       detachSignal: undefined,
       accepted: false,
     };
-    const cleanup = async () => {
-      launch.detachSignal?.();
-      const prepared = launch.prepared;
-      if (!launch.accepted) {
-        if (releaseOnRejectedLaunch && prepared) await prepared.release();
-        return;
-      }
-      if (launch.lifecycle) {
+    const cleanup = () => {
+      const finish = async () => {
         const errors: unknown[] = [];
         try {
-          await launch.lifecycle.closeAsync();
+          launch.detachSignal?.();
+          const prepared = launch.prepared;
+          if (!launch.accepted) {
+            if (releaseOnRejectedLaunch && prepared) await prepared.release();
+          } else if (launch.lifecycle) {
+            try {
+              await launch.lifecycle.closeAsync();
+            } catch (error) {
+              errors.push(error);
+            }
+            try {
+              prepared?.markLifecycleReleased();
+            } catch (error) {
+              errors.push(error);
+            }
+          } else if (prepared) {
+            await prepared.releaseTransferred();
+          }
         } catch (error) {
           errors.push(error);
-        }
-        try {
-          prepared?.markLifecycleReleased();
-        } catch (error) {
-          errors.push(error);
+        } finally {
+          try {
+            launch.cpuProcess?.stop();
+          } catch (error) {
+            errors.push(error);
+          }
         }
         throwCleanupErrors(errors);
-      } else if (prepared) {
-        await prepared.releaseTransferred();
-      }
+      };
+      return launch.cpuProcess ? launch.cpuProcess.run(finish) : finish();
     };
 
     const spawned = this.#processes.spawn(
@@ -211,6 +231,8 @@ export class KernelProgramSpawner {
       (identity) => {
         const prepared = prepare();
         launch.prepared = prepared;
+        const cpuProcess = this.#cpuExecution?.forProcess(identity.pid);
+        launch.cpuProcess = cpuProcess;
         const controller = new AbortController();
         const parentSignal = prepared.signal;
         const abortFromParent = () => controller.abort();
@@ -223,6 +245,7 @@ export class KernelProgramSpawner {
           args,
           env,
           identity,
+          cpuProcess,
           controller,
           (request) =>
             this.#spawnNested(
@@ -258,6 +281,7 @@ export class KernelProgramSpawner {
     args: readonly string[],
     env: Readonly<Record<string, string>>,
     identity: KernelProcessIdentity,
+    cpuProcess: KernelCpuProcessExecution | undefined,
     controller: AbortController,
     spawn: (request: AgentOsSpawnRequest) => Promise<KernelResult<KernelHandle<"process">>>,
   ): {
@@ -274,20 +298,24 @@ export class KernelProgramSpawner {
       return kernelOk(undefined);
     };
     if (implementation.kind === "javascript") {
-      const completion = Promise.resolve().then(() => {
-        if (controller.signal.aborted) return terminatedStatus(sentSignal);
-        try {
-          const exitCode = runKernelInlineExecution(controller.signal, () =>
-            runInlineJavaScript(implementation.runInline, prepared, args, env),
-          );
-          return controller.signal.aborted
-            ? terminatedStatus(sentSignal)
-            : { exitCode, signal: 0, coreDumped: false };
-        } catch (error) {
+      const start = () =>
+        Promise.resolve().then(() => {
           if (controller.signal.aborted) return terminatedStatus(sentSignal);
-          throw error;
-        }
-      });
+          try {
+            const exitCode = runKernelInlineExecution(controller.signal, () => {
+              const runInline = () =>
+                runInlineJavaScript(implementation.runInline, prepared, args, env);
+              return cpuProcess ? cpuProcess.runUser(runInline) : runInline();
+            });
+            return controller.signal.aborted
+              ? terminatedStatus(sentSignal)
+              : { exitCode, signal: 0, coreDumped: false };
+          } catch (error) {
+            if (controller.signal.aborted) return terminatedStatus(sentSignal);
+            throw error;
+          }
+        });
+      const completion = cpuProcess ? cpuProcess.run(start) : start();
       return { process: { completion, signal } };
     }
 
@@ -316,6 +344,7 @@ export class KernelProgramSpawner {
         signal: controller.signal,
         processes: this.#processes,
         wakes: this.#wakes,
+        ...(cpuProcess === undefined ? {} : { cpu: createAsyncProgramCpu(cpuProcess) }),
         spawn: spawnFor({
           filesystem: prepared.filesystem,
           identity,
@@ -323,28 +352,34 @@ export class KernelProgramSpawner {
           ...(prepared.home === undefined ? {} : { home: prepared.home }),
         }),
       };
-      const completion = runKernelExecution(controller.signal, () =>
-        Promise.resolve().then(async () => {
-          if (controller.signal.aborted) return terminatedStatus(sentSignal);
-          try {
-            const exit = await runKernelAsyncProgram(implementation.run, context, {
-              resolve: this.#resolve,
-              bindingFor: this.#bindingFor,
-              processes: this.#processes,
-              wakes: this.#wakes,
-              spawnFor,
-            });
-            return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
-          } catch (error) {
+      const start = () =>
+        runKernelExecution(controller.signal, () =>
+          Promise.resolve().then(async () => {
             if (controller.signal.aborted) return terminatedStatus(sentSignal);
-            throw error;
-          }
-        }),
-      );
+            try {
+              const exit = await runKernelAsyncProgram(implementation.run, context, {
+                resolve: this.#resolve,
+                bindingFor: this.#bindingFor,
+                processes: this.#processes,
+                wakes: this.#wakes,
+                spawnFor,
+              });
+              return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
+            } catch (error) {
+              if (controller.signal.aborted) return terminatedStatus(sentSignal);
+              throw error;
+            }
+          }),
+        );
+      const completion = cpuProcess ? cpuProcess.run(start) : start();
       return { process: { completion, signal } };
     }
 
     const runtime = createKernelWasiRuntime(implementation.module, {
+      ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
+      ...(implementation.cwdEnvironment === undefined
+        ? {}
+        : { cwdEnvironment: implementation.cwdEnvironment }),
       prepared,
       args,
       env,
@@ -355,18 +390,20 @@ export class KernelProgramSpawner {
       wakes: this.#wakes,
       spawn,
     });
-    const completion = runKernelExecution(controller.signal, () =>
-      runtime.lifecycle.startAsync(runtime.instance),
-    ).then(
-      (exitCode) =>
-        controller.signal.aborted
-          ? terminatedStatus(sentSignal)
-          : { exitCode, signal: 0, coreDumped: false },
-      (error: unknown) => {
-        if (controller.signal.aborted) return terminatedStatus(sentSignal);
-        throw error;
-      },
-    );
+    const start = () =>
+      runKernelExecution(controller.signal, () =>
+        runtime.lifecycle.startAsync(runtime.instance),
+      ).then(
+        (exitCode) =>
+          controller.signal.aborted
+            ? terminatedStatus(sentSignal)
+            : { exitCode, signal: 0, coreDumped: false },
+        (error: unknown) => {
+          if (controller.signal.aborted) return terminatedStatus(sentSignal);
+          throw error;
+        },
+      );
+    const completion = cpuProcess ? cpuProcess.run(start) : start();
     return { process: { completion, signal }, lifecycle: runtime.lifecycle };
   }
 }
@@ -377,6 +414,12 @@ function withHome(
 ): Readonly<Record<string, string>> {
   if (home === undefined || env.HOME !== undefined) return env;
   return Object.freeze({ ...env, HOME: home });
+}
+
+function createAsyncProgramCpu(cpuProcess: KernelCpuProcessExecution): KernelAsyncProgramCpu {
+  return Object.freeze({
+    runUser: <T>(run: () => T): T => cpuProcess.runUser(run),
+  });
 }
 
 function terminatedStatus(signal: number) {

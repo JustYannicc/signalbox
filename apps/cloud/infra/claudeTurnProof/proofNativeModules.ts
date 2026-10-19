@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - diagnostic native fallback, independent from the release's facades.
 import * as NodeAssert from "node:assert";
-import * as NodeAsyncHooks from "node:async_hooks";
 import * as NodeBuffer from "node:buffer";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeInspector from "node:inspector";
@@ -29,6 +28,7 @@ import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeZlib from "node:zlib";
+import { createNodeAsyncHooks } from "../../src/isolate/NodeAsyncHooks.ts";
 
 function nativeModule(namespace: object): object {
   const value: unknown = Reflect.get(namespace, "default") ?? namespace;
@@ -43,7 +43,7 @@ export function getNativeHostModules() {
   return Object.fromEntries(
     Object.entries({
       assert: NodeAssert,
-      async_hooks: NodeAsyncHooks,
+      async_hooks: createNodeAsyncHooks(),
       buffer: NodeBuffer,
       child_process: NodeChildProcess,
       crypto: NodeCrypto,

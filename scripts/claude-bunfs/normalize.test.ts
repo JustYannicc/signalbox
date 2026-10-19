@@ -1,5 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - inspect source URLs in build-time normalization tests.
 import { describe, expect, it } from "@effect/vitest";
 import * as Esbuild from "esbuild";
+import * as NodeURL from "node:url";
 import { normalizeModule } from "./normalize.ts";
 
 describe("Bun module normalization", () => {
@@ -36,6 +38,56 @@ describe("Bun module normalization", () => {
     expect(normalized.source).toContain('const d="/$bunfs/root"');
     expect(normalized.source).toContain('const f="/$bunfs/root/cli"');
     expect(normalized.source).toContain('export const value=require("node:path")');
+  });
+
+  it("keeps source file URLs through bundling instead of the output module URL", async () => {
+    const name = "/$bunfs/root/nested #/%25/ä source.js";
+    const normalized = normalizeModule({
+      name,
+      key: name.slice(1),
+      format: 1,
+      source: `export const url=import.meta.url;
+        export const bracketUrl=import.meta["url"];
+        export const filename=import.meta.filename;
+        export const dirname=import.meta.dirname;`,
+    });
+    const result = await Esbuild.transform(normalized.source, { loader: "js", format: "esm" });
+    const module = await import(
+      `data:text/javascript;base64,${Buffer.from(result.code).toString("base64")}`
+    );
+    expect(module.url).toBe("file:///$bunfs/root/nested%20%23/%2525/%C3%A4%20source.js");
+    expect(module.bracketUrl).toBe(module.url);
+    expect(NodeURL.fileURLToPath(module.url, { windows: false })).toBe(name);
+    expect(module.filename).toBe(name);
+    expect(module.dirname).toBe("/$bunfs/root/nested #/%25");
+  });
+
+  it("preserves Windows guest metadata independently of the build host", async () => {
+    const name = "B:\\~BUN\\root\\nested #\\cli.js";
+    const normalized = normalizeModule({
+      name,
+      key: "~BUN/root/nested #/cli.js",
+      format: 1,
+      source: "export const value=[import.meta.url,import.meta.filename,import.meta.dirname]",
+    });
+    const result = await Esbuild.transform(normalized.source, { loader: "js", format: "esm" });
+    const module = await import(
+      `data:text/javascript;base64,${Buffer.from(result.code).toString("base64")}`
+    );
+    expect(module.value).toEqual([
+      "file:///B:/%7EBUN/root/nested%20%23/cli.js",
+      name,
+      "B:\\~BUN\\root\\nested #",
+    ]);
+    expect(NodeURL.fileURLToPath(module.value[0], { windows: true })).toBe(name);
+    expect(() =>
+      normalizeModule({
+        name: "relative.js",
+        key: "relative.js",
+        format: 1,
+        source: "import.meta.url",
+      }),
+    ).toThrow("BUN_MODULE_URL_PATH_INVALID");
   });
 
   it("rejects unfamiliar CommonJS shapes before emitting a misleading artifact", () => {

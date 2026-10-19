@@ -19,12 +19,26 @@ class OverlayError(ValueError):
 
 
 _RULES = Path(__file__).parent / "compatibility"
-_TARGETS = {"wasm32-wasip1"}
+_TARGETS = {"wasm32-wasip1", "wasm32-unknown-emscripten"}
 
 
 def _rules() -> list[dict]:
     return [rule for path in sorted(_RULES.glob("*.json"))
             for rule in json.loads(path.read_text())["rules"]]
+
+
+def _target_rules(target: str):
+    if target != "wasm32-unknown-emscripten":
+        return _rules()
+    # Keep Unix arms; native TLS and blocking telemetry need Emscripten routes.
+    rules = json.loads((_RULES / "http-client.json").read_text())["rules"]
+    tls_rules = [{**rule, "after": [line.replace('"wasi"', '"emscripten"').replace(
+                                   "# wasm32-wasip1 (agentOS): no OpenSSL; TLS is host-brokered.",
+                                   "# Emscripten has no native OpenSSL backend; TLS is host-brokered.")
+                               for line in rule["after"]]} for rule in rules]
+    platform_rules = [rule for path in sorted((_RULES / "emscripten").glob("*.json"))
+                      for rule in json.loads(path.read_text())["rules"]]
+    return tls_rules + platform_rules
 
 
 def _shape(rule: dict, message: str) -> NoReturn:
@@ -53,15 +67,16 @@ def _locate(source: str, rule: dict) -> tuple[bool, int, int]:
     return False, old[0], old[0] + len(before)
 
 
-def _validate(source: str, rules: list[dict]) -> list[tuple[dict, bool, int, int]]:
+def _validate(source: str, rules: list[dict], platform: str = "wasi") -> list[tuple[dict, bool, int, int]]:
     matches = [(rule, *_locate(source, rule)) for rule in rules]
     toml = rules[0]["path"].endswith(".toml")
     tokens = tokenize(source, toml)
     for index, token in enumerate(tokens):
-        platform_arm = token.value in ('"wasi"', "wasi") or (toml and '"wasi"' in token.value)
+        platform_arm = token.value in (f'"{platform}"', platform) or (toml and f'"{platform}"' in token.value)
         if platform_arm and not any(
                 done and start <= index < end for _, done, start, end in matches):
-            _shape(rules[0], "unrecognized WASI arm outside the accepted structures")
+            label = "WASI" if platform == "wasi" else platform
+            _shape(rules[0], f"unrecognized {label} arm outside the accepted structures")
     return matches
 
 
@@ -123,7 +138,8 @@ def apply_overlay(root: Path, target: str) -> list[dict]:
     if not root.is_dir() or (root / ".git").exists() or (root / ".git").is_symlink():
         raise OverlayError("overlay requires a wrapper-owned copy without .git")
     grouped = {}
-    for rule in _rules():
+    platform = "emscripten" if target == "wasm32-unknown-emscripten" else "wasi"
+    for rule in _target_rules(target):
         grouped.setdefault(rule["path"], []).append(rule)
     pending = []
     changes = []
@@ -146,12 +162,12 @@ def apply_overlay(root: Path, target: str) -> list[dict]:
                 _shape(rules[0], "missing source file")
             original = path.read_text()
             try:
-                matches = _validate(original, rules)
+                matches = _validate(original, rules, platform)
                 output = original
                 applied = [rule for rule, done, _, _ in matches if not done]
                 for rule in applied:
                     output = _replace(output, rule)
-                if not all(done for _, done, _, _ in _validate(output, rules)):
+                if not all(done for _, done, _, _ in _validate(output, rules, platform)):
                     _shape(rules[0], "overlay did not produce the expected structures")
             except ValueError as error:
                 if isinstance(error, OverlayError):

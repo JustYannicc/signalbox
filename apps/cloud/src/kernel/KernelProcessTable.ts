@@ -238,6 +238,42 @@ export class KernelProcessTable {
         : kernelError("IO_ERROR", "Child process completion failed");
   }
 
+  /** Kills and reaps one owned process without allocating a waiter notification. */
+  async terminateAndReap(handle: KernelHandle<"process">): Promise<KernelResult<void>> {
+    const found = this.#record(handle);
+    if (found.status !== "ok") return found;
+    const record = found.value;
+    if (!record.outcome && !record.completionObserved) {
+      if (!record.child || !record.settled) {
+        return kernelError("ALREADY_WAITING", "Process launch is still in progress");
+      }
+      const signalled = this.signal(handle, SIGKILL);
+      if (signalled.status === "would_block") return signalled;
+      if (signalled.status === "error") {
+        if (
+          signalled.error.code !== "NOT_FOUND" ||
+          (!record.completionObserved && !record.outcome)
+        ) {
+          return signalled;
+        }
+      }
+    }
+
+    if (!record.settled) return kernelError("IO_ERROR", "Process completion is unavailable");
+    await record.settled;
+    if (this.#processes.get(record.pid) !== record) return kernelOk(undefined);
+
+    const outcome = record.outcome;
+    this.#reap(record);
+    if (outcome?.kind === "failed") {
+      return kernelError("IO_ERROR", "Child process completion failed");
+    }
+    if (outcome?.kind === "cancelled") {
+      return kernelError("CANCELLED", outcome.error.message);
+    }
+    return kernelOk(undefined);
+  }
+
   /** Resolves a live or unreaped PID to its existing opaque process handle. */
   lookupPid(pid: number): KernelResult<KernelProcessLookup> {
     if (!Number.isSafeInteger(pid) || pid < ROOT_PID || pid > MAX_PID) {

@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { Inode } from "../storage.ts";
+import type { CreateOptions, Inode } from "../storage.ts";
 import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import {
@@ -46,10 +46,22 @@ const encoder = new TextEncoder();
 const OFLAGS = { CREATE: 1, DIRECTORY: 2, EXCLUSIVE: 4, TRUNCATE: 8 } as const;
 const DIRFLAGS_SYMLINK_FOLLOW = 1;
 
+export interface WasiCreationPolicy {
+  readonly createInode: (
+    mount: WasiMountedStorage,
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ) => Inode | Promise<Inode>;
+  readonly takeCreateMode: () => number | undefined;
+}
+
 export class WasiPathCalls {
   readonly #memory: WasiMemory;
   readonly #descriptors: WasiDescriptorTable;
   readonly #paths: WasiPathResolver;
+  readonly #creation: WasiCreationPolicy | undefined;
 
   readonly imports = {
     path_create_directory: (fd: number, path: number, pathLen: number): WasiCall<number> =>
@@ -132,22 +144,35 @@ export class WasiPathCalls {
       this.pathUnlinkFile(fd, path, pathLen),
   };
 
-  constructor(memory: WasiMemory, descriptors: WasiDescriptorTable, paths: WasiPathResolver) {
+  constructor(
+    memory: WasiMemory,
+    descriptors: WasiDescriptorTable,
+    paths: WasiPathResolver,
+    creation?: WasiCreationPolicy,
+  ) {
     this.#memory = memory;
     this.#descriptors = descriptors;
     this.#paths = paths;
+    this.#creation = creation;
   }
 
   *pathCreateDirectory(fd: number, pathPointer: number, pathLength: number): WasiCall<number> {
+    const mode = this.#creation?.takeCreateMode();
     const directory = this.#requireDirectory(fd, RIGHTS.PATH_CREATE_DIRECTORY);
     this.#requireWritable(directory.mount);
     const path = this.#readPath(pathPointer, pathLength);
     const target = yield* this.#paths.resolveParent(this.#anchor(directory), path);
     const inode = yield* complete(
-      target.mount.storage.create(target.parent, target.name, {
-        type: "directory",
-        exclusive: true,
-      }),
+      this.#createInode(
+        target.mount,
+        target.parent,
+        target.name,
+        {
+          type: "directory",
+          exclusive: true,
+        },
+        mode,
+      ),
     );
     yield* complete(target.mount.storage.release(inode));
     return 0;
@@ -233,10 +258,10 @@ export class WasiPathCalls {
     fdflags: number,
     openedFd: number,
   ): WasiCall<number> {
+    const creationMode = this.#creation?.takeCreateMode();
     const directory = this.#requireDirectory(fd, RIGHTS.PATH_OPEN);
     validateDirFlags(dirflags);
     validateOpenFlags(oflags, fdflags);
-    if ((fdflags & FDFLAGS.NONBLOCK) !== 0) throw new WasiError(ENOTSUP);
     if ((oflags & OFLAGS.CREATE) !== 0 && (oflags & OFLAGS.DIRECTORY) !== 0) {
       throw new WasiError(EINVAL);
     }
@@ -275,10 +300,16 @@ export class WasiPathCalls {
         this.#requireRight(directory, RIGHTS.PATH_CREATE_FILE);
         this.#requireWritable(directory.mount);
         inode = yield* complete(
-          lookup.parent.mount.storage.create(lookup.parent.parent, lookup.parent.name, {
-            type: "file",
-            exclusive: (oflags & OFLAGS.EXCLUSIVE) !== 0,
-          }),
+          this.#createInode(
+            lookup.parent.mount,
+            lookup.parent.parent,
+            lookup.parent.name,
+            {
+              type: "file",
+              exclusive: (oflags & OFLAGS.EXCLUSIVE) !== 0,
+            },
+            creationMode,
+          ),
         );
         retained = { mount: lookup.parent.mount, inode };
         const stat = yield* complete(lookup.parent.mount.storage.stat(inode));
@@ -433,7 +464,7 @@ export class WasiPathCalls {
     const newPath = this.#readPath(newPathPointer, newPathLength);
     const parent = yield* this.#paths.resolveParent(this.#anchor(directory), newPath);
     const inode = yield* complete(
-      parent.mount.storage.create(parent.parent, parent.name, {
+      this.#createInode(parent.mount, parent.parent, parent.name, {
         type: "symlink",
         exclusive: true,
         target,
@@ -457,6 +488,18 @@ export class WasiPathCalls {
       }),
     );
     return 0;
+  }
+
+  #createInode(
+    mount: WasiMountedStorage,
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): Inode | Promise<Inode> {
+    return this.#creation === undefined
+      ? mount.storage.create(parent, name, options)
+      : this.#creation.createInode(mount, parent, name, options, mode);
   }
 
   #anchor(descriptor: WasiPathDirectoryDescriptor): WasiPathAnchor {

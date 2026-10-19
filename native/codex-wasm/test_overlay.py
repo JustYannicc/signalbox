@@ -166,7 +166,7 @@ class OverlayTests(unittest.TestCase):
     def test_target_is_checked_before_writing(self):
         original = snapshot(self.root)
         for target in ('x86_64-unknown-linux-gnu', 'wasm32-wasip1-threads',
-                       'wasm32-unknown-emscripten', 'wasm32-wasip2', 'wasm32-unknown-unknown'):
+                       'wasm32-wasip2', 'wasm32-unknown-unknown'):
             with self.subTest(target=target):
                 with self.assertRaisesRegex(overlay.OverlayError, 'unsupported overlay target'):
                     overlay.apply_overlay(self.root, target)
