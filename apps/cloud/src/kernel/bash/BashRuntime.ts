@@ -233,6 +233,7 @@ function fork(module: WebAssembly.Module, parent: BashProcess): number {
           );
         return {
           completion,
+          supportedSignals: [9, 15],
           signal: (signal: number) => {
             if (signal !== 9 && signal !== 15)
               return kernelError("UNSUPPORTED", "Bash signal handlers are unavailable");

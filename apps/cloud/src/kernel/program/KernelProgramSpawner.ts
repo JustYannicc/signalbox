@@ -17,6 +17,7 @@ import {
   KernelProcessTable,
   type KernelLaunchedChild,
   type KernelProcessIdentity,
+  type KernelSignalMask,
 } from "../KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { KernelCpuExecution, type KernelCpuProcessExecution } from "../KernelCpuExecution.ts";
@@ -108,17 +109,9 @@ export class KernelProgramSpawner {
     home: string | undefined,
     request: AgentOsSpawnRequest,
   ): Promise<KernelResult<KernelHandle<"process">>> {
-    // Only SETPGROUP has host semantics here; mask/default/identity changes must
-    // not be accepted until the process table can actually apply them.
-    // AgentOS applies this mask even without SETSIGMASK. SIGKILL and SIGSTOP
-    // cannot be blocked and are removed by the pinned runner before spawning.
-    const mask = request.attributes.signalMask;
-    const unblockable = (1 << (9 - 1)) | (1 << (19 - 1));
-    if (
-      (request.attributes.flags & ~2) !== 0 ||
-      (mask.low & ~unblockable) !== 0 ||
-      mask.high !== 0
-    ) {
+    // AgentOS passes the authoritative mask even without SETSIGMASK. Default
+    // disposition and identity changes still have no host implementation.
+    if ((request.attributes.flags & ~(2 | 8)) !== 0) {
       return Promise.resolve(
         kernelError("UNSUPPORTED", "Requested spawn attributes are unavailable"),
       );
@@ -159,6 +152,7 @@ export class KernelProgramSpawner {
           withHome(home, env),
           (request.attributes.flags & 2) !== 0 ? request.attributes.processGroup : undefined,
           true,
+          request.attributes.signalMask,
         );
       },
       "process.wait": ({ handle }) => this.#processes.wait(handle),
@@ -182,6 +176,7 @@ export class KernelProgramSpawner {
     env: Readonly<Record<string, string>>,
     processGroupId: number | undefined,
     releaseOnRejectedLaunch: boolean,
+    signalMask?: KernelSignalMask,
   ): KernelResult<KernelHandle<"process">> {
     const launch: LaunchContext = {
       prepared: undefined,
@@ -260,7 +255,10 @@ export class KernelProgramSpawner {
         return child.process;
       },
       cleanup,
-      processGroupId === undefined ? {} : { processGroupId },
+      {
+        ...(processGroupId === undefined ? {} : { processGroupId }),
+        ...(signalMask === undefined ? {} : { signalMask }),
+      },
     );
     if (spawned.status !== "ok") return spawned;
     const prepared = launch.prepared;
@@ -316,7 +314,7 @@ export class KernelProgramSpawner {
           }
         });
       const completion = cpuProcess ? cpuProcess.run(start) : start();
-      return { process: { completion, signal } };
+      return { process: { completion, signal, supportedSignals: [9, 15] } };
     }
 
     if (implementation.kind === "async") {
@@ -374,7 +372,7 @@ export class KernelProgramSpawner {
           }),
         );
       const completion = cpuProcess ? cpuProcess.run(start) : start();
-      return { process: { completion, signal } };
+      return { process: { completion, signal, supportedSignals: [9, 15] } };
     }
 
     const runtime = createKernelWasiRuntime(implementation.module, {
@@ -406,7 +404,10 @@ export class KernelProgramSpawner {
         },
       );
     const completion = cpuProcess ? cpuProcess.run(start) : start();
-    return { process: { completion, signal }, lifecycle: runtime.lifecycle };
+    return {
+      process: { completion, signal, supportedSignals: [9, 15] },
+      lifecycle: runtime.lifecycle,
+    };
   }
 }
 
