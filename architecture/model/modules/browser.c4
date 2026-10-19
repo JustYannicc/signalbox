@@ -76,6 +76,7 @@ model {
     browser.loginService -> browser.realWeb.kernelBrowser 'Managed Auth'
     browser.signInGrants -> browser.grantRows 'kept per person'
     browser.mirror -> signalbox.funnel.api 'mirror'
+    browser.render -> signalbox.computer.portGateway 'preview a port'
 
     // Interface → hidden parts (the only way in)
     browser.api -> browser.loginService 'session (signed in)'

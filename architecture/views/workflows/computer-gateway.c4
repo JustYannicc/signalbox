@@ -1,0 +1,290 @@
+// One command gateway (#1071 design, owner, 2026-10-19) and resource budgets (#1255). Computer's own internal
+// flow: every caller enters at `signalbox.computer.commandGateway`; other modules stay black boxes.
+// Binding: routing never looks at the caller, and nobody (model or person) sees where a command ran.
+views {
+
+  // ───────────────────────────── Same command, same place ─────────────────────────────
+
+  dynamic view computer_gateway_same_command {
+    variant sequence
+    title 'Workflows/Work/Computer/Gateway/Same command from the terminal and the model'
+    description '''
+      Person A types `npm test` in the thread's terminal, then the model runs `npm test` through Bash. Do they
+      run in different places? No: both enter the one command gateway, one routing table decides from argv and
+      evidence (never from the caller), and both get the same output from the same place. Placement shows only
+      in the exec trace.
+    '''
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.gateway with { title 'Model (via Gateway)' },
+      signalbox.harness,
+      signalbox.computer.commandGateway,
+      signalbox.computer.escalation with { title 'Routing table' },
+      signalbox.computer.execDaemon with { title 'boxd VM' },
+      signalbox.observability
+
+    personA -> signalbox.web 'types npm test' {
+      navigateTo computer_terminal_session
+      notes '''
+        - In the thread's terminal: a login shell in the kernel, same prompt and hostname `t-{threadId}` the model sees
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'stdin'
+    signalbox.funnel -> signalbox.computer.commandGateway 'exec(npm test)' {
+      notes '''
+        - The caller only decides *whether* it may exec: A's grant and role on the thread's folder
+        - Where it runs is not the caller's business
+      '''
+    }
+    signalbox.computer.commandGateway -> signalbox.computer.escalation 'route(argv, evidence)' {
+      notes '''
+        - argv, program registry, recipe, workspace evidence; never the caller
+        - Tests escalate (#1071)
+      '''
+    }
+    signalbox.computer.escalation -> signalbox.computer.execDaemon 'run npm test' {
+      navigateTo lifecycle_tool_needs_vm
+      notes '- Inside the push · run · pull bracket; the VM forks, resumes or attaches as usual'
+    }
+    signalbox.computer.commandGateway <- signalbox.computer.execDaemon 'output · exit 0'
+    signalbox.funnel <- signalbox.computer.commandGateway 'stream'
+    personA <- signalbox.web 'test output' {
+      notes '''
+        - No banner, no "running on a VM"; same paths, `uname`, env and errors as anywhere in this computer
+      '''
+    }
+    signalbox.gateway -> signalbox.harness 'Bash: npm test' {
+      notes '- Later the model asks for the same command, as on any computer'
+    }
+    signalbox.harness -> signalbox.computer.commandGateway 'exec(npm test)' {
+      notes '- Same gateway, same live FS; the harness has no backend choice'
+    }
+    signalbox.computer.commandGateway -> signalbox.computer.escalation 'route(argv, evidence)' {
+      notes '- Same argv, same thread, same revision: same decision, whoever typed it'
+    }
+    signalbox.computer.escalation -> signalbox.computer.execDaemon 'run npm test' {
+      notes '- Same place: the warm VM from A\'s run, if it is still awake'
+    }
+    signalbox.computer.commandGateway <- signalbox.computer.execDaemon 'same output · exit 0'
+    signalbox.harness <- signalbox.computer.commandGateway 'Bash result'
+    signalbox.gateway <- signalbox.harness 'tool result' {
+      notes '- The model reads the same test run A saw'
+    }
+    signalbox.computer.commandGateway -[async]-> signalbox.observability 'exec traces' {
+      notes '''
+        - Both execs: caller, placement, budget, exit
+        - Visible only in Thread details or developer mode, never inside the computer
+      '''
+    }
+
+    include signalbox, signalbox.computer
+    style signalbox, signalbox.computer {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Terminal session ─────────────────────────────
+
+  dynamic view computer_terminal_session {
+    variant sequence
+    title 'Workflows/Work/Computer/Gateway/A terminal session with vim'
+    description '''
+      Person A opens the terminal, runs `ls`, then `vim notes.md`, suspends it with Ctrl-Z, brings it back with
+      `fg` and quits. The shell stays in the kernel; only vim escalates, and its PTY is bridged so job control
+      works across it. The file comes back to the live FS on exit.
+    '''
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.funnel,
+      signalbox.computer.commandGateway,
+      signalbox.computer.backend.kernelFs with { title 'Kernel · shell · PTY' },
+      signalbox.computer.escalation with { title 'Routing table' },
+      signalbox.computer.childIsolates with { title 'Kernel program' },
+      signalbox.computer.execDaemon with { title 'VM · node-pty' }
+
+    personA -> signalbox.web 'opens terminal' {
+      navigateTo work_computer_terminal
+    }
+    signalbox.web -> signalbox.funnel 'open terminal'
+    signalbox.funnel -> signalbox.computer.commandGateway 'exec(login shell, pty)' {
+      notes '''
+        - One long-lived exec; `attach(id)` reconnects from web, desktop or mobile
+        - Each person in a shared thread gets their own session on the same computer
+      '''
+    }
+    signalbox.computer.commandGateway -> signalbox.computer.backend.kernelFs 'GNU Bash + kernel PTY' {
+      notes '''
+        - Kernel PTY handles do the line discipline
+        - Prompt and hostname `t-{threadId}`; no banner
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'ls'
+    signalbox.funnel -> signalbox.computer.commandGateway 'stdin'
+    signalbox.computer.backend.kernelFs -> signalbox.computer.escalation 'exec ls: route' {
+      notes '- Programs inside the shell route per program at kernel exec, as for the model'
+    }
+    signalbox.computer.escalation -> signalbox.computer.childIsolates 'ls' {
+      notes '- Small isolate set: runs in a child Dynamic Worker'
+    }
+    signalbox.computer.backend.kernelFs <- signalbox.computer.childIsolates 'listing'
+    signalbox.web -> signalbox.funnel 'vim notes.md'
+    signalbox.funnel -> signalbox.computer.commandGateway 'stdin'
+    signalbox.computer.backend.kernelFs -> signalbox.computer.escalation 'exec vim: route' {
+      notes '- An interactive full-screen program escalates'
+    }
+    signalbox.computer.escalation -> signalbox.computer.execDaemon 'push delta · spawn under node-pty' {
+      navigateTo lifecycle_file_sync
+      notes '''
+        - PTY bridged to the kernel PTY through the exec daemon: bytes, `SIGWINCH`, signals
+        - A proxy entry in the kernel process table: one job list, one `ps`
+      '''
+    }
+    loop 'editing' {
+      signalbox.web -> signalbox.funnel 'keys · resize'
+      signalbox.funnel -> signalbox.computer.commandGateway 'stdin · resize'
+      signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'bytes · SIGWINCH'
+      signalbox.computer.backend.kernelFs <- signalbox.computer.execDaemon 'screen'
+      signalbox.funnel <- signalbox.computer.commandGateway 'screen'
+    }
+    opt 'nothing happens for 2 minutes' {
+      signalbox.computer.execDaemon -> signalbox.computer.execDaemon 'hibernate' {
+        navigateTo lifecycle_idle_dev_server
+        notes '- Same idle rules as any VM process; the next key wakes it, a little slowly'
+      }
+    }
+    signalbox.web -> signalbox.funnel 'Ctrl-Z'
+    signalbox.funnel -> signalbox.computer.commandGateway 'stdin'
+    signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'SIGTSTP' {
+      notes '''
+        - Line discipline turns Ctrl-Z into SIGTSTP for the foreground job; the proxy entry forwards it
+        - `jobs` shows `[1]+ Stopped vim notes.md`; `kill %1` and `ps` work too
+      '''
+    }
+    signalbox.web -> signalbox.funnel 'fg'
+    signalbox.funnel -> signalbox.computer.commandGateway 'stdin'
+    signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'SIGCONT · redraw'
+    signalbox.web -> signalbox.funnel ':wq'
+    signalbox.funnel -> signalbox.computer.commandGateway 'stdin'
+    signalbox.computer.backend.kernelFs <- signalbox.computer.execDaemon 'pull on exit · exit 0' {
+      notes '''
+        - notes.md comes back to the live FS by the bracket rules; last write per path wins
+        - The proxy entry is reaped; `$?` is 0
+      '''
+    }
+    signalbox.funnel <- signalbox.computer.commandGateway 'prompt' {
+      notes '- `cat notes.md` now runs in the kernel and shows the edit'
+    }
+
+    include signalbox, signalbox.computer
+    style signalbox, signalbox.computer {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Resource budgets ─────────────────────────────
+
+  dynamic view computer_budgets {
+    variant sequence
+    title 'Workflows/Work/Computer/Gateway/Resource budgets'
+    description '''
+      Can one command take the Durable Object down? No (#1255). Three cases: `cat` of a 2 GB file streams in the
+      kernel; `sort` of a 1 GB file escalates up front from the manifest; a runaway program in the kernel is
+      killed with exit 137 while the DO and the session keep going. Open: the harness's own reads against
+      128 MB, and the deployed CPU limit (about 44 s).
+    '''
+
+    include
+      signalbox.harness with { title 'Harness (session facet)' },
+      signalbox.computer.commandGateway,
+      signalbox.computer.budgets,
+      signalbox.computer.escalation with { title 'Routing table' },
+      signalbox.computer.childIsolates with { title 'Kernel program (child DW)' },
+      signalbox.computer.backend.kernelFs with { title 'Live FS' },
+      signalbox.computer.execDaemon with { title 'boxd VM' }
+
+    alt 'case' {
+      when '1 · cat a 2 GB file' {
+        signalbox.harness -> signalbox.computer.commandGateway 'exec(cat big.log)'
+        signalbox.computer.commandGateway -> signalbox.computer.budgets 'per-command budget' {
+          notes '''
+            - Memory, CPU, wall time, processes, handles, output rate
+            - Recorded on every exec trace, for every caller
+          '''
+        }
+        signalbox.computer.commandGateway -> signalbox.computer.escalation 'route'
+        signalbox.computer.escalation -> signalbox.computer.childIsolates 'cat' {
+          notes '- Streaming: file size alone is no reason to escalate'
+        }
+        signalbox.computer.childIsolates -> signalbox.computer.backend.kernelFs 'chunked reads' {
+          notes '- Positional reads, hydrated by range; nothing is buffered whole'
+        }
+        signalbox.computer.commandGateway <- signalbox.computer.childIsolates 'output stream' {
+          notes '- Pipes with fixed buffers and backpressure'
+        }
+        signalbox.computer.commandGateway -> signalbox.computer.backend.kernelFs 'spill full output' {
+          notes '- The bounded tool result has the head, the tail and the file\'s path; never truncated silently'
+        }
+        signalbox.harness <- signalbox.computer.commandGateway 'bounded result'
+      }
+      when '2 · sort a 1 GB file' {
+        signalbox.harness -> signalbox.computer.commandGateway 'exec(sort big.csv)'
+        signalbox.computer.commandGateway -> signalbox.computer.escalation 'route(argv, manifest sizes)' {
+          notes '''
+            - Prediction first: input above the memory budget, known from the manifest
+            - Most budget cases end here
+          '''
+        }
+        signalbox.computer.escalation -> signalbox.computer.execDaemon 'escalate up front' {
+          navigateTo lifecycle_tool_needs_vm
+          notes '- Nothing started in the kernel, so nothing to undo'
+        }
+        signalbox.computer.commandGateway <- signalbox.computer.execDaemon 'sorted · exit 0'
+        signalbox.harness <- signalbox.computer.commandGateway 'Bash result'
+      }
+      else '3 · runaway program' {
+        signalbox.harness -> signalbox.computer.commandGateway 'exec(node gen.js)'
+        signalbox.computer.commandGateway -> signalbox.computer.escalation 'route' {
+          notes '- No evidence it is heavy: it starts in the kernel'
+        }
+        signalbox.computer.escalation -> signalbox.computer.childIsolates 'run (memory, cpuMs)' {
+          notes '- Its own child Dynamic Worker; the session facet never runs program code'
+        }
+        signalbox.computer.budgets -> signalbox.computer.childIsolates 'memory budget hit' {
+          notes '- The child dies; only this command goes with it'
+        }
+        alt 'did anything observable happen?' {
+          when 'no output consumed, no writes' {
+            signalbox.computer.escalation -> signalbox.computer.execDaemon 'replay same argv' {
+              notes '- Invisible to the caller, by the #1071 rule'
+            }
+            signalbox.harness <- signalbox.computer.commandGateway 'normal result'
+          }
+          else 'output already consumed' {
+            signalbox.harness <- signalbox.computer.commandGateway 'Killed · exit 137' {
+              notes '''
+                - What a real machine gives: 137 for memory, 152 for CPU; no Signalbox error
+                - The DO and the session keep going; the next tool call works
+              '''
+            }
+          }
+        }
+        signalbox.computer.budgets -> signalbox.computer.escalation 'record (program, evidence)' {
+          notes '- Next time it escalates up front'
+        }
+      }
+    }
+
+    include signalbox, signalbox.computer
+    style signalbox, signalbox.computer {
+      color muted
+      opacity 10%
+    }
+  }
+}
