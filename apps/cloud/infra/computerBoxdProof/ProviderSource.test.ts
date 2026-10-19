@@ -197,6 +197,40 @@ describe("Boxd proof source preparation", () => {
     ]);
   });
 
+  it("records a bounded OS errno without exposing paths from the failed install", async () => {
+    const sdk = controlledSdk({
+      exec: [
+        success,
+        () =>
+          Promise.resolve({
+            exitCode: 1,
+            stdout: "private-output",
+            stderr:
+              "OSError: [Errno 18] Invalid cross-device link: '/private/source' -> '/private/target'",
+          }),
+      ],
+      upload: () => Promise.resolve(3),
+    });
+    const recorded = reports();
+
+    await expect(prepareSource(sdk.client, recorded.reporter)).rejects.toThrow(
+      "Proof provider setup or closure failed",
+    );
+
+    expect(recorded.values.at(-1)).toEqual({
+      step: "installExec",
+      outcome: "failed",
+      diagnostics: [
+        { kind: "errorName", value: "Error" },
+        { kind: "exitCode", value: 1 },
+        { kind: "osErrno", value: 18 },
+        { kind: "stderrCategory", value: "OSError" },
+        { kind: "stderrCategory", value: "cross-device" },
+      ],
+    });
+    expect(JSON.stringify(recorded.values)).not.toContain("private");
+  });
+
   it("records all three setup phases as passed", async () => {
     const sdk = controlledSdk({ exec: [success, success], upload: () => Promise.resolve(3) });
     const recorded = reports();

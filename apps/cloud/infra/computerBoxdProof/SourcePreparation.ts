@@ -23,6 +23,8 @@ const SOURCE_ERROR_NAMES = [
 type SourceErrorName = (typeof SOURCE_ERROR_NAMES)[number];
 
 const SOURCE_STDERR_CATEGORIES = [
+  { value: "OSError", pattern: /(?:^|\n)OSError(?::|\s)/ },
+  { value: "cross-device", pattern: /\b(?:invalid cross-device link|EXDEV)\b/i },
   { value: "SyntaxError", pattern: /(?:^|\n)SyntaxError(?::|\s)/ },
   { value: "PermissionError", pattern: /(?:^|\n)PermissionError(?::|\s)/ },
   { value: "FileNotFoundError", pattern: /(?:^|\n)FileNotFoundError(?::|\s)/ },
@@ -38,6 +40,7 @@ export type SourcePreparationDiagnostic =
   | { readonly kind: "grpcCode"; readonly value: number }
   | { readonly kind: "status"; readonly value: number }
   | { readonly kind: "exitCode"; readonly value: number }
+  | { readonly kind: "osErrno"; readonly value: number }
   | { readonly kind: "stderrCategory"; readonly value: SourceStderrCategory };
 
 export type SourcePreparationReporter = (
@@ -68,11 +71,18 @@ function numericProperty(
 
 class SourcePreparationCommandFailure extends Error {
   readonly exitCode: number;
+  readonly osErrno: number | undefined;
   readonly stderrCategories: readonly SourceStderrCategory[];
 
   constructor(exitCode: number, stderr: string) {
     super("Proof provider setup or closure failed");
     this.exitCode = exitCode;
+    const match =
+      /(?:OSError|PermissionError|FileNotFoundError|FileExistsError|NotADirectoryError|IsADirectoryError): \[Errno (\d{1,3})\]/.exec(
+        stderr,
+      );
+    const errno = match === null ? undefined : Number(match[1]);
+    this.osErrno = errno !== undefined && errno >= 1 && errno <= 133 ? errno : undefined;
     this.stderrCategories = SOURCE_STDERR_CATEGORIES.filter(({ pattern }) =>
       pattern.test(stderr),
     ).map(({ value }) => value);
@@ -97,6 +107,7 @@ function sourceFailureDiagnostics(error: unknown): readonly SourcePreparationDia
     if (Number.isSafeInteger(error.exitCode) && error.exitCode >= 1 && error.exitCode <= 255) {
       diagnostics.push({ kind: "exitCode", value: error.exitCode });
     }
+    if (error.osErrno !== undefined) diagnostics.push({ kind: "osErrno", value: error.osErrno });
     for (const value of error.stderrCategories) diagnostics.push({ kind: "stderrCategory", value });
   }
   return diagnostics;
