@@ -37,6 +37,7 @@ import { createHookService } from "../../src/hooks/HookService.ts";
 import { KERNEL_HOOK_EXECUTABLE, registerKernelHookProgram } from "../../src/hooks/HookProgram.ts";
 import { createStandardProofAdapter, type StandardProofAdapter } from "./standardProofAdapter.ts";
 import { createProofCommandFilesystem } from "./proofCommandFilesystem.ts";
+import type { CodexHookBashExpectation } from "./codexPayloads.ts";
 import {
   captureStandardProofSessions,
   inspectStandardProofSessions,
@@ -69,6 +70,7 @@ export interface CodexHookRuntimeConfiguration {
   readonly wakes: KernelWakeRegistry;
   readonly env: ProofEnv;
   readonly modelForward?: (request: Request) => Promise<Response>;
+  readonly bashExpectation?: CodexHookBashExpectation;
 }
 
 export interface CodexHookRuntimeComposition {
@@ -332,6 +334,9 @@ export function createCodexHookRuntime(
               signalboxCalls,
               spawnCalls,
               machineAttempts,
+              ...(configuration.bashExpectation === undefined
+                ? {}
+                : { bashExpectation: configuration.bashExpectation }),
               standard: standardResult,
               nativeFileRead: activeStandard.output.takeFileRead("/workspace/proof.txt"),
             });

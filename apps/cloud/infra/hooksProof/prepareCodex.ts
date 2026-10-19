@@ -8,6 +8,7 @@ import * as NodeUtil from "node:util";
 import { build } from "esbuild";
 import { encodeAssetBundle, PROGRAM_BUNDLE_CONTENT_TYPE } from "../claudeTurnProof/assetBundle.ts";
 import { prepareChildPrograms } from "../childPrograms/prepare.ts";
+import type { CodexExecCommandExpectation } from "./CodexHooksProof.ts";
 // @ts-expect-error The existing MJS packager has no declaration; the local type below narrows its API.
 import { createCodexFixture as createCodexFixtureUntyped } from "../codexTurn/fixturePackager.mjs";
 
@@ -49,6 +50,7 @@ export async function prepareCodexHooksProof(options: {
   readonly programDir: string;
   readonly kernelRoot?: string;
   readonly outputDir: string;
+  readonly execCommand?: CodexExecCommandExpectation;
 }) {
   if (options == null) throw new Error("Pass --release, --programs and --output");
   const releaseDir = requiredPath("--release", options.releaseDir);
@@ -80,7 +82,7 @@ export async function prepareCodexHooksProof(options: {
       `import { createCodexHooksProofClass } from ${JSON.stringify(NodePath.join(proofRoot, "CodexHooksProof.ts"))};`,
       `const programs=${JSON.stringify(programs)};`,
       `const catalog=${JSON.stringify(children.executableCatalog)};`,
-      "export class ProbeFacet extends createCodexHooksProofClass(engine, programs, catalog, createProofFacet) {}",
+      `export class ProbeFacet extends createCodexHooksProofClass(engine, programs, catalog, createProofFacet${options.execCommand === undefined ? "" : `,${JSON.stringify({ execCommand: options.execCommand })}`}) {}`,
       'export default { fetch() { return new Response("Facet only"); } };',
     ].join("\n");
     const sourcePath = NodePath.join(staging, "codex-hooks-entry.mjs");

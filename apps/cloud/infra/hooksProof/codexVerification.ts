@@ -16,6 +16,7 @@ import {
   verifyCodexHookPayloads,
   verifyCodexStandardHookPayloads,
   verifyCodexStandardHookResults,
+  type CodexHookBashExpectation,
   type CodexStandardHookInspection,
 } from "./codexPayloads.ts";
 import {
@@ -110,6 +111,7 @@ export interface CodexHookVerificationInput {
         readonly stdout: Uint8Array;
       }
     | undefined;
+  readonly bashExpectation?: CodexHookBashExpectation;
   readonly standard: CodexStandardHookInspection;
 }
 
@@ -122,8 +124,8 @@ export async function verifyCodexHooks(input: CodexHookVerificationInput) {
   const originalIds = new Set<string>(CODEX_HOOK_REGISTRATIONS.map(({ id }) => id));
   const originalInvocations = input.invocations.filter((record) => originalIds.has(record.id));
   const failures = [
-    ...verifyCodexHookPayloads(input.invocations),
-    ...verifyCodexStandardHookPayloads(input.invocations),
+    ...verifyCodexHookPayloads(input.invocations, input.bashExpectation),
+    ...verifyCodexStandardHookPayloads(input.invocations, input.bashExpectation),
     ...verifyCodexStandardHookResults(input.invocations, input.standard),
   ];
   const hookFile = inspectFile(input.filesystem, CODEX_HOOK_EXECUTABLE);
