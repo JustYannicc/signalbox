@@ -1,14 +1,18 @@
 import * as Option from "effect/Option";
-import type { FilePersistencePorts, ForkCommit } from "../kernel/FilePersistencePorts.ts";
+import type { FilePersistencePorts } from "../kernel/FilePersistencePorts.ts";
 import type {
   KernelCommand,
   KernelCommandChild,
   KernelCommandForwarder,
 } from "../kernel/KernelCommandForwarder.ts";
 import type { BaseLease, DriveRef, RecipeHash } from "./Computer.ts";
-import { MachineCreationError, type Machine } from "./Machine.ts";
+import type { Machine, MachineCreateInput } from "./Machine.ts";
 import type { MachineCommandJournal, MachineCommandRecord } from "./MachineCommandJournal.ts";
 import type { MachineCommandRuntime, MachineWorkspace } from "./MachineWorkspace.ts";
+import { assertMachineOwnership } from "./commands/MachineCommandAttestations.ts";
+import { MachineCommandRecovery } from "./commands/MachineCommandRecovery.ts";
+
+export { MachineRevisionError } from "./commands/MachineCommandRecovery.ts";
 
 export interface MachineCommandsOptions {
   readonly drive: DriveRef;
@@ -28,13 +32,14 @@ export interface MachineCommandsOptions {
   readonly recoverySignal: AbortSignal;
 }
 
-/** Owns one VM bracket per selected command, retaining failed cleanup for explicit recovery. */
+/** Brackets one VM command and recovers only from its durable journal record. */
 export class MachineCommands implements KernelCommandForwarder {
   readonly #options: MachineCommandsOptions;
-  readonly #pending = new Map<string, () => Promise<void>>();
+  readonly #recovery: MachineCommandRecovery;
 
   constructor(options: MachineCommandsOptions) {
     this.#options = options;
+    this.#recovery = new MachineCommandRecovery(options);
   }
 
   readonly spawn = async (
@@ -45,106 +50,62 @@ export class MachineCommands implements KernelCommandForwarder {
     signal.throwIfAborted();
     const admittedCommand = captureCommand(command);
     const operationId = options.nextOperationId();
-    if (!operationId || this.#pending.has(operationId))
+    if (!operationId || options.journal.read(operationId))
       throw new Error("Duplicate machine command identity");
+
     let record: MachineCommandRecord = { operationId, phase: "checkpoint" };
-    const write = async (phase: MachineCommandRecord["phase"]) => {
-      record = { ...record, phase };
-      await options.journal.write(record);
+    const write = async (next: MachineCommandRecord) => {
+      await options.journal.write(next);
+      record = next;
     };
-    await write("checkpoint");
-    const before = await options.workspace.checkpoint(`${operationId}:before`, signal);
-    record = { ...record, before };
-    const base = await options.bases.acquire();
-    if (Option.isSome(base)) record = { ...record, base: base.value };
-    let machine: Awaited<ReturnType<Machine["create"]>> | undefined;
-    let runtime: Awaited<ReturnType<MachineCommandRuntime["attach"]>> | undefined;
-    let mount: Awaited<ReturnType<MachineWorkspace["prepare"]>> | undefined;
-    let after: ForkCommit | undefined;
-    let committedChanges: Awaited<ReturnType<NonNullable<typeof mount>["changes"]>> | undefined;
-    let applied = false;
-    let deleted = false;
-    let completed = false;
-    let baseReleased = false;
-    let creationFailure: { readonly error: unknown } | undefined;
-    let creationInput: Parameters<Machine["create"]>[0] | undefined;
-    let cleanup: Promise<void> | undefined;
-    const finish = (): Promise<void> => {
-      cleanup ??= (async () => {
-        if (completed) return;
-        if (creationFailure) {
-          const error = creationFailure.error;
-          if (!(error instanceof MachineCreationError) || error.disposition !== "not_created") {
-            if (!creationInput) throw error;
-            machine = await options.machines.create(creationInput, options.recoverySignal);
-            record = { ...record, machine: { id: machine.id, generation: machine.generation } };
-          }
-          creationFailure = undefined;
-        }
-        if (runtime) await runtime.dispose();
-        if (mount && !applied) {
-          if (!after) {
-            await write("commit");
-            committedChanges ??= await mount.changes(options.recoverySignal);
-            const result = await options.ports.commits.commit({
-              at: before,
-              turnId: `${operationId}:after`,
-              changedInodes: committedChanges,
-              signal: options.recoverySignal,
-            });
-            if (result.status === "error") throw new MachineRevisionError(result.error.code);
-            after = { ...before, commit: result.value.commit };
-            record = { ...record, after };
-          }
-          await write("apply");
-          await options.workspace.apply({
-            before,
-            after,
-            changedInodes: committedChanges ?? [],
-            hydration: options.ports.hydration,
-            signal: options.recoverySignal,
-          });
-          applied = true;
-        }
-        await write("delete");
-        if (machine && !deleted) {
-          await machine.release();
-          deleted = true;
-        }
-        if (Option.isSome(base) && !baseReleased) {
-          await options.bases.release(base.value);
-          baseReleased = true;
-        }
-        await write("complete");
-        completed = true;
-        this.#pending.delete(operationId);
-      })().catch((error: unknown) => {
-        cleanup = undefined;
-        throw error;
-      });
-      return cleanup;
-    };
-    this.#pending.set(operationId, finish);
+
+    await options.journal.write(record);
     try {
-      await write("create");
-      signal.throwIfAborted();
-      creationInput = {
+      const before = await options.workspace.checkpoint(`${operationId}:before`, signal);
+      record = { ...record, before };
+      await write(record);
+      const base = await options.bases.acquire();
+      if (Option.isSome(base)) record = { ...record, base: base.value };
+      await write(record);
+
+      const createInput: MachineCreateInput = {
         operationId,
         drive: options.drive,
         recipeHash: options.recipeHash,
         base,
         expiresAt: Option.isSome(base) ? base.value.expiresAt : options.coldExpiresAt(),
       };
-      try {
-        machine = await options.machines.create(creationInput, signal);
-      } catch (error) {
-        creationFailure = { error };
-        throw error;
-      }
-      record = { ...record, machine: { id: machine.id, generation: machine.generation } };
-      await write("prepare");
-      mount = await options.workspace.prepare(machine, before, options.ports.hydration, signal);
-      runtime = await options.runtime.attach({
+      record = {
+        ...record,
+        phase: "create",
+        createInput: {
+          operationId,
+          drive: options.drive,
+          recipeHash: options.recipeHash,
+          base: Option.isSome(base) ? base.value : null,
+          expiresAt: createInput.expiresAt,
+        },
+      };
+      await write(record);
+
+      const machine = await options.machines.create(createInput, signal);
+      this.#recovery.rememberMachine(operationId, machine);
+      record = {
+        ...record,
+        phase: "prepare",
+        machine: { id: machine.id, generation: machine.generation },
+      };
+      await write(record);
+
+      const mount = await options.workspace.prepare(
+        machine,
+        before,
+        options.ports.hydration,
+        signal,
+      );
+      this.#recovery.rememberMount(operationId, mount);
+      const runtime = await options.runtime.attach({
+        operationId,
         machine,
         workspace: mount,
         policy: {
@@ -155,11 +116,30 @@ export class MachineCommands implements KernelCommandForwarder {
         },
         signal,
       });
-      await write("execute");
+      this.#recovery.rememberRuntime(operationId, runtime);
+      assertMachineOwnership(
+        { operationId, id: machine.id, generation: machine.generation },
+        runtime.owner,
+      );
+      record = { ...record, phase: "execute" };
+      await write(record);
+
       const child = await runtime.spawn(admittedCommand, signal);
+      const settle = async () => {
+        try {
+          await child.dispose();
+        } catch (disposeError) {
+          try {
+            await this.recover(operationId);
+          } catch (recoveryError) {
+            throw recoveryFailure(disposeError, recoveryError);
+          }
+          throw disposeError;
+        }
+        await this.recover(operationId);
+      };
       const exited = child.exited.then(async (exit) => {
-        await child.dispose();
-        await finish();
+        await settle();
         return exit;
       });
       void exited.catch(() => undefined);
@@ -169,37 +149,21 @@ export class MachineCommands implements KernelCommandForwarder {
         stderr: child.stderr,
         exited,
         signal: child.signal,
-        dispose: async () => {
-          await child.dispose();
-          await finish();
-        },
+        dispose: settle,
       };
     } catch (error) {
       try {
-        await finish();
-      } catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
-          "Command failed and its workspace requires recovery",
-        );
+        await this.recover(operationId);
+      } catch (recoveryError) {
+        throw recoveryFailure(error, recoveryError);
       }
       throw error;
     }
   };
 
-  async recover(operationId: string): Promise<void> {
-    const finish = this.#pending.get(operationId);
-    if (!finish) throw new Error("Unknown pending machine command");
-    await finish();
-  }
-}
-
-export class MachineRevisionError extends Error {
-  readonly code: string;
-  constructor(code: string) {
-    super("Command workspace revision could not be committed");
-    this.name = "MachineRevisionError";
-    this.code = code;
+  /** Reconcile one pending row. This path never spawns a command or creates a machine. */
+  recover(operationId: string): Promise<void> {
+    return this.#recovery.recover(operationId);
   }
 }
 
@@ -221,4 +185,12 @@ function captureCommand(command: KernelCommand): KernelCommand {
     cwd: command.cwd,
     env: Object.freeze({ ...command.env }),
   });
+}
+
+function recoveryFailure(primary: unknown, recovery: unknown) {
+  return new AggregateError(
+    [primary, recovery],
+    "Command failed and its workspace requires recovery",
+    { cause: primary },
+  );
 }

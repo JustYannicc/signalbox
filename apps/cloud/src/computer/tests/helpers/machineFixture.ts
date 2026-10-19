@@ -50,6 +50,7 @@ export interface MachineFixtureOptions {
     signal: AbortSignal,
     handle: MachineHandle,
   ) => Promise<MachineHandle>;
+  readonly reconcileMachine?: Machine["reconcile"];
   readonly deleteMachine?: () => Promise<void>;
   readonly releaseBase?: (lease: BaseLease) => Promise<void>;
   readonly runtimeDispose?: () => Promise<void>;
@@ -59,6 +60,12 @@ export interface MachineFixtureOptions {
     fixture: MachineFixture,
   ) => Promise<KernelCommandChild>;
   readonly changes?: () => readonly CommitInode[];
+  readonly machine?: Machine;
+  readonly runtime?: MachineCommandRuntime;
+  readonly workspace?: MachineWorkspace;
+  readonly ports?: FilePersistencePorts;
+  readonly resume?: MachineWorkspace["resume"];
+  readonly rebind?: MachineCommandRuntime["rebind"];
   readonly apply?: (input: {
     readonly before: ForkCommit;
     readonly after: ForkCommit;
@@ -70,6 +77,9 @@ export interface MachineFixtureOptions {
 
 export interface MachineFixture {
   readonly commands: MachineCommands;
+  readonly workspace: MachineWorkspace;
+  readonly runtime: MachineCommandRuntime;
+  readonly mount: MachineWorkspaceMount | undefined;
   readonly events: string[];
   readonly records: MachineCommandRecord[];
   readonly createCalls: Parameters<Machine["create"]>[0][];
@@ -129,7 +139,7 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
   let commitFailures = options.commitFailures ?? 0;
   let producedOutput = false;
   memory.seedFile(machineBefore, machineInputPath, machineInputBytes);
-  const ports: FilePersistencePorts = {
+  const localPorts: FilePersistencePorts = {
     hydration: memory.hydration,
     commits: {
       async commit(input) {
@@ -146,6 +156,7 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
       },
     },
   };
+  const ports = options.ports ?? localPorts;
 
   let resolveExit!: (exit: KernelCommandExit) => void;
   const exited = new Promise<KernelCommandExit>((resolve) => {
@@ -192,6 +203,9 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
 
   const fixture = {
     commands: undefined as unknown as MachineCommands,
+    workspace: undefined as unknown as MachineWorkspace,
+    runtime: undefined as unknown as MachineCommandRuntime,
+    mount: undefined as MachineWorkspaceMount | undefined,
     events,
     records,
     createCalls,
@@ -230,12 +244,15 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
       yield machineOutputBytes.slice(3);
     },
   };
+  let machineCreated = false;
+  let machineDeleted = false;
   const handle: MachineHandle = {
     id: "local-machine-1",
     generation: 7,
     async release() {
       events.push("machine.delete");
       await options.deleteMachine?.();
+      machineDeleted = true;
     },
   };
 
@@ -244,9 +261,19 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
       events.push(`journal:${record.phase}`);
       records.push(structuredClone(record));
     },
+    read(operationId) {
+      const record = records.toReversed().find((item) => item.operationId === operationId);
+      return record ? structuredClone(record) : undefined;
+    },
+    pending() {
+      const latest = new Map<string, MachineCommandRecord>();
+      for (const record of records) latest.set(record.operationId, record);
+      return [...latest.values()].filter((record) => record.phase !== "complete");
+    },
   };
 
-  const workspace: MachineWorkspace = {
+  let lastMount: MachineWorkspaceMount | undefined;
+  const localWorkspace: MachineWorkspace = {
     async checkpoint(operationId: string, _signal: AbortSignal) {
       operationIds.push(operationId.replace(/:before$/, ""));
       events.push("checkpoint");
@@ -271,7 +298,24 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
           return options.changes?.() ?? (producedOutput ? [outputInode] : []);
         },
       };
+      lastMount = mount;
+      fixture.mount = mount;
       return mount;
+    },
+    async resume(input) {
+      events.push("resume");
+      const supplied = await options.resume?.(input);
+      const mount = supplied?.mount ?? lastMount;
+      if (!mount) throw new Error("Local machine fake has no workspace mount to resume");
+      return {
+        mount,
+        ownership: supplied?.ownership ?? {
+          operationId: input.operationId,
+          machineId: input.machine.id,
+          generation: input.machine.generation,
+          before: input.before,
+        },
+      };
     },
     async apply(input: {
       readonly before: ForkCommit;
@@ -289,11 +333,60 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
     },
   };
 
-  const machine: Machine = {
+  const localMachine: Machine = {
     async create(input, signal) {
       events.push("machine.create");
       createCalls.push(input);
-      return options.createMachine ? options.createMachine(input, signal, handle) : handle;
+      const created = options.createMachine
+        ? await options.createMachine(input, signal, handle)
+        : handle;
+      machineCreated = true;
+      return created;
+    },
+    async reconcile(input, signal) {
+      events.push("machine.reconcile");
+      if (options.reconcileMachine) return options.reconcileMachine(input, signal);
+      if (machineDeleted) {
+        return {
+          status: "absent",
+          absence: {
+            operationId: input.operationId,
+            reservationId: "local-reservation",
+            name: handle.id,
+            generation: handle.generation,
+            machineId: handle.id,
+            createStarted: true,
+            reservationReleased: true,
+            providerAbsent: true,
+          },
+          releaseReservation: async () => undefined,
+        };
+      }
+      if (!machineCreated) {
+        return {
+          status: "absent",
+          absence: {
+            operationId: input.operationId,
+            reservationId: null,
+            name: null,
+            generation: null,
+            machineId: null,
+            createStarted: false,
+            reservationReleased: false,
+            providerAbsent: true,
+          },
+          releaseReservation: async () => undefined,
+        };
+      }
+      return {
+        status: "owned",
+        handle,
+        ownership: {
+          operationId: input.operationId,
+          machineId: handle.id,
+          generation: handle.generation,
+        },
+      };
     },
   };
   const bases = {
@@ -306,11 +399,26 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
       await options.releaseBase?.(lease);
     },
   };
-  const runtime = {
+  const localRuntime: MachineCommandRuntime = {
     async attach(input: Parameters<MachineCommandRuntime["attach"]>[0]) {
       events.push("attach");
       policy.push(input.policy);
       return {
+        owner: {
+          operationId: input.operationId,
+          machineId: input.machine.id,
+          generation: input.machine.generation,
+        },
+        async quiesce(_signal: AbortSignal) {
+          events.push("runtime.quiesce");
+          await options.runtimeDispose?.();
+          return {
+            operationId: input.operationId,
+            machineId: input.machine.id,
+            generation: input.machine.generation,
+            closed: true as const,
+          };
+        },
         async spawn(command: KernelCommand, signal: AbortSignal) {
           events.push("spawn");
           spawnCalls.push(command);
@@ -321,11 +429,38 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
         },
         async dispose() {
           events.push("runtime.dispose");
+        },
+      };
+    },
+    async rebind(input) {
+      events.push("runtime.rebind");
+      const supplied = await options.rebind?.(input);
+      if (supplied) return supplied;
+      return {
+        owner: {
+          operationId: input.operationId,
+          machineId: input.machine.id,
+          generation: input.machine.generation,
+        },
+        async quiesce(_signal: AbortSignal) {
+          events.push("runtime.quiesce");
           await options.runtimeDispose?.();
+          return {
+            operationId: input.operationId,
+            machineId: input.machine.id,
+            generation: input.machine.generation,
+            closed: true as const,
+          };
+        },
+        async dispose() {
+          events.push("runtime.dispose");
         },
       };
     },
   };
+  const machine = options.machine ?? localMachine;
+  const workspace = options.workspace ?? localWorkspace;
+  const runtime = options.runtime ?? localRuntime;
   const commands = new MachineCommands({
     drive: "drive:test" as DriveRef,
     recipeHash: "recipe:test" as RecipeHash,
@@ -340,5 +475,7 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
     recoverySignal: fixture.recoverySignal,
   });
   fixture.commands = commands;
+  fixture.workspace = workspace;
+  fixture.runtime = runtime;
   return fixture;
 }

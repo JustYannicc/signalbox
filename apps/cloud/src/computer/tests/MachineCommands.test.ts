@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Option from "effect/Option";
 import type { BaseLease } from "../Computer.ts";
-import { MachineCreationError } from "../Machine.ts";
+import { MachineCreationError, type MachineHandle } from "../Machine.ts";
 import {
   createMachineFixture,
   machineBefore,
@@ -298,30 +298,35 @@ describe("MachineCommands", () => {
     );
   });
 
-  it("retains the Base while create is unknown and reconciles without another provider create", async () => {
+  it("retains the Base while create is unknown and uses lookup-only recovery", async () => {
     const base: BaseLease = {
       id: "warm-base",
       sourceRef: "recipe:snapshot",
       expiresAt: 1_900_000_000_000,
     };
     const ambiguous = new MachineCreationError("unknown", "create result is unknown");
-    const stillUnknown = new MachineCreationError("unknown", "provider handle is not visible yet");
-    let providerCreates = 0;
-    let reserved: string | undefined;
-    let adapterCalls = 0;
+    let reconciliations = 0;
+    let providerReady = false;
+    let reserved: MachineHandle | undefined;
     const fixture = createMachineFixture({
       baseLease: base,
-      createMachine: async (input, _signal, handle) => {
-        if (adapterCalls === 0) {
-          reserved = input.operationId;
-          providerCreates += 1;
-          adapterCalls += 1;
-          throw ambiguous;
-        }
-        expect(input.operationId).toBe(reserved);
-        adapterCalls += 1;
-        if (adapterCalls === 2) throw stillUnknown;
-        return handle;
+      createMachine: async (_input, _signal, handle) => {
+        reserved = handle;
+        throw ambiguous;
+      },
+      reconcileMachine: async (input) => {
+        reconciliations += 1;
+        if (!providerReady) return { status: "unknown" };
+        if (!reserved) throw new Error("The local fake lost its provider handle");
+        return {
+          status: "owned",
+          handle: reserved,
+          ownership: {
+            operationId: input.operationId,
+            machineId: reserved.id,
+            generation: reserved.generation,
+          },
+        };
       },
     });
 
@@ -329,25 +334,17 @@ describe("MachineCommands", () => {
       fixture.commands.spawn(machineCommand, new AbortController().signal),
     ).rejects.toMatchObject({ message: "Command failed and its workspace requires recovery" });
 
-    expect(providerCreates).toBe(1);
-    expect(fixture.createCalls).toHaveLength(2);
-    expect(fixture.createCalls.map((input) => input.operationId)).toEqual([
-      "machine-op-1",
-      "machine-op-1",
-    ]);
+    expect(reconciliations).toBe(1);
+    expect(fixture.createCalls).toHaveLength(1);
     expect(fixture.spawnCalls).toHaveLength(0);
     expect(fixture.events).not.toContain("machine.delete");
     expect(fixture.events).not.toContain("base.release");
 
+    providerReady = true;
     await fixture.commands.recover("machine-op-1");
 
-    expect(adapterCalls).toBe(3);
-    expect(providerCreates).toBe(1);
-    expect(fixture.createCalls.map((input) => input.operationId)).toEqual([
-      "machine-op-1",
-      "machine-op-1",
-      "machine-op-1",
-    ]);
+    expect(reconciliations).toBe(2);
+    expect(fixture.createCalls).toHaveLength(1);
     expect(fixture.spawnCalls).toHaveLength(0);
     expect(indexOf(fixture.events, "machine.delete")).toBeLessThan(
       indexOf(fixture.events, "base.release"),

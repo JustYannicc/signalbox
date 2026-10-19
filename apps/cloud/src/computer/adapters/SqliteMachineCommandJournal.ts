@@ -7,6 +7,18 @@ const revision = Schema.Struct({
   fork: Schema.String,
   commit: Schema.String,
 });
+const base = Schema.Struct({
+  id: Schema.String,
+  sourceRef: Schema.String,
+  expiresAt: Schema.Number,
+});
+const createInput = Schema.Struct({
+  operationId: Schema.String,
+  drive: Schema.String,
+  recipeHash: Schema.String,
+  base: Schema.NullOr(base),
+  expiresAt: Schema.Number,
+});
 const recordSchema = Schema.Struct({
   operationId: Schema.String,
   phase: Schema.Literals([
@@ -22,9 +34,16 @@ const recordSchema = Schema.Struct({
   before: Schema.optionalKey(revision),
   after: Schema.optionalKey(revision),
   machine: Schema.optionalKey(Schema.Struct({ id: Schema.String, generation: Schema.Number })),
-  base: Schema.optionalKey(
-    Schema.Struct({ id: Schema.String, sourceRef: Schema.String, expiresAt: Schema.Number }),
+  base: Schema.optionalKey(base),
+  settled: Schema.optionalKey(
+    Schema.Struct({
+      operationId: Schema.String,
+      machineId: Schema.String,
+      generation: Schema.Number,
+      closed: Schema.Literal(true),
+    }),
   ),
+  createInput: Schema.optionalKey(createInput),
 });
 const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(recordSchema));
 const phases = [
@@ -37,6 +56,9 @@ const phases = [
   "delete",
   "complete",
 ];
+const decode = (json: string): MachineCommandRecord =>
+  decodeRecord(json) as unknown as MachineCommandRecord;
+const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
 /** Retains interrupted operations for reconciliation; opening a journal never replays a command. */
 export class SqliteMachineCommandJournal implements MachineCommandJournal {
@@ -51,7 +73,23 @@ export class SqliteMachineCommandJournal implements MachineCommandJournal {
 
   async write(record: MachineCommandRecord) {
     const json = JSON.stringify(record);
-    const captured = decodeRecord(json);
+    const captured = decode(json);
+    const createPhase = phases.indexOf("create");
+    if (
+      captured.phase !== "complete" &&
+      phases.indexOf(captured.phase) >= createPhase &&
+      (!captured.createInput || captured.createInput.operationId !== captured.operationId)
+    ) {
+      throw new Error("Machine create inputs must be journaled before machine work starts");
+    }
+    if (
+      captured.createInput?.base &&
+      (captured.base?.id !== captured.createInput.base.id ||
+        captured.base.sourceRef !== captured.createInput.base.sourceRef ||
+        captured.base.expiresAt !== captured.createInput.base.expiresAt)
+    ) {
+      throw new Error("Machine create Base does not match the journaled lease");
+    }
     this.#storage.transactionSync(() => {
       const previous = Array.from(
         this.#storage.sql.exec(
@@ -60,13 +98,24 @@ export class SqliteMachineCommandJournal implements MachineCommandJournal {
         ),
       )[0];
       if (previous) {
-        const old = decodeRecord(String(previous.record_json));
+        const old = decode(String(previous.record_json));
         if (
-          captured.phase === "checkpoint" ||
           old.phase === "complete" ||
           phases.indexOf(captured.phase) < phases.indexOf(old.phase)
         ) {
           throw new Error("Machine command identity was reused or its phase moved backwards");
+        }
+        for (const field of [
+          "createInput",
+          "before",
+          "after",
+          "base",
+          "machine",
+          "settled",
+        ] as const) {
+          if (old[field] !== undefined && !same(old[field], captured[field])) {
+            throw new Error(`Machine command ${field} changed after it was journaled`);
+          }
         }
       } else if (captured.phase !== "checkpoint") {
         throw new Error("Machine command must be recorded before external work starts");
@@ -80,12 +129,22 @@ export class SqliteMachineCommandJournal implements MachineCommandJournal {
     });
   }
 
+  read(operationId: string): MachineCommandRecord | undefined {
+    const row = Array.from(
+      this.#storage.sql.exec(
+        "SELECT record_json FROM computer_machine_command WHERE operation_id = ?",
+        operationId,
+      ),
+    )[0];
+    return row ? decode(String(row.record_json)) : undefined;
+  }
+
   pending(): readonly MachineCommandRecord[] {
     return Array.from(
       this.#storage.sql.exec(
         "SELECT record_json FROM computer_machine_command WHERE phase <> 'complete' ORDER BY operation_id",
       ),
-      (row) => decodeRecord(String(row.record_json)),
+      (row) => decode(String(row.record_json)),
     );
   }
 }

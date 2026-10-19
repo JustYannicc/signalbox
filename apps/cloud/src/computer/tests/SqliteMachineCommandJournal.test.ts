@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { BaseLease } from "../Computer.ts";
 import type { MachineCommandRecord } from "../MachineCommandJournal.ts";
-import { SqliteMachineCommandJournal } from "../adapters/SqliteMachineCommandJournal.ts";
+import { SqliteMachineCommandJournal } from "../SqliteMachineCommandJournal.ts";
 import { createMachineFixture } from "./helpers/machineFixture.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
 
@@ -11,6 +11,13 @@ const base: BaseLease = {
   sourceRef: "recipe:snapshot",
   expiresAt: 1_900_000_000_000,
 };
+const createInput = (operationId: string) => ({
+  operationId,
+  drive: "drive:one",
+  recipeHash: "recipe:one",
+  base,
+  expiresAt: base.expiresAt,
+});
 
 describe("SqliteMachineCommandJournal", () => {
   it("persists an interrupted command for inspection without replaying it on reopen", async () => {
@@ -19,12 +26,19 @@ describe("SqliteMachineCommandJournal", () => {
       const first = new SqliteMachineCommandJournal(fixture.storage);
       const records: MachineCommandRecord[] = [
         { operationId: "interrupted-op", phase: "checkpoint" },
-        { operationId: "interrupted-op", phase: "create", before, base },
+        {
+          operationId: "interrupted-op",
+          phase: "create",
+          before,
+          base,
+          createInput: createInput("interrupted-op"),
+        },
         {
           operationId: "interrupted-op",
           phase: "execute",
           before,
           base,
+          createInput: createInput("interrupted-op"),
           machine: { id: "local-machine-1", generation: 7 },
         },
       ];
@@ -34,6 +48,7 @@ describe("SqliteMachineCommandJournal", () => {
       const commands = createMachineFixture({ journal: reopened });
 
       expect(reopened.pending()).toEqual([records.at(-1)]);
+      expect(reopened.read("interrupted-op")).toEqual(records.at(-1));
       expect(commands.createCalls).toHaveLength(0);
       expect(commands.spawnCalls).toHaveLength(0);
       expect(commands.events).toEqual([]);
@@ -47,20 +62,44 @@ describe("SqliteMachineCommandJournal", () => {
     try {
       const journal = new SqliteMachineCommandJournal(fixture.storage);
       await journal.write({ operationId: "op-one", phase: "checkpoint" });
-      await journal.write({ operationId: "op-one", phase: "create", before, base });
+      await journal.write({
+        operationId: "op-one",
+        phase: "create",
+        before,
+        base,
+        createInput: createInput("op-one"),
+      });
 
       await expect(journal.write({ operationId: "op-one", phase: "checkpoint" })).rejects.toThrow(
         "identity was reused or its phase moved backwards",
       );
       await expect(
-        journal.write({ operationId: "op-one", phase: "prepare", before, base }),
+        journal.write({
+          operationId: "op-one",
+          phase: "prepare",
+          before,
+          base,
+          createInput: createInput("op-one"),
+        }),
       ).resolves.toBeUndefined();
       await expect(
-        journal.write({ operationId: "op-one", phase: "create", before, base }),
+        journal.write({
+          operationId: "op-one",
+          phase: "create",
+          before,
+          base,
+          createInput: createInput("op-one"),
+        }),
       ).rejects.toThrow("identity was reused or its phase moved backwards");
 
       expect(journal.pending()).toEqual([
-        { operationId: "op-one", phase: "prepare", before, base },
+        {
+          operationId: "op-one",
+          phase: "prepare",
+          before,
+          base,
+          createInput: createInput("op-one"),
+        },
       ]);
     } finally {
       fixture.close();
@@ -72,11 +111,23 @@ describe("SqliteMachineCommandJournal", () => {
     try {
       const journal = new SqliteMachineCommandJournal(fixture.storage);
       await expect(
-        journal.write({ operationId: "op-two", phase: "create", before, base }),
+        journal.write({
+          operationId: "op-two",
+          phase: "create",
+          before,
+          base,
+          createInput: createInput("op-two"),
+        }),
       ).rejects.toThrow("Machine command must be recorded before external work starts");
 
       await journal.write({ operationId: "op-two", phase: "checkpoint" });
-      await journal.write({ operationId: "op-two", phase: "complete", before, base });
+      await journal.write({
+        operationId: "op-two",
+        phase: "complete",
+        before,
+        base,
+        createInput: createInput("op-two"),
+      });
       expect(journal.pending()).toEqual([]);
       await expect(journal.write({ operationId: "op-two", phase: "checkpoint" })).rejects.toThrow(
         "identity was reused or its phase moved backwards",
@@ -97,6 +148,89 @@ describe("SqliteMachineCommandJournal", () => {
 
       await expect(journal.write(invalid)).rejects.toThrow();
       expect(journal.pending()).toEqual([]);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("locks exact machine create inputs once a create phase is recorded", async () => {
+    const fixture = createTestFilesystem();
+    try {
+      const journal = new SqliteMachineCommandJournal(fixture.storage);
+      await journal.write({ operationId: "op-three", phase: "checkpoint" });
+      await expect(
+        journal.write({
+          operationId: "op-three",
+          phase: "create",
+          before,
+          base,
+          createInput: createInput("op-three"),
+        }),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        journal.write({
+          operationId: "op-three",
+          phase: "create",
+          before,
+          base,
+          createInput: { ...createInput("op-three"), expiresAt: base.expiresAt + 1 },
+        }),
+      ).rejects.toThrow("Machine command createInput changed after it was journaled");
+      expect(journal.read("op-three")?.createInput).toEqual(createInput("op-three"));
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("locks the provider closure proof once the command is settled", async () => {
+    const fixture = createTestFilesystem();
+    try {
+      const journal = new SqliteMachineCommandJournal(fixture.storage);
+      await journal.write({ operationId: "op-four", phase: "checkpoint" });
+      await journal.write({
+        operationId: "op-four",
+        phase: "create",
+        before,
+        base,
+        createInput: createInput("op-four"),
+      });
+      const settled = {
+        operationId: "op-four",
+        machineId: "machine-one",
+        generation: 4,
+        closed: true as const,
+      };
+      await journal.write({
+        operationId: "op-four",
+        phase: "execute",
+        before,
+        base,
+        createInput: createInput("op-four"),
+        machine: { id: "machine-one", generation: 4 },
+      });
+      await journal.write({
+        operationId: "op-four",
+        phase: "commit",
+        before,
+        base,
+        createInput: createInput("op-four"),
+        machine: { id: "machine-one", generation: 4 },
+        settled,
+      });
+
+      await expect(
+        journal.write({
+          operationId: "op-four",
+          phase: "commit",
+          before,
+          base,
+          createInput: createInput("op-four"),
+          machine: { id: "machine-one", generation: 4 },
+          settled: { ...settled, generation: 5 },
+        }),
+      ).rejects.toThrow("Machine command settled changed after it was journaled");
+      expect(journal.read("op-four")?.settled).toEqual(settled);
     } finally {
       fixture.close();
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Option from "effect/Option";
 import type { DriveRef, RecipeHash } from "../Computer.ts";
-import { SqliteBoxdReservations } from "../adapters/SqliteBoxdReservations.ts";
+import { SqliteBoxdReservations } from "../SqliteBoxdReservations.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
 
 const input = {
@@ -28,6 +28,10 @@ describe("SqliteBoxdReservations", () => {
         throw new Error("must reuse");
       });
       expect(await reopened.reserve(input)).toEqual({ ...reservation, createStarted: true });
+      expect(await reopened.lookup(input)).toEqual({
+        status: "active",
+        reservation: { ...reservation, createStarted: true },
+      });
       expect(await reopened.startCreate(reservation)).toBe(false);
       await reopened.recordMachineId(reservation, "provider-one");
       expect((await first.reserve(input)).machineId).toBe("provider-one");
@@ -50,6 +54,7 @@ describe("SqliteBoxdReservations", () => {
       ).rejects.toThrow("inputs changed");
       await reservations.release(reservation);
       await reservations.release(reservation);
+      expect(await reservations.lookup(input)).toEqual({ status: "released", reservation });
       await expect(reservations.reserve(input)).rejects.toThrow("already released");
       await expect(reservations.startCreate(reservation)).rejects.toThrow("already released");
       const second = await reservations.reserve({ ...input, operationId: "operation-two" });

@@ -2,7 +2,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { FacetStorage } from "../../kernel/FacetSqliteStorage.ts";
 import type { Machine } from "../Machine.ts";
-import type { BoxdMachineReservation, BoxdMachineReservations } from "./BoxdMachines.ts";
+import type {
+  BoxdMachineReservation,
+  BoxdMachineReservationLookup,
+  BoxdMachineReservations,
+} from "./BoxdMachines.ts";
 
 const reservationSchema = Schema.Struct({
   id: Schema.String,
@@ -12,6 +16,19 @@ const reservationSchema = Schema.Struct({
   machineId: Schema.NullOr(Schema.String),
 });
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(reservationSchema));
+const fingerprint = (input: Parameters<Machine["create"]>[0]) =>
+  JSON.stringify({
+    drive: input.drive,
+    recipeHash: input.recipeHash,
+    expiresAt: input.expiresAt,
+    base: Option.isSome(input.base)
+      ? {
+          id: input.base.value.id,
+          sourceRef: input.base.value.sourceRef,
+          expiresAt: input.base.value.expiresAt,
+        }
+      : null,
+  });
 
 /** Tombstones prevent an old operation from acquiring a fresh name after deletion. */
 export class SqliteBoxdReservations implements BoxdMachineReservations {
@@ -27,22 +44,11 @@ export class SqliteBoxdReservations implements BoxdMachineReservations {
   }
 
   async reserve(input: Parameters<Machine["create"]>[0]): Promise<BoxdMachineReservation> {
-    const fingerprint = JSON.stringify({
-      drive: input.drive,
-      recipeHash: input.recipeHash,
-      expiresAt: input.expiresAt,
-      base: Option.isSome(input.base)
-        ? {
-            id: input.base.value.id,
-            sourceRef: input.base.value.sourceRef,
-            expiresAt: input.base.value.expiresAt,
-          }
-        : null,
-    });
+    const inputFingerprint = fingerprint(input);
     return this.#storage.transactionSync(() => {
       const previous = this.#read(input.operationId);
       if (previous) {
-        if (previous.fingerprint !== fingerprint)
+        if (previous.fingerprint !== inputFingerprint)
           throw new Error("Machine operation inputs changed");
         if (previous.released !== 0) throw new Error("Machine operation was already released");
         return decode(String(previous.record_json));
@@ -67,12 +73,23 @@ export class SqliteBoxdReservations implements BoxdMachineReservations {
       this.#storage.sql.exec(
         "INSERT INTO computer_boxd_reservation (operation_id, fingerprint, generation, record_json) VALUES (?, ?, ?, ?)",
         input.operationId,
-        fingerprint,
+        inputFingerprint,
         generation,
         JSON.stringify(reservation),
       );
       return reservation;
     });
+  }
+
+  async lookup(input: Parameters<Machine["create"]>[0]): Promise<BoxdMachineReservationLookup> {
+    const row = this.#read(input.operationId);
+    if (!row) return { status: "missing" };
+    if (String(row.fingerprint) !== fingerprint(input))
+      throw new Error("Machine operation inputs changed");
+    return {
+      status: Number(row.released) === 0 ? "active" : "released",
+      reservation: decode(String(row.record_json)),
+    };
   }
 
   async startCreate(reservation: BoxdMachineReservation): Promise<boolean> {

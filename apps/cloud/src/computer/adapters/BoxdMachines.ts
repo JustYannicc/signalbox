@@ -1,7 +1,13 @@
 // @effect-diagnostics globalDate:off - Boxd TTLs are absolute provider deadlines.
 import { Boxd, NotFoundError } from "@boxd-sh/sdk/web";
 import * as Option from "effect/Option";
-import { MachineCreationError, type Machine, type MachineHandle } from "../Machine.ts";
+import {
+  MachineCreationError,
+  type Machine,
+  type MachineCreateInput,
+  type MachineHandle,
+  type MachineReconciliation,
+} from "../Machine.ts";
 
 const BOXD_BASE_URL = "https://boxd.sh:9443";
 const BOXD_TIMEOUT_MS = 10_000;
@@ -87,7 +93,9 @@ export interface BoxdMachineReservation {
 /** Every method commits to persistent storage before returning. */
 export interface BoxdMachineReservations {
   /** Reuses the same reservation for an operationId and persists its exact name first. */
-  readonly reserve: (input: Parameters<Machine["create"]>[0]) => Promise<BoxdMachineReservation>;
+  readonly reserve: (input: MachineCreateInput) => Promise<BoxdMachineReservation>;
+  /** Lookup-only recovery. This must not create a reservation or dispatch a machine. */
+  readonly lookup: (input: MachineCreateInput) => Promise<BoxdMachineReservationLookup>;
   /** Atomically marks the one allowed create/fork dispatch; false means it already started. */
   readonly startCreate: (reservation: BoxdMachineReservation) => Promise<boolean>;
   readonly recordMachineId: (
@@ -97,6 +105,11 @@ export interface BoxdMachineReservations {
   /** Call only after exact-name lookup confirms provider absence. */
   readonly release: (reservation: BoxdMachineReservation) => Promise<void>;
 }
+
+export type BoxdMachineReservationLookup =
+  | { readonly status: "missing" }
+  | { readonly status: "active"; readonly reservation: BoxdMachineReservation }
+  | { readonly status: "released"; readonly reservation: BoxdMachineReservation };
 
 export interface BoxdMachinesConfig {
   readonly org: string;
@@ -346,6 +359,85 @@ export const makeBoxdMachines = (
           { cause: error },
         );
       }
+    },
+    reconcile: async (input, signal): Promise<MachineReconciliation> => {
+      abortIfNeeded(signal);
+      const lookup = await reservations.lookup(input);
+      if (lookup.status === "missing") {
+        return {
+          status: "absent",
+          absence: {
+            operationId: input.operationId,
+            reservationId: null,
+            name: null,
+            generation: null,
+            machineId: null,
+            createStarted: false,
+            reservationReleased: false,
+            providerAbsent: true,
+          },
+          releaseReservation: async () => undefined,
+        };
+      }
+
+      const { reservation } = lookup;
+      const machine = await get(client, reservation.name);
+      abortIfNeeded(signal);
+      if (!machine) {
+        if (lookup.status === "released") {
+          return {
+            status: "absent",
+            absence: {
+              operationId: input.operationId,
+              reservationId: reservation.id,
+              name: reservation.name,
+              generation: reservation.generation,
+              machineId: reservation.machineId,
+              createStarted: reservation.createStarted,
+              reservationReleased: true,
+              providerAbsent: true,
+            },
+            releaseReservation: async () => undefined,
+          };
+        }
+        if (!reservation.createStarted || reservation.machineId) {
+          return {
+            status: "absent",
+            absence: {
+              operationId: input.operationId,
+              reservationId: reservation.id,
+              name: reservation.name,
+              generation: reservation.generation,
+              machineId: reservation.machineId,
+              createStarted: reservation.createStarted,
+              reservationReleased: false,
+              providerAbsent: true,
+            },
+            releaseReservation: () => reservations.release(reservation),
+          };
+        }
+        return { status: "unknown" };
+      }
+
+      if (
+        lookup.status !== "active" ||
+        !reservation.createStarted ||
+        machine.name !== reservation.name ||
+        !machine.id ||
+        (reservation.machineId !== null && reservation.machineId !== machine.id)
+      ) {
+        return { status: "unknown" };
+      }
+
+      return {
+        status: "owned",
+        handle: handle(reservation, machine),
+        ownership: {
+          operationId: input.operationId,
+          machineId: machine.id,
+          generation: reservation.generation,
+        },
+      };
     },
   };
 };

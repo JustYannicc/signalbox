@@ -9,7 +9,7 @@ import {
   type BoxdMachineRecord,
   type BoxdMachineReservation,
   type BoxdMachineReservations,
-} from "../adapters/BoxdMachines.ts";
+} from "../BoxdMachines.ts";
 import type { BaseLease, DriveRef, RecipeHash } from "../Computer.ts";
 import { MachineCreationError, type Machine } from "../Machine.ts";
 
@@ -53,6 +53,10 @@ const fixture = () => {
       events.push("reserve");
       return currentReservation();
     }),
+    lookup: vi.fn(async () => ({
+      status: state.released ? ("released" as const) : ("active" as const),
+      reservation: currentReservation(),
+    })),
     startCreate: vi.fn(async () => {
       events.push("startCreate");
       if (state.createStarted) return false;

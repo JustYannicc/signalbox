@@ -21,16 +21,51 @@ export interface MachineHandle {
   readonly release: () => Promise<void>;
 }
 
+export interface MachineCreateInput {
+  readonly operationId: string;
+  readonly drive: DriveRef;
+  readonly recipeHash: RecipeHash;
+  readonly base: Option.Option<BaseLease>;
+  /** Absolute epoch milliseconds; with a Base lease this equals lease.expiresAt. */
+  readonly expiresAt: number;
+}
+
+export interface MachineOwnershipAttestation {
+  readonly operationId: string;
+  readonly machineId: string;
+  readonly generation: number;
+}
+
+export interface MachineAbsenceAttestation {
+  readonly operationId: string;
+  readonly reservationId: string | null;
+  readonly name: string | null;
+  readonly generation: number | null;
+  readonly machineId: string | null;
+  readonly createStarted: boolean;
+  readonly reservationReleased: boolean;
+  readonly providerAbsent: true;
+}
+
+export type MachineReconciliation =
+  | {
+      readonly status: "owned";
+      readonly handle: MachineHandle;
+      readonly ownership: MachineOwnershipAttestation;
+    }
+  | {
+      readonly status: "absent";
+      readonly absence: MachineAbsenceAttestation;
+      /** Tombstone an exact, provider-absent reservation. Does not create or reserve. */
+      readonly releaseReservation: () => Promise<void>;
+    }
+  | { readonly status: "unknown" };
+
 export interface Machine {
-  readonly create: (
-    input: {
-      readonly operationId: string;
-      readonly drive: DriveRef;
-      readonly recipeHash: RecipeHash;
-      readonly base: Option.Option<BaseLease>;
-      /** Absolute epoch milliseconds; with a Base lease this equals lease.expiresAt. */
-      readonly expiresAt: number;
-    },
+  readonly create: (input: MachineCreateInput, signal: AbortSignal) => Promise<MachineHandle>;
+  /** Lookup-only recovery. Implementations must never dispatch create or fork here. */
+  readonly reconcile: (
+    input: MachineCreateInput,
     signal: AbortSignal,
-  ) => Promise<MachineHandle>;
+  ) => Promise<MachineReconciliation>;
 }
