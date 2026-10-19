@@ -34,7 +34,8 @@ from the repository root. Use a clean, reviewed commit and supply `BOXD_API_KEY`
 through the process environment. The local pass needs `cloudflared` for the VM's
 Runner callback. Put it on PATH or set `CLOUDFLARED_BIN` to its executable path;
 its endpoint stays out of receipts. It keeps SQLite ownership
-state beside the stage file. Recover an interrupted local pass with the same
+state beside the stage file. Keep the generated `<stage>-worker/` directory there
+until cleanup is confirmed; recovery reuses that static WASM bundle. Recover an interrupted local pass with the same
 commit and `local.ts --recover-stage-file FILE --output NEW_FILE`.
 
 Both passes compare a real Bash child Dynamic Worker with the same command over

@@ -8,6 +8,7 @@ export interface StoragePort {
   put(key: string, value: unknown): Promise<void>;
   setAlarm(time: number): Promise<void>;
   deleteAlarm(): Promise<void>;
+  sync(): Promise<void>;
 }
 
 export class FakeStorage implements StoragePort {
@@ -31,6 +32,8 @@ export class FakeStorage implements StoragePort {
   async setAlarm(_time: number) {}
 
   async deleteAlarm() {}
+
+  async sync() {}
 }
 
 export function deferred<T = void>() {

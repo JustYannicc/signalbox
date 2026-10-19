@@ -297,6 +297,8 @@ export class ComputerBoxdProof extends DurableObject<Env> {
         },
       },
     });
+    // abort() can roll back buffered SQL and KV writes even after put() has resolved.
+    await this.ctx.storage.sync();
     this.ctx.abort("Intentional proof owner replacement after durable VM commit");
     // abort() destroys this instance. Falling through cannot count as replacement evidence.
     return new Promise<void>(() => {});

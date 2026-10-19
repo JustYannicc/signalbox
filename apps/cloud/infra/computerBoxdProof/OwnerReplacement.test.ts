@@ -121,4 +121,40 @@ describe("durable proof owner replacement", () => {
       "Invalid durable",
     );
   });
+
+  it("waits for durable storage before destroying the old owner", async () => {
+    const entered = deferred();
+    const committed = deferred();
+    class BufferedStorage extends FakeStorage {
+      override async sync() {
+        entered.resolve();
+        await committed.promise;
+      }
+    }
+    const storage = new BufferedStorage();
+    const abort = vi.fn(() => {
+      throw new Error("test object was replaced");
+    });
+    ports.run.mockImplementation(
+      async (input: { onBeforeApply: (cut: ProofRecoveryReceipt) => Promise<void> }) => {
+        await input.onBeforeApply(receipt);
+      },
+    );
+    const first = createWorker(storage, abort);
+    await first.ready;
+    await request(first.worker, "/seed", JSON.stringify(seed));
+    await request(first.worker, "/run", JSON.stringify({ seed, mode: "nested-recovery" }));
+    const reached = await Promise.race([
+      entered.promise.then(() => "durability-fence"),
+      Promise.all(first.background).then(() => "destroyed-before-fence"),
+    ]);
+    expect(reached).toBe("durability-fence");
+    expect(abort).not.toHaveBeenCalled();
+    expect(decodeProofReplacementCut(storage.values.get(PROOF_REPLACEMENT_CUT))).toMatchObject(
+      receipt,
+    );
+    committed.resolve();
+    await Promise.all(first.background);
+    expect(abort).toHaveBeenCalledOnce();
+  });
 });
