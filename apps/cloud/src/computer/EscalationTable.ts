@@ -11,9 +11,15 @@ export interface ComputerEscalationEvidence {
   readonly workspaceBytes?: number;
 }
 
+export interface ComputerEscalationPolicy {
+  readonly isolateExecutables: readonly string[];
+  readonly default: "machine";
+}
+
 export type ComputerEscalationDecision =
   | { readonly kind: "isolate" }
-  | { readonly kind: "machine"; readonly ruleId: string };
+  | { readonly kind: "machine"; readonly ruleId: string }
+  | { readonly kind: "machine"; readonly reason: "unsupported-executable" };
 
 export class ComputerEscalationEvidenceNotReadyError extends Error {
   readonly code = "EVIDENCE_NOT_READY";
@@ -29,8 +35,9 @@ export class ComputerEscalationEvidenceNotReadyError extends Error {
 /** Selects machine execution for individual commands from explicit, ordered rules. */
 export class ComputerEscalationTable {
   readonly rules: readonly ComputerEscalationRule[];
+  readonly #policy: ComputerEscalationPolicy | undefined;
 
-  constructor(rules: readonly ComputerEscalationRule[] = []) {
+  constructor(rules: readonly ComputerEscalationRule[] = [], policy?: ComputerEscalationPolicy) {
     if (!Array.isArray(rules)) {
       throw new TypeError("Computer escalation rules must be an array");
     }
@@ -85,6 +92,39 @@ export class ComputerEscalationTable {
         });
       }),
     );
+    if (policy === undefined) {
+      this.#policy = undefined;
+    } else {
+      if (typeof policy !== "object" || policy === null || Array.isArray(policy)) {
+        throw new TypeError("Computer escalation policy must be an object");
+      }
+      if (policy.default !== "machine") {
+        throw new TypeError('Computer escalation policy default must be exactly "machine"');
+      }
+      if (!Array.isArray(policy.isolateExecutables)) {
+        throw new TypeError("Computer isolate executables must be an array of strings");
+      }
+
+      const isolateExecutables = new Set<string>();
+      for (const executable of policy.isolateExecutables) {
+        if (typeof executable !== "string" || executable.trim().length === 0) {
+          throw new TypeError("Computer isolate executables must not be empty");
+        }
+        if (executable.includes("\0")) {
+          throw new TypeError("Computer isolate executables must not contain NUL");
+        }
+        if (isolateExecutables.has(executable)) {
+          throw new RangeError(`Duplicate computer isolate executable: ${executable}`);
+        }
+        isolateExecutables.add(executable);
+      }
+
+      const snapshot = Object.freeze({
+        isolateExecutables: Object.freeze([...isolateExecutables]),
+        default: "machine" as const,
+      });
+      this.#policy = snapshot;
+    }
     Object.freeze(this);
   }
 
@@ -110,7 +150,10 @@ export class ComputerEscalationTable {
       return { kind: "machine", ruleId: rule.id };
     }
 
-    return { kind: "isolate" };
+    if (this.#policy === undefined) return { kind: "isolate" };
+    return this.#policy.isolateExecutables.includes(command.executable)
+      ? { kind: "isolate" }
+      : { kind: "machine", reason: "unsupported-executable" };
   }
 }
 
