@@ -24,6 +24,7 @@ export async function openLocalProofTunnel(origin: string) {
   try {
     const url = await new Promise<URL>((resolve, reject) => {
       let output = "";
+      let advertised: URL | undefined;
       const timer = setTimeout(
         () => reject(new Error("Local proof tunnel startup timed out")),
         30_000,
@@ -40,7 +41,9 @@ export async function openLocalProofTunnel(origin: string) {
       const inspect = (bytes: Buffer) => {
         output = (output + bytes.toString("utf8")).slice(-32_768);
         const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/u);
-        if (match) finish(undefined, new URL(match[0]));
+        if (match) advertised = new URL(match[0]);
+        if (advertised && output.includes("Registered tunnel connection"))
+          finish(undefined, advertised);
       };
       const failed = () => finish(new Error("Local proof tunnel could not start"));
       const ended = () => finish(new Error("Local proof tunnel exited before readiness"));

@@ -20,6 +20,7 @@ import {
 import { openLocalProofTunnel } from "./LocalTunnel.ts";
 import { prepareProofSeed } from "./Seed.ts";
 import { prepareProofWorker } from "./PrepareWorker.ts";
+import { waitForDevTunnel } from "./DevTunnelReadiness.ts";
 
 const options = NodeUtil.parseArgs({
   options: {
@@ -160,6 +161,22 @@ try {
     await stage.update("seeding");
     await request("/seed", seed);
     tunnel = await openLocalProofTunnel(origin.href);
+    receipt = { ...receipt, checks: { ...receipt.checks, devTunnelReachable: "pending" } };
+    await save();
+    try {
+      await waitForDevTunnel({
+        url: tunnel.url,
+        token,
+        stage: stage.record.stage,
+        signal: AbortSignal.timeout(120_000),
+      });
+      receipt = { ...receipt, checks: { ...receipt.checks, devTunnelReachable: "passed" } };
+    } catch {
+      receipt = { ...receipt, checks: { ...receipt.checks, devTunnelReachable: "failed" } };
+      throw new Error("The dev tunnel is not reachable; no machine was started");
+    } finally {
+      await save();
+    }
     const callback = new URL("/api/computer/runner", tunnel.url);
     callback.protocol = "wss:";
     await stage.update("running");
