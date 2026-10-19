@@ -1,4 +1,6 @@
-import { WorkerEntrypoint, exports as hostExports } from "cloudflare:workers";
+import { type RpcTarget, WorkerEntrypoint, exports as hostExports } from "cloudflare:workers";
+import type { NodeGeneratedCodeInvocation } from "../../src/isolate/NodeGeneratedCode.ts";
+import { MANAGED_INVOCATION_VERSION, managedInvocationModules } from "./managedInvocation.ts";
 import { DEFAULT_MODULE_TRANSPORT_LIMITS } from "./moduleTransport.ts";
 
 interface Props {
@@ -39,11 +41,7 @@ function invocation(value: unknown) {
   return { mainModule: value.mainModule, modules, input: value.input };
 }
 
-async function invokeNative(
-  loader: WorkerLoader,
-  namespace: string,
-  input: ReturnType<typeof invocation>,
-) {
+async function codeIdentity(input: ReturnType<typeof invocation>) {
   // Loader IDs are immutable code identities, not caller-supplied labels. Keep module globals
   // within this parent session/facet and canonicalize map order before hashing.
   const canonical = JSON.stringify([
@@ -55,7 +53,16 @@ async function invokeNative(
   const hash = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)),
   );
-  const digest = Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function invokeNative(
+  loader: WorkerLoader,
+  namespace: string,
+  input: ReturnType<typeof invocation>,
+  signal: AbortSignal,
+) {
+  const digest = await codeIdentity(input);
   const worker = loader.get(JSON.stringify(["generated", namespace, digest]), () => ({
     compatibilityDate: "2026-10-18",
     mainModule: input.mainModule,
@@ -66,10 +73,30 @@ async function invokeNative(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input.input),
+    signal,
   });
 }
 
+interface ManagedEntrypoint extends WorkerEntrypoint {
+  open(input: unknown): RpcTarget & Omit<NodeGeneratedCodeInvocation, typeof Symbol.dispose>;
+}
+
 export class CodeGeneration extends WorkerEntrypoint<{ LOADER: WorkerLoader }, Props> {
+  async open(envelope: string) {
+    const input = invocation(JSON.parse(envelope));
+    const digest = await codeIdentity(input);
+    const worker = this.env.LOADER.get(
+      JSON.stringify(["generated", this.ctx.props.namespace, MANAGED_INVOCATION_VERSION, digest]),
+      () => ({
+        compatibilityDate: "2026-10-18",
+        ...managedInvocationModules(input.mainModule, input.modules),
+        globalOutbound: null,
+        env: {},
+      }),
+    );
+    return await worker.getEntrypoint<ManagedEntrypoint>("ManagedInvocation").open(input.input);
+  }
+
   override async fetch(request: Request) {
     if (new URL(request.url).pathname !== "/invoke") {
       return new Response("CODE_GENERATION: use /invoke", { status: 404 });
@@ -87,11 +114,13 @@ export class CodeGeneration extends WorkerEntrypoint<{ LOADER: WorkerLoader }, P
     try {
       input = invocation(await request.json());
     } catch (error) {
+      if (request.signal.aborted) throw error;
       return new Response(`CODE_GENERATION: invalid invocation: ${String(error)}`, { status: 400 });
     }
     try {
-      return await invokeNative(this.env.LOADER, this.ctx.props.namespace, input);
+      return await invokeNative(this.env.LOADER, this.ctx.props.namespace, input, request.signal);
     } catch (error) {
+      if (request.signal.aborted) throw error;
       return new Response(`CODE_GENERATION: native execution failed: ${String(error)}`, {
         status: 500,
       });
