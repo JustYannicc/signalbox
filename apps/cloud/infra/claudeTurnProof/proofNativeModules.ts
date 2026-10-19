@@ -4,7 +4,10 @@ import * as NodeBuffer from "node:buffer";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeInspector from "node:inspector";
 import * as NodeQuerystring from "node:querystring";
+import * as NodeConsole from "node:console";
+import * as NodeTimers from "node:timers";
 import * as NodeCrypto from "node:crypto";
+import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import * as NodeDns from "node:dns";
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeEvents from "node:events";
@@ -14,6 +17,7 @@ import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 import * as NodePerfHooks from "node:perf_hooks";
 import * as NodeReadline from "node:readline";
+import * as NodeStreamWeb from "node:stream/web";
 import * as NodeStream from "node:stream";
 import * as NodeStreamConsumers from "node:stream/consumers";
 import * as NodeStreamPromises from "node:stream/promises";
@@ -46,7 +50,10 @@ export function getNativeHostModules() {
       async_hooks: createNodeAsyncHooks(),
       buffer: NodeBuffer,
       child_process: NodeChildProcess,
+      console: NodeConsole,
+      timers: NodeTimers,
       crypto: NodeCrypto,
+      diagnostics_channel: NodeDiagnosticsChannel,
       dns: NodeDns,
       "dns/promises": NodeDnsPromises,
       events: NodeEvents,
@@ -59,6 +66,7 @@ export function getNativeHostModules() {
       perf_hooks: NodePerfHooks,
       readline: NodeReadline,
       stream: NodeStream,
+      "stream/web": NodeStreamWeb,
       "stream/consumers": NodeStreamConsumers,
       "stream/promises": NodeStreamPromises,
       string_decoder: NodeStringDecoder,
