@@ -5,7 +5,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { describe, expect, it } from "vite-plus/test";
-import { BOXD_PROOF_SOURCE_INSTALL, BOXD_PROOF_BOOTSTRAP_INSTALL } from "./NativeInstall.ts";
+import {
+  BOXD_PROOF_SOURCE_INSTALL,
+  BOXD_PROOF_BOOTSTRAP_INSTALL,
+  BOXD_PROOF_WORKSPACE_INSTALL,
+} from "./NativeInstall.ts";
 
 const execute = NodeUtil.promisify(NodeChildProcess.execFile);
 const python = "/usr/bin/python3";
@@ -104,6 +108,50 @@ describe("proof native source installation", () => {
       await expect(NodeFSP.stat(NodePath.join(root, "artifact"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("proof workspace hydration installation", () => {
+  it("copies binary bytes atomically with owner and tracked metadata, then removes staging", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "boxd-workspace-install-"));
+    const uploadDirectory = NodePath.join(root, "upload");
+    const workspaceDirectory = NodePath.join(root, "workspace");
+    const staging = NodePath.join(uploadDirectory, "proof-upload");
+    const target = NodePath.join(workspaceDirectory, "out.bin");
+    const bytes = new Uint8Array([0, 255, 65, 0, 10]);
+    const atimeNs = 1_700_000_000_123_456_789n;
+    const mtimeNs = 1_700_000_000_123_456_788n;
+    try {
+      await NodeFSP.mkdir(uploadDirectory);
+      await NodeFSP.mkdir(workspaceDirectory);
+      await NodeFSP.writeFile(staging, bytes, { mode: 0o600 });
+      await NodeFSP.writeFile(target, "replaced bytes");
+      const stagedStat = await NodeFSP.stat(staging, { bigint: true });
+      const metadata = JSON.stringify({
+        size: bytes.byteLength,
+        mode: 0o750,
+        uid: Number(stagedStat.uid),
+        gid: Number(stagedStat.gid),
+        atimeNs: atimeNs.toString(),
+        mtimeNs: mtimeNs.toString(),
+      });
+      const script = `${crossDevice}${BOXD_PROOF_WORKSPACE_INSTALL}\ninstall_workspace_file(sys.argv[1], sys.argv[2], json.loads(sys.argv[3]))`;
+
+      await execute(python, ["-c", script, staging, target, metadata]);
+
+      const installedStat = await NodeFSP.stat(target, { bigint: true });
+      expect(new Uint8Array(await NodeFSP.readFile(target))).toEqual(bytes);
+      expect(installedStat.mode & 0o777n).toBe(0o750n);
+      expect(installedStat.uid).toBe(stagedStat.uid);
+      expect(installedStat.gid).toBe(stagedStat.gid);
+      expect(installedStat.atimeNs).toBe(atimeNs);
+      expect(installedStat.mtimeNs).toBe(mtimeNs);
+      await expect(NodeFSP.stat(staging)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await NodeFSP.readdir(uploadDirectory)).toEqual([]);
+      expect(await NodeFSP.readdir(workspaceDirectory)).toEqual(["out.bin"]);
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

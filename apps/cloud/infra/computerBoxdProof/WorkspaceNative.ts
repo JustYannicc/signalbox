@@ -9,9 +9,10 @@ import {
   type BoxdProofNativeWorkspace,
   type BoxdProofVmPort,
 } from "./WorkspaceTypes.ts";
+import { BOXD_PROOF_WORKSPACE_FINALIZE } from "./NativeInstall.ts";
 
 const PREPARE_SCRIPT = String.raw`# BOXD_PROOF:prepare
-import os, stat
+import os, stat, sys
 root = "/workspace"
 try:
     os.mkdir(root, 0o755)
@@ -23,20 +24,15 @@ if not stat.S_ISDIR(root_stat.st_mode) or os.path.realpath(root) != root:
 with os.scandir(root) as entries:
     if next(entries, None) is not None:
         raise RuntimeError("proof workspace must be empty before hydration")
-`;
-
-const FINALIZE_SCRIPT = String.raw`# BOXD_PROOF:finalize
-import json, os, stat, sys
-root = "/workspace"
-if os.path.realpath(root) != root or not stat.S_ISDIR(os.lstat(root).st_mode):
-    raise RuntimeError("proof workspace is not canonical")
-metadata = json.loads(sys.argv[1])
-path = root + "/out.bin"
-if os.path.realpath(path) != path or not stat.S_ISREG(os.lstat(path).st_mode):
-    raise RuntimeError("hydrated proof file is not a regular file")
-mode = int(metadata["mode"]) & 0o777
-os.chmod(path, mode)
-os.utime(path, ns=(int(metadata["atimeNs"]), int(metadata["mtimeNs"])))
+staging = sys.argv[1]
+if (
+    os.path.dirname(staging) != "/tmp"
+    or not os.path.basename(staging).startswith(".signalbox-boxd-proof-")
+    or os.path.realpath(staging) != staging
+):
+    raise RuntimeError("hydration staging path is outside the owned /tmp namespace")
+if os.path.lexists(staging):
+    raise RuntimeError("hydration staging path already exists")
 `;
 
 const SCAN_SCRIPT = String.raw`# BOXD_PROOF:scan
@@ -96,19 +92,30 @@ export async function prepareBoxdProofNativeWorkspace(
   vm: BoxdProofVmPort,
   machineId: string,
   initialBytes: Uint8Array,
-  metadata: { readonly mode: number; readonly atimeNs: bigint; readonly mtimeNs: bigint },
+  metadata: {
+    readonly mode: number;
+    readonly uid: number | null;
+    readonly gid: number | null;
+    readonly atimeNs: bigint;
+    readonly mtimeNs: bigint;
+  },
   signal: AbortSignal,
 ): Promise<BoxdProofNativeWorkspace> {
-  await runPython(vm, machineId, PREPARE_SCRIPT, undefined, "/", signal, "prepare");
-  await vm.upload(machineId, BOXD_PROOF_TRACKED_VM_PATH, initialBytes.slice(), signal);
+  const stagingPath = stagingPathFor(machineId);
+  await runPython(vm, machineId, PREPARE_SCRIPT, stagingPath, "/", signal, "prepare");
+  await vm.upload(machineId, stagingPath, initialBytes.slice(), signal);
   signal.throwIfAborted();
 
   await runPython(
     vm,
     machineId,
-    FINALIZE_SCRIPT,
+    BOXD_PROOF_WORKSPACE_FINALIZE,
     JSON.stringify({
+      stagingPath,
+      size: initialBytes.byteLength,
       mode: metadata.mode,
+      uid: metadata.uid,
+      gid: metadata.gid,
       atimeNs: metadata.atimeNs.toString(),
       mtimeNs: metadata.mtimeNs.toString(),
     }),
@@ -241,6 +248,10 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
     if (left[index] !== right[index]) return false;
   }
   return true;
+}
+
+function stagingPathFor(machineId: string): string {
+  return `/tmp/.signalbox-boxd-proof-${encodeURIComponent(machineId)}.upload`;
 }
 
 function sameNativeMetadata(

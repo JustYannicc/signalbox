@@ -47,6 +47,9 @@ type FakeEntry = FakeFile | FakeSymlink;
 
 class FakeVm implements BoxdProofVmPort {
   readonly entries = new Map<string, FakeEntry>();
+  readonly stagedUploads = new Map<string, FakeFile>();
+  readonly uploadPaths: string[] = [];
+  refuseProtectedUploads = false;
   rootKind: "directory" | "symlink" = "directory";
   private rootExists = false;
   private clock = 20n;
@@ -74,14 +77,29 @@ class FakeVm implements BoxdProofVmPort {
     if (cwd !== "/workspace") return failed("probe must use canonical /workspace");
 
     if (script.includes("BOXD_PROOF:finalize")) {
-      const file = this.entries.get("out.bin");
-      if (!file || file.type !== "file") return failed("hydrated proof file is not a regular file");
       const metadata = JSON.parse(argv[2] ?? "{}") as {
+        readonly stagingPath?: string;
         readonly mode: number;
         readonly atimeNs: string;
         readonly mtimeNs: string;
+        readonly uid?: number;
+        readonly gid?: number;
       };
+      let file: FakeFile | undefined;
+      if (metadata.stagingPath !== undefined) {
+        file = this.stagedUploads.get(metadata.stagingPath);
+        if (!file) return failed("staged proof file is missing");
+        this.stagedUploads.delete(metadata.stagingPath);
+        file = { ...file };
+        this.entries.set("out.bin", file);
+      } else {
+        const direct = this.entries.get("out.bin");
+        if (direct?.type === "file") file = direct;
+      }
+      if (!file) return failed("hydrated proof file is not a regular file");
       file.mode = metadata.mode & 0o777;
+      file.uid = metadata.uid ?? file.uid;
+      file.gid = metadata.gid ?? file.gid;
       file.atimeNs = metadata.atimeNs;
       file.mtimeNs = metadata.mtimeNs;
       file.ctimeNs = this.tick();
@@ -137,7 +155,28 @@ class FakeVm implements BoxdProofVmPort {
 
   async upload(_machineId: string, path: string, bytes: Uint8Array, signal: AbortSignal) {
     signal.throwIfAborted();
-    if (!this.rootExists || this.rootKind !== "directory" || path !== "/workspace/out.bin") {
+    this.uploadPaths.push(path);
+    if (!this.rootExists || this.rootKind !== "directory") {
+      throw new Error("unexpected upload before workspace preparation");
+    }
+    if (path.startsWith("/workspace/") && this.refuseProtectedUploads) {
+      throw new Error("SDK refuses uploads inside the protected workspace");
+    }
+    if (path.startsWith("/tmp/.signalbox-boxd-proof-")) {
+      this.stagedUploads.set(path, {
+        type: "file",
+        bytes: bytes.slice(),
+        mode: 0o600,
+        uid: 2000,
+        gid: 2001,
+        nlink: 1,
+        atimeNs: "0",
+        mtimeNs: "0",
+        ctimeNs: this.tick(),
+      });
+      return;
+    }
+    if (path !== "/workspace/out.bin") {
       throw new Error("unexpected upload path");
     }
     this.entries.set("out.bin", {
@@ -194,6 +233,37 @@ class FakeVm implements BoxdProofVmPort {
 }
 
 describe("boxd proof workspace", () => {
+  it("hydrates when SDK uploads into the protected workspace are refused", async () => {
+    const persistence = createMemoryFilePersistencePorts();
+    persistence.seedFile(base, "/out.bin", new Uint8Array([0, 255, 1, 2]));
+    const vm = new FakeVm();
+    vm.refuseProtectedUploads = true;
+
+    const mount = await createBoxdProofWorkspace({ vm, trackedFiles: [kernelFile] })(
+      machine,
+      base,
+      persistence.hydration,
+      new AbortController().signal,
+    );
+
+    expect(vm.uploadPaths).toHaveLength(1);
+    expect(vm.uploadPaths[0]).toMatch(/^\/tmp\/\.signalbox-boxd-proof-/);
+    expect(vm.stagedUploads.size).toBe(0);
+    expect(vm.entries.get("out.bin")).toMatchObject({
+      bytes: new Uint8Array([0, 255, 1, 2]),
+      mode: 0o750,
+      uid: 1000,
+      gid: 1000,
+      atimeNs: "10",
+      mtimeNs: "11",
+    });
+
+    const command = commandAt("/workspace");
+    expect(
+      await mount.canonicalCwd(command, machine.generation, new AbortController().signal),
+    ).toBe(command.cwd);
+  });
+
   it("hydrates only out.bin with exact bytes and returns the exact canonical cwd", async () => {
     const persistence = createMemoryFilePersistencePorts();
     const original = new Uint8Array([0, 255, 1, 2]);

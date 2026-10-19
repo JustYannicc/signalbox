@@ -43,6 +43,8 @@ export function createBoxdProofWorkspace(
       initialBytes,
       {
         mode: tracked.posix?.mode ?? 0o644,
+        uid: tracked.posix?.uid ?? null,
+        gid: tracked.posix?.gid ?? null,
         atimeNs: tracked.stat.atimeNs,
         mtimeNs: tracked.stat.mtimeNs,
       },
