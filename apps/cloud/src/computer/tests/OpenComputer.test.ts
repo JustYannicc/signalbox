@@ -64,4 +64,63 @@ describe("createComputerFactory", () => {
       fixture.close();
     }
   });
+
+  it("keeps shared bindings alive when the first caller cancels", async () => {
+    const fixture = createTestFilesystem();
+    const ports = bindings(fixture.filesystem);
+    const ready = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<AbortSignal>();
+    const owner = new AbortController();
+    const caller = new AbortController();
+    const bind = vi.fn(async (_thread: string, signal: AbortSignal) => {
+      started.resolve(signal);
+      await ready.promise;
+      signal.throwIfAborted();
+      return ports;
+    });
+    const factory = createComputerFactory(bind);
+    const failure = new Error("caller stopped waiting");
+    try {
+      const cancelled = factory.open("thread-a", caller.signal);
+      const cancellation = expect(cancelled).rejects.toBe(failure);
+      const bindingSignal = await started.promise;
+      const other = factory.open("thread-a", owner.signal);
+      caller.abort(failure);
+      await cancellation;
+      expect(bindingSignal.aborted).toBe(false);
+      ready.resolve();
+      expect((await other).files).toBe(fixture.filesystem);
+      expect(bind).toHaveBeenCalledOnce();
+    } finally {
+      ready.resolve();
+      fixture.close();
+    }
+  });
+
+  it("cancels every pending open when its owner stops", async () => {
+    const fixture = createTestFilesystem();
+    const ready = Promise.withResolvers<ComputerBindings>();
+    const started = Promise.withResolvers<AbortSignal>();
+    const owner = new AbortController();
+    const bind = vi.fn(async (_thread: string, signal: AbortSignal) => {
+      started.resolve(signal);
+      return ready.promise;
+    });
+    const factory = createComputerFactory(bind, owner.signal);
+    const failure = new Error("owner stopped");
+    const signal = new AbortController().signal;
+    try {
+      const first = expect(factory.open("thread-a", signal)).rejects.toBe(failure);
+      const bindingSignal = await started.promise;
+      const second = expect(factory.open("thread-a", signal)).rejects.toBe(failure);
+      owner.abort(failure);
+      await Promise.all([first, second]);
+      expect(bindingSignal).toBe(owner.signal);
+      await expect(factory.open("thread-a", signal)).rejects.toBe(failure);
+      expect(bind).toHaveBeenCalledOnce();
+    } finally {
+      ready.resolve(bindings(fixture.filesystem));
+      fixture.close();
+    }
+  });
 });
