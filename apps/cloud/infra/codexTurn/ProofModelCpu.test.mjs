@@ -57,3 +57,20 @@ NodeTest.test("native close events reach the CPU proof even without a guest clos
   socket.dispatchEvent(new Event("close"));
   NodeAssert.equal(closed, 1);
 });
+
+NodeTest.test("socket setters retain their native receiver", () => {
+  class BrandedSocket extends EventTarget {
+    #binaryType = "blob";
+    set binaryType(value) {
+      this.#binaryType = value;
+    }
+    get binaryType() {
+      return this.#binaryType;
+    }
+  }
+  const socket = new BrandedSocket();
+  const observed = observeProofSocket(socket, {});
+  observed.binaryType = "arraybuffer";
+  NodeAssert.equal(socket.binaryType, "arraybuffer");
+  NodeAssert.equal(observed.binaryType, "arraybuffer");
+});

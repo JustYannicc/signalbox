@@ -163,6 +163,7 @@ function observeNativeSocket(socket, beforeMessage, onClose) {
   socket.addEventListener("close", () => onClose?.());
   const listeners = new Map();
   return new Proxy(socket, {
+    set: (target, key, value) => Reflect.set(target, key, value, target),
     get(target, key) {
       if (key === "addEventListener")
         return (type, listener, options) => {
