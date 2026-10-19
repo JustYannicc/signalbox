@@ -83,6 +83,30 @@ describe("computer boxd proof admission", () => {
     expect((await status(reopened.worker)).status).toBe("passed");
   });
 
+  it("persists provider setup before yielding and preserves a failed setup without dispatch", async () => {
+    const enteredProvider = deferred();
+    const provider = deferred();
+    ports.openProvider.mockImplementation(() => {
+      enteredProvider.resolve();
+      return provider.promise;
+    });
+    const proof = createWorker(new FakeStorage());
+    await proof.ready;
+    await request(proof.worker, "/seed", "{}");
+    expect((await request(proof.worker, "/run")).status).toBe(202);
+    await enteredProvider.promise;
+    const pending = await status(proof.worker);
+    provider.reject(new Error("private provider detail must stay private"));
+    await Promise.all(proof.background);
+    const failed = await status(proof.worker);
+
+    expect(pending.checks.providerConnection).toBe("pending");
+    expect(failed.status).toBe("failed");
+    expect(failed.checks.providerConnection).toBe("failed");
+    expect(ports.runProof).not.toHaveBeenCalled();
+    expect(JSON.stringify(failed)).not.toContain("private provider detail");
+  });
+
   it("rejects replaced inputs and reseeding after idle reconstruction", async () => {
     const storage = new FakeStorage();
     const first = createWorker(storage);

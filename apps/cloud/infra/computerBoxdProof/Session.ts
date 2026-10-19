@@ -76,6 +76,7 @@ export async function runComputerBoxdProof(input: {
   readonly publishSockets: (sockets: RunnerMachineSockets) => void;
 }) {
   const { ownership, seed, signal } = input;
+  await ownership.check("kernelSetup", "pending");
   const kernel = proofKernel(ownership.storage, input.loader, seed);
   const commandReporter: ProofCommandReporter = async (step, outcome, diagnostics) => {
     await ownership.check(COMMAND_PHASE_CHECKS[step], outcome);
@@ -85,6 +86,7 @@ export async function runComputerBoxdProof(input: {
   };
   const provider = proofProvider(ownership.client, ownership.owner, commandReporter);
   try {
+    await ownership.check("kernelSetup", "passed");
     await ownership.check("childDynamicWorkerControl", "pending");
     await kernel.localControl(signal);
     await ownership.check("childDynamicWorkerControl", "passed");

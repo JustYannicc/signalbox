@@ -43,7 +43,9 @@ export async function decodeProofSeed(value: unknown) {
     seen.add(file.path);
     const expected = artifacts[file.path];
     const raw = atob(file.data);
-    const bytes = Uint8Array.from(raw, (character) => character.charCodeAt(0));
+    // TypedArray.from on a string builds a temporary value list for every WASM byte.
+    const bytes = new Uint8Array(raw.length);
+    for (let index = 0; index < raw.length; index++) bytes[index] = raw.charCodeAt(index);
     if (
       bytes.length !== expected.bytes ||
       file.sha256 !== expected.sha256 ||

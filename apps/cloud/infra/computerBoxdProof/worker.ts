@@ -190,6 +190,14 @@ export class ComputerBoxdProof extends DurableObject<Env> {
     return new Response("Not found", { status: 404 });
   }
 
+  private async checkProviderConnection(outcome: "pending" | "passed") {
+    const state = await this.state();
+    await this.ctx.storage.put("proof-state", {
+      ...state,
+      checks: { ...state.checks, providerConnection: outcome },
+    });
+  }
+
   private async run(
     seed: Awaited<ReturnType<typeof decodeProofSeed>>,
     endpoint: string,
@@ -199,8 +207,10 @@ export class ComputerBoxdProof extends DurableObject<Env> {
     try {
       await admitted;
       signal.throwIfAborted();
+      await this.checkProviderConnection("pending");
       const ownership = await this.getOwnership();
       signal.throwIfAborted();
+      await this.checkProviderConnection("passed");
       await runComputerBoxdProof({
         ownership,
         seed,
