@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { RpcTarget } from "cloudflare:workers";
 import { ChildWorkerDispatch, childWorkerDispatchBinding } from "./childWorkerDispatch.ts";
 import { CodeGeneration, codeGenerationBinding } from "./codeGeneration.ts";
+import { ChildWorkerDispatchError } from "../../src/computer/ChildWorkerDispatchError.ts";
+import {
+  createWorkerLoaderDispatch,
+  type ChildWorkerLoaderPort,
+} from "../../src/computer/WorkerLoaderDispatch.ts";
 import type { ChildWorkerLimits } from "../../src/computer/ChildWorkerLimits.ts";
 
 const bindings = vi.hoisted(() => ({ child: vi.fn(), generated: vi.fn() }));
@@ -55,6 +60,7 @@ function fixture(limits?: ChildWorkerLimits) {
 const command = { executable: "/bin/cat", argv: ["cat", "input"], cwd: "/work", env: {} };
 const program = { mainModule: "main.js", modules: { "main.js": "export default {};" } };
 const envelope = { id: "input", ...program, input: { text: "unchanged input" } };
+const exit = { exitCode: 0, signal: 0, coreDumped: false };
 
 function request(value: unknown = envelope) {
   return new Request("https://code.invalid/invoke", {
@@ -147,5 +153,102 @@ describe("host-selected child CPU limits", () => {
     expect((await Promise.all(f.codes)).map((code) => code.limits?.cpuMs)).toEqual([
       1_000, 1_000, 600_000, 600_000,
     ]);
+  });
+
+  it("preserves raw public probe targets while acknowledging registry preflight failures", async () => {
+    const f = fixture();
+    const host = new Host();
+    await expect(f.child.run({ ...program, command }, host)).resolves.toEqual({
+      exitCode: 0,
+      signal: 0,
+      coreDumped: false,
+    });
+    expect(f.target.run).toHaveBeenCalledWith(command, host);
+
+    const completionHost = Object.assign(new Host(), { stopped: vi.fn() });
+    await expect(
+      f.child.run(
+        {
+          ...program,
+          modules: { ...program.modules, "missing.wasm": { wasmReference: "a".repeat(64) } },
+          command,
+        },
+        completionHost,
+      ),
+    ).rejects.toThrow("Unknown child WASM reference");
+    expect(completionHost.stopped).toHaveBeenCalledOnce();
+    expect(f.get).toHaveBeenCalledOnce();
+  });
+
+  it("carries the core capability through the public adapter and compiled loader preflight", async () => {
+    let observedHost: Host | undefined;
+    const target = {
+      run: vi.fn(async (_command: unknown, invocation: unknown) => {
+        const capability = invocation as { host(): Host; stopped(): void };
+        observedHost = capability.host();
+        capability.stopped();
+        return { exitCode: 0, signal: 0, coreDumped: false };
+      }),
+    };
+    const getEntrypoint = vi.fn().mockReturnValue(target);
+    const get = vi.fn<WorkerLoader["get"]>().mockImplementation((_name, factory) => {
+      const code = factory();
+      if (code instanceof Promise) throw new Error("Unexpected async code factory");
+      codes.push(code);
+      return { getEntrypoint, getDurableObjectClass: vi.fn() };
+    });
+    const codes: WorkerLoaderWorkerCode[] = [];
+    const limits = { cpuMs: 1_000 };
+    const adapter = new ChildWorkerDispatch(
+      {
+        props: { namespace: "unused", limits },
+        waitUntil: vi.fn(),
+        passThroughOnException: vi.fn(),
+      },
+      { LOADER: { get, load: vi.fn() } },
+    );
+    const core = createWorkerLoaderDispatch<Host>(adapter as unknown as ChildWorkerLoaderPort);
+    const rawHost = new Host();
+
+    await expect(
+      core.run(
+        {
+          ...program,
+          command,
+          limits: { cpuMs: 600_000 },
+        },
+        rawHost,
+      ),
+    ).resolves.toEqual(exit);
+
+    expect(observedHost).toBe(rawHost);
+    expect(get).toHaveBeenCalledOnce();
+    expect(codes[0]?.limits).toEqual(limits);
+    expect(getEntrypoint).toHaveBeenCalledWith(undefined, { limits: codes[0]?.limits });
+    expect(target.run).toHaveBeenCalledOnce();
+
+    let failure: unknown;
+    try {
+      await core.run(
+        {
+          ...program,
+          modules: {
+            ...program.modules,
+            "missing.wasm": { wasmReference: "b".repeat(64) },
+          },
+          command,
+          limits: { cpuMs: 600_000 },
+        },
+        rawHost,
+      );
+    } catch (cause) {
+      failure = cause;
+    }
+
+    expect(failure).toBeInstanceOf(ChildWorkerDispatchError);
+    expect(failure).toMatchObject({ code: "CHILD_EXECUTION_FAILED" });
+    expect((failure as ChildWorkerDispatchError).termination).toEqual({ kind: "stopped" });
+    expect(get).toHaveBeenCalledOnce();
+    expect(target.run).toHaveBeenCalledOnce();
   });
 });

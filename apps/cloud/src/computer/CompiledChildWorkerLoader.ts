@@ -15,7 +15,7 @@ interface Entrypoint extends WorkerEntrypoint {
 
 type CompiledModules = Record<
   string,
-  string | { readonly js: string } | { readonly wasm: WebAssembly.Module }
+  string | { readonly js: string } | { readonly wasm: ArrayBuffer | WebAssembly.Module }
 >;
 
 /** Compiled WASM cannot cross service RPC. Resolve immutable references in the loader's isolate. */
@@ -39,13 +39,16 @@ export function resolveCompiledChildWorkerModules(
         value: Object.freeze({ js: module.js }),
         enumerable: true,
       });
-    } else if ("wasm" in module && module.wasm instanceof WebAssembly.Module) {
+    } else if (
+      "wasm" in module &&
+      (module.wasm instanceof ArrayBuffer || module.wasm instanceof WebAssembly.Module)
+    ) {
       Object.defineProperty(resolved, name, {
         value: Object.freeze({ wasm: module.wasm }),
         enumerable: true,
       });
     } else {
-      throw new TypeError("Child WASM must use a registered compiled module");
+      throw new TypeError("Child WASM must use an ArrayBuffer or a registered compiled module");
     }
   }
   return Object.freeze(resolved);

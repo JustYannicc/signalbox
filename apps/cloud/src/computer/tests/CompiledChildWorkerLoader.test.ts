@@ -73,8 +73,8 @@ describe("compiled child worker loader", () => {
       { "main.js": "export default {}", "program.wasm": { wasmReference: "unknown" } },
     ],
     [
-      "raw byte fallback",
-      { "main.js": "export default {}", "program.wasm": { wasm: new ArrayBuffer(8) } },
+      "invalid WASM bytes",
+      { "main.js": "export default {}", "program.wasm": { wasm: new Uint8Array(8) } },
     ],
     ["invalid source", JSON.parse('{"main.js":{"js":1}}')],
   ])("rejects %s before loading and acknowledges that no child started", async (_name, modules) => {
@@ -83,6 +83,51 @@ describe("compiled child worker loader", () => {
     await expect(f.port.run(input, f.target)).rejects.toThrow();
     expect(f.get).not.toHaveBeenCalled();
     expect(f.target.stopped).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a legacy ArrayBuffer by identity through the same loader", async () => {
+    const f = fixture();
+    const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer;
+    const target = new RpcTarget();
+    await expect(
+      f.port.run(
+        {
+          ...invocation(),
+          modules: { "main.js": "export class Child {}", "program.wasm": { wasm: bytes } },
+        },
+        target,
+      ),
+    ).resolves.toEqual(exit);
+    const wasm = f.code()?.modules["program.wasm"];
+    if (typeof wasm !== "object" || wasm === null) throw new Error("Missing WASM bytes");
+    expect(wasm.wasm).toBe(bytes);
+    expect(f.run).toHaveBeenCalledWith(command, target);
+    expect(f.getEntrypoint).toHaveBeenCalledWith("Child", { limits: f.code()?.limits });
+  });
+
+  it("honors a declared SHA reference even when the payload also contains raw bytes", async () => {
+    const f = fixture();
+    const bytes = new ArrayBuffer(8);
+    const input = (wasmReference: string) => ({
+      ...invocation(),
+      modules: {
+        "main.js": "export class Child {}",
+        "program.wasm": { wasmReference, wasm: bytes },
+      },
+    });
+    await expect(f.port.run(input("b".repeat(64)), f.target)).rejects.toThrow(
+      "Unknown child WASM reference",
+    );
+    await expect(f.port.run(input("invalid"), f.target)).rejects.toThrow(
+      "Invalid child WASM reference",
+    );
+    expect(f.get).not.toHaveBeenCalled();
+    expect(f.target.stopped).toHaveBeenCalledTimes(2);
+    await expect(f.port.run(input(hash), f.target)).resolves.toEqual(exit);
+    const wasm = f.code()?.modules["program.wasm"];
+    if (typeof wasm !== "object" || wasm === null) throw new Error("Missing compiled WASM");
+    expect(wasm.wasm).toBe(module);
+    expect(wasm.wasm).not.toBe(bytes);
   });
 
   it("rejects mismatched CPU budgets and invalid entrypoints before loading", async () => {

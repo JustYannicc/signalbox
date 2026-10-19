@@ -1,39 +1,29 @@
 import { RpcTarget, WorkerEntrypoint, exports as hostExports } from "cloudflare:workers";
+import { createCompiledChildWorkerLoader } from "../../src/computer/CompiledChildWorkerLoader.ts";
+import type { ChildWorkerInvocation } from "../../src/computer/ChildWorkerProgram.ts";
 import {
   type ChildWorkerLimits,
   resolveChildWorkerLimits,
 } from "../../src/computer/ChildWorkerLimits.ts";
-import type { KernelCommand, KernelCommandExit } from "../../src/kernel/KernelCommandForwarder.ts";
+import { CHILD_PROGRAM_WASM_REGISTRY } from "./programWasmRegistry.ts";
 
-export interface ChildWorkerInvocation {
-  readonly modules: Record<string, WorkerLoaderModule | string>;
-  readonly mainModule: string;
-  readonly entrypoint?: string;
-  readonly command: KernelCommand;
-}
-
-interface ChildEntrypoint extends WorkerEntrypoint {
-  run(command: KernelCommand, host: RpcTarget): Promise<KernelCommandExit>;
-}
+export type { ChildWorkerInvocation };
 
 /** Proof facets receive this service instead of retaining a raw WorkerLoader binding. */
 export class ChildWorkerDispatch extends WorkerEntrypoint<
   { LOADER: WorkerLoader },
   { limits?: ChildWorkerLimits }
 > {
-  async run(invocation: ChildWorkerInvocation, host: RpcTarget): Promise<KernelCommandExit> {
+  async run(invocation: ChildWorkerInvocation, host: RpcTarget) {
     const limits = resolveChildWorkerLimits(this.ctx.props.limits);
-    const child = this.env.LOADER.get(null, () => ({
-      compatibilityDate: "2026-10-18",
-      compatibilityFlags: ["nodejs_compat"],
-      mainModule: invocation.mainModule,
-      modules: invocation.modules,
-      globalOutbound: null,
+    const dispatch = createCompiledChildWorkerLoader(
+      this.env.LOADER,
+      CHILD_PROGRAM_WASM_REGISTRY,
       limits,
-    }));
-    return await child
-      .getEntrypoint<ChildEntrypoint>(invocation.entrypoint, { limits })
-      .run(invocation.command, host);
+    );
+    // Public probe callers supply their own RPC capability target. Computer's dispatch has
+    // already wrapped that target with host()/stopped() before it reaches this loader.
+    return dispatch.run({ ...invocation, limits }, host);
   }
 }
 

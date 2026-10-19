@@ -4,8 +4,12 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import type { ProbeSession } from "./worker.ts";
 import { prepare } from "./prepare.ts";
+import { readChildProgramWasmInventory } from "./programWasmRegistryGeneration.ts";
 
-await prepare();
+const programWasmInventory = await readChildProgramWasmInventory(
+  process.env.ISOLATE_PROBE_PROGRAM_WASM_INVENTORY,
+);
+await prepare({ programWasmArtifacts: programWasmInventory.artifacts });
 
 export default Alchemy.Stack(
   "SignalboxIsolateProbe",
