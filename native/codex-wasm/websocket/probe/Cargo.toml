@@ -1,0 +1,14 @@
+[package]
+name = "signalbox-host-websocket-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186", default-features = false, features = ["handshake"] }
+serde_json = "1"
+base64 = "0.22"
+rustls = { version = "=0.23.45", default-features = false, features = ["std"] }
