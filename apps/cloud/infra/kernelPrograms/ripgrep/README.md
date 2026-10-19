@@ -29,7 +29,7 @@ The local timestamp-sort patch checks metadata on each resolved filesystem searc
 Run the focused artifact regression against a frozen Signalbox host source tree:
 
 ```sh
-~/.local/bin/heavy-slot node --experimental-wasm-jspi \
+node --experimental-wasm-jspi \
   apps/cloud/infra/kernelPrograms/ripgrep/verify-sort.mjs \
   /path/to/candidate/rg.wasm /path/to/frozen/signalbox-source candidate
 ```
@@ -50,4 +50,4 @@ node --experimental-strip-types apps/cloud/infra/nodeProof/prepareRipgrepSort.ts
 
 The fixture statically imports the WASM and exercises the real child-process bridge against persistent facet storage. It returns structured results for `/proof` and `/proof-again`; native and deployed proof still run in their respective environments.
 
-For an official ripgrep update, change the source version and checksum in `provenance.json`, review the pinned Cargo lock and AgentOS patch set, rebuild, then update the artifact pin and import list in `prepare.ts` and `probe-source.ts`. Run the pure-WASI check and hosted fixture proof before updating the recorded provenance. `build.scriptSha256` records the script used for the existing artifact; `rebuildRecipe` records this portable checked-in recipe separately.
+For an official ripgrep update, change the source version and checksum in `provenance.json`, review the pinned Cargo lock and AgentOS patch set, then rebuild twice. Update the artifact pin in `KernelRipgrepProgram.ts` and review the WASI import checks in the preparation scripts. Run the public Node regression and the sort fixture in local workerd and a deployed facet before updating the recorded provenance. `build.scriptSha256` records the script used for the existing artifact; `rebuildRecipe` records this portable checked-in recipe separately.
