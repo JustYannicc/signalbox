@@ -3,8 +3,8 @@ import type { KernelProgramImplementation } from "./KernelProgramHost.ts";
 
 export const KERNEL_RIPGREP_ARTIFACT = Object.freeze({
   path: "bin/rg.wasm",
-  bytes: 2_207_817,
-  sha256: "5c88ecb6dd08b1952585efc3523b397621b62db54e60572449c784c886a17006",
+  bytes: 2_208_556,
+  sha256: "791b862a433f1a5a9b6a7ce982546d33f4146dcb019dba5da1e78be7bffc7ca7",
   version: "15.1.0",
 });
 
