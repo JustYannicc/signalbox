@@ -31,6 +31,7 @@ jobs:
       SOURCE_COMMIT: ${{ inputs.sourceCommit }}
     steps:
       - name: Checkout trusted workflow source
+        timeout-minutes: 3
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -40,6 +41,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Select reviewed descendant
+        timeout-minutes: 2
         shell: bash
         run: |
           if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
@@ -52,6 +54,7 @@ jobs:
           test -f apps/cloud/infra/computerBoxdProof/run.ts
 
       - name: Setup Vite+
+        timeout-minutes: 7
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -62,6 +65,7 @@ jobs:
               - --filter=@t3tools/monorepo
 
       - name: Fetch pinned kernel programs
+        timeout-minutes: 3
         run: >-
           node --experimental-strip-types scripts/harness-releases/fetchPrograms.ts
           --output "$RUNNER_TEMP/computer-boxd-programs"
@@ -89,7 +93,8 @@ jobs:
         run: |
           if [[ -e "$RUNNER_TEMP/computer-boxd-stage" || -L "$RUNNER_TEMP/computer-boxd-stage" ]]; then
             node --experimental-strip-types apps/cloud/infra/computerBoxdProof/run.ts \
-              --recover-stage-file "$RUNNER_TEMP/computer-boxd-stage"
+              --recover-stage-file "$RUNNER_TEMP/computer-boxd-stage" \
+              --output "$RUNNER_TEMP/computer-boxd-recovery.json"
           fi
 
       - name: Upload safe proof receipt
@@ -97,6 +102,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: computer-boxd-proof
-          path: ${{ runner.temp }}/computer-boxd-deployed.json
+          path: |
+            ${{ runner.temp }}/computer-boxd-deployed.json
+            ${{ runner.temp }}/computer-boxd-recovery.json
           if-no-files-found: warn
           retention-days: 14

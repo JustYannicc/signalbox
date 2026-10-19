@@ -19,7 +19,9 @@ stage file. The recovery file stays in the job temporary directory and is never
 uploaded. If recovery fails, keep the stage deployed and follow the safe failure
 receipt to recover its owned resources.
 
-The uploaded receipt records the candidate, checks and confirmed cleanup without
+The runner writes a safe receipt before deployment and updates it during recovery,
+including failures. Both proof and recovery receipts are uploaded. They record
+the candidate, unique stage, owned VM names, checks and cleanup state without
 credentials, endpoints or command configuration. This workflow enables proof
 execution. A successful run establishes only the cases recorded in that receipt.
 The proof source's Bases and revision backing are test adapters, separate from
