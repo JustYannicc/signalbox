@@ -80,6 +80,15 @@ export function createWorkerLoaderDispatch<Host extends object>(
         const code = dispatchModules(input, limits);
         let exit: KernelCommandExit;
         if ("run" in loader) {
+          for (const module of Object.values(code.modules)) {
+            if (
+              typeof module !== "string" &&
+              "wasm" in module &&
+              module.wasm instanceof WebAssembly.Module
+            ) {
+              throw new Error("Compiled child WASM must stay in the loader-owned registry");
+            }
+          }
           submitted = true;
           exit = await loader.run({ ...code, command: input.command }, invocation);
         } else {

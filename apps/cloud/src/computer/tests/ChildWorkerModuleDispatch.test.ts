@@ -56,6 +56,17 @@ describe("module dispatch ownership", () => {
     expect(f.get).not.toHaveBeenCalled();
   });
 
+  it("rejects compiled WASM before RPC submission as physically stopped", async () => {
+    const run = vi.fn().mockRejectedValue(new Error("Unable to deserialize cloned data"));
+    const dispatch = createWorkerLoaderDispatch({ run });
+    await expect(
+      dispatch.run(input({ "program.wasm": { wasm: compiled } }), {}),
+    ).rejects.toMatchObject({
+      termination: { kind: "stopped" },
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("uses the actual private completion envelope across compiled-registry dispatch", async () => {
     const f = loader();
     const port = createCompiledChildWorkerLoader(f.native, new Map([[hash, compiled]]));
