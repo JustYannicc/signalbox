@@ -55,7 +55,15 @@ const save = async () => {
 // Wrangler creates temporary files in the checkout, so freeze inputs before starting it.
 const seed = options["recover-stage-file"]
   ? undefined
-  : await prepareProofSeed(NodePath.resolve(options["program-dir"]!));
+  : await prepareProofSeed(NodePath.resolve(options["program-dir"]!)).catch(async () => {
+      receipt = {
+        ...receipt,
+        checks: { ...receipt.checks, seedPreparation: "failed", localProof: "failed" },
+      };
+      await save();
+      await stage.update("failed-before-deploy");
+      throw new Error("Proof seed preparation failed");
+    });
 const stateDir = NodePath.resolve(NodePath.dirname(stagePath), `${stage.record.stage}-local-state`);
 await NodeFSP.mkdir(stateDir, { recursive: true, mode: 0o700 });
 const config = NodePath.resolve(stateDir, "wrangler.json");
