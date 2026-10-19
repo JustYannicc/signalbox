@@ -1,19 +1,24 @@
 import type { KernelFileSystem, KernelPosixMetadata, KernelStat } from "../KernelFileSystem.ts";
+import { KERNEL_GIT_MAX_PATH_BYTES } from "../KernelGitMemoryPlan.ts";
 import { mapErrno } from "../wasi/internal_wasi_calls.ts";
-import { validRange } from "../process/AgentOsDescriptorSupport.ts";
 import type { KernelGitCredentials } from "./KernelGitCredentials.ts";
+import {
+  gitMemoryRange,
+  gitMemoryView,
+  validGitMemoryRange,
+  type KernelGitMemory,
+} from "./KernelGitProcessWire.ts";
 
 const EFAULT = 21;
 const EINVAL = 28;
 const ENOTSUP = 58;
 const AT_FDCWD = -100;
 const LOOKUP_SYMLINK_FOLLOW = 1;
-const MAX_PATH_BYTES = 1_048_576;
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 interface GitFilesystemImportOptions {
-  readonly memory: () => WebAssembly.Memory;
+  readonly memory: () => KernelGitMemory;
   readonly filesystem: KernelFileSystem;
   readonly credentials: KernelGitCredentials;
 }
@@ -67,7 +72,13 @@ export class KernelGitFilesystemImports {
     outPointer: number,
   ) {
     const memory = this.#options.memory();
-    if (!validRange(memory, outPointer, 80)) return EFAULT;
+    if (!validGitMemoryRange(memory, outPointer, 80)) return EFAULT;
+    let output: DataView;
+    try {
+      output = gitMemoryView(memory, outPointer, 80);
+    } catch {
+      return EFAULT;
+    }
     const path = this.#readPath(memory, pathPointer, pathLength);
     if (typeof path === "number") return path;
     if (path.length === 0) return 44;
@@ -75,7 +86,7 @@ export class KernelGitFilesystemImports {
       const record = this.#withDirectory(dirFd | 0, path, (filesystem) =>
         statAt(filesystem, path, ((lookupFlags >>> 0) & LOOKUP_SYMLINK_FOLLOW) !== 0),
       );
-      this.#writeStat(memory, outPointer, record);
+      this.#writeStat(output, record);
       return 0;
     } catch (error) {
       return mapErrno(error);
@@ -84,11 +95,12 @@ export class KernelGitFilesystemImports {
 
   #fdStat(fd: number, outPointer: number) {
     const memory = this.#options.memory();
-    if (!validRange(memory, outPointer, 80)) return EFAULT;
+    if (!validGitMemoryRange(memory, outPointer, 80)) return EFAULT;
     try {
+      const output = gitMemoryView(memory, outPointer, 80);
       const filesystem = this.#options.filesystem;
       const descriptor = fd >>> 0;
-      this.#writeStat(memory, outPointer, {
+      this.#writeStat(output, {
         stat: filesystem.fstat(descriptor),
         metadata: filesystem.getPosixMetadataForFd(descriptor),
       });
@@ -129,12 +141,18 @@ export class KernelGitFilesystemImports {
 
   #setUmask(mask: number, previousPointer: number) {
     const memory = this.#options.memory();
-    if (!validRange(memory, previousPointer, 4)) return EFAULT;
+    if (!validGitMemoryRange(memory, previousPointer, 4)) return EFAULT;
+    let output: DataView;
+    try {
+      output = gitMemoryView(memory, previousPointer, 4);
+    } catch {
+      return EFAULT;
+    }
     const next = mask >>> 0;
     if ((next & ~0o777) !== 0) return EINVAL;
     try {
       const previous = this.#options.filesystem.setUmask(next);
-      new DataView(memory.buffer).setUint32(previousPointer >>> 0, previous, true);
+      output.setUint32(0, previous, true);
       return 0;
     } catch (error) {
       return mapErrno(error);
@@ -179,12 +197,17 @@ export class KernelGitFilesystemImports {
     }
   }
 
-  #readPath(memory: WebAssembly.Memory, pointer: number, length: number): string | number {
+  #readPath(memory: KernelGitMemory, pointer: number, length: number): string | number {
     const start = pointer >>> 0;
     const size = length >>> 0;
-    if (size > MAX_PATH_BYTES) return EINVAL;
-    if (!validRange(memory, start, size)) return EFAULT;
-    const bytes = new Uint8Array(memory.buffer, start, size);
+    if (size > KERNEL_GIT_MAX_PATH_BYTES) return EINVAL;
+    if (!validGitMemoryRange(memory, start, size)) return EFAULT;
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = gitMemoryRange(memory, start, size);
+    } catch {
+      return EFAULT;
+    }
     if (bytes.includes(0)) return EINVAL;
     try {
       return decoder.decode(bytes);
@@ -193,22 +216,20 @@ export class KernelGitFilesystemImports {
     }
   }
 
-  #writeStat(memory: WebAssembly.Memory, pointer: number, record: GitStat) {
+  #writeStat(view: DataView, record: GitStat) {
     const { stat, metadata } = record;
-    const view = new DataView(memory.buffer);
-    const start = pointer >>> 0;
-    view.setBigUint64(start, stat.dev, true);
-    view.setBigUint64(start + 8, stat.ino, true);
-    view.setUint8(start + 16, fileType(stat.type));
-    view.setBigUint64(start + 24, stat.nlink, true);
-    view.setBigUint64(start + 32, stat.size, true);
-    view.setBigUint64(start + 40, stat.atimeNs, true);
-    view.setBigUint64(start + 48, stat.mtimeNs, true);
-    view.setBigUint64(start + 56, stat.ctimeNs, true);
-    view.setUint32(start + 64, fileTypeMode(stat.type) | (metadata.mode & 0o7777), true);
-    view.setUint32(start + 68, metadata.uid, true);
-    view.setUint32(start + 72, metadata.gid, true);
-    view.setUint32(start + 76, 0, true);
+    view.setBigUint64(0, stat.dev, true);
+    view.setBigUint64(8, stat.ino, true);
+    view.setUint8(16, fileType(stat.type));
+    view.setBigUint64(24, stat.nlink, true);
+    view.setBigUint64(32, stat.size, true);
+    view.setBigUint64(40, stat.atimeNs, true);
+    view.setBigUint64(48, stat.mtimeNs, true);
+    view.setBigUint64(56, stat.ctimeNs, true);
+    view.setUint32(64, fileTypeMode(stat.type) | (metadata.mode & 0o7777), true);
+    view.setUint32(68, metadata.uid, true);
+    view.setUint32(72, metadata.gid, true);
+    view.setUint32(76, 0, true);
   }
 }
 
