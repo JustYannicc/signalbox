@@ -3,6 +3,14 @@ export interface NodeNativeAddonDeclaration {
   readonly members: readonly string[];
 }
 
+export interface NodeNativeAddonCall {
+  readonly addon: string;
+  readonly member: string;
+  readonly args: readonly unknown[];
+}
+
+export type NodeNativeAddonInvoker = (call: NodeNativeAddonCall) => unknown;
+
 export class NodeCapabilityNeedsMachineError extends Error {
   readonly code = "ERR_NODE_CAPABILITY_NEEDS_MACHINE";
   readonly addon: string;
@@ -16,7 +24,10 @@ export class NodeCapabilityNeedsMachineError extends Error {
   }
 }
 
-export function createNodeNativeAddonModules(declarations: readonly NodeNativeAddonDeclaration[]) {
+export function createNodeNativeAddonModules(
+  declarations: readonly NodeNativeAddonDeclaration[],
+  invoke: NodeNativeAddonInvoker = invokeNativeAddon,
+) {
   const modules = new Map<string, object>();
   for (const declaration of declarations) {
     if (!declaration.specifier.endsWith(".node")) {
@@ -24,18 +35,18 @@ export function createNodeNativeAddonModules(declarations: readonly NodeNativeAd
     }
     if (modules.has(declaration.specifier))
       throw new TypeError("Duplicate native addon declaration");
-    const module: Record<string, (...args: readonly unknown[]) => never> = Object.create(null);
+    const addon = declaration.specifier;
+    const module: Record<string, (...args: readonly unknown[]) => unknown> = Object.create(null);
     for (const member of declaration.members) {
       if (!member || Object.hasOwn(module, member))
         throw new TypeError("Invalid native addon member");
-      module[member] = (..._args) => invokeNativeAddon(declaration.specifier, member);
+      module[member] = (...args) => invoke({ addon, member, args });
     }
     modules.set(declaration.specifier, Object.freeze(module));
   }
   return modules as ReadonlyMap<string, object>;
 }
 
-// #1071 can replace this call boundary once object-call escalation has an accepted contract.
-function invokeNativeAddon(addon: string, member: string): never {
+function invokeNativeAddon({ addon, member }: NodeNativeAddonCall): never {
   throw new NodeCapabilityNeedsMachineError(addon, member);
 }

@@ -2,6 +2,7 @@ import { NodeModuleUnavailableError, type NodePreparedModuleResolver } from "./N
 import {
   createNodeNativeAddonModules,
   type NodeNativeAddonDeclaration,
+  type NodeNativeAddonInvoker,
 } from "./NodeNativeAddon.ts";
 
 export type NodeEnvironmentPackage = "undici" | "yaml" | "ws" | "node-fetch" | "bun:jsc";
@@ -19,6 +20,8 @@ export interface NodeEnvironmentOptions {
   readonly packages: Readonly<Partial<Record<NodeEnvironmentPackage, object>>>;
   readonly addons: readonly NodeNativeAddonDeclaration[];
   readonly prepared?: NodePreparedModuleResolver;
+  /** The host preserves each declared member's synchronous or asynchronous return contract. */
+  readonly invokeNativeAddon?: NodeNativeAddonInvoker;
 }
 
 export function createNodeEnvironmentResolver(
@@ -32,7 +35,7 @@ export function createNodeEnvironmentResolver(
       throw new TypeError(`Environment package ${name} needs its actual exports`);
     }
   }
-  const addons = createNodeNativeAddonModules(options.addons);
+  const addons = createNodeNativeAddonModules(options.addons, options.invokeNativeAddon);
   return (specifier, referrer) => {
     if (packages.has(specifier)) return packages.get(specifier);
     if (addons.has(specifier)) return addons.get(specifier);

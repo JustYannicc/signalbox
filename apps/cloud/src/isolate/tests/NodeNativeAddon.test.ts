@@ -9,6 +9,35 @@ const image = "/$bunfs/root/image-processor.node";
 const audio = "/$bunfs/root/audio-capture.node";
 
 describe("native addon call boundary", () => {
+  it("invokes only at the member call and preserves arguments, returns and thrown errors", async () => {
+    const seen: unknown[] = [];
+    const payload = new Uint8Array([0, 255]);
+    const promise = Promise.resolve(payload);
+    const failure = new Error("native failure");
+    const resolver = createNodeEnvironmentResolver({
+      packages: {},
+      addons: [{ specifier: image, members: ["sync", "async", "fail"] }],
+      invokeNativeAddon(call) {
+        seen.push(call);
+        if (call.member === "fail") throw failure;
+        return call.member === "async" ? promise : payload;
+      },
+    });
+    const addon = resolver(image, "/release/main.js");
+    expect(seen).toEqual([]);
+    if (typeof addon !== "object" || addon === null) throw new Error("Missing addon");
+    expect(Reflect.apply(Reflect.get(addon, "sync"), addon, [payload, 17])).toBe(payload);
+    const returned = Reflect.apply(Reflect.get(addon, "async"), addon, [payload]);
+    expect(returned).toBe(promise);
+    await expect(returned).resolves.toBe(payload);
+    expect(() => Reflect.apply(Reflect.get(addon, "fail"), addon, [])).toThrow(failure);
+    expect(seen).toEqual([
+      { addon: image, member: "sync", args: [payload, 17] },
+      { addon: image, member: "async", args: [payload] },
+      { addon: image, member: "fail", args: [] },
+    ]);
+  });
+
   it("imports exact declared exports without invoking native capabilities", () => {
     const modules = createNodeNativeAddonModules([
       { specifier: image, members: ["processImage"] },
