@@ -39,6 +39,93 @@ function bridge(fixture: ReturnType<typeof childBashFixture>, port = fixture.own
 }
 
 describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
+  it("runs and cleans up a background report under its own CPU identity after the root exits", async () => {
+    const control = childBashLifetimeFixture(module, false, true);
+    const fixture = childBashLifetimeFixture(module, true, true);
+    try {
+      const expected = control.start("/bin/report & exit 17");
+      const controlReport = await control.entered;
+      expect(await expected.exited).toMatchObject({ status: "ok", value: exited(17) });
+      control.release();
+      expect(await control.reported).toEqual({
+        pid: controlReport.identity.pid,
+        cpuPid: controlReport.identity.pid,
+      });
+      const command = fixture.start("/bin/report & exit 17");
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+      expect(() => fixture.rootContext().cpu!.runUser(() => {})).toThrow(
+        "CPU process execution is stopped",
+      );
+      const drained = fixture.capacity
+        .acquire(new AbortController().signal)
+        .then((permit) => permit.release());
+      const progress = await Promise.race([
+        fixture.entered.then((context) => ({ kind: "entered" as const, context })),
+        drained.then(() => ({ kind: "drained" as const })),
+      ]);
+      expect(progress.kind).toBe("entered");
+      if (progress.kind !== "entered") throw new Error("Background report never started");
+      const background = progress.context;
+      expect(fixture.capacity.active).toBe(1);
+      const cpu = fixture.programs.cpuExecution!.forProcess(background.identity.pid);
+      fixture.release();
+      expect(await fixture.reported).toEqual({
+        pid: background.identity.pid,
+        cpuPid: background.identity.pid,
+      });
+      await drained;
+      expect(fixture.files.stdout()).toBe(control.files.stdout());
+      expect(fixture.files.stdout()).toBe(
+        `report:${background.identity.pid}:${background.identity.pid}`,
+      );
+      expect(cpu.snapshot().userNs).toBeGreaterThanOrEqual(7n);
+      expect(() => background.cpu!.runUser(() => {})).toThrow("CPU process execution is stopped");
+      expect(background.filesystem.descriptors.has(1)).toBe(false);
+      expect(fixture.capacity.active).toBe(0);
+      expect(fixture.programs.processes.size).toBe(1);
+      expect(fixture.files.wakes.size).toBe(0);
+    } finally {
+      await fixture.close();
+      await control.close();
+    }
+  });
+
+  it("signals and cleans up a CPU-owned background child after reaping its stopped root", async () => {
+    const fixture = childBashLifetimeFixture(module, true, true);
+    try {
+      const command = fixture.start("/bin/blocked & exit 17");
+      expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
+      expect(() => fixture.rootContext().cpu!.runUser(() => {})).toThrow(
+        "CPU process execution is stopped",
+      );
+      expect(fixture.programs.reap(command.handle).status).toBe("ok");
+      const drained = fixture.capacity
+        .acquire(new AbortController().signal)
+        .then((permit) => permit.release());
+      const progress = await Promise.race([
+        fixture.entered.then((context) => ({ kind: "entered" as const, context })),
+        drained.then(() => ({ kind: "drained" as const })),
+      ]);
+      expect(progress.kind).toBe("entered");
+      if (progress.kind !== "entered") throw new Error("Background process never started");
+      const background = progress.context;
+      expect(fixture.programs.processes.info(background.identity.handle)).toMatchObject({
+        status: "ok",
+        value: { parentPid: 1 },
+      });
+      expect(fixture.programs.processes.signal(background.identity.handle, 9).status).toBe("ok");
+      await fixture.aborted;
+      await drained;
+      expect(() => background.cpu!.runUser(() => {})).toThrow("CPU process execution is stopped");
+      expect(background.filesystem.descriptors.has(1)).toBe(false);
+      expect(fixture.capacity.active).toBe(0);
+      expect(fixture.programs.processes.size).toBe(0);
+      expect(fixture.files.wakes.size).toBe(0);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("reports root exit while a background child retains the worker and its descriptors", async () => {
     const control = childBashLifetimeFixture(module, false);
     const fixture = childBashLifetimeFixture(module);

@@ -1,5 +1,6 @@
 import { kernelError, kernelOk, type KernelResult } from "./KernelAbi.ts";
 import { KernelProgramExecAdmissionError } from "./KernelAsyncProgram.ts";
+import type { KernelAsyncProgramCpu } from "./KernelAsyncProgram.ts";
 import type { KernelBashCredentials, KernelBashProgramContext } from "./KernelBashProgram.ts";
 import type { KernelBashCompletion, KernelBashPort } from "./KernelBashPort.ts";
 import type { KernelExitStatus } from "./KernelProcessTable.ts";
@@ -71,10 +72,12 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     const operation = <T>(run: () => Promise<T> | T): Promise<T> => {
       if (closed || completed || active !== undefined)
         return Promise.reject(new Error("Bash process port is unavailable or already executing"));
-      const result = Promise.resolve().then(() => {
-        context.signal.throwIfAborted();
-        return run();
-      });
+      const execute = () =>
+        Promise.resolve().then(() => {
+          context.signal.throwIfAborted();
+          return run();
+        });
+      const result = context.cpu === undefined ? execute() : context.cpu.run(execute);
       active = result;
       void result.then(
         () => {
@@ -139,18 +142,40 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
             return { kind: "error" as const, errno: errno(error) };
           }
           let child: BashHostNode | undefined;
+          let childCpu: KernelAsyncProgramCpu | undefined;
           const spawned = context.processes.spawn(
             context.identity.handle,
             (identity) => {
-              child = create({ ...context, filesystem, identity }, credentials, node, preopens);
+              childCpu = context.cpu?.forProcess(identity.pid);
+              const launch = () =>
+                create(
+                  {
+                    ...context,
+                    filesystem,
+                    identity,
+                    ...(childCpu === undefined ? {} : { cpu: childCpu }),
+                  },
+                  credentials,
+                  node,
+                  preopens,
+                );
+              child = childCpu === undefined ? launch() : childCpu.run(launch);
               return { completion: child.completion, signal: child.signal };
             },
             async () => {
+              const release = async () => {
+                try {
+                  await runAsync(table.closeAll());
+                } finally {
+                  filesystem.dispose();
+                  child?.dispose();
+                }
+              };
               try {
-                await runAsync(table.closeAll());
+                if (childCpu === undefined) await release();
+                else await childCpu.run(release);
               } finally {
-                filesystem.dispose();
-                child?.dispose();
+                childCpu?.stop();
               }
             },
           );

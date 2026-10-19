@@ -3,17 +3,24 @@ import { createKernelBashProgram } from "../../kernel/KernelBashProgram.ts";
 import { createKernelBashHost } from "../../kernel/KernelBashHost.ts";
 import type { KernelAsyncProgramContext } from "../../kernel/KernelAsyncProgram.ts";
 import { KernelProgramHost, type KernelProgramBinding } from "../../kernel/KernelProgramHost.ts";
+import { KernelCpuAccounting } from "../../kernel/KernelCpuAccounting.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { createChildBash } from "../ChildBash.ts";
 import { createChildWorkerProgram } from "../ChildWorkerProgram.ts";
 import { bashCredentials, childBashFixture, exited, text } from "./ChildBashFixture.ts";
 
-export function childBashLifetimeFixture(module: WebAssembly.Module, child = true) {
+export function childBashLifetimeFixture(
+  module: WebAssembly.Module,
+  child = true,
+  cpuAccounting = false,
+) {
   const files = childBashFixture();
   const capacity = new ChildWorkerCapacity(1);
   const entered = Promise.withResolvers<KernelAsyncProgramContext>();
   const aborted = Promise.withResolvers<void>();
   const gate = Promise.withResolvers<void>();
+  const reported = Promise.withResolvers<{ pid: number; cpuPid: number | undefined }>();
+  let cpuTime = 0n;
   let rootContext: KernelAsyncProgramContext | undefined;
   let closeWorker: (() => Promise<void>) | undefined;
   const implementation = child
@@ -97,13 +104,33 @@ export function childBashLifetimeFixture(module: WebAssembly.Module, child = tru
       throw new Error("Replacement execution failed");
     },
   });
-  const programs = new KernelProgramHost({ registry, wakes: files.wakes, programs: bindings });
+  add("/bin/report", {
+    kind: "async",
+    async run(context) {
+      entered.resolve(context);
+      await gate.promise;
+      const cpuPid = programs.cpuExecution?.current()?.pid;
+      context.cpu?.runUser(() => {
+        cpuTime += 7n;
+      });
+      context.filesystem.write(1, text(`report:${context.identity.pid}:${cpuPid}`), null);
+      reported.resolve({ pid: context.identity.pid, cpuPid });
+      return exited();
+    },
+  });
+  const programs = new KernelProgramHost({
+    registry,
+    wakes: files.wakes,
+    programs: bindings,
+    ...(cpuAccounting ? { cpuAccounting: new KernelCpuAccounting(() => cpuTime) } : {}),
+  });
   return {
     files,
     programs,
     capacity,
     entered: entered.promise,
     aborted: aborted.promise,
+    reported: reported.promise,
     rootContext: () => {
       if (rootContext === undefined) throw new Error("Bash has not started");
       return rootContext;
