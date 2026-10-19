@@ -354,7 +354,9 @@ export class KernelProgramSpawner {
         signal: controller.signal,
         processes: this.#processes,
         wakes: this.#wakes,
-        ...(cpuProcess === undefined ? {} : { cpu: createAsyncProgramCpu(cpuProcess) }),
+        ...(cpuProcess === undefined || this.#cpuExecution === undefined
+          ? {}
+          : { cpu: createAsyncProgramCpu(this.#cpuExecution, cpuProcess) }),
         spawn: spawnFor({
           filesystem: prepared.filesystem,
           identity,
@@ -426,10 +428,20 @@ function withHome(
   return Object.freeze({ ...env, HOME: home });
 }
 
-function createAsyncProgramCpu(cpuProcess: KernelCpuProcessExecution): KernelAsyncProgramCpu {
-  return Object.freeze({
+function createAsyncProgramCpu(
+  execution: KernelCpuExecution,
+  cpuProcess: KernelCpuProcessExecution,
+): KernelAsyncProgramCpu {
+  const cpu: KernelAsyncProgramCpu = Object.freeze({
+    run: <T>(run: () => T): T => cpuProcess.run(run),
     runUser: <T>(run: () => T): T => cpuProcess.runUser(run),
+    forProcess: (pid: number): KernelAsyncProgramCpu =>
+      pid === cpuProcess.pid ? cpu : createAsyncProgramCpu(execution, execution.forProcess(pid)),
+    stop: () => {
+      cpuProcess.stop();
+    },
   });
+  return cpu;
 }
 
 function terminatedStatus(signal: number) {
