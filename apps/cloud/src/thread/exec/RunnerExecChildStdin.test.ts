@@ -1,27 +1,48 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { ExecCommand, ExecCommandErrorCode } from "@signalbox/runner-protocol/ExecProtocol";
-import { RunnerExecChild } from "./RunnerExecChild.ts";
+import {
+  EXEC_PROTOCOL_VERSION,
+  type ExecCommand,
+  type ExecCommandErrorCode,
+  type ExecReport,
+} from "@signalbox/runner-protocol/ExecProtocol";
+import { ThreadExecForwarder } from "../ThreadExecForwarder.ts";
 
 async function fixture() {
   const closeRequest = Promise.withResolvers<ExecCommand>();
   const writeRequest = Promise.withResolvers<ExecCommand>();
   let released = 0;
   let acknowledgeWrites = true;
-  const child = new RunnerExecChild({
-    generation: 1,
+  const socket = {} as WebSocket;
+  let processId = "";
+  const forwarder = new ThreadExecForwarder({
     acknowledgementTimeoutMs: 30_000,
-    releaseLease: async () => {
-      released++;
+    lease: {
+      acquire: async () => ({
+        generation: 1,
+        connection: 1,
+        release: async () => {
+          released++;
+        },
+      }),
     },
-    onDone: () => undefined,
-    send(command) {
+    workspace: { canonicalCwd: async () => "/workspace" },
+    policy: { authorize: async () => undefined },
+  });
+  const report = (value: ExecReport) => forwarder.socketHost.report(socket, 1, 1, value);
+  forwarder.socketHost.connected(socket, {
+    generation: 1,
+    connection: 1,
+    protocolVersion: EXEC_PROTOCOL_VERSION,
+    exec: true,
+    send({ command }) {
+      processId = command.processId;
       if (command.type === "stdin.close") closeRequest.resolve(command);
       else if (command.type === "stdin.write" && !acknowledgeWrites) writeRequest.resolve(command);
       else acknowledge(command);
     },
   });
   function acknowledge(command: ExecCommand, code?: ExecCommandErrorCode) {
-    child.report({
+    report({
       type: "ack",
       generation: 1,
       processId: command.processId,
@@ -31,9 +52,8 @@ async function fixture() {
       ...(code === undefined ? {} : { error: { code, message: "Controlled rejection" } }),
     });
   }
-  await child.start(
+  const child = await forwarder.spawn(
     { executable: "/bin/bash", argv: ["custom argv0"], cwd: "/workspace", env: {} },
-    "/workspace",
     new AbortController().signal,
   );
   return {
@@ -46,33 +66,33 @@ async function fixture() {
       acknowledgeWrites = false;
     },
     finish() {
-      child.report({
+      report({
         type: "output",
         generation: 1,
-        processId: child.processId,
+        processId,
         sequence: 1,
         stream: "stdout",
         dataBase64: "AP9B",
       });
-      child.report({
+      report({
         type: "output",
         generation: 1,
-        processId: child.processId,
+        processId,
         sequence: 2,
         stream: "stderr",
         dataBase64: "gAA=",
       });
-      child.report({
+      report({
         type: "exit",
         generation: 1,
-        processId: child.processId,
+        processId,
         sequence: 3,
         exitCode: 17,
       });
-      child.report({
+      report({
         type: "closed",
         generation: 1,
-        processId: child.processId,
+        processId,
         sequence: 4,
       });
     },
