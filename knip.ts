@@ -86,6 +86,8 @@ export default {
         "src/boxdSpike/worker.ts!",
         "alchemy.run.ts!",
         "infra/boxd-spike.alchemy.ts!",
+        "infra/computer-boxd-proof.alchemy.ts!",
+        "infra/computerBoxdProof/local.ts",
         "infra/runner-images.alchemy.ts!",
         "infra/check-plan.ts",
         "infra/nodeProof/*.ts",
