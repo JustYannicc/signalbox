@@ -14,6 +14,14 @@ export const prepare = async () => {
   );
   await NodeFSP.writeFile(new URL("suspend.wasm", dir), JSPI_WASM);
   await NodeFSP.writeFile(new URL("esm.js", dir), "export const answer = 42;\n");
+  const childWorkerLimits = await NodeFSP.readFile(
+    new URL("../../src/computer/ChildWorkerLimits.ts", import.meta.url),
+    "utf8",
+  );
+  await NodeFSP.writeFile(
+    new URL("childWorkerLimits.js", dir),
+    NodeModule.stripTypeScriptTypes(childWorkerLimits, { mode: "strip" }),
+  );
   // The same prebuilt module graph is uploaded locally and remotely, including the require(ESM) target.
   for (const name of [
     "worker",
@@ -28,6 +36,7 @@ export const prepare = async () => {
     const source = await NodeFSP.readFile(new URL(`./${name}.ts`, import.meta.url), "utf8");
     const js = NodeModule.stripTypeScriptTypes(source, { mode: "strip" })
       .replaceAll(/(from "\.\/[^"]+)\.ts"/g, '$1.js"')
+      .replace('"../../src/computer/ChildWorkerLimits.ts"', '"./childWorkerLimits.js"')
       .replace('"./generated/runtime.js"', '"./runtime.js"');
     await NodeFSP.writeFile(new URL(`${name}.js`, dir), js);
   }

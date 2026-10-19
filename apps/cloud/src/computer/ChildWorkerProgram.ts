@@ -3,6 +3,7 @@ import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandFo
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import type { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
+import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 
 export type ChildWorkerModule = string | { readonly js: string } | { readonly wasm: ArrayBuffer };
 
@@ -10,6 +11,7 @@ export interface ChildWorkerCode {
   readonly mainModule: string;
   readonly modules: Readonly<Record<string, ChildWorkerModule>>;
   readonly entrypoint?: string;
+  readonly limits?: ChildWorkerLimits;
 }
 
 export interface ChildWorkerInvocation extends ChildWorkerCode {
@@ -54,6 +56,7 @@ export function createChildWorkerProgram<Host extends object>(
       ),
     ),
     ...(options.code.entrypoint === undefined ? {} : { entrypoint: options.code.entrypoint }),
+    limits: resolveChildWorkerLimits(options.code.limits),
   });
   return Object.freeze({
     kind: "async" as const,

@@ -1,5 +1,6 @@
 import { RpcTarget } from "cloudflare:workers";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
+import { resolveChildWorkerLimits, type ResolvedChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerDispatch, ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 
@@ -31,7 +32,7 @@ class ChildInvocation<Host extends object> extends RpcTarget {
   }
 }
 
-function dispatchModules(input: ChildWorkerInvocation) {
+function dispatchModules(input: ChildWorkerInvocation, limits: ResolvedChildWorkerLimits) {
   let wrapper = "__signalbox_child_dispatch.js";
   const paths = new Set(
     Object.keys(input.modules).map((name) => new URL(name, "https://child.invalid/").pathname),
@@ -57,6 +58,7 @@ export default class extends WorkerEntrypoint {
 }
 `,
     },
+    limits,
   };
 }
 
@@ -66,6 +68,7 @@ export function createWorkerLoaderDispatch<Host extends object>(
 ): ChildWorkerDispatch<Host> {
   return {
     async run(input: ChildWorkerInvocation, host: Host) {
+      const limits = resolveChildWorkerLimits(input.limits);
       const stopped = Promise.withResolvers<void>();
       let acknowledged = false;
       const invocation = new ChildInvocation(host, () => {
@@ -73,7 +76,7 @@ export function createWorkerLoaderDispatch<Host extends object>(
         stopped.resolve();
       });
       try {
-        const code = dispatchModules(input);
+        const code = dispatchModules(input, limits);
         let exit: KernelCommandExit;
         if ("run" in loader) {
           exit = await loader.run({ ...code, command: input.command }, invocation);
@@ -84,7 +87,9 @@ export function createWorkerLoaderDispatch<Host extends object>(
             ...code,
             globalOutbound: null,
           }));
-          const entrypoint = worker.getEntrypoint() as unknown as ChildEntrypoint<Host>;
+          const entrypoint = worker.getEntrypoint(undefined, {
+            limits,
+          }) as unknown as ChildEntrypoint<Host>;
           exit = await entrypoint.run(input.command, invocation);
         }
         await stopped.promise;

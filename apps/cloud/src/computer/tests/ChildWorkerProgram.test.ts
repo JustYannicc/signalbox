@@ -265,6 +265,7 @@ describe("ChildWorkerProgram", () => {
       const capacity = new ChildWorkerCapacity();
       const wasm = new Uint8Array([0, 97, 115, 109]);
       const modules = { "entry.js": "original", "tool.wasm": { wasm: wasm.buffer } };
+      const limits = { cpuMs: 777 };
       const host = { identity: context.identity };
       const close = vi.fn();
       const run = vi.fn(async (input: ChildWorkerInvocation, owner: typeof host) => {
@@ -277,6 +278,7 @@ describe("ChildWorkerProgram", () => {
           env: context.env,
         });
         expect(input.modules["entry.js"]).toBe("original");
+        expect(input.limits).toEqual({ cpuMs: 777 });
         const module = input.modules["tool.wasm"];
         if (!module || typeof module === "string" || !("wasm" in module))
           throw new Error("Wasm module missing");
@@ -285,17 +287,39 @@ describe("ChildWorkerProgram", () => {
       });
       const program = createChildWorkerProgram({
         executable: "/bin/tool",
-        code: { mainModule: "entry.js", modules },
+        code: { mainModule: "entry.js", modules, limits },
         capacity,
         dispatch: { run },
         createHost: () => ({ host, close }),
       });
       modules["entry.js"] = "changed";
+      limits.cpuMs = 888;
       wasm.fill(255);
       expect(await program.run(context)).toEqual({ exitCode: 17, signal: 0, coreDumped: false });
       expect(close).toHaveBeenCalledOnce();
       expect(capacity.active).toBe(0);
     }));
+
+  it("rejects invalid limits before capacity, host creation, or dispatch", () => {
+    const capacity = new ChildWorkerCapacity();
+    const runCapacity = vi.spyOn(capacity, "run");
+    const dispatch = vi.fn(async () => ({ exitCode: 0, signal: 0, coreDumped: false }));
+    const createHost = vi.fn(() => ({ host: {}, close() {} }));
+
+    expect(() =>
+      createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {}, limits: { cpuMs: 0 } },
+        capacity,
+        dispatch: { run: dispatch },
+        createHost,
+      }),
+    ).toThrow("Child worker cpuMs must be a positive safe integer");
+
+    expect(runCapacity).not.toHaveBeenCalled();
+    expect(createHost).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
 
   it("holds admission through actual dispatch and host close after cancellation", () =>
     withContext(async (context) => {
