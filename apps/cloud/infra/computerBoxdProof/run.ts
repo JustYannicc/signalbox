@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - this private CLI owns proof deployment and recovery.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - the standalone CLI owns deployment deadlines and recovery polling.
 import { proofInputEvidence } from "./InputEvidence.ts";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";

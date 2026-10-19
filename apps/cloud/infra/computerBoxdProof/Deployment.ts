@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - private proof identity and transport helpers.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - the standalone CLI calls its disposable Worker over native HTTP.
 import * as NodeCrypto from "node:crypto";
 import { runProcess } from "../isolateProbe/process.ts";
 import {

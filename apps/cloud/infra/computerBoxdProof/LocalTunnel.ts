@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - this local proof owns the exact tunnel child it spawns.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - native timers bound this CLI-owned tunnel process.
 import * as NodeChildProcess from "node:child_process";
 
 /** The callback tunnel carries only this disposable Worker's private protocol. */

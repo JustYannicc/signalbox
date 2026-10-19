@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - disposable local workerd proof with persistent owned state.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off globalConsole:off - the standalone CLI owns workerd deadlines, cleanup polling and its result output.
 import { proofInputEvidence } from "./InputEvidence.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
