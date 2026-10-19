@@ -1,0 +1,99 @@
+name: Computer boxd proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      sourceCommit:
+        description: Reviewed full commit containing the Computer boxd proof
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+  NO_COLOR: "1"
+
+jobs:
+  deployed-proof:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: cloud-preview
+    concurrency:
+      group: computer-boxd-proof
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
+      SOURCE_COMMIT: ${{ inputs.sourceCommit }}
+    steps:
+      - name: Checkout trusted workflow source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Select reviewed descendant
+        shell: bash
+        run: |
+          if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "sourceCommit must be a full commit SHA" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin "$SOURCE_COMMIT"
+          git merge-base --is-ancestor "$GITHUB_SHA" "$SOURCE_COMMIT"
+          git checkout --detach "$SOURCE_COMMIT"
+          test -f apps/cloud/infra/computerBoxdProof/run.ts
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+              - --filter=@t3tools/monorepo
+
+      - name: Fetch pinned kernel programs
+        run: >-
+          node --experimental-strip-types scripts/harness-releases/fetchPrograms.ts
+          --output "$RUNNER_TEMP/computer-boxd-programs"
+
+      - name: Run deployed proof
+        timeout-minutes: 22
+        run: >-
+          node --experimental-strip-types apps/cloud/infra/computerBoxdProof/run.ts
+          --program-dir "$RUNNER_TEMP/computer-boxd-programs"
+          --stage-file "$RUNNER_TEMP/computer-boxd-stage"
+          --output "$RUNNER_TEMP/computer-boxd-deployed.json"
+
+      - name: Recover interrupted proof
+        if: always()
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          if [[ -e "$RUNNER_TEMP/computer-boxd-stage" || -L "$RUNNER_TEMP/computer-boxd-stage" ]]; then
+            node --experimental-strip-types apps/cloud/infra/computerBoxdProof/run.ts \
+              --recover-stage-file "$RUNNER_TEMP/computer-boxd-stage"
+          fi
+
+      - name: Upload safe proof receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: computer-boxd-proof
+          path: |
+            ${{ runner.temp }}/computer-boxd-deployed.json
+            ${{ runner.temp }}/computer-boxd-stage
+          if-no-files-found: warn
+          retention-days: 14
