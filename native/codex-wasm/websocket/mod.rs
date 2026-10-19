@@ -25,20 +25,18 @@ pub(crate) async fn connect(
     _tcp_nodelay: TcpNodelay,
     _loopback_direct: bool,
 ) -> Result<(HostConnection, Response), Error> {
-    // Ordinary connect leaves the loopback flag false; the resolved route still enforces proxy policy.
-    // Plain WS never uses TCP options or default TLS. Caller TLS is rejected by the connector.
+    // The host owns the network connection and default TLS; resolved proxy policy still applies.
     let custom_ca = ["CODEX_CA_CERTIFICATE", "SSL_CERT_FILE"]
         .iter()
         .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()));
-    if !crate::is_loopback_destination(request.uri())
-        || request.uri().scheme_str() != Some("ws")
+    if !matches!(request.uri().scheme_str(), Some("ws" | "wss"))
         || !matches!(proxy_route, OutboundProxyRoute::Direct)
         || custom_ca
         || config.accept_unmasked_frames
     {
         return Err(Error::Io(io::Error::new(
             io::ErrorKind::Unsupported,
-            "WASI host WebSocket supports resolved direct ws://loopback only; proxy, TLS/custom CA and unmasked-frame configuration are unsupported",
+            "WASI host WebSocket requires resolved direct ws/wss; proxy, custom TLS/CA and unmasked-frame configuration are unsupported",
         )));
     }
     // This first host slice has fixed upper bounds, including when Tungstenite permits more.

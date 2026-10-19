@@ -28,7 +28,7 @@ const MAX_HEADER_BLOCK_BYTES = 64 * 1024;
 const MAX_REQUEST_BYTES = 16 + 8 * 1024 + MAX_HEADER_BLOCK_BYTES;
 
 describe("KernelWebSocketHost", () => {
-  it("routes only validated loopback requests and preserves a non-upgrade response", async () => {
+  it("routes validated requests and preserves a non-upgrade response", async () => {
     const memory = new WebAssembly.Memory({ initial: 2 });
     const descriptors = new FakeDescriptors();
     const routeRequest = deferred<KernelWebSocketRouteRequest>();
@@ -125,7 +125,39 @@ describe("KernelWebSocketHost", () => {
     expect(host.imports.ws_drop(fd)).toBe(0);
   });
 
-  it("rejects non-loopback targets before route or descriptor allocation", () => {
+  it.each(["ws://model.invalid/v1/responses", "wss://model.invalid/v1/responses"])(
+    "routes %s through the injected network adapter",
+    async (url) => {
+      const memory = new WebAssembly.Memory({ initial: 1 });
+      const descriptors = new FakeDescriptors();
+      const routed = deferred<KernelWebSocketRouteRequest>();
+      const socket = new FakeSocket();
+      const host = makeHost(memory, descriptors, (request) => {
+        routed.resolve(request);
+        return upgrade(socket);
+      });
+      writeRequest(memory, 64, url, [["authorization", "Bearer fixture"]]);
+      expect(host.imports.ws_open(64, requestLength(memory), 16)).toBe(0);
+      const fd = readU32(memory, 16);
+      expect((await routed.promise).request.url).toBe(url);
+      await waitForResourceRead(descriptors.resource(fd));
+      expect(host.imports.ws_handshake(fd, 512, 1024, 32)).toBe(0);
+      socket.emit("message", { data: "model event" });
+      expect(host.imports.ws_recv(fd, 24, 2048, 64, 32)).toBe(0);
+      expect(
+        new TextDecoder().decode(new Uint8Array(memory.buffer, 2048, readU32(memory, 32))),
+      ).toBe("model event");
+      expect(host.imports.ws_drop(fd)).toBe(0);
+      expect(socket.closeCalls).toBe(1);
+      expect(descriptors.size).toBe(0);
+    },
+  );
+
+  it.each([
+    "https://model.invalid/",
+    "wss://model.invalid/#fragment",
+    "ws://user:password@model.invalid/",
+  ])("rejects %s before route or descriptor allocation", (url) => {
     const memory = new WebAssembly.Memory({ initial: 1 });
     const descriptors = new FakeDescriptors();
     let routed = false;
@@ -137,7 +169,7 @@ describe("KernelWebSocketHost", () => {
         return { status: 500, headers: [] };
       },
     });
-    writeRequest(memory, 64, "ws://example.com/exec", []);
+    writeRequest(memory, 64, url, []);
 
     expect(host.imports.ws_open(64, requestLength(memory), 16)).toBe(WS_ERRNO.ENOTSUP);
     expect(descriptors.size).toBe(0);

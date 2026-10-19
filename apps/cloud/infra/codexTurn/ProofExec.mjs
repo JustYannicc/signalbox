@@ -63,16 +63,56 @@ export function createProofExec({ filesystem, host, transcript, cleanupErrors, w
   });
 }
 
-export function createProofWebSocket({ memory, binding, sessions, context }) {
+export function createProofWebSocket({
+  memory,
+  binding,
+  sessions,
+  context,
+  modelRoute,
+  execSocket,
+}) {
   return new KernelWebSocketHost({
     memory,
     descriptors: binding.descriptors,
-    route({ request }) {
+    route(input) {
+      const { request } = input;
       if (request.url !== proofEnvironment.CODEX_EXEC_SERVER_URL) {
+        if (modelRoute) return modelRoute(input);
         throw new Error("Unexpected WebSocket route");
       }
-      const response = acceptCodexExecWebSocket(request, sessions, context);
+      execSocket?.opened();
+      const observedSessions = execSocket
+        ? new Proxy(sessions, {
+            get(target, key) {
+              if (key !== "connect") return Reflect.get(target, key, target);
+              return (...args) => {
+                const connection = target.connect(...args);
+                return {
+                  ...connection,
+                  get closed() {
+                    return connection.closed;
+                  },
+                  receive(text) {
+                    execSocket.serverReceive();
+                    return connection.receive(text);
+                  },
+                  disconnect() {
+                    execSocket.serverClose();
+                    return connection.disconnect();
+                  },
+                };
+              };
+            },
+          })
+        : sessions;
+      const response = acceptCodexExecWebSocket(request, observedSessions, context);
       response.webSocket?.accept();
+      if (response.webSocket && execSocket)
+        return {
+          status: response.status,
+          headers: [],
+          webSocket: execSocket.observe(response.webSocket),
+        };
       return { response, headers: [] };
     },
   });

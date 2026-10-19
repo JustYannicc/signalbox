@@ -18,6 +18,8 @@ so callers and test layers resolve the same metadata.
 `ModelRecords` owns the request and usage schemas. `ModelGateway` serves provider
 HTTP requests, with streaming, usage scanning and header handling kept private.
 `ModelHttp` exposes the credential and header rules shared with pool links and local keys.
+The [Responses WebSocket contract](../../../../docs/internals/model-gateway-responses-websocket.md)
+defines the gateway behavior required by native model sockets.
 
 Cloudflare composition uses `cloudflare` and the `gatewayWorker` entry point; their
 adapters stay private under `adapters/`. Tests use the public entry points and `testing`.
