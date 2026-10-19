@@ -390,7 +390,7 @@ export class WasiPathCalls {
   ): WasiCall<number> {
     const directory = this.#requireDirectory(fd, RIGHTS.PATH_READLINK);
     const capacity = bufferLen >>> 0;
-    this.#memory.range(buffer, capacity);
+    this.#memory.validateRange(buffer, capacity);
     this.#memory.range(bufused, 4);
     const path = this.#readPath(pathPointer, pathLength);
     const resolved = yield* this.#paths.resolve(this.#anchor(directory), path, false);
