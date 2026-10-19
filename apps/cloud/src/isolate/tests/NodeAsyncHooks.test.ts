@@ -135,14 +135,14 @@ describe("Node async context compatibility", () => {
   });
 
   it("keeps native constructors untouched and exposes one module through the bridge", () => {
-    const module = createFixture();
     const nativeEnter = NodeAsyncHooks.AsyncLocalStorage.prototype.enterWith;
+    const module = createNodeAsyncHooks();
     const bridge = createNodeBridge({ async_hooks: module });
     expect(bridge.require("node:async_hooks")).toBe(bridge.require("async_hooks"));
     expect(module.default).toBe(module);
     expect(module.AsyncResource).toBe(NodeAsyncHooks.AsyncResource);
     expect(NodeAsyncHooks.AsyncLocalStorage.prototype.enterWith).toBe(nativeEnter);
-    expect(module.AsyncLocalStorage).not.toBe(NativeWithoutEnter);
+    expect(module.AsyncLocalStorage).not.toBe(NodeAsyncHooks.AsyncLocalStorage);
   });
 
   it("preserves context switching when the native runtime supports it", () => {
