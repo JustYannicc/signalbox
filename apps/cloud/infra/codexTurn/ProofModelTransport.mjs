@@ -53,6 +53,7 @@ export function createProofModelTransport({ request, context, execution }) {
   return {
     baseUrl: http ? "http://mock.invalid/v1" : endpoint.href,
     supportsWebSockets: !http,
+    ...(cpu ? { streamIdleTimeoutMs: 90000, watchdogMs: 90000 } : {}),
     async route(input) {
       const result = await dial(input);
       const socket = result.response.webSocket;

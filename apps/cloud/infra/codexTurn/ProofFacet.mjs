@@ -41,7 +41,7 @@ function bootstrap(model) {
         wire_api: "responses",
         requires_openai_auth: false,
         supports_websockets: model.supportsWebSockets ?? true,
-        stream_idle_timeout_ms: 5000,
+        stream_idle_timeout_ms: model.streamIdleTimeoutMs ?? 5000,
       },
       // The WASI connector requires an explicit proxy decision before opening a host socket.
       "features.respect_system_proxy": true,
@@ -251,10 +251,10 @@ export function createProofFacet(engine, createHost, options = {}) {
             )
           : undefined;
         watchdog = setTimeout(() => {
-          failure ??= "Engine proof exceeded 30s milestone budget";
+          failure ??= "Engine proof exceeded its milestone budget";
           driver.fail(new Error(failure));
           wakes.dispose();
-        }, 30000);
+        }, model.watchdogMs ?? 30000);
         milestone("before-instance");
         const instance = new WebAssembly.Instance(engine, imports);
         memory = instance.exports.memory;
