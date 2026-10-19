@@ -97,6 +97,13 @@ export default {
         "infra/computerPolicyProof/proof-source.ts", // Loaded by the generated policy proof entry.
         "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
         "infra/claudeTurnProof/ClaudeTurnProof.ts", // signalbox: imported by the generated proof entry.
+        // CodeMode preparation and generated workers load these files by name.
+        "infra/harnessProof/codeMode/prepare.ts",
+        "infra/harnessProof/codeMode/CellService.ts",
+        "src/harness/codeMode/worker.ts",
+        "infra/harnessProof/codeMode/local/prepare.mjs",
+        "infra/harnessProof/codeMode/local/run.mjs",
+        "infra/harnessProof/codeMode/local/proof.ts",
         "infra/harnessReleases/artifactCli.ts", // signalbox: standalone artifact preparation and publishing CLI.
         "infra/harnessReleases/harnessReleaseCloudflare.ts", // signalbox: deployment tooling launches this subprocess by filename.
         "infra/hooksProof/prepareClaude.ts", // Standalone hook proof builders.
