@@ -7,6 +7,11 @@ interface ChildEntrypoint<Host extends object> {
   run(command: KernelCommand, invocation: ChildInvocation<Host>): Promise<KernelCommandExit>;
 }
 
+/** Transports prepared child code without moving its completion acknowledgement out of the facet. */
+export interface ChildWorkerLoaderPort {
+  readonly run: (input: ChildWorkerInvocation, invocation: RpcTarget) => Promise<KernelCommandExit>;
+}
+
 class ChildInvocation<Host extends object> extends RpcTarget {
   readonly #host: Host;
   readonly #acknowledge: () => void;
@@ -57,7 +62,7 @@ export default class extends WorkerEntrypoint {
 
 /** Code and syscalls are supplied by Computer; guest programs receive no outbound network binding. */
 export function createWorkerLoaderDispatch<Host extends object>(
-  loader: WorkerLoader,
+  loader: WorkerLoader | ChildWorkerLoaderPort,
 ): ChildWorkerDispatch<Host> {
   return {
     async run(input: ChildWorkerInvocation, host: Host) {
@@ -68,14 +73,20 @@ export function createWorkerLoaderDispatch<Host extends object>(
         stopped.resolve();
       });
       try {
-        const worker = loader.get(null, () => ({
-          compatibilityDate: "2026-10-19",
-          compatibilityFlags: ["nodejs_compat"],
-          ...dispatchModules(input),
-          globalOutbound: null,
-        }));
-        const entrypoint = worker.getEntrypoint() as unknown as ChildEntrypoint<Host>;
-        const exit = await entrypoint.run(input.command, invocation);
+        const code = dispatchModules(input);
+        let exit: KernelCommandExit;
+        if ("run" in loader) {
+          exit = await loader.run({ ...code, command: input.command }, invocation);
+        } else {
+          const worker = loader.get(null, () => ({
+            compatibilityDate: "2026-10-19",
+            compatibilityFlags: ["nodejs_compat"],
+            ...code,
+            globalOutbound: null,
+          }));
+          const entrypoint = worker.getEntrypoint() as unknown as ChildEntrypoint<Host>;
+          exit = await entrypoint.run(input.command, invocation);
+        }
         await stopped.promise;
         return exit;
       } catch (cause) {
