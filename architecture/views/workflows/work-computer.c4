@@ -43,15 +43,20 @@ views {
         - Until confirmed, exec returns `Busy` (same error as the kernel path)
       '''
     }
-    smVm.attached -> smVm.hibernated '2-min idle' {
+    smVm.attached -> smVm.hibernated '2 min no activity' {
+      navigateTo lifecycle_tool_needs_vm
       notes '''
+        - Activity: a command, an edit streaming to the agent's own process, its output, or a port request
+        - A final pull first, so nothing but regenerable state is on the disk
         - Computer hibernates explicitly: boxd's own idle clock only sees network
-        - `deleteAfter` is set to the horizon H while hibernated
+        - A running dev server is frozen, not killed; `deleteAfter` is set to the horizon H
       '''
     }
-    smVm.hibernated -> smVm.attached 'next escalation' {
+    smVm.hibernated -> smVm.attached 'next command or request' {
+      navigateTo lifecycle_idle_dev_server
       notes '''
-        - Wakes for the next command burst; the tool result shape never changes
+        - A command, an edit to a running process, or a port request held at the gateway while it resumes
+        - The tool result shape never changes
       '''
     }
 
@@ -69,7 +74,8 @@ views {
         smVm.hibernated -> smVm.deleted 'archive' {
           navigateTo work_threads_lifecycle_archive
           notes '''
-            - Archive deletes the VM; unarchive starts with No VM and forks again on demand
+            - Archive deletes the VM at once; nothing needs saving because everything was already pulled
+            - Unarchive starts with No VM and forks again from the Base on demand
           '''
         }
       }
@@ -223,6 +229,7 @@ views {
           notes '''
             - Egress unconfirmed, file not hydrated, isolates full (W-CMP-07)
             - The one transient error, identical on kernel and VM paths, so placement never leaks
+            - It never reaches the model: the tool call just takes longer, as on one machine
           '''
         }
       }
@@ -460,7 +467,7 @@ views {
         signalbox.computer.escalation -> signalbox.computer.vmLifecycle 'escalate argv' {
           notes '''
             - Unknown binary, apt, docker or a native toolchain; known kernel programs never get here
-            - A long-lived process behind `port` stays on the VM for its whole lifetime
+            - A long-lived process behind `port` stays on that VM; the VM still hibernates after 2 quiet minutes (process frozen) and resumes on the next request (lifecycle_idle_dev_server)
           '''
         }
       }
@@ -496,7 +503,7 @@ views {
     }
     signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'push delta' {
       notes '''
-        - Source and kept-local changes since the last sync, incl. a synced `.git`
+        - Source and kept-local changes since the last sync; `.git` arrives read-only
         - The daemon dialed out to the Thread; it holds no agent, model token or grant
       '''
     }
@@ -510,15 +517,18 @@ views {
     signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'pull changes' {
       notes '''
         - Source + kept-local changes and a regenerable manifest delta
-        - VM-side git writes (hooks, `git commit`) come back as source changes (W-CMP-14)
+        - `.git` is never pulled back: git always runs in the kernel on the canonical view (W-CMP-14)
       '''
     }
-    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply to live FS'
+    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply to live FS' {
+      navigateTo lifecycle_file_sync
+      notes '- Last write per path wins, by write time, as on one machine; the agent is never told about a conflict'
+    }
     signalbox.computer.api -> signalbox.harness 'Process' {
-      navigateTo work_computer_kernel_exec
+      navigateTo lifecycle_tool_needs_vm
       notes '''
         - Same tool result shape as a kernel program; escalation is invisible
-        - The VM idles into hibernation (2 min) and is deleted on settle
+        - The VM idles 2 min, gets a final pull, hibernates, and is deleted on settle (lifecycle_tool_needs_vm)
         - No machine classes, and the thread never moves
       '''
     }
@@ -609,7 +619,7 @@ views {
       }
     }
     signalbox.computer.api -> signalbox.harness 'content' {
-      notes '- Never forks a VM; `Busy` while a chunk is still hydrating'
+      notes '- Never forks a VM; while a chunk hydrates the read just waits, and the model never sees `Busy`'
     }
     opt 'after each pull' {
       signalbox.computer.backend.kernelFs -> signalbox.computer.backend.kernelFs 'prefetch small files' {
@@ -1026,7 +1036,7 @@ views {
   dynamic view work_computer_background_service {
     variant sequence
     title 'Workflows/Work/Computer/Terminals/Background service outlives a turn'
-    description 'W-CMP-23. Lease held → keep-alive past turn end → stop on settle.'
+    description 'W-CMP-23. The agent\'s dev server outlives its turn; the VM is awake only while something happens, hibernates frozen after 2 quiet minutes, wakes on the next request, and is deleted on settle.'
 
     include
       personA,
@@ -1041,31 +1051,43 @@ views {
       notes '- The agent stays in the isolate tier; only the dev server process runs on the VM'
     }
     signalbox.computer -> platform.boxd 'escalate' {
-      navigateTo state_computer
+      navigateTo lifecycle_long_process
       notes '''
         - Dev servers match the recipe `machine` patterns
-        - A long-lived process behind `port` stays on this VM for its whole lifetime (#1071)
+        - The process lives on this VM; the VM is awake only while something happens (#1071)
       '''
     }
-    signalbox.thread <- signalbox.computer 'lease held'
     signalbox.thread <- signalbox.harness 'turn ends' {
-      notes '- The turn is done; the service is not'
+      navigateTo work_turns_keepalive_mirror
+      notes '''
+        - The turn is done; the service is not
+        - Keep-alive clears as usual: a running process alone is not active work
+      '''
     }
-    loop 'while the lease is held' {
-      signalbox.thread -> signalbox.thread 'keep-alive job' {
-        navigateTo work_turns_keepalive_mirror
+    loop 'while something happens' {
+      signalbox.computer -> platform.boxd 'stay warm' {
         notes '''
-          - Keeps the thread host alive only during active work
+          - A preview request through the port gateway, an edit streaming in, output, or a command
           - A or B can open the preview meanwhile
         '''
       }
-      signalbox.computer -> platform.boxd 'refresh deleteAfter'
     }
-    signalbox.thread -> signalbox.computer 'thread settles: stop' {
+    signalbox.computer -> platform.boxd 'final pull, hibernate' {
+      navigateTo lifecycle_idle_dev_server
+      notes '''
+        - After 2 quiet minutes; the dev server is frozen, not killed
+        - The next preview request is held at the port gateway while the VM resumes
+      '''
+    }
+    signalbox.thread -> signalbox.computer 'thread settles' {
       navigateTo state_thread
     }
-    signalbox.computer -> platform.boxd 'hibernate, then delete' {
-      notes '- Only regenerable state is lost'
+    signalbox.computer -> platform.boxd 'delete' {
+      navigateTo lifecycle_boxd_data
+      notes '''
+        - Only regenerable state is lost
+        - A later preview request reruns the agent\'s start command on a fresh VM
+      '''
     }
 
     include signalbox, platform
@@ -1479,12 +1501,19 @@ views {
       }
     }
     opt 'machine asleep' {
-      signalbox.thread -> signalbox.computer 'open + restore'
-      signalbox.computer -> platform.boxd 'wake or fork VM' {
-        navigateTo state_computer
+      signalbox.funnel.portGateway -> signalbox.funnel.portGateway 'hold request' {
+        navigateTo lifecycle_idle_dev_server
+        notes '- No "starting" page: the browser just waits, like a slow first request'
       }
-      signalbox.computer -> signalbox.computer 'start declared dev server'
-      signalbox.web <- signalbox.funnel.portGateway 'Starting preview…'
+      signalbox.thread -> signalbox.computer 'wake for port'
+      signalbox.computer -> platform.boxd 'resume, or fork VM' {
+        navigateTo state_computer
+        notes '''
+          - Hibernated: the dev server resumes frozen as it was
+          - Deleted: fork from the Base and rerun the agent\'s own start command; the model never sees it
+          - **Open question:** processes that can\'t be rerun faithfully
+        '''
+      }
     }
     signalbox.funnel.portGateway -> signalbox.computer 'proxy to port' {
       navigateTo work_previews_port_url

@@ -23,8 +23,12 @@ model/modules/       one file per module with its parts, seams, adapters and tec
 deployment.c4        build layer + production topology (Cloudflare, boxd, SaaS, devices)
 views/               landscape, containers (runtime), modules (drill-downs), hierarchy,
                      domain, deployment, smells, v1, packages (publishable vs stays)
-views/states/        state machines: thread, turn, ask, pool account, VM, Base, trash, connection
+views/states/        state machines: thread, turn, ask, pool account, VM, computer over time, Base, trash, connection
 views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
+  lifecycle.c4       thread and computer lifecycle (Workflows/Lifecycle/...): lifecycle_overview,
+                     lifecycle_tool_needs_vm, lifecycle_long_process, lifecycle_idle_dev_server,
+                     lifecycle_wake_after_day, lifecycle_fork_thread, lifecycle_interrupt,
+                     lifecycle_park_and_shutdown, lifecycle_file_sync, lifecycle_boxd_data
 views/journeys/      scenario walk-throughs (Scenarios/... in the sidebar)
 CONTEXT.md           glossary and the words that are never kinds
 ```
@@ -44,7 +48,9 @@ CONTEXT.md           glossary and the words that are never kinds
 - Generic names only. Nothing private: no real people, companies, repos, hosts or local paths.
 - Every view uses `autoLayout TopBottom`. View titles use folders: `Modules / Models`.
 - Harnesses (Claude Code, Codex) run in the isolate tier. boxd VMs forked from a warm Base only run
-  commands. Containers host CLIProxyAPI only.
+  commands and the agent's own long-lived processes; they hibernate after 2 minutes without activity and
+  are deleted at settle, archive or after H hours. A VM disk is cache only. The model never learns any of
+  this. Containers host CLIProxyAPI only.
 - Executor (Gateway's ToolGateway + Connections) is the one gateway for every connector; built-in tools
   (Bash, Read, Edit …) go Harness → Computer, and their network traffic leaves through Gateway's egress filter.
 

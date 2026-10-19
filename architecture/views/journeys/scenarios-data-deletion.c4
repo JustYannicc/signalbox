@@ -33,11 +33,11 @@ views {
       notes 'Trash is excluded from search results'
     }
     signalbox.thread -> signalbox.drive 'Confirm fork saved' {
-      notes 'Artifacts fork has caught up with the VM; R2 holds the record'
+      notes 'The last turn-end commit of the live FS is in the fork; R2 holds the record'
     }
     signalbox.thread -> signalbox.computer 'Free VM' {
-      navigateTo state_computer
-      notes 'Only after Drive confirmed; the VM was never the durable copy'
+      navigateTo lifecycle_boxd_data
+      notes 'Deleted by name with its Base lease; it only ever held regenerable cache'
     }
     personA -> signalbox.web 'Trash › Restore' {
       notes 'Within 30 days, from the trash list of folder Company'
@@ -312,12 +312,12 @@ views {
     #decided #assumption
     variant sequence
     title 'Scenarios/Data/Trash/Delete Mid Turn'
-    description 'Person A deletes a thread mid-turn: what happens to the running work? Decided: #806, #474 (2026-10-17) delete interrupts active work, keeps queued work for restore, and confirms the saved drain before purge. Assumption for a lost disk: the trash entry keeps the last pushed checkpoint and the thread says plainly which edits were lost. Why: every file-changing turn is committed and pushed (#1129); the provider disk is never the durable copy (#915, #478). SCN-209 · W-LIF-15, T-SYS-06, P-BLK-17, W-LIF-16 · v1: no.'
+    description 'Person A deletes a thread mid-turn: what happens to the running work? Decided: #806, #474 (2026-10-17) delete interrupts active work, keeps queued work for restore, and confirms the saved drain before purge. Edits live in the session facet\'s live FS, so a lost VM disk loses only regenerable state. Why: every file-changing turn is committed and pushed (#1129); the provider disk is never the durable copy (#915, #478). SCN-209 · W-LIF-15, T-SYS-06, P-BLK-17, W-LIF-16 · v1: no.'
 
     include personA, signalbox.web, signalbox.thread, signalbox.harness, signalbox.attention, signalbox.computer, signalbox.drive
 
     personA -> signalbox.web 'Delete mid-turn' {
-      notes '**Start:** a turn is running; edits on the VM are not saved yet'
+      notes '**Start:** a turn is running; its edits are in the live FS and not committed yet'
     }
     signalbox.web -> signalbox.thread 'Tombstone' {
       navigateTo work_threads_lifecycle_trash
@@ -333,28 +333,24 @@ views {
       navigateTo person_pipeline_blocker_withdrawn
       notes 'Open blockers and asks leave everyone’s lanes'
     }
-    signalbox.thread -> signalbox.computer 'Drain VM'
-    alt 'disk' {
-      when 'VM still there' {
-        signalbox.computer -> signalbox.drive 'Commit changes' {
-          notes 'Fork commit plus the private `machine/<thread>` ref'
-        }
-        signalbox.computer <- signalbox.drive 'Drain confirmed'
-        signalbox.computer -> signalbox.computer 'Free VM' {
-          notes '''
-            - **End:** in trash with every edit kept; active work interrupted, queued work kept
-            - **Decided** #806/#474 (2026-10-17)
-          '''
-        }
+    signalbox.thread -> signalbox.computer 'Drain computer'
+    opt 'an escalated command was running' {
+      signalbox.computer -> signalbox.computer 'Kill, pull back' {
+        navigateTo lifecycle_interrupt
+        notes 'Its changes so far come back to the live FS, as on an interrupt'
       }
-      else 'disk lost first' {
-        signalbox.thread -> signalbox.drive 'Keep last checkpoint' {
-          notes '**Assumption:** the last pushed checkpoint is what restores (#1129)'
-        }
-        signalbox.thread -> signalbox.web 'States lost edits' {
-          notes 'Says plainly which edits after that turn were lost'
-        }
-      }
+    }
+    signalbox.computer -> signalbox.drive 'Commit live FS' {
+      notes 'Fork commit plus the private `machine/<thread>` ref'
+    }
+    signalbox.computer <- signalbox.drive 'Drain confirmed'
+    signalbox.computer -> signalbox.computer 'Free VM' {
+      navigateTo lifecycle_boxd_data
+      notes '''
+        - **End:** in trash with every edit kept; active work interrupted, queued work kept
+        - A lost VM loses only regenerable state: the live FS was always the authority
+        - **Decided** #806/#474 (2026-10-17)
+      '''
     }
 
     include signalbox
@@ -497,8 +493,12 @@ views {
     signalbox.thread -> signalbox.tree 'Resolve chain' {
       notes 'The turn runs on the thread’s current chain'
     }
-    signalbox.thread -> signalbox.computer 'Start VM' {
-      notes 'Only if commands run: current Base with the thread’s changes on top'
+    signalbox.thread -> signalbox.computer 'Open computer' {
+      navigateTo lifecycle_wake_after_day
+      notes '''
+        - Live FS holds a manifest; files hydrate on read from the fork
+        - A VM forks from the current Base only when a heavy command needs one
+      '''
     }
     signalbox.thread -> signalbox.harness 'Resume session' {
       navigateTo work_threads_lifecycle_history_tier
@@ -606,7 +606,7 @@ views {
     include personA, signalbox.web, signalbox.harness, signalbox.thread, signalbox.computer, signalbox.bases, signalbox.drive
 
     signalbox.harness -> signalbox.computer 'Write notes/, .env' {
-      notes '**Start:** A’s agent writes gitignored `notes/` and a `.env` on the VM'
+      notes '**Start:** A’s agent writes gitignored `notes/` and a `.env` into the live FS'
     }
     signalbox.computer -> signalbox.drive 'Final save' {
       navigateTo work_drive_r2_record
@@ -617,7 +617,7 @@ views {
     }
     signalbox.thread -> signalbox.computer 'PR merged: free VM' {
       navigateTo state_computer
-      notes 'Cleanup frees only the VM, and only after the final save'
+      notes 'Cleanup frees only the VM; it never held these files except while a command ran'
     }
     signalbox.drive -> signalbox.drive 'Evict to R2' {
       navigateTo work_drive_eviction
@@ -625,15 +625,16 @@ views {
     }
     personA -> signalbox.web 'Resume years later'
     signalbox.web -> signalbox.thread 'Send'
-    signalbox.thread -> signalbox.computer 'Start VM'
-    signalbox.computer -> signalbox.bases 'Current Base' {
-      notes 'Starts on today’s Base, not the old image'
-    }
+    signalbox.thread -> signalbox.computer 'Open computer'
     signalbox.computer -> signalbox.drive 'Restore notes, .env' {
+      navigateTo lifecycle_wake_after_day
       notes '''
-        - **End:** both still there; `.env` decrypted onto the new VM
+        - **End:** both still there; they hydrate into the live FS on read, `.env` decrypted
         - **Decided** #119 · #489/#490
       '''
+    }
+    signalbox.computer -> signalbox.bases 'Current Base' {
+      notes 'Only when a heavy command needs a VM: today’s Base, not the old image; the files are pushed to it'
     }
 
     include signalbox

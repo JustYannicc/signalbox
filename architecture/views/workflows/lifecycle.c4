@@ -1,0 +1,873 @@
+// Thread and computer lifecycle: what runs and what is stored as a thread moves through time.
+// Binding (owner): the model thinks it is on one normal computer and never learns about VMs, isolates,
+// sync, eviction, conflicts or placement. The harness and the files stay in the Thread's session facet;
+// a boxd VM exists only while it is needed and every VM disk is a cache. Generic names only.
+views {
+
+  // ───────────────────────────── Overview ─────────────────────────────
+
+  view lifecycle_overview {
+    title 'Workflows/Lifecycle/Overview'
+    description '''
+      What runs and what is stored as a thread's computer ages? Left: the computer over time (active turn →
+      idle → settled → dormant → cold). Right: the VM's own states. A VM is warm only while a command or the
+      agent's own process is active; it hibernates after 2 minutes without activity and is deleted at settle,
+      archive, or after H hours hibernated. Nothing lives only on a VM. Click a state for its walk.
+    '''
+
+    include smComputer, smComputer.*, smVm, smVm.*
+    include smComputer.active with { navigateTo lifecycle_tool_needs_vm }
+    include smComputer.idle with { navigateTo lifecycle_park_and_shutdown }
+    include smComputer.settled with { navigateTo lifecycle_park_and_shutdown }
+    include smComputer.dormant with { navigateTo lifecycle_wake_after_day }
+    include smComputer.cold with { navigateTo lifecycle_wake_after_day }
+    include smVm with { navigateTo state_computer }
+    include smVm.hibernated with { navigateTo lifecycle_idle_dev_server }
+    include smVm.deleted with { navigateTo lifecycle_boxd_data }
+    // Wake edges (send, reopen, message) point back to Active turn; drawn they flip the time axis, so the
+    // states say what wakes them instead. The model keeps the edges (views/states/computer.c4).
+    exclude smComputer.* -> smComputer.active
+
+    style smComputer, smVm { color muted; opacity 10% }
+    style smComputer.active { color green }
+    style smComputer.cold { color gray }
+    style smVm.none { color green }
+    style smVm.deleted { color gray }
+    autoLayout TopBottom
+  }
+
+  // ───────────────────────────── A command needs a VM ─────────────────────────────
+
+  dynamic view lifecycle_tool_needs_vm {
+    variant sequence
+    title 'Workflows/Lifecycle/A tool call needs a VM'
+    description '''
+      The model calls Bash `npm test`. What happens, and what happens to the VM afterwards? One command
+      escalates inside a push/run/pull bracket and the model gets a normal Bash result. Then the VM idles
+      2 minutes, hibernates, resumes for the next heavy command and is deleted at settle.
+    '''
+
+    include
+      signalbox.gateway with { title 'Model (via Gateway)' },
+      signalbox.harness,
+      signalbox.thread.threadActor,
+      signalbox.computer.backend.kernelFs with { title 'Kernel · live FS' },
+      signalbox.computer.vmLifecycle,
+      signalbox.computer.execDaemon,
+      signalbox.bases,
+      platform.boxd
+
+    opt 'recipe predicts escalation' {
+      signalbox.computer.vmLifecycle -> platform.boxd 'pre-fork from Base' {
+        navigateTo work_computer_escalate
+        notes '''
+          - Starts while the model is still thinking, so warm-Base latency hides
+          - Base lease first, then the fork; same path as the cold fork below
+        '''
+      }
+    }
+    signalbox.gateway -> signalbox.harness 'Bash: npm test' {
+      notes '''
+        - The model asks for an ordinary Bash call, as on any computer
+        - It has no idea where commands run
+      '''
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'exec(npm test)' {
+      notes '''
+        - Claude Code runs in the session facet and never leaves it
+        - The escalated exec is live work: the Thread keeps its keep-alive on
+      '''
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.computer.vmLifecycle 'escalate argv' {
+      notes '''
+        - Tests, builds, installs and typecheck escalate per command (#1071)
+        - File edits, cat, ls, grep/rg and plumbing stay in the kernel
+      '''
+    }
+    alt 'VM state' {
+      when 'pre-forked or warm' {
+        signalbox.computer.vmLifecycle -> platform.boxd 'attach' {
+          notes '- Already running: no wait'
+        }
+      }
+      when 'hibernated' {
+        signalbox.computer.vmLifecycle -> platform.boxd 'resume' {
+          notes '- Memory and the regenerable files (node_modules, dist) come back as they were'
+        }
+      }
+      else 'none' {
+        signalbox.computer.vmLifecycle -> signalbox.bases 'acquire Base lease' {
+          navigateTo work_bases_lease
+          notes '- Lease expires at the VM\'s `deleteAfter`, so no hold is orphaned'
+        }
+        signalbox.computer.vmLifecycle -> platform.boxd 'fork from Base' {
+          navigateTo state_computer
+          notes '''
+            - `t-{threadId}-g{gen}`; isolated, egress allowlist, dead-port public proxy, `deleteAfter`
+            - Until confirmed the call waits; the model just sees a slower command
+          '''
+        }
+      }
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'push delta' {
+      navigateTo lifecycle_file_sync
+      notes '''
+        - Source and kept-local changes since the last sync
+        - `.git` arrives read-only; regenerable paths are already there from the Base
+      '''
+    }
+    opt 'lockfile differs from the Base' {
+      signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'prepare' {
+        notes '- The recipe\'s lockfile-diff install, before the command'
+      }
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'run npm test'
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'exit + output'
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'pull changes' {
+      notes '''
+        - Source and kept-local changes, plus a regenerable manifest delta
+        - `.git` is never pulled back
+      '''
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply to live FS'
+    signalbox.computer.backend.kernelFs -> signalbox.harness 'Bash result' {
+      notes '''
+        - stdout, stderr, exit code, hostname `t-{threadId}`: same shape as a kernel program
+        - Nothing in it mentions a VM, escalation or sync
+      '''
+    }
+    signalbox.harness -> signalbox.gateway 'tool result' {
+      notes '- The model reads an ordinary test run'
+    }
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'final pull' {
+      notes '''
+        - 2 minutes with no command, no edits to a running process, no port traffic
+        - Before any hibernate: nothing pending stays on the VM
+      '''
+    }
+    signalbox.computer.vmLifecycle -> platform.boxd 'hibernate' {
+      notes '''
+        - Explicit: boxd\'s own idle clock only counts network
+        - Billed for disk only; `deleteAfter` set to the H-hour horizon
+      '''
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'next heavy command' {
+      notes '- Later in this turn or the next: `npm run build`'
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.computer.vmLifecycle 'escalate argv'
+    signalbox.computer.vmLifecycle -> platform.boxd 'resume hibernated VM' {
+      notes '''
+        - Same bracket as above; the warm node_modules is still on its disk
+        - Then idle, final pull and hibernate again
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'thread settles' {
+      navigateTo lifecycle_park_and_shutdown
+      notes '- The turn already committed its files to the Drive'
+    }
+    signalbox.computer.vmLifecycle -> platform.boxd 'delete VM' {
+      notes '''
+        - Only regenerable state is lost; it resets to the Base next time
+        - Also at archive, or when `deleteAfter` fires after H hours hibernated
+      '''
+    }
+    signalbox.computer.vmLifecycle -> signalbox.bases 'release lease'
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Long-lived processes ─────────────────────────────
+
+  dynamic view lifecycle_long_process {
+    variant sequence
+    title 'Workflows/Lifecycle/Agent runs a dev server'
+    description '''
+      The agent starts `npm run dev &`. When is the VM awake? Only while something happens: a request through
+      the port gateway, source edits streaming to it, the process writing output, or a command running. After
+      2 quiet minutes it hibernates with the process frozen, not killed, and wakes on the next request or edit.
+    '''
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.funnel.portGateway,
+      signalbox.harness,
+      signalbox.computer.backend.kernelFs with { title 'Kernel · live FS' },
+      signalbox.computer.vmLifecycle,
+      signalbox.computer.execDaemon,
+      platform.boxd
+
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'exec: npm run dev &' {
+      notes '''
+        - The agent\'s own background process, exactly as on a normal computer
+        - Claude Code stays in the session facet
+      '''
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.computer.vmLifecycle 'escalate argv' {
+      navigateTo lifecycle_tool_needs_vm
+      notes '- Dev servers need a real machine: fork, resume or attach as for any command'
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'push delta · start'
+    signalbox.computer.execDaemon -> signalbox.funnel.portGateway 'outbound tunnel' {
+      navigateTo work_previews_port_url
+      notes '''
+        - The daemon dials out; boxd\'s public URL points at a dead port
+      '''
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.harness 'job started' {
+      notes '- Output so far, like `&` in any shell'
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'port(5173)'
+    signalbox.computer.backend.kernelFs -> signalbox.harness 'preview URL' {
+      notes '- One authenticated URL, the same for A, the agent and the renderer'
+    }
+    loop 'while something happens' {
+      signalbox.harness -> signalbox.computer.backend.kernelFs 'edit src/App.tsx' {
+        notes '- Written in the live FS, as every edit is'
+      }
+      signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'stream edit' {
+        navigateTo lifecycle_file_sync
+        notes '''
+          - A debounced source delta, so hot reload sees it
+          - Counts as activity
+        '''
+      }
+      personA -> signalbox.web 'open preview'
+      signalbox.web -> signalbox.funnel.portGateway 'GET /'
+      signalbox.funnel.portGateway -> signalbox.computer.execDaemon 'forward request' {
+        notes '- Counts as activity; so does the process writing output'
+      }
+    }
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'final pull' {
+      notes '- 2 quiet minutes; anything the server wrote comes back first'
+    }
+    signalbox.computer.vmLifecycle -> platform.boxd 'hibernate' {
+      navigateTo lifecycle_idle_dev_server
+      notes '''
+        - Memory goes to disk: the dev server is frozen, not killed
+        - The next request or edit resumes it; the first request is a little slower
+      '''
+    }
+    alt 'how the process ends' {
+      when 'agent stops it or it exits' {
+        signalbox.harness -> signalbox.computer.backend.kernelFs 'kill %1' {
+          notes '- Or the process exits on its own; the result reads like any shell'
+        }
+        signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'signal process'
+      }
+      else 'thread settles or is archived' {
+        signalbox.computer.vmLifecycle -> platform.boxd 'delete VM' {
+          navigateTo lifecycle_boxd_data
+          notes '''
+            - The process goes with it; source was already pulled
+            - If the preview is needed later, the agent\'s start command reruns on a fresh VM
+          '''
+        }
+      }
+    }
+
+    include signalbox, signalbox.computer, signalbox.funnel, platform
+    style signalbox, signalbox.computer, signalbox.funnel, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view lifecycle_idle_dev_server {
+    variant sequence
+    title 'Workflows/Lifecycle/Nobody uses the dev server for an hour'
+    description '''
+      The agent started a dev server and nobody used it. What happens when Person A opens the preview an hour
+      later? The VM hibernated with the server frozen; the port gateway holds the request while the VM
+      resumes, then serves it. A and the model see a normal, slightly slow first request.
+    '''
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.funnel.portGateway,
+      signalbox.thread.threadActor,
+      signalbox.harness,
+      signalbox.computer.vmLifecycle,
+      signalbox.computer.execDaemon,
+      platform.boxd
+
+    signalbox.harness -> signalbox.computer.vmLifecycle 'exec: npm run dev &' {
+      navigateTo lifecycle_long_process
+      notes '- The agent starts the server in a turn, then the turn ends'
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'start process'
+    signalbox.computer.vmLifecycle -> signalbox.computer.vmLifecycle '2 min, no activity' {
+      notes '''
+        - No requests, no edits, no output, no commands
+        - A running process alone keeps nothing awake
+      '''
+    }
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'final pull'
+    signalbox.computer.vmLifecycle -> platform.boxd 'hibernate' {
+      notes '''
+        - The server is frozen in memory on disk, not killed
+        - Billed for disk only
+      '''
+    }
+    personA -> signalbox.web 'open preview URL' {
+      notes '- An hour later'
+    }
+    signalbox.web -> signalbox.funnel.portGateway 'GET /'
+    signalbox.funnel.portGateway -> signalbox.thread.threadActor 'resolve computer' {
+      navigateTo work_previews_open
+      notes '- Access check: can A see this thread? The Thread wakes if it was evicted'
+    }
+    signalbox.funnel.portGateway -> signalbox.funnel.portGateway 'hold request' {
+      notes '- No "starting" page; the browser just waits'
+    }
+    signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'wake for port'
+    alt 'VM' {
+      when 'hibernated' {
+        signalbox.computer.vmLifecycle -> platform.boxd 'resume' {
+          notes '- Same process, same port, same in-memory state'
+        }
+      }
+      else 'deleted (settle · archive · H hours)' {
+        signalbox.computer.vmLifecycle -> platform.boxd 'fork fresh from Base' {
+          navigateTo lifecycle_tool_needs_vm
+        }
+        signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'rerun start command' {
+          notes '''
+            - The command the agent originally ran, after the usual push
+            - The model doesn\'t see this
+            - **Open question:** processes that can\'t be rerun faithfully (in-memory state, interactive setup)
+          '''
+        }
+      }
+    }
+    signalbox.computer.execDaemon -> signalbox.funnel.portGateway 'tunnel up'
+    signalbox.funnel.portGateway -> signalbox.computer.execDaemon 'forward request'
+    signalbox.web <- signalbox.funnel.portGateway 'page' {
+      notes '''
+        - A slightly slow first request, as if the server had kept running
+        - After 2 more quiet minutes the VM hibernates again
+      '''
+    }
+
+    include signalbox, signalbox.computer, signalbox.funnel, platform
+    style signalbox, signalbox.computer, signalbox.funnel, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Waking, forking, stopping ─────────────────────────────
+
+  dynamic view lifecycle_wake_after_day {
+    variant sequence
+    title 'Workflows/Lifecycle/Message a thread dormant for a day'
+    description '''
+      Person A messages a thread that has been dormant for a day. What wakes, and in what order? The Thread
+      DO wakes, the harness resumes from the session mirror, files hydrate on read from the fork (back from
+      R2 if it was evicted), and the first heavy command forks a fresh VM from today's Base.
+    '''
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.thread.threadActor,
+      signalbox.harness,
+      signalbox.computer.backend.kernelFs with { title 'Kernel · live FS' },
+      signalbox.computer.vmLifecycle,
+      signalbox.bases,
+      signalbox.drive,
+      platform.boxd
+
+    personA -> signalbox.web 'send message' {
+      notes '''
+        - **Start:** facet evicted, live FS holds a manifest only, VM deleted
+        - The fork may have moved to R2 if the drive went idle
+      '''
+    }
+    signalbox.web -> signalbox.thread.threadActor 'thread input' {
+      notes '- The Thread DO wakes; the client shows the turn as starting, never a frozen spinner'
+    }
+    opt 'fork evicted to R2' {
+      signalbox.thread.threadActor -> signalbox.drive 'promote fork' {
+        navigateTo work_drive_eviction
+        notes '- Rebuilt into Artifacts from the R2 bundle; reads are served from R2 meanwhile'
+      }
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'resume from mirror' {
+      navigateTo work_turns_cold_wake
+      notes '''
+        - The facet loads by code id; the session comes from the mirror
+        - Keep-alive is on for the turn
+      '''
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'read src/app.ts' {
+      notes '- The manifest knows every path and size; the content is not local'
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.drive 'hydrate from fork' {
+      navigateTo work_drive_live_fs_read
+    }
+    signalbox.computer.backend.kernelFs <- signalbox.drive 'bytes'
+    signalbox.computer.backend.kernelFs -> signalbox.harness 'file' {
+      notes '''
+        - A normal read, a bit slower the first time
+        - node_modules reads hydrate from the Base\'s chunks in R2; a read never forks a VM
+      '''
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'exec(npm test)'
+    signalbox.computer.backend.kernelFs -> signalbox.computer.vmLifecycle 'escalate argv'
+    signalbox.computer.vmLifecycle -> signalbox.bases 'lease current Base' {
+      navigateTo work_bases_lease
+      notes '- Today\'s Base, not the one the thread used yesterday'
+    }
+    signalbox.computer.vmLifecycle -> platform.boxd 'fork fresh VM' {
+      notes '- Nothing to resume: yesterday\'s VM was deleted'
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'push · run · pull' {
+      navigateTo lifecycle_tool_needs_vm
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.harness 'Bash result' {
+      notes '- Same as on any machine; then the VM idles and hibernates as usual'
+    }
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view lifecycle_fork_thread {
+    variant sequence
+    title 'Workflows/Lifecycle/Fork a thread'
+    description '''
+      Person A forks a thread. What does the child get, and what stays with the parent? The parent saves first,
+      the Drive forks at that exact commit, and the child gets its own computer with an empty live FS that
+      hydrates on read. No VM is copied: the child forks its own from the Base if it ever needs one.
+    '''
+
+    include
+      personA,
+      hier.company.team.sharedThread with { title 'Parent thread' },
+      signalbox.web,
+      signalbox.thread.threadActor with { title 'Child thread' },
+      signalbox.harness,
+      signalbox.computer,
+      signalbox.drive,
+      signalbox.bases,
+      platform.boxd
+
+    personA -> signalbox.web 'Fork from here'
+    signalbox.web -> hier.company.team.sharedThread 'Fork{at}' {
+      navigateTo work_threads_fork_at_point
+    }
+    hier.company.team.sharedThread -> signalbox.computer 'Computer.save' {
+      notes '''
+        - The parent saves first, so the fork point is a real commit
+        - Durable in the Drive when it returns
+      '''
+    }
+    signalbox.computer -> signalbox.drive 'commit live FS'
+    hier.company.team.sharedThread <- signalbox.computer 'revision'
+    hier.company.team.sharedThread -> signalbox.thread.threadActor 'seed child' {
+      notes '- Lineage `{parent, atTurn}`; same folder as the parent'
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'Drive.fork @ commit' {
+      navigateTo work_drive_thread_fork
+      notes '- CAS to the exact revision; the kept-local ref forks with it'
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'fork session'
+    signalbox.thread.threadActor -> signalbox.computer 'Computers.open' {
+      notes '''
+        - A fresh identity and an empty live FS: a manifest of the fork, no content yet
+        - No VM, no process and no regenerable files are copied
+      '''
+    }
+    signalbox.harness -> signalbox.computer 'first read'
+    signalbox.computer -> signalbox.drive 'hydrate on read' {
+      navigateTo work_drive_live_fs_read
+    }
+    opt 'child runs a heavy command' {
+      signalbox.harness -> signalbox.computer 'exec(npm test)'
+      signalbox.computer -> signalbox.bases 'lease Base'
+      signalbox.computer -> platform.boxd 'fork child VM' {
+        navigateTo lifecycle_tool_needs_vm
+        notes '- Its own `t-{childId}-g1`, from the Base, never from the parent\'s VM'
+      }
+    }
+    hier.company.team.sharedThread -> hier.company.team.sharedThread 'keeps its VM' {
+      notes '''
+        - The parent\'s VM and its dev server stay with the parent
+        - Each idles, hibernates and is deleted on its own thread\'s schedule
+      '''
+    }
+
+    include signalbox, hier.company.team
+    style signalbox, hier.company.team {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view lifecycle_interrupt {
+    variant sequence
+    title 'Workflows/Lifecycle/Interrupt during a VM command'
+    description '''
+      Person A interrupts a turn while an escalated command runs. What stops and what is kept? The kernel
+      programs stop, the VM process is killed through the exec daemon, the changes so far come back (partial
+      writes stay, as on a real machine), the turn ends interrupted with its work kept, and the VM hibernates.
+    '''
+
+    include
+      personA,
+      signalbox.web,
+      signalbox.thread.threadActor,
+      signalbox.harness,
+      signalbox.computer.backend.kernelFs with { title 'Kernel · live FS' },
+      signalbox.computer.vmLifecycle,
+      signalbox.computer.execDaemon,
+      signalbox.drive,
+      platform.boxd
+
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'run npm run build' {
+      navigateTo lifecycle_tool_needs_vm
+      notes '- **Start:** the agent\'s build escalated and is running'
+    }
+    personA -> signalbox.web 'Stop'
+    signalbox.web -> signalbox.thread.threadActor 'Interrupt' {
+      navigateTo work_turns_interrupt_stop
+    }
+    signalbox.thread.threadActor -> signalbox.harness 'control(Interrupt)'
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'stop programs' {
+      notes '- Kernel programs in child isolates stop'
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.computer.vmLifecycle 'kill escalated exec'
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'kill process'
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'pull changes so far' {
+      notes '''
+        - Whatever the build already wrote comes back
+        - Partial writes stay, as on a real machine stopped mid-build
+      '''
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply to live FS'
+    signalbox.computer.backend.kernelFs -> signalbox.harness 'interrupted result' {
+      notes '''
+        - Reads like Ctrl-C in any shell: output so far, ended by a signal
+        - An unsafe call with an unknown outcome is never replayed
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.computer.backend.kernelFs 'save turn'
+    signalbox.computer.backend.kernelFs -> signalbox.drive 'commit' {
+      navigateTo work_turns_settle
+      notes '- The turn ends `interrupted`; its work is kept'
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'clear keep-alive'
+    signalbox.computer.vmLifecycle -> platform.boxd 'hibernate after 2 min' {
+      navigateTo state_computer
+      notes '- Nothing left to pull; deleted later at settle, archive or after H hours'
+    }
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Parking and shutting down ─────────────────────────────
+
+  dynamic view lifecycle_park_and_shutdown {
+    variant sequence
+    title 'Workflows/Lifecycle/Park on an ask, then settle'
+    description '''
+      A turn waits on Person A. What keeps running while A thinks, and what goes away after the thread
+      settles? Parking mirrors the session, clears keep-alive, evicts the facet and hibernates the VM (A39).
+      Settling commits, deletes the VM, and later the idle evictions empty the live FS and move the fork to R2.
+    '''
+
+    include
+      personA,
+      signalbox.attention,
+      signalbox.thread.threadActor,
+      signalbox.harness,
+      signalbox.computer.backend.kernelFs with { title 'Kernel · live FS' },
+      signalbox.computer.vmLifecycle,
+      signalbox.drive,
+      signalbox.automations,
+      platform.boxd
+
+    signalbox.harness -> signalbox.thread.threadActor 'ask' {
+      notes '''
+        - A question for A, a decision gate or an access ask
+        - Waiting on a model or a running command is active work and never parks
+      '''
+    }
+    signalbox.thread.threadActor -> signalbox.attention 'raise ask'
+    par 'park (A39)' {
+      signalbox.thread.threadActor -> signalbox.harness 'mirror · evict facet' {
+        navigateTo work_approvals_turn_parks
+        notes '- The session lands in the Thread; the facet\'s isolate is released'
+      }
+      signalbox.thread.threadActor -> signalbox.thread.threadActor 'clear keep-alive'
+      signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'hibernate VM' {
+        notes '- Only if one is attached; final pull first'
+      }
+    }
+    signalbox.computer.vmLifecycle -> platform.boxd 'hibernate'
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'parked{ask}' {
+      notes '- Zero resident time while A is away, even for hours'
+    }
+    personA -> signalbox.attention 'answers'
+    signalbox.attention -> signalbox.thread.threadActor 'answer'
+    signalbox.thread.threadActor -> signalbox.harness 'resume from mirror' {
+      navigateTo work_turns_cold_wake
+      notes '''
+        - Keep-alive back on; the answer is the pending tool result
+        - The VM stays hibernated until a command needs it
+      '''
+    }
+    signalbox.harness -> signalbox.thread.threadActor 'turn completed'
+    signalbox.thread.threadActor -> signalbox.computer.backend.kernelFs 'save turn'
+    signalbox.computer.backend.kernelFs -> signalbox.drive 'commit to fork' {
+      navigateTo lifecycle_file_sync
+      notes '- From here the live FS is cache'
+    }
+    signalbox.thread.threadActor -> signalbox.thread.threadActor 'clear keep-alive'
+    signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'thread settles' {
+      navigateTo state_thread
+    }
+    signalbox.computer.vmLifecycle -> platform.boxd 'delete VM' {
+      notes '- Release the Base lease; only regenerable state is lost'
+    }
+    signalbox.automations -> signalbox.computer.backend.kernelFs 'idle live-FS eviction' {
+      notes '''
+        - A default automation: drops contents, keeps the manifest
+        - The next read rehydrates from the fork
+      '''
+    }
+    signalbox.automations -> signalbox.drive 'idle-drive eviction' {
+      navigateTo work_drive_eviction
+      notes '''
+        - Moves the idle Artifacts repo to R2 once the R2 copy is confirmed
+        - Opening or messaging the thread brings it back
+      '''
+    }
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Where files live ─────────────────────────────
+
+  dynamic view lifecycle_file_sync {
+    variant sequence
+    title 'Workflows/Lifecycle/Where each file lives'
+    description '''
+      Where does each path class live, and how does it move? Source and kept-local files live in the live FS
+      until the turn-end commit; regenerable files (node_modules, dist, caches) belong to the VM and the Base,
+      with only a manifest in the isolate. While a command runs on the VM, the last write per path wins.
+    '''
+
+    include
+      signalbox.harness,
+      signalbox.computer.backend.kernelFs with { title 'Kernel · live FS' },
+      signalbox.computer.vmLifecycle,
+      signalbox.computer.execDaemon,
+      signalbox.drive,
+      platform.artifacts,
+      platform.r2
+
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'edit src/a.ts' {
+      notes '''
+        - **Source:** the live FS is the authority until the turn-end commit
+        - Same for **kept-local** files such as `.env` or scratch notes
+      '''
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'exec(npm run build)'
+    signalbox.computer.backend.kernelFs -> signalbox.computer.vmLifecycle 'escalate argv'
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'push delta' {
+      notes '''
+        - Source and kept-local changes since the last sync
+        - `.git` read-only; secrets materialize only in memory (#1242)
+      '''
+    }
+    signalbox.computer.execDaemon -> signalbox.computer.execDaemon 'writes dist/, src/gen.ts' {
+      notes '''
+        - `dist/` is **regenerable**: it stays on the VM
+        - `src/gen.ts` is source: it comes back
+      '''
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'edit src/gen.ts' {
+      notes '- Meanwhile, the agent writes the same path in the isolate'
+    }
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'pull changes' {
+      notes '- Source and kept-local changes plus a regenerable manifest delta (names, sizes, mtimes, hashes)'
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.backend.kernelFs 'apply: last write wins' {
+      navigateTo work_computer_escalate
+      notes '''
+        - Per path, the later write by write time stays, as on one machine
+        - The agent is never told about a conflict
+      '''
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'read dist/index.js'
+    alt 'regenerable content' {
+      when 'VM attached' {
+        signalbox.computer.backend.kernelFs -> signalbox.computer.execDaemon 'hydrate from VM' {
+          navigateTo work_computer_paths_regenerable
+        }
+      }
+      else 'no VM' {
+        signalbox.computer.backend.kernelFs -> platform.r2 'Base chunks' {
+          notes '- The Base\'s content-addressed chunk set; a read never forks a VM'
+        }
+      }
+    }
+    signalbox.harness -> signalbox.computer.backend.kernelFs 'git commit' {
+      notes '''
+        - Git always runs in the kernel on the canonical view (placeholders for secrets)
+        - Never escalated, so no VM-side git result is ever pulled back
+      '''
+    }
+    signalbox.computer.backend.kernelFs -> signalbox.drive 'turn-end commit' {
+      navigateTo work_turns_settle
+      notes '''
+        - Source to the thread\'s working ref; kept-local to `machine/<thread>`
+        - Regenerable files are never committed
+      '''
+    }
+    signalbox.drive -> platform.artifacts 'push to fork' {
+      notes '- The thread\'s Artifacts fork: the hot tier'
+    }
+    signalbox.drive -> platform.r2 'write-through' {
+      navigateTo work_drive_r2_record
+      notes '''
+        - R2 is the full record
+        - From here the live FS is cache
+      '''
+    }
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view lifecycle_boxd_data {
+    variant sequence
+    title 'Workflows/Lifecycle/What lives on boxd'
+    description '''
+      What do we keep on boxd, and what do archive and trash do to it? Nothing but cache: a VM's default
+      100 GB disk holds regenerable files, source comes back after every command and before every hibernate,
+      and Bases are snapshots that belong to the drive. Archive deletes the VM at once; trash also drops the
+      hot fork; restore needs no VM.
+    '''
+
+    include
+      personA,
+      signalbox.thread.threadActor,
+      signalbox.computer.vmLifecycle,
+      signalbox.computer.execDaemon,
+      signalbox.bases,
+      signalbox.drive,
+      signalbox.automations,
+      platform.boxd,
+      platform.r2
+
+    signalbox.computer.vmLifecycle -> platform.boxd 'fork from Base' {
+      navigateTo work_bases_lease
+      notes '''
+        - We use machines (create, fork, hibernate, resume, delete) and named Base snapshots per drive and recipe
+        - The default 100 GB disk is cache only; mounted disks are an open option, not decided
+      '''
+    }
+    signalbox.computer.vmLifecycle -> platform.boxd 'lock down' {
+      navigateTo work_computer_egress_vm
+      notes '''
+        - `deleteAfter` on every VM, so boxd deletes it even if our DO dies
+        - Egress allowlist; host-bound secrets for platform-wide credentials only
+        - Default public URL at a dead port; previews use our port gateway
+      '''
+    }
+    signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'run command'
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'pull right after' {
+      navigateTo lifecycle_file_sync
+      notes '- Source and kept-local changes never wait on the VM'
+    }
+    signalbox.computer.vmLifecycle <- signalbox.computer.execDaemon 'final pull'
+    signalbox.computer.vmLifecycle -> platform.boxd 'hibernate' {
+      notes '- Before any hibernate, a dev server\'s too; losing the VM now loses only regenerable state'
+    }
+    alt 'what ends the VM' {
+      when 'settle' {
+        signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'commit, then delete'
+        signalbox.computer.vmLifecycle -> platform.boxd 'delete by name'
+        signalbox.computer.vmLifecycle -> signalbox.bases 'release lease'
+      }
+      when 'archive' {
+        personA -> signalbox.thread.threadActor 'archive' {
+          navigateTo work_threads_lifecycle_archive
+          notes '''
+            - Deletes the VM at once; nothing needs saving
+            - Never merges; the fork stays until idle-drive eviction moves it to R2
+            - Unarchive restores nothing on boxd
+          '''
+        }
+        signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'delete now'
+        signalbox.computer.vmLifecycle -> platform.boxd 'delete by name'
+        signalbox.computer.vmLifecycle -> signalbox.bases 'release lease'
+      }
+      when 'H hours hibernated' {
+        platform.boxd -> platform.boxd 'deleteAfter fires' {
+          notes '''
+            - H is not decided yet
+            - The Base lease expires with it (`expiresAt` = `deleteAfter`)
+          '''
+        }
+      }
+      else 'no record' {
+        signalbox.automations -> platform.boxd 'hourly reconcile' {
+          navigateTo work_computer_vm_reconcile
+          notes '- Deletes VMs with no record; releases leases whose machine is NOT_FOUND'
+        }
+      }
+    }
+    personA -> signalbox.thread.threadActor 'trash thread' {
+      navigateTo work_threads_lifecycle_trash
+      notes '- 30-day trash: R2 and the thread record stay'
+    }
+    signalbox.thread.threadActor -> signalbox.drive 'purge hot copies' {
+      notes '- Purge workers remove the Artifacts fork and the kept-local ref'
+    }
+    signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'purge machine' {
+      notes '- The boxd machine by name, and its Base lease'
+    }
+    opt 'restore within 30 days' {
+      personA -> signalbox.thread.threadActor 'restore'
+      signalbox.drive -> platform.r2 'fork back from R2' {
+        navigateTo work_drive_eviction
+        notes '- No VM needed; the next heavy command forks fresh from the Base'
+      }
+    }
+    signalbox.drive -> signalbox.bases 'drive trashed' {
+      notes '''
+        - A trashed or deleted folder or drive releases its Base leases
+        - Snapshots retire at zero leases; cleanup mechanics are deferred
+      '''
+    }
+
+    include signalbox, signalbox.computer, platform
+    style signalbox, signalbox.computer, platform {
+      color muted
+      opacity 10%
+    }
+  }
+}
