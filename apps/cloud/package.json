@@ -16,6 +16,7 @@
     "@signalbox/account": "workspace:*",
     "@signalbox/api": "workspace:*",
     "@signalbox/automations": "workspace:*",
+    "@signalbox/provider-claude": "workspace:*",
     "@signalbox/provider-codex": "workspace:*",
     "@signalbox/runner-protocol": "workspace:*",
     "@signalbox/sync": "workspace:*",
