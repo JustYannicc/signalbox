@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Node streams supply the explicit guest host context and capture warning output.
 import * as NodeStream from "node:stream";
 import { describe, expect, it } from "vite-plus/test";
 import { createNodeProcess, type NodeProcessHostContext } from "../NodeProcess.ts";
