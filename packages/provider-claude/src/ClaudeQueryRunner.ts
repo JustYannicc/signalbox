@@ -41,6 +41,8 @@ export type ClaudeAgentSdkQueryOptions = Omit<
   readonly permissionMode: NonNullable<ClaudeQueryOptions["permissionMode"]>;
 } & ClaudeAgentSdkThreadIdentity;
 
+export type ClaudeAgentSdkMcpServers = NonNullable<ClaudeAgentSdkQueryOptions["mcpServers"]>;
+
 export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
@@ -50,6 +52,11 @@ export interface ClaudeAgentSdkQueryOpenInput {
 export interface ClaudeAgentSdkQuerySession {
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Strictly installs the supplied map on this retained native Query; an empty map clears it. */
+  readonly configureMcp?: (
+    servers: ClaudeAgentSdkMcpServers,
+    signal: AbortSignal,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly applyFlagSettings: (
     settings: ClaudeFlagSettings,

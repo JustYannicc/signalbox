@@ -9,8 +9,14 @@ import {
   type KernelNodeChildStdioProgram,
   type KernelProgramHost,
   type KernelProgramPrepareInput,
+  type KernelPreparedProgram,
 } from "../../../kernel/KernelProgramHost.ts";
-import { callKernel, type KernelHandle, type ResolvedProgram } from "../../../kernel/KernelAbi.ts";
+import {
+  callKernel,
+  type KernelHandle,
+  type KernelResult,
+  type ResolvedProgram,
+} from "../../../kernel/KernelAbi.ts";
 import type { NodeProcessHostContext } from "../process/context.ts";
 import { unsupportedNodeOperation } from "../process/NodeError.ts";
 import { abortError, asChildProcessError, isCode, unwrapHostResult } from "./errors.ts";
@@ -18,6 +24,14 @@ import { normalizeSignal, signalName, type NormalizedSpawn } from "./arguments.t
 
 export type NodeChildProcessContext = KernelProgramPrepareInput &
   Pick<NodeProcessHostContext, "env">;
+
+export interface NodeChildProcessTransport {
+  readonly exitStatus?: KernelProgramHost["exitStatus"];
+  readonly spawn: (
+    prepared: KernelPreparedProgram,
+    spawn: NormalizedSpawn,
+  ) => KernelResult<KernelHandle<"process">>;
+}
 
 const synchronousSpawnErrors = new WeakMap<NodeChildProcess, Error>();
 
@@ -53,6 +67,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
 
   readonly #host: KernelProgramHost;
   readonly #context: NodeChildProcessContext;
+  readonly #transport: NodeChildProcessTransport | undefined;
   readonly #spawn: NormalizedSpawn;
   readonly #hostAbortController = new AbortController();
   readonly #abortListeners = new Map<AbortSignal, () => void>();
@@ -69,9 +84,15 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
   #errorScheduled = false;
   #timeout: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(host: KernelProgramHost, context: NodeChildProcessContext, spawn: NormalizedSpawn) {
+  constructor(
+    host: KernelProgramHost,
+    context: NodeChildProcessContext,
+    spawn: NormalizedSpawn,
+    transport?: NodeChildProcessTransport,
+  ) {
     super();
     this.#host = host;
+    this.#transport = transport;
     this.#context = context;
     this.#spawn = spawn;
     this.spawnfile = spawn.spawnfile;
@@ -154,10 +175,13 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
         this.#fail(abortError());
         return;
       }
-      const program = unwrapHostResult(
-        this.#host.resolve(this.#spawn.executable),
-        "spawn",
-      ) as ResolvedProgram;
+      const program =
+        this.#transport === undefined
+          ? (unwrapHostResult(
+              this.#host.resolve(this.#spawn.executable),
+              "spawn",
+            ) as ResolvedProgram)
+          : undefined;
       const input = { ...this.#context, signal: this.#hostAbortController.signal };
       if (this.#spawn.stdio.every((mode) => mode === "pipe")) {
         const piped = this.#host.preparePiped(input, { cwd: this.#spawn.cwd });
@@ -181,12 +205,14 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
       this.#preparedReleased = false;
       this.#connectPipes(prepared);
 
-      const backend = this.#host.backend(prepared.prepared);
-      const spawned = callKernel(backend, "process.spawn", {
-        program,
-        args: this.#spawn.argv,
-        env: this.#spawn.env,
-      });
+      const spawned =
+        this.#transport === undefined
+          ? callKernel(this.#host.backend(prepared.prepared), "process.spawn", {
+              program: program!,
+              args: this.#spawn.argv,
+              env: this.#spawn.env,
+            })
+          : this.#transport.spawn(prepared.prepared, this.#spawn);
       const handle = unwrapHostResult(spawned, "spawn") as KernelHandle<"process">;
       this.#handle = handle;
       const info = unwrapHostResult(this.#host.processes.info(handle), "wait") as
@@ -215,7 +241,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
 
   async #finishFailedSpawn(handle: KernelHandle<"process">): Promise<void> {
     try {
-      await this.#host.exitStatus(handle);
+      await (this.#transport?.exitStatus?.(handle) ?? this.#host.exitStatus(handle));
     } catch {
       // The original synchronous spawn failure is the useful error for this child.
     }
@@ -299,7 +325,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
   async #waitForExit(handle: KernelHandle<"process">): Promise<void> {
     try {
       const status = unwrapHostResult(
-        await this.#host.exitStatus(handle),
+        await (this.#transport?.exitStatus?.(handle) ?? this.#host.exitStatus(handle)),
         "wait",
       ) as KernelExitStatus;
       this.#onExit(status);

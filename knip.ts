@@ -123,6 +123,7 @@ export default {
         "src/computer/*.ts", // Public Computer entry points consumed by Harness and generated worker compositions.
         // signalbox: public Harness constructors are consumed by generated session workers.
         "src/harness/AdapterHarness.ts",
+        "src/harness/ClaudeNativeHostBinding.ts",
         "src/harness/CodexNativeHostBinding.ts",
         "src/harness/Harness.ts",
         "src/harness/HarnessReleaseLoader.ts",

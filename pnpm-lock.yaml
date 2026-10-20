@@ -263,6 +263,9 @@ importers:
       '@signalbox/automations':
         specifier: workspace:*
         version: link:../../packages/automations
+      '@signalbox/provider-claude':
+        specifier: workspace:*
+        version: link:../../packages/provider-claude
       '@signalbox/provider-codex':
         specifier: workspace:*
         version: link:../../packages/provider-codex

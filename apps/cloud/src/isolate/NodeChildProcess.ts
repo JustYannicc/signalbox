@@ -5,6 +5,7 @@ import {
   NodeChildProcess,
   type NodeChildProcessContext,
   type NodeChildProcessWithPipes,
+  type NodeChildProcessTransport,
 } from "./node/childProcess/ChildProcess.ts";
 import {
   isArgumentList,
@@ -31,13 +32,18 @@ import { resolveGuestExecutable } from "./node/childProcess/resolveExecutable.ts
 export { NodeChildProcess as ChildProcess, NodeChildProcess };
 export type { NodeChildProcessWithPipes };
 export type { NodeChildProcessOptions, NodeExecOptions, NodeSyncOptions, ExecCallback };
-export type { NodeChildProcessContext };
+export type { NodeChildProcessContext, NodeChildProcessTransport };
 
 type DefaultPipedNodeChildProcessOptions = NodeChildProcessOptions & {
   readonly stdio?: "pipe" | null | undefined;
 };
 
-export function createNodeChildProcess(host: KernelProgramHost, process: NodeChildProcessContext) {
+export function createNodeChildProcess(
+  host: KernelProgramHost,
+  process: NodeChildProcessContext,
+  transport?: NodeChildProcessTransport,
+  onChild?: (child: NodeChildProcess) => void,
+) {
   if (
     !host ||
     typeof host.prepare !== "function" ||
@@ -84,6 +90,7 @@ export function createNodeChildProcess(host: KernelProgramHost, process: NodeChi
   ): NodeChildProcess {
     const [args, spawnOptions] = parseSpawnArguments(argsOrOptions, options);
     const normalized = normalizeSpawn(file, args, spawnOptions, defaults);
+    if (transport !== undefined) return startChild(normalized);
     const resolution = resolveGuestExecutable(host, normalized.spawnfile, {
       cwd: normalized.cwd,
       baseCwd: defaults.cwd(),
@@ -98,7 +105,8 @@ export function createNodeChildProcess(host: KernelProgramHost, process: NodeChi
   }
 
   function startChild(normalized: ReturnType<typeof normalizeSpawn>): NodeChildProcess {
-    const child = new NodeChildProcess(host, process, normalized);
+    const child = new NodeChildProcess(host, process, normalized, transport);
+    onChild?.(child);
     child.start();
     return child;
   }
@@ -108,7 +116,12 @@ export function createNodeChildProcess(host: KernelProgramHost, process: NodeChi
       ? spawn(file, argsOrOptions, options ?? {})
       : spawn(file, argsOrOptions ?? {});
   const asyncMethods = createExecMethods(execSpawner, spawnShell);
-  const syncMethods = createSyncMethods(host, process, defaults);
+  const unsupportedSync = (): never =>
+    unsupportedNodeOperation("child_process synchronous Computer exec");
+  const syncMethods =
+    transport === undefined
+      ? createSyncMethods(host, process, defaults)
+      : { spawnSync: unsupportedSync, execSync: unsupportedSync, execFileSync: unsupportedSync };
   const fork = (..._args: unknown[]): never => unsupportedNodeOperation("child_process.fork IPC");
 
   return Object.freeze({
