@@ -110,8 +110,8 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
     if (this.#closed) return;
     let next: Baseline;
     try {
-      // Full rescans of every watched tree at 10 Hz kept a waiting harness busy enough to exhaust
-      // its isolate heap, so skip them while nothing has been committed.
+      // Rescanning every watched tree each tick costs a path walk and stat per entry; skip it while
+      // nothing has committed.
       const generation = this.#kernelFs.changeGeneration();
       if (generation !== undefined && generation === this.#baseline.generation) return;
       next = {

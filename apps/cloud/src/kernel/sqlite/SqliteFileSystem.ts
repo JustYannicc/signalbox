@@ -1,5 +1,5 @@
 import type { PosixStorage } from "../PosixStorage.ts";
-import type { ChangeGenerationStorage } from "../StorageChanges.ts";
+import type { ChangeGenerationStorage } from "../ChangeGenerationStorage.ts";
 import { SqliteChunks } from "./SqliteChunks.ts";
 import { SqliteInodes } from "./SqliteInodes.ts";
 import { type FacetStorage, firstRow } from "./SqliteDatabase.ts";

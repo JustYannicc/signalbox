@@ -1,7 +1,7 @@
 import { canonicalFileByteSelection, type KernelFileByteSelection } from "./KernelFileBytes.ts";
 import type { Mount, Storage, Times } from "./storage.ts";
 import type { CreateOptions, Inode } from "./storage.ts";
-import { readChangeGeneration } from "./StorageChanges.ts";
+import { hasChangeGeneration } from "./ChangeGenerationStorage.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
 import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { runSync } from "./wasi/internal_wasi_calls.ts";
@@ -178,13 +178,11 @@ export class KernelFileSystem {
   changeGeneration(): number | undefined {
     return this.#system(() => {
       this.#assertOpen();
-      if (this.#mounts.length === 0) return undefined;
       // Each part never decreases, so an equal sum means every part is unchanged.
       let generation = this.#viewGeneration;
       for (const mount of this.#mounts) {
-        const value = readChangeGeneration(mount.storage);
-        if (value === undefined) return undefined;
-        generation += value;
+        if (!hasChangeGeneration(mount.storage)) return undefined;
+        generation += mount.storage.changeGeneration();
       }
       return generation;
     });

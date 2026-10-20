@@ -45,7 +45,7 @@ export function nodeFsWatchFixture(options: { readonly changeGeneration?: boolea
   const kernelFs = new KernelFileSystem({ mounts: [{ path: "/", storage: mounted }], cwd: "/" });
   return {
     kernelFs,
-    database: storage,
+    storage,
     fs: createNodeFs(kernelFs).fs,
     close() {
       try {

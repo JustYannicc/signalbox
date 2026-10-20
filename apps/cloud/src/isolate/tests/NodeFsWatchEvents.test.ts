@@ -200,7 +200,7 @@ describe("virtual filesystem event watchers", () => {
       await vi.advanceTimersByTimeAsync(200);
 
       // Hydration and revision applies write these rows directly.
-      fixture.database.sql.exec("UPDATE kernel_fs_inode SET mtime_ns = '1' WHERE ino != 1");
+      fixture.storage.sql.exec("UPDATE kernel_fs_inode SET mtime_ns = '1' WHERE ino != 1");
       await vi.advanceTimersByTimeAsync(100);
       expect(events).toContainEqual({ type: "change", name: "file.txt" });
       watcher.close();
