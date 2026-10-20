@@ -1,4 +1,6 @@
 mod bridge;
+mod client;
+mod client_request;
 mod input;
 mod protocol;
 mod startup;
@@ -36,12 +38,14 @@ async fn run() -> anyhow::Result<()> {
     let mut input = StdinLines::new().context("configure nonblocking stdin")?;
     let line = input.next_line().await?.context("missing bootstrap line")?;
     let bootstrap = Bootstrap::decode(&line)?;
+    let host_capabilities = bootstrap.host_capabilities;
     let client = Box::pin(startup::start(bootstrap)).await?;
     protocol::emit(&protocol::notification(
         "signalbox/ready",
         serde_json::json!({
             "upstreamVersion": UPSTREAM_VERSION,
             "engineVersion": env!("CARGO_PKG_VERSION"),
+            "host_capabilities": host_capabilities,
         }),
     ))?;
     bridge::run(client, input).await

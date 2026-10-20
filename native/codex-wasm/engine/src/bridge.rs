@@ -3,7 +3,6 @@ use std::io;
 use std::time::Duration;
 
 use anyhow::Context;
-use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessServerEvent;
 use codex_app_server_client::RequestResult;
 use codex_app_server_protocol::ClientNotification;
@@ -16,6 +15,7 @@ use futures::stream::FuturesUnordered;
 use serde_json::json;
 use tokio::time::Instant;
 
+use crate::client::Client;
 use crate::input::StdinLines;
 use crate::protocol;
 
@@ -24,10 +24,7 @@ const INTERRUPT_RESERVE: usize = 8;
 const EOF_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 type PendingResponse = LocalBoxFuture<'static, (RequestId, io::Result<RequestResult>)>;
 
-pub async fn run(
-    mut client: InProcessAppServerClient,
-    mut input: StdinLines,
-) -> anyhow::Result<()> {
+pub async fn run(mut client: Client, mut input: StdinLines) -> anyhow::Result<()> {
     let result = forward(&mut client, &mut input).await;
     let shutdown = client
         .shutdown()
@@ -36,10 +33,7 @@ pub async fn run(
     result.and(shutdown)
 }
 
-async fn forward(
-    client: &mut InProcessAppServerClient,
-    input: &mut StdinLines,
-) -> anyhow::Result<()> {
+async fn forward(client: &mut Client, input: &mut StdinLines) -> anyhow::Result<()> {
     let mut pending = FuturesUnordered::<PendingResponse>::new();
     let mut pending_ids = BTreeSet::new();
     let mut eof_deadline = None;
