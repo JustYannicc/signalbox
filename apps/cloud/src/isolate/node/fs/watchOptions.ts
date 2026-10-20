@@ -6,16 +6,6 @@ import type { PathLike } from "./path.ts";
 export type WatchEventType = "change" | "rename";
 export type WatchFilename = string | NodeBuffer.Buffer | null;
 
-export interface WatchEvent {
-  readonly eventType: WatchEventType;
-  readonly filename: WatchFilename;
-}
-
-export interface WatchIterator extends AsyncIterableIterator<WatchEvent> {
-  return(value?: unknown): Promise<IteratorResult<WatchEvent>>;
-  throw(error?: unknown): Promise<IteratorResult<WatchEvent>>;
-}
-
 export type WatchListener = (eventType: WatchEventType, filename: WatchFilename) => void;
 
 export interface WatchOptions {
@@ -23,11 +13,6 @@ export interface WatchOptions {
   readonly recursive?: boolean;
   readonly encoding?: BufferEncoding | "buffer";
   readonly signal?: AbortSignal;
-}
-
-export interface WatchIteratorOptions extends WatchOptions {
-  readonly maxQueue?: number;
-  readonly overflow?: "ignore" | "error" | "throw";
 }
 
 export interface WatchFunction {
@@ -44,11 +29,6 @@ export interface ResolvedWatchOptions {
   readonly recursive: boolean;
   readonly encoding: BufferEncoding | "buffer";
   readonly signal?: AbortSignal;
-}
-
-export interface ResolvedIteratorOptions extends ResolvedWatchOptions {
-  readonly maxQueue: number;
-  readonly overflow: "ignore" | "error";
 }
 
 export type RegisterCleanup = (close: () => void) => () => void;
@@ -122,38 +102,5 @@ export function parseWatchOptions(
       ...(values.signal === undefined ? {} : { signal: values.signal }),
     },
     ...(listener === undefined ? {} : { listener: listener as WatchListener }),
-  };
-}
-
-export function parseWatchIteratorOptions(
-  options: WatchIteratorOptions | BufferEncoding | "buffer" | undefined,
-): ResolvedIteratorOptions {
-  let values: WatchIteratorOptions;
-  if (options === undefined) values = {};
-  else if (typeof options === "string") values = { encoding: options as BufferEncoding | "buffer" };
-  else if (typeof options === "object" && options !== null && !Array.isArray(options))
-    values = options;
-  else invalidWatchArg("options", "of type string or an object", options);
-
-  const base = parseWatchOptions(values, undefined).options;
-  const maxQueue = values.maxQueue ?? 2048;
-  if (!Number.isSafeInteger(maxQueue) || maxQueue < 0) {
-    throw Object.assign(
-      new RangeError('The "options.maxQueue" argument must be a non-negative safe integer'),
-      { code: "ERR_OUT_OF_RANGE" },
-    );
-  }
-  const overflow = values.overflow ?? "ignore";
-  if (overflow !== "ignore" && overflow !== "error" && overflow !== "throw") {
-    throw Object.assign(
-      new TypeError('The "options.overflow" argument must be "ignore", "error", or "throw"'),
-      { code: "ERR_INVALID_ARG_VALUE" },
-    );
-  }
-
-  return {
-    ...base,
-    maxQueue,
-    overflow: overflow === "ignore" ? "ignore" : "error",
   };
 }

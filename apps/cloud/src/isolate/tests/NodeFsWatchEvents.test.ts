@@ -11,7 +11,7 @@ describe("virtual filesystem event watchers", () => {
     try {
       fixture.fs.mkdirSync("/watched");
       fixture.fs.writeFileSync("/watched/existing.txt", "before");
-      const api = { watch: fixture.fs.watch, watchPromises: fixture.fs.promises.watch };
+      const api = { watch: fixture.fs.watch };
       expect(() => api.watch("/watched/missing.txt")).toThrow(
         expect.objectContaining({ code: "ENOENT", syscall: "watch" }),
       );
@@ -51,7 +51,7 @@ describe("virtual filesystem event watchers", () => {
     const fixture = nodeFsWatchFixture();
     try {
       fixture.fs.mkdirSync("/watched");
-      const api = { watch: fixture.fs.watch, watchPromises: fixture.fs.promises.watch };
+      const api = { watch: fixture.fs.watch };
       const controller = new AbortController();
       const events: Array<{ type: string; name: string | NodeBuffer.Buffer | null }> = [];
       const watcher = api.watch(
@@ -109,10 +109,13 @@ describe("virtual filesystem event watchers", () => {
     vi.useFakeTimers();
     const fixture = nodeFsWatchFixture();
     try {
-      const api = { watch: fixture.fs.watch, watchPromises: fixture.fs.promises.watch };
+      const api = { watch: fixture.fs.watch };
       const controller = new AbortController();
       controller.abort();
-      const watcher = api.watch("/missing", { signal: controller.signal });
+      expect(() => api.watch("/missing", { signal: controller.signal })).toThrow(
+        expect.objectContaining({ code: "ENOENT", syscall: "watch" }),
+      );
+      const watcher = api.watch("/", { signal: controller.signal });
       const closed = new Promise<void>((resolve) => watcher.once("close", resolve));
       await closed;
       expect(vi.getTimerCount()).toBe(0);
@@ -126,7 +129,7 @@ describe("virtual filesystem event watchers", () => {
     const fixture = nodeFsWatchFixture();
     try {
       fixture.fs.mkdirSync("/watched");
-      const api = { watch: fixture.fs.watch, watchPromises: fixture.fs.promises.watch };
+      const api = { watch: fixture.fs.watch };
       const names: Array<string | NodeBuffer.Buffer | null> = [];
       let watcher: ReturnType<typeof api.watch>;
       watcher = api.watch("/watched", (_type, name) => {
@@ -143,76 +146,18 @@ describe("virtual filesystem event watchers", () => {
     }
   });
 
-  it("detects directory-root replacement and delivers pending events before a zero queue limit", async () => {
+  it("detects replacement of the watched directory root", async () => {
     vi.useFakeTimers();
     const fixture = nodeFsWatchFixture();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       fixture.fs.mkdirSync("/watched");
-      const api = { watch: fixture.fs.watch, watchPromises: fixture.fs.promises.watch };
-      const rootEvents: Array<{ type: string; name: string | NodeBuffer.Buffer | null }> = [];
-      const directory = api.watch("/watched", (type, name) => rootEvents.push({ type, name }));
+      const events: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/watched", (_type, name) => events.push(name));
       fixture.fs.rmSync("/watched", { recursive: true });
       fixture.fs.mkdirSync("/watched");
       await vi.advanceTimersByTimeAsync(100);
-      expect(rootEvents).toContainEqual({ type: "rename", name: "watched" });
-      directory.close();
-
-      const iterator = api.watchPromises("/watched", { maxQueue: 0, overflow: "ignore" });
-      const pending = iterator.next();
-      fixture.fs.writeFileSync("/watched/one.txt", "1");
-      fixture.fs.writeFileSync("/watched/two.txt", "2");
-      fixture.fs.writeFileSync("/watched/three.txt", "3");
-      await vi.advanceTimersByTimeAsync(100);
-      await expect(pending).resolves.toMatchObject({
-        done: false,
-        value: { eventType: "rename", filename: "one.txt" },
-      });
-      expect(warn).toHaveBeenCalledTimes(1);
-      await iterator.return();
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      warn.mockRestore();
-      fixture.close();
-    }
-  });
-
-  it("bounds the promises queue and cleans up on return, throw, and abort", async () => {
-    vi.useFakeTimers();
-    const fixture = nodeFsWatchFixture();
-    try {
-      fixture.fs.mkdirSync("/watched");
-      const api = { watch: fixture.fs.watch, watchPromises: fixture.fs.promises.watch };
-      const iterator = api.watchPromises("/watched", { maxQueue: 1, overflow: "error" });
-      const first = iterator.next();
-      fixture.fs.writeFileSync("/watched/one.txt", "1");
-      fixture.fs.writeFileSync("/watched/two.txt", "2");
-      fixture.fs.writeFileSync("/watched/three.txt", "3");
-      await vi.advanceTimersByTimeAsync(100);
-      await expect(first).resolves.toMatchObject({ done: false });
-      await expect(iterator.next()).rejects.toMatchObject({ code: "ERR_FS_WATCH_QUEUE_OVERFLOW" });
-      await expect(iterator.next()).resolves.toMatchObject({ done: true });
-      expect(vi.getTimerCount()).toBe(0);
-
-      const returned = api.watchPromises("/watched");
-      await expect(returned.return()).resolves.toMatchObject({ done: true });
-      expect(vi.getTimerCount()).toBe(0);
-
-      const pendingReturn = api.watchPromises("/watched");
-      const pendingNext = pendingReturn.next();
-      await expect(pendingReturn.return()).resolves.toMatchObject({ done: true });
-      await expect(pendingNext).resolves.toMatchObject({ done: true });
-      expect(vi.getTimerCount()).toBe(0);
-
-      const thrown = api.watchPromises("/watched");
-      await expect(thrown.throw(new Error("stop"))).rejects.toThrow("stop");
-      expect(vi.getTimerCount()).toBe(0);
-
-      const controller = new AbortController();
-      const aborted = api.watchPromises("/watched", { signal: controller.signal });
-      const next = aborted.next();
-      controller.abort();
-      await expect(next).rejects.toMatchObject({ name: "AbortError" });
+      expect(events).toContain("watched");
+      watcher.close();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       fixture.close();

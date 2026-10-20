@@ -94,7 +94,6 @@ export {bootNodeRelease} from './isolate/NodeBootstrap.ts';`,
 }
 
 const releaseSource = `import fs from 'node:fs';
-import promises from 'node:fs/promises';
 import {watch as chokidarWatch} from 'chokidar';
 
 function deadline(operation) {
@@ -125,6 +124,10 @@ export async function check(call) {
     fs.mkdirSync(root);
     checks.rootWatchFile=await deadline(rootChanged);
   } finally {fs.unwatchFile('/',rootListener);}
+  const aborted=new AbortController(); aborted.abort();
+  let missing;
+  try {fs.watch(root+'/missing',{signal:aborted.signal});}catch(error){missing=error;}
+  checks.abortedMissingPath=missing?.code==='ENOENT';
   fs.writeFileSync(root+'/entry','before');
   let statListener;
   try {
@@ -162,14 +165,6 @@ export async function check(call) {
     fs.writeFileSync(root+'/second/expected','yes');
     checks.symlinkTraversal=await deadline(traversedChange);
   } finally {traversed.close();}
-  const iterator=promises.watch(root);
-  try {
-    const next=iterator.next();
-    fs.writeFileSync(root+'/iterated','new');
-    const result=await deadline(next);
-    checks.promiseWatch=result.done===false && result.value.eventType==='rename' && result.value.filename==='iterated';
-  } finally {await iterator.return();}
-
   const observed=[];
   const tree=chokidarWatch(root,{usePolling:true,interval:5,binaryInterval:5,atomic:false,ignoreInitial:true,ignorePermissionErrors:true});
   tree.on('all',(type,path)=>observed.push({type,path}));

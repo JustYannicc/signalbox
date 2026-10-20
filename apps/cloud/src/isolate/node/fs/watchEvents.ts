@@ -1,26 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off - Implement Node's event interface over the virtual filesystem.
 // @effect-diagnostics globalTimers:off - The virtual FS watcher uses a Node-compatible polling scheduler.
 import * as NodeEvents from "node:events";
-import * as NodePath from "node:path";
 import type * as NodeFS from "node:fs";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { nodeFsError } from "./errors.ts";
 import { encodedPath } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
-import { createWatchIterator } from "./watchIterator.ts";
 import {
   diffWatchSnapshots,
   takeWatchSnapshot,
   takeWatchSnapshotAllowMissing,
   type Snapshot,
 } from "./watchSnapshot.ts";
-import {
-  parseWatchOptions,
-  type RegisterCleanup,
-  type WatchFunction,
-  type WatchIteratorOptions,
-  type WatchIterator,
-} from "./watchOptions.ts";
+import { parseWatchOptions, type RegisterCleanup, type WatchFunction } from "./watchOptions.ts";
 
 // Storage has no change feed, so polling can coalesce mutations between samples.
 const DEFAULT_POLL_INTERVAL_MS = 100;
@@ -134,10 +126,6 @@ export function createWatchEvents(
   registerCleanup: RegisterCleanup,
 ): {
   readonly watch: WatchFunction;
-  readonly watchPromises: (
-    path: PathLike,
-    options?: WatchIteratorOptions | BufferEncoding | "buffer",
-  ) => WatchIterator;
 } {
   const watch: WatchFunction = (
     path: PathLike,
@@ -146,17 +134,13 @@ export function createWatchEvents(
   ) => {
     const parsed = parseWatchOptions(options, listener);
     const rawPath = pathString(path);
-    let absolutePath = NodePath.posix.resolve(kernelFs.cwd, rawPath);
+    let absolutePath: string;
     let snapshot: Snapshot;
-    if (parsed.options.signal?.aborted) {
-      snapshot = { rootType: "missing", entries: new Map() };
-    } else {
-      try {
-        absolutePath = kernelFs.realpath(rawPath);
-        snapshot = takeWatchSnapshot(kernelFs, absolutePath, parsed.options.recursive);
-      } catch (cause) {
-        throw nodeFsError(cause, "watch", rawPath);
-      }
+    try {
+      absolutePath = kernelFs.realpath(rawPath);
+      snapshot = takeWatchSnapshot(kernelFs, absolutePath, parsed.options.recursive);
+    } catch (cause) {
+      throw nodeFsError(cause, "watch", rawPath);
     }
     const watcher = new PollingFSWatcher(
       kernelFs,
@@ -173,6 +157,5 @@ export function createWatchEvents(
 
   return {
     watch,
-    watchPromises: (path, options) => createWatchIterator(watch, path, options),
   };
 }

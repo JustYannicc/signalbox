@@ -12,7 +12,6 @@ import { createSyncApi } from "./sync.ts";
 
 export type NodeFsPromisesModule = ReturnType<typeof createPromisesApi> & {
   constants: typeof fsConstants;
-  watch: ReturnType<typeof createWatchEvents>["watchPromises"];
   default: NodeFsPromisesModule;
 };
 
@@ -54,7 +53,6 @@ export function createNodeFs(
       createPromisesApi(kernelFs, runLeaf),
       {
         constants,
-        watch: watchers.watchPromises,
       },
     ),
   ) as unknown as NodeFsPromisesModule;

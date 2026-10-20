@@ -82,7 +82,6 @@ const fsPromiseExports = [
   "symlink",
   "unlink",
   "utimes",
-  "watch",
   "writeFile",
 ] as const;
 
