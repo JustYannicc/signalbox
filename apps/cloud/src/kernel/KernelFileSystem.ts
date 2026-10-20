@@ -74,7 +74,6 @@ export class KernelFileSystem {
   #disposed = false;
   readonly #disposeListeners = new Set<() => void>();
   #fileBytes: KernelFileByteSelection;
-  #viewGeneration = 0;
 
   constructor(config: KernelFileSystemConfig) {
     const forkContext = (config as KernelFileSystemInternalConfig)[forkContextSymbol];
@@ -172,14 +171,16 @@ export class KernelFileSystem {
   }
 
   /**
-   * Equal values mean nothing visible through this view changed in between. Undefined when any
-   * mount can't tell, so callers have to re-read to notice changes.
+   * Equal values mean nothing visible through this filesystem changed in between. Undefined when
+   * any mount or the selected byte view can't tell, so callers have to re-read to notice changes.
    */
   changeGeneration(): number | undefined {
     return this.#system(() => {
       this.#assertOpen();
+      // A byte view can change reported bytes and sizes without any storage write.
+      if (this.#fileBytes.kind !== "canonical") return undefined;
       // Each part never decreases, so an equal sum means every part is unchanged.
-      let generation = this.#viewGeneration;
+      let generation = 0;
       for (const mount of this.#mounts) {
         if (!hasChangeGeneration(mount.storage)) return undefined;
         generation += mount.storage.changeGeneration();
@@ -196,8 +197,6 @@ export class KernelFileSystem {
     this.#system(() => {
       this.#assertOpen();
       this.#fileBytes = selection;
-      // A byte view changes reported sizes without any storage write.
-      this.#viewGeneration++;
     });
   }
 

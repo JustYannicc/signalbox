@@ -230,6 +230,44 @@ describe("virtual filesystem event watchers", () => {
     }
   });
 
+  it("keeps rescanning while a byte view can change sizes without a storage write", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.writeFileSync("/file", "data");
+      let size = 4n;
+      fixture.kernelFs.setFileBytes({
+        kind: "view",
+        view: {
+          completion: "sync",
+          storage: fixture.mounted,
+          bind: (inode) => ({
+            stat: () => ({ ...fixture.mounted.stat(inode), size }),
+            readInto: () => 0,
+            write: () => 0,
+            append: () => ({ offset: size, bytesWritten: 0 }),
+            truncate: (next) => {
+              size = next;
+            },
+            sync: () => {},
+            release: () => {},
+          }),
+        },
+      });
+      expect(fixture.kernelFs.changeGeneration()).toBeUndefined();
+      const events: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/file", (_type, name) => events.push(name));
+      await vi.advanceTimersByTimeAsync(200);
+
+      size = 2n;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toEqual(["file"]);
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("keeps rescanning every tick when a mount cannot report changes", async () => {
     vi.useFakeTimers();
     const fixture = nodeFsWatchFixture({ changeGeneration: false });

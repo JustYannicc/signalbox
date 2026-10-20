@@ -46,6 +46,7 @@ export function nodeFsWatchFixture(options: { readonly changeGeneration?: boolea
   return {
     kernelFs,
     storage,
+    mounted,
     fs: createNodeFs(kernelFs).fs,
     close() {
       try {
