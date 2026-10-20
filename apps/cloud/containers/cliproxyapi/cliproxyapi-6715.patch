@@ -550,10 +550,10 @@ index 00000000000..5f99151e00d
 +}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_test.go b/internal/api/handlers/management/auth_files_v8_device_test.go
 new file mode 100644
-index 00000000000..a7e994304a6
+index 00000000000..3be2b36ee7c
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_test.go
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,169 @@
 +package management
 +
 +import (
@@ -636,6 +636,7 @@ index 00000000000..a7e994304a6
 +func TestStartOAuthV8CodexDeviceFlowSavesThroughManagementAuthHook(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
 +	saved := make(chan string, 1)
++	workerContext := make(chan context.Context, 1)
 +	preSave := make(chan string, 1)
 +	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)
 +	store := &memoryAuthStore{}
@@ -648,7 +649,8 @@ index 00000000000..a7e994304a6
 +		saved <- record.ID
 +		return nil
 +	})
-+	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(_ context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++		workerContext <- ctx
 +		opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
 +		return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, nil
 +	})
@@ -658,6 +660,14 @@ index 00000000000..a7e994304a6
 +
 +	start := httptest.NewRecorder()
 +	router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/v8/management/oauth/auth-url?provider=codex&flow=device", nil))
++	ctx := <-workerContext
++	t.Cleanup(func() {
++		select {
++		case <-ctx.Done():
++		case <-time.After(3 * time.Second):
++			t.Error("device worker did not finish")
++		}
++	})
 +	if start.Code != http.StatusOK {
 +		t.Fatalf("start status = %d, body=%s", start.Code, start.Body.String())
 +	}
