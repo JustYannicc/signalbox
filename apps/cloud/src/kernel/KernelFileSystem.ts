@@ -1,6 +1,7 @@
 import { canonicalFileByteSelection, type KernelFileByteSelection } from "./KernelFileBytes.ts";
 import type { Mount, Storage, Times } from "./storage.ts";
 import type { CreateOptions, Inode } from "./storage.ts";
+import { readChangeGeneration } from "./StorageChanges.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
 import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { runSync } from "./wasi/internal_wasi_calls.ts";
@@ -73,6 +74,7 @@ export class KernelFileSystem {
   #disposed = false;
   readonly #disposeListeners = new Set<() => void>();
   #fileBytes: KernelFileByteSelection;
+  #viewGeneration = 0;
 
   constructor(config: KernelFileSystemConfig) {
     const forkContext = (config as KernelFileSystemInternalConfig)[forkContextSymbol];
@@ -169,6 +171,25 @@ export class KernelFileSystem {
     return this.#mountedMounts === other.#mountedMounts;
   }
 
+  /**
+   * Equal values mean nothing visible through this view changed in between. Undefined when any
+   * mount can't tell, so callers have to re-read to notice changes.
+   */
+  changeGeneration(): number | undefined {
+    return this.#system(() => {
+      this.#assertOpen();
+      if (this.#mounts.length === 0) return undefined;
+      // Each part never decreases, so an equal sum means every part is unchanged.
+      let generation = this.#viewGeneration;
+      for (const mount of this.#mounts) {
+        const value = readChangeGeneration(mount.storage);
+        if (value === undefined) return undefined;
+        generation += value;
+      }
+      return generation;
+    });
+  }
+
   get fileBytes(): KernelFileByteSelection {
     return this.#fileBytes;
   }
@@ -177,6 +198,8 @@ export class KernelFileSystem {
     this.#system(() => {
       this.#assertOpen();
       this.#fileBytes = selection;
+      // A byte view changes reported sizes without any storage write.
+      this.#viewGeneration++;
     });
   }
 

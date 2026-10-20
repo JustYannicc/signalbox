@@ -163,4 +163,91 @@ describe("virtual filesystem event watchers", () => {
       fixture.close();
     }
   });
+
+  it("skips rescans while storage reports no committed change", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/watched");
+      const events: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/watched", (_type, name) => events.push(name));
+      const readdir = vi.spyOn(fixture.kernelFs, "readdir");
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(readdir).not.toHaveBeenCalled();
+
+      fixture.fs.writeFileSync("/watched/new.txt", "created");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toEqual(["new.txt"]);
+
+      readdir.mockClear();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(readdir).not.toHaveBeenCalled();
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("sees changes committed to the database without going through the filesystem", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/watched");
+      fixture.fs.writeFileSync("/watched/file.txt", "before");
+      const events: Array<{ type: string; name: string | NodeBuffer.Buffer | null }> = [];
+      const watcher = fixture.fs.watch("/watched", (type, name) => events.push({ type, name }));
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Hydration and revision applies write these rows directly.
+      fixture.database.sql.exec("UPDATE kernel_fs_inode SET mtime_ns = '1' WHERE ino != 1");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toContainEqual({ type: "change", name: "file.txt" });
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("reports writes made by a listener on the next tick", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/watched");
+      const names: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/watched", (_type, name) => {
+        names.push(name);
+        if (name === "first.txt") fixture.fs.writeFileSync("/watched/second.txt", "2");
+      });
+      fixture.fs.writeFileSync("/watched/first.txt", "1");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(names).toEqual(["first.txt"]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(names).toEqual(["first.txt", "second.txt"]);
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps rescanning every tick when a mount cannot report changes", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture({ changeGeneration: false });
+    try {
+      fixture.fs.mkdirSync("/watched");
+      expect(fixture.kernelFs.changeGeneration()).toBeUndefined();
+      const events: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/watched", (_type, name) => events.push(name));
+      const readdir = vi.spyOn(fixture.kernelFs, "readdir");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(readdir).toHaveBeenCalledTimes(10);
+      fixture.fs.writeFileSync("/watched/new.txt", "created");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toEqual(["new.txt"]);
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
 });
