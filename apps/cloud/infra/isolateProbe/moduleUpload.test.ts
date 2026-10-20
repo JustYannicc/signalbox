@@ -130,6 +130,13 @@ export class UploadTest extends DurableObject {
       return Response.json({result, callbacks, staged, remaining:this.rows().rows});
     } catch(error) {
       upload?.dispose();
+      // As in the probe HTTP boundary, unread input must reach EOF before forwarding a rejection.
+      const reader = request.body.getReader();
+      try {
+        while (!(await reader.read()).done) {}
+      } finally {
+        reader.releaseLock();
+      }
       return Response.json({error:String(error), callbacks, remaining:this.rows().rows}, {status:400});
     }
   }
