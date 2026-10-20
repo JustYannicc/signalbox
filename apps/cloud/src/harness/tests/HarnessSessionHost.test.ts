@@ -239,6 +239,7 @@ describe("HarnessSessionHost", () => {
           session: instance.adapter.input.session,
           checkpoint,
           bootAttemptId: "boot-2",
+          initialAccess: f.access("grant-B"),
         });
         expect(f.acquisitions).toHaveLength(2);
         expect(f.acquisitions[0]?.computer).toBe(f.acquisitions[1]?.computer);

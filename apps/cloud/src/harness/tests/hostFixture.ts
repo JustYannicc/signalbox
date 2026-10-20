@@ -11,6 +11,7 @@ import {
   createHarnessSessionHost,
   type HarnessHostOptions,
   type NativeMcpConfiguration,
+  type NativeThreadLoad,
   type TurnAccess,
   type ExecutorMcpPort,
 } from "../HarnessSessionHost.ts";
@@ -38,6 +39,8 @@ export const hostFixture = Effect.gen(function* () {
   ).join("");
   let handle = database.open();
   const configurations: NativeMcpConfiguration[] = [];
+  const configurationLoads: NativeThreadLoad[] = [];
+  const configurationSignals: AbortSignal[] = [];
   const acquisitions: HarnessOpenInput[] = [];
   const computers: Computer["files"][] = [];
   const persistenceBindings: boolean[] = [];
@@ -146,9 +149,15 @@ export const hostFixture = Effect.gen(function* () {
                         );
                   }),
               },
-              configureMcp: (config: NativeMcpConfiguration) =>
+              configureMcp: (
+                config: NativeMcpConfiguration,
+                signal: AbortSignal,
+                load: NativeThreadLoad,
+              ) =>
                 Effect.gen(function* () {
                   configurations.push(config);
+                  configurationLoads.push(load);
+                  configurationSignals.push(signal);
                   yield* Queue.offer(configured, config);
                   yield* configureGate;
                   if (configurationFailure)
@@ -171,7 +180,25 @@ export const hostFixture = Effect.gen(function* () {
         adapter,
         options,
         lifetime,
-        open: (id = "boot-1") => host.open({ ...adapter.input, bootAttemptId: id }),
+        open: (id = "boot-1") => host.open({ session: adapter.input.session, bootAttemptId: id }),
+        checkpoint: () => ({
+          release: host.release,
+          providerSession: adapter.runtime.providerSession,
+          snapshot: {
+            providerThread: {
+              ...adapter.turn.providerThread,
+              nativeThreadRef: {
+                driver: adapter.runtime.driver,
+                nativeId: "native-thread",
+                strength: "strong" as const,
+              },
+            },
+            providerTurns: [],
+            messages: [],
+            runtimeRequests: [],
+          },
+          revision: { commit: "checkpoint-revision" },
+        }),
       };
     });
   const access = (secret: string, controller = new AbortController()): TurnAccess<Grant> => ({
@@ -188,6 +215,8 @@ export const hostFixture = Effect.gen(function* () {
     make,
     access,
     configurations,
+    configurationLoads,
+    configurationSignals,
     acquisitions,
     computers,
     persistenceBindings,

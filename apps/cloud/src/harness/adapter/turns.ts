@@ -10,6 +10,7 @@ import type * as Scope from "effect/Scope";
 import type * as Semaphore from "effect/Semaphore";
 
 import { HarnessError, type HarnessOpenInput } from "../Harness.ts";
+import { nativeTurnThreadLoad } from "../HarnessThreadLoad.ts";
 import { threadMatches } from "./checkpoint.ts";
 import type { ActiveTurn, TurnState } from "./state.ts";
 
@@ -45,27 +46,12 @@ export const makeTurn = ({
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
           yield* check("turn");
-          const policy = {
-            ...input.session.runtimePolicy,
-            runtimeMode: turn.runtimeMode,
-            interactionMode: turn.interactionMode,
-          };
           if (state.providerThread === undefined) {
+            const load = nativeTurnThreadLoad(turn, input.session, runtime.providerSessionId);
             state.providerThread = yield* (
-              turn.providerThread.nativeThreadRef === null
-                ? runtime.ensureThread({
-                    threadId: turn.threadId,
-                    providerSessionId: runtime.providerSessionId,
-                    modelSelection: turn.modelSelection,
-                    runtimePolicy: policy,
-                    existingProviderThread: turn.providerThread,
-                  })
-                : runtime.resumeThread({
-                    providerThread: turn.providerThread,
-                    threadId: turn.threadId,
-                    modelSelection: turn.modelSelection,
-                    runtimePolicy: policy,
-                  })
+              load.method === "ensureThread"
+                ? runtime.ensureThread(load.input)
+                : runtime.resumeThread(load.input)
             ).pipe(
               Effect.mapError(
                 (cause) =>

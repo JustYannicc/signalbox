@@ -18,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { HarnessError, type HarnessOpenInput, type HarnessSession } from "../Harness.ts";
+import { checkpointThreadLoad } from "../HarnessThreadLoad.ts";
 import { saveCheckpoint, saveComputer, threadMatches, validateOpen } from "./checkpoint.ts";
 import { applyInterrupt, controlTurn } from "./controls.ts";
 import { belongsToTurn, type TurnState } from "./state.ts";
@@ -95,12 +96,7 @@ export const openAdapterSession = (
       if (input.checkpoint !== undefined) {
         const existing = input.checkpoint.snapshot.providerThread;
         state.providerThread = yield* runtime
-          .resumeThread({
-            providerThread: existing,
-            threadId: input.session.threadId,
-            modelSelection: input.session.modelSelection,
-            runtimePolicy: input.session.runtimePolicy,
-          })
+          .resumeThread(checkpointThreadLoad(input.checkpoint, input.session).input)
           .pipe(
             Effect.mapError(
               (cause) =>

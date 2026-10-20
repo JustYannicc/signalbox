@@ -15,6 +15,7 @@ describe("Harness host durable boot", () => {
         yield* instance.host.seed("programs");
         const input = {
           bootAttemptId: "accepted-attempt",
+          initialAccess: f.access("accepted-grant"),
           session: {
             ...instance.adapter.input.session,
             runtimePolicy: { ...instance.adapter.input.session.runtimePolicy },
