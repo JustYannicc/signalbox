@@ -13,6 +13,8 @@ export const sha = (bytes) => NodeCrypto.createHash("sha256").update(bytes).dige
 export const canonical = (value) => JSON.stringify(value);
 const acceptedCandidate = "26fe43086901095106f293245d71f0558a628449767ee276d6d00600eb037876";
 const fixtureNames = [
+  "cell-code.d.json.ts",
+  "executable.d.json.ts",
   "exchange.ts",
   "prepare.mjs",
   "proof.ts",
@@ -196,6 +198,7 @@ async function prepare() {
       "knip.ts",
       "apps/cloud/package.json",
       "apps/cloud/tsconfig.json",
+      "apps/cloud/tsconfig.infra.json",
     ].map((name) => pin(NodePath.join(root, name), name)),
   );
   const toolsBefore = await snapshotTools();

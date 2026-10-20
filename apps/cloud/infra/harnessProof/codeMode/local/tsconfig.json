@@ -4,6 +4,7 @@
   "include": [],
   "exclude": [],
   "compilerOptions": {
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "allowArbitraryExtensions": true
   }
 }

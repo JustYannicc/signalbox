@@ -101,6 +101,9 @@ export default {
         "infra/harnessProof/codeMode/prepare.ts",
         "infra/harnessProof/codeMode/CellService.ts",
         "src/harness/codeMode/worker.ts",
+        // signalbox: TypeScript resolves these declarations for generated JSON assets.
+        "infra/harnessProof/codeMode/local/cell-code.d.json.ts",
+        "infra/harnessProof/codeMode/local/executable.d.json.ts",
         "infra/harnessProof/codeMode/local/prepare.mjs",
         "infra/harnessProof/codeMode/local/run.mjs",
         "infra/harnessProof/codeMode/local/proof.ts",
