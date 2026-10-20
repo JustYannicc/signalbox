@@ -36,6 +36,8 @@ views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
                      computer_gateway_same_command, computer_terminal_session, computer_budgets
 views/funnels.c4     every boundary is one gateway (Overview/Decisions/Gateways): funnels, then one drill-down
                      each: funnel_clients, funnel_command, funnel_files, funnel_model, funnel_connections, funnel_port
+views/harness-map.c4 what an agent consists of and which parts we own (Overview/Decisions/Harness map):
+                     harness_map, a talk's harness split applied to Signalbox
 views/journeys/      scenario walk-throughs (Scenarios/... in the sidebar)
 CONTEXT.md           glossary and the words that are never kinds
 ```

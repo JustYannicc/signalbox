@@ -63,6 +63,8 @@ model {
 
     signalbox.funnel.transport -> signalbox.operations.api 'commands · queries · subscribe'
     signalbox.funnel.transport -> signalbox.identity.api 'credentials'
+    // Overview edge for the hop above: a person's turns and live views reach the Thread through Operations.
+    signalbox.funnel.transport -> signalbox.thread.api 'send · watch (via Operations)'
     signalbox.funnel.portGateway -> signalbox.computer.portGateway 'forward'
     signalbox.funnel.transport -> signalbox.computer.commandGateway 'terminal · API agents: exec · attach'
     signalbox.funnel.transport -> signalbox.computer.filesGateway 'files (renderer · laptops)'

@@ -20,6 +20,8 @@ model {
   personA -> signalbox.web 'uses'
   personA -> signalbox.desktop 'uses'
   personA -> laptopCli 'runs locally'
+  // Overview edge: whichever client a person uses, they come in through the one client gateway.
+  personA -> signalbox.funnel 'any client'
   personB -> signalbox.mobile 'uses'
   personB -> signalbox.web 'uses'
   personB -> laptopCli 'runs locally'
