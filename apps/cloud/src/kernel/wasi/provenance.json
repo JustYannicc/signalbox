@@ -37,7 +37,7 @@
     },
     {
       "file": "internal_wasi_lifecycle.ts",
-      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands, and an optional filesystem-import adapter supplies canonical kernel devices inside the existing errno, CPU and JSPI wrappers. Configured kernel CPU scopes charge WASM exports as user work and synchronous import steps as system work, pausing the user scope during suspension. Reactor entry and exit release the active flag even when the accounting clock fails; unconfigured WASI behavior remains unchanged."
+      "reason": "Optional internal argument transforms decode explicit guest ABI preopen operands, and an optional filesystem-import adapter supplies canonical kernel devices inside the existing errno, CPU and JSPI wrappers. Configured kernel CPU scopes charge WASM exports as user work and synchronous import steps as system work, pausing the user scope during suspension. Reactor entry and exit release the active flag even when the accounting clock fails; unconfigured WASI behavior remains unchanged. An optional execution signal cancels suspended polls and is checked outside errno conversion before and after imports, so owner cancellation unwinds WASM before guest shutdown code resumes. The kernel forwards the command signal for its execution lifetime; generic WASI callers without that signal keep existing behavior."
     },
     {
       "file": "internal_wasi_calls.ts",
