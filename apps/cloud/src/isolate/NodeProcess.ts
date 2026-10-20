@@ -6,6 +6,7 @@ import { validateNodeProcessHost, type NodeProcessHostContext } from "./node/pro
 import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
 import { nodeProcessSignalError, normalizeNodeSignal } from "./node/process/signals.ts";
 import { createCpuUsage } from "./node/process/cpu-usage.ts";
+import { createProcessWarnings } from "./node/process/warnings.ts";
 
 /* Adapted from Rivet agentOS's Node process bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * This keeps its exit-event/typed-exit shape while requiring Signalbox host identity and capabilities.
@@ -31,6 +32,8 @@ export class NodeProcessExitError extends Error {
     this.code = code;
   }
 }
+
+export type { NodeProcessWarningOptions } from "./node/process/warnings.ts";
 
 export type NodeProcessState = "running" | "exiting" | "exited";
 
@@ -150,6 +153,7 @@ class HostProcess extends NodeEvents.EventEmitter {
   readonly stdout: NodeProcessHostContext["streams"]["stdout"];
   readonly stderr: NodeProcessHostContext["streams"]["stderr"];
   readonly hrtime: HrtimeFunction;
+  readonly emitWarning: ReturnType<typeof createProcessWarnings>;
   readonly #host: NodeProcessHostContext;
   readonly #monotonicNowNs: () => bigint;
   readonly #startTimeNs: bigint;
@@ -179,6 +183,7 @@ class HostProcess extends NodeEvents.EventEmitter {
     this.stdin = host.streams.stdin;
     this.stdout = host.streams.stdout;
     this.stderr = host.streams.stderr;
+    this.emitWarning = createProcessWarnings(this);
 
     for (const name of ["_events", "_eventsCount", "_maxListeners"]) {
       const descriptor = Object.getOwnPropertyDescriptor(this, name);
@@ -192,6 +197,7 @@ class HostProcess extends NodeEvents.EventEmitter {
       "cwd",
       "chdir",
       "nextTick",
+      "emitWarning",
       "exit",
       "kill",
     ]);
