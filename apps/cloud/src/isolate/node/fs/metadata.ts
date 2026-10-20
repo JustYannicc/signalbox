@@ -60,33 +60,36 @@ class NodeFsStats {
   readonly mtime: Date;
   readonly ctime: Date;
   readonly birthtime: Date;
-  readonly #type: KernelStat["type"];
+  readonly #type: KernelStat["type"] | undefined;
 
-  constructor(stat: KernelStat, bigint: boolean) {
-    const posix = stat.posix;
-    this.#type = stat.type;
-    this.dev = convert(stat.dev, bigint);
-    this.ino = convert(stat.ino, bigint);
-    this.mode = convert(BigInt(modeByType[stat.type] | (posix?.mode ?? 0)), bigint);
-    this.nlink = convert(stat.nlink, bigint);
-    this.uid = convert(BigInt(posix?.uid ?? -1), bigint);
-    this.gid = convert(BigInt(posix?.gid ?? -1), bigint);
-    this.rdev = bigint ? -1n : -1;
-    this.size = convert(stat.size, bigint);
-    this.blksize = bigint ? -1n : Number.NaN;
-    this.blocks = bigint ? -1n : Number.NaN;
-    this.atimeMs = timeMs(stat.atimeNs, bigint);
-    this.mtimeMs = timeMs(stat.mtimeNs, bigint);
-    this.ctimeMs = timeMs(stat.ctimeNs, bigint);
-    this.birthtimeMs = bigint ? -1n : Number.NaN;
-    this.atimeNs = bigint ? stat.atimeNs : undefined;
-    this.mtimeNs = bigint ? stat.mtimeNs : undefined;
-    this.ctimeNs = bigint ? stat.ctimeNs : undefined;
-    this.birthtimeNs = bigint ? -1n : undefined;
-    this.atime = dateFromNs(stat.atimeNs);
-    this.mtime = dateFromNs(stat.mtimeNs);
-    this.ctime = dateFromNs(stat.ctimeNs);
-    this.birthtime = new Date(Number.NaN);
+  constructor(stat: KernelStat | undefined, bigint: boolean) {
+    const posix = stat?.posix;
+    this.#type = stat?.type;
+    this.dev = convert(stat?.dev ?? 0n, bigint);
+    this.ino = convert(stat?.ino ?? 0n, bigint);
+    this.mode = convert(
+      BigInt(stat === undefined ? 0 : modeByType[stat.type] | (posix?.mode ?? 0)),
+      bigint,
+    );
+    this.nlink = convert(stat?.nlink ?? 0n, bigint);
+    this.uid = convert(BigInt(posix?.uid ?? (stat === undefined ? 0 : -1)), bigint);
+    this.gid = convert(BigInt(posix?.gid ?? (stat === undefined ? 0 : -1)), bigint);
+    this.rdev = convert(stat === undefined ? 0n : -1n, bigint);
+    this.size = convert(stat?.size ?? 0n, bigint);
+    this.blksize = stat === undefined ? convert(0n, bigint) : bigint ? -1n : Number.NaN;
+    this.blocks = stat === undefined ? convert(0n, bigint) : bigint ? -1n : Number.NaN;
+    this.atimeMs = timeMs(stat?.atimeNs ?? 0n, bigint);
+    this.mtimeMs = timeMs(stat?.mtimeNs ?? 0n, bigint);
+    this.ctimeMs = timeMs(stat?.ctimeNs ?? 0n, bigint);
+    this.birthtimeMs = stat === undefined ? convert(0n, bigint) : bigint ? -1n : Number.NaN;
+    this.atimeNs = bigint ? (stat?.atimeNs ?? 0n) : undefined;
+    this.mtimeNs = bigint ? (stat?.mtimeNs ?? 0n) : undefined;
+    this.ctimeNs = bigint ? (stat?.ctimeNs ?? 0n) : undefined;
+    this.birthtimeNs = bigint ? (stat === undefined ? 0n : -1n) : undefined;
+    this.atime = dateFromNs(stat?.atimeNs ?? 0n);
+    this.mtime = dateFromNs(stat?.mtimeNs ?? 0n);
+    this.ctime = dateFromNs(stat?.ctimeNs ?? 0n);
+    this.birthtime = new Date(stat === undefined ? 0 : Number.NaN);
   }
 
   isFile() {
@@ -124,10 +127,10 @@ function dateFromNs(value: bigint): Date {
   return new Date(Number(value) / 1_000_000);
 }
 
-export function nodeStats(stat: KernelStat, bigint: true): NodeFS.BigIntStats;
-export function nodeStats(stat: KernelStat, bigint?: false): NodeFS.Stats;
-export function nodeStats(stat: KernelStat, bigint?: boolean): NodeStatsLike;
-export function nodeStats(stat: KernelStat, bigint = false): NodeStatsLike {
+export function nodeStats(stat: KernelStat | undefined, bigint: true): NodeFS.BigIntStats;
+export function nodeStats(stat: KernelStat | undefined, bigint?: false): NodeFS.Stats;
+export function nodeStats(stat: KernelStat | undefined, bigint?: boolean): NodeStatsLike;
+export function nodeStats(stat: KernelStat | undefined, bigint = false): NodeStatsLike {
   return new NodeFsStats(stat, bigint) as unknown as NodeStatsLike;
 }
 

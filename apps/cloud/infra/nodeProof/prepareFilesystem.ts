@@ -204,7 +204,7 @@ export async function check(call) {
   try {await promises.readFile('missing');} catch(error) {missing = error;}
   checks.typedError = missing?.code === 'ENOENT' && missing.path === 'missing' && typeof missing.syscall === 'string';
   let unsupported;
-  try {fs.watch('bytes');} catch(error) {unsupported = error;}
+  try {fs.statfsSync('bytes');} catch(error) {unsupported = error;}
   checks.unsupported = unsupported?.code === 'ENOTSUP';
   fs.mkdirSync('anchor', {recursive:true});
   process.chdir('/work/anchor');

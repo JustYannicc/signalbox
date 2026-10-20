@@ -5,24 +5,24 @@ import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import type { AsyncLeafRunner } from "./operations.ts";
 import { createCallbackApi } from "./callbacks.ts";
 import { createFsConstants, fsConstants, type NativeFsConstants } from "./constants.ts";
-import { unsupportedFs } from "./errors.ts";
+import { createWatchFile } from "./watchFile.ts";
+import { createWatchEvents } from "./watchEvents.ts";
 import { createPromisesApi } from "./promises.ts";
 import { createSyncApi } from "./sync.ts";
-import { pathString, type PathLike } from "./path.ts";
 
 export type NodeFsPromisesModule = ReturnType<typeof createPromisesApi> & {
   constants: typeof fsConstants;
+  watch: ReturnType<typeof createWatchEvents>["watchPromises"];
   default: NodeFsPromisesModule;
 };
 
 export type NodeFsModule = ReturnType<typeof createSyncApi> &
-  ReturnType<typeof createCallbackApi> & {
+  ReturnType<typeof createCallbackApi> &
+  ReturnType<typeof createWatchFile> & {
     constants: typeof fsConstants;
+    watch: ReturnType<typeof createWatchEvents>["watch"];
     promises: NodeFsPromisesModule;
     default: NodeFsModule;
-    watch: (path: PathLike, ...args: unknown[]) => never;
-    watchFile: (path: PathLike, ...args: unknown[]) => never;
-    unwatchFile: (path?: PathLike, ...args: unknown[]) => never;
   };
 
 export interface NodeFsModules {
@@ -47,12 +47,14 @@ export function createNodeFs(
 ): NodeFsModules {
   const constants =
     nativeConstants === undefined ? fsConstants : createFsConstants(nativeConstants);
+  const watchers = createWatchEvents(kernelFs, (close) => kernelFs.onDispose(close));
   const promiseModule = defineDefault(
     Object.assign(
       Object.create(null) as Record<string, unknown>,
       createPromisesApi(kernelFs, runLeaf),
       {
         constants,
+        watch: watchers.watchPromises,
       },
     ),
   ) as unknown as NodeFsPromisesModule;
@@ -62,18 +64,11 @@ export function createNodeFs(
       Object.create(null) as Record<string, unknown>,
       createSyncApi(kernelFs, runLeaf),
       createCallbackApi(kernelFs, runLeaf),
+      createWatchFile(kernelFs),
       {
         constants,
+        watch: watchers.watch,
         promises: promiseModule,
-        watch: (path: PathLike) => {
-          throw unsupportedFs("watch", pathString(path));
-        },
-        watchFile: (path: PathLike) => {
-          throw unsupportedFs("watchFile", pathString(path));
-        },
-        unwatchFile: (path?: PathLike) => {
-          throw unsupportedFs("unwatchFile", path === undefined ? undefined : pathString(path));
-        },
       },
     ),
   ) as unknown as NodeFsModule;
