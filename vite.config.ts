@@ -58,8 +58,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    // signalbox: exercise the kernel's real suspending WASI imports on Node 24.
-    execArgv: ["--experimental-wasm-jspi"],
+    // signalbox: exercise real WASI suspension and isolated ESM unit fixtures on Node 24.
+    execArgv: ["--experimental-wasm-jspi", "--experimental-vm-modules"],
     exclude: [
       "**/.repos/**",
       "**/.t3/**",

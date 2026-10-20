@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2023",
+    "allowArbitraryExtensions": true,
     // As tsconfig.json: the stack types the Worker, which reaches the automation engine.
     "lib": ["ES2024", "WebWorker"],
     "types": ["@cloudflare/workers-types", "node"]
