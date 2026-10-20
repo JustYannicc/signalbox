@@ -71,6 +71,7 @@ export class KernelFileSystem {
   readonly #ownsDescriptors: boolean;
   #cwdAnchor: WasiPathAnchor | undefined;
   #disposed = false;
+  readonly #disposeListeners = new Set<() => void>();
   #fileBytes: KernelFileByteSelection;
 
   constructor(config: KernelFileSystemConfig) {
@@ -491,11 +492,28 @@ export class KernelFileSystem {
     });
   }
 
+  /** Context-owned work must stop before its descriptors and cwd anchor are released. */
+  onDispose(listener: () => void): () => void {
+    this.#assertOpen();
+    this.#disposeListeners.add(listener);
+    return () => {
+      this.#disposeListeners.delete(listener);
+    };
+  }
+
   dispose(): void {
     this.#system(() => {
       if (this.#disposed) return;
       this.#disposed = true;
       const errors: unknown[] = [];
+      for (const listener of this.#disposeListeners) {
+        try {
+          listener();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      this.#disposeListeners.clear();
       if (this.#ownsDescriptors) {
         try {
           withKernelErrors(() => runSync(this.#wasi.close()));

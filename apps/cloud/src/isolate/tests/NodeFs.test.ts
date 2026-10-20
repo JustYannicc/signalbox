@@ -356,11 +356,7 @@ describe("Node fs modules backed by KernelFileSystem", () => {
           return entry.name === "entry" && entry.isFile();
         }),
       ).toBe(true);
-      const unsupported = [
-        () => fs.chmodSync("/entry", 0o600),
-        () => fs.watch("/entry"),
-        () => fs.statfsSync("/entry"),
-      ];
+      const unsupported = [() => fs.chmodSync("/entry", 0o600), () => fs.statfsSync("/entry")];
       for (const operation of unsupported) {
         let thrown: unknown;
         try {
