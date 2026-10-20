@@ -22,6 +22,18 @@ const user = {
   type: "event_msg",
   payload: { type: "user_message", client_id: "input", message: "original" },
 };
+const currentUser = (
+  clientId: string,
+  payload: { readonly thread_id?: string; readonly turn_id?: string } = {},
+) => ({
+  type: "event_msg",
+  payload: {
+    type: "item_completed",
+    thread_id: payload.thread_id ?? "session",
+    turn_id: payload.turn_id ?? "turn-1",
+    item: { type: "UserMessage", client_id: clientId },
+  },
+});
 const completed = { type: "event_msg", payload: { type: "task_complete", turn_id: "turn-1" } };
 const call = {
   type: "response_item",
@@ -69,6 +81,18 @@ describe("Codex native-file recovery inspection", () => {
       nativeInputId: "input",
       nativeTurnId: "turn-1",
       inputDurability: "native-file",
+    });
+  });
+  it("recognizes the current item_completed UserMessage schema with exact identities", () => {
+    expect(inspect([meta, started, currentUser("input")])).toMatchObject({
+      status: "ready",
+      admission: {
+        nativeSessionId: "session",
+        nativeTurnId: "turn-1",
+        nativeInputId: "input",
+        inputDurability: "native-file",
+      },
+      evidence: { inputLine: 3, state: "unfinished" },
     });
   });
   it("reconciles an already completed native head", () => {
@@ -197,6 +221,54 @@ describe("Codex native-file recovery inspection", () => {
       }).status,
     ).toBe("indeterminate");
   });
+  it("rejects malformed or mismatched current UserMessage identities", () => {
+    const malformed = {
+      type: "event_msg",
+      payload: {
+        type: "item_completed",
+        thread_id: "session",
+        turn_id: "turn-1",
+        item: { type: "UserMessage" },
+      },
+    };
+    expect(inspect([meta, started, malformed]).status).toBe("indeterminate");
+    expect(inspect([meta, started, currentUser("other-input")]).status).toBe("indeterminate");
+    expect(
+      inspect([meta, started, currentUser("input", { thread_id: "other-session" })]),
+    ).toMatchObject({
+      status: "indeterminate",
+      reason: "Native UserMessage belongs to a different thread.",
+    });
+    expect(inspect([meta, started, currentUser("input", { turn_id: "turn-2" })])).toMatchObject({
+      status: "indeterminate",
+      reason: "Original native input turn does not match its event turn.",
+    });
+  });
+  it("rejects duplicate and superseding current UserMessage rows", () => {
+    expect(inspect([meta, started, currentUser("input"), currentUser("input")])).toMatchObject({
+      status: "indeterminate",
+      reason: "Original input appears more than once in the rollout.",
+    });
+    expect(inspect([meta, started, user, currentUser("input")])).toMatchObject({
+      status: "indeterminate",
+      reason: "Original input appears more than once in the rollout.",
+    });
+    expect(inspect([meta, started, currentUser("input"), currentUser("later")])).toMatchObject({
+      status: "indeterminate",
+      reason: "A later native input superseded this logical run.",
+    });
+  });
+  it("does not turn the r4 interrupted head into crash recovery eligibility", () => {
+    const interrupted = {
+      type: "event_msg",
+      payload: { type: "turn_aborted", turn_id: "turn-1", reason: "interrupted" },
+    };
+    expect(inspect([meta, started, currentUser("input"), interrupted])).toMatchObject({
+      status: "unsupported",
+      reason: "An explicitly interrupted native turn is not eligible for automatic crash recovery.",
+      evidence: { state: "interrupted", inputLine: 3, nativeTurnId: "turn-1" },
+    });
+  });
   it("requires stop evidence for the previous incarnation", () => {
     expect(
       inspectCodexNativeRecovery({
@@ -232,6 +304,13 @@ describe("Codex native admission at the closed external gate", () => {
     ).toMatchObject({
       status: "native-admitted",
       admission: { inputDurability: "native-file" },
+      nativeFile: { path: "/codex/sessions/session.jsonl" },
+    });
+    expect(
+      confirmCodexNativeAdmission({ receipt, file: file([meta, started, currentUser("input")]) }),
+    ).toMatchObject({
+      status: "native-admitted",
+      admission: { inputDurability: "native-file", nativeTurnId: "turn-1" },
       nativeFile: { path: "/codex/sessions/session.jsonl" },
     });
     expect(
