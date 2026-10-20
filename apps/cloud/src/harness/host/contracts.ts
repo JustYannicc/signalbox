@@ -1,4 +1,5 @@
 import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { NativeThreadLoad } from "../HarnessThreadLoad.ts";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type { Computer } from "../../computer/Computer.ts";
@@ -12,10 +13,18 @@ import type { AdapterRuntimeFactory } from "../AdapterHarness.ts";
 import type { HarnessError, HarnessOpenInput, HarnessRelease, HarnessSession } from "../Harness.ts";
 import type { LoadedHarnessRelease, LoadHarnessReleaseOptions } from "../HarnessReleaseLoader.ts";
 
+export type { NativeThreadLoad };
+
 export type SeedStage = "assets" | "programs";
-export type HostOpenInput = Pick<HarnessOpenInput, "session" | "checkpoint"> & {
+export type HostOpenInput<G> = Pick<HarnessOpenInput, "session"> & {
   readonly bootAttemptId: string;
-};
+} & (
+    | { readonly checkpoint?: undefined; readonly initialAccess?: never }
+    | {
+        readonly checkpoint: NonNullable<HarnessOpenInput["checkpoint"]>;
+        readonly initialAccess: TurnAccess<G>;
+      }
+  );
 export interface SeedMetadata {
   readonly mode: number;
   readonly uid: number;
@@ -62,6 +71,7 @@ export interface NativeHostBinding {
   readonly configureMcp: (
     config: NativeMcpConfiguration,
     signal: AbortSignal,
+    load: NativeThreadLoad,
   ) => Effect.Effect<void, HarnessError>;
 }
 export interface HarnessHostFilesOptions {
@@ -108,6 +118,6 @@ export interface HarnessSessionHost<G> {
   readonly threadId: string;
   readonly release: HarnessRelease;
   readonly seed: (stage: SeedStage) => Effect.Effect<void, HarnessError>;
-  readonly open: (input: HostOpenInput) => Effect.Effect<HarnessHostSession<G>, HarnessError>;
+  readonly open: (input: HostOpenInput<G>) => Effect.Effect<HarnessHostSession<G>, HarnessError>;
   readonly dispose: Effect.Effect<void, HarnessError>;
 }

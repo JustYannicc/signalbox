@@ -12,12 +12,21 @@ supported arms need no overlay. These rules stay in the wrapper until upstream
 ships equivalent support. The first contribution is tracked at
 [openai/codex#55066](https://github.com/openai/codex/issues/55066).
 
-The engine uses the upstream in-process app-server client on a current-thread
-Tokio runtime. It excludes the Codex CLI and TUI from its dependency closure. Its
+The engine wraps the upstream in-process app-server runtime with a local client
+that supplies initialization extensions and preserves request cancellation and
+event buffering. It uses a current-thread Tokio runtime and excludes the Codex
+CLI and TUI from its dependency closure. Its
 NDJSON bootstrap selects an isolated Codex home, working directory and ordinary
 configuration overrides. `signalbox/ready` means initialization succeeded;
 subsequent messages use app-server request, response and notification types.
 Approvals remain server requests. The wrapper never auto-answers them.
+
+Hosts that implement standard MCP form input may set
+`host_capabilities: { "standard_form_input": true }` in the bootstrap. It defaults
+to false and rejects unknown capability fields. After initialization,
+`signalbox/ready` echoes that exact capability object, including false. This declares
+the host's input support; Codex still applies its approval policy, root-thread and
+thread-source checks. The legacy `openai/form` extension stays disabled.
 
 ## Build and proof
 

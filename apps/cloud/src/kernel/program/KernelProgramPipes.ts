@@ -220,7 +220,7 @@ function pipeDescriptor(
   };
 }
 
-function readEndpoint(
+export function readEndpoint(
   pipe: KernelPipe,
   wakes: KernelWakeRegistry,
   signal?: AbortSignal,
@@ -236,7 +236,7 @@ function readEndpoint(
   };
 }
 
-function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): PollableStdio {
+export function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): PollableStdio {
   return {
     supportsNonblocking: true,
     write: (source, flags) =>
@@ -247,20 +247,28 @@ function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): PollableStd
   };
 }
 
-function writable(pipe: KernelPipe, signal?: AbortSignal): WritableStream<Uint8Array> {
+export function writable(
+  pipe: KernelPipe,
+  signal?: AbortSignal,
+  pending?: Set<Promise<unknown>>,
+): WritableStream<Uint8Array> {
   return new WritableStream<Uint8Array>({
-    write: (chunk) => writeAll(pipe, chunk, signal),
+    write: (chunk) => trackPipeIo(writeAll(pipe, chunk, signal), pending),
     close: () => pipe.closeWriter(),
     abort: () => pipe.closeWriter(),
   });
 }
 
-function readable(pipe: KernelPipe, signal?: AbortSignal): ReadableStream<Uint8Array> {
+export function readable(
+  pipe: KernelPipe,
+  signal?: AbortSignal,
+  pending?: Set<Promise<unknown>>,
+): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const target = new Uint8Array(READ_CHUNK_BYTES);
       try {
-        const count = await pipe.readInto(target, { signal });
+        const count = await trackPipeIo(pipe.readInto(target, { signal }), pending);
         if (count === 0) {
           pipe.closeReader();
           controller.close();
@@ -331,4 +339,11 @@ async function waitForReadiness(
   } finally {
     wakes.release(token);
   }
+}
+
+export function trackPipeIo<T>(operation: Promise<T>, pending?: Set<Promise<unknown>>): Promise<T> {
+  if (pending === undefined) return operation;
+  const tracked = operation.finally(() => pending.delete(tracked));
+  pending.add(tracked);
+  return tracked;
 }

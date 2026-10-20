@@ -16,6 +16,7 @@ export type {
   HostOpenInput,
   NativeHostBinding,
   NativeMcpConfiguration,
+  NativeThreadLoad,
   ProgramSeed,
   ResolvedConnections,
   SeedStage,

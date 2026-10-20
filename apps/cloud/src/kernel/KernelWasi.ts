@@ -6,6 +6,7 @@ import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import type { AsyncWASIOptions } from "./Wasi.ts";
 import { WasiLifecycle } from "./wasi/internal_wasi_lifecycle.ts";
 import { validateOptions } from "./wasi/internal_wasi_options.ts";
+import { runKernelExecution } from "./process/KernelExecution.ts";
 
 export interface KernelAsyncWasiOptions {
   readonly filesystem: KernelFileSystem;
@@ -45,7 +46,10 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
         return lifecycle.wasiImport;
       },
       getImportObject: () => lifecycle.getImportObject(),
-      start: (instance: object) => lifecycle.startAsync(instance),
+      start: (instance: object, signal?: AbortSignal) =>
+        signal === undefined
+          ? lifecycle.startAsync(instance)
+          : runKernelExecution(signal, () => lifecycle.startAsync(instance)),
       initialize: (instance: object) => lifecycle.initializeAsync(instance),
       run: (fn: (...args: Array<number | bigint>) => unknown, ...args: Array<number | bigint>) =>
         lifecycle.runAsync(fn, ...args),

@@ -10,8 +10,14 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HarnessError, type HarnessOpenInput, type HarnessSession } from "../Harness.ts";
+import { checkpointThreadLoad, nativeTurnThreadLoad } from "../HarnessThreadLoad.ts";
 import { threadMatches } from "../adapter/checkpoint.ts";
-import type { HarnessHostSession, NativeHostBinding, TurnAccess } from "./contracts.ts";
+import type {
+  HarnessHostSession,
+  NativeHostBinding,
+  NativeMcpConfiguration,
+  TurnAccess,
+} from "./contracts.ts";
 import type { McpRoutes } from "./mcp.ts";
 import { mcpAborted } from "./mcp.ts";
 import { fingerprint } from "./seed.ts";
@@ -31,12 +37,33 @@ const sameConnections = Schema.toEquivalence(
   }),
 );
 
+export const snapshotAccess = <G>(access: TurnAccess<G>): TurnAccess<G> => ({
+  grant: access.grant,
+  signal: access.signal,
+  connections: {
+    servers: access.connections.servers.map((server) => ({
+      ...server,
+      directTools: [...server.directTools],
+    })),
+  },
+});
+
+export const sameAccess = <G>(a: TurnAccess<G> | undefined, b: TurnAccess<G> | undefined) =>
+  a === undefined || b === undefined
+    ? a === b
+    : Object.is(a.grant, b.grant) &&
+      a.signal === b.signal &&
+      sameConnections(a.connections, b.connections);
+
 export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
     let closed = false;
     let highestOrdinal = 0;
     let providerThreadId: string | undefined;
+    let initial:
+      | { readonly access: TurnAccess<G>; readonly configuration: NativeMcpConfiguration }
+      | undefined;
     let active:
       | {
           turn: RunnerTurn;
@@ -60,6 +87,7 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
     >();
     const stop = () => {
       closed = true;
+      initial = undefined;
       if (active !== undefined) Deferred.doneUnsafe(active.drained, Effect.void);
       mcp.close();
     };
@@ -125,6 +153,61 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
     return {
       decorate,
       stop,
+      prepareInitial(
+        native: NativeHostBinding,
+        input: HarnessOpenInput,
+        access: TurnAccess<G>,
+        signal: AbortSignal,
+      ) {
+        return lock.withPermits(1)(
+          Effect.gen(function* () {
+            const checkpoint = input.checkpoint;
+            if (
+              closed ||
+              signal.aborted ||
+              access.signal.aborted ||
+              initial !== undefined ||
+              checkpoint === undefined
+            )
+              return yield* Effect.fail(
+                new HarnessError({
+                  operation: "open",
+                  message: "Checkpoint access is unavailable.",
+                }),
+              );
+            const configuration = yield* Effect.try({
+              try: () => mcp.activate(access),
+              catch: () =>
+                new HarnessError({ operation: "open", message: "Checkpoint MCP binding failed." }),
+            });
+            initial = { access, configuration };
+            // Native setup belongs to the session and access, beyond this open operation's fiber.
+            const setupSignal = AbortSignal.any([signal, access.signal]);
+            yield* Effect.suspend(() =>
+              native.configureMcp(
+                configuration,
+                setupSignal,
+                checkpointThreadLoad(checkpoint, input.session),
+              ),
+            ).pipe(
+              Effect.raceFirst(mcpAborted(setupSignal)),
+              Effect.andThen(
+                Effect.suspend(() =>
+                  setupSignal.aborted
+                    ? Effect.fail(
+                        new HarnessError({
+                          operation: "open",
+                          message: "Checkpoint access ended.",
+                        }),
+                      )
+                    : Effect.void,
+                ),
+              ),
+              Effect.onExit((exit) => (Exit.isFailure(exit) ? Effect.sync(stop) : Effect.void)),
+            );
+          }),
+        );
+      },
       wrap(
         raw: HarnessSession,
         native: NativeHostBinding,
@@ -155,16 +238,7 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
           dispose,
           turn: ({ turn: supplied, access }) =>
             Effect.gen(function* () {
-              const authorized = {
-                grant: access.grant,
-                signal: access.signal,
-                connections: {
-                  servers: access.connections.servers.map((server) => ({
-                    ...server,
-                    directTools: [...server.directTools],
-                  })),
-                },
-              };
+              const authorized = snapshotAccess(access);
               const encoded = yield* encodeTurn(supplied).pipe(
                 Effect.mapError(
                   () =>
@@ -237,14 +311,25 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
                           message: "Turn is stale, active, or belongs to another session.",
                         }),
                       );
-                    const config = yield* Effect.try({
-                      try: () => mcp.activate(authorized),
-                      catch: () =>
+                    const prepared = initial;
+                    if (prepared !== undefined && !sameAccess(prepared.access, authorized))
+                      return yield* Effect.fail(
                         new HarnessError({
                           operation: "turn",
-                          message: "MCP turn binding failed.",
+                          message: "Turn access conflicts with checkpoint access.",
                         }),
-                    });
+                      );
+                    const config =
+                      prepared === undefined
+                        ? yield* Effect.try({
+                            try: () => mcp.activate(authorized),
+                            catch: () =>
+                              new HarnessError({
+                                operation: "turn",
+                                message: "MCP turn binding failed.",
+                              }),
+                          })
+                        : prepared.configuration;
                     const acceptedAccessId = accessId ?? ++nextAccessId;
                     accessIds.set(access, acceptedAccessId);
                     const result = yield* Deferred.make<void, HarnessError>();
@@ -264,9 +349,14 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
                       finishing: false,
                       drained: yield* Deferred.make<void>(),
                     };
+                    initial = undefined;
                     const accessSignal = AbortSignal.any([signal, authorized.signal]);
+                    const load = nativeTurnThreadLoad(turn, input.session, raw.providerSession.id);
                     const started = yield* restore(
-                      Effect.suspend(() => native.configureMcp(config, accessSignal)).pipe(
+                      (prepared === undefined
+                        ? Effect.suspend(() => native.configureMcp(config, accessSignal, load))
+                        : Effect.void
+                      ).pipe(
                         Effect.raceFirst(mcpAborted(accessSignal)),
                         Effect.andThen(
                           Effect.suspend(() =>

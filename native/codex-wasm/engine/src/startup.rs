@@ -1,25 +1,26 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use codex_app_server::in_process::InProcessStartArgs;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use codex_app_server_client::EmbeddedNetworkPolicy;
 use codex_app_server_client::EnvironmentManager;
 use codex_app_server_client::ExecServerRuntimeOptions;
-use codex_app_server_client::InProcessAppServerClient;
-use codex_app_server_client::InProcessClientStartArgs;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::LoaderOverrides;
+use codex_config::NoopThreadConfigLoader;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
 
 use crate::UPSTREAM_VERSION;
+use crate::client::Client;
 use crate::protocol::Bootstrap;
 
-pub async fn start(bootstrap: Bootstrap) -> anyhow::Result<InProcessAppServerClient> {
+pub async fn start(bootstrap: Bootstrap) -> anyhow::Result<Client> {
     std::env::set_current_dir(&bootstrap.cwd).context("set engine working directory")?;
     std::fs::create_dir_all(&bootstrap.codex_home).context("create engine Codex home")?;
 
@@ -79,7 +80,7 @@ pub async fn start(bootstrap: Bootstrap) -> anyhow::Result<InProcessAppServerCli
         })
         .collect();
 
-    InProcessAppServerClient::start(InProcessClientStartArgs {
+    Client::start(InProcessStartArgs {
         arg0_paths,
         config: Arc::new(config),
         cli_overrides,
@@ -87,6 +88,7 @@ pub async fn start(bootstrap: Bootstrap) -> anyhow::Result<InProcessAppServerCli
         strict_config: false,
         cloud_config_bundle,
         embedded_network_policy,
+        thread_config_loader: Arc::new(NoopThreadConfigLoader),
         feedback: CodexFeedback::new(),
         log_db: None,
         state_db: Some(state_db),
@@ -94,11 +96,9 @@ pub async fn start(bootstrap: Bootstrap) -> anyhow::Result<InProcessAppServerCli
         config_warnings,
         session_source: SessionSource::Exec,
         enable_codex_api_key_env: true,
-        client_name: "signalbox-codex-engine".to_owned(),
-        client_version: UPSTREAM_VERSION.to_owned(),
-        experimental_api: true,
-        mcp_server_openai_form_elicitation: false,
-        opt_out_notification_methods: Vec::new(),
+        initialize: bootstrap
+            .host_capabilities
+            .initialize_params(UPSTREAM_VERSION),
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     })
     .await

@@ -2,6 +2,7 @@ import type {
   ExecutorMcpPort,
   ExecutorTarget,
   NativeMcpConfiguration,
+  ResolvedConnections,
   TurnAccess,
 } from "./contracts.ts";
 import { HarnessError } from "../Harness.ts";
@@ -12,6 +13,26 @@ const denied = () =>
     operation: "turn",
     message: "Harness MCP request is unavailable.",
   });
+
+export const validateConnections = (connections: ResolvedConnections) => {
+  const names = new Set<string>(["executor"]);
+  const ids = new Set<string>();
+  for (const server of connections.servers) {
+    if (
+      !server.id ||
+      !server.name ||
+      names.has(server.name) ||
+      ids.has(server.id) ||
+      server.directTools.some((tool) => !tool)
+    )
+      throw new HarnessError({
+        operation: "turn",
+        message: "Resolved MCP server identities conflict.",
+      });
+    names.add(server.name);
+    ids.add(server.id);
+  }
+};
 
 export const mcpAborted = (signal: AbortSignal) =>
   Effect.callback<never, HarnessError>((resume) => {
@@ -158,23 +179,9 @@ export function createMcpRoutes<G>(executor: ExecutorMcpPort<G>, ownerSignal: Ab
         close,
         activate(access: TurnAccess<G>): NativeMcpConfiguration {
           if (ownerSignal.aborted || sessionSignal.aborted || access.signal.aborted) throw denied();
+          validateConnections(access.connections);
           const targets = new Map<string, ExecutorTarget>([["executor", { type: "executor" }]]);
-          const names = new Set<string>(["executor"]);
-          const ids = new Set<string>();
           for (const server of access.connections.servers) {
-            if (
-              !server.id ||
-              !server.name ||
-              names.has(server.name) ||
-              ids.has(server.id) ||
-              server.directTools.some((tool) => !tool)
-            )
-              throw new HarnessError({
-                operation: "turn",
-                message: "Resolved MCP server identities conflict.",
-              });
-            names.add(server.name);
-            ids.add(server.id);
             if (server.directTools.length > 0)
               targets.set(server.name, {
                 type: "direct",

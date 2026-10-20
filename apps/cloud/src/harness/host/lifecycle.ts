@@ -16,10 +16,11 @@ import type {
   HarnessHostSession,
   HarnessSessionHost,
   NativeHostBinding,
+  TurnAccess,
 } from "./contracts.ts";
-import { createMcpRoutes } from "./mcp.ts";
+import { createMcpRoutes, validateConnections } from "./mcp.ts";
 import { fingerprint, type SeedCatalog } from "./seed.ts";
-import { createHostSession } from "./session.ts";
+import { createHostSession, sameAccess, snapshotAccess } from "./session.ts";
 import { createHostStorage } from "./storage.ts";
 
 export const createHostLifecycle = <G>(
@@ -105,6 +106,7 @@ export const createHostLifecycle = <G>(
       type Attempt = {
         readonly hash: string;
         readonly id: string;
+        readonly initialAccess: TurnAccess<G> | undefined;
         session?: HarnessHostSession<G>;
         ended: boolean;
       };
@@ -203,9 +205,21 @@ export const createHostLifecycle = <G>(
             native = { binding, session, signal };
             return {
               open: (harness: HarnessOpenInput) =>
-                binding.factory
-                  .open(harness)
-                  .pipe(Scope.provide(scope), Effect.map(session.decorate)),
+                Effect.gen(function* () {
+                  const runtime = yield* binding.factory.open(harness).pipe(Scope.provide(scope));
+                  if (harness.checkpoint !== undefined) {
+                    const access = attempt.initialAccess;
+                    if (access === undefined)
+                      return yield* Effect.fail(
+                        new HarnessError({
+                          operation: "open",
+                          message: "Checkpoint access is unavailable.",
+                        }),
+                      );
+                    yield* session.prepareInitial(binding, harness, access, signal);
+                  }
+                  return session.decorate(runtime);
+                }),
             };
           }),
       });
@@ -256,8 +270,26 @@ export const createHostLifecycle = <G>(
           ),
         open: (supplied) =>
           Effect.gen(function* () {
-            const input = yield* Effect.try({
-              try: () => snapshotOpen(supplied),
+            const { input, initialAccess } = yield* Effect.try({
+              try: () => {
+                const { bootAttemptId, session, checkpoint, initialAccess: access } = supplied;
+                if (
+                  (checkpoint === undefined) !== (access === undefined) ||
+                  (access !== undefined &&
+                    (!(access.signal instanceof AbortSignal) || access.signal.aborted))
+                )
+                  throw new Error("Invalid checkpoint access");
+                const initialAccess = access === undefined ? undefined : snapshotAccess(access);
+                if (initialAccess !== undefined) validateConnections(initialAccess.connections);
+                return {
+                  input: snapshotOpen({
+                    bootAttemptId,
+                    session,
+                    ...(checkpoint === undefined ? {} : { checkpoint }),
+                  }),
+                  initialAccess,
+                };
+              },
               catch: () =>
                 new HarnessError({
                   operation: "open",
@@ -283,8 +315,17 @@ export const createHostLifecycle = <G>(
                     }),
                 });
                 const prior = attempts.get(input.bootAttemptId);
+                if (initialAccess?.signal.aborted)
+                  return yield* Effect.fail(
+                    new HarnessError({ operation: "open", message: "Checkpoint access ended." }),
+                  );
                 if (prior !== undefined) {
-                  if (prior.hash === hash && !prior.ended && prior.session !== undefined)
+                  if (
+                    prior.hash === hash &&
+                    sameAccess(prior.initialAccess, initialAccess) &&
+                    !prior.ended &&
+                    prior.session !== undefined
+                  )
                     return prior.session;
                   return yield* Effect.fail(
                     new HarnessError({
@@ -316,18 +357,35 @@ export const createHostLifecycle = <G>(
                 );
                 yield* Effect.tryPromise({
                   try: (signal) =>
-                    boot.claim(input.bootAttemptId, hash, AbortSignal.any([signal, owner.signal])),
+                    boot.claim(
+                      input.bootAttemptId,
+                      hash,
+                      AbortSignal.any([
+                        signal,
+                        owner.signal,
+                        ...(initialAccess === undefined ? [] : [initialAccess.signal]),
+                      ]),
+                    ),
                   catch: () =>
                     new HarnessError({
                       operation: "open",
                       message: "Harness boot validation or admission failed.",
                     }),
                 });
-                const attempt: Attempt = { hash, id: input.bootAttemptId, ended: false };
+                const attempt: Attempt = {
+                  hash,
+                  id: input.bootAttemptId,
+                  initialAccess,
+                  ended: false,
+                };
                 attempts.set(attempt.id, attempt);
                 occupied = attempt;
                 let raw: HarnessSession | undefined;
                 return yield* Effect.gen(function* () {
+                  if (initialAccess?.signal.aborted)
+                    return yield* Effect.fail(
+                      new HarnessError({ operation: "open", message: "Checkpoint access ended." }),
+                    );
                   if (ports === undefined) {
                     yield* Effect.uninterruptibleMask((restore) =>
                       Effect.gen(function* () {
@@ -363,7 +421,15 @@ export const createHostLifecycle = <G>(
                       }),
                     );
                   }
+                  if (initialAccess?.signal.aborted)
+                    return yield* Effect.fail(
+                      new HarnessError({ operation: "open", message: "Checkpoint access ended." }),
+                    );
                   raw = yield* facet.open(input);
+                  if (initialAccess?.signal.aborted)
+                    return yield* Effect.fail(
+                      new HarnessError({ operation: "open", message: "Checkpoint access ended." }),
+                    );
                   const built = native;
                   if (built === undefined)
                     return yield* Effect.fail(

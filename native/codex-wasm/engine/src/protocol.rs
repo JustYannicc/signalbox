@@ -3,8 +3,12 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use codex_app_server_protocol::ClientInfo;
+use codex_app_server_protocol::InitializeCapabilities;
+use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::RequestId;
+use codex_protocol::mcp::OPENAI_STANDARD_FORM_INPUT_EXTENSION_ID;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -19,6 +23,48 @@ pub struct Bootstrap {
     pub cwd: PathBuf,
     #[serde(default)]
     pub overrides: BTreeMap<String, toml::Value>,
+    #[serde(default, deserialize_with = "decode_host_capabilities")]
+    pub host_capabilities: HostCapabilities,
+}
+
+fn decode_host_capabilities<'de, D>(deserializer: D) -> Result<HostCapabilities, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let fields = serde_json::Map::<String, Value>::deserialize(deserializer)?;
+    serde_json::from_value(Value::Object(fields)).map_err(serde::de::Error::custom)
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostCapabilities {
+    #[serde(default)]
+    pub standard_form_input: bool,
+}
+
+impl HostCapabilities {
+    pub fn initialize_params(self, upstream_version: &str) -> InitializeParams {
+        InitializeParams {
+            client_info: ClientInfo {
+                name: "signalbox-codex-engine".to_owned(),
+                title: None,
+                version: upstream_version.to_owned(),
+            },
+            capabilities: Some(InitializeCapabilities {
+                explicit_gateway_oauth: false,
+                experimental_api: true,
+                request_attestation: false,
+                mcp_server_openai_form_elicitation: false,
+                opt_out_notification_methods: None,
+                extensions: self.standard_form_input.then(|| {
+                    std::collections::HashMap::from([(
+                        OPENAI_STANDARD_FORM_INPUT_EXTENSION_ID.to_owned(),
+                        json!({}),
+                    )])
+                }),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +158,71 @@ mod tests {
             bootstrap.overrides["model_context_window"].as_integer(),
             Some(8192)
         );
+    }
+
+    #[test]
+    fn undeclared_host_capabilities_stay_disabled() {
+        let bootstrap =
+            Bootstrap::decode(br#"{"type":"bootstrap","codex_home":"/home/codex","cwd":"/work"}"#)
+                .unwrap();
+        assert_eq!(bootstrap.host_capabilities, HostCapabilities::default());
+        let initialize = bootstrap.host_capabilities.initialize_params("test");
+        let capabilities = initialize.capabilities.unwrap();
+        assert!(capabilities.extensions.is_none());
+        assert!(!capabilities.mcp_server_openai_form_elicitation);
+        assert_eq!(
+            serde_json::to_value(bootstrap.host_capabilities).unwrap(),
+            json!({"standard_form_input": false})
+        );
+    }
+
+    #[test]
+    fn declared_form_support_initializes_only_the_standard_extension() {
+        let bootstrap = Bootstrap::decode(br#"{"type":"bootstrap","codex_home":"/home/codex","cwd":"/work","host_capabilities":{"standard_form_input":true}}"#).unwrap();
+        let initialize =
+            serde_json::to_value(bootstrap.host_capabilities.initialize_params("test")).unwrap();
+        assert_eq!(
+            initialize["capabilities"]["extensions"],
+            json!({"openai/standard-form-input": {}})
+        );
+        assert_eq!(initialize["capabilities"]["experimentalApi"], true);
+        assert_eq!(initialize["capabilities"]["requestAttestation"], false);
+        assert!(
+            initialize["capabilities"]
+                .get("mcpServerOpenaiFormElicitation")
+                .is_none()
+        );
+        assert_eq!(
+            serde_json::to_value(bootstrap.host_capabilities).unwrap(),
+            json!({"standard_form_input": true})
+        );
+    }
+
+    #[test]
+    fn empty_or_explicitly_disabled_host_capabilities_stay_disabled() {
+        for capabilities in [json!({}), json!({"standard_form_input": false})] {
+            let value = json!({"type":"bootstrap","codex_home":"/home/codex","cwd":"/work","host_capabilities":capabilities});
+            let bootstrap = Bootstrap::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert_eq!(bootstrap.host_capabilities, HostCapabilities::default());
+            let initialize = bootstrap.host_capabilities.initialize_params("test");
+            assert!(initialize.capabilities.unwrap().extensions.is_none());
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_or_malformed_host_capabilities() {
+        for capabilities in [
+            json!([true]),
+            json!([false]),
+            json!([]),
+            json!({"standard_form_input": "true"}),
+            json!({"standard_form_input": true, "approval_policy": "never"}),
+            json!({"extensions": {"openai/form": {}}}),
+            json!(null),
+        ] {
+            let value = json!({"type":"bootstrap","codex_home":"/home/codex","cwd":"/work","host_capabilities":capabilities});
+            assert!(Bootstrap::decode(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
     }
 
     #[test]
