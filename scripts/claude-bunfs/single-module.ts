@@ -4,8 +4,7 @@ import type * as Esbuild from "esbuild";
 import type { BundleFile } from "./bundle-artifact.ts";
 
 const MAIN_SPECIFIER = "signalbox:release-main";
-const NAMESPACE_PREFIX = "signalbox:entry-namespace:";
-const NAMESPACE = "signalbox-release-main";
+const PLUGIN_NAMESPACE = "signalbox-release";
 
 /** Export names of each entry output, read from a split build of the same entries. */
 export function entryExports(
@@ -69,8 +68,9 @@ export function planSingleModule(input: {
     const accessor = JSON.stringify(`signalbox:entry:${index}`);
     // Requiring an entry directly yields esbuild's CommonJS view: module.exports for a CommonJS
     // entry and an injected __esModule for an ES one. A wrapper that re-exports the entry's
-    // namespace keeps the split build's exports, and still evaluates on first call.
-    const wrapper = `${NAMESPACE_PREFIX}${index}`;
+    // namespace keeps the split build's exports, and still evaluates on first call. The .mjs
+    // path selects Node interop, so a CommonJS default is module.exports even with __esModule.
+    const wrapper = `signalbox:entry-wrapper:${index}.mjs`;
     namespaces.set(
       wrapper,
       `import * as entry from ${JSON.stringify(specifier)};export default entry;`,
@@ -90,13 +90,18 @@ export function planSingleModule(input: {
     facades.push({ path: `${name}.js`, contents: encoder.encode(source) });
   }
   const plugin: Esbuild.Plugin = {
-    name: "signalbox-release-main",
+    name: PLUGIN_NAMESPACE,
     setup(build) {
-      build.onResolve({ filter: /^signalbox:(release-main|entry-namespace:\d+)$/ }, (args) => ({
-        path: args.path,
-        namespace: NAMESPACE,
-      }));
-      build.onLoad({ filter: /.*/, namespace: NAMESPACE }, (args) => {
+      // Only the synthetic entry point and the main module's own wrapper requires are ours; any
+      // real module with a similar name resolves as usual.
+      build.onResolve({ filter: /^signalbox:/ }, (args) => {
+        const ours =
+          args.kind === "entry-point"
+            ? args.path === MAIN_SPECIFIER
+            : args.namespace === PLUGIN_NAMESPACE && namespaces.has(args.path);
+        return ours ? { path: args.path, namespace: PLUGIN_NAMESPACE } : undefined;
+      });
+      build.onLoad({ filter: /.*/, namespace: PLUGIN_NAMESPACE }, (args) => {
         const contents =
           args.path === MAIN_SPECIFIER ? lines.join("\n") : namespaces.get(args.path);
         return contents === undefined ? null : { contents, loader: "js" };

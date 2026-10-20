@@ -16,7 +16,9 @@ afterEach(async () => {
 const fixturePlugin = (sources: Readonly<Record<string, string>>): Esbuild.Plugin => ({
   name: "fixture",
   setup(build) {
-    build.onResolve({ filter: /^fixture:/ }, (args) => ({ path: args.path, namespace: "fixture" }));
+    build.onResolve({ filter: /.*/ }, (args) =>
+      Object.hasOwn(sources, args.path) ? { path: args.path, namespace: "fixture" } : undefined,
+    );
     build.onLoad({ filter: /.*/, namespace: "fixture" }, (args) => ({
       contents: sources[args.path]!,
       loader: "js",
@@ -141,6 +143,33 @@ describe("single-module release planning", () => {
     const host = await load("host/shared.js");
     expect(host.default).toEqual({ value: "cjs" });
     expect(host.default).toBe((await load("claude.js")).fromMain);
+  });
+
+  it("publishes module.exports as the default of a CommonJS entry marked __esModule", async () => {
+    const { load } = await publish({
+      sources: {
+        "fixture:main": "",
+        "fixture:marked": 'exports.__esModule=true;exports.value=17;exports.default="inner";',
+      },
+      entries: { claude: "fixture:main", "host/marked": "fixture:marked" },
+    });
+    const host = await load("host/marked.js");
+    expect(host.default).toEqual({ __esModule: true, value: 17, default: "inner" });
+  });
+
+  it("leaves real modules named like its synthetic specifiers alone", async () => {
+    const { load } = await publish({
+      sources: {
+        "fixture:main": "",
+        "fixture:worker":
+          'export {value} from "signalbox:entry-wrapper:0.mjs";export {other} from "signalbox:entry-wrapper:999.mjs";',
+        "signalbox:entry-wrapper:0.mjs": "export const value=17;",
+        "signalbox:entry-wrapper:999.mjs": "export const other=18;",
+      },
+      entries: { claude: "fixture:main", "workers/one": "fixture:worker" },
+    });
+    const worker = await load("workers/one.js");
+    expect([worker.value, worker.other]).toEqual([17, 18]);
   });
 
   it("keeps an entry's own __esModule export instead of esbuild's interop marker", async () => {
