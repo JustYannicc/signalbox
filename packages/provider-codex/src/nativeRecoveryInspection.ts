@@ -13,6 +13,18 @@ const Row = Schema.Struct({
   payload: Schema.Record(Schema.String, Schema.Unknown),
 });
 const isRow = Schema.is(Row);
+const UserMessageItemMarker = Schema.Struct({ type: Schema.Literal("UserMessage") });
+const isUserMessageItem = Schema.is(UserMessageItemMarker);
+const CurrentUserMessage = Schema.Struct({
+  type: Schema.Literal("item_completed"),
+  thread_id: Schema.String,
+  turn_id: Schema.String,
+  item: Schema.Struct({
+    type: Schema.Literal("UserMessage"),
+    client_id: Schema.String,
+  }),
+});
+const isCurrentUserMessage = Schema.is(CurrentUserMessage);
 const isNativeOutput = Schema.is(
   Schema.Union([Schema.String, Schema.Array(ClientRequest__FunctionCallOutputContentItem)]),
 );
@@ -71,6 +83,22 @@ function readHead(
           inputTurnId = turnId;
         } else if (inputLine > 0)
           return blocked("A later native input superseded this logical run.");
+      }
+      if (p.type === "item_completed" && isUserMessageItem(p.item)) {
+        if (!isCurrentUserMessage(p))
+          return blocked("Native UserMessage event has incomplete correlation identity.");
+        if (p.thread_id !== sessionId)
+          return blocked("Native UserMessage belongs to a different thread.");
+        if (p.item.client_id === admission.nativeInputId) {
+          if (p.turn_id !== turnId)
+            return blocked("Original native input turn does not match its event turn.");
+          if (inputLine > 0)
+            return blocked("Original input appears more than once in the rollout.");
+          inputLine = offset + 1;
+          inputTurnId = p.turn_id;
+        } else if (inputLine > 0) {
+          return blocked("A later native input superseded this logical run.");
+        }
       }
       if ((p.type === "task_complete" || p.type === "turn_complete") && p.turn_id === turnId) {
         state = "completed";
