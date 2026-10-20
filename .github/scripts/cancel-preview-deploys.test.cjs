@@ -12,10 +12,7 @@ const run = (id, fields = {}) => ({
   ...fields,
 });
 
-function fixture(
-  snapshots,
-  { cancelError, currentStatus = "completed", headRepo = "owner/repo" } = {},
-) {
+function fixture(snapshots, { cancelError, headRepo = "owner/repo" } = {}) {
   const cancelled = [];
   const queries = [];
   let reads = 0;
@@ -51,7 +48,6 @@ function fixture(
               cancelled.push(run_id);
               if (cancelError) throw cancelError;
             },
-            getWorkflowRun: async () => ({ data: { status: currentStatus } }),
           },
         },
       },
@@ -101,12 +97,14 @@ test("refuses teardown when cancellation does not finish", async () => {
   assert.deepEqual(f.cancelled, [1]);
 });
 
-test("only tolerates a cancellation conflict after confirming that run completed", async () => {
+test("treats a cancellation conflict as a finishing run and waits for it to complete", async () => {
   const conflict = Object.assign(new Error("Conflict"), { status: 409 });
-  const f = fixture([[run(1)], []], { cancelError: conflict });
-  await cancelPreviewDeploys(f.input);
-  const active = fixture([[run(1)]], { cancelError: conflict, currentStatus: "in_progress" });
-  await assert.rejects(cancelPreviewDeploys(active.input), conflict);
+  const finished = fixture([[run(1)], [run(1)], []], { cancelError: conflict });
+  await cancelPreviewDeploys(finished.input);
+  assert.deepEqual(finished.cancelled, [1]);
+  assert.equal(finished.waits(), 2);
+  const stuck = fixture([[run(1)]], { cancelError: conflict });
+  await assert.rejects(cancelPreviewDeploys(stuck.input), /did not stop; refusing teardown/);
 });
 
 test("fails closed on GitHub errors or an unsafe PR target", async () => {

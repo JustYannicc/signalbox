@@ -53,9 +53,11 @@ module.exports = async function cancelPreviewDeploys({
       try {
         await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
       } catch (error) {
+        // 409 means the run is already finishing, e.g. the all-skipped deploy run this
+        // same close event starts. GitHub can still report it in progress for a moment,
+        // so the next poll, not this response, decides whether it stopped.
         if (error.status !== 409) throw error;
-        const current = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
-        if (current.data.status !== "completed") throw error;
+        core.info(`Preview deploy run ${run.id} is already finishing.`);
       }
       requested.add(run.id);
     }
