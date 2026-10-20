@@ -54,6 +54,7 @@ model {
     thread.sagas -> signalbox.drive.api 'fork · accept'
     thread.engine -> signalbox.actorhost.api 'facet · isolates'
     thread.engine -[async]-> signalbox.automations.api 'turn settled (never task completion)'
+    thread.engine -> signalbox.observability.api 'unit · event (ids only)'
 
     // Interface → hidden parts (the only way in)
     thread.api -> thread.runQueue 'send'

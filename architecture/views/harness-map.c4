@@ -1,0 +1,77 @@
+// The talk's split of an agent system (harness = context & orchestration + runtime; around it inference,
+// environments, connectors, apps), applied to Signalbox: we split the harness, every outside thing is one
+// of our gateways, and Tree resolves the place before each turn.
+views {
+
+  view harness_map {
+    title 'Overview/Decisions/Harness map'
+    description '''
+      What does an agent in Signalbox consist of, and which parts do we own?
+      Blue is ours, amber is the vendor's harness, grey is an adapter behind a gateway. In the talk's terms:
+      - **Context & orchestration** is the vendor's harness (Claude Code, Codex), unmodified. We only feed it
+        instructions (AGENTS.md, skills) and hooks.
+      - **Runtime** is ours: Thread (loop, state, turns, asks), the session facet that hosts the harness and
+        holds the grant (auth), Automations (triggers), Observability.
+      - **Inference** is the model gateway, **environments** the computer, **connectors** the tools gateway,
+        **apps** the client gateway.
+      - No box in the talk: Tree resolves the thread's place for each turn, which picks the pool, the
+        connections, the instructions and skills, and the drive.
+    '''
+
+    include personA with { title 'People'; description 'Person A · B · C' }
+    include hier.asstA with { title 'Assistant'; description 'coordinates, never executes' }
+    include signalbox.funnel with {
+      description 'web · desktop · mobile · CLI · API'
+      navigateTo funnel_clients
+    }
+    include signalbox.attention with { description 'asks → pipeline lanes · push' }
+
+    group 'Runtime (ours)' {
+      color primary
+      opacity 6%
+      include signalbox.thread with { description 'loop · state · event log · turns · asks' }
+      include signalbox.automations with { description 'triggers: app events · webhooks · ticks' }
+      include signalbox.observability with { description 'every action traced · ids only' }
+      include signalbox.harness with { title 'Session facet'; description 'hosts the harness · holds the grant · runs hooks' }
+      include signalbox.harness.agents.claudeCode with { description 'Harness (vendor, unmodified): context & orchestration' }
+      include signalbox.harness.agents.codex with { description 'Harness (vendor, unmodified): context & orchestration' }
+    }
+
+    include signalbox.tree with { description 'resolves the place' }
+
+    include signalbox.gateway.modelGateway with { title 'Model gateway'; description 'inference'; navigateTo funnel_model }
+    include signalbox.gateway.toolGateway with { title 'Tools gateway'; description 'connectors'; navigateTo funnel_connections }
+    include signalbox.computer with { description 'command · files · port gateways'; navigateTo funnel_command }
+    include signalbox.models with { title 'Pools'; description 'an account answers' }
+    include signalbox.connections with { title 'Connections · vault'; description 'credentials filled at egress' }
+    include signalbox.computer.backend.kernelFs with { title 'Isolate or machine'; description 'placement hidden' }
+
+    // Only the boxes above: the system, Gateway and the example tree would otherwise wrap them.
+    exclude signalbox, signalbox.gateway, hier
+
+    include signalbox.thread -> signalbox.tree with { title 'resolve place → pool · connections · instructions · drive' }
+    include signalbox.funnel -> signalbox.computer with { title 'terminal · files · ports' }
+    // Asks reach people through Attention; its edge back up to the client gateway tangles the layout, so its card says it.
+    exclude signalbox.attention -> signalbox.funnel
+    include signalbox.thread -> signalbox.automations with { title 'turn settled' }
+    include signalbox.harness -> signalbox.computer with { title 'Bash · Read · Edit' }
+    include signalbox.gateway.modelGateway -> signalbox.models with { title 'pin an account' }
+    exclude signalbox.tree -> *
+    exclude signalbox.connections -> *, signalbox.models -> *
+    exclude signalbox.thread -> signalbox.connections, signalbox.thread -> signalbox.models, signalbox.thread -> signalbox.computer
+    exclude signalbox.harness -> signalbox.thread
+    exclude signalbox.automations -> signalbox.connections
+
+    rank source { personA }
+
+    style signalbox.thread, signalbox.harness, signalbox.automations, signalbox.observability, signalbox.tree,
+      signalbox.attention, signalbox.funnel, signalbox.gateway.modelGateway, signalbox.gateway.toolGateway,
+      signalbox.computer {
+      color primary
+    }
+    style signalbox.harness.agents.claudeCode, signalbox.harness.agents.codex { color amber }
+    style signalbox.models, signalbox.connections, signalbox.computer.backend.kernelFs { color muted }
+    style personA, hier.asstA { color green }
+    autoLayout TopBottom
+  }
+}
