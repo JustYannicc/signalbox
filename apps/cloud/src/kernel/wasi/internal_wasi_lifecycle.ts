@@ -76,6 +76,7 @@ export class WasiLifecycle {
     descriptorContext?: WasiDescriptorContext,
     transformArguments?: WasiImportArgumentTransform,
     adaptFileSystemImports?: WasiFileSystemImportAdapter,
+    executionSignal?: AbortSignal,
   ) {
     this.#async = asyncMode;
     this.#returnOnExit = options.returnOnExit;
@@ -99,6 +100,7 @@ export class WasiLifecycle {
       options.env,
       asyncMode,
       this.filesystem.descriptors,
+      executionSignal,
     );
     const imports = {
       ...host.imports,
@@ -111,19 +113,25 @@ export class WasiLifecycle {
       // provide this suspension boundary.
       this.wasiImport[name] = asyncMode
         ? new (getJSPI().Suspending)(async (...args): Promise<number> => {
+            executionSignal?.throwIfAborted();
+            let result: number;
             try {
               if (this.#closed) throw stateError("WASI has been closed");
-              return await runCurrentKernelCpuAsyncSystemImport((runSystem) =>
+              result = await runCurrentKernelCpuAsyncSystemImport((runSystem) =>
                 runAsync(handler(...(transformArguments?.(name, args) ?? args)), runSystem).catch(
                   (error: unknown) => runSystem(() => mapErrno(error)),
                 ),
               );
             } catch (error) {
-              return runCurrentKernelCpuSystemImport(() => mapErrno(error));
+              result = runCurrentKernelCpuSystemImport(() => mapErrno(error));
             }
+            // signalbox: owner cancellation must unwind WASM before guest shutdown can mutate its saved head.
+            executionSignal?.throwIfAborted();
+            return result;
           })
         : (...args: WasmArgument[]): number => {
-            return runCurrentKernelCpuSystemImport(() => {
+            executionSignal?.throwIfAborted();
+            const result = runCurrentKernelCpuSystemImport(() => {
               try {
                 if (this.#closed) throw stateError("WASI has been closed");
                 return runSync(handler(...(transformArguments?.(name, args) ?? args)));
@@ -131,6 +139,8 @@ export class WasiLifecycle {
                 return mapErrno(error);
               }
             });
+            executionSignal?.throwIfAborted();
+            return result;
           };
     }
   }

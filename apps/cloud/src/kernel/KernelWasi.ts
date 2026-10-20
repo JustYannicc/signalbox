@@ -22,6 +22,7 @@ export interface KernelAsyncWasiOptions {
 
 /** Public kernel binding for a command or reactor that shares its owner's fds. */
 export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
+  const execution = new AbortController();
   const lifecycle = new WasiLifecycle(
     validateOptions(input.options ?? { version: "preview1" }),
     true,
@@ -37,6 +38,7 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
     },
     input.agentOsPreopens ? createAgentOsWasiArgumentTransform(input.filesystem) : undefined,
     createKernelWasiDeviceAdapter(input.filesystem),
+    execution.signal,
   );
   return {
     descriptors: new KernelDescriptors(input.filesystem.descriptors, input.wakes),
@@ -46,10 +48,21 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
         return lifecycle.wasiImport;
       },
       getImportObject: () => lifecycle.getImportObject(),
-      start: (instance: object, signal?: AbortSignal) =>
-        signal === undefined
-          ? lifecycle.startAsync(instance)
-          : runKernelExecution(signal, () => lifecycle.startAsync(instance)),
+      async start(instance: object, signal?: AbortSignal) {
+        if (signal === undefined) {
+          execution.signal.throwIfAborted();
+          return lifecycle.startAsync(instance);
+        }
+        const abort = () => execution.abort(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+        try {
+          execution.signal.throwIfAborted();
+          return await runKernelExecution(signal, () => lifecycle.startAsync(instance));
+        } finally {
+          signal.removeEventListener("abort", abort);
+        }
+      },
       initialize: (instance: object) => lifecycle.initializeAsync(instance),
       run: (fn: (...args: Array<number | bigint>) => unknown, ...args: Array<number | bigint>) =>
         lifecycle.runAsync(fn, ...args),
