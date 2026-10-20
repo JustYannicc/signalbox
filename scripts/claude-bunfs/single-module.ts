@@ -11,7 +11,7 @@ export function entryExports(
   metafile: Esbuild.Metafile,
   output: string,
   entries: Readonly<Record<string, string>>,
-): Record<string, readonly string[]> {
+) {
   const byPath = new Map(
     Object.entries(metafile.outputs).map(([path, value]) => [NodePath.resolve(path), value]),
   );
@@ -19,6 +19,10 @@ export function entryExports(
   for (const name of Object.keys(entries)) {
     const built = byPath.get(NodePath.join(output, `${name}.js`));
     if (!built) throw new Error(`BUNDLE_ENTRY_OUTPUT_MISSING: ${name}`);
+    // A required CommonJS entry yields module.exports, which a facade can't re-export as the split
+    // build's default does, so only ES module entries are published.
+    const format = built.entryPoint && metafile.inputs[built.entryPoint]?.format;
+    if (format === "cjs") throw new Error(`BUNDLE_ENTRY_NOT_ESM: ${name}`);
     exports[name] = built.exports;
   }
   return exports;
@@ -31,7 +35,7 @@ const names = (exported: readonly string[]) => exported.map((name) => JSON.strin
  * One module per release keeps the isolate inside its memory limit: thousands of split chunks
  * cost tens of MiB of module records. Every entry keeps its path as a facade over that module,
  * so entries share its instances. Secondary entries evaluate when their facade is imported and
- * export snapshots, which holds for deferred entries: they export launch() or functions only.
+ * export snapshots of their bindings, so entries must export functions or constants.
  */
 export function planSingleModule(input: {
   readonly mainEntry: string;
@@ -65,9 +69,9 @@ export function planSingleModule(input: {
   const secondaries = Object.entries(input.entries).filter(([name]) => name !== input.mainEntry);
   for (const [index, [name, specifier]] of secondaries.entries()) {
     const accessor = JSON.stringify(`signalbox:entry:${index}`);
-    // A bundled require() evaluates the entry on first call. CJS returns module.exports itself.
+    // A bundled require() evaluates the entry on first call and returns its namespace.
     lines.push(
-      `function load${index}(){const m=require(${JSON.stringify(specifier)});return m&&m.__esModule?m:{default:m}}`,
+      `function load${index}(){return require(${JSON.stringify(specifier)})}`,
       `export {load${index} as ${accessor}};`,
     );
     const exported = exportsOf(name);

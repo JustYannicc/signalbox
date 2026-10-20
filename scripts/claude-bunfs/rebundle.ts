@@ -5,22 +5,21 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Esbuild from "esbuild";
 import { readExtraction } from "./extracted-input.ts";
-import { publishBundle, type EmbeddedAsset } from "./bundle-artifact.ts";
+import { publishBundle, type BundleFile, type EmbeddedAsset } from "./bundle-artifact.ts";
 import { discoverEmbeddedModuleReferences } from "./embedded-entrypoints.ts";
 import { createDeferredInitialization } from "./deferred-initialization.ts";
 import { entryExports, planSingleModule } from "./single-module.ts";
-import { createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
+import { type BunGraphOptions, createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
 
-export interface RebundleOptions {
+export interface RebundleOptions extends BunGraphOptions {
   readonly extracted: string;
   readonly output: string;
   readonly version: string;
   readonly platform: string;
-  /** Pass the same object if transform adds modules while the graph loads. */
-  readonly layerModules?: Readonly<Record<string, string>>;
-  /** Prepared real package sources keyed by their exact import specifiers. */
-  readonly environmentPackageModules?: Readonly<Record<string, string>>;
-  /** Stable host entry names mapped to virtual layer modules. Names omit the .js extension. */
+  /**
+   * Stable host entry names mapped to virtual layer modules. Names omit the .js extension.
+   * Deferred builds publish entries as snapshot facades, so they must export functions or constants.
+   */
   readonly hostEntrypoints?: Readonly<Record<string, string>>;
   /** Prebundled host/bootstrap modules, kept outside release import remapping. */
   readonly runtimeModules?: Readonly<Record<string, string>>;
@@ -32,12 +31,6 @@ export interface RebundleOptions {
     metafile: Esbuild.Metafile,
     embeddedEntrypoints: Readonly<Record<string, string>>,
   ) => void;
-  readonly transform?: (module: {
-    key: string;
-    name: string;
-    source: string;
-    format: number;
-  }) => Promise<string>;
 }
 
 export async function rebundle(options: RebundleOptions) {
@@ -120,7 +113,7 @@ export async function rebundle(options: RebundleOptions) {
   } satisfies Esbuild.BuildOptions;
   // Split output still drives verification: lazy __esm init follows static reachability, so each
   // entry's split graph is what that entry evaluates.
-  const result = await Esbuild.build({
+  const split = await Esbuild.build({
     ...shared,
     entryPoints: entries,
     chunkNames: "chunks/[name]-[hash]",
@@ -129,7 +122,7 @@ export async function rebundle(options: RebundleOptions) {
   });
   const missingPackages = [
     ...new Set(
-      Object.values(result.metafile.outputs).flatMap((output) =>
+      Object.values(split.metafile.outputs).flatMap((output) =>
         output.imports
           .filter((dependency) => dependency.external && !NODE_BUILTINS.has(dependency.path))
           .map((dependency) => dependency.path),
@@ -138,23 +131,23 @@ export async function rebundle(options: RebundleOptions) {
   ].sort();
   if (missingPackages.length)
     throw new Error(`BUNDLE_ENVIRONMENT_MODULES_MISSING: ${missingPackages.join(", ")}`);
-  options.verify?.(result.metafile, embeddedEntrypoints);
-  // Deferred entries evaluate nothing until launch(), so one shared module keeps their timing.
-  const single =
-    deferred &&
-    planSingleModule({
+  options.verify?.(split.metafile, embeddedEntrypoints);
+  let published = split;
+  let facades: BundleFile[] = [];
+  if (deferred) {
+    // Deferred entries evaluate nothing until launch(), so one shared module keeps their timing.
+    const single = planSingleModule({
       mainEntry: "claude",
       entries,
-      exports: entryExports(result.metafile, output, entries),
+      exports: entryExports(split.metafile, output, entries),
     });
-  const built =
-    deferred && single
-      ? await Esbuild.build({
-          ...shared,
-          entryPoints: { [single.bundleName]: single.entryPoint },
-          plugins: [single.plugin, deferred.plugin, graph.plugin],
-        })
-      : result;
+    published = await Esbuild.build({
+      ...shared,
+      entryPoints: { [single.bundleName]: single.entryPoint },
+      plugins: [single.plugin, deferred.plugin, graph.plugin],
+    });
+    facades = single.facades;
+  }
   const embeddedAssets: EmbeddedAsset[] = [];
   // Bun.file can read embedded assets without a JavaScript import. Preserve the full asset map.
   for (const module of input.manifest.modules) {
@@ -184,11 +177,11 @@ export async function rebundle(options: RebundleOptions) {
     embeddedEntrypoints,
     hostEntrypoints,
     modules: [
-      ...built.outputFiles.map((file) => ({
+      ...published.outputFiles.map((file) => ({
         path: NodePath.relative(output, file.path).split(NodePath.sep).join("/"),
         contents: file.contents,
       })),
-      ...(single ? single.facades : []),
+      ...facades,
       ...Object.entries(options.runtimeModules ?? {}).map(([path, source]) => ({
         path,
         contents: new TextEncoder().encode(source),
@@ -197,7 +190,7 @@ export async function rebundle(options: RebundleOptions) {
     assets: embeddedAssets,
     requiredHostModules: [...requiredHostModules],
     sourceModules: [...loaded],
-    metafile: built.metafile,
+    metafile: published.metafile,
   });
 }
 

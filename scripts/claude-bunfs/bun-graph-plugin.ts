@@ -4,17 +4,32 @@ import * as NodePath from "node:path";
 import type * as Esbuild from "esbuild";
 import type { readExtraction } from "./extracted-input.ts";
 import { normalizeModule } from "./normalize.ts";
-import type { RebundleOptions } from "./rebundle.ts";
 
 export const NODE_BUILTINS = new Set(
   NodeModule.builtinModules.flatMap((name) => [name, `node:${name}`]),
 );
 
-/** Resolves and loads the extracted Bun graph. Loads are cached so every build transforms once. */
+/**
+ * Resolves and loads the extracted Bun graph. Loads are cached across builds because transforms
+ * accumulate the AJV report, so each module must transform exactly once.
+ */
+export interface BunGraphOptions {
+  /** Pass the same object if transform adds modules while the graph loads. */
+  readonly layerModules?: Readonly<Record<string, string>>;
+  /** Prepared real package sources keyed by their exact import specifiers. */
+  readonly environmentPackageModules?: Readonly<Record<string, string>>;
+  readonly transform?: (module: {
+    key: string;
+    name: string;
+    source: string;
+    format: number;
+  }) => Promise<string>;
+}
+
 export function createBunGraphPlugin(input: {
   readonly extraction: Awaited<ReturnType<typeof readExtraction>>;
   readonly sources: ReadonlyMap<string, string>;
-  readonly options: RebundleOptions;
+  readonly options: BunGraphOptions;
   readonly deferSource: (source: string, importer: string) => string;
 }) {
   const { extraction, options, deferSource } = input;
