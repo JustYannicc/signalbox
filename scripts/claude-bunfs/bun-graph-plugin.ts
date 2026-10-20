@@ -9,10 +9,6 @@ export const NODE_BUILTINS = new Set(
   NodeModule.builtinModules.flatMap((name) => [name, `node:${name}`]),
 );
 
-/**
- * Resolves and loads the extracted Bun graph. Loads are cached across builds because transforms
- * accumulate the AJV report, so each module must transform exactly once.
- */
 export interface BunGraphOptions {
   /** Pass the same object if transform adds modules while the graph loads. */
   readonly layerModules?: Readonly<Record<string, string>>;
@@ -26,6 +22,10 @@ export interface BunGraphOptions {
   }) => Promise<string>;
 }
 
+/**
+ * Resolves and loads the extracted Bun graph. Loads are cached across builds because transforms
+ * accumulate the AJV report, so each module must transform exactly once.
+ */
 export function createBunGraphPlugin(input: {
   readonly extraction: Awaited<ReturnType<typeof readExtraction>>;
   readonly sources: ReadonlyMap<string, string>;

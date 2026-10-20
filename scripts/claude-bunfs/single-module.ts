@@ -4,7 +4,8 @@ import type * as Esbuild from "esbuild";
 import type { BundleFile } from "./bundle-artifact.ts";
 
 const MAIN_SPECIFIER = "signalbox:release-main";
-const MAIN_NAMESPACE = "signalbox-release-main";
+const NAMESPACE_PREFIX = "signalbox:entry-namespace:";
+const NAMESPACE = "signalbox-release-main";
 
 /** Export names of each entry output, read from a split build of the same entries. */
 export function entryExports(
@@ -19,10 +20,6 @@ export function entryExports(
   for (const name of Object.keys(entries)) {
     const built = byPath.get(NodePath.join(output, `${name}.js`));
     if (!built) throw new Error(`BUNDLE_ENTRY_OUTPUT_MISSING: ${name}`);
-    // A required CommonJS entry yields module.exports, which a facade can't re-export as the split
-    // build's default does, so only ES module entries are published.
-    const format = built.entryPoint && metafile.inputs[built.entryPoint]?.format;
-    if (format === "cjs") throw new Error(`BUNDLE_ENTRY_NOT_ESM: ${name}`);
     exports[name] = built.exports;
   }
   return exports;
@@ -67,11 +64,19 @@ export function planSingleModule(input: {
     },
   ];
   const secondaries = Object.entries(input.entries).filter(([name]) => name !== input.mainEntry);
+  const namespaces = new Map<string, string>();
   for (const [index, [name, specifier]] of secondaries.entries()) {
     const accessor = JSON.stringify(`signalbox:entry:${index}`);
-    // A bundled require() evaluates the entry on first call and returns its namespace.
+    // Requiring an entry directly yields esbuild's CommonJS view: module.exports for a CommonJS
+    // entry and an injected __esModule for an ES one. A wrapper that re-exports the entry's
+    // namespace keeps the split build's exports, and still evaluates on first call.
+    const wrapper = `${NAMESPACE_PREFIX}${index}`;
+    namespaces.set(
+      wrapper,
+      `import * as entry from ${JSON.stringify(specifier)};export default entry;`,
+    );
     lines.push(
-      `function load${index}(){return require(${JSON.stringify(specifier)})}`,
+      `function load${index}(){return require(${JSON.stringify(wrapper)}).default}`,
       `export {load${index} as ${accessor}};`,
     );
     const exported = exportsOf(name);
@@ -87,14 +92,15 @@ export function planSingleModule(input: {
   const plugin: Esbuild.Plugin = {
     name: "signalbox-release-main",
     setup(build) {
-      build.onResolve({ filter: new RegExp(`^${MAIN_SPECIFIER}$`) }, (args) => ({
+      build.onResolve({ filter: /^signalbox:(release-main|entry-namespace:\d+)$/ }, (args) => ({
         path: args.path,
-        namespace: MAIN_NAMESPACE,
+        namespace: NAMESPACE,
       }));
-      build.onLoad({ filter: /.*/, namespace: MAIN_NAMESPACE }, () => ({
-        contents: lines.join("\n"),
-        loader: "js",
-      }));
+      build.onLoad({ filter: /.*/, namespace: NAMESPACE }, (args) => {
+        const contents =
+          args.path === MAIN_SPECIFIER ? lines.join("\n") : namespaces.get(args.path);
+        return contents === undefined ? null : { contents, loader: "js" };
+      });
     },
   };
   return { bundleName, entryPoint: MAIN_SPECIFIER, plugin, facades };

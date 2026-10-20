@@ -130,21 +130,40 @@ describe("single-module release planning", () => {
     ]).toEqual([1, 1, 1, 1, 1]);
   });
 
+  it("publishes a CommonJS entry's exports as the default, shared with the release", async () => {
+    const { load } = await publish({
+      sources: {
+        "fixture:main": 'import shared from "fixture:shared";export const fromMain=shared;',
+        "fixture:shared": 'module.exports={value:"cjs"};',
+      },
+      entries: { claude: "fixture:main", "host/shared": "fixture:shared" },
+    });
+    const host = await load("host/shared.js");
+    expect(host.default).toEqual({ value: "cjs" });
+    expect(host.default).toBe((await load("claude.js")).fromMain);
+  });
+
+  it("keeps an entry's own __esModule export instead of esbuild's interop marker", async () => {
+    const { load } = await publish({
+      sources: {
+        "fixture:main": "",
+        "fixture:worker": "const marker=17;export{marker as __esModule};export const value=1;",
+      },
+      entries: { claude: "fixture:main", "workers/one": "fixture:worker" },
+    });
+    const worker = await load("workers/one.js");
+    expect([worker.__esModule, worker.value]).toEqual([17, 1]);
+  });
+
   it("rejects entries it can't place", async () => {
     const root = await tempRoot();
-    const entries = { claude: "fixture:main", "workers/one": "fixture:cjs" };
     const split = await Esbuild.build({
       ...shared,
-      entryPoints: entries,
+      entryPoints: { claude: "fixture:main" },
       outdir: root,
       splitting: true,
-      plugins: [
-        fixturePlugin({ "fixture:main": "", "fixture:cjs": 'module.exports={value:"cjs"};' }),
-      ],
+      plugins: [fixturePlugin({ "fixture:main": "" })],
     });
-    expect(() => entryExports(split.metafile, root, entries)).toThrow(
-      "BUNDLE_ENTRY_NOT_ESM: workers/one",
-    );
     expect(() => entryExports(split.metafile, root, { missing: "fixture:main" })).toThrow(
       "BUNDLE_ENTRY_OUTPUT_MISSING: missing",
     );
