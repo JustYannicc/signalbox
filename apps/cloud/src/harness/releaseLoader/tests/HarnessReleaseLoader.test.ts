@@ -9,33 +9,40 @@ import {
 } from "./artifactFixtures.ts";
 
 describe("loadHarnessRelease", () => {
-  it("returns verified Codex bytes and leaves Cargo.lock out of native inputs", async () => {
+  it("verifies Codex modules without retaining bytes and leaves Cargo.lock out of native inputs", async () => {
     const fixture = await codexFixture();
     const ready = await loadHarnessRelease(fixture.options);
     expect(ready.plan.harness).toBe("codex");
     expect(ready.plan.release.manifestSha256).toBe(fixture.options.identity.artifactHash);
-    expect([...ready.payloads.keys()]).toEqual([
+    expect([...ready.payloads.keys()]).toEqual([]);
+    expect(fixture.reads).toEqual([
+      "manifest.json",
+      "codex/manifest.json",
       "codex/engine.wasm",
       "codex/loader.mjs",
       "codex/helper.mjs",
     ]);
     expect(fixture.reads).not.toContain("codex/Cargo.lock");
-    for (const [path, bytes] of ready.payloads) {
-      expect(bytes).toEqual(fixture.files.get(path));
-      expect(bytes).not.toBe(fixture.files.get(path));
-    }
   });
 
-  it("reads all Claude modules, shared assets and its map once per distinct path", async () => {
+  it("verifies all Claude modules but retains only shared assets and module maps", async () => {
     const fixture = await claudeFixture();
     const ready = await loadHarnessRelease(fixture.options);
     const expectedPaths = [...fixture.files.keys()].filter(
       (path) => !path.endsWith("manifest.json"),
     );
-    expect([...ready.payloads.keys()].sort()).toEqual(expectedPaths.sort());
+    const retainedPaths = new Set([
+      ...ready.plan.assets.map(({ path }) => path),
+      ...(ready.plan.harness === "claude-code"
+        ? ready.plan.moduleMaps.map(({ path }) => path)
+        : []),
+    ]);
+    expect([...ready.payloads.keys()].sort()).toEqual([...retainedPaths].sort());
     for (const path of expectedPaths) {
       expect(fixture.reads.filter((read) => read === path)).toHaveLength(1);
-      expect(ready.payloads.get(path)).toEqual(fixture.files.get(path));
+      expect(ready.payloads.get(path)).toEqual(
+        retainedPaths.has(path) ? fixture.files.get(path) : undefined,
+      );
     }
     const module = ready.plan.preparedModules[`cli/${literalModuleName}`];
     expect(module?.name).toBe(literalModuleName);

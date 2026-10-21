@@ -43,9 +43,19 @@ export async function loadHarnessRelease(
     ...plan.assets,
     ...(plan.harness === "claude-code" ? plan.moduleMaps : []),
   ];
+  // Runtime loaders own imports; this admission check must verify their descriptors' bytes,
+  // but no runtime consumer uses module buffers. Only assets and maps need to survive it.
+  const retained = new Set([
+    ...plan.assets.map(({ path }) => path),
+    ...(plan.harness === "claude-code" ? plan.moduleMaps.map(({ path }) => path) : []),
+  ]);
   const payloads = new Map<string, Uint8Array>();
+  const verified = new Set<string>();
   for (const { path } of required) {
-    if (!payloads.has(path)) payloads.set(path, await artifact.read(path));
+    if (verified.has(path)) continue;
+    const bytes = await artifact.read(path);
+    if (retained.has(path)) payloads.set(path, bytes);
+    verified.add(path);
   }
   if (plan.harness === "claude-code") validateModuleMaps(plan, payloads);
   return { plan, payloads };

@@ -185,7 +185,7 @@ export const serializeHarnessReleaseArtifactManifest = (input: unknown): Uint8Ar
 };
 
 export const decodeCanonicalManifestBytes = async (
-  bytes: Uint8Array,
+  bytes: Uint8Array<ArrayBuffer>,
   artifactHash: string,
 ): Promise<HarnessReleaseArtifactManifest> => {
   if ((await sha256Hex(bytes)) !== artifactHash) failArtifact("MANIFEST_HASH_MISMATCH");
@@ -240,13 +240,12 @@ export const decodeRawProviderManifest = (bytes: Uint8Array) => {
   }
 };
 
-export const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
-  const input = Uint8Array.from(bytes);
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", input.buffer as ArrayBuffer);
+export const sha256Hex = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> => {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
-export const copyBytes = (bytes: unknown): Uint8Array => {
+export const copyBytes = (bytes: unknown) => {
   if (!(bytes instanceof Uint8Array)) return failArtifact("SOURCE_RETURNED_INVALID_BYTES");
   return Uint8Array.from(bytes);
 };
