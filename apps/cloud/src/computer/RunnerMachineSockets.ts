@@ -26,7 +26,18 @@ import {
   commandRunnerIdentity,
 } from "./runner/CommandRunnerIdentity.ts";
 
+export const RUNNER_MACHINE_SOCKET_TAG = "command-runner";
+
+export const isRunnerMachineSocket = (
+  ctx: Pick<DurableObjectState, "getTags">,
+  socket: WebSocket,
+) => ctx.getTags(socket).includes(RUNNER_MACHINE_SOCKET_TAG);
+
 export interface RunnerMachineSocketsOptions {
+  readonly ctx: Pick<
+    DurableObjectState,
+    "acceptWebSocket" | "getTags" | "getWebSockets" | "setWebSocketAutoResponse"
+  >;
   readonly endpoint: string;
   readonly threadId: ThreadId;
   /** Writes the hydration receipt, then launches. Quiesce must fence any pending launch. */
@@ -76,6 +87,15 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
     )
       throw new Error("Invalid command Runner endpoint");
     this.#options = Object.freeze({ ...options });
+    options.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(RUNNER_HEARTBEAT_PING, RUNNER_HEARTBEAT_PONG),
+    );
+    // The registration and RPC host are volatile. Close sockets from a prior
+    // instance before they can outlive their owner; this says nothing about
+    // whether the native process has stopped.
+    for (const socket of options.ctx.getWebSockets(RUNNER_MACHINE_SOCKET_TAG)) {
+      this.#closeSocket(socket, 1008, "Command Runner registration was lost");
+    }
   }
 
   readonly connect: MachineRunnerTransport["connect"] = async (input) => {
@@ -170,7 +190,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
     return Object.freeze({ ...owner, closed: true });
   };
 
-  /** The owning DO routes only this dedicated upgrade path here. Uses standard, nonhibernating sockets. */
+  /** The owning DO routes only this dedicated upgrade path here. */
   fetch(request: Request): Response {
     if (new URL(request.url).pathname !== COMMAND_RUNNER_CONNECT_PATH)
       return new Response(null, { status: 404 });
@@ -183,29 +203,34 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
 
   /** Accepts a server socket; the first frame must authenticate an outstanding registration. */
   accept(socket: WebSocket) {
-    if (this.#sockets.size >= 32) {
-      socket.close(1008, "Command Runner socket capacity reached");
+    this.#closeUnregisteredSockets();
+    const liveSocketCount = this.#options.ctx
+      .getWebSockets(RUNNER_MACHINE_SOCKET_TAG)
+      .filter(
+        (candidate) =>
+          candidate.readyState !== WebSocket.CLOSING &&
+          candidate.readyState !== WebSocket.CLOSED,
+      ).length;
+    if (liveSocketCount >= 32) {
+      this.#closeSocket(socket, 1008, "Command Runner socket capacity reached");
       return;
     }
+    this.#options.ctx.acceptWebSocket(socket, [RUNNER_MACHINE_SOCKET_TAG]);
     this.#sockets.set(socket, null);
     this.#helloTimeouts.set(
       socket,
       setTimeout(() => {
-        try {
-          socket.close(1008, "Command Runner hello timed out");
-        } finally {
-          this.closed(socket);
-        }
+        this.#closeSocket(socket, 1008, "Command Runner hello timed out");
       }, this.#options.handshakeTimeoutMs ?? 30_000),
     );
-    socket.accept();
-    socket.addEventListener("message", (event) => this.message(socket, event.data));
-    socket.addEventListener("close", () => this.closed(socket));
-    socket.addEventListener("error", () => this.closed(socket));
   }
 
   message(socket: WebSocket, data: string | ArrayBuffer) {
-    if (!this.#sockets.has(socket)) return;
+    if (!this.#sockets.has(socket)) {
+      if (isRunnerMachineSocket(this.#options.ctx, socket))
+        this.#closeSocket(socket, 1008, "Command Runner registration was lost");
+      return;
+    }
     try {
       if (data === RUNNER_HEARTBEAT_PING && this.#sockets.get(socket)) {
         socket.send(RUNNER_HEARTBEAT_PONG);
@@ -262,8 +287,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
       }
       throw new Error("Unexpected command Runner frame");
     } catch {
-      socket.close(1008, "Command Runner frame rejected");
-      this.closed(socket);
+      this.#closeSocket(socket, 1008, "Command Runner frame rejected");
     }
   }
 
@@ -278,11 +302,46 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
     registration.socketHost.disconnected(socket, registration.owner.generation, 1);
   }
 
+  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    if (isRunnerMachineSocket(this.#options.ctx, socket)) this.message(socket, message);
+  }
+
+  webSocketClose(socket: WebSocket) {
+    if (isRunnerMachineSocket(this.#options.ctx, socket)) this.closed(socket);
+  }
+
+  webSocketError(socket: WebSocket) {
+    if (isRunnerMachineSocket(this.#options.ctx, socket)) this.closed(socket);
+  }
+
   #clearHelloTimeout(socket: WebSocket) {
     const timeout = this.#helloTimeouts.get(socket);
     if (timeout === undefined) return;
     clearTimeout(timeout);
     this.#helloTimeouts.delete(socket);
+  }
+
+  #closeUnregisteredSockets() {
+    for (const socket of this.#options.ctx.getWebSockets(RUNNER_MACHINE_SOCKET_TAG)) {
+      if (this.#sockets.has(socket)) continue;
+      // Hibernation drops registrations and RPC hosts; discard stale sockets
+      // without notifying a host that no longer exists or claiming native closure.
+      this.#closeSocket(socket, 1008, "Command Runner registration was lost");
+    }
+  }
+
+  #closeSocket(socket: WebSocket, code: number, reason: string) {
+    if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      this.closed(socket);
+      return;
+    }
+    try {
+      socket.close(code, reason);
+    } catch {
+      // Already closing; this is transport loss, not native process closure.
+    } finally {
+      this.closed(socket);
+    }
   }
 
   #connection(registration: Registration): MachineRunnerConnection {
@@ -319,10 +378,6 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
   #disconnect(registration: Registration) {
     const socket = registration.socket;
     if (!socket) return;
-    try {
-      socket.close(1000, "Command Runner detached");
-    } finally {
-      this.closed(socket);
-    }
+    this.#closeSocket(socket, 1000, "Command Runner detached");
   }
 }
