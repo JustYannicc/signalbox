@@ -1,6 +1,6 @@
 import * as Esbuild from "esbuild";
 import { describe, expect, it } from "@effect/vitest";
-import { oneByteReleaseModules } from "./ascii-output.ts";
+import { assertOneByteModules, inlineLegalNotices } from "./one-byte-output.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
@@ -21,9 +21,9 @@ async function build(source: string) {
   }));
 }
 
-describe("ASCII release output", () => {
+describe("one-byte release output", () => {
   it("keeps a wide legal notice in the module as ASCII so the source stays one byte per character", async () => {
-    const files = oneByteReleaseModules(
+    const files = inlineLegalNotices(
       await build('/*! (c) 2015–2016 whatwg \u{1F600} */\nexport const s = "–é";'),
     );
     expect(files.map((file) => file.path)).toEqual(["release.js"]);
@@ -36,15 +36,26 @@ describe("ASCII release output", () => {
   });
 
   it("rejects a wide character esbuild leaves in code", async () => {
-    const files = await build("export const raw = String.raw`–`;");
-    expect(() => oneByteReleaseModules(files)).toThrow("BUNDLE_WIDE_SOURCE: release.js");
+    const files = inlineLegalNotices(await build("export const raw = String.raw`–`;"));
+    expect(() => assertOneByteModules(files)).toThrow("BUNDLE_WIDE_SOURCE: release.js");
   });
 
   it("accepts Latin-1 that esbuild leaves in code, since it still fits one byte per character", async () => {
-    const [release] = oneByteReleaseModules(await build("export const raw = String.raw`\u00e9`;"));
+    const files = inlineLegalNotices(await build("export const raw = String.raw`\u00e9`;"));
+    expect(() => assertOneByteModules(files)).not.toThrow();
+    const [release] = files;
     const module = await import(
       `data:text/javascript,${encodeURIComponent(decode(release!.contents))}`
     );
     expect(module.raw).toBe("\u00e9");
+  });
+  it("checks every published script kind, including facades and runtime modules", () => {
+    const wide = new TextEncoder().encode('export default "\u2126";');
+    for (const path of ["facade.js", "runtime.mjs", "legacy.cjs"]) {
+      expect(() => assertOneByteModules([{ path, contents: wide }])).toThrow(
+        `BUNDLE_WIDE_SOURCE: ${path}`,
+      );
+    }
+    expect(() => assertOneByteModules([{ path: "notes.txt", contents: wide }])).not.toThrow();
   });
 });

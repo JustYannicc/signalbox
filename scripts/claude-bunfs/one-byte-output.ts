@@ -1,16 +1,11 @@
-/**
- * V8 stores a string one byte per character only when every character fits in Latin-1. One wider
- * character makes the whole module two bytes per character in every isolate that loads it, so a
- * single legal notice once doubled the release's 50 MB source. esbuild escapes code, but leaves
- * legal comments, tagged templates and regex literals as written.
- */
+// V8 keeps a string one byte per character only while every character fits in Latin-1. One wider
+// character in a legal notice doubles a 50 MB release source in every isolate that loads it.
+// esbuild escapes code, but leaves legal comments, tagged templates and regex literals as written.
+
 const LEGAL_SUFFIX = ".LEGAL.txt";
 
-/**
- * Moves esbuild's external legal notices back into their module as ASCII line comments, and fails
- * the build if any module would still load as a two-byte string.
- */
-export function oneByteReleaseModules(
+/** Moves esbuild's external legal notices back into their module as ASCII line comments. */
+export function inlineLegalNotices(
   files: ReadonlyArray<{ readonly path: string; readonly contents: Uint8Array }>,
 ) {
   const notices = new Map(
@@ -23,7 +18,6 @@ export function oneByteReleaseModules(
     .map((file) => {
       const notice = notices.get(file.path);
       const contents = notice === undefined ? file.contents : appendNotice(file.contents, notice);
-      assertOneByte(file.path, contents);
       return { path: file.path, contents };
     });
 }
@@ -48,12 +42,19 @@ function escapeNonAscii(text: string): string {
   );
 }
 
-function assertOneByte(path: string, contents: Uint8Array) {
-  if (!path.endsWith(".js")) return;
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(contents);
-  const index = text.search(/[^\0-\xff]/);
-  if (index >= 0) {
-    const excerpt = JSON.stringify(text.slice(Math.max(0, index - 40), index + 40));
-    throw new Error(`BUNDLE_WIDE_SOURCE: ${path} at ${index}: ${excerpt}`);
+const SCRIPT = /\.[cm]?js$/;
+
+/** Fails the build if any published script would load as a two-byte string. */
+export function assertOneByteModules(
+  modules: ReadonlyArray<{ readonly path: string; readonly contents: Uint8Array }>,
+) {
+  for (const { path, contents } of modules) {
+    if (!SCRIPT.test(path)) continue;
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(contents);
+    const index = text.search(/[^\0-\xff]/);
+    if (index >= 0) {
+      const excerpt = JSON.stringify(text.slice(Math.max(0, index - 40), index + 40));
+      throw new Error(`BUNDLE_WIDE_SOURCE: ${path} at ${index}: ${excerpt}`);
+    }
   }
 }

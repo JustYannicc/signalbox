@@ -9,7 +9,7 @@ import { publishBundle, type BundleFile, type EmbeddedAsset } from "./bundle-art
 import { discoverEmbeddedModuleReferences } from "./embedded-entrypoints.ts";
 import { createDeferredInitialization } from "./deferred-initialization.ts";
 import { entryExports, planSingleModule } from "./single-module.ts";
-import { oneByteReleaseModules } from "./ascii-output.ts";
+import { assertOneByteModules, inlineLegalNotices } from "./one-byte-output.ts";
 import { type BunGraphOptions, createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
 
 export interface RebundleOptions extends BunGraphOptions {
@@ -164,6 +164,20 @@ export async function rebundle(options: RebundleOptions) {
       contents,
     });
   }
+  const modules = [
+    ...inlineLegalNotices(
+      published.outputFiles.map((file) => ({
+        path: NodePath.relative(output, file.path).split(NodePath.sep).join("/"),
+        contents: file.contents,
+      })),
+    ),
+    ...facades,
+    ...Object.entries(options.runtimeModules ?? {}).map(([path, source]) => ({
+      path,
+      contents: new TextEncoder().encode(source),
+    })),
+  ];
+  assertOneByteModules(modules);
   return publishBundle({
     output,
     release: {
@@ -177,19 +191,7 @@ export async function rebundle(options: RebundleOptions) {
     environmentPackageModules: options.environmentPackageModules ?? {},
     embeddedEntrypoints,
     hostEntrypoints,
-    modules: [
-      ...oneByteReleaseModules(
-        published.outputFiles.map((file) => ({
-          path: NodePath.relative(output, file.path).split(NodePath.sep).join("/"),
-          contents: file.contents,
-        })),
-      ),
-      ...facades,
-      ...Object.entries(options.runtimeModules ?? {}).map(([path, source]) => ({
-        path,
-        contents: new TextEncoder().encode(source),
-      })),
-    ],
+    modules,
     assets: embeddedAssets,
     requiredHostModules: [...requiredHostModules],
     sourceModules: [...loaded],
