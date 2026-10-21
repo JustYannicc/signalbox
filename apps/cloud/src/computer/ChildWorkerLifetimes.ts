@@ -8,6 +8,7 @@ export class ChildWorkerLifetimes {
     void lifetime.then(
       () => this.#pending.delete(lifetime),
       (error: unknown) => {
+        settleStacks(error);
         this.#failures.push(error);
         this.#pending.delete(lifetime);
       },
@@ -20,5 +21,16 @@ export class ChildWorkerLifetimes {
     if (this.#failures.length > 1) {
       throw new AggregateError(this.#failures, "Child program cleanup failed");
     }
+  }
+}
+
+/**
+ * Failures wait here for the whole session. V8 keeps an unread stack as live frames that pin each
+ * frame's closures, such as a failed command's kernel program and pipes; formatting it frees them.
+ */
+function settleStacks(error: unknown): void {
+  for (let current = error, depth = 0; current instanceof Error && depth < 8; depth++) {
+    void current.stack;
+    current = current.cause;
   }
 }

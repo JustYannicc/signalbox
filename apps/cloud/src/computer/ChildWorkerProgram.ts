@@ -1,4 +1,5 @@
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
+import { ChildHostLease } from "./ChildHostLease.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import {
@@ -45,8 +46,14 @@ export interface ChildWorkerProgramOptions<Host extends object> {
   readonly childEnv?: (context: KernelAsyncProgramContext) => Readonly<Record<string, string>>;
   readonly lifetimes?: ChildWorkerLifetimes;
   readonly dispatch: ChildWorkerDispatch<Host>;
-  /** The adapter supplies an RPC target; its methods retain the process's actual kernel resources. */
-  readonly createHost: (context: KernelAsyncProgramContext) => {
+  /**
+   * The adapter supplies an RPC target that reaches kernel resources only through refs held in
+   * the lease, which is released before the host closes.
+   */
+  readonly createHost: (
+    context: KernelAsyncProgramContext,
+    lease: ChildHostLease,
+  ) => {
     readonly host: Host;
     /** Logical exit may precede dispatch completion when descendants retain the worker. */
     readonly exited?: Promise<KernelCommandExit>;
@@ -90,7 +97,8 @@ export function createChildWorkerProgram<Host extends object>(
         const env = Object.freeze({
           ...(childEnv === undefined ? context.env : childEnv(context)),
         });
-        const owner = createHost(childEnv === undefined ? context : { ...context, env });
+        const lease = new ChildHostLease();
+        const owner = createHost(childEnv === undefined ? context : { ...context, env }, lease);
         if (owner.exited !== undefined) void owner.exited.then(result.resolve, result.reject);
         let failure: ChildWorkerDispatchError | undefined;
         try {
@@ -117,6 +125,8 @@ export function createChildWorkerProgram<Host extends object>(
                 });
           result.reject(failure);
         } finally {
+          // Late child calls then fail with EBADF instead of reaching a process that is closing.
+          lease.release();
           try {
             await owner.close();
           } finally {

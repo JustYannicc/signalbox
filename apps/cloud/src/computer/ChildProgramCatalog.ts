@@ -1,14 +1,9 @@
-import { RpcTarget } from "cloudflare:workers";
 import { ABI_VERSION, KernelProgramRegistry } from "../kernel/KernelAbi.ts";
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
-import type {
-  KernelBusyboxCall,
-  KernelBusyboxCallResult,
-  KernelBusyboxPort,
-} from "../kernel/KernelBusyboxPort.ts";
-import type { KernelSyscallPort, KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
+import type { KernelBusyboxPort } from "../kernel/KernelBusyboxPort.ts";
+import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
 import { createChildWorkerProgram } from "./ChildWorkerProgram.ts";
 import { createWorkerLoaderDispatch, type ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import { createWorkerBashHost } from "./WorkerBashHost.ts";
@@ -91,7 +86,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
       capacity,
       lifetimes,
       dispatch: bashDispatch,
-      createHost: (context) => createWorkerBashHost({ context, credentials }),
+      createHost: (context, lease) => createWorkerBashHost({ context, credentials }, lease),
     }),
   );
 
@@ -136,7 +131,6 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
           capacity,
           lifetimes,
           dispatch: catDispatch,
-          parentRpcTarget: (port) => new WorkerBusyboxPort(port),
         }),
       ),
     });
@@ -153,13 +147,16 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
       lifetimes,
       dispatch: ripgrepDispatch,
       childEnv: (context) => ({ ...context.env, PWD: context.filesystem.cwd }),
-      createHost(context) {
-        return createWorkerSyscalls({
-          filesystem: context.filesystem,
-          args: context.args,
-          env: context.env,
-          signal: context.signal,
-        });
+      createHost(context, lease) {
+        return createWorkerSyscalls(
+          {
+            filesystem: context.filesystem,
+            args: context.args,
+            env: context.env,
+            signal: context.signal,
+          },
+          lease,
+        );
       },
     }),
   );
@@ -206,7 +203,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
           capacity,
           lifetimes,
           dispatch: createWorkerLoaderDispatch<KernelGitPort>(options.loader),
-          createHost: (context) => createWorkerGitHost({ context }),
+          createHost: (context, lease) => createWorkerGitHost({ context }, lease),
         }),
       ),
     });
@@ -239,23 +236,6 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
       }
     },
   };
-}
-
-class WorkerBusyboxPort extends RpcTarget implements KernelBusyboxPort {
-  readonly #port: KernelBusyboxPort;
-
-  constructor(port: KernelBusyboxPort) {
-    super();
-    this.#port = port;
-  }
-
-  call(request: KernelSyscallRequest) {
-    return this.#port.call(request);
-  }
-
-  callBusybox(request: KernelBusyboxCall): Promise<KernelBusyboxCallResult> {
-    return this.#port.callBusybox(request);
-  }
 }
 
 function bashCredentials(filesystem: KernelFileSystem, hostname: string): KernelBashCredentials {
