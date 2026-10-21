@@ -31,14 +31,17 @@ export class ChildWorkerLifetimes {
  */
 function settleStacks(error: unknown): void {
   const seen = new Set<unknown>();
-  const queue = [error];
-  for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
-    if (!(next instanceof Error) || seen.has(next)) continue;
-    seen.add(next);
+  const pending = [error];
+  while (pending.length > 0) {
+    const next = pending.pop();
     try {
+      if (!(next instanceof Error) || seen.has(next)) continue;
+      seen.add(next);
       void next.stack;
-      queue.push(next.cause);
-      if (next instanceof AggregateError) queue.push(...next.errors);
+      pending.push(next.cause);
+      // Only real arrays are walked: an arbitrary iterable could be endless.
+      const members: unknown = next instanceof AggregateError ? next.errors : undefined;
+      if (Array.isArray(members)) for (const member of members) pending.push(member);
     } catch {
       // An unreadable stack, cause or member is skipped; the failure is already recorded.
     }
