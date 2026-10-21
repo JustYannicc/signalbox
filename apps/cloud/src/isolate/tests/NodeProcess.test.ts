@@ -160,7 +160,7 @@ describe("Node process facet", () => {
   });
 
   it("lets guest code replace process methods the way graceful-fs and signal-exit do", () => {
-    const process = createNodeProcess(host(46));
+    const process = createNodeProcess(host(44));
     const originalCwd = process.cwd;
     const originalChdir = process.chdir;
     let cached: string | undefined;
@@ -179,8 +179,11 @@ describe("Node process facet", () => {
     expect(process.cwd()).toBe("/work/one");
     process.chdir("/work/next");
     expect(process.cwd()).toBe("/work/next");
-    process.emit("custom");
+    const received: unknown[] = [];
+    process.on("custom", (value) => received.push(value));
+    expect(process.emit("custom", 1)).toBe(true);
     expect(emitted).toEqual(["custom"]);
+    expect(received).toEqual([1]);
     for (const name of ["cwd", "chdir", "emit", "nextTick", "exit", "kill"]) {
       expect(Object.getOwnPropertyDescriptor(process, name)).toMatchObject({
         writable: true,

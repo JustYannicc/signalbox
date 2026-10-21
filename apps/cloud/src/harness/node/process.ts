@@ -113,6 +113,8 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     settle({ status: { exitCode, signal: 0, coreDumped: false } });
   };
   runtime.process.once("exit", onExit);
+  // Guests may replace process methods, so teardown keeps the remover from before guest code ran.
+  const removeProcessListener = runtime.process.removeListener;
   let leaveCpu: (() => void) | undefined;
   const start = async () => {
     lifetime.signal.throwIfAborted();
@@ -199,10 +201,16 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       input.stdio.finish();
       await attempt(() => input.stdio.dispose());
       await attempt(() => leaveCpu?.());
+      // Detaching can call guest listeners, so it runs while the guest's globals are still installed.
+      await attempt(() => {
+        removeProcessListener("exit", onExit);
+      });
+      for (const stream of Object.values(runtime.streams))
+        await attempt(() => {
+          stream.removeListener("error", failed);
+        });
       await attempt(() => personality.restore());
       await attempt(() => realm.release());
-      runtime.process.removeListener("exit", onExit);
-      for (const stream of Object.values(runtime.streams)) stream.removeListener("error", failed);
     }
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1)
