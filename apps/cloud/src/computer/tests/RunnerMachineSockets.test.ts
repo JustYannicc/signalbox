@@ -149,7 +149,9 @@ describe("RunnerMachineSockets", () => {
     const config = await f.launched.promise;
     const live = socketFixture();
     f.adapter.accept(live.socket);
-    expect(f.context.acceptWebSocket).toHaveBeenCalledWith(live.socket, [RUNNER_MACHINE_SOCKET_TAG]);
+    expect(f.context.acceptWebSocket).toHaveBeenCalledWith(live.socket, [
+      RUNNER_MACHINE_SOCKET_TAG,
+    ]);
     expect(isRunnerMachineSocket(f.context.ctx, live.socket)).toBe(true);
     expect(live.socket.accept).not.toHaveBeenCalled();
     expect(live.socket.addEventListener).not.toHaveBeenCalled();
@@ -378,7 +380,9 @@ describe("RunnerMachineSockets", () => {
       }
       const next = socketFixture();
       f.adapter.accept(next.socket);
-      expect(f.context.acceptWebSocket).toHaveBeenLastCalledWith(next.socket, [RUNNER_MACHINE_SOCKET_TAG]);
+      expect(f.context.acceptWebSocket).toHaveBeenLastCalledWith(next.socket, [
+        RUNNER_MACHINE_SOCKET_TAG,
+      ]);
       expect(next.socket.accept).not.toHaveBeenCalled();
       f.adapter.closed(next.socket);
       await f.adapter.quiesce(f.input);
@@ -447,7 +451,9 @@ describe("RunnerMachineSockets", () => {
     const replacement = socketFixture();
     restored.adapter.accept(replacement.socket);
     expect(stale.socket.close).toHaveBeenCalledWith(1008, "Command Runner registration was lost");
-    expect(f.context.acceptWebSocket).toHaveBeenLastCalledWith(replacement.socket, [RUNNER_MACHINE_SOCKET_TAG]);
+    expect(f.context.acceptWebSocket).toHaveBeenLastCalledWith(replacement.socket, [
+      RUNNER_MACHINE_SOCKET_TAG,
+    ]);
 
     restored.quiesce.mockRejectedValueOnce(new Error("Native closure is unknown"));
     await expect(restored.adapter.quiesce(restored.input)).rejects.toThrow("unknown");

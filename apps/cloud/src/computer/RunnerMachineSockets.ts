@@ -34,6 +34,10 @@ export const isRunnerMachineSocket = (
 ) => ctx.getTags(socket).includes(RUNNER_MACHINE_SOCKET_TAG);
 
 export interface RunnerMachineSocketsOptions {
+  /**
+   * The owner must retain connection, execution and settlement in an awaited event or
+   * ctx.waitUntil. Host callbacks are volatile; reconstruction requires journal recovery.
+   */
   readonly ctx: Pick<
     DurableObjectState,
     "acceptWebSocket" | "getTags" | "getWebSockets" | "setWebSocketAutoResponse"
@@ -208,8 +212,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
       .getWebSockets(RUNNER_MACHINE_SOCKET_TAG)
       .filter(
         (candidate) =>
-          candidate.readyState !== WebSocket.CLOSING &&
-          candidate.readyState !== WebSocket.CLOSED,
+          candidate.readyState !== WebSocket.CLOSING && candidate.readyState !== WebSocket.CLOSED,
       ).length;
     if (liveSocketCount >= 32) {
       this.#closeSocket(socket, 1008, "Command Runner socket capacity reached");
