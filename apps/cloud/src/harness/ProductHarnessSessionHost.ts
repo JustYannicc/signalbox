@@ -16,6 +16,10 @@ import {
   makeClaudeNativeHostBinding,
   type ClaudeNativeHostBindingOptions,
 } from "./ClaudeNativeHostBinding.ts";
+import {
+  makeCodexNativeHostBinding,
+  type CodexNativeHostBindingOptions,
+} from "./CodexNativeHostBinding.ts";
 import { HarnessError } from "./Harness.ts";
 import { makeFacetLifetime } from "./facet/lifetime.ts";
 import {
@@ -27,6 +31,31 @@ import {
 type BindingInput<G> = Parameters<HarnessHostOptions<G>["bindComputer"]>[0];
 type RuntimeInput<G> = Parameters<HarnessHostOptions<G>["buildRuntime"]>[0];
 type NativeProcess = ClaudeNativeHostBindingOptions["process"];
+type ProductClaudeNativeOptions<G> = Omit<
+  ClaudeNativeHostBindingOptions,
+  "process" | "adapter" | "mcp"
+> & {
+  readonly harness?: "claude-code";
+  readonly process: Omit<
+    NativeProcess,
+    "host" | "computer" | "stdio" | "loadedRelease" | "modelTransport" | "processHandle"
+  >;
+  readonly adapter: (
+    input: RuntimeInput<G>,
+  ) => Effect.Effect<ClaudeNativeHostBindingOptions["adapter"], HarnessError, Scope.Scope>;
+};
+
+export type ProductCodexNativeOptions = Omit<CodexNativeHostBindingOptions, "process"> & {
+  readonly harness: "codex";
+  readonly process: Omit<
+    CodexNativeHostBindingOptions["process"],
+    "host" | "computer" | "stdio"
+  > & {
+    readonly environment: CodexNativeHostBindingOptions["process"]["environment"] & {
+      readonly HOME: string;
+    };
+  };
+};
 
 export interface ProductHarnessHostOptions<G> extends Omit<
   HarnessHostOptions<G>,
@@ -46,15 +75,7 @@ export interface ProductHarnessHostOptions<G> extends Omit<
   readonly observeOutput?: KernelSessionOutputObserver;
   readonly save: (input: BindingInput<G>) => ReturnType<Computer["save"]>;
   readonly port: Computer["port"];
-  readonly native: Omit<ClaudeNativeHostBindingOptions, "process" | "adapter" | "mcp"> & {
-    readonly process: Omit<
-      NativeProcess,
-      "host" | "computer" | "stdio" | "loadedRelease" | "modelTransport" | "processHandle"
-    >;
-    readonly adapter: (
-      input: RuntimeInput<G>,
-    ) => Effect.Effect<ClaudeNativeHostBindingOptions["adapter"], HarnessError, Scope.Scope>;
-  };
+  readonly native: ProductClaudeNativeOptions<G> | ProductCodexNativeOptions;
 }
 
 export interface ProductHarnessSessionHost<G> extends HarnessSessionHost<G> {
@@ -102,7 +123,7 @@ function createProductBindings<G>(
                 filesystem: input.files,
                 wakes,
                 programs: codes,
-                home: options.native.process.identity.homedir,
+                home: productComputerHome(options.native),
                 signal: input.signal,
               }),
             catch: (cause) =>
@@ -146,21 +167,40 @@ function createProductBindings<G>(
     buildRuntime: (input: RuntimeInput<G>) =>
       Effect.gen(function* () {
         const bound = commands;
-        if (bound === undefined || input.loaded.plan.release.harness !== "claude-code")
-          return yield* Effect.fail(
-            new HarnessError({
-              operation: "open",
-              message: "Product host requires the Claude native release.",
-            }),
-          );
+        const native = options.native;
+        const releaseHarness = input.loaded.plan.release.harness;
+        const nativeHarness = native.harness ?? "claude-code";
+        if (bound === undefined || releaseHarness !== nativeHarness)
+          return yield* new HarnessError({
+            operation: "open",
+            message: "Product host native binding does not match the verified release.",
+          });
         computer = input.harness.computer;
-        const adapter = yield* options.native.adapter(input);
+        if (native.harness === "codex") {
+          const { harness: _harness, process, ...bindingOptions } = native;
+          const { origin: mcpOrigin, fetch: mcpFetch } = input.mcp;
+          const fallbackFetch = process.fetch;
+          return makeCodexNativeHostBinding({
+            ...bindingOptions,
+            process: {
+              ...process,
+              host: bound.host,
+              computer,
+              stdio,
+              fetch: (request) =>
+                new URL(request.url).origin === mcpOrigin
+                  ? mcpFetch(request)
+                  : fallbackFetch(request),
+            },
+          });
+        }
+        const adapter = yield* native.adapter(input);
         return makeClaudeNativeHostBinding({
-          ...options.native,
+          ...native,
           adapter,
           mcp: input.mcp,
           process: {
-            ...options.native.process,
+            ...native.process,
             host: bound.host,
             computer,
             stdio,
@@ -196,6 +236,14 @@ function createProductBindings<G>(
       };
     },
   };
+}
+
+function productComputerHome<G>(native: ProductHarnessHostOptions<G>["native"]) {
+  if (native.harness !== "codex") return native.process.identity.homedir;
+  const home = native.process.environment.HOME;
+  if (typeof home !== "string" || !home.startsWith("/"))
+    throw new Error("Codex product Computer requires an absolute HOME path.");
+  return home;
 }
 
 /** Public product composition. Platform callers never assemble a private Computer or runtime. */
