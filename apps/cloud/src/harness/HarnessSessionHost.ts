@@ -82,6 +82,6 @@ export const createHarnessSessionHost = <G>(
         }),
     });
     const { release: _release, programs: _programs, ...hostOptions } = options;
-    // Release sources may close over entire bundles; the live host only needs verified assets.
+    // Release sources and program catalogs can hold whole bundles; the live host reads only through loaded and catalog.
     return yield* createHostLifecycle(hostOptions, loaded, catalog);
   });

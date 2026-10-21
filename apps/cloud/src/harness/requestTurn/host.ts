@@ -36,6 +36,7 @@ function gateReleaseSource(
   return { read: (reference, path) => gate.promise(() => source.read(reference, path), false) };
 }
 
+// The lazy program reader must survive seeding; its context must exclude the release source.
 function gateProgramReader(
   read: HarnessHostOptions<unknown>["programs"]["read"],
   gate: RequestGate,
@@ -47,7 +48,7 @@ function gateProgramReader(
     );
 }
 
-// The lazy program reader must survive seeding; its context must exclude the release source.
+// These gated ports live as long as the host; keep the release source out of their closure context.
 function gateRuntimeHost<G>(
   options: Omit<HarnessHostOptions<G>, "release" | "programs">,
   gate: RequestGate,

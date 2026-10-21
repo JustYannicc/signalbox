@@ -26,7 +26,7 @@ it.each(["turn", "interrupt", "dispose", "hydrate"])(
   },
 );
 
-it("collects release inputs through public product composition after each seed stage", async () => {
+it("collects release inputs through direct and public product composition after each seed stage", async () => {
   const output = await new Promise<string>((resolve, reject) => {
     const child = NodeChildProcess.execFile(
       NodeProcess.execPath,

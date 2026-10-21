@@ -5,7 +5,7 @@ import { vi } from "vite-plus/test";
 import { hostFixture } from "./hostFixture.ts";
 
 describe("Harness seed catalog payload ownership", () => {
-  it.effect("copies verified assets only when a stage requests them", () =>
+  it.effect("shares verified asset bytes and seeds after the source changes", () =>
     Effect.gen(function* () {
       const f = yield* hostFixture;
       const copies = yield* Effect.acquireRelease(

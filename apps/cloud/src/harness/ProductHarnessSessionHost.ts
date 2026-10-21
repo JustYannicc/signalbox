@@ -63,6 +63,8 @@ export interface ProductHarnessSessionHost<G> extends HarnessSessionHost<G> {
   readonly commands: ProductComputer;
 }
 
+// Anything that outlives open is built outside createProductHarnessSessionHost; closures there
+// keep options, and its release source, alive.
 const acquireWakes = Effect.acquireRelease(
   Effect.sync(() => new KernelWakeRegistry()),
   (value) => Effect.sync(() => value.dispose()),
@@ -220,19 +222,8 @@ export const createProductHarnessSessionHost = <G>(
     return yield* Effect.gen(function* () {
       const wakes = yield* acquireWakes;
       const stdio = yield* acquireStdio(wakes, owner.signal, options.observeOutput);
-      const bindings = createProductBindings<G>(
-        {
-          commands: options.commands,
-          native: options.native,
-          ...(options.hydrate === undefined ? {} : { hydrate: options.hydrate }),
-          port: options.port,
-          save: options.save,
-        },
-        options.programs.codes,
-        wakes,
-        stdio,
-        owner.close,
-      );
+      const { release: _release, programs, ...runtime } = options;
+      const bindings = createProductBindings<G>(runtime, programs.codes, wakes, stdio, owner.close);
       const host = yield* createHarnessSessionHost({
         ...options,
         files: { ...options.files, wakes, stdio: stdio.stdio },
