@@ -99,10 +99,8 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     }
   };
   const normal = pair(
-    new ComputerEscalationTable(
-      options.orderedMachineRules,
-      COMPUTER_ISOLATE_POLICY,
-      qualifyGnuCommand,
+    new ComputerEscalationTable(options.orderedMachineRules, COMPUTER_ISOLATE_POLICY, (command) =>
+      qualifyGnuCommand(command, options.filesystem),
     ),
     options.machine,
     options.evidence,
