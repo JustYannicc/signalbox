@@ -63,7 +63,18 @@ export function installHarnessPersonality(
   }
   return {
     bridge: personality.bridge,
-    drain: transport.drain,
+    async drain() {
+      const results = await Promise.allSettled([
+        Promise.resolve().then(transport.drain),
+        Promise.resolve().then(runtime.drainDns),
+      ]);
+      const failures = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Node harness transport cleanup failed");
+    },
     restore() {
       if (Object.getOwnPropertyDescriptor(globalThis, "fetch")?.value !== modelFetch) {
         throw new Error("Node harness fetch ownership changed");

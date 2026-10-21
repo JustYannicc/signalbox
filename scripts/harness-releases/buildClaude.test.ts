@@ -183,6 +183,33 @@ describe("Claude release build integration", () => {
     }
   });
 
+  it("rejects builtin-only process loads before publishing a Claude build", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-builtin-"));
+    try {
+      const input = await makeExtraction(
+        root,
+        "2.1.303",
+        `
+        globalThis.process?.getBuiltinModule?.('cluster');
+        export const sourceMarker = 'builtin-only';
+      `,
+      );
+      const output = NodePath.join(root, "artifact");
+      await expect(buildClaudeRelease({ ...input, output })).rejects.toThrow(
+        "NODE_BUILTIN_COVERAGE_FAILED: missing=cluster",
+      );
+      await expect(NodeFSP.lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(NodeFSP.lstat(`${output}.provenance.json`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(
+        (await NodeFSP.readdir(root)).filter((name) => name.startsWith("artifact.rejected-")),
+      ).toHaveLength(1);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("retains rejected build evidence and does not publish a damaged graph", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-tamper-"));
     try {
