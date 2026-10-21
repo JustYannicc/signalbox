@@ -24,26 +24,46 @@ export class ChildWorkerLifetimes {
   }
 }
 
+/** V8 shares one native getter for every error's lazily formatted stack. */
+const nativeStack = Object.getOwnPropertyDescriptor(new Error(), "stack")?.get;
+const MAX_SETTLED = 1024;
+
 /**
  * Failures wait here for the whole session. V8 keeps an unread stack as live frames that pin each
  * frame's closures, such as a failed command's kernel program and pipes; formatting it frees them.
- * Best effort: a hostile getter only leaves that one error's frames alive.
+ * Only own data properties and V8's own stack getter are read, so no failure's code runs here, and
+ * the walk is bounded.
  */
 function settleStacks(error: unknown): void {
-  const seen = new Set<unknown>();
-  const pending = [error];
-  while (pending.length > 0) {
+  const seen = new Set<object>();
+  const pending: unknown[] = [error];
+  const enqueue = (holder: object, key: PropertyKey) => {
+    const link = Object.getOwnPropertyDescriptor(holder, key);
+    if (link !== undefined && "value" in link && pending.length < MAX_SETTLED) {
+      pending.push(link.value);
+    }
+  };
+  while (pending.length > 0 && seen.size < MAX_SETTLED) {
     const next = pending.pop();
+    if (typeof next !== "object" || next === null || seen.has(next)) continue;
+    seen.add(next);
     try {
-      if (!(next instanceof Error) || seen.has(next)) continue;
-      seen.add(next);
-      void next.stack;
-      pending.push(next.cause);
-      // Only real arrays are walked: an arbitrary iterable could be endless.
-      const members: unknown = next instanceof AggregateError ? next.errors : undefined;
-      if (Array.isArray(members)) for (const member of members) pending.push(member);
+      const stack = Object.getOwnPropertyDescriptor(next, "stack");
+      if (stack?.get !== undefined && stack.get === nativeStack) stack.get.call(next);
     } catch {
-      // An unreadable stack, cause or member is skipped; the failure is already recorded.
+      // The failure is already recorded; an unformattable stack only stays unformatted.
+    }
+    try {
+      enqueue(next, "cause");
+      const errors = Object.getOwnPropertyDescriptor(next, "errors");
+      const members: unknown = errors !== undefined && "value" in errors ? errors.value : undefined;
+      if (Array.isArray(members)) {
+        for (let index = 0; index < Math.min(members.length, MAX_SETTLED); index++) {
+          enqueue(members, index);
+        }
+      }
+    } catch {
+      // Unreadable links are skipped.
     }
   }
 }

@@ -1,79 +1,79 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 import { ChildWorkerLifetimes } from "../ChildWorkerLifetimes.ts";
+
+const prepare = Error.prepareStackTrace;
+afterEach(() => {
+  Error.prepareStackTrace = prepare;
+});
+
+/** V8 calls prepareStackTrace when it first formats a stack, which is what frees the frames. */
+function recordFormatting() {
+  const formatted: string[] = [];
+  Error.prepareStackTrace = (error: Error) => {
+    formatted.push(error.message);
+    return error.message;
+  };
+  return formatted;
+}
 
 describe("ChildWorkerLifetimes", () => {
   it("formats every retained failure in a cause chain and aggregate before drain", async () => {
+    const formatted = recordFormatting();
     const lifetimes = new ChildWorkerLifetimes();
-    const read: string[] = [];
-    const watched = (name: string, cause?: unknown) => {
-      const error = new Error(name, { cause });
-      const stack = error.stack;
-      Object.defineProperty(error, "stack", {
-        get() {
-          read.push(name);
-          return stack;
-        },
-      });
-      return error;
-    };
     const failure = new AggregateError(
-      [watched("first"), watched("second", watched("second cause")), watched("third")],
-      "cleanup failed",
-      { cause: watched("aggregate cause") },
+      [new Error("first"), new Error("second", { cause: new Error("second cause") })],
+      "aggregate",
+      { cause: new Error("aggregate cause") },
     );
     lifetimes.track(Promise.reject(failure));
     await expect(lifetimes.drain()).rejects.toBe(failure);
-    expect(read.sort()).toEqual(
-      ["aggregate cause", "first", "second", "second cause", "third"].sort(),
+    expect(formatted.sort()).toEqual(
+      ["aggregate", "aggregate cause", "first", "second", "second cause"].sort(),
     );
   });
 
-  it("still reports a failure whose stack, cause and members cannot be read", async () => {
+  it("reports hostile failures without running their getters or iterators", async () => {
+    let ran = 0;
     const lifetimes = new ChildWorkerLifetimes();
-    const hostile = new Error("cleanup failed");
-    Object.defineProperty(hostile, "stack", {
+    const endlessCause = new Error("endless cause");
+    Object.defineProperty(endlessCause, "cause", {
       get() {
-        throw new Error("unreadable stack");
+        ran++;
+        return new Error("fresh");
       },
     });
-    const nested = new AggregateError([hostile, new Error("inner")], "outer");
-    Object.defineProperty(nested, "cause", {
+    const customStack = new Error("custom stack");
+    Object.defineProperty(customStack, "stack", {
       get() {
-        throw new Error("unreadable cause");
+        ran++;
+        return Promise.reject(new Error("rejected"));
       },
     });
-    lifetimes.track(Promise.reject(hostile));
-    lifetimes.track(Promise.reject(nested));
-
+    const members: unknown[] = [new Error("member")];
+    Object.defineProperty(members, Symbol.iterator, {
+      value: function* () {
+        ran++;
+        for (;;) yield new Error("again");
+      },
+    });
+    const endlessMembers = new AggregateError([], "endless members");
+    Object.defineProperty(endlessMembers, "errors", { value: members });
+    for (const failure of [endlessCause, customStack, endlessMembers]) {
+      lifetimes.track(Promise.reject(failure));
+    }
     await expect(lifetimes.drain()).rejects.toMatchObject({
-      name: "AggregateError",
-      errors: [hostile, nested],
+      errors: [endlessCause, customStack, endlessMembers],
     });
+    expect(ran).toBe(0);
   });
 
-  it("formats a very large aggregate and skips an endless one", async () => {
+  it("bounds the walk over a very large aggregate", async () => {
+    const formatted = recordFormatting();
     const lifetimes = new ChildWorkerLifetimes();
-    const members = Array.from({ length: 200_000 }, () => new Error("member"));
-    let lastRead = false;
-    const last = members.at(-1)!;
-    const stack = last.stack;
-    Object.defineProperty(last, "stack", {
-      get() {
-        lastRead = true;
-        return stack;
-      },
-    });
-    const endless = new AggregateError([], "endless");
-    Object.defineProperty(endless, "errors", {
-      value: {
-        *[Symbol.iterator]() {
-          for (;;) yield new Error("again");
-        },
-      },
-    });
+    const members = Array.from({ length: 200_000 }, (_, index) => new Error(`member ${index}`));
     lifetimes.track(Promise.reject(new AggregateError(members, "large")));
-    lifetimes.track(Promise.reject(endless));
     await expect(lifetimes.drain()).rejects.toMatchObject({ name: "AggregateError" });
-    expect(lastRead).toBe(true);
+    expect(formatted).toContain("large");
+    expect(formatted).toHaveLength(1024);
   });
 });
