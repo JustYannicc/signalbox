@@ -63,7 +63,7 @@ export const InvokedAs = Context.Reference<string>("@t3tools/shared/HostProcess/
 });
 
 export const IsExecutable = Context.Reference<boolean>("@t3tools/shared/HostProcess/IsExecutable", {
-  // Cloud consumers use other host references without supporting Node's SEA module.
+  // signalbox: Cloud consumers use other host references without supporting Node's SEA module.
   defaultValue: () => process.getBuiltinModule("node:sea").isSea(),
 });
 
