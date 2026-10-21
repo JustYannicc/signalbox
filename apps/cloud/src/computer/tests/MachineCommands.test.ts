@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Option from "effect/Option";
-import { KernelProgramExecAdmissionError } from "../../kernel/KernelAsyncProgram.ts";
 import type { BaseLease } from "../Computer.ts";
 import { MachineCreationError, type MachineHandle } from "../Machine.ts";
 import type { MachineCommandJournal, MachineCommandRecord } from "../MachineCommandJournal.ts";
@@ -38,7 +37,7 @@ function indexOf(events: readonly string[], event: string) {
 }
 
 describe("MachineCommands", () => {
-  it("rejects another command while apply holds capacity, then admits one after settlement", async () => {
+  it("queues another command while apply holds capacity, then admits it after settlement", async () => {
     const checkpointIds: string[] = [];
     let nextId = 0;
     let releaseApply!: () => void;
@@ -68,13 +67,19 @@ describe("MachineCommands", () => {
     fixture.closeChild();
     await applyEntered;
 
+    const cancelled = new AbortController();
+    const reason = new Error("Cancel queued machine command");
+    const waiting = fixture.commands.spawn(machineCommand, cancelled.signal);
+    const rejected = expect(waiting).rejects.toBe(reason);
     const competing = fixture.commands.spawn(machineCommand, new AbortController().signal);
-    const competingOutcome = competing.then(
-      () => "resolved" as const,
-      (error: unknown) => error,
-    );
+    cancelled.abort(reason);
+    await rejected;
+    let admitted = false;
+    void competing.then(() => {
+      admitted = true;
+    });
     await Promise.resolve();
-    const immediate = await Promise.race([competingOutcome, Promise.resolve("pending" as const)]);
+    expect(admitted).toBe(false);
     expect(checkpointIds).toEqual(["machine-op-1:before"]);
     expect(fixture.createCalls).toHaveLength(1);
     expect(fixture.spawnCalls).toHaveLength(1);
@@ -86,15 +91,7 @@ describe("MachineCommands", () => {
       coreDumped: false,
     });
 
-    const competingResult = await competingOutcome;
-    expect(immediate).toBeInstanceOf(KernelProgramExecAdmissionError);
-    expect(competingResult).toBeInstanceOf(KernelProgramExecAdmissionError);
-    expect(competingResult).toMatchObject({
-      code: "RESOURCE_LIMIT",
-      message: "Command capacity is full",
-    });
-
-    const next = await fixture.commands.spawn(machineCommand, new AbortController().signal);
+    const next = await competing;
     await expect(next.exited).resolves.toEqual({
       exitCode: 0,
       signal: 0,

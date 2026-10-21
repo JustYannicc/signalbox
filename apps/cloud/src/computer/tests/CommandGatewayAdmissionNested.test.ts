@@ -18,7 +18,7 @@ describe("nested command gateway admission", () => {
     const nestedStdout = new Uint8Array([0, 250, 65]);
     const loaderCalls: string[] = [];
     const fixture = commandGatewayFixture({
-      capacityLimit: 2,
+      capacityLimit: 1,
       run: async (input, invocation) => {
         loaderCalls.push(input.command.executable);
         try {
@@ -29,6 +29,7 @@ describe("nested command gateway admission", () => {
             await bash.complete({ kind: "exit", status: exited(31) });
             return exited(31);
           }
+          expect(fixture.capacity.active).toBe(2);
           expect(input.command).toEqual({
             executable: "/bin/cat",
             argv: ["caller-cat", "nested"],
@@ -43,7 +44,7 @@ describe("nested command gateway admission", () => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "tryReserve");
+    const reserve = vi.spyOn(fixture.capacity, "reserve");
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let parent: Awaited<ReturnType<typeof fixture.gateway.host.spawn>> | undefined;
     let nested: Awaited<ReturnType<typeof fixture.gateway.host.spawn>> | undefined;
@@ -150,7 +151,7 @@ describe("nested command gateway admission", () => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "tryReserve");
+    const reserve = vi.spyOn(fixture.capacity, "reserve");
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let root: Awaited<ReturnType<typeof fixture.gateway.exec>> | undefined;
     let siblingDrainSettled = false;

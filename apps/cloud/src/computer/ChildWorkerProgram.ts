@@ -140,7 +140,10 @@ export function createChildWorkerProgram<Host extends object>(
       };
       const lifetime =
         reservationFor === undefined
-          ? capacity.run(context.signal, work)
+          ? capacity.run(context.signal, work, {
+              processes: context.processes,
+              process: context.identity.handle,
+            })
           : runWithReservation(reservationFor, context, work);
       lifetimes.track(lifetime);
       // Logical exit can precede dispatch completion and physical teardown on either admission path.
@@ -160,7 +163,7 @@ function runWithReservation<T>(
   if (!isChildWorkerReservation(reservation)) {
     throw new TypeError("Child worker reservation resolver did not return a capacity reservation");
   }
-  return reservation.run(context.signal, work);
+  return reservation.run(context.signal, work, context.identity.pid);
 }
 
 function createModuleLoader(source: ChildWorkerModules | ChildWorkerModulesFactory) {

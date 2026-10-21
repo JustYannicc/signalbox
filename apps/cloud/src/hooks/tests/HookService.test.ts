@@ -17,7 +17,7 @@ const notUsed = async (): Promise<never> => {
 const defaults = {
   commands: { exec: notUsed },
   generated: { invoke: notUsed },
-  capacity: { tryAcquire: () => ({ release() {} }) },
+  capacity: { acquire: async () => ({ release() {} }) },
 };
 
 describe("configured hook execution", () => {
@@ -134,7 +134,7 @@ describe("configured hook execution", () => {
       ...defaults,
       registrations: scriptRegistration(),
       capacity: {
-        tryAcquire: () => {
+        acquire: async () => {
           admitted = true;
           return {
             release() {
@@ -173,7 +173,7 @@ describe("configured hook execution", () => {
       ...defaults,
       registrations: scriptRegistration(),
       capacity: {
-        tryAcquire: () => ({
+        acquire: async () => ({
           release() {
             releasedAfterConsumption = consumed;
           },

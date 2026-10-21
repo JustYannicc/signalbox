@@ -48,7 +48,7 @@ function setup(failure: Error, phase: "write" | "close") {
       }),
     },
     generated: { invoke: unreadable },
-    capacity: { tryAcquire: () => ({ release() {} }) },
+    capacity: { acquire: async () => ({ release() {} }) },
   });
   return {
     run: () =>

@@ -74,7 +74,7 @@ describe("uniform command gateway admission", () => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "tryReserve");
+    const reserve = vi.spyOn(fixture.capacity, "reserve");
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let child: Awaited<ReturnType<typeof fixture.gateway.exec>> | undefined;
     const command = {

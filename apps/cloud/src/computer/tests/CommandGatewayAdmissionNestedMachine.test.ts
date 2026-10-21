@@ -39,7 +39,7 @@ describe("nested machine command gateway admission", () => {
       machineStarted.resolve();
       return forwarded;
     });
-    const reserve = vi.spyOn(fixture.capacity, "tryReserve");
+    const reserve = vi.spyOn(fixture.capacity, "reserve");
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let parent: Awaited<ReturnType<typeof fixture.gateway.host.spawn>> | undefined;
     let nested: Awaited<ReturnType<typeof fixture.gateway.host.spawn>> | undefined;

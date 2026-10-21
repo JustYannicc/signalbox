@@ -23,7 +23,7 @@ export interface CodeModeConnectionOptions {
   readonly signal: AbortSignal;
   readonly loader: CodeModeCellLoaderPort;
   readonly code: CodeModeCellCode;
-  readonly capacity: Pick<ChildWorkerCapacity, "tryAcquire">;
+  readonly cellCapacity: Pick<ChildWorkerCapacity, "acquire">;
 }
 
 export async function runCodeModeHostConnection(options: CodeModeConnectionOptions) {
@@ -89,15 +89,6 @@ export async function runCodeModeHostConnection(options: CodeModeConnectionOptio
             throw new Error("Duplicate CodeMode request ID");
           const observation = { cancel: new AbortController(), yield: new AbortController() };
           active.set(message.id, observation);
-          if (active.size > 256) {
-            send({
-              type: "operation/response",
-              id: message.id,
-              result: fail("code-mode host has too many in-flight requests"),
-            });
-            finish(message.id);
-            break;
-          }
           const task = handle(message.id, message.request, observation).finally(() => {
             finish(message.id);
             tasks.delete(task);
@@ -163,7 +154,7 @@ export async function runCodeModeHostConnection(options: CodeModeConnectionOptio
       switch (request.method) {
         case "session/execute": {
           observe.cancel.throwIfAborted();
-          const cell = session.execute(request.request, signal);
+          const cell = await session.execute(request.request, observe.cancel);
           respond({ type: "execution/started", cellId: cell.id });
           const response = await session.observe(cell, request.request.yield_time_ms ?? 10_000, {
             cancel: signal,

@@ -1,46 +1,67 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
+import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
+import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 
 describe("ChildWorkerCapacity", () => {
-  it("refuses nested callback work at full capacity while every ancestor remains live", async () => {
-    const capacity = new ChildWorkerCapacity(10);
+  it("runs limit plus five root commands FIFO within the soft limit", async () => {
+    const capacity = new ChildWorkerCapacity();
     const signal = new AbortController().signal;
-    const ancestors = await Promise.all(Array.from({ length: 10 }, () => capacity.acquire(signal)));
-    let starts = 0;
-    try {
-      const outcomes = await Promise.all(
-        Array.from({ length: 10 }, () =>
-          capacity
-            .run(signal, async () => {
-              starts++;
-            })
-            .catch((error: unknown) => error),
-        ),
-      );
-      expect(
-        outcomes.every(
-          (error) => error instanceof Error && "code" in error && error.code === "RESOURCE_LIMIT",
-        ),
-      ).toBe(true);
-      expect(starts).toBe(0);
-      expect(capacity.active).toBe(10);
-    } finally {
-      ancestors.forEach((permit) => permit.release());
-    }
-    expect(capacity.active).toBe(0);
-    await capacity.run(signal, async () => {
-      starts++;
-    });
-    expect(starts).toBe(1);
+    const full = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const order: number[] = [];
+    let maximum = 0;
+    const commands = Array.from({ length: capacity.limit + 5 }, (_, index) =>
+      capacity.run(signal, async () => {
+        order.push(index);
+        maximum = Math.max(maximum, capacity.active);
+        if (order.length === capacity.limit) full.resolve();
+        await finish.promise;
+        return index * index;
+      }),
+    );
+    await full.promise;
+    expect(order).toEqual(Array.from({ length: capacity.limit }, (_, index) => index));
+    finish.resolve();
+    expect(await Promise.all(commands)).toEqual(
+      Array.from({ length: capacity.limit + 5 }, (_, index) => index * index),
+    );
+    expect(order).toEqual(Array.from({ length: capacity.limit + 5 }, (_, index) => index));
+    expect(maximum).toBe(capacity.limit);
     expect(capacity.active).toBe(0);
   });
 
-  it("enforces a default maximum of ten positive integer permits", () => {
+  it("skips ancestry and queue listeners when the soft pool has room", async () => {
+    const capacity = new ChildWorkerCapacity();
+    const signal = new AbortController().signal;
+    const wakes = new KernelWakeRegistry();
+    const processes = new KernelProcessTable({ wakes });
+    const info = vi.spyOn(processes, "info");
+    const listen = vi.spyOn(signal, "addEventListener");
+    try {
+      const permit = await capacity.acquire(signal, { processes });
+      expect(info).not.toHaveBeenCalled();
+      expect(listen).not.toHaveBeenCalled();
+      permit.release();
+    } finally {
+      await processes.dispose();
+      wakes.dispose();
+    }
+  });
+
+  it("validates the soft and hard limits", () => {
     expect(new ChildWorkerCapacity().limit).toBe(10);
     expect(new ChildWorkerCapacity(1).limit).toBe(1);
     expect(new ChildWorkerCapacity(10).limit).toBe(10);
 
-    for (const limit of [0, -1, 1.5, 11, Number.NaN, Number.POSITIVE_INFINITY]) {
+    expect(new ChildWorkerCapacity().hardLimit).toBe(64);
+    expect(new ChildWorkerCapacity(11).limit).toBe(11);
+    expect(new ChildWorkerCapacity(65).hardLimit).toBe(65);
+    for (const hardLimit of [0, -1, 1.5, 9, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => new ChildWorkerCapacity(10, { hardLimit })).toThrow(RangeError);
+    }
+    expect(new ChildWorkerCapacity(10, { hardLimit: 10 }).hardLimit).toBe(10);
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => new ChildWorkerCapacity(limit)).toThrow(RangeError);
     }
   });
@@ -160,8 +181,10 @@ describe("ChildWorkerCapacity", () => {
       },
     } as unknown as AbortSignal;
 
+    const held = await capacity.acquire(new AbortController().signal);
     await expect(capacity.acquire(signal)).rejects.toBe(reason);
-    expect(capacity.active).toBe(0);
+    expect(capacity.active).toBe(1);
+    held.release();
     const permit = await capacity.acquire(new AbortController().signal);
     expect(capacity.active).toBe(1);
     permit.release();
@@ -195,7 +218,11 @@ describe("ChildWorkerCapacity", () => {
       },
     } as unknown as AbortSignal;
 
-    const permit = await capacity.acquire(signal);
+    const held = await capacity.acquire(new AbortController().signal);
+    const pending = capacity.acquire(signal);
+    held.release();
+    const permit = await pending;
+    expect(controller.signal.aborted).toBe(true);
     expect(capacity.active).toBe(1);
     permit.release();
     expect(capacity.active).toBe(0);

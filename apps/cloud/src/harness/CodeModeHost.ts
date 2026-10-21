@@ -1,4 +1,4 @@
-import type { ChildWorkerCapacity } from "../computer/ChildWorkerCapacity.ts";
+import { ChildWorkerCapacity } from "../computer/ChildWorkerCapacity.ts";
 import { ABI_VERSION } from "../kernel/KernelAbi.ts";
 import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import { createKernelProcessStreams } from "../kernel/KernelProcessStreams.ts";
@@ -26,7 +26,8 @@ export const CODE_MODE_UPSTREAM_COMMIT = "092d3acd6bec3e3a14bdc7e7a2810ab628ab75
 /** Register this binding at the exact companion path and seed it through the ordinary filesystem. */
 export function createCodeModeHostProgram(options: {
   readonly loader: CodeModeCellLoaderPort;
-  readonly capacity: Pick<ChildWorkerCapacity, "tryAcquire">;
+  /** Dedicated cell pool, separate from command admission. */
+  readonly capacity?: Pick<ChildWorkerCapacity, "acquire">;
   readonly code: CodeModeCellCode;
 }) {
   const code: CodeModeCellCode = Object.freeze({
@@ -40,6 +41,7 @@ export function createCodeModeHostProgram(options: {
       ),
     ),
   });
+  const cellCapacity = options.capacity ?? new ChildWorkerCapacity();
   const lifetimes = new Set<Promise<unknown>>();
   const errors: unknown[] = [];
   const binding: KernelProgramBinding = {
@@ -59,7 +61,7 @@ export function createCodeModeHostProgram(options: {
           output: streams.stdout,
           signal: context.signal,
           loader: options.loader,
-          capacity: options.capacity,
+          cellCapacity,
           code,
         }).then(() => ({
           exitCode: 0,

@@ -30,11 +30,10 @@ async function withFixture(run: (fixture: Fixture) => Promise<void>) {
 }
 
 describe("ChildWorkerReservation", () => {
-  it("is capacity-owned, shares admission, refuses immediately, and cancels once", async () => {
+  it("is capacity-owned, shares queued admission, and cancels once", async () => {
     const capacity = new ChildWorkerCapacity(1);
     const signal = new AbortController().signal;
-    const reservation = capacity.tryReserve(signal);
-    expect(reservation).toBeDefined();
+    const reservation = await capacity.reserve(signal);
     expect(isChildWorkerReservation(reservation)).toBe(true);
     expect(capacity.active).toBe(1);
 
@@ -43,22 +42,20 @@ describe("ChildWorkerReservation", () => {
     const permitLike = { release: vi.fn() };
     const implementation = Object.getPrototypeOf(reservation).constructor;
     expect(() => Reflect.construct(implementation, [permitLike])).toThrow("issued by capacity");
-    expect(capacity.tryReserve(signal)).toBeUndefined();
-
-    const queued = capacity.acquire(signal);
-    reservation!.cancel();
-    reservation!.cancel();
+    const queued = capacity.reserve(signal);
+    reservation.cancel();
+    reservation.cancel();
     expect(capacity.active).toBe(1);
-    const permit = await queued;
+    const nextReservation = await queued;
     expect(capacity.active).toBe(1);
-    permit.release();
+    nextReservation.cancel();
     expect(capacity.active).toBe(0);
   });
 
   it("consumes synchronously, ignores cancel after handoff, and releases on settlement", async () => {
     const capacity = new ChildWorkerCapacity(1);
     const signal = new AbortController().signal;
-    const reservation = capacity.tryReserve(signal)!;
+    const reservation = await capacity.reserve(signal);
     const started = deferred<void>();
     const finished = deferred<number>();
     let starts = 0;
@@ -84,7 +81,7 @@ describe("ChildWorkerReservation", () => {
   it("releases an unconsumed reservation when run observes an aborted signal", async () => {
     const capacity = new ChildWorkerCapacity(1);
     const controller = new AbortController();
-    const reservation = capacity.tryReserve(controller.signal)!;
+    const reservation = await capacity.reserve(controller.signal);
     const reason = new Error("cancelled before dispatch");
     const work = vi.fn(async () => undefined);
 
@@ -97,7 +94,7 @@ describe("ChildWorkerReservation", () => {
   it("dispatches with its reserved slot at full capacity without reacquiring", () =>
     withFixture(async (fixture) => {
       const capacity = new ChildWorkerCapacity(1);
-      const reservation = capacity.tryReserve(fixture.context.signal)!;
+      const reservation = await capacity.reserve(fixture.context.signal);
       const capacityRun = vi.spyOn(capacity, "run");
       const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
       const dispatch = vi.fn(async () => {
@@ -133,7 +130,7 @@ describe("ChildWorkerReservation", () => {
       const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
       const dispatch = vi.fn(async () => exited());
       const createHost = vi.fn(() => ({ host: {}, close() {} }));
-      let reservation = capacity.tryReserve(fixture.context.signal)!;
+      let reservation = await capacity.reserve(fixture.context.signal);
       reservation.cancel();
       reservation.cancel();
       const program = createChildWorkerProgram({
@@ -146,7 +143,7 @@ describe("ChildWorkerReservation", () => {
       });
 
       await expect(program.run(fixture.context)).rejects.toThrow("no longer available");
-      reservation = capacity.tryReserve(fixture.context.signal)!;
+      reservation = await capacity.reserve(fixture.context.signal);
       await expect(program.run(fixture.context)).resolves.toEqual(exited());
       await expect(program.run(fixture.context)).rejects.toThrow("no longer available");
 
@@ -212,7 +209,7 @@ describe("ChildWorkerReservation", () => {
   it("releases after module loading fails before host creation", () =>
     withFixture(async (fixture) => {
       const capacity = new ChildWorkerCapacity(1);
-      const reservation = capacity.tryReserve(fixture.context.signal)!;
+      const reservation = await capacity.reserve(fixture.context.signal);
       const failure = new Error("module source unavailable");
       const modules = vi.fn(async () => {
         throw failure;
@@ -240,7 +237,7 @@ describe("ChildWorkerReservation", () => {
       const fixture = childBusyboxFixture();
       try {
         const capacity = new ChildWorkerCapacity(1);
-        const reservation = capacity.tryReserve(fixture.context.signal)!;
+        const reservation = yield* Effect.promise(() => capacity.reserve(fixture.context.signal));
         const descendant = Promise.withResolvers<ReturnType<typeof exited>>();
         const exitedEarly = deferred<ReturnType<typeof exited>>();
         const closeStarted = deferred<void>();

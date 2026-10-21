@@ -22,7 +22,7 @@ describe("Computer root admission", () => {
     async (failure) => {
       const fixture = childBusyboxFixture();
       const capacity = new ChildWorkerCapacity(1);
-      const reserve = vi.spyOn(capacity, "tryReserve");
+      const reserve = vi.spyOn(capacity, "reserve");
       const machine = {
         async spawn(): Promise<never> {
           throw new Error("Unexpected machine");
@@ -88,7 +88,7 @@ describe("Computer root admission", () => {
     async (withParent) => {
       const fixture = childBusyboxFixture();
       const capacity = new ChildWorkerCapacity(1);
-      const reserve = vi.spyOn(capacity, "tryReserve");
+      const reserve = vi.spyOn(capacity, "reserve");
       const reacquire = vi.spyOn(capacity, "run");
       const machine = {
         spawn: vi.fn(async (): Promise<never> => {
@@ -183,7 +183,7 @@ describe("Computer root admission", () => {
   it("previews replacement stdio without effects and forwards binary pipes exactly once", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1);
-    const reserve = vi.spyOn(capacity, "tryReserve");
+    const reserve = vi.spyOn(capacity, "reserve");
     const fork = vi.spyOn(fixture.filesystem.descriptors, "fork");
     const bytes = new Uint8Array([0, 255, 128, 10]);
     const input: Uint8Array[] = [];

@@ -14,7 +14,7 @@ interface SessionOptions {
   id: string;
   loader: CodeModeCellLoaderPort;
   code: CodeModeCellCode;
-  capacity: Pick<ChildWorkerCapacity, "tryAcquire">;
+  cellCapacity: Pick<ChildWorkerCapacity, "acquire">;
   delegates: CodeModeDelegates;
   send: (message: unknown) => void;
 }
@@ -24,6 +24,7 @@ export class CodeModeSession {
   readonly #cells = new Map<string, CodeModeCell>();
   readonly #lifetimes = new Set<Promise<void>>();
   readonly #options: SessionOptions;
+  readonly #pending = new Set<AbortController>();
   #nextId = 1;
   #closing = false;
 
@@ -31,10 +32,27 @@ export class CodeModeSession {
     this.#options = options;
   }
 
-  execute(request: CodeModeExecuteRequest, signal: AbortSignal) {
+  async execute(request: CodeModeExecuteRequest, signal: AbortSignal) {
     if (this.#closing) throw new Error("CodeMode session is shutting down");
-    const permit = this.#options.capacity.tryAcquire(signal);
-    if (permit === undefined) throw new Error("code-mode host has too many active cells");
+    const queued = new AbortController();
+    const onAbort = () => queued.abort(signal.reason);
+    this.#pending.add(queued);
+    let permit;
+    try {
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      permit = await this.#options.cellCapacity.acquire(queued.signal);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      this.#pending.delete(queued);
+    }
+    try {
+      queued.signal.throwIfAborted();
+      if (this.#closing) throw new Error("CodeMode session is shutting down");
+    } catch (error) {
+      permit.release();
+      throw error;
+    }
     const id = String(this.#nextId++);
     const cell = new CodeModeCell({
       id,
@@ -83,6 +101,8 @@ export class CodeModeSession {
 
   async shutdown() {
     this.#closing = true;
+    for (const queued of this.#pending)
+      queued.abort(new Error("CodeMode session is shutting down"));
     await Promise.all([...this.#cells.values()].map((cell) => cell.terminate()));
     await Promise.all(this.#lifetimes);
     for (const cell of this.#cells.values()) this.#close(cell);

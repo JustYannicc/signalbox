@@ -1,8 +1,5 @@
 import type { ComputerExecPort } from "../computer/Computer.ts";
-import {
-  ChildWorkerLimitError,
-  type ChildWorkerCapacity,
-} from "../computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerCapacity } from "../computer/ChildWorkerCapacity.ts";
 import {
   NodeGeneratedCodeCleanupError,
   type NodeGeneratedCode,
@@ -43,7 +40,7 @@ export interface HookServiceOptions {
   readonly commands: ComputerExecPort;
   readonly generated: Pick<NodeGeneratedCode, "invoke">;
   /** The same admission pool used by every child program in this DO. */
-  readonly capacity: Pick<ChildWorkerCapacity, "tryAcquire">;
+  readonly capacity: Pick<ChildWorkerCapacity, "acquire">;
 }
 
 const encoder = new TextEncoder();
@@ -88,8 +85,7 @@ export function createHookService(options: HookServiceOptions) {
           exit: successExit,
         };
       }
-      const permit = options.capacity.tryAcquire(invocation.signal);
-      if (!permit) throw new ChildWorkerLimitError();
+      const permit = await options.capacity.acquire(invocation.signal);
       let cleanupConfirmed = true;
       try {
         invocation.signal.throwIfAborted();

@@ -106,7 +106,7 @@ describe("Coreutils child bridge", () => {
       async (_name, env) => {
         const fixture = childBusyboxFixture({ args: ["pwd"], env });
         const capacity = new ChildWorkerCapacity(1);
-        const reservation = capacity.tryReserve(fixture.context.signal)!;
+        const reservation = await capacity.reserve(fixture.context.signal);
         const capacityRun = vi.spyOn(capacity, "run");
         const commands: KernelCommand[] = [];
         let parentEnvironment: string | undefined;

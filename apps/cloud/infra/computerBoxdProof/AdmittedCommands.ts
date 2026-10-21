@@ -27,10 +27,15 @@ export function createProofAdmittedCommands(
   const lifetimes = new ChildWorkerLifetimes();
   let fallbackRuns = 0;
   const observedCapacity = {
-    tryReserve: (signal: AbortSignal) => capacity.tryReserve(signal),
-    run: <T>(signal: AbortSignal, work: () => Promise<T>) => {
+    reserve: (signal: AbortSignal, requester?: Parameters<ChildWorkerCapacity["reserve"]>[1]) =>
+      capacity.reserve(signal, requester),
+    run: <T>(
+      signal: AbortSignal,
+      work: () => Promise<T>,
+      requester?: Parameters<ChildWorkerCapacity["run"]>[2],
+    ) => {
       fallbackRuns++;
-      return capacity.run(signal, work);
+      return capacity.run(signal, work, requester);
     },
   };
   let machine: KernelCommandForwarder | undefined;

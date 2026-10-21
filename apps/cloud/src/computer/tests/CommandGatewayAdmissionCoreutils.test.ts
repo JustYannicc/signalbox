@@ -53,7 +53,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "tryReserve");
+    const reserve = vi.spyOn(fixture.capacity, "reserve");
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let child: KernelCommandChild | undefined;
     try {
@@ -125,7 +125,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "tryReserve");
+    const reserve = vi.spyOn(fixture.capacity, "reserve");
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let child: KernelCommandChild | undefined;
     try {
