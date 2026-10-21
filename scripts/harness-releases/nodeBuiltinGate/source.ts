@@ -4,11 +4,12 @@ import ts from "typescript-legacy";
 import {
   isNodeRequireCall,
   nodeRequireBindings,
+  unwrapRequireExpression as unwrap,
 } from "../../claude-bunfs/release-inventory-require.ts";
 import { ScopedBindings } from "../../claude-bunfs/release-inventory-scope.ts";
 import type { NodeBuiltinAmbiguity } from "./coverage.ts";
 
-type Origin = "module" | "factory" | "require" | "bridge" | "process";
+type Origin = "module" | "factory" | "require" | "bridge" | "process" | "builtin-loader";
 export interface BuiltinSource {
   readonly name: string;
   readonly source: string;
@@ -16,13 +17,6 @@ export interface BuiltinSource {
 }
 const literal = (node: ts.Node | undefined) =>
   node && ts.isStringLiteralLike(node) ? node.text : undefined;
-function unwrap(node: ts.Expression): ts.Expression {
-  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken)
-    return unwrap(node.right);
-  return ts.isParenthesizedExpression(node) || ts.isAwaitExpression(node)
-    ? unwrap(node.expression)
-    : node;
-}
 function member(node: ts.Expression) {
   node = unwrap(node);
   if (ts.isPropertyAccessExpression(node)) return { target: node.expression, name: node.name.text };
@@ -53,6 +47,8 @@ export function scanBuiltinSource(input: BuiltinSource) {
       return !binding && node.text === "process" ? "process" : undefined;
     }
     const property = member(node);
+    if (property?.name === "getBuiltinModule" && origin(property.target) === "process")
+      return "builtin-loader";
     if (property?.name === "createRequire" && origin(property.target) === "module")
       return "factory";
     if (property?.name === "require" && origin(property.target) === "bridge") return "require";
@@ -80,15 +76,14 @@ export function scanBuiltinSource(input: BuiltinSource) {
     if (ts.isCallExpression(node)) {
       if (origin(node.expression) === "factory") return "require";
       if (
-        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-        ["module", "node:module"].includes(literal(node.arguments[0]) ?? "")
-      )
-        return "module";
-      if (
-        (isNodeRequireCall(node, requires) || origin(node.expression) === "require") &&
-        ["module", "node:module"].includes(literal(node.arguments[0]) ?? "")
-      )
-        return "module";
+        node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        isNodeRequireCall(node, requires) ||
+        origin(node.expression) === "require"
+      ) {
+        const specifier = literal(node.arguments[0]);
+        if (["module", "node:module"].includes(specifier ?? "")) return "module";
+        if (["process", "node:process"].includes(specifier ?? "")) return "process";
+      }
     }
     return undefined;
   };
@@ -100,6 +95,10 @@ export function scanBuiltinSource(input: BuiltinSource) {
       if (clause?.name) bindings.setOrigin(clause.name, "process");
       if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings))
         bindings.setOrigin(clause.namedBindings.name, "process");
+      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings))
+        for (const item of clause.namedBindings.elements)
+          if ((item.propertyName ?? item.name).text === "getBuiltinModule")
+            bindings.setOrigin(item.name, "builtin-loader");
       continue;
     }
     if (!specifier || !["module", "node:module"].includes(specifier)) continue;
@@ -128,14 +127,21 @@ export function scanBuiltinSource(input: BuiltinSource) {
           bindings.setOrigin(declaration.name, value);
           changed = true;
         }
-      } else if (value === "module" && ts.isObjectBindingPattern(declaration.name)) {
+      } else if (
+        (value === "module" || value === "process") &&
+        ts.isObjectBindingPattern(declaration.name)
+      ) {
+        const memberName = value === "module" ? "createRequire" : "getBuiltinModule";
+        const memberOrigin = value === "module" ? "factory" : "builtin-loader";
         for (const item of declaration.name.elements) {
+          const key = item.propertyName ?? item.name;
           if (
             ts.isIdentifier(item.name) &&
-            (item.propertyName ?? item.name).getText(file) === "createRequire" &&
-            bindings.lookup(item.name)?.origin !== "factory"
+            (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) &&
+            key.text === memberName &&
+            bindings.lookup(item.name)?.origin !== memberOrigin
           ) {
-            bindings.setOrigin(item.name, "factory");
+            bindings.setOrigin(item.name, memberOrigin);
             changed = true;
           }
         }
@@ -169,10 +175,7 @@ export function scanBuiltinSource(input: BuiltinSource) {
     else if (ts.isCallExpression(node)) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
         add(node, node.arguments[0], "dynamic-import");
-      else if (
-        member(node.expression)?.name === "getBuiltinModule" &&
-        origin(member(node.expression)!.target) === "process"
-      )
+      else if (origin(node.expression) === "builtin-loader")
         add(node, node.arguments[0], "builtin-module");
       else if (isNodeRequireCall(node, requires) || origin(node.expression) === "require")
         add(node, node.arguments[0], "dynamic-require");

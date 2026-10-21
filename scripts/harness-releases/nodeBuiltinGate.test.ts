@@ -62,6 +62,41 @@ describe("release builtin gate", () => {
     ).rejects.toThrow("NODE_BUILTIN_COVERAGE_FAILED: missing=cluster");
   });
 
+  it.each([
+    "const p = require('node:process'); p.getBuiltinModule('node:cluster');",
+    "const p = (await import('process')); p.getBuiltinModule('cluster');",
+    "import {createRequire} from 'node:module'; const r = createRequire(import.meta.url); const p = r('process'); p.getBuiltinModule('cluster');",
+    "const {getBuiltinModule: g} = require('node:process'); (0,g)('cluster');",
+  ])("rejects builtin loads through process-module loader aliases: %s", async (text) => {
+    await expect(assertPackagedBuiltinCoverage([source(text)])).rejects.toThrow(
+      "NODE_BUILTIN_COVERAGE_FAILED: missing=cluster",
+    );
+  });
+
+  it("tracks named, destructured and member aliases of the builtin loader", async () => {
+    const scan = scanBuiltinSource(
+      source(`
+      import { getBuiltinModule as get } from 'node:process';
+      get('dns');
+      const { getBuiltinModule: load } = process; load('node:stream');
+      const g = process.getBuiltinModule; (0, g)('cluster');
+      const { 'getBuiltinModule': take } = globalThis.process; take('util');
+      function shadow(get, process) { get('dgram'); process.getBuiltinModule('wasi'); }
+    `),
+    );
+    expect(scan.requiredSpecifiers).toEqual([
+      "cluster",
+      "dns",
+      "node:process",
+      "node:stream",
+      "util",
+    ]);
+    expect(scan.ambiguities).toEqual([]);
+    await expect(
+      assertPackagedBuiltinCoverage([source("const g = process.getBuiltinModule; g('cluster');")]),
+    ).rejects.toThrow("NODE_BUILTIN_COVERAGE_FAILED: missing=cluster");
+  });
+
   it("tracks optional builtin loads and aliases while respecting shadowed process objects", () => {
     const scan = scanBuiltinSource(
       source(`
@@ -87,8 +122,8 @@ describe("release builtin gate", () => {
       name: "extracted.cjs",
       format: 2,
       source: `(function(exports,require,module,__filename,__dirname){
-      require('dns'); module.require('node:stream');
-      import.meta.require('dns/promises');
+      (0, require)('dns'); (0, module.require)('node:stream');
+      (0, import.meta.require)('dns/promises');
       function unrelated(require) { require('cluster'); }
     })`,
     });

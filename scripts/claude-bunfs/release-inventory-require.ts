@@ -84,12 +84,13 @@ function commonJsRequireParameter(file: ts.SourceFile): ts.Identifier {
 }
 
 export function isNodeRequireCall(call: ts.CallExpression, bindings: RequireBindings): boolean {
-  if (ts.isIdentifier(call.expression)) {
-    const binding = bindings.lookup(call.expression);
-    if (call.expression.text === "require") return binding ? binding.origin === true : true;
+  const expression = unwrapRequireExpression(call.expression);
+  if (ts.isIdentifier(expression)) {
+    const binding = bindings.lookup(expression);
+    if (expression.text === "require") return binding ? binding.origin === true : true;
     return binding?.origin === true;
   }
-  return isRequireMember(call.expression, bindings);
+  return isRequireMember(expression, bindings);
 }
 
 type FactoryOrigin = "module" | "factory" | "created";
@@ -99,10 +100,17 @@ function unwrapParentheses(expression: ts.Expression): ts.Expression {
   return expression;
 }
 
-function unwrap(expression: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(expression) || ts.isAwaitExpression(expression))
-    expression = expression.expression;
-  return expression;
+export function unwrapRequireExpression(expression: ts.Expression): ts.Expression {
+  while (true) {
+    if (ts.isParenthesizedExpression(expression) || ts.isAwaitExpression(expression))
+      expression = expression.expression;
+    else if (
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.CommaToken
+    )
+      expression = expression.right;
+    else return expression;
+  }
 }
 
 function property(
@@ -120,7 +128,7 @@ function property(
 }
 
 function isImportMetaRequire(expression: ts.Expression): boolean {
-  const member = property(unwrap(expression));
+  const member = property(unwrapRequireExpression(expression));
   return (
     member?.name === "require" &&
     ts.isMetaProperty(member.receiver) &&
@@ -147,7 +155,7 @@ export function factoryRequireEscapes(
 ): ReadonlyArray<ts.Node> {
   const bindings = new ScopedBindings<FactoryOrigin>(file);
   const origin = (expression: ts.Expression): FactoryOrigin | undefined => {
-    const value = unwrap(expression);
+    const value = unwrapRequireExpression(expression);
     if (ts.isIdentifier(value)) return bindings.lookup(value)?.origin;
     if (isModuleImport(value)) return "module";
     const member = property(value);
@@ -206,7 +214,7 @@ export function factoryRequireEscapes(
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
         node.expression.name.text === "then" &&
-        isModuleImport(unwrap(node.expression.expression))
+        isModuleImport(unwrapRequireExpression(node.expression.expression))
       ) {
         const callback = node.arguments[0];
         if (callback && ts.isFunctionLike(callback) && callback.parameters[0])
@@ -272,7 +280,7 @@ export function factoryRequireEscapes(
 }
 
 function isRequireMember(expression: ts.Expression, bindings: RequireBindings): boolean {
-  const member = property(unwrap(expression));
+  const member = property(unwrapRequireExpression(expression));
   return (
     isImportMetaRequire(expression) ||
     Boolean(
