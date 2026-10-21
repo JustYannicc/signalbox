@@ -63,6 +63,141 @@ export interface ProductHarnessSessionHost<G> extends HarnessSessionHost<G> {
   readonly commands: ProductComputer;
 }
 
+// Anything that outlives open is built outside createProductHarnessSessionHost; closures there
+// keep options, and its release source, alive.
+const acquireWakes = Effect.acquireRelease(
+  Effect.sync(() => new KernelWakeRegistry()),
+  (value) => Effect.sync(() => value.dispose()),
+);
+function acquireStdio(
+  wakes: KernelWakeRegistry,
+  signal: AbortSignal,
+  observe?: KernelSessionOutputObserver,
+) {
+  return Effect.acquireRelease(
+    Effect.sync(() => createKernelSessionStdio(wakes, signal, observe)),
+    (value) => Effect.promise(() => value.dispose()),
+  );
+}
+
+// Runtime callbacks share a V8 context, so this scope must never receive release sources.
+function createProductBindings<G>(
+  options: Pick<ProductHarnessHostOptions<G>, "commands" | "native" | "hydrate" | "port" | "save">,
+  codes: ProductComputerOptions["programs"],
+  wakes: KernelWakeRegistry,
+  stdio: ReturnType<typeof createKernelSessionStdio>,
+  close: Effect.Effect<void>,
+) {
+  let commands: ProductComputer | undefined;
+  let computer: Computer | undefined;
+  return {
+    bindComputer: (input: BindingInput<G>) =>
+      Effect.gen(function* () {
+        stdio.assertBound(input.files);
+        const bound = yield* Effect.acquireRelease(
+          Effect.try({
+            try: () =>
+              createProductComputer({
+                ...options.commands,
+                filesystem: input.files,
+                wakes,
+                programs: codes,
+                home: options.native.process.identity.homedir,
+                signal: input.signal,
+              }),
+            catch: (cause) =>
+              new HarnessError({
+                operation: "open",
+                message: "Product Computer could not be opened.",
+                cause,
+              }),
+          }),
+          (value) => Effect.promise(() => value.close()),
+        );
+        commands = bound;
+        // Hydration can hold canonical files; cancellation must join it before they close.
+        yield* Effect.tryPromise({
+          try: async () => {
+            input.signal.throwIfAborted();
+            await options.hydrate?.(input);
+            input.signal.throwIfAborted();
+          },
+          catch: (cause) =>
+            new HarnessError({
+              operation: "open",
+              message: "Product files could not be hydrated.",
+              cause,
+            }),
+        }).pipe(Effect.uninterruptible);
+        return {
+          exec: bound.exec,
+          port: (port: number, signal: AbortSignal) => {
+            const owned = AbortSignal.any([input.signal, signal]);
+            owned.throwIfAborted();
+            return options.port(port, owned);
+          },
+          save: (signal: AbortSignal) => {
+            const owned = AbortSignal.any([input.signal, signal]);
+            owned.throwIfAborted();
+            return options.save({ ...input, signal: owned });
+          },
+        };
+      }),
+    buildRuntime: (input: RuntimeInput<G>) =>
+      Effect.gen(function* () {
+        const bound = commands;
+        if (bound === undefined || input.loaded.plan.release.harness !== "claude-code")
+          return yield* Effect.fail(
+            new HarnessError({
+              operation: "open",
+              message: "Product host requires the Claude native release.",
+            }),
+          );
+        computer = input.harness.computer;
+        const adapter = yield* options.native.adapter(input);
+        return makeClaudeNativeHostBinding({
+          ...options.native,
+          adapter,
+          mcp: input.mcp,
+          process: {
+            ...options.native.process,
+            host: bound.host,
+            computer,
+            stdio,
+            loadedRelease: input.loaded,
+            modelTransport: input.harness.modelTransport,
+          },
+        });
+      }),
+    wrap(host: HarnessSessionHost<G>): ProductHarnessSessionHost<G> {
+      return {
+        ...host,
+        dispose: close.pipe(
+          Effect.catchCause((cause) =>
+            Effect.fail(
+              new HarnessError({
+                operation: "dispose",
+                message: "Product host cleanup failed.",
+                cause,
+              }),
+            ),
+          ),
+        ),
+        get computer() {
+          if (computer === undefined)
+            throw new Error("Open the product host before using Computer");
+          return computer;
+        },
+        get commands() {
+          if (commands === undefined)
+            throw new Error("Open the product host before using commands");
+          return commands;
+        },
+      };
+    },
+  };
+}
+
 /** Public product composition. Platform callers never assemble a private Computer or runtime. */
 export const createProductHarnessSessionHost = <G>(
   options: ProductHarnessHostOptions<G>,
@@ -85,123 +220,18 @@ export const createProductHarnessSessionHost = <G>(
     });
     const owner = yield* makeFacetLifetime(yield* Scope.Scope);
     return yield* Effect.gen(function* () {
-      const wakes = yield* Effect.acquireRelease(
-        Effect.sync(() => new KernelWakeRegistry()),
-        (value) => Effect.sync(() => value.dispose()),
-      );
-      const stdio = yield* Effect.acquireRelease(
-        Effect.sync(() => createKernelSessionStdio(wakes, owner.signal, options.observeOutput)),
-        (value) => Effect.promise(() => value.dispose()),
-      );
-      let commands: ProductComputer | undefined;
-      let computer: Computer | undefined;
+      const wakes = yield* acquireWakes;
+      const stdio = yield* acquireStdio(wakes, owner.signal, options.observeOutput);
+      const { release: _release, programs, ...runtime } = options;
+      const bindings = createProductBindings<G>(runtime, programs.codes, wakes, stdio, owner.close);
       const host = yield* createHarnessSessionHost({
         ...options,
         files: { ...options.files, wakes, stdio: stdio.stdio },
         programs: options.programs.seed,
-        bindComputer: (input) =>
-          Effect.gen(function* () {
-            stdio.assertBound(input.files);
-            const bound = yield* Effect.acquireRelease(
-              Effect.try({
-                try: () =>
-                  createProductComputer({
-                    ...options.commands,
-                    filesystem: input.files,
-                    wakes,
-                    programs: options.programs.codes,
-                    home: options.native.process.identity.homedir,
-                    signal: input.signal,
-                  }),
-                catch: (cause) =>
-                  new HarnessError({
-                    operation: "open",
-                    message: "Product Computer could not be opened.",
-                    cause,
-                  }),
-              }),
-              (value) => Effect.promise(() => value.close()),
-            );
-            commands = bound;
-            // Hydration can hold canonical files; cancellation must join it before they close.
-            yield* Effect.tryPromise({
-              try: async () => {
-                input.signal.throwIfAborted();
-                await options.hydrate?.(input);
-                input.signal.throwIfAborted();
-              },
-              catch: (cause) =>
-                new HarnessError({
-                  operation: "open",
-                  message: "Product files could not be hydrated.",
-                  cause,
-                }),
-            }).pipe(Effect.uninterruptible);
-            return {
-              exec: bound.exec,
-              port: (port: number, signal: AbortSignal) => {
-                const owned = AbortSignal.any([input.signal, signal]);
-                owned.throwIfAborted();
-                return options.port(port, owned);
-              },
-              save: (signal: AbortSignal) => {
-                const owned = AbortSignal.any([input.signal, signal]);
-                owned.throwIfAborted();
-                return options.save({ ...input, signal: owned });
-              },
-            };
-          }),
-        buildRuntime: (input) =>
-          Effect.gen(function* () {
-            const bound = commands;
-            if (bound === undefined || input.loaded.plan.release.harness !== "claude-code")
-              return yield* Effect.fail(
-                new HarnessError({
-                  operation: "open",
-                  message: "Product host requires the Claude native release.",
-                }),
-              );
-            computer = input.harness.computer;
-            const adapter = yield* options.native.adapter(input);
-            return makeClaudeNativeHostBinding({
-              ...options.native,
-              adapter,
-              mcp: input.mcp,
-              process: {
-                ...options.native.process,
-                host: bound.host,
-                computer,
-                stdio,
-                loadedRelease: input.loaded,
-                modelTransport: input.harness.modelTransport,
-              },
-            });
-          }),
+        bindComputer: bindings.bindComputer,
+        buildRuntime: bindings.buildRuntime,
       });
-      return {
-        ...host,
-        dispose: owner.close.pipe(
-          Effect.catchCause((cause) =>
-            Effect.fail(
-              new HarnessError({
-                operation: "dispose",
-                message: "Product host cleanup failed.",
-                cause,
-              }),
-            ),
-          ),
-        ),
-        get computer() {
-          if (computer === undefined)
-            throw new Error("Open the product host before using Computer");
-          return computer;
-        },
-        get commands() {
-          if (commands === undefined)
-            throw new Error("Open the product host before using commands");
-          return commands;
-        },
-      };
+      return bindings.wrap(host);
     }).pipe(
       Scope.provide(owner.scope),
       Effect.onError(() => owner.close),

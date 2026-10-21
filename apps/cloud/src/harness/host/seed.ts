@@ -2,8 +2,8 @@ import { KernelOpenFlags, type KernelFileSystem } from "../../kernel/KernelFileS
 import type { LoadedHarnessRelease } from "../HarnessReleaseLoader.ts";
 import type { HarnessHostFilesOptions, ProgramSeed, SeedMetadata, SeedStage } from "./contracts.ts";
 
-const digest = async (bytes: Uint8Array) => {
-  const hash = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer);
+const digest = async (bytes: Uint8Array<ArrayBuffer>) => {
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 export const fingerprint = (input: unknown) =>
@@ -81,7 +81,7 @@ export async function createSeedCatalog(
   const assets: SeedFile[] = loaded.plan.assets.map((entry) => {
     const payload = loaded.payloads.get(entry.path);
     if (payload === undefined) throw new Error("Missing verified asset");
-    assetBytes.set(entry.name, Uint8Array.from(payload));
+    assetBytes.set(entry.name, payload);
     return {
       path: entry.name,
       bytes: entry.bytes,
@@ -119,27 +119,35 @@ export async function createSeedCatalog(
         throw new Error("Seed file conflicts with a parent directory");
     }
   const catalogId = await fingerprint({ identity, programSource: programs.sourceIdentity, stages });
-  const readProgram = programs.read;
   return {
     id: catalogId,
     stages,
-    async payloads(stage: SeedStage, signal: AbortSignal) {
-      const result = new Map<string, Uint8Array>();
-      for (const entry of stages[stage]) {
-        signal.throwIfAborted();
-        const bytes = Uint8Array.from(
-          stage === "assets" ? assetBytes.get(entry.path)! : await readProgram(entry.path, signal),
-        );
-        if (bytes.byteLength !== entry.bytes || (await digest(bytes)) !== entry.sha256)
-          throw new Error("Seed payload verification failed");
-        result.set(entry.path, bytes);
-      }
-      signal.throwIfAborted();
-      return result;
-    },
+    payloads: createPayloadReader(stages, assetBytes, programs.read),
   };
 }
 export type SeedCatalog = Awaited<ReturnType<typeof createSeedCatalog>>;
+
+// Keep catalog construction inputs out of the reader context; the lifecycle still owns loaded.
+function createPayloadReader(
+  stages: Record<SeedStage, readonly SeedFile[]>,
+  assetBytes: ReadonlyMap<string, Uint8Array>,
+  readProgram: ProgramSeed["read"],
+) {
+  return async (stage: SeedStage, signal: AbortSignal) => {
+    const result = new Map<string, Uint8Array>();
+    for (const entry of stages[stage]) {
+      signal.throwIfAborted();
+      const bytes = Uint8Array.from(
+        stage === "assets" ? assetBytes.get(entry.path)! : await readProgram(entry.path, signal),
+      );
+      if (bytes.byteLength !== entry.bytes || (await digest(bytes)) !== entry.sha256)
+        throw new Error("Seed payload verification failed");
+      result.set(entry.path, bytes);
+    }
+    signal.throwIfAborted();
+    return result;
+  };
+}
 
 function parents(files: KernelFileSystem, path: string) {
   let current = "";

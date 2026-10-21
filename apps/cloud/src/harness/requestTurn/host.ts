@@ -21,6 +21,38 @@ export function gateHost<G>(
   options: HarnessHostOptions<G>,
   gate: RequestGate,
 ): HarnessHostOptions<G> {
+  const { release, programs, ...runtime } = options;
+  return {
+    ...gateRuntimeHost(runtime, gate),
+    release: { ...release, source: gateReleaseSource(release.source, gate) },
+    programs: { ...programs, read: gateProgramReader(programs.read, gate) },
+  };
+}
+
+function gateReleaseSource(
+  source: HarnessHostOptions<unknown>["release"]["source"],
+  gate: RequestGate,
+): HarnessHostOptions<unknown>["release"]["source"] {
+  return { read: (reference, path) => gate.promise(() => source.read(reference, path), false) };
+}
+
+// The lazy program reader must survive seeding; its context must exclude the release source.
+function gateProgramReader(
+  read: HarnessHostOptions<unknown>["programs"]["read"],
+  gate: RequestGate,
+): HarnessHostOptions<unknown>["programs"]["read"] {
+  return (path, signal) =>
+    gate.promise(
+      (_context, currentSignal) => read(path, AbortSignal.any([signal, currentSignal])),
+      false,
+    );
+}
+
+// These gated ports live as long as the host; keep the release source out of their closure context.
+function gateRuntimeHost<G>(
+  options: Omit<HarnessHostOptions<G>, "release" | "programs">,
+  gate: RequestGate,
+): Omit<HarnessHostOptions<G>, "release" | "programs"> {
   const response = (operation: (signal: AbortSignal) => Promise<Response>, original: AbortSignal) =>
     gate.promise(async (context, signal) => {
       const effectiveSignal = AbortSignal.any([original, signal]);
@@ -77,22 +109,6 @@ export function gateHost<G>(
   const persistence = options.files.persistencePorts;
   return {
     ...options,
-    release: {
-      ...options.release,
-      source: {
-        read: (reference, path) =>
-          gate.promise(() => options.release.source.read(reference, path), false),
-      },
-    },
-    programs: {
-      ...options.programs,
-      read: (path, signal) =>
-        gate.promise(
-          (_context, currentSignal) =>
-            options.programs.read(path, AbortSignal.any([signal, currentSignal])),
-          false,
-        ),
-    },
     files: {
       ...options.files,
       persistencePorts: {

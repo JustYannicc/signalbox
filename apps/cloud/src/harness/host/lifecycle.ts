@@ -24,7 +24,7 @@ import { createHostSession, sameAccess, snapshotAccess } from "./session.ts";
 import { createHostStorage } from "./storage.ts";
 
 export const createHostLifecycle = <G>(
-  options: HarnessHostOptions<G>,
+  options: Omit<HarnessHostOptions<G>, "release" | "programs">,
   loaded: LoadedHarnessRelease,
   catalog: SeedCatalog,
 ): Effect.Effect<HarnessSessionHost<G>, HarnessError, Scope.Scope> =>

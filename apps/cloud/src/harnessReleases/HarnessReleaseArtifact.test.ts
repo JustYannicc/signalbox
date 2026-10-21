@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { Schema } from "effect";
 import {
   HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH,
@@ -310,6 +310,21 @@ describe("harness release artifact reader", () => {
     expect(await opened.read(fixture.payloadPath)).toEqual(fixture.payload);
   });
 
+  it("makes one owned copy for a single read and re-verifies later reads", async () => {
+    const fixture = await createFixture();
+    const opened = await openHarnessReleaseArtifact(fixture.identity, fixture.source);
+    const copy = vi.spyOn(Uint8Array, "from");
+    try {
+      const returned = await opened.read(fixture.payloadPath);
+      expect(copy.mock.calls.filter(([bytes]) => bytes === fixture.payload)).toHaveLength(1);
+      expect(copy).toHaveBeenCalledTimes(1);
+      returned.fill(0);
+      expect(await opened.read(fixture.payloadPath)).toEqual(fixture.payload);
+    } finally {
+      copy.mockRestore();
+    }
+  });
+
   it("shares concurrent payload reads, then rechecks bytes on later reads", async () => {
     const fixture = await createFixture();
     const source = fixture.source;
@@ -328,7 +343,10 @@ describe("harness release artifact reader", () => {
       },
     });
 
-    const first = opened.read(fixture.payloadPath);
+    const first = opened.read(fixture.payloadPath).then((bytes) => {
+      bytes.fill(0);
+      return bytes;
+    });
     const second = opened.read(fixture.payloadPath);
     expect(payloadReads).toBe(1);
     releaseFirstRead?.();

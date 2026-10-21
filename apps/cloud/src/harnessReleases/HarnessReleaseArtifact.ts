@@ -111,6 +111,7 @@ export const openHarnessReleaseArtifact = async (
     if (!descriptor) return failArtifact("FILE_NOT_DECLARED");
 
     let verified = verifiedReads.get(path);
+    const shared = verified !== undefined;
     if (!verified) {
       verified = readVerifiedFile(source, identity.artifactRef, path, descriptor, {
         size: "FILE_SIZE_MISMATCH",
@@ -120,7 +121,9 @@ export const openHarnessReleaseArtifact = async (
     }
 
     try {
-      return Uint8Array.from(await verified);
+      const bytes = await verified;
+      // The first caller owns the verified copy; overlapping callers need independent results.
+      return shared ? Uint8Array.from(bytes) : bytes;
     } finally {
       if (verifiedReads.get(path) === verified) verifiedReads.delete(path);
     }
