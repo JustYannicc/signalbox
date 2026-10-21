@@ -1,7 +1,7 @@
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
-import { ChildHostLease } from "./ChildHostLease.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
+import { ChildHostLease } from "./ChildHostLease.ts";
 import {
   isChildWorkerReservation,
   type ChildWorkerCapacity,

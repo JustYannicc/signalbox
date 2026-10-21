@@ -1,43 +1,49 @@
 /**
  * A child worker's stub to its host can outlive the command: Workers RPC releases stubs when the
  * whole event ends, and a harness session is one event. Host ports therefore reach kernel state
- * only through refs this lease owns, so a lingering export pins nothing once the command closes.
+ * only through refs this lease clears, so a lingering export pins nothing once the command closes.
  */
 export class ChildHostLease {
-  #values: Map<ChildHostRef<unknown>, unknown> | undefined = new Map();
+  #refs: Set<ChildHostRef<unknown>> | undefined = new Set();
 
   hold<Value>(value: Value): ChildHostRef<Value> {
-    const ref = new ChildHostRef<Value>(this);
+    const ref = new ChildHostRef(value);
     // A fork can resolve after close; its port is born released.
-    this.#values?.set(ref, value);
+    if (this.#refs === undefined) ref[release]();
+    else this.#refs.add(ref);
     return ref;
   }
 
   /** Releases one ref early, for a process that finished before its command did. */
   drop(ref: ChildHostRef<unknown>): void {
-    this.#values?.delete(ref);
+    ref[release]();
+    this.#refs?.delete(ref);
   }
 
   release(): void {
-    this.#values = undefined;
-  }
-
-  read<Value>(ref: ChildHostRef<Value>): Value {
-    if (!this.#values?.has(ref)) {
-      throw Object.assign(new Error("Child host is closed"), { code: "EBADF" });
-    }
-    return this.#values.get(ref) as Value;
+    for (const ref of this.#refs ?? []) ref[release]();
+    this.#refs = undefined;
   }
 }
 
-export class ChildHostRef<Value> {
-  readonly #lease: ChildHostLease;
+const release = Symbol("release");
 
-  constructor(lease: ChildHostLease) {
-    this.#lease = lease;
+export class ChildHostRef<Value> {
+  #value: Value | undefined;
+
+  constructor(value: Value) {
+    this.#value = value;
   }
 
   get(): Value {
-    return this.#lease.read(this);
+    if (this.#value === undefined) {
+      throw Object.assign(new Error("Child host is closed"), { code: "EBADF" });
+    }
+    return this.#value;
+  }
+
+  /** Only the lease clears a ref, so holders can't revoke each other's access. */
+  [release](): void {
+    this.#value = undefined;
   }
 }

@@ -59,12 +59,10 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   }
 
   async complete(result: KernelBashCompletion) {
-    try {
-      return await this.#port.get().complete(result);
-    } finally {
-      // A completed process rejects every later call, so its fork state can go before the command.
-      this.#lease.drop(this.#port);
-    }
+    const completed = await this.#port.get().complete(result);
+    // A completed process rejects every later call, so its fork state can go before the command.
+    this.#lease.drop(this.#port);
+    return completed;
   }
 }
 

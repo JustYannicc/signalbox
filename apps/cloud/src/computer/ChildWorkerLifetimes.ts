@@ -8,9 +8,9 @@ export class ChildWorkerLifetimes {
     void lifetime.then(
       () => this.#pending.delete(lifetime),
       (error: unknown) => {
-        settleStacks(error);
         this.#failures.push(error);
         this.#pending.delete(lifetime);
+        settleStacks(error);
       },
     );
   }
@@ -27,10 +27,20 @@ export class ChildWorkerLifetimes {
 /**
  * Failures wait here for the whole session. V8 keeps an unread stack as live frames that pin each
  * frame's closures, such as a failed command's kernel program and pipes; formatting it frees them.
+ * Best effort: a hostile getter only leaves that one error's frames alive.
  */
 function settleStacks(error: unknown): void {
-  for (let current = error, depth = 0; current instanceof Error && depth < 8; depth++) {
-    void current.stack;
-    current = current.cause;
+  const seen = new Set<unknown>();
+  const queue = [error];
+  for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
+    if (!(next instanceof Error) || seen.has(next)) continue;
+    seen.add(next);
+    try {
+      void next.stack;
+      queue.push(next.cause);
+      if (next instanceof AggregateError) queue.push(...next.errors);
+    } catch {
+      // An unreadable stack, cause or member is skipped; the failure is already recorded.
+    }
   }
 }
