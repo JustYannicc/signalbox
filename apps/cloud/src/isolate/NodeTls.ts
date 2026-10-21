@@ -11,7 +11,9 @@ export function nodeRootCertificates(native = NodeTls.rootCertificates) {
 }
 
 /** Native TLS, with Node's bundled root metadata when the runtime has none. Some CLIs filter
- * that list before trusting the runtime and refuse to start when it comes back empty. */
+ * that list before trusting the runtime and refuse to start when it comes back empty. Workerd
+ * validates against its own trust store and ignores an explicit `ca`, so a caller's narrower
+ * filtered list is metadata only. */
 export function nodeTlsModule(native: object = NodeTls): object {
   const module: object = Reflect.get(native, "default") ?? native;
   const roots: unknown = Reflect.get(module, "rootCertificates");
