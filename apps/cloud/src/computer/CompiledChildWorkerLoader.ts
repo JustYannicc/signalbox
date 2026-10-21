@@ -1,4 +1,5 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
+import { childWorkerId } from "./ChildWorkerIdentity.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
@@ -61,15 +62,32 @@ export function createCompiledChildWorkerLoader(
   configuredLimits?: ChildWorkerLimits,
 ): ChildWorkerLoaderPort {
   const limits = resolveChildWorkerLimits(configuredLimits);
+  const policy = {
+    compatibilityDate: "2026-10-19",
+    compatibilityFlags: ["nodejs_compat"],
+    globalOutbound: null,
+    limits,
+  } as const;
   const modulesByHash = new Map(registry);
   for (const [hash, module] of modulesByHash) {
     if (!/^[a-f0-9]{64}$/.test(hash) || !(module instanceof WebAssembly.Module)) {
       throw new TypeError("Expected pinned compiled child WASM modules");
     }
   }
+  const compiledHashes = new Map([...modulesByHash].map(([hash, module]) => [module, hash]));
   return {
     async run(input, target) {
-      let modules: ReturnType<typeof resolveCompiledChildWorkerModules>;
+      const mainModule = input.mainModule;
+      const entrypoint = input.entrypoint;
+      let code: {
+        readonly compatibilityDate: string;
+        readonly compatibilityFlags: readonly string[];
+        readonly mainModule: string;
+        readonly modules: ReturnType<typeof resolveCompiledChildWorkerModules>;
+        readonly globalOutbound: null;
+        readonly limits: ReturnType<typeof resolveChildWorkerLimits>;
+      };
+      let workerId: string;
       try {
         if (
           !input.mainModule ||
@@ -80,30 +98,24 @@ export function createCompiledChildWorkerLoader(
         if (resolveChildWorkerLimits(input.limits).cpuMs !== limits.cpuMs) {
           throw new RangeError("Child CPU budget differs from the host binding");
         }
-        modules = resolveCompiledChildWorkerModules(input.modules, modulesByHash);
+        const modules = resolveCompiledChildWorkerModules(input.modules, modulesByHash);
         const main = modules[input.mainModule];
         if (typeof main !== "string" && (main === undefined || !("js" in main))) {
           throw new TypeError("Child main module must contain JavaScript");
         }
+        code = { ...policy, mainModule, modules };
+        workerId = await childWorkerId(code, entrypoint, compiledHashes);
       } catch (error) {
         // No loader call happened, so this invocation cannot own a running child.
         const completion = target as typeof target & { stopped(): void | Promise<void> };
         await completion.stopped();
         throw error;
       }
-      const code = {
-        compatibilityDate: "2026-10-19",
-        compatibilityFlags: ["nodejs_compat"],
-        mainModule: input.mainModule,
-        modules,
-        globalOutbound: null,
-        limits,
-      };
       // Installed workers-types predates compiled-module inputs supported by Worker Loader.
       // https://github.com/cloudflare/workerd/blob/fa8b9d343f00c200b8e8d314c541c33be9e1ee70/src/workerd/api/worker-loader.h#L73-L80
-      const worker = loader.get(null, () => code as WorkerLoaderWorkerCode);
+      const worker = loader.get(workerId, () => code as WorkerLoaderWorkerCode);
       return await worker
-        .getEntrypoint<Entrypoint>(input.entrypoint, { limits })
+        .getEntrypoint<Entrypoint>(entrypoint, { limits })
         .run(input.command, target);
     },
   };

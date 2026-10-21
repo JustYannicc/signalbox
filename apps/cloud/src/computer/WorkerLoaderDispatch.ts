@@ -1,4 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
+import { childWorkerId } from "./ChildWorkerIdentity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 import { resolveChildWorkerLimits, type ResolvedChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerDispatch, ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
@@ -103,9 +104,10 @@ export function createWorkerLoaderDispatch<Host extends object>(
             ...code,
             globalOutbound: null,
           };
+          const workerId = await childWorkerId(workerCode, input.entrypoint);
           submitted = true;
           // Native Worker Loader supports compiled WASM inputs; installed types still require bytes.
-          const worker = loader.get(null, () => workerCode as WorkerLoaderWorkerCode);
+          const worker = loader.get(workerId, () => workerCode as WorkerLoaderWorkerCode);
           const entrypoint = worker.getEntrypoint(undefined, {
             limits,
           }) as unknown as ChildEntrypoint<Host>;

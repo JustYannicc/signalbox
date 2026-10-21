@@ -75,12 +75,29 @@ describe("computer boxd proof admission", () => {
 
     const reopened = createWorker(storage);
     await reopened.ready;
+    const enteredProof = deferred<{ seed: unknown }>();
+    const finishProof = deferred();
+    ports.runProof.mockImplementation(async (input: { seed: unknown }) => {
+      enteredProof.resolve(input);
+      await finishProof.promise;
+    });
     const response = await request(reopened.worker, "/run", JSON.stringify({ seed: seedA }));
-    await Promise.all(reopened.background);
+    const dispatched = await enteredProof.promise;
+    let backgroundSettled = false;
+    const background = Promise.all(reopened.background).then(() => {
+      backgroundSettled = true;
+    });
 
     expect(response.status).toBe(202);
+    expect(reopened.background).toHaveLength(1);
+    expect((await status(reopened.worker)).status).toBe("running");
+    expect(backgroundSettled).toBe(false);
+    finishProof.resolve();
+    await background;
+
+    expect(backgroundSettled).toBe(true);
     expect(ports.runProof).toHaveBeenCalledTimes(1);
-    expect(ports.runProof.mock.calls[0]?.[0].seed).toEqual(seedA);
+    expect(dispatched.seed).toEqual(seedA);
     expect((await status(reopened.worker)).status).toBe("passed");
   });
 

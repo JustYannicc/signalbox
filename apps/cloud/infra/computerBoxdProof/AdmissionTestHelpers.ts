@@ -43,6 +43,7 @@ export function deferred<T = void>() {
 export function createWorker(storage: FakeStorage, abort?: (reason?: string) => void) {
   const background: Promise<unknown>[] = [];
   const initialization = { ready: Promise.resolve() };
+  const socketTags = new Map<WebSocket, ReadonlyArray<string>>();
   const ctx = {
     storage,
     blockConcurrencyWhile(callback: () => Promise<void>) {
@@ -52,6 +53,18 @@ export function createWorker(storage: FakeStorage, abort?: (reason?: string) => 
     waitUntil(promise: Promise<unknown>) {
       background.push(promise);
     },
+    acceptWebSocket(socket: WebSocket, tags: string[]) {
+      socketTags.set(socket, tags);
+    },
+    getTags(socket: WebSocket) {
+      return socketTags.get(socket) ?? [];
+    },
+    getWebSockets(tag?: string) {
+      return Array.from(socketTags)
+        .filter(([, tags]) => tag === undefined || tags.includes(tag))
+        .map(([socket]) => socket);
+    },
+    setWebSocketAutoResponse(_pair: unknown) {},
     abort,
   };
   const env = {

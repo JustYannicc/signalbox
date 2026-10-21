@@ -46,6 +46,31 @@ function invocation(cpuMs = 300_000): ChildWorkerInvocation {
 }
 
 describe("compiled child worker loader", () => {
+  it("reuses pinned code across command changes and newly constructed loader ports", async () => {
+    const f = fixture();
+    await f.port.run(invocation(), f.target);
+    await f.port.run(
+      { ...invocation(), command: { ...command, argv: ["different"], env: { SECRET: "second" } } },
+      new Target(),
+    );
+    const next = createCompiledChildWorkerLoader(
+      { get: f.get, load: vi.fn() },
+      new Map([[hash, new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))]]),
+    );
+    await next.run(invocation(), new Target());
+    const keys = f.get.mock.calls.map(([key]) => key);
+    expect(keys[0]).toMatch(/^child-v1:[a-f0-9]{64}$/);
+    expect(new Set(keys).size).toBe(1);
+    await f.port.run(
+      {
+        ...invocation(),
+        modules: { ...invocation().modules, "main.js": "export class Child { changed=true }" },
+      },
+      f.target,
+    );
+    expect(f.get.mock.calls.at(-1)?.[0]).not.toBe(keys[0]);
+  });
+
   it.each([1_000, 300_000, 600_000])(
     "resolves static module identity at the loader with budget %s",
     async (cpuMs) => {

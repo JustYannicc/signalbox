@@ -1,12 +1,18 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import {
+  RUNNER_HEARTBEAT_PING,
+  RUNNER_HEARTBEAT_PONG,
   RUNNER_PROTOCOL_VERSION,
   runnerFrame,
   threadFrame,
   type RunnerHello,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunnerCommandConfig } from "@signalbox/runner-protocol/RunnerCommandProtocol";
-import { RunnerMachineSockets } from "../RunnerMachineSockets.ts";
+import {
+  isRunnerMachineSocket,
+  RUNNER_MACHINE_SOCKET_TAG,
+  RunnerMachineSockets,
+} from "../RunnerMachineSockets.ts";
 import { createRunnerMachineRuntime } from "../RunnerMachineRuntime.ts";
 import type { RunnerExecSocketHost } from "../../thread/ThreadExecForwarder.ts";
 import { ThreadId } from "@t3tools/contracts";
@@ -22,6 +28,19 @@ const command = {
   env: { EXACT: "雪", EMPTY: "" },
 };
 
+class WebSocketRequestResponsePairFixture {
+  readonly request: string;
+  readonly response: string;
+
+  constructor(request: string, response: string) {
+    this.request = request;
+    this.response = response;
+  }
+}
+
+beforeAll(() => vi.stubGlobal("WebSocketRequestResponsePair", WebSocketRequestResponsePairFixture));
+afterAll(() => vi.unstubAllGlobals());
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -33,23 +52,55 @@ function deferred<T>() {
 }
 
 function socketFixture() {
+  let readyState: number = WebSocket.OPEN;
   const sent: string[] = [];
   const socket = {
-    readyState: WebSocket.OPEN,
+    get readyState() {
+      return readyState;
+    },
     accept: vi.fn(),
     addEventListener: vi.fn(),
     send: (value: string) => {
       sent.push(value);
     },
-    close: vi.fn(),
+    close: vi.fn(() => {
+      readyState = WebSocket.CLOSING;
+    }),
   } as unknown as WebSocket;
   return { socket, sent };
 }
 
-function fixture(launchFinished = Promise.resolve()) {
+function socketContextFixture() {
+  const tags = new Map<WebSocket, ReadonlyArray<string>>();
+  const acceptWebSocket = vi.fn((socket: WebSocket, socketTags: Array<string>) => {
+    tags.set(socket, socketTags);
+  });
+  const getTags = vi.fn((socket: WebSocket) => tags.get(socket) ?? []);
+  const getWebSockets = vi.fn((tag?: string) =>
+    Array.from(tags)
+      .filter(([, socketTags]) => tag === undefined || socketTags.includes(tag))
+      .map(([socket]) => socket),
+  );
+  const setWebSocketAutoResponse = vi.fn();
+  return {
+    ctx: {
+      acceptWebSocket,
+      getTags,
+      getWebSockets,
+      setWebSocketAutoResponse,
+    } as unknown as DurableObjectState,
+    acceptWebSocket,
+    getTags,
+    getWebSockets,
+    setWebSocketAutoResponse,
+  };
+}
+
+function fixture(launchFinished = Promise.resolve(), context = socketContextFixture()) {
   const launched = deferred<RunnerCommandConfig>();
   const quiesce = vi.fn(async () => ({ ...owner, closed: true as const }));
   const adapter = new RunnerMachineSockets({
+    ctx: context.ctx,
     endpoint: "wss://proof.invalid/api/computer/runner",
     threadId,
     workspaceReceipt: "/run/signalbox-command/workspace.json",
@@ -80,10 +131,42 @@ function fixture(launchFinished = Promise.resolve()) {
       exec: true,
       ...patch,
     });
-  return { adapter, launched, quiesce, socketHost, input, hello };
+  return { adapter, launched, quiesce, socketHost, input, hello, context };
 }
 
 describe("RunnerMachineSockets", () => {
+  it("uses hibernating acceptance, auto-responds to heartbeats, and exposes DO routing handlers", async () => {
+    const f = fixture();
+    const pair = f.context.setWebSocketAutoResponse.mock.calls[0]?.[0] as
+      | WebSocketRequestResponsePairFixture
+      | undefined;
+    expect(pair).toMatchObject({
+      request: RUNNER_HEARTBEAT_PING,
+      response: RUNNER_HEARTBEAT_PONG,
+    });
+
+    const pending = f.adapter.connect(f.input);
+    const config = await f.launched.promise;
+    const live = socketFixture();
+    f.adapter.accept(live.socket);
+    expect(f.context.acceptWebSocket).toHaveBeenCalledWith(live.socket, [
+      RUNNER_MACHINE_SOCKET_TAG,
+    ]);
+    expect(isRunnerMachineSocket(f.context.ctx, live.socket)).toBe(true);
+    expect(live.socket.accept).not.toHaveBeenCalled();
+    expect(live.socket.addEventListener).not.toHaveBeenCalled();
+
+    f.adapter.webSocketMessage(live.socket, f.hello(config));
+    const connection = await pending;
+    f.adapter.webSocketMessage(live.socket, RUNNER_HEARTBEAT_PING);
+    expect(live.sent[1]).toBe(RUNNER_HEARTBEAT_PONG);
+    f.adapter.webSocketClose(live.socket);
+    expect(f.socketHost.disconnected).toHaveBeenCalledWith(live.socket, 4, 1);
+    expect(f.socketHost.generationEnded).not.toHaveBeenCalled();
+    await f.adapter.quiesce(f.input);
+    await connection.dispose();
+  });
+
   it("authenticates the exact fresh fork and forwards byte reports through its accepted socket", async () => {
     const f = fixture();
     const pending = f.adapter.connect(f.input);
@@ -297,7 +380,10 @@ describe("RunnerMachineSockets", () => {
       }
       const next = socketFixture();
       f.adapter.accept(next.socket);
-      expect(next.socket.accept).toHaveBeenCalledTimes(1);
+      expect(f.context.acceptWebSocket).toHaveBeenLastCalledWith(next.socket, [
+        RUNNER_MACHINE_SOCKET_TAG,
+      ]);
+      expect(next.socket.accept).not.toHaveBeenCalled();
       f.adapter.closed(next.socket);
       await f.adapter.quiesce(f.input);
       await connection.dispose();
@@ -336,6 +422,43 @@ describe("RunnerMachineSockets", () => {
     expect(f.socketHost.disconnected).toHaveBeenCalledTimes(1);
     expect(f.socketHost.generationEnded).not.toHaveBeenCalled();
     await expect(connection.lease.acquire(signal)).rejects.toThrow("unavailable");
+    await f.adapter.quiesce(f.input);
+    await connection.dispose();
+  });
+
+  it("closes restored sockets without recreating their registration, host, lease, or native proof", async () => {
+    const f = fixture();
+    const pending = f.adapter.connect(f.input);
+    const config = await f.launched.promise;
+    const live = socketFixture();
+    f.adapter.accept(live.socket);
+    f.adapter.message(live.socket, f.hello(config));
+    const connection = await pending;
+
+    const restored = fixture(Promise.resolve(), f.context);
+    expect(live.socket.close).toHaveBeenCalledWith(1008, "Command Runner registration was lost");
+    expect(f.socketHost.disconnected).not.toHaveBeenCalled();
+    expect(f.socketHost.generationEnded).not.toHaveBeenCalled();
+    restored.adapter.webSocketMessage(live.socket, f.hello(config));
+    expect(f.socketHost.disconnected).not.toHaveBeenCalled();
+    expect(f.socketHost.generationEnded).not.toHaveBeenCalled();
+    expect(restored.socketHost.connected).not.toHaveBeenCalled();
+    expect(restored.socketHost.disconnected).not.toHaveBeenCalled();
+    await expect(connection.dispose()).rejects.toThrow("still live");
+
+    const stale = socketFixture();
+    f.context.acceptWebSocket(stale.socket, [RUNNER_MACHINE_SOCKET_TAG]);
+    const replacement = socketFixture();
+    restored.adapter.accept(replacement.socket);
+    expect(stale.socket.close).toHaveBeenCalledWith(1008, "Command Runner registration was lost");
+    expect(f.context.acceptWebSocket).toHaveBeenLastCalledWith(replacement.socket, [
+      RUNNER_MACHINE_SOCKET_TAG,
+    ]);
+
+    restored.quiesce.mockRejectedValueOnce(new Error("Native closure is unknown"));
+    await expect(restored.adapter.quiesce(restored.input)).rejects.toThrow("unknown");
+    await expect(connection.dispose()).rejects.toThrow("still live");
+
     await f.adapter.quiesce(f.input);
     await connection.dispose();
   });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { afterAll, beforeAll, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { MachineCommands } from "../../src/computer/MachineCommands.ts";
@@ -20,6 +21,11 @@ import { sqliteFixture } from "./ProofSqliteFixture.ts";
 import { createRecoveryMachineOptions } from "./RecoveryMachine.ts";
 
 const RECOVERY_OWNER = "recovery-wiring";
+
+beforeAll(() =>
+  vi.stubGlobal("WebSocketRequestResponsePair", function WebSocketRequestResponsePairFixture() {}),
+);
+afterAll(() => vi.unstubAllGlobals());
 
 function testCommand(): KernelCommand {
   return { executable: "/bin/true", argv: ["true"], cwd: "/workspace", env: {} };
@@ -374,6 +380,14 @@ describe("computer Boxd proof recovery wiring", () => {
       const providerCallsBeforeRecovery = provider.counts();
       yield* Effect.promise(() =>
         recoverComputerBoxdProof({
+          ctx: {
+            acceptWebSocket() {
+              throw new Error("Recovery cannot accept a new Runner");
+            },
+            getTags: () => [],
+            getWebSockets: () => [],
+            setWebSocketAutoResponse() {},
+          },
           ownership: owner,
           endpoint: "wss://proof.invalid/api/computer/runner",
           signal: new AbortController().signal,

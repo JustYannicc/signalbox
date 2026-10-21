@@ -5,7 +5,10 @@ import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import { MachineCommands } from "../../src/computer/MachineCommands.ts";
 import { createRunnerMachineRuntime } from "../../src/computer/RunnerMachineRuntime.ts";
-import { RunnerMachineSockets } from "../../src/computer/RunnerMachineSockets.ts";
+import {
+  RunnerMachineSockets,
+  type RunnerMachineSocketsOptions,
+} from "../../src/computer/RunnerMachineSockets.ts";
 import { createDurableProofBases } from "./DurableBases.ts";
 import { proofKernel } from "./Kernel.ts";
 import { ProofOwnership } from "./Ownership.ts";
@@ -76,6 +79,7 @@ function commandDiagnosticCheckName(
 }
 
 export async function runComputerBoxdProof(input: {
+  readonly ctx: RunnerMachineSocketsOptions["ctx"];
   readonly ownership: ProofOwnership;
   readonly seed: Awaited<ReturnType<typeof decodeProofSeed>>;
   readonly loader: WorkerLoader;
@@ -155,6 +159,7 @@ export async function runComputerBoxdProof(input: {
       nextLeaseId: () => `${ownership.owner}-lease-1`,
     });
     const sockets = new RunnerMachineSockets({
+      ctx: input.ctx,
       endpoint: input.endpoint,
       threadId: ThreadId.make(ownership.owner),
       workspaceReceipt: WORKSPACE_RECEIPT,

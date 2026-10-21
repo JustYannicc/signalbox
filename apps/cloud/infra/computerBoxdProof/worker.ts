@@ -120,6 +120,19 @@ export class ComputerBoxdProof extends DurableObject<Env> {
       : decodeProofState(saved);
   }
 
+  override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    if (this.sockets) this.sockets.webSocketMessage(socket, message);
+    else socket.close(1008, "Command Runner operation was interrupted");
+  }
+
+  override webSocketClose(socket: WebSocket) {
+    this.sockets?.webSocketClose(socket);
+  }
+
+  override webSocketError(socket: WebSocket) {
+    this.sockets?.webSocketError(socket);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path === "/api/computer/runner") {
@@ -251,6 +264,7 @@ export class ComputerBoxdProof extends DurableObject<Env> {
       signal.throwIfAborted();
       await this.checkProviderConnection("passed");
       await runComputerBoxdProof({
+        ctx: this.ctx,
         ownership,
         seed,
         loader: this.env.CHILD_WORKERS,
@@ -307,7 +321,7 @@ export class ComputerBoxdProof extends DurableObject<Env> {
   private async resume(expected: ProofRecoveryReceipt, endpoint: string, signal: AbortSignal) {
     try {
       const ownership = await this.getOwnership();
-      await recoverComputerBoxdProof({ ownership, endpoint, signal, expected });
+      await recoverComputerBoxdProof({ ctx: this.ctx, ownership, endpoint, signal, expected });
       const state = await this.state();
       await ownership.save({
         ...state,

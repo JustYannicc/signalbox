@@ -62,6 +62,26 @@ const validBudgets: readonly [string, ChildWorkerLimits | undefined, number][] =
 ];
 
 describe("WorkerLoader child CPU limits", () => {
+  it("reuses code for different commands and separates source and policy changes", async () => {
+    const fixture = workerLoader();
+    const dispatch = createWorkerLoaderDispatch<object>(fixture.loader);
+    await dispatch.run(invocation(), { first: true });
+    await dispatch.run(
+      { ...invocation(), command: { ...command, argv: ["second"], env: { PRIVATE: "second" } } },
+      { second: true },
+    );
+    const firstKey = fixture.get.mock.calls[0]?.[0];
+    expect(firstKey).toMatch(/^child-v1:[a-f0-9]{64}$/);
+    expect(fixture.get.mock.calls[1]?.[0]).toBe(firstKey);
+    await dispatch.run(
+      { ...invocation(), modules: { "entry.js": "export default class { changed=true }" } },
+      {},
+    );
+    expect(fixture.get.mock.calls[2]?.[0]).not.toBe(firstKey);
+    await dispatch.run(invocation({ cpuMs: 500 }), {});
+    expect(fixture.get.mock.calls[3]?.[0]).not.toBe(firstKey);
+  });
+
   it.each(validBudgets)(
     "passes the resolved %s budget into code and entrypoint options",
     async (_name, limits, expected) => {

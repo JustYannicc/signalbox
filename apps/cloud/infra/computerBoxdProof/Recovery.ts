@@ -4,7 +4,10 @@ import * as Option from "effect/Option";
 import { ThreadId } from "@t3tools/contracts";
 import { createFacetWorkspace } from "../../src/computer/FacetWorkspace.ts";
 import { createRunnerMachineRuntime } from "../../src/computer/RunnerMachineRuntime.ts";
-import { RunnerMachineSockets } from "../../src/computer/RunnerMachineSockets.ts";
+import {
+  RunnerMachineSockets,
+  type RunnerMachineSocketsOptions,
+} from "../../src/computer/RunnerMachineSockets.ts";
 import { KernelOpenFlags } from "../../src/kernel/KernelFileSystem.ts";
 import type { ForkCommit } from "../../src/kernel/FilePersistencePorts.ts";
 import { createDurableProofBases } from "./DurableBases.ts";
@@ -52,6 +55,7 @@ export function proofRecoveryReceipt(
 
 /** Rebuilds every owner-local port from the same SQLite. It has no command execution path. */
 export async function recoverComputerBoxdProof(input: {
+  readonly ctx: RunnerMachineSocketsOptions["ctx"];
   readonly ownership: ProofOwnership;
   readonly endpoint: string;
   readonly signal: AbortSignal;
@@ -112,6 +116,7 @@ export async function recoverComputerBoxdProof(input: {
       throw new Error("The replacement did not retain the original Base lease");
     await ownership.check("replacementReopenedDurableBracket", "passed");
     const sockets = new RunnerMachineSockets({
+      ctx: input.ctx,
       endpoint: input.endpoint,
       threadId: ThreadId.make(ownership.owner),
       workspaceReceipt: WORKSPACE_RECEIPT,

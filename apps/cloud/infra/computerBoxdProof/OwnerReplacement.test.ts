@@ -87,16 +87,29 @@ describe("durable proof owner replacement", () => {
     expect((await status(first.worker)).status).toBe("running");
     expect((await request(first.worker, "/resume")).status).toBe(409);
 
+    const resumeStarted = deferred();
     const waiting = deferred();
-    ports.resume.mockImplementation(async () => waiting.promise);
+    ports.resume.mockImplementation(async () => {
+      resumeStarted.resolve();
+      await waiting.promise;
+    });
     const replacement = createWorker(storage);
     await replacement.ready;
     expect((await status(replacement.worker)).checks.ownerConstructorReplaced).toBe("passed");
     expect((await request(replacement.worker, "/run", JSON.stringify({ seed }))).status).toBe(409);
     expect((await request(replacement.worker, "/resume")).status).toBe(202);
+    await resumeStarted.promise;
     expect((await request(replacement.worker, "/resume")).status).toBe(409);
+    let backgroundSettled = false;
+    const background = Promise.all(replacement.background).then(() => {
+      backgroundSettled = true;
+    });
+    expect(replacement.background).toHaveLength(1);
+    expect((await status(replacement.worker)).status).toBe("running");
+    expect(backgroundSettled).toBe(false);
     waiting.resolve();
-    await Promise.all(replacement.background);
+    await background;
+    expect(backgroundSettled).toBe(true);
     expect(ports.run).toHaveBeenCalledOnce();
     expect(ports.resume).toHaveBeenCalledOnce();
     expect(ports.resume.mock.calls[0]?.[0].expected).toMatchObject(receipt);
