@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { KernelAsyncProgramContext } from "../../kernel/KernelAsyncProgram.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
+import { ChildWorkerDispatchError } from "../ChildWorkerDispatchError.ts";
 import { createChildWorkerProgram } from "../ChildWorkerProgram.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
 
@@ -114,6 +115,58 @@ describe("Child worker environment after admission", () => {
       await expect(program.drain()).resolves.toBeUndefined();
       expect(createHost).not.toHaveBeenCalled();
       expect(capacity.active).toBe(0);
+    } finally {
+      await fixture.close();
+    }
+  });
+  it("reports a close failure that follows a dispatch error its caller received", async () => {
+    const fixture = childBusyboxFixture();
+    const capacity = new ChildWorkerCapacity(1);
+    const dispatchFailure = new ChildWorkerDispatchError(new Error("child failed"), {
+      kind: "stopped",
+    });
+    const closeFailure = new Error("close failed");
+    const program = createChildWorkerProgram({
+      executable: "/bin/tool",
+      code: { mainModule: "main.js", modules: {} },
+      capacity,
+      createHost: () => ({
+        host: {},
+        close() {
+          throw closeFailure;
+        },
+      }),
+      dispatch: {
+        run: async () => {
+          throw dispatchFailure;
+        },
+      },
+    });
+    try {
+      await expect(program.run(fixture.context)).rejects.toBe(dispatchFailure);
+      await expect(program.drain()).rejects.toBe(closeFailure);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("reports a cleanup rejection with no value after the command already exited", async () => {
+    const fixture = childBusyboxFixture();
+    const capacity = new ChildWorkerCapacity(1);
+    const program = createChildWorkerProgram({
+      executable: "/bin/tool",
+      code: { mainModule: "main.js", modules: {} },
+      capacity,
+      createHost: () => ({
+        host: {},
+        exited: Promise.resolve(exited()),
+        close: () => Promise.reject(),
+      }),
+      dispatch: { run: async () => exited() },
+    });
+    try {
+      await expect(program.run(fixture.context)).resolves.toEqual(exited());
+      await expect(program.drain()).rejects.toBeUndefined();
     } finally {
       await fixture.close();
     }

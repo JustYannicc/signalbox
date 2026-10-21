@@ -91,14 +91,15 @@ export function createChildWorkerProgram<Host extends object>(
     async run(context: KernelAsyncProgramContext) {
       const result = Promise.withResolvers<KernelCommandExit>();
       let settled = false;
-      let delivered: unknown;
+      // Boxed so an unseen rejection with undefined never matches "nothing delivered".
+      let delivered: { readonly error: unknown } | undefined;
       const settle = {
         resolve(exit: KernelCommandExit) {
           settled = true;
           result.resolve(exit);
         },
         reject(error: unknown) {
-          if (!settled) delivered = error;
+          if (!settled) delivered = { error };
           settled = true;
           result.reject(error);
         },
@@ -159,11 +160,11 @@ export function createChildWorkerProgram<Host extends object>(
             })
           : runWithReservation(reservationFor, context, work);
       // Logical exit can precede dispatch completion and physical teardown on either admission path.
-      void lifetime.then(settle.resolve, settle.reject);
-      // A failure its caller already received would only pin the command's frames until drain.
+      // Drain gets only failures the caller never received; the rest would pin the command's frames.
       lifetimes.track(
-        lifetime.then(undefined, (error: unknown) => {
-          const received = error === delivered;
+        lifetime.then(settle.resolve, (error: unknown) => {
+          settle.reject(error);
+          const received = delivered !== undefined && delivered.error === error;
           delivered = undefined;
           if (!received) throw error;
         }),

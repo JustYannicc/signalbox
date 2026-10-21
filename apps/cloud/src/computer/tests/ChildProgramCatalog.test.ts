@@ -72,7 +72,7 @@ describe("ChildProgramCatalog cleanup", () => {
   });
 
   it("doesn't report a child failure to drain once its caller has received it", async () => {
-    const failure = new Error("child cleanup failed");
+    const failure = new Error("child dispatch failed");
     const f = fixture(failure);
     try {
       const running = f.program.run({ ...f.kernel.context, args: ["/bin/rg", "pattern"] });
@@ -88,10 +88,10 @@ describe("ChildProgramCatalog cleanup", () => {
     }
   });
 
-  it("joins a sibling launched after drain began before it completes", async () => {
+  it("keeps drain pending until a sibling launched after it began has finished", async () => {
     const siblingStarted = Promise.withResolvers<void>();
     const siblingStopped = Promise.withResolvers<void>();
-    const failure = new Error("late sibling cleanup failed");
+    const failure = new Error("sibling dispatch failed");
     let sibling: Promise<unknown> | undefined;
     const f = fixture(undefined, async (input) => {
       if (input.command.executable === "/bin/rg") {
