@@ -71,7 +71,7 @@ describe("ChildProgramCatalog cleanup", () => {
     }
   });
 
-  it("reports an acknowledged child failure even when drain starts after it exited", async () => {
+  it("doesn't report a child failure to drain once its caller has received it", async () => {
     const failure = new Error("child cleanup failed");
     const f = fixture(failure);
     try {
@@ -80,10 +80,7 @@ describe("ChildProgramCatalog cleanup", () => {
       await f.started.promise;
       f.stopped.resolve();
       await rejected;
-      await expect(f.catalog.drain()).rejects.toMatchObject({
-        name: "AggregateError",
-        errors: [expect.objectContaining({ cause: failure })],
-      });
+      await expect(f.catalog.drain()).resolves.toBeUndefined();
       expect(f.capacity.active).toBe(0);
     } finally {
       f.stopped.resolve();
@@ -91,7 +88,7 @@ describe("ChildProgramCatalog cleanup", () => {
     }
   });
 
-  it("joins a sibling launched after drain began and reports its late failure", async () => {
+  it("joins a sibling launched after drain began before it completes", async () => {
     const siblingStarted = Promise.withResolvers<void>();
     const siblingStopped = Promise.withResolvers<void>();
     const failure = new Error("late sibling cleanup failed");
@@ -111,17 +108,19 @@ describe("ChildProgramCatalog cleanup", () => {
     try {
       const running = f.program.run({ ...f.kernel.context, args: ["/bin/rg", "pattern"] });
       await f.started.promise;
-      const draining = expect(f.catalog.drain()).rejects.toMatchObject({
-        name: "AggregateError",
-        errors: [expect.objectContaining({ cause: failure })],
+      let drained = false;
+      const draining = f.catalog.drain().then(() => {
+        drained = true;
       });
       f.stopped.resolve();
       await siblingStarted.promise;
       await running;
       expect(f.capacity.active).toBe(1);
+      expect(drained).toBe(false);
       siblingStopped.resolve();
       await expect(sibling).rejects.toMatchObject({ cause: failure });
       await draining;
+      expect(drained).toBe(true);
       expect(f.capacity.active).toBe(0);
     } finally {
       siblingStopped.resolve();

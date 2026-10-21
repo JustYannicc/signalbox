@@ -90,6 +90,19 @@ export function createChildWorkerProgram<Host extends object>(
     kind: "async" as const,
     async run(context: KernelAsyncProgramContext) {
       const result = Promise.withResolvers<KernelCommandExit>();
+      let settled = false;
+      let delivered: unknown;
+      const settle = {
+        resolve(exit: KernelCommandExit) {
+          settled = true;
+          result.resolve(exit);
+        },
+        reject(error: unknown) {
+          if (!settled) delivered = error;
+          settled = true;
+          result.reject(error);
+        },
+      };
       const work = async () => {
         context.signal.throwIfAborted();
         const modules = await loadModules();
@@ -99,7 +112,7 @@ export function createChildWorkerProgram<Host extends object>(
         });
         const lease = new ChildHostLease();
         const owner = createHost(childEnv === undefined ? context : { ...context, env }, lease);
-        if (owner.exited !== undefined) void owner.exited.then(result.resolve, result.reject);
+        if (owner.exited !== undefined) void owner.exited.then(settle.resolve, settle.reject);
         let failure: ChildWorkerDispatchError | undefined;
         try {
           return await dispatch.run(
@@ -123,7 +136,7 @@ export function createChildWorkerProgram<Host extends object>(
                   kind: "unconfirmed",
                   stopped: new Promise<void>(() => {}),
                 });
-          result.reject(failure);
+          settle.reject(failure);
         } finally {
           // Late child calls then fail with EBADF instead of reaching a process that is closing.
           lease.release();
@@ -145,9 +158,16 @@ export function createChildWorkerProgram<Host extends object>(
               process: context.identity.handle,
             })
           : runWithReservation(reservationFor, context, work);
-      lifetimes.track(lifetime);
       // Logical exit can precede dispatch completion and physical teardown on either admission path.
-      void lifetime.then(result.resolve, result.reject);
+      void lifetime.then(settle.resolve, settle.reject);
+      // A failure its caller already received would only pin the command's frames until drain.
+      lifetimes.track(
+        lifetime.then(undefined, (error: unknown) => {
+          const received = error === delivered;
+          delivered = undefined;
+          if (!received) throw error;
+        }),
+      );
       return result.promise;
     },
     drain: () => lifetimes.drain(),
