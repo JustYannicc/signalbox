@@ -540,6 +540,28 @@ describe("integrated Claude rebundling", () => {
       await NodeFSP.rm(importRoot, { recursive: true, force: true });
     }
   });
+
+  it("rejects wide source in any published module, whatever its name, before publishing", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-rebundle-wide-"));
+    try {
+      const { extracted } = await makeExtraction(root);
+      for (const path of ["runtime/extra.txt", "runtime/extra"]) {
+        const output = NodePath.join(root, "bundle");
+        await expect(
+          rebundle({
+            extracted,
+            output,
+            version: "fixture-1",
+            platform: "linux-x64",
+            runtimeModules: { [path]: 'export const wide = "\u2126";\n' },
+          }),
+        ).rejects.toThrow(`BUNDLE_WIDE_SOURCE: ${path}`);
+        await expectPathMissing(output);
+      }
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
   it("uses the shipped AJV build path and publishes an observable compatibility entry", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-ajv-pipeline-"));
     try {
