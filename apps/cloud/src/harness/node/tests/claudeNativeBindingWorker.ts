@@ -12,6 +12,12 @@ import type {
 } from "../../ClaudeIsolateAdapter.ts";
 import type { ClaudeAgentSdkMcpServers } from "@signalbox/provider-claude/ClaudeQueryRunner";
 import type { ClaudeSdkQuery } from "@signalbox/provider-claude/ClaudeSdkQueryRunner";
+import {
+  assertPreparedAssets,
+  preparedAssetsFixture,
+  latinAsset,
+} from "./preparedAssetsFixture.ts";
+import type { GuestModule } from "./fixture.ts";
 import { readinessFixture } from "./claudeReadinessFixture.ts";
 import * as NodeWorkerThreads from "node:worker_threads";
 
@@ -62,11 +68,12 @@ function sdkQuery(
   }) satisfies ClaudeSdkQuery;
 }
 
-function coldSetup() {
+function coldSetup(override?: "prepared" | "both") {
   const f = readinessFixture();
   return Effect.scoped(
     Effect.gen(function* () {
       const services = yield* f.services;
+      const { loaded } = yield* Effect.promise(preparedAssetsFixture);
       const origin = "https://harness-mcp.invalid";
       const routeRequests: string[] = [];
       const modelRequests: string[] = [];
@@ -99,10 +106,34 @@ function coldSetup() {
         getSubagentMessages: async () => [],
       };
       const binding = makeClaudeNativeHostBinding({
-        process: { ...f.input, computer: services.computer },
+        process: {
+          ...f.input,
+          computer: services.computer,
+          ...(override === undefined
+            ? {}
+            : {
+                prepared: (specifier: string) => {
+                  if (specifier === latinAsset) return "caller text";
+                  throw new Error("Caller refused asset");
+                },
+              }),
+          ...(override !== "both" ? {} : { resolvePrepared: () => "/caller/text" }),
+        },
         adapter: services.adapter,
         mcpSessions: services.mcpSessions,
-        loadSdk: async () => {
+        loadSdk: async (bridge) => {
+          const module = bridge.require("node:module") as GuestModule;
+          if (override === undefined) assertPreparedAssets(module);
+          else {
+            const require = module.createRequire("/entry.js");
+            NodeAssert.equal(require(latinAsset), "caller text");
+            NodeAssert.throws(() => require("/embedded/utf16.txt"), /Caller refused asset/);
+            if (override === "both") NodeAssert.equal(require.resolve(latinAsset), "/caller/text");
+            else
+              NodeAssert.throws(() => require.resolve(latinAsset), {
+                code: "ERR_NODE_PREPARED_MODULE_UNAVAILABLE",
+              });
+          }
           // @effect-diagnostics-next-line globalFetch:off - Verify the fetch installed by the guest personality.
           const mcpResponse = await globalThis.fetch(`${origin}/thread/epoch-1/executor`);
           fetchedMcp = await mcpResponse.text();
@@ -120,12 +151,8 @@ function coldSetup() {
         },
       });
       const openInput = {
-        release: {
-          harness: "claude-code" as const,
-          version: "test",
-          manifestSha256: "binding-test",
-          modules: { entry: { bytes: 1, sha256: "entry" } },
-        },
+        loadedRelease: loaded,
+        release: loaded.plan.release,
         session: services.session,
         computer: services.computer,
         modelTransport: async (request: Request) => {
@@ -295,11 +322,15 @@ function resumeSetup() {
 }
 
 const run =
-  NodeWorkerThreads.workerData === "cold"
-    ? coldSetup
-    : NodeWorkerThreads.workerData === "resume"
-      ? resumeSetup
-      : undefined;
+  NodeWorkerThreads.workerData === "prepared"
+    ? () => coldSetup("prepared")
+    : NodeWorkerThreads.workerData === "both"
+      ? () => coldSetup("both")
+      : NodeWorkerThreads.workerData === "cold"
+        ? coldSetup
+        : NodeWorkerThreads.workerData === "resume"
+          ? resumeSetup
+          : undefined;
 if (run === undefined || NodeWorkerThreads.parentPort === null)
   throw new Error("Invalid native binding test case.");
 const port = NodeWorkerThreads.parentPort;

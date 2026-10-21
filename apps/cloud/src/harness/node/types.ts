@@ -11,7 +11,10 @@ import type {
 } from "../../isolate/NodeModule.ts";
 import type { NodeProcessEnvironment, NodeRuntimeIdentity } from "../../isolate/NodeProcess.ts";
 
+import type { LoadedHarnessRelease } from "../HarnessReleaseLoader.ts";
+
 export interface NodeHarnessProcessInput {
+  readonly loadedRelease?: LoadedHarnessRelease;
   readonly host: KernelProgramHost;
   readonly computer: Computer;
   readonly stdio: KernelSessionStdio;

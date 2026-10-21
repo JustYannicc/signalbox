@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
+import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
 import type { Computer } from "../computer/Computer.ts";
 import type { HarnessHookCallback } from "../hooks/HarnessHooks.ts";
 import type { FileCommitReceipt } from "../kernel/FilePersistencePorts.ts";
@@ -44,6 +45,7 @@ export class HarnessError extends Schema.TaggedError<HarnessError>()("HarnessErr
 }) {}
 
 export interface HarnessOpenInput {
+  readonly loadedRelease?: LoadedHarnessRelease;
   readonly release: HarnessRelease;
   readonly session: ProviderAdapterV2OpenSessionInput;
   readonly computer: Computer;

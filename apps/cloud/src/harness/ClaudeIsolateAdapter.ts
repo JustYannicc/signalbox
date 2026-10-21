@@ -60,7 +60,13 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
   return {
     open: (input) =>
       Effect.gen(function* () {
-        if (input.release.harness !== "claude-code" || input.computer !== options.process.computer)
+        const loadedRelease = input.loadedRelease ?? options.process.loadedRelease;
+        if (
+          input.release.harness !== "claude-code" ||
+          input.computer !== options.process.computer ||
+          (loadedRelease !== undefined &&
+            loadedRelease.plan.release.manifestSha256 !== input.release.manifestSha256)
+        )
           return yield* Effect.fail(
             new HarnessError({
               operation: "open",
@@ -74,6 +80,7 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
         let spawned = false;
         const processInput: NodeHarnessProcessInput = {
           ...options.process,
+          ...(loadedRelease === undefined ? {} : { loadedRelease }),
           modelTransport: input.modelTransport,
           signal: lifetime.signal,
           loadRelease: async (installed, signal) => {
