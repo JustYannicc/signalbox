@@ -123,6 +123,15 @@ describe("default names", () => {
   });
 });
 
+describe("Considering ask reach", () => {
+  const byName = new Map(operations.map((operation) => [operation.name, operation]));
+
+  it("keeps resume and re-defer as owner decisions", () => {
+    for (const name of ["threads.asks.considering.resume", "threads.asks.considering.redefer"])
+      expect(byName.get(name)).toMatchObject({ access: "write", humanOnly: true });
+  });
+});
+
 describe("Trash API reach", () => {
   const byName = new Map(operations.map((operation) => [operation.name, operation]));
 

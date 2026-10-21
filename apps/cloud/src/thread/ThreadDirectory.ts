@@ -1,4 +1,5 @@
 import { type ThreadCommand } from "./threadCommands.ts";
+import type { SignalboxAskConsideringCloudFireCommand } from "@t3tools/contracts/signalboxAsks";
 import type { Threads } from "./Threads.ts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
@@ -159,6 +160,10 @@ export interface ThreadObjectApi extends TerminalObjectApi {
     actor: Actor,
     command: unknown,
     creation: ThreadCreation,
+  ) => Promise<ThreadObjectReply<OrchestrationV2DispatchCommandResult>>;
+  readonly fireConsideringAsk: (
+    actor: Actor,
+    command: unknown,
   ) => Promise<ThreadObjectReply<OrchestrationV2DispatchCommandResult>>;
   readonly launch: (
     actor: Actor,
@@ -324,6 +329,10 @@ export interface ThreadHandle extends TerminalHandle {
     actor: Actor,
     command: ThreadCommand,
     creation: ThreadCreation,
+  ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CommandFailure>;
+  readonly fireConsideringAsk: (
+    actor: Actor,
+    command: SignalboxAskConsideringCloudFireCommand,
   ) => Effect.Effect<OrchestrationV2DispatchCommandResult, CommandFailure>;
   readonly launch: (
     actor: Actor,
@@ -609,6 +618,10 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
         Effect.flatMap(fromReply),
       ),
+    fireConsideringAsk: (actor, command) =>
+      call("fireConsideringAsk", () =>
+        api.fireConsideringAsk(actor, wire.consideringFireCommand.encode(command)),
+      ).pipe(Effect.flatMap(fromReply)),
     launch: (actor, input, creation) =>
       call("launch", () => api.launch(actor, wire.launchInput.encode(input), creation)).pipe(
         Effect.flatMap(fromReply),

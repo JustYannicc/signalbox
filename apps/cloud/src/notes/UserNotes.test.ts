@@ -85,6 +85,7 @@ const setup = (
         dispatchCommand: unused,
         answerAskAsAssistant: unused,
         syncAutomationAsk: unused,
+        fireConsideringAsk: unused,
         threadSnapshot: unused,
         threadHistoryPage: unused,
         requestPullRequestSync: unused,

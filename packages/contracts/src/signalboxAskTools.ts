@@ -1,26 +1,27 @@
 import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import {
-  SignalboxAsk,
-  SignalboxAskAnswerInput,
-  SignalboxAskKind,
-  SignalboxAskQuestion,
-} from "./signalboxAsks.ts";
+import { SignalboxAsk, SignalboxAskAnswerInput, SignalboxAskQuestion } from "./signalboxAsks.ts";
+import { SignalboxAskConsideringDraft } from "./signalboxConsidering.ts";
 
 const target = { threadId: Schema.optional(ThreadId) };
 const askTarget = { ...target, askId: TrimmedNonEmptyString };
 const sequence = Schema.Struct({ sequence: Schema.Number });
+const raiseFields = {
+  ...target,
+  askId: Schema.optional(TrimmedNonEmptyString),
+  clientRequestId: Schema.optional(TrimmedNonEmptyString),
+  questions: Schema.NonEmptyArray(SignalboxAskQuestion),
+};
+const raiseParameters = Schema.Struct({
+  ...raiseFields,
+  kind: Schema.Literals(["blocker", "ready", "considering"]),
+  considering: Schema.optional(SignalboxAskConsideringDraft),
+});
 export const SIGNALBOX_ASK_TOOLS = {
   t3_ask_raise: {
     description:
-      "Raise a durable Blocker, Ready or Considering ask. Include why, what answering unblocks and whose decision it is. Free text is always allowed. Non-blocking questions let you keep working. Never ask for secrets here; use request_secret or URL elicitation. Reuse clientRequestId or askId when retrying.",
-    parameters: Schema.Struct({
-      ...target,
-      askId: Schema.optional(TrimmedNonEmptyString),
-      clientRequestId: Schema.optional(TrimmedNonEmptyString),
-      kind: SignalboxAskKind,
-      questions: Schema.NonEmptyArray(SignalboxAskQuestion),
-    }),
+      "Raise a durable Blocker, Ready or Considering ask. Considering asks include a date, event or evidence exit and preparation attachment IDs. Include why, what answering unblocks and whose decision it is. Free text is always allowed. Non-blocking questions let you keep working. Never ask for secrets here; use request_secret or URL elicitation. Reuse clientRequestId or askId when retrying.",
+    parameters: raiseParameters,
     success: Schema.Struct({
       askId: TrimmedNonEmptyString,
       round: Schema.Number,

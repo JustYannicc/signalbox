@@ -4,7 +4,10 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import type { SignalboxAskServerCommand } from "@t3tools/contracts/signalboxAsks";
+import type {
+  SignalboxAskConsideringFireCommand,
+  SignalboxAskServerCommand,
+} from "@t3tools/contracts/signalboxAsks";
 import { applyAskCommand, nativeAskAnswerMessage } from "@t3tools/shared/signalboxAsks";
 import * as DateTime from "effect/DateTime";
 import { applyEvents } from "./threadProjection.ts";
@@ -37,12 +40,10 @@ export function decideAsk(
       _tag: "rejected",
       message: "Answer this ask through its automation so its form is validated.",
     };
-  const result = applyAskCommand(
-    projection.thread.asks ?? [],
-    command,
-    DateTime.formatIso(ctx.now),
-  );
+  const previousAsks = projection.thread.asks ?? [];
+  const result = applyAskCommand(previousAsks, command, DateTime.formatIso(ctx.now));
   if (!result.ok) return { _tag: "rejected", message: result.error };
+  if (result.asks === previousAsks) return { _tag: "accepted", events: [] };
   const thread = { ...projection.thread, asks: result.asks, updatedAt: ctx.now };
   const changed = threadEvent(ctx, "thread.metadata-updated", thread);
   const answered = result.answered;
@@ -135,4 +136,28 @@ export function decideAsk(
     ctx,
   );
   return sent._tag === "rejected" ? sent : { _tag: "accepted", events: [changed, ...sent.events] };
+}
+
+/** A fire is server-only and cannot deliver an answer or touch native/automation mirrors. */
+export function decideConsideringFire(
+  projection: Projection,
+  command: typeof SignalboxAskConsideringFireCommand.Type,
+  ctx: DecisionContext,
+): Decision {
+  if (projection.thread.archivedAt !== null)
+    return { _tag: "rejected", message: "Reopen this thread before resuming a Considering ask." };
+  const asks = projection.thread.asks ?? [];
+  const result = applyAskCommand(asks, command, DateTime.formatIso(ctx.now));
+  if (!result.ok) return { _tag: "rejected", message: result.error };
+  if (result.asks === asks) return { _tag: "accepted", events: [] };
+  return {
+    _tag: "accepted",
+    events: [
+      threadEvent(ctx, "thread.metadata-updated", {
+        ...projection.thread,
+        asks: result.asks,
+        updatedAt: ctx.now,
+      }),
+    ],
+  };
 }

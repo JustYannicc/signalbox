@@ -18,13 +18,31 @@ export const askHandlers = {
           ? yield* newCommandId()
           : CommandId.make(`ask:${threadId}:${input.clientRequestId}`);
       const askId = input.askId ?? `ask:${commandId}`;
+      const ask =
+        input.kind === "considering"
+          ? input.considering === undefined
+            ? yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "Considering asks require an exit condition.",
+              })
+            : {
+                kind: "considering" as const,
+                questions: input.questions,
+                source: { kind: "agent" as const },
+                considering: input.considering,
+              }
+          : {
+              kind: input.kind,
+              questions: input.questions,
+              source: { kind: "agent" as const },
+            };
       const result = yield* threads
         .dispatch({
           type: "thread.ask.raise",
           commandId,
           threadId,
           askId,
-          ask: { kind: input.kind, questions: input.questions, source: { kind: "agent" } },
+          ask,
         })
         .pipe(Effect.mapError(dispatchFailure));
       return { askId, round: 1, sequence: result.sequence };

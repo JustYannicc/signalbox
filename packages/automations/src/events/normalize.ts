@@ -190,6 +190,27 @@ const MAPPERS: Mappers = {
         ),
     },
   ],
+  "thread.ask-updated": (event) => {
+    const ask = event.payload;
+    const considering = ask.kind === "considering" ? ask.considering : undefined;
+    return [
+      {
+        name: "ask.changed",
+        id: `ask.changed:${event.id}`,
+        // The dispatcher resolves this thread to its current project/folder.
+        build: fixed(() => ({
+          askId: ask.id,
+          kind: ask.kind,
+          status: ask.status,
+          sourceKind: ask.source.kind,
+          round: ask.rounds[ask.rounds.length - 1]!.number,
+          revision: considering?.revision ?? null,
+          exitKind: considering?.exit.kind ?? null,
+          fired: considering?.fired !== undefined,
+        })),
+      },
+    ];
+  },
   "run.created": (event) => [
     {
       name: "turn.requested",
@@ -292,6 +313,7 @@ export function candidatesFor(event: DomainEvent): ReadonlyArray<Candidate> {
 export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   ...Object.values(THREAD_EVENTS),
   "thread.created",
+  "ask.changed",
   "turn.requested",
   "turn.started",
   "turn.finished",

@@ -73,6 +73,8 @@ const CLOUD_COMMAND_TYPES = [
   "thread.ask.answer",
   "thread.ask.withdraw",
   "thread.ask.sync",
+  "thread.ask.considering.resume",
+  "thread.ask.considering.redefer",
   "runtime-request.respond",
   "message.dispatch",
   "run.interrupt",
@@ -289,6 +291,8 @@ export function decide(
     case "thread.ask.answer":
     case "thread.ask.withdraw":
     case "thread.ask.sync":
+    case "thread.ask.considering.resume":
+    case "thread.ask.considering.redefer":
       return decideAsk(projection, command, ctx, dispatchMessage, (state, response, at) =>
         runtimeResponseEvents(
           state,

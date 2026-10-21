@@ -1,5 +1,6 @@
 import {
   MessageId,
+  type ProjectId,
   type ThreadId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -19,11 +20,20 @@ import { mirrorSignalboxAskEvents } from "./SignalboxAskEventMirror.ts";
 
 type AskCommand = Extract<
   OrchestrationV2ServerCommand,
-  { type: "thread.ask.raise" | "thread.ask.answer" | "thread.ask.withdraw" | "thread.ask.sync" }
+  {
+    type:
+      | "thread.ask.raise"
+      | "thread.ask.answer"
+      | "thread.ask.withdraw"
+      | "thread.ask.sync"
+      | "thread.ask.considering.resume"
+      | "thread.ask.considering.redefer"
+      | "thread.ask.considering.fire";
+  }
 >;
 type AskProjection = Pick<
   OrchestrationV2ThreadProjection,
-  "thread" | "runtimeRequests" | "providerSessions" | "turnItems"
+  "thread" | "runtimeRequests" | "providerSessions" | "turnItems" | "messages"
 >;
 
 type AnswerDelivery = Extract<
@@ -31,14 +41,55 @@ type AnswerDelivery = Extract<
   { type: "message.dispatch" | "runtime-request.respond" }
 >;
 
+type ServerProjectHome = { readonly projectId: ProjectId; readonly workspaceRoot: string };
+
 function planAskCommand(
   command: SignalboxAskServerCommand,
   projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "runtimeRequests" | "providerSessions" | "turnItems"
+    "thread" | "runtimeRequests" | "providerSessions" | "turnItems" | "messages"
   >,
   now: string,
+  currentHome?: ServerProjectHome | null,
 ) {
+  if (command.type === "thread.ask.considering.fire") {
+    const expectedHome = command.expectedHome;
+    if (
+      expectedHome.kind !== "server" ||
+      projection.thread.projectId !== expectedHome.projectId ||
+      currentHome === undefined ||
+      currentHome === null ||
+      currentHome.projectId !== expectedHome.projectId ||
+      currentHome.workspaceRoot !== expectedHome.workspaceRoot
+    )
+      return { ok: false as const, error: "This Considering ask's home changed." };
+  }
+  const considering =
+    command.type === "thread.ask.raise" &&
+    command.ask.kind === "considering" &&
+    "considering" in command.ask &&
+    command.ask.considering !== undefined
+      ? command.ask.considering
+      : command.type === "thread.ask.considering.redefer"
+        ? command.considering
+        : undefined;
+  if (considering !== undefined) {
+    if (
+      new Set(considering.preparationAttachmentIds).size !==
+      considering.preparationAttachmentIds.length
+    )
+      return { ok: false as const, error: "Preparation attachments must be unique." };
+    const heldByThread = new Set(
+      projection.messages.flatMap((message) =>
+        message.attachments.map((attachment) => attachment.id),
+      ),
+    );
+    if (considering.preparationAttachmentIds.some((id) => !heldByThread.has(id)))
+      return {
+        ok: false as const,
+        error: "A preparation attachment isn't available in this thread.",
+      };
+  }
   if (
     projection.thread.deletedAt !== null ||
     (projection.thread.archivedAt !== null && command.type !== "thread.ask.sync")
@@ -147,6 +198,7 @@ function planAskCommand(
 export function dispatchSignalboxAskCommand<E>(input: {
   readonly command: AskCommand;
   readonly loadProjection: () => Effect.Effect<AskProjection, E>;
+  readonly loadCurrentHome: (projectId: ProjectId) => Effect.Effect<ServerProjectHome | null, E>;
   readonly now: Effect.Effect<DateTime.Utc, E>;
   readonly dispatchDelivery: (delivery: AnswerDelivery) => Effect.Effect<void, E>;
   readonly emitAskUpdate: (
@@ -160,7 +212,12 @@ export function dispatchSignalboxAskCommand<E>(input: {
   return Effect.gen(function* () {
     const projection = yield* input.loadProjection();
     const now = yield* input.now;
-    const plan = planAskCommand(input.command, projection, DateTime.formatIso(now));
+    const currentHome =
+      input.command.type === "thread.ask.considering.fire" &&
+      input.command.expectedHome.kind === "server"
+        ? yield* input.loadCurrentHome(input.command.expectedHome.projectId)
+        : undefined;
+    const plan = planAskCommand(input.command, projection, DateTime.formatIso(now), currentHome);
     if (!plan.ok) return yield* Effect.fail(input.dispatchError(plan.error));
     for (const delivery of plan.deliveries) yield* input.dispatchDelivery(delivery);
     if (plan.asks === projection.thread.asks) return;

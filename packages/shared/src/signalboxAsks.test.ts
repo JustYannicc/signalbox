@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
-import { CommandId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
+import { CommandId, ProjectId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type {
   SignalboxAsk,
   SignalboxAskAnswerCommand,
   SignalboxAskCommand,
   SignalboxAskServerCommand,
 } from "@t3tools/contracts/signalboxAsks";
+import type {
+  SignalboxAskConsideringExit,
+  SignalboxAskConsideringFireProof,
+} from "@t3tools/contracts/signalboxConsidering";
 import {
   applyAskCommand,
   blockingAsk,
+  consideringAskHasFiredExit,
   pendingAskQuestions,
   clientAskCommand,
 } from "./signalboxAsks.ts";
@@ -39,11 +45,66 @@ const raise: SignalboxAskCommand = {
     questions: [question("a"), question("b", true), question("c")],
   },
 };
-function apply(asks: readonly SignalboxAsk[], command: SignalboxAskServerCommand) {
-  const result = applyAskCommand(asks, command, now);
+const consideringRaise: SignalboxAskCommand = {
+  ...target,
+  type: "thread.ask.raise",
+  ask: {
+    kind: "considering",
+    source: { kind: "agent" },
+    questions: [question("decision")],
+    considering: {
+      exit: { kind: "event", name: "The customer replies" },
+      preparationAttachmentIds: [],
+    },
+  },
+};
+const consideringRaiseWithExit = (exit: SignalboxAskConsideringExit): SignalboxAskCommand => ({
+  ...target,
+  type: "thread.ask.raise" as const,
+  ask: {
+    kind: "considering" as const,
+    source: { kind: "agent" as const },
+    questions: [question("decision")],
+    considering: { exit, preparationAttachmentIds: [] },
+  },
+});
+const defaultFireProof: SignalboxAskConsideringFireProof = {
+  kind: "event",
+  eventId: "event:customer-replied",
+  name: "The customer replies",
+  matchedFields: {},
+};
+const fire = (
+  expectedRevision = 1,
+  proof: SignalboxAskConsideringFireProof = defaultFireProof,
+) => ({
+  ...target,
+  type: "thread.ask.considering.fire" as const,
+  expectedRevision,
+  proof,
+  expectedHome: {
+    kind: "cloud" as const,
+    projectId: ProjectId.make("project:test"),
+    contextId: SignalboxContextId.make("context:test"),
+    driveId: "drive:test",
+  },
+});
+const redefer = (expectedRevision: number | null, name: string) => ({
+  ...target,
+  type: "thread.ask.considering.redefer" as const,
+  expectedRevision,
+  considering: {
+    exit: { kind: "event" as const, name },
+    preparationAttachmentIds: [],
+  },
+});
+function applyAt(asks: readonly SignalboxAsk[], command: SignalboxAskServerCommand, at = now) {
+  const result = applyAskCommand(asks, command, at);
   if (!result.ok) throw new Error(result.error);
   return result;
 }
+const apply = (asks: readonly SignalboxAsk[], command: SignalboxAskServerCommand) =>
+  applyAt(asks, command);
 const answer = (
   overrides: Partial<typeof SignalboxAskAnswerCommand.Type> = {},
 ): typeof SignalboxAskAnswerCommand.Type => ({
@@ -152,6 +213,209 @@ describe("durable ask rounds", () => {
         now,
       ).ok,
     ).toBe(false);
+    const automationConsidering = {
+      ...ask,
+      kind: "considering" as const,
+      considering: {
+        exit: { kind: "event" as const, name: "event" },
+        preparationAttachmentIds: [],
+        revision: 1,
+        revisionAt: now,
+      },
+    };
+    expect(applyAskCommand(asks, { ...command, ask: automationConsidering }, now).ok).toBe(false);
+  });
+});
+
+describe("Considering lifecycle", () => {
+  it("fires once per revision, re-defers with a new revision, and supports owner resume", () => {
+    const raised = apply([], consideringRaise).asks;
+    expect(raised[0]?.considering).toMatchObject({
+      revision: 1,
+      revisionAt: now,
+    });
+    expect(raised[0]?.considering?.fired).toBeUndefined();
+    const fired = apply(raised, fire()).asks;
+    expect(fired[0]?.considering?.fired).toEqual({
+      at: now,
+      source: "event",
+      whatChanged: 'Event "The customer replies" matched.',
+      proof: defaultFireProof,
+    });
+    expect(consideringAskHasFiredExit(fired[0]!)).toBe(true);
+    expect(applyAskCommand(fired, fire(), now)).toMatchObject({ ok: true, asks: fired });
+    expect(applyAskCommand(raised, fire(2), now).ok).toBe(false);
+
+    const deferred = apply(fired, redefer(1, "The budget is approved")).asks;
+    expect(deferred[0]?.considering).toMatchObject({
+      revision: 2,
+      exit: { kind: "event", name: "The budget is approved" },
+    });
+    expect(deferred[0]?.considering?.fired).toBeUndefined();
+    expect(consideringAskHasFiredExit(deferred[0]!)).toBe(false);
+    expect(applyAskCommand(deferred, fire(1), now).ok).toBe(false);
+
+    const resumed = apply(deferred, {
+      ...target,
+      type: "thread.ask.considering.resume",
+      expectedRevision: 2,
+      whatChanged: "I have had enough time to decide.",
+    }).asks;
+    expect(resumed[0]?.considering?.fired).toMatchObject({
+      source: "owner",
+      whatChanged: "I have had enough time to decide.",
+      proof: { kind: "owner", whatChanged: "I have had enough time to decide." },
+    });
+    expect(consideringAskHasFiredExit(resumed[0]!)).toBe(true);
+  });
+
+  it("lets a legacy Considering ask acquire its first exit only with a null revision", () => {
+    const saved = apply([], consideringRaise).asks[0]!;
+    const legacy = { ...saved, considering: undefined } as SignalboxAsk;
+    expect(applyAskCommand([legacy], redefer(null, "A date arrives"), now)).toMatchObject({
+      ok: true,
+      asks: [{ considering: { revision: 1, revisionAt: now, exit: { name: "A date arrives" } } }],
+    });
+    expect(applyAskCommand([legacy], redefer(1, "A date arrives"), now).ok).toBe(false);
+  });
+
+  it("matches date and event proofs against the saved exit", () => {
+    const dated = apply(
+      [],
+      consideringRaiseWithExit({ kind: "date", at: "2026-10-16T09:00:00.000Z" }),
+    ).asks;
+    expect(
+      applyAskCommand(dated, fire(1, { kind: "date", at: "2026-10-16T09:00:00.000Z" }), now).ok,
+    ).toBe(true);
+    expect(
+      applyAskCommand(dated, fire(1, { kind: "date", at: "2026-10-16T11:00:00.000Z" }), now).ok,
+    ).toBe(false);
+    expect(
+      applyAskCommand(
+        dated,
+        fire(1, { kind: "date", at: "2026-10-16T09:00:00.000Z" }),
+        "2026-10-16T08:59:59.999Z",
+      ).ok,
+    ).toBe(false);
+
+    const eventAsk = apply(
+      [],
+      consideringRaiseWithExit({
+        kind: "event",
+        name: "pr.closed",
+        where: {
+          event: "pr.closed",
+          repository: ["JustYannicc/Signalbox", "Other/Repo"],
+          state: ["closed", "merged"],
+        },
+      }),
+    ).asks;
+    const matchingProof: SignalboxAskConsideringFireProof = {
+      kind: "event",
+      eventId: "event:pr-closed",
+      name: "pr.closed",
+      matchedFields: { repository: "JustYannicc/Signalbox", state: "closed" },
+    };
+    expect(applyAskCommand(eventAsk, fire(1, matchingProof), now).ok).toBe(true);
+    expect(
+      applyAskCommand(
+        eventAsk,
+        fire(1, {
+          ...matchingProof,
+          matchedFields: { repository: "unlisted/repo", state: "closed" },
+        }),
+        now,
+      ).ok,
+    ).toBe(false);
+    expect(
+      applyAskCommand(eventAsk, fire(1, { ...matchingProof, name: "pr.opened" }), now).ok,
+    ).toBe(false);
+    expect(
+      applyAskCommand(
+        eventAsk,
+        fire(1, { ...matchingProof, matchedFields: { repository: "JustYannicc/Signalbox" } }),
+        now,
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("checks evidence sources and the current revision age for weekly review", () => {
+    const evidenceAsk = apply(
+      [],
+      consideringRaiseWithExit({
+        kind: "evidence",
+        reference: "support case 42",
+        relatednessCriteria: "The item concerns this customer's case.",
+        materialChangeCriteria: "It changes the decision about the chosen option.",
+        sourceKinds: ["message.sent"],
+      }),
+    ).asks;
+    const evidenceProof: SignalboxAskConsideringFireProof = {
+      kind: "evidence",
+      source: "message.sent",
+      eventId: "event:message-42",
+      judgment: "materially_changes",
+    };
+    expect(applyAskCommand(evidenceAsk, fire(1, evidenceProof), now).ok).toBe(true);
+    expect(
+      applyAskCommand(evidenceAsk, fire(1, { ...evidenceProof, source: "drive.changed" }), now).ok,
+    ).toBe(false);
+
+    const raised = apply([], consideringRaise).asks;
+    const weeklyProof: SignalboxAskConsideringFireProof = {
+      kind: "weekly-review",
+      reviewedAt: "2026-10-23T10:00:00.000Z",
+      staleSince: now,
+      automationRunId: "run:weekly-review",
+    };
+    expect(
+      applyAt(raised, fire(1, weeklyProof), "2026-10-23T10:00:00.000Z").asks[0]?.considering?.fired,
+    ).toMatchObject({ source: "weekly-review", proof: weeklyProof });
+    expect(
+      applyAskCommand(
+        raised,
+        fire(1, { ...weeklyProof, staleSince: "2026-10-15T10:00:00.000Z" }),
+        "2026-10-23T10:00:00.000Z",
+      ).ok,
+    ).toBe(false);
+    expect(applyAskCommand(raised, fire(1, weeklyProof), "2026-10-22T23:59:59.999Z").ok).toBe(
+      false,
+    );
+  });
+
+  it("does not resurrect exits after an ask is answered or withdrawn", () => {
+    const fired = apply(apply([], consideringRaise).asks, fire()).asks;
+    const answered = apply(
+      fired,
+      answer({
+        answers: [{ questionId: "decision", value: "yes" }],
+        deferredQuestionIds: [],
+      }),
+    ).asks[0]!;
+    expect(answered.status).toBe("answered");
+    expect(consideringAskHasFiredExit(answered)).toBe(false);
+    expect(applyAskCommand([answered], fire(), now).ok).toBe(false);
+
+    const withdrawn = apply(fired, { ...target, type: "thread.ask.withdraw" }).asks[0]!;
+    expect(withdrawn.status).toBe("withdrawn");
+    expect(consideringAskHasFiredExit(withdrawn)).toBe(false);
+    expect(applyAskCommand([withdrawn], redefer(1, "Another event"), now).ok).toBe(false);
+  });
+
+  it("rejects lifecycle commands on automation and native asks", () => {
+    const saved = apply([], consideringRaise).asks[0]!;
+    const automation = {
+      ...saved,
+      source: { kind: "automation" as const, runId: "run", stepKey: "step" },
+    };
+    const native = {
+      ...saved,
+      source: { kind: "native" as const, requestId: RuntimeRequestId.make("request") },
+    };
+    for (const ask of [automation, native]) {
+      expect(applyAskCommand([ask], fire(), now).ok).toBe(false);
+      expect(applyAskCommand([ask], redefer(1, "A new event"), now).ok).toBe(false);
+    }
   });
 });
 
@@ -163,17 +427,7 @@ it("attributes public answers to the caller and prevents reserved source forgery
     "signed-in",
   );
   expect(forged).toMatchObject({ answeredBy: { kind: "person", personId: "signed-in" } });
-  if (raise.type !== "thread.ask.raise") throw new Error("Expected a raise");
-  expect(
-    clientAskCommand(
-      {
-        ...raise,
-        ask: {
-          ...raise.ask,
-          source: { kind: "native", requestId: RuntimeRequestId.make("reserved") },
-        },
-      },
-      "signed-in",
-    ),
-  ).toMatchObject({ ask: { source: { kind: "agent" } } });
+  expect(clientAskCommand(raise, "signed-in")).toMatchObject({
+    ask: { source: { kind: "agent" } },
+  });
 });

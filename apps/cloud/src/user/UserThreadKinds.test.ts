@@ -66,6 +66,7 @@ const setup = (
           archived.push({ threadId, commandId, idleSinceMs: creation.idleSinceMs });
           return { _tag: "ok", value: { sequence: 1 } };
         },
+        fireConsideringAsk: async () => ({ _tag: "not_found" }),
         getWorkflowScript: async () => ({ _tag: "not_found" }),
         stopWorkflow: async () => ({ _tag: "not_found" }),
         launch: async () => ({ _tag: "not_found" }),

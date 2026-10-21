@@ -1,4 +1,5 @@
 import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
+import type { SignalboxAskConsideringCloudFireCommand } from "@t3tools/contracts/signalboxAsks";
 import type {
   OrchestrationV2Command,
   OrchestrationV2GetWorkflowScriptInput,
@@ -47,6 +48,11 @@ export class Threads extends Context.Service<
       caller: ThreadId,
       command: typeof SignalboxAskAnswerCommand.Type,
     ) => Effect.Effect<{ readonly sequence: number }, ThreadError>;
+    /** Internal, owner-bound exit delivery; ThreadEngine rechecks expected home under its lock. */
+    readonly fireConsideringAsk: (
+      actor: Actor,
+      command: SignalboxAskConsideringCloudFireCommand,
+    ) => Effect.Effect<OrchestrationV2DispatchCommandResult, ThreadError>;
     /** A missing thread id is derived from actor + command id, so retrying a launch cannot duplicate it. */
     readonly subscribePreparation: (
       actor: Actor,

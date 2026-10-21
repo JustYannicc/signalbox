@@ -209,6 +209,14 @@ export const makeThreadObjectApi = (
       await afterChange();
       return result;
     },
+    fireConsideringAsk: async (actor, command) => {
+      const decoded = wire.consideringFireCommand.decode(command);
+      const result = await reply(
+        engine.use((service) => service.fireConsideringAsk(actor, decoded)),
+      );
+      await afterChange();
+      return result;
+    },
     launch: async (actor, input, creation) => {
       const result = await reply(
         engine.use((service) =>

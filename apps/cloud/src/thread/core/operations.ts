@@ -161,6 +161,49 @@ export const makeThreads = Effect.gen(function* () {
       }),
     );
 
+  const validateConsideringAttachments = (
+    actor: Actor,
+    command: ThreadCommand,
+    threadId: ThreadId,
+  ) =>
+    Effect.gen(function* () {
+      const considering =
+        command.type === "thread.ask.raise" && command.ask.kind === "considering"
+          ? command.ask.considering
+          : command.type === "thread.ask.considering.redefer"
+            ? command.considering
+            : undefined;
+      if (considering === undefined) return;
+      const ids = considering.preparationAttachmentIds;
+      if (new Set(ids).size !== ids.length)
+        return yield* ThreadCommandRejectedError.forCommand(
+          { id: command.commandId, type: command.type },
+          "Preparation attachments must be unique.",
+        );
+      if (ids.length === 0) return;
+      const { projection } = yield* directory.forThread(threadId).snapshot(actor);
+      const heldByThread = new Set(
+        projection.messages.flatMap((message) =>
+          message.attachments.map((attachment) => attachment.id),
+        ),
+      );
+      for (const attachmentId of ids) {
+        if (!heldByThread.has(attachmentId))
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: command.commandId, type: command.type },
+            "A preparation attachment isn't available in this thread.",
+          );
+        const readable = yield* attachments.canRead(actor.userId, attachmentId, (sourceThreadId) =>
+          Effect.succeed(sourceThreadId === String(threadId)),
+        );
+        if (!readable)
+          return yield* ThreadCommandRejectedError.forCommand(
+            { id: command.commandId, type: command.type },
+            "A preparation attachment isn't available in this thread.",
+          );
+      }
+    });
+
   const dispatchCommand = (actor: Actor, command: ThreadCommand) =>
     Effect.gen(function* () {
       const automationAnswer =
@@ -177,6 +220,7 @@ export const makeThreads = Effect.gen(function* () {
           unsupported(),
         );
       }
+      yield* validateConsideringAttachments(actor, command, threadId);
       // Only a create can make a thread, so only a create names its place. The
       // thread object rejects a new thread without one, after replaying retries.
       const place =
@@ -423,6 +467,8 @@ export const makeThreads = Effect.gen(function* () {
         ...command,
         answeredBy: { kind: "assistant", personId: actor.userId, assistantThreadId: caller },
       }),
+    fireConsideringAsk: (actor, command) =>
+      directory.forThread(command.threadId).fireConsideringAsk(actor, command),
     syncAutomationAsk: (actor, threadId, ask) =>
       dispatchCommand(actor, {
         type: "thread.ask.sync",

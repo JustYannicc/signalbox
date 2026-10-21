@@ -1,6 +1,7 @@
 import {
   SignalboxAsk,
   SignalboxAskCommands,
+  SignalboxAskConsideringFireCommand,
   SignalboxAskSyncCommand,
   SignalboxAskThreadFields,
   SignalboxNativeAskRespondCommand,
@@ -3037,6 +3038,7 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  */
 const OrchestrationV2InternalCommand = Schema.Union([
   SignalboxAskSyncCommand,
+  SignalboxAskConsideringFireCommand,
   SignalboxNativeAskRespondCommand,
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),

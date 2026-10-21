@@ -1,4 +1,5 @@
 import { ThreadCommand } from "./threadCommands.ts";
+import { SignalboxAskConsideringCloudFireCommandSchema } from "@t3tools/contracts/signalboxAsks";
 import {
   ModelSelection,
   NonNegativeInt,
@@ -126,6 +127,7 @@ export const wire = {
   secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(ThreadCommand),
+  consideringFireCommand: jsonCodec(SignalboxAskConsideringCloudFireCommandSchema),
   launchInput: jsonCodec(LaunchInputWire),
   launchResult: jsonCodec(OrchestrationV2ThreadLaunchResult),
   snapshot: jsonCodec(ThreadSnapshotWire),
