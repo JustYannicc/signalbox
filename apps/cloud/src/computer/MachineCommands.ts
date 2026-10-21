@@ -1,4 +1,5 @@
 import * as Option from "effect/Option";
+import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
 import type { FilePersistencePorts } from "../kernel/FilePersistencePorts.ts";
 import type {
   KernelCommand,
@@ -51,7 +52,10 @@ export class MachineCommands implements KernelCommandForwarder {
   ): Promise<KernelCommandChild> => {
     signal.throwIfAborted();
     const admittedCommand = captureCommand(command);
-    const releaseAdmission = await this.#admission.acquire(signal);
+    const releaseAdmission = this.#admission.tryAcquire(signal);
+    if (!releaseAdmission) {
+      throw new KernelProgramExecAdmissionError("RESOURCE_LIMIT", "Command capacity is full");
+    }
     let handoffAdmission = false;
     let operationId: string | undefined;
 

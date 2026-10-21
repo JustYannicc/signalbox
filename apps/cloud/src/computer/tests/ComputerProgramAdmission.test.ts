@@ -222,7 +222,12 @@ describe("Computer program admission", () => {
       await rejected;
       expect(capacity.active).toBe(1);
       held.release();
-      await expect(capacity.run(fixture.context.signal, async () => 23)).resolves.toBe(23);
+      await expect(
+        capacity.run(fixture.context.signal, async () => 23, {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        }),
+      ).resolves.toBe(23);
       expect(capacity.active).toBe(0);
     } finally {
       admission.close();

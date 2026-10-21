@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import type { KernelProcessIdentity } from "../../kernel/KernelProcessTable.ts";
 import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
@@ -14,11 +14,11 @@ function processTree() {
   }>();
   return {
     processes,
-    spawn(parent?: KernelProcessIdentity) {
+    spawn(parent?: KernelProcessIdentity, exited = completion.promise) {
       const child = processes.spawn(
         parent?.handle,
         () => ({
-          completion: completion.promise,
+          completion: exited,
           signal: () => ({ status: "ok", value: undefined }),
         }),
         () => {},
@@ -63,12 +63,12 @@ describe("nested child worker capacity", () => {
     try {
       const commands = Array.from({ length: capacity.limit }, (_, index) => {
         const parent = tree.spawn();
-        const child = tree.spawn(parent.identity);
         return capacity.run(
           signal,
           async () => {
             if (++roots === capacity.limit) full.resolve();
             await full.promise;
+            const child = tree.spawn(parent.identity);
             return capacity.run(
               signal,
               async () => {
@@ -91,14 +91,49 @@ describe("nested child worker capacity", () => {
     }
   });
 
-  it("walks through an unpermitted parent to its holder", async () => {
+  it("admits a background continuation after its subshell exits and is reaped", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1);
     const holder = tree.spawn();
+    const release = await hold(capacity, holder);
+    const subshellExit = Promise.withResolvers<{
+      exitCode: number;
+      signal: number;
+      coreDumped: boolean;
+    }>();
+    const subshell = tree.spawn(holder.identity, subshellExit.promise);
+    const continuation = tree.spawn(subshell.identity);
+    const controller = new AbortController();
+    let running: Promise<number> | undefined;
+    try {
+      subshellExit.resolve({ exitCode: 0, signal: 0, coreDumped: false });
+      expect(await tree.processes.terminateAndReap(subshell.identity.handle)).toEqual({
+        status: "ok",
+        value: undefined,
+      });
+      expect(tree.processes.info(continuation.identity.handle)).toMatchObject({
+        status: "ok",
+        value: { parentPid: 1 },
+      });
+      running = capacity.run(controller.signal, async () => 17, continuation);
+      void running.catch(() => undefined);
+      expect(capacity.active).toBe(2);
+      await expect(running).resolves.toBe(17);
+    } finally {
+      controller.abort();
+      await running?.catch(() => undefined);
+      await release();
+      await tree.close();
+    }
+  });
+
+  it("inherits worker ownership through an unpermitted process", async () => {
+    const tree = processTree();
+    const capacity = new ChildWorkerCapacity(1);
+    const holder = tree.spawn();
+    const release = await hold(capacity, holder);
     const middle = tree.spawn(holder.identity);
     const child = tree.spawn(middle.identity);
-    const release = await hold(capacity, holder);
-    const info = vi.spyOn(tree.processes, "info");
     try {
       await capacity.run(
         new AbortController().signal,
@@ -107,8 +142,6 @@ describe("nested child worker capacity", () => {
         },
         child,
       );
-      // One lookup starts the walk; one binds the admitted child. Parents reuse lookupPid.info.
-      expect(info).toHaveBeenCalledTimes(2);
     } finally {
       await release();
       await tree.close();
@@ -116,18 +149,18 @@ describe("nested child worker capacity", () => {
     expect(capacity.active).toBe(0);
   });
 
-  it("includes the requester itself and refcounts an exec replacement sharing its pid", async () => {
+  it("gives an exec replacement its own owner until that worker settles", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1);
     const signal = new AbortController().signal;
     const holder = tree.spawn();
-    const child = tree.spawn(holder.identity);
     const release = await hold(capacity, holder);
     const finish = Promise.withResolvers<void>();
     let running: Promise<void> | undefined;
     try {
       const replacement = await capacity.reserve(signal, holder);
-      running = replacement.run(signal, () => finish.promise, holder.identity.pid);
+      running = replacement.run(signal, () => finish.promise, holder);
+      const child = tree.spawn(holder.identity);
       expect(capacity.active).toBe(2);
       await release();
       await capacity.run(
@@ -166,6 +199,28 @@ describe("nested child worker capacity", () => {
       await second.close();
     }
     expect(capacity.active).toBe(0);
+  });
+
+  it("treats descendants of a stopped worker as roots", async () => {
+    const tree = processTree();
+    const capacity = new ChildWorkerCapacity(1);
+    const holder = tree.spawn();
+    const release = await hold(capacity, holder);
+    const child = tree.spawn(holder.identity);
+    await release();
+    const held = await capacity.acquire(new AbortController().signal);
+    const controller = new AbortController();
+    const queued = capacity.acquire(controller.signal, child);
+    const reason = new Error("cancel stale owner request");
+    const rejected = expect(queued).rejects.toBe(reason);
+    try {
+      expect(capacity.active).toBe(1);
+      controller.abort(reason);
+      await rejected;
+    } finally {
+      held.release();
+      await tree.close();
+    }
   });
 
   it("queues past the hard limit FIFO and gives descendants priority over queued roots", async () => {
@@ -233,7 +288,7 @@ describe("nested child worker capacity", () => {
       await rejected;
       await release();
       const reservation = await next;
-      await expect(reservation.run(signal, async () => 17)).resolves.toBe(17);
+      await expect(reservation.run(signal, async () => 17, parent)).resolves.toBe(17);
       expect(capacity.active).toBe(0);
     } finally {
       await tree.close();

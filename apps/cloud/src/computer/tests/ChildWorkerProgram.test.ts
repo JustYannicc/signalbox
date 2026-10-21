@@ -146,8 +146,7 @@ describe("ChildWorkerProgram", () => {
       await expect(program.run(context)).rejects.toMatchObject({ code: "CLEANUP_UNCONFIRMED" });
       stopped.reject(new Error("ACK transport lost too"));
       await expect(stopped.promise).rejects.toThrow("ACK transport lost too");
-      expect(capacity.active).toBe(1);
-      expect(capacity.tryAcquire(context.signal)).toBeUndefined();
+      expect(capacity.active).toBe(capacity.limit);
     }));
 
   it("retains admission after a disconnected dispatch even after host cleanup finishes", () =>
@@ -175,8 +174,7 @@ describe("ChildWorkerProgram", () => {
         message: "RPC disconnected",
       });
       await closing.promise;
-      expect(capacity.active).toBe(1);
-      expect(capacity.tryAcquire(context.signal)).toBeUndefined();
+      expect(capacity.active).toBe(capacity.limit);
     }));
 
   it("returns logical exit while retaining admission through a late dispatch failure and gated close", () =>

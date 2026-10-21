@@ -89,6 +89,7 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       if (implementation.kind !== "async") {
         throw new KernelProgramExecAdmissionError("ENOTSUP", "Computer requires a child program");
       }
+      // close() aborts queued reserves; removable links avoid AbortSignal.any retaining the session signal.
       const controller = new AbortController();
       const onAbort = () => controller.abort(request.signal.reason);
       reserves.add(controller);

@@ -131,6 +131,7 @@ export function createCodexHookRuntime(
     };
     try {
       const result = await hookService.invoke(id, payload, {
+        requester: invocation.requester,
         signal: invocation.signal,
         cwd: invocation.cwd,
         env: invocation.env,

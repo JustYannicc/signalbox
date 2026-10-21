@@ -123,6 +123,14 @@ function composedProgramFixture(sourceKind: "static" | "lazy-factory") {
     args: ["/bin/program"],
     filesystem: { cwd: "/work" },
     env: {},
+    // Admission still binds ownership when dispatch uses a minimal kernel fixture.
+    identity: { handle: {}, pid: 2 },
+    processes: {
+      info: () => ({ status: "ok", value: { pid: 2, parentPid: 1, processGroupId: 2 } }),
+      lookupPid: () => ({ status: "error" }),
+      workerOwner: () => ({ status: "ok", value: undefined }),
+      setWorkerOwner: () => ({ status: "ok", value: undefined }),
+    },
   } as unknown as KernelAsyncProgramContext;
   const close = vi.fn();
 

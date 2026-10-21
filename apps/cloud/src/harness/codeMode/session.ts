@@ -32,36 +32,29 @@ export class CodeModeSession {
     this.#options = options;
   }
 
-  async execute(request: CodeModeExecuteRequest, signal: AbortSignal) {
+  execute(request: CodeModeExecuteRequest, signal: AbortSignal) {
     if (this.#closing) throw new Error("CodeMode session is shutting down");
-    const queued = new AbortController();
-    const onAbort = () => queued.abort(signal.reason);
-    this.#pending.add(queued);
-    let permit;
-    try {
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
-      permit = await this.#options.cellCapacity.acquire(queued.signal);
-    } finally {
+    const admission = new AbortController();
+    const onAbort = () => admission.abort(signal.reason);
+    const detach = () => {
       signal.removeEventListener("abort", onAbort);
-      this.#pending.delete(queued);
-    }
-    try {
-      queued.signal.throwIfAborted();
-      if (this.#closing) throw new Error("CodeMode session is shutting down");
-    } catch (error) {
-      permit.release();
-      throw error;
-    }
+      this.#pending.delete(admission);
+    };
+    this.#pending.add(admission);
+    // Detach the per-request listener after admission; AbortSignal.any would retain it for the session lifetime.
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
     const id = String(this.#nextId++);
     const cell = new CodeModeCell({
       id,
       sessionId: this.#options.id,
       request,
-      storedValues: Object.fromEntries(this.#values),
+      storedValues: () => Object.fromEntries(this.#values),
       loader: this.#options.loader,
       code: this.#options.code,
-      permit,
+      admissionController: admission,
+      cellCapacity: this.#options.cellCapacity,
+      admissionSettled: detach,
       delegates: this.#options.delegates,
       commit: (writes) => {
         for (const [key, value] of Object.entries(writes)) this.#values.set(key, value);
@@ -69,7 +62,10 @@ export class CodeModeSession {
     });
     this.#cells.set(id, cell);
     this.#lifetimes.add(cell.lifetime);
-    void cell.lifetime.finally(() => this.#lifetimes.delete(cell.lifetime));
+    void cell.lifetime.finally(() => {
+      this.#lifetimes.delete(cell.lifetime);
+      if (cell.admissionState === "cancelled") this.#close(cell);
+    });
     return cell;
   }
 
@@ -78,9 +74,14 @@ export class CodeModeSession {
     yieldMs: number,
     observation: CellObservation,
   ): Promise<RuntimeResponse> {
-    const response = await cell.observe(yieldMs, observation);
-    if (!("Yielded" in response)) this.#close(cell);
-    return response;
+    try {
+      const response = await cell.observe(yieldMs, observation);
+      if (!("Yielded" in response)) this.#close(cell);
+      return response;
+    } catch (error) {
+      if (cell.admissionState === "cancelled") this.#close(cell);
+      throw error;
+    }
   }
 
   async wait(id: string, yieldMs: number, observation: CellObservation): Promise<WaitOutcome> {
@@ -101,6 +102,7 @@ export class CodeModeSession {
 
   async shutdown() {
     this.#closing = true;
+    // Closing withdraws queued acquisitions so shutdown cannot wait for capacity held elsewhere.
     for (const queued of this.#pending)
       queued.abort(new Error("CodeMode session is shutting down"));
     await Promise.all([...this.#cells.values()].map((cell) => cell.terminate()));
@@ -112,6 +114,8 @@ export class CodeModeSession {
   #close(cell: CodeModeCell) {
     if (this.#cells.get(cell.id) !== cell) return;
     this.#cells.delete(cell.id);
+    // Closing a queued cell withdraws its capacity request before the cell can outlive the session.
+    cell.close();
     void cell.lifetime.then(() =>
       this.#options.send({ type: "cell/closed", sessionId: this.#options.id, cellId: cell.id }),
     );

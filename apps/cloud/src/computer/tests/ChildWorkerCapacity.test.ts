@@ -1,7 +1,18 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { childBusyboxFixture } from "./ChildBusyboxFixture.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
+
+const fixtures: ReturnType<typeof childBusyboxFixture>[] = [];
+function requester() {
+  const fixture = childBusyboxFixture();
+  fixtures.push(fixture);
+  return { processes: fixture.context.processes, process: fixture.context.identity.handle };
+}
+afterEach(async () => {
+  for (const fixture of fixtures.splice(0)) await fixture.close();
+});
 
 describe("ChildWorkerCapacity", () => {
   it("runs limit plus five root commands FIFO within the soft limit", async () => {
@@ -12,13 +23,17 @@ describe("ChildWorkerCapacity", () => {
     const order: number[] = [];
     let maximum = 0;
     const commands = Array.from({ length: capacity.limit + 5 }, (_, index) =>
-      capacity.run(signal, async () => {
-        order.push(index);
-        maximum = Math.max(maximum, capacity.active);
-        if (order.length === capacity.limit) full.resolve();
-        await finish.promise;
-        return index * index;
-      }),
+      capacity.run(
+        signal,
+        async () => {
+          order.push(index);
+          maximum = Math.max(maximum, capacity.active);
+          if (order.length === capacity.limit) full.resolve();
+          await finish.promise;
+          return index * index;
+        },
+        requester(),
+      ),
     );
     await full.promise;
     expect(order).toEqual(Array.from({ length: capacity.limit }, (_, index) => index));
@@ -31,16 +46,16 @@ describe("ChildWorkerCapacity", () => {
     expect(capacity.active).toBe(0);
   });
 
-  it("skips ancestry and queue listeners when the soft pool has room", async () => {
+  it("skips ownership lookups and queue listeners when the soft pool has room", async () => {
     const capacity = new ChildWorkerCapacity();
     const signal = new AbortController().signal;
     const wakes = new KernelWakeRegistry();
     const processes = new KernelProcessTable({ wakes });
-    const info = vi.spyOn(processes, "info");
+    const owner = vi.spyOn(processes, "workerOwner");
     const listen = vi.spyOn(signal, "addEventListener");
     try {
-      const permit = await capacity.acquire(signal, { processes });
-      expect(info).not.toHaveBeenCalled();
+      const permit = await capacity.acquire(signal, { processes, process: undefined });
+      expect(owner).not.toHaveBeenCalled();
       expect(listen).not.toHaveBeenCalled();
       permit.release();
     } finally {
@@ -232,9 +247,13 @@ describe("ChildWorkerCapacity", () => {
     const capacity = new ChildWorkerCapacity(1);
     const reason = new Error("child failed");
     await expect(
-      capacity.run(new AbortController().signal, async () => {
-        throw reason;
-      }),
+      capacity.run(
+        new AbortController().signal,
+        async () => {
+          throw reason;
+        },
+        requester(),
+      ),
     ).rejects.toBe(reason);
     expect(capacity.active).toBe(0);
   });

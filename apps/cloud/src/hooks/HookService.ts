@@ -1,5 +1,5 @@
 import type { ComputerExecPort } from "../computer/Computer.ts";
-import type { ChildWorkerCapacity } from "../computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerCapacity, ChildWorkerRequester } from "../computer/ChildWorkerCapacity.ts";
 import {
   NodeGeneratedCodeCleanupError,
   type NodeGeneratedCode,
@@ -19,6 +19,7 @@ export type { HookExecutionResult } from "./execution/command.ts";
 type HookContext = Omit<HarnessHookRequest, "payload">;
 
 export interface HookServiceInvocationOptions extends HarnessHookInvocationOptions {
+  readonly requester?: ChildWorkerRequester;
   readonly cwd: KernelCommand["cwd"];
   readonly env: KernelCommand["env"];
 }
@@ -85,7 +86,7 @@ export function createHookService(options: HookServiceOptions) {
           exit: successExit,
         };
       }
-      const permit = await options.capacity.acquire(invocation.signal);
+      const permit = await options.capacity.acquire(invocation.signal, invocation.requester);
       let cleanupConfirmed = true;
       try {
         invocation.signal.throwIfAborted();

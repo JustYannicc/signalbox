@@ -154,7 +154,7 @@ export async function runCodeModeHostConnection(options: CodeModeConnectionOptio
       switch (request.method) {
         case "session/execute": {
           observe.cancel.throwIfAborted();
-          const cell = await session.execute(request.request, observe.cancel);
+          const cell = session.execute(request.request, observe.cancel);
           respond({ type: "execution/started", cellId: cell.id });
           const response = await session.observe(cell, request.request.yield_time_ms ?? 10_000, {
             cancel: signal,

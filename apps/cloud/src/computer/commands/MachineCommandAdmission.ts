@@ -10,6 +10,13 @@ export class MachineCommandAdmission {
   #held = false;
   readonly #waiters: AdmissionWaiter[] = [];
 
+  tryAcquire(signal?: AbortSignal): (() => void) | undefined {
+    if (signal?.aborted) throw abortReason(signal);
+    if (this.#held || this.#waiters.length > 0) return undefined;
+    this.#held = true;
+    return this.#releaseHandle();
+  }
+
   acquire(signal?: AbortSignal): Promise<() => void> {
     if (signal?.aborted) return Promise.reject(abortReason(signal));
     if (!this.#held && this.#waiters.length === 0) {

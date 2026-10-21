@@ -163,7 +163,10 @@ function runWithReservation<T>(
   if (!isChildWorkerReservation(reservation)) {
     throw new TypeError("Child worker reservation resolver did not return a capacity reservation");
   }
-  return reservation.run(context.signal, work, context.identity.pid);
+  return reservation.run(context.signal, work, {
+    processes: context.processes,
+    process: context.identity.handle,
+  });
 }
 
 function createModuleLoader(source: ChildWorkerModules | ChildWorkerModulesFactory) {
