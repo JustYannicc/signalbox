@@ -58,6 +58,38 @@ const withFileSystem = (
   }) as ArtifactFileSystem;
 
 describe("Harness artifact preparation", () => {
+  it("rejects unavailable builtins before publishing either provider artifact", async () => {
+    const { root, sdk, input } = await setup();
+    await NodeFSP.writeFile(NodePath.join(sdk, "sdk.js"), "import 'node:cluster';");
+    await expect(prepareHarnessArtifact(input)).rejects.toThrow(
+      "NODE_BUILTIN_COVERAGE_FAILED: missing=cluster",
+    );
+    await expect(NodeFSP.lstat(input.output)).rejects.toMatchObject({ code: "ENOENT" });
+    const codex = NodePath.join(root, "codex");
+    await NodeFSP.mkdir(codex);
+    await NodeFSP.writeFile(NodePath.join(codex, "manifest.json"), '{"mainModule":"loader.mjs"}');
+    await NodeFSP.writeFile(NodePath.join(codex, "loader.mjs"), "import 'node:dgram';");
+    const codexOutput = NodePath.join(root, "codex-output");
+    await expect(
+      prepareHarnessArtifact({
+        ...input,
+        harness: "codex",
+        components: { codex },
+        output: codexOutput,
+      }),
+    ).rejects.toThrow("NODE_BUILTIN_COVERAGE_FAILED: missing=dgram");
+    await expect(NodeFSP.lstat(codexOutput)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("accepts DNS supplied by the runtime adapter with no caller module map", async () => {
+    const { sdk, input } = await setup();
+    await NodeFSP.writeFile(
+      NodePath.join(sdk, "sdk.js"),
+      "import 'dns'; import 'node:dns/promises';",
+    );
+    await expect(prepareHarnessArtifact(input)).resolves.toHaveProperty("artifactHash");
+  });
+
   it("preserves raw provider bytes and binds both components in one identity", async () => {
     const { root, sdk, manifest, input } = await setup();
     const identity = await prepareHarnessArtifact(input);

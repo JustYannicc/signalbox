@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { verifyArtifactNodeBuiltins } from "./verifyNodeBuiltins.ts";
 import { OwnedArtifactOutput, type ArtifactFileSystem } from "./prepareArtifact.output.ts";
 import {
   openHarnessReleaseArtifact,
@@ -231,6 +232,8 @@ export const prepareHarnessArtifactWithFileSystem = async (
       await copyTree(root.path, component, "", root.stat);
       components[component] = { manifest: `${component}/manifest.json` };
     }
+
+    await verifyArtifactNodeBuiltins(artifactOutput.path);
 
     const manifestBytes = serializeHarnessReleaseArtifactManifest({
       schemaVersion: 1,

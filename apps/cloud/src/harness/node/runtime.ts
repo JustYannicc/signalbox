@@ -4,6 +4,7 @@ import { createNodeConsole } from "../../isolate/NodeConsole.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Node compatibility requires the native stream and process interfaces.
 import type * as NodeStreamWeb from "node:stream/web";
 import { createKernelProcessStreams } from "../../kernel/KernelProcessStreams.ts";
+import { createNodeDns } from "../../isolate/NodeDns.ts";
 import { createNodeFs } from "../../isolate/NodeFs.ts";
 import { createNodeProcess } from "../../isolate/NodeProcess.ts";
 import { createNodeReadline } from "../../isolate/NodeReadline.ts";
@@ -17,6 +18,7 @@ import { createNodeConstants } from "../../isolate/NodeConstants.ts";
 import { createNodeOs } from "../../isolate/NodeOs.ts";
 import { createNodePath } from "../../isolate/NodePath.ts";
 import * as NodeTty from "../../isolate/NodeTty.ts";
+import { DEFAULT_NODE_NATIVE_MODULES } from "./nativeModules.ts";
 import { createHarnessEnvironment } from "./environment.ts";
 import type { NodeHarnessProcessInput } from "./types.ts";
 
@@ -31,7 +33,11 @@ export function createHarnessRuntime(
   bridge: () => NodeBridge,
 ) {
   input.stdio.assertBound(input.computer.files);
-  const native = createNodeBridge(input.nativeModules);
+  const supplied = createNodeBridge(input.nativeModules);
+  const native = createNodeBridge({
+    ...DEFAULT_NODE_NATIVE_MODULES,
+    ...Object.fromEntries(supplied.names.map((name) => [name, supplied.require(name)])),
+  });
   const current = input.host.processes.info(input.processHandle);
   if (current.status !== "ok") throw new Error("Harness process has no live kernel identity");
   const filesystem = input.computer.files;
@@ -59,6 +65,12 @@ export function createHarnessRuntime(
     };
     const process = createNodeProcess(context);
     const fs = createNodeFs(filesystem);
+    // Capture host fetch before the personality replaces it with the model transport.
+    const dns = createNodeDns({
+      fetch: globalThis.fetch.bind(globalThis),
+      signal: signals.lifetime,
+      readHosts: () => fs.fs.readFileSync("/etc/hosts", "utf8").toString(),
+    });
     const childProcess = createNodeComputerChildProcess(
       input.host,
       {
@@ -89,6 +101,8 @@ export function createHarnessRuntime(
     );
     Object.assign(modules, {
       ...fs,
+      dns: dns.dns,
+      "dns/promises": dns["dns/promises"],
       console,
       process,
       readline: createNodeReadline(),
@@ -102,7 +116,17 @@ export function createHarnessRuntime(
     });
     if (native.names.includes("constants"))
       modules.constants = createNodeConstants(native.require("constants"), fs.fs);
-    return { process, streams, modules, bun, console, environment, cpu, missingBunMembers };
+    return {
+      process,
+      streams,
+      modules,
+      bun,
+      console,
+      environment,
+      cpu,
+      missingBunMembers,
+      drainDns: dns.drain,
+    };
   } catch (error) {
     for (const stream of Object.values(streams)) {
       stream.on("error", () => {});
