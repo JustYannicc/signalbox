@@ -1,5 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { nodeFsWatchFixture } from "./testing/nodeFsWatchFixture.ts";
 
 afterEach(() => vi.useRealTimers());
@@ -159,6 +160,156 @@ describe("virtual filesystem event watchers", () => {
       expect(events).toContain("watched");
       watcher.close();
       expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("skips rescans while storage reports no committed change", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/watched");
+      const events: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/watched", (_type, name) => events.push(name));
+      const readdir = vi.spyOn(fixture.kernelFs, "readdir");
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(readdir).not.toHaveBeenCalled();
+
+      fixture.fs.writeFileSync("/watched/new.txt", "created");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toEqual(["new.txt"]);
+
+      readdir.mockClear();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(readdir).not.toHaveBeenCalled();
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("sees changes committed to the database without going through the filesystem", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/watched");
+      fixture.fs.writeFileSync("/watched/file.txt", "before");
+      const events: Array<{ type: string; name: string | NodeBuffer.Buffer | null }> = [];
+      const watcher = fixture.fs.watch("/watched", (type, name) => events.push({ type, name }));
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Hydration and revision applies write these rows directly.
+      fixture.storage.sql.exec("UPDATE kernel_fs_inode SET mtime_ns = '1' WHERE ino != 1");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toContainEqual({ type: "change", name: "file.txt" });
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("reports writes made by a listener on the next tick", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/watched");
+      const names: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/watched", (_type, name) => {
+        names.push(name);
+        if (name === "first.txt") fixture.fs.writeFileSync("/watched/second.txt", "2");
+      });
+      fixture.fs.writeFileSync("/watched/first.txt", "1");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(names).toEqual(["first.txt"]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(names).toEqual(["first.txt", "second.txt"]);
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps rescanning while a byte view can change sizes without a storage write", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.writeFileSync("/file", "data");
+      let size = 4n;
+      fixture.kernelFs.setFileBytes({
+        kind: "view",
+        view: {
+          completion: "sync",
+          storage: fixture.mounted,
+          bind: (inode) => ({
+            stat: () => ({ ...fixture.mounted.stat(inode), size }),
+            readInto: () => 0,
+            write: () => 0,
+            append: () => ({ offset: size, bytesWritten: 0 }),
+            truncate: (next) => {
+              size = next;
+            },
+            sync: () => {},
+            release: () => {},
+          }),
+        },
+      });
+      expect(fixture.kernelFs.changeGeneration()).toBeUndefined();
+      const events: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/file", (_type, name) => events.push(name));
+      await vi.advanceTimersByTimeAsync(200);
+
+      size = 2n;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toEqual(["file"]);
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps rescanning descriptor-alias paths, which change when descriptors close", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/proc/self/fd", { recursive: true });
+      fixture.fs.writeFileSync("/file", "data");
+      const fd = fixture.kernelFs.open("/file", KernelOpenFlags.O_RDONLY);
+      // A relative path skips alias resolution, so this creates a real entry under the alias.
+      fixture.fs.writeFileSync(`proc/self/fd/${fd}`, "");
+      const events: Array<{ type: string; name: string | NodeBuffer.Buffer | null }> = [];
+      const watcher = fixture.fs.watch("/proc/self/fd", (type, name) =>
+        events.push({ type, name }),
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      expect(events).toEqual([]);
+
+      fixture.kernelFs.close(fd);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events.map((event) => event.name)).toContain(String(fd));
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps rescanning every tick when a mount cannot report changes", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture({ changeGeneration: false });
+    try {
+      fixture.fs.mkdirSync("/watched");
+      expect(fixture.kernelFs.changeGeneration()).toBeUndefined();
+      const events: Array<string | NodeBuffer.Buffer | null> = [];
+      const watcher = fixture.fs.watch("/watched", (_type, name) => events.push(name));
+      const readdir = vi.spyOn(fixture.kernelFs, "readdir");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(readdir).toHaveBeenCalledTimes(10);
+      fixture.fs.writeFileSync("/watched/new.txt", "created");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events).toEqual(["new.txt"]);
+      watcher.close();
     } finally {
       fixture.close();
     }

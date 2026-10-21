@@ -4,7 +4,7 @@ import { createFacetSqliteStorage, type FacetStorage } from "../../../kernel/Fac
 import { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { createNodeFs } from "../../NodeFs.ts";
 
-export function nodeFsWatchFixture() {
+export function nodeFsWatchFixture(options: { readonly changeGeneration?: boolean } = {}) {
   const database = new NodeSqlite.DatabaseSync(":memory:");
   let transactionDepth = 0;
   const storage: FacetStorage = {
@@ -39,12 +39,14 @@ export function nodeFsWatchFixture() {
     },
   };
   let time = 1_800_000_000_000_000_000n;
-  const kernelFs = new KernelFileSystem({
-    mounts: [{ path: "/", storage: createFacetSqliteStorage(storage, () => (time += 1_000_000n)) }],
-    cwd: "/",
-  });
+  const sqlite = createFacetSqliteStorage(storage, () => (time += 1_000_000n));
+  const { changeGeneration: _omitted, ...withoutGeneration } = sqlite;
+  const mounted = options.changeGeneration === false ? withoutGeneration : sqlite;
+  const kernelFs = new KernelFileSystem({ mounts: [{ path: "/", storage: mounted }], cwd: "/" });
   return {
     kernelFs,
+    storage,
+    mounted,
     fs: createNodeFs(kernelFs).fs,
     close() {
       try {

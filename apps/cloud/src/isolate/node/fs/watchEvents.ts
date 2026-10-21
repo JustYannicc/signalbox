@@ -26,6 +26,12 @@ function setTimerReference(timer: ReturnType<typeof setInterval>, referenced: bo
   if (typeof reference === "function") reference.call(timer);
 }
 
+/** The generation is read before its snapshot, so a write in between only costs a rescan. */
+interface Baseline {
+  readonly generation: number | undefined;
+  readonly snapshot: Snapshot;
+}
+
 class PollingFSWatcher extends NodeEvents.EventEmitter {
   #closed = false;
   #referenced: boolean;
@@ -37,7 +43,7 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
   readonly #path: string;
   readonly #displayPath: string;
   readonly #options: ReturnType<typeof parseWatchOptions>["options"];
-  #snapshot: Snapshot;
+  #baseline: Baseline;
   readonly #registerCleanup: RegisterCleanup;
 
   constructor(
@@ -45,7 +51,7 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
     path: string,
     displayPath: string,
     options: ReturnType<typeof parseWatchOptions>["options"],
-    snapshot: Snapshot,
+    baseline: Baseline,
     registerCleanup: RegisterCleanup,
   ) {
     super();
@@ -53,7 +59,7 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
     this.#path = path;
     this.#displayPath = displayPath;
     this.#options = options;
-    this.#snapshot = snapshot;
+    this.#baseline = baseline;
     this.#registerCleanup = registerCleanup;
     this.#referenced = options.persistent;
   }
@@ -102,9 +108,25 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
 
   #poll(): void {
     if (this.#closed) return;
-    let current: Snapshot;
+    let next: Baseline;
     try {
-      current = takeWatchSnapshotAllowMissing(this.#kernelFs, this.#path, this.#options.recursive);
+      // Rescanning every watched tree each tick costs a path walk and stat per entry; skip it while
+      // nothing has committed.
+      const generation = this.#kernelFs.changeGeneration();
+      if (
+        generation !== undefined &&
+        generation === this.#baseline.generation &&
+        !this.#baseline.snapshot.descriptorDependent
+      )
+        return;
+      next = {
+        generation,
+        snapshot: takeWatchSnapshotAllowMissing(
+          this.#kernelFs,
+          this.#path,
+          this.#options.recursive,
+        ),
+      };
     } catch (cause) {
       const error = nodeFsError(cause, "watch", this.#displayPath) as Error;
       this.close();
@@ -112,8 +134,8 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
       return;
     }
 
-    const changes = diffWatchSnapshots(this.#snapshot, current, this.#path);
-    this.#snapshot = current;
+    const changes = diffWatchSnapshots(this.#baseline.snapshot, next.snapshot, this.#path);
+    this.#baseline = next;
     for (const change of changes) {
       if (this.#closed) return;
       this.emit("change", change.eventType, encodedPath(change.filename, this.#options.encoding));
@@ -135,10 +157,14 @@ export function createWatchEvents(
     const parsed = parseWatchOptions(options, listener);
     const rawPath = pathString(path);
     let absolutePath: string;
-    let snapshot: Snapshot;
+    let baseline: Baseline;
     try {
       absolutePath = kernelFs.realpath(rawPath);
-      snapshot = takeWatchSnapshot(kernelFs, absolutePath, parsed.options.recursive);
+      const generation = kernelFs.changeGeneration();
+      baseline = {
+        generation,
+        snapshot: takeWatchSnapshot(kernelFs, absolutePath, parsed.options.recursive),
+      };
     } catch (cause) {
       throw nodeFsError(cause, "watch", rawPath);
     }
@@ -147,7 +173,7 @@ export function createWatchEvents(
       absolutePath,
       rawPath,
       parsed.options,
-      snapshot,
+      baseline,
       registerCleanup,
     );
     if (parsed.listener !== undefined) watcher.on("change", parsed.listener);

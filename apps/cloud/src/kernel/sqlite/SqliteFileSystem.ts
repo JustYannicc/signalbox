@@ -1,7 +1,8 @@
 import type { PosixStorage } from "../PosixStorage.ts";
+import type { ChangeGenerationStorage } from "../ChangeGenerationStorage.ts";
 import { SqliteChunks } from "./SqliteChunks.ts";
 import { SqliteInodes } from "./SqliteInodes.ts";
-import type { FacetStorage } from "./SqliteDatabase.ts";
+import { type FacetStorage, firstRow } from "./SqliteDatabase.ts";
 
 import { SqliteHydration } from "./SqliteHydration.ts";
 import { SqlitePosixMetadata } from "./SqlitePosixMetadata.ts";
@@ -24,7 +25,7 @@ export function createSqliteFileSystem(storage: FacetStorage, nowNs: () => bigin
     inodes.stat(inode);
     if (hydration.pending(inode)) throw new PendingContentError(inode);
   };
-  const fs: PosixStorage = {
+  const fs: PosixStorage & ChangeGenerationStorage = {
     posix: new SqlitePosixMetadata(inodes),
     root: inodes.root,
     lookup: inodes.lookup.bind(inodes),
@@ -57,6 +58,14 @@ export function createSqliteFileSystem(storage: FacetStorage, nowNs: () => bigin
     sync(inode) {
       // Every mutation has committed its transactionSync before returning. Drive checkpoints are separate.
       inodes.stat(inode);
+    },
+    changeGeneration() {
+      // The facet has one connection, so this also counts hydration and revision writes that
+      // bypass this object. Unrelated tables only cause a spurious rescan.
+      const row = firstRow(storage.sql.exec("SELECT total_changes() AS changes"));
+      // A constant fallback would make watchers miss every later change.
+      if (row === undefined) throw new Error("SQLite returned no change count");
+      return Number(row.changes);
     },
   };
   return { storage: fs, hydration };
