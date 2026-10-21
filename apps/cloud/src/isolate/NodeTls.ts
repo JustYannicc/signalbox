@@ -20,5 +20,13 @@ export function nodeTlsModule(native: object = NodeTls): object {
   // Everything else stays the native module itself, so guest settings and identities still apply.
   return new Proxy(module, {
     get: (target, key) => (key === "rootCertificates" ? fallback : Reflect.get(target, key)),
+    // Descriptor-copying re-exports must see the fallback too, where proxy invariants allow it.
+    getOwnPropertyDescriptor(target, key) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+      if (key !== "rootCertificates" || descriptor === undefined || !("value" in descriptor))
+        return descriptor;
+      if (!descriptor.configurable && !descriptor.writable) return descriptor;
+      return { ...descriptor, value: fallback };
+    },
   });
 }

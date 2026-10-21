@@ -48,5 +48,7 @@ describe("Node TLS bundled roots", () => {
     Reflect.set(module, "DEFAULT_MIN_VERSION", "TLSv1.3");
     expect(native.DEFAULT_MIN_VERSION).toBe("TLSv1.3");
     expect(native.rootCertificates).toEqual([]);
+    const clone = Object.create(null, Object.getOwnPropertyDescriptors(module));
+    expect(clone.rootCertificates).toBe(nodeRootCertificates([]));
   });
 });
