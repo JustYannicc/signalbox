@@ -1,0 +1,220 @@
+import { expect, vi } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import type { CodexHarnessProcess, CodexHarnessProcessOptions } from "../CodexHarnessProcess.ts";
+import {
+  createProductHarnessSessionHost,
+  type ProductHarnessHostOptions,
+} from "../ProductHarnessSessionHost.ts";
+import { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
+import { createMemoryFilePersistencePorts } from "../../kernel/MemoryFilePersistencePorts.ts";
+import { codexFixture, claudeFixture } from "../releaseLoader/tests/artifactFixtures.ts";
+import {
+  adapterOptions,
+  processFixture,
+  readyLine,
+  session as codexSession,
+} from "../codex/tests/preinitializedFixture.ts";
+import { echoEngine } from "../codex/tests/wasm.ts";
+import { hostSqlite } from "./hostSqlite.ts";
+import { commandLoader, programFixture } from "./productHost/commands.ts";
+
+const launch = vi.hoisted(() =>
+  vi.fn<(input: CodexHarnessProcessOptions) => Promise<CodexHarnessProcess>>(),
+);
+const captureProductComputer = vi.hoisted(() =>
+  vi.fn<(options: { readonly home?: string }) => void>(),
+);
+vi.mock("../CodexHarnessProcess.ts", () => ({ startCodexHarnessProcess: launch }));
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+vi.mock("../../computer/ProductComputer.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../computer/ProductComputer.ts")>();
+  return {
+    ...actual,
+    createProductComputer: (options: Parameters<typeof actual.createProductComputer>[0]) => {
+      captureProductComputer(options);
+      return actual.createProductComputer(options);
+    },
+  };
+});
+
+const services = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer);
+type ReleaseOptions = Awaited<ReturnType<typeof codexFixture>>["options"];
+
+const productOptions = (release: ReleaseOptions, home = "/home/product-codex") =>
+  Effect.gen(function* () {
+    const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>
+      Effect.sync(() => value.dispose()),
+    );
+    const programs = yield* Effect.promise(programFixture);
+    const adapter = yield* adapterOptions();
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    let fallbackCalls = 0;
+    let modelCalls = 0;
+    const commands = commandLoader();
+    const options: ProductHarnessHostOptions<unknown> = {
+      threadId: codexSession.threadId,
+      release,
+      programs: { codes: programs.codes, seed: programs.seed },
+      files: {
+        identity: "product-codex-computer",
+        database: database.open().storage,
+        nowNs: () => 0n,
+        persistencePorts: createMemoryFilePersistencePorts(),
+        rootMetadata: { mode: 0o755, uid: 1000, gid: 1000 },
+        posix: {
+          credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 },
+          umask: 0o022,
+        },
+        cwd: "/workspace",
+        assetMode: 0o644,
+      },
+      commands: {
+        loader: commands.loader,
+        capacity: new ChildWorkerCapacity(2),
+        hostname: "product-codex-test",
+        machine: {
+          async spawn() {
+            throw new Error("Unexpected forwarded command");
+          },
+        },
+      },
+      modelTransport: async () => {
+        modelCalls++;
+        return new Response("product model transport");
+      },
+      executor: { forward: async () => new Response("executor") },
+      save: async () => ({ commit: "unused" }),
+      port: async () => ({ fetch: async () => new Response("port") }),
+      native: {
+        harness: "codex",
+        process: {
+          engine: echoEngine(),
+          environment: { HOME: home, CODEX_EXEC_SERVER_URL: "ws://exec.test/session" },
+          bootstrap: {
+            type: "bootstrap",
+            codex_home: "/separate/config/codex",
+            cwd: "/workspace",
+            overrides: {},
+          },
+          environmentInfo: {
+            cwd: "/workspace",
+            platformOs: "linux",
+            shell: { name: "bash", path: "/bin/bash" },
+            executorVersion: "test",
+          },
+          fetch: async () => {
+            fallbackCalls++;
+            return new Response("fallback fetch");
+          },
+          lifetime: { waitUntil: () => undefined },
+        },
+        adapter,
+        mcpSessions,
+        modelOrigins: ["https://models.product.test"],
+      },
+      hydrate: async () => {},
+    };
+    const host = yield* createProductHarnessSessionHost(options);
+    yield* Effect.addFinalizer(() => Effect.orDie(host.dispose));
+    yield* host.seed("assets");
+    yield* host.seed("programs");
+    return {
+      host,
+      options,
+      get fallbackCalls() {
+        return fallbackCalls;
+      },
+      get modelCalls() {
+        return modelCalls;
+      },
+    };
+  });
+
+it.effect(
+  "routes the public Codex composition through its bound Computer and native transports",
+  () =>
+    Effect.gen(function* () {
+      launch.mockReset();
+      const release = yield* Effect.promise(codexFixture);
+      const product = yield* productOptions(release.options);
+      const peer = processFixture();
+      yield* Effect.addFinalizer(() => Effect.promise(() => peer.process.abort()));
+      (yield* Effect.promise(() => peer.output)).enqueue(new TextEncoder().encode(readyLine));
+      let processOptions: CodexHarnessProcessOptions | undefined;
+      launch.mockImplementation(async (input) => {
+        processOptions = input;
+        return peer.process;
+      });
+      const session = yield* product.host.open({
+        session: codexSession,
+        bootAttemptId: "product-codex-open",
+      });
+      yield* Effect.addFinalizer(() => Effect.orDie(session.dispose));
+      if (processOptions === undefined) throw new Error("Codex process did not start");
+      expect(processOptions.computer).toBe(product.host.computer);
+      expect(processOptions.host).toBe(product.host.commands.host);
+      expect(processOptions.stdio.filesystem).toBe(product.host.computer.files);
+      processOptions.stdio.assertBound(product.host.computer.files);
+
+      const model = yield* Effect.promise(() =>
+        processOptions!.fetch(new Request("https://models.product.test/v1")),
+      );
+      expect(yield* Effect.promise(() => model.text())).toBe("product model transport");
+      expect(product.modelCalls).toBe(1);
+      const local = yield* Effect.promise(() =>
+        processOptions!.fetch(new Request("http://127.0.0.1:8787/")),
+      );
+      expect(yield* Effect.promise(() => local.text())).toBe("port");
+      yield* Effect.promise(() =>
+        expect(
+          processOptions!.fetch(new Request("https://harness-mcp.invalid/no-active-route")),
+        ).rejects.toMatchObject({ message: "Harness MCP request is unavailable." }),
+      );
+      const external = yield* Effect.promise(() =>
+        processOptions!.fetch(new Request("https://external.product.test/")),
+      );
+      expect(yield* Effect.promise(() => external.text())).toBe("fallback fetch");
+      expect(product.fallbackCalls).toBe(1);
+
+      const computerOptions = captureProductComputer.mock.calls.at(-1)?.[0];
+      expect(computerOptions?.home).toBe("/home/product-codex");
+      const native = product.options.native;
+      if (native.harness !== "codex") throw new Error("Expected Codex native options");
+      expect(computerOptions?.home).toBe(native.process.environment.HOME);
+      expect(computerOptions?.home).not.toBe(native.process.bootstrap.codex_home);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect(
+  "rejects a Codex binding against a Claude release before starting the native engine",
+  () =>
+    Effect.gen(function* () {
+      launch.mockReset();
+      const release = yield* Effect.promise(() => claudeFixture());
+      const product = yield* productOptions(release.options);
+      const outcome = yield* product.host
+        .open({ session: codexSession, bootAttemptId: "mismatched-product-release" })
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(outcome)).toBe(true);
+      expect(launch).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("rejects a non-absolute Codex HOME before starting the native engine", () =>
+  Effect.gen(function* () {
+    launch.mockReset();
+    const release = yield* Effect.promise(codexFixture);
+    const product = yield* productOptions(release.options, "relative/home");
+    const outcome = yield* product.host
+      .open({ session: codexSession, bootAttemptId: "invalid-product-home" })
+      .pipe(Effect.exit);
+    expect(Exit.isFailure(outcome)).toBe(true);
+    expect(launch).not.toHaveBeenCalled();
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
