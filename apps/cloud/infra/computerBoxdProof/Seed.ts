@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { prepareChildPrograms } from "../childPrograms/prepare.ts";
+import { prepareBasicChildPrograms } from "../childPrograms/basic.ts";
 import { preflightTrustedRunnerArtifact } from "./privateRunnerArtifact.ts";
 import type { ProofSeed } from "./SeedProtocol.ts";
 
@@ -21,7 +21,7 @@ export async function prepareProofSeed(programDir: string): Promise<ProofSeed> {
   ) {
     throw new Error("Commit the proof candidate before packaging inputs");
   }
-  const prepared = await prepareChildPrograms({ programDir });
+  const prepared = await prepareBasicChildPrograms({ programDir });
   const runner = await NodeFSP.readFile(
     NodePath.resolve(root, "apps/server/dist/command-runner/command-runner.mjs"),
   );

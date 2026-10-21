@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeUtil from "node:util";
 import { COMPUTER_ISOLATE_EXECUTABLES } from "../../src/computer/EscalationPolicy.ts";
-import { prepareChildPrograms } from "../childPrograms/prepare.ts";
+import { prepareBasicChildPrograms } from "../childPrograms/basic.ts";
 
 const CLOUD_ROOT = NodePath.resolve(import.meta.dirname, "../..");
 const WORKTREE_ROOT = NodePath.resolve(CLOUD_ROOT, "../..");
@@ -113,7 +113,7 @@ async function prepareComputerPolicyFixture({ programsPath, outputPath }) {
 
   const written = [];
   try {
-    const children = await prepareChildPrograms({ programDir, cloudRoot: CLOUD_ROOT });
+    const children = await prepareBasicChildPrograms({ programDir, cloudRoot: CLOUD_ROOT });
     const childSourcePaths = children.sourceInventory.sources
       .map(({ path }) => path)
       .filter((path) => !path.startsWith("generated/"));

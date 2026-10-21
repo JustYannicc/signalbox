@@ -22,10 +22,13 @@ export interface KernelSessionStdio {
   readonly dispose: () => Promise<void>;
 }
 
+export type KernelSessionOutputObserver = (fd: 1 | 2, bytes: Uint8Array) => void | Promise<void>;
+
 /** Construct the filesystem with this tuple before giving that filesystem to Computer. */
 export function createKernelSessionStdio(
   wakes: KernelWakeRegistry,
   signal?: AbortSignal,
+  observe?: KernelSessionOutputObserver,
 ): KernelSessionStdio {
   const inputController = new AbortController();
   const inputSignal =
@@ -36,7 +39,7 @@ export function createKernelSessionStdio(
   const output = new KernelPipe(wakes);
   const error = new KernelPipe(wakes);
   const pending = new Set<Promise<unknown>>();
-  const trackEndpoint = (endpoint: WasiStdio): WasiStdio => {
+  const trackEndpoint = (endpoint: WasiStdio, fd: 0 | 1 | 2): WasiStdio => {
     const track = <T>(value: T | Promise<T>): T | Promise<T> =>
       value instanceof Promise ? trackPipeIo(value, pending) : value;
     return {
@@ -49,7 +52,23 @@ export function createKernelSessionStdio(
       ...(endpoint.write === undefined
         ? {}
         : {
-            write: (source, flags) => track(endpoint.write!(source, flags)),
+            write: (source, flags) => {
+              const snapshot = observe === undefined || fd === 0 ? undefined : source.slice();
+              const accepted = (count: number) => {
+                if (snapshot !== undefined && count > 0 && fd !== 0) {
+                  // Observers cannot consume SDK streams or turn an accepted write into a retry.
+                  try {
+                    const observed = observe!(fd, snapshot.slice(0, count));
+                    if (observed instanceof Promise) void observed.catch(() => undefined);
+                  } catch {
+                    /* Output ownership stays with the writer. */
+                  }
+                }
+                return count;
+              };
+              const written = endpoint.write!(source, flags);
+              return track(written instanceof Promise ? written.then(accepted) : accepted(written));
+            },
           }),
       ...(endpoint.poll === undefined
         ? {}
@@ -59,9 +78,9 @@ export function createKernelSessionStdio(
     };
   };
   const stdio = [
-    trackEndpoint(readEndpoint(input, wakes, inputSignal)),
-    trackEndpoint(writeEndpoint(output, wakes)),
-    trackEndpoint(writeEndpoint(error, wakes)),
+    trackEndpoint(readEndpoint(input, wakes, inputSignal), 0),
+    trackEndpoint(writeEndpoint(output, wakes), 1),
+    trackEndpoint(writeEndpoint(error, wakes), 2),
   ] as const;
   let owner: KernelFileSystem | undefined;
   let disposed: Promise<void> | undefined;

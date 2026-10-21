@@ -1,44 +1,33 @@
 // @effect-diagnostics nodeBuiltinImport:off - this file packages local proof artifacts.
-import * as NodeCrypto from "node:crypto";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeModule from "node:module";
-import * as NodePath from "node:path";
-import type { ChildWorkerCode } from "../../src/computer/ChildWorkerProgram.ts";
+import {
+  CHILD_BUSYBOX_APPLETS,
+  CHILD_PROGRAM_PATHS,
+  type ChildCoreutilsCommand,
+} from "../../src/computer/ChildProgramSet.ts";
+import { prepareMeasuredPrograms, type MeasuredChildProgramSources } from "./measured.ts";
+import { prepareBasePrograms } from "./basic.ts";
+import {
+  readPinnedGitTemplates,
+  type ChildProgramDataFile,
+  type ChildProgramDataCatalog,
+} from "./gitTemplates.ts";
 
-const ARTIFACTS = Object.freeze({
-  bash: Object.freeze({
-    file: "bash.wasm",
-    bytes: 3_887_571,
-    sha256: "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
-  }),
-  busybox: Object.freeze({
-    file: "busybox.wasm",
-    bytes: 241_159,
-    sha256: "7d1b34a31d74473be1fdb50706ed75e8ec765b68878b4fb2cf6ab486cbcb2631",
-  }),
-  ripgrep: Object.freeze({
-    file: "rg.wasm",
-    bytes: 2_208_556,
-    sha256: "791b862a433f1a5a9b6a7ce982546d33f4146dcb019dba5da1e78be7bffc7ca7",
-  }),
-});
-
-const SOURCE_ROOT = NodePath.resolve(import.meta.dirname, "../..");
-const IMPORT_PATTERN = /\b(?:from\s*|import\s*(?:\(\s*)?)["'](\.{1,2}\/[^"']+)["']/g;
-
-export interface ChildProgramSourceRecord {
-  readonly path: string;
-  readonly bytes: number;
-  readonly sha256: string;
-}
+import {
+  programInventory,
+  recordFile,
+  byPath,
+  type ChildProgramSourceRecord,
+  type ChildProgramSourceCode,
+} from "./packageGraph.ts";
+export type { ChildProgramSourceRecord, ChildProgramSourceCode } from "./packageGraph.ts";
 
 export interface ChildProgramSourceInventory {
-  readonly format: "signalbox-hook-child-programs-v1";
+  readonly format: "signalbox-child-programs-v1";
   readonly sources: readonly ChildProgramSourceRecord[];
   readonly artifacts: readonly ChildProgramSourceRecord[];
   readonly programs: Readonly<
     Record<
-      "bash" | "busyboxCat" | "ripgrep",
+      string,
       {
         readonly entrypoint: string;
         readonly mainModule: string;
@@ -48,31 +37,54 @@ export interface ChildProgramSourceInventory {
   >;
 }
 
-export type ChildProgramSourceCode = Omit<ChildWorkerCode, "modules"> & {
-  readonly modules: Readonly<Record<string, string | { readonly js: string }>>;
-};
-
-export interface ChildProgramSources {
+export interface ChildProgramSources extends MeasuredChildProgramSources {
   readonly bash: ChildProgramSourceCode;
   readonly busyboxCat: ChildProgramSourceCode;
   readonly ripgrep: ChildProgramSourceCode;
 }
 
-export type ChildProgramExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
+export interface FullChildProgramSources extends ChildProgramSources {
+  readonly busyboxApplets: ChildProgramSourceCode;
+  readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildProgramSourceCode>>;
+  readonly git: ChildProgramSourceCode;
+}
+
+export type ChildProgramExecutablePath =
+  (typeof CHILD_PROGRAM_PATHS)[keyof typeof CHILD_PROGRAM_PATHS];
+export type LegacyChildProgramExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
 
 export interface ChildProgramExecutableFile {
   readonly path: ChildProgramExecutablePath;
   readonly bytes: Uint8Array;
   readonly sha256: string;
+  readonly mode: 0o755;
+}
+
+export interface LegacyChildProgramExecutableFile extends Omit<ChildProgramExecutableFile, "path"> {
+  readonly path: LegacyChildProgramExecutablePath;
 }
 
 export type ChildProgramExecutableCatalog = Readonly<
-  Record<ChildProgramExecutablePath, { readonly bytes: number; readonly sha256: string }>
+  Record<
+    ChildProgramExecutablePath,
+    { readonly bytes: number; readonly sha256: string; readonly mode: 0o755 }
+  >
+>;
+export type LegacyChildProgramExecutableCatalog = Readonly<
+  Record<LegacyChildProgramExecutablePath, { readonly bytes: number; readonly sha256: string }>
 >;
 
 export interface PreparedChildPrograms extends ChildProgramSources {
-  readonly executableFiles: readonly ChildProgramExecutableFile[];
-  readonly executableCatalog: ChildProgramExecutableCatalog;
+  readonly busyboxApplets: ChildProgramSourceCode;
+  readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildProgramSourceCode>>;
+  readonly git: ChildProgramSourceCode;
+  readonly programs: FullChildProgramSources;
+  readonly executableFiles: readonly LegacyChildProgramExecutableFile[];
+  readonly executableCatalog: LegacyChildProgramExecutableCatalog;
+  readonly commandExecutableFiles: readonly ChildProgramExecutableFile[];
+  readonly commandExecutableCatalog: ChildProgramExecutableCatalog;
+  readonly dataFiles: readonly ChildProgramDataFile[];
+  readonly dataCatalog: ChildProgramDataCatalog;
   readonly sourceInventory: ChildProgramSourceInventory;
 }
 
@@ -85,257 +97,133 @@ export interface PrepareChildProgramsOptions {
 export async function prepareChildPrograms(
   options: PrepareChildProgramsOptions,
 ): Promise<PreparedChildPrograms> {
-  if (options == null) throw new Error("Pass the pinned program directory");
-  const programDir = NodePath.resolve(options.programDir);
-  const cloudRoot = await NodeFSP.realpath(options.cloudRoot ?? SOURCE_ROOT);
-  const sources = new Map<string, ChildProgramSourceRecord>();
-  const artifacts = new Map<string, ChildProgramSourceRecord>();
-
-  const [bashArtifact, busyboxArtifact, ripgrepArtifact] = await Promise.all([
-    readArtifact(programDir, ARTIFACTS.bash, artifacts),
-    readArtifact(programDir, ARTIFACTS.busybox, artifacts),
-    readArtifact(programDir, ARTIFACTS.ripgrep, artifacts),
-  ]);
-  const [bashGraph, busyboxGraph, ripgrepGraph] = await Promise.all([
-    packageGraph(cloudRoot, "src/computer/ChildBash.ts", "ChildBash", bashMain, sources),
-    packageGraph(cloudRoot, "src/computer/ChildBusybox.ts", "ChildBusybox", busyboxMain, sources),
-    packageGraph(cloudRoot, "src/computer/ChildWasi.ts", "ChildRipgrep", ripgrepMain, sources),
-  ]);
+  const {
+    programDir,
+    cloudRoot,
+    sources,
+    artifacts,
+    bashArtifact,
+    busyboxArtifact,
+    ripgrepArtifact,
+    bashGraph,
+    busyboxGraph,
+    ripgrepGraph,
+  } = await prepareBasePrograms(options);
+  const measured = await prepareMeasuredPrograms({ cloudRoot, programDir, sources, artifacts });
+  const gitTemplates = await readPinnedGitTemplates(programDir);
+  for (const file of gitTemplates.dataFiles) {
+    artifacts.set(file.path, {
+      path: file.path,
+      bytes: file.bytes.byteLength,
+      sha256: file.sha256,
+    });
+  }
 
   for (const relativePath of [
     "infra/childPrograms/prepare.ts",
+    "infra/childPrograms/basic.ts",
     "infra/childPrograms/runtime.ts",
+    "infra/childPrograms/packageGraph.ts",
+    "infra/childPrograms/measured.ts",
+    "infra/childPrograms/gitTemplates.ts",
+    "infra/childPrograms/gitTemplates.manifest.json",
+    "infra/childPrograms/gitTemplateManifest.ts",
+    "infra/kernelPrograms/coreutils/provenance.json",
+    "infra/kernelPrograms/git/provenance.json",
+    "src/computer/ChildProgramSet.ts",
     "src/computer/ChildProgramCatalog.ts",
+    "src/computer/CommandGateway.ts",
+    "src/computer/CompiledChildWorkerLoader.ts",
+    "src/kernel/KernelBashProgram.ts",
+    "src/kernel/KernelBusyboxProgram.ts",
+    "src/kernel/KernelBusyboxPrograms.ts",
+    "src/kernel/KernelCoreutilsPrograms.ts",
+    "src/kernel/KernelGitProgram.ts",
+    "src/kernel/KernelRipgrepProgram.ts",
+    "infra/childPrograms/workerEntrypoints.ts",
   ]) {
     await recordFile(cloudRoot, relativePath, sources);
   }
 
+  const programs: FullChildProgramSources = Object.freeze({
+    bash: bashGraph.code,
+    busyboxCat: busyboxGraph.code,
+    busyboxApplets: busyboxGraph.code,
+    ripgrep: ripgrepGraph.code,
+    coreutils: measured.coreutils,
+    git: measured.git,
+  });
   const inventory: ChildProgramSourceInventory = Object.freeze({
-    format: "signalbox-hook-child-programs-v1",
+    format: "signalbox-child-programs-v1",
     sources: Object.freeze([...sources.values()].sort(byPath)),
     artifacts: Object.freeze([...artifacts.values()].sort(byPath)),
     programs: Object.freeze({
       bash: programInventory(bashGraph),
       busyboxCat: programInventory(busyboxGraph),
+      busyboxApplets: programInventory(busyboxGraph),
       ripgrep: programInventory(ripgrepGraph),
+      coreutils: programInventory(measured.graphs.coreutils),
+      git: programInventory(measured.graphs.git),
     }),
   });
-  const executableFiles = Object.freeze([
-    Object.freeze({ path: "/bin/bash" as const, ...bashArtifact }),
-    Object.freeze({ path: "/bin/cat" as const, ...busyboxArtifact }),
-    Object.freeze({ path: "/bin/rg" as const, ...ripgrepArtifact }),
+  const commandExecutableFiles = Object.freeze([
+    executableFile("/bin/bash", bashArtifact),
+    executableFile("/bin/cat", busyboxArtifact),
+    executableFile("/bin/rg", ripgrepArtifact),
+    executableFile("/bin/sh", bashArtifact),
+    ...CHILD_BUSYBOX_APPLETS.filter((applet) => applet !== "cat").map((applet) =>
+      executableFile(CHILD_PROGRAM_PATHS[applet], busyboxArtifact),
+    ),
+    ...measured.files,
   ]);
-  const executableCatalog: ChildProgramExecutableCatalog = Object.freeze({
-    "/bin/bash": Object.freeze({
-      bytes: bashArtifact.bytes.byteLength,
-      sha256: bashArtifact.sha256,
-    }),
-    "/bin/cat": Object.freeze({
-      bytes: busyboxArtifact.bytes.byteLength,
-      sha256: busyboxArtifact.sha256,
-    }),
-    "/bin/rg": Object.freeze({
-      bytes: ripgrepArtifact.bytes.byteLength,
-      sha256: ripgrepArtifact.sha256,
-    }),
+  const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
+  const executableFiles = Object.freeze(
+    commandExecutableFiles.filter(
+      (file): file is LegacyChildProgramExecutableFile =>
+        file.path === "/bin/bash" || file.path === "/bin/cat" || file.path === "/bin/rg",
+    ),
+  );
+  const executableCatalog = Object.freeze({
+    "/bin/bash": commandExecutableCatalog["/bin/bash"],
+    "/bin/cat": commandExecutableCatalog["/bin/cat"],
+    "/bin/rg": commandExecutableCatalog["/bin/rg"],
   });
   return Object.freeze({
-    bash: bashGraph.code,
-    busyboxCat: busyboxGraph.code,
-    ripgrep: ripgrepGraph.code,
+    ...programs,
+    programs,
     executableFiles,
     executableCatalog,
+    commandExecutableFiles,
+    commandExecutableCatalog,
+    ...gitTemplates,
     sourceInventory: inventory,
   });
 }
 
-interface ProgramGraph {
-  readonly entrypoint: string;
-  readonly code: ChildProgramSourceCode;
-}
-
-async function packageGraph(
-  cloudRoot: string,
-  entrySource: string,
-  entrypoint: string,
-  mainSource: (entrypoint: string) => string,
-  sources: Map<string, ChildProgramSourceRecord>,
-): Promise<ProgramGraph> {
-  const pending = [entrySource];
-  const modules = new Map<string, string>();
-  while (pending.length > 0) {
-    const sourcePath = pending.pop()!;
-    if (modules.has(sourcePath)) continue;
-    assertKernelSourcePath(sourcePath);
-    const absolutePath = NodePath.resolve(cloudRoot, sourcePath);
-    if (!absolutePath.startsWith(cloudRoot + NodePath.sep)) {
-      throw new Error(`Child source escapes apps/cloud: ${sourcePath}`);
-    }
-    const sourceBytes = await NodeFSP.readFile(absolutePath);
-    const stripped = NodeModule.stripTypeScriptTypes(sourceBytes.toString("utf8"), {
-      mode: "strip",
-    });
-    for (const specifier of relativeImports(stripped)) {
-      if (!specifier.endsWith(".ts")) {
-        throw new Error(
-          `Child source import must name a TypeScript file: ${sourcePath} -> ${specifier}`,
-        );
-      }
-      const dependency = NodePath.posix.normalize(
-        NodePath.posix.join(NodePath.posix.dirname(sourcePath), specifier),
-      );
-      assertKernelSourcePath(dependency);
-      pending.push(dependency);
-    }
-    const javascript = rewriteTypeScriptImports(stripped);
-    modules.set(sourcePath, javascript);
-    addRecord(sources, sourcePath, sourceBytes);
-    addGeneratedRecord(
-      sources,
-      `generated/${entrypoint}/${javascriptPath(sourcePath)}`,
-      javascript,
-    );
+export function createChildProgramExecutableCatalog(
+  files: readonly ChildProgramExecutableFile[],
+): ChildProgramExecutableCatalog {
+  const expectedPaths = new Set(Object.values(CHILD_PROGRAM_PATHS));
+  if (
+    files.length !== expectedPaths.size ||
+    files.some((file) => !expectedPaths.delete(file.path)) ||
+    expectedPaths.size !== 0
+  ) {
+    throw new Error("Prepared child executables do not cover the full command catalog");
   }
-
-  const generatedMain = mainSource(entrypoint);
-  const moduleSources = Object.fromEntries(
-    [...modules].map(([sourcePath, javascript]) => [
-      javascriptPath(sourcePath),
-      { js: javascript },
-    ]),
-  );
-  const code: ChildProgramSourceCode = Object.freeze({
-    mainModule: "main.js",
-    entrypoint,
-    modules: Object.freeze({
-      "main.js": Object.freeze({ js: generatedMain }),
-      ...moduleSources,
-    }),
-  });
-  addGeneratedRecord(sources, `generated/${entrypoint}/main.js`, generatedMain);
-  return { entrypoint, code };
+  return Object.freeze(
+    Object.fromEntries(
+      files.map((file) => [
+        file.path,
+        Object.freeze({ bytes: file.bytes.byteLength, sha256: file.sha256, mode: file.mode }),
+      ]),
+    ),
+  ) as ChildProgramExecutableCatalog;
 }
 
-function relativeImports(source: string): readonly string[] {
-  const imports = new Set<string>();
-  for (const match of source.matchAll(IMPORT_PATTERN)) imports.add(match[1]!);
-  return [...imports];
-}
-
-function rewriteTypeScriptImports(source: string): string {
-  return source.replace(/(["'])(\.{1,2}\/[^"']+)\.ts\1/g, "$1$2.js$1");
-}
-
-function assertKernelSourcePath(sourcePath: string): void {
-  if (!/^src\/(?:computer|kernel)\//.test(sourcePath) || sourcePath.split("/").includes("..")) {
-    throw new Error(`Child source is outside the computer and kernel modules: ${sourcePath}`);
-  }
-}
-
-async function readArtifact(
-  programDir: string,
-  artifact: (typeof ARTIFACTS)[keyof typeof ARTIFACTS],
-  inventory: Map<string, ChildProgramSourceRecord>,
-): Promise<{ readonly bytes: Uint8Array; readonly sha256: string }> {
-  const path = NodePath.join(programDir, artifact.file);
-  const bytes = await NodeFSP.readFile(path);
-  const sha256 = digest(bytes);
-  if (bytes.byteLength !== artifact.bytes || sha256 !== artifact.sha256) {
-    throw new Error(`Pinned child program does not match ${artifact.file}`);
-  }
-  inventory.set(artifact.file, { path: artifact.file, bytes: bytes.byteLength, sha256 });
-  return { bytes, sha256 };
-}
-
-async function recordFile(
-  cloudRoot: string,
-  relativePath: string,
-  inventory: Map<string, ChildProgramSourceRecord>,
-): Promise<void> {
-  const bytes = await NodeFSP.readFile(NodePath.join(cloudRoot, relativePath));
-  addRecord(inventory, relativePath, bytes);
-}
-
-function addRecord(
-  inventory: Map<string, ChildProgramSourceRecord>,
-  path: string,
-  bytes: Uint8Array,
-): void {
-  inventory.set(path, { path, bytes: bytes.byteLength, sha256: digest(bytes) });
-}
-
-function addGeneratedRecord(
-  inventory: Map<string, ChildProgramSourceRecord>,
-  path: string,
-  source: string,
-): void {
-  const bytes = new TextEncoder().encode(source);
-  addRecord(inventory, path, bytes);
-}
-
-function programInventory(graph: ProgramGraph) {
-  return Object.freeze({
-    entrypoint: graph.entrypoint,
-    mainModule: graph.code.mainModule,
-    modules: Object.freeze(Object.keys(graph.code.modules).sort()),
-  });
-}
-
-function javascriptPath(sourcePath: string): string {
-  return sourcePath.replace(/\.ts$/, ".js");
-}
-
-function byPath(left: ChildProgramSourceRecord, right: ChildProgramSourceRecord): number {
-  return left.path.localeCompare(right.path);
-}
-
-function digest(bytes: Uint8Array): string {
-  return NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-}
-
-function bashMain(entrypoint: string): string {
-  return [
-    'import { WorkerEntrypoint } from "cloudflare:workers";',
-    'import module from "./program.wasm";',
-    'import { createChildBash } from "./src/computer/ChildBash.js";',
-    `export class ${entrypoint} extends WorkerEntrypoint {`,
-    "  async run(command, owner) {",
-    "    const { pid, credentials } = await owner.metadata();",
-    "    const bash = createChildBash({ module, credentials, pid, port: owner, args: command.argv, env: command.env });",
-    "    try { return await bash.run(); } finally { await bash.drain(); }",
-    "  }",
-    "}",
-    "",
-  ].join("\n");
-}
-
-function busyboxMain(entrypoint: string): string {
-  return [
-    'import { WorkerEntrypoint } from "cloudflare:workers";',
-    'import module from "./program.wasm";',
-    'import { createChildBusybox } from "./src/computer/ChildBusybox.js";',
-    `export class ${entrypoint} extends WorkerEntrypoint {`,
-    "  async run(command, owner) {",
-    "    return await createChildBusybox({ module, port: owner, args: command.argv, env: command.env }).run();",
-    "  }",
-    "}",
-    "",
-  ].join("\n");
-}
-
-function ripgrepMain(entrypoint: string): string {
-  return [
-    'import { WorkerEntrypoint } from "cloudflare:workers";',
-    'import module from "./program.wasm";',
-    'import { createChildWasi } from "./src/computer/ChildWasi.js";',
-    `export class ${entrypoint} extends WorkerEntrypoint {`,
-    "  async run(command, owner) {",
-    "    const wasi = createChildWasi({ module, syscalls: owner, args: command.argv, env: { ...command.env, PWD: command.cwd } });",
-    "    const instance = new WebAssembly.Instance(module, wasi.imports);",
-    "    wasi.bind(instance);",
-    "    return { exitCode: await wasi.start(instance), signal: 0, coreDumped: false };",
-    "  }",
-    "}",
-    "",
-  ].join("\n");
+function executableFile(
+  path: ChildProgramExecutablePath,
+  artifact: { readonly bytes: Uint8Array; readonly sha256: string },
+): ChildProgramExecutableFile {
+  return Object.freeze({ path, ...artifact, mode: 0o755 });
 }
