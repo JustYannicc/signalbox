@@ -33,23 +33,20 @@ describe("Node TLS bundled roots", () => {
     expect(Object.isFrozen(roots)).toBe(true);
   });
 
-  it("gives native TLS the bundled roots while connections stay native", () => {
-    const calls: unknown[][] = [];
-    const native = {
-      rootCertificates: [],
-      DEFAULT_MIN_VERSION: "TLSv1.2",
-      connect(...args: unknown[]) {
-        calls.push(args);
-        return "native socket";
-      },
-    };
-    const module = nodeTlsModule(native);
-    expect(module.rootCertificates).toBe(nodeRootCertificates([]));
-    expect(module.DEFAULT_MIN_VERSION).toBe("TLSv1.2");
-    expect(Reflect.apply(module.connect as (...args: unknown[]) => unknown, undefined, [443])).toBe(
-      "native socket",
-    );
-    expect(calls).toEqual([[443]]);
+  it("returns native TLS itself when the runtime already has roots", () => {
+    const native = { rootCertificates: [NodeTls.rootCertificates[0]!], connect() {} };
+    expect(nodeTlsModule(native)).toBe(native);
+    expect(nodeTlsModule({ default: native })).toBe(native);
+  });
+
+  it("adds only the bundled roots when native TLS has none", () => {
+    const connect = () => "native socket";
+    const native = { rootCertificates: [] as string[], DEFAULT_MIN_VERSION: "TLSv1.2", connect };
+    const module = nodeTlsModule({ default: native });
+    expect(Reflect.get(module, "rootCertificates")).toBe(nodeRootCertificates([]));
+    expect(Reflect.get(module, "connect")).toBe(connect);
+    Reflect.set(module, "DEFAULT_MIN_VERSION", "TLSv1.3");
+    expect(native.DEFAULT_MIN_VERSION).toBe("TLSv1.3");
     expect(native.rootCertificates).toEqual([]);
   });
 });
