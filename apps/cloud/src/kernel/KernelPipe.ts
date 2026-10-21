@@ -129,10 +129,9 @@ export class KernelPipe {
         }
         const notified = await this.#wakes.wait(token, options.signal);
         if (notified.status !== "ok") {
-          throw pipeError(
-            notified.error.code === "EXPIRED" ? "ETIMEDOUT" : "ECANCELED",
-            notified.error.message,
-          );
+          // Notification expiry is not a deadline for the blocking pipe operation.
+          if (notified.error.code === "EXPIRED") continue;
+          throw pipeError("ECANCELED", notified.error.message);
         }
       } finally {
         this.#wakes.release(token);

@@ -323,21 +323,24 @@ async function waitForReadiness(
   direction: PollDirection,
   signal?: AbortSignal,
 ): Promise<void> {
-  const registration = wakes.register(pipe.subscribe(direction));
-  if (registration.status !== "ok") {
-    throw Object.assign(new Error(registration.error.message), { code: "ECANCELED" });
-  }
-  const token = registration.value;
-  try {
-    if (pipe.ready(direction)) wakes.signal(token);
-    const result = await wakes.wait(token, signal);
-    if (result.status !== "ok") {
-      throw Object.assign(new Error(result.error.message), {
-        code: result.error.code === "EXPIRED" ? "ETIMEDOUT" : "ECANCELED",
-      });
+  for (;;) {
+    if (signal?.aborted)
+      throw Object.assign(new Error("Pipe poll cancelled"), { code: "ECANCELED" });
+    const registration = wakes.register(pipe.subscribe(direction));
+    if (registration.status !== "ok") {
+      throw Object.assign(new Error(registration.error.message), { code: "ECANCELED" });
     }
-  } finally {
-    wakes.release(token);
+    const token = registration.value;
+    try {
+      if (pipe.ready(direction)) wakes.signal(token);
+      const result = await wakes.wait(token, signal);
+      if (result.status === "ok") return;
+      // Recheck readiness under a fresh subscription after its notification expires.
+      if (result.error.code === "EXPIRED") continue;
+      throw Object.assign(new Error(result.error.message), { code: "ECANCELED" });
+    } finally {
+      wakes.release(token);
+    }
   }
 }
 
