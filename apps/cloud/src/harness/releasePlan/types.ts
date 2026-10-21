@@ -1,4 +1,4 @@
-import type { HarnessRelease } from "../Harness.ts";
+import type { HarnessRelease } from "../HarnessRelease.ts";
 
 export interface ReleaseFile {
   readonly bytes: number;

@@ -1,4 +1,4 @@
-import type { HarnessRelease } from "../Harness.ts";
+import type { HarnessRelease } from "../HarnessRelease.ts";
 import type {
   HarnessReleasePlanInput,
   PreparedReleaseModule,
