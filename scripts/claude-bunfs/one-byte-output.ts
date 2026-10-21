@@ -42,14 +42,12 @@ function escapeNonAscii(text: string): string {
   );
 }
 
-const SCRIPT = /\.[cm]?js$/;
-
-/** Fails the build if any published script would load as a two-byte string. */
+/** Fails the build if any published module would load as a two-byte string. Every module is
+ * published as JavaScript, so its name doesn't exempt it. */
 export function assertOneByteModules(
   modules: ReadonlyArray<{ readonly path: string; readonly contents: Uint8Array }>,
 ) {
   for (const { path, contents } of modules) {
-    if (!SCRIPT.test(path)) continue;
     const text = new TextDecoder("utf-8", { fatal: true }).decode(contents);
     const index = text.search(/[^\0-\xff]/);
     if (index >= 0) {

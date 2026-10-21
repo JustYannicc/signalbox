@@ -49,13 +49,13 @@ describe("one-byte release output", () => {
     );
     expect(module.raw).toBe("\u00e9");
   });
-  it("checks every published script kind, including facades and runtime modules", () => {
+
+  it("checks every module whatever its name, since all of them load as JavaScript", () => {
     const wide = new TextEncoder().encode('export default "\u2126";');
-    for (const path of ["facade.js", "runtime.mjs", "legacy.cjs"]) {
+    for (const path of ["facade.js", "runtime.mjs", "legacy.cjs", "notes.txt", "extra"]) {
       expect(() => assertOneByteModules([{ path, contents: wide }])).toThrow(
         `BUNDLE_WIDE_SOURCE: ${path}`,
       );
     }
-    expect(() => assertOneByteModules([{ path: "notes.txt", contents: wide }])).not.toThrow();
   });
 });
