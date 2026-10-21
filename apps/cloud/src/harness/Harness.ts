@@ -13,16 +13,13 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
+import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
+import type { HarnessRelease } from "./HarnessRelease.ts";
 import type { Computer } from "../computer/Computer.ts";
 import type { HarnessHookCallback } from "../hooks/HarnessHooks.ts";
 import type { FileCommitReceipt } from "../kernel/FilePersistencePorts.ts";
 
-export interface HarnessRelease {
-  readonly harness: "claude-code" | "codex";
-  readonly version: string;
-  readonly manifestSha256: string;
-  readonly modules: Readonly<Record<string, { readonly bytes: number; readonly sha256: string }>>;
-}
+export type { HarnessRelease };
 
 /** Session files and workspace files are saved together before this checkpoint is returned. */
 export interface HarnessCheckpoint {
@@ -44,6 +41,7 @@ export class HarnessError extends Schema.TaggedError<HarnessError>()("HarnessErr
 }) {}
 
 export interface HarnessOpenInput {
+  readonly loadedRelease?: LoadedHarnessRelease;
   readonly release: HarnessRelease;
   readonly session: ProviderAdapterV2OpenSessionInput;
   readonly computer: Computer;

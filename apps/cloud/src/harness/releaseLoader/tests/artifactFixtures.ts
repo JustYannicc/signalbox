@@ -101,7 +101,11 @@ export const cliModuleMap = () =>
   Object.fromEntries(cliSpecifications.map(({ name, path, type }) => [name, { path, type }]));
 
 export async function claudeFixture(
-  options: { cliMapBytes?: Uint8Array; sdkMapBytes?: Uint8Array } = {},
+  options: {
+    cliMapBytes?: Uint8Array;
+    sdkMapBytes?: Uint8Array;
+    assets?: Readonly<Record<string, { bytes: Uint8Array; loader: number; encoding: number }>>;
+  } = {},
 ) {
   const files = new Map<string, Uint8Array>();
   const modules: Record<string, ReleaseFile & { path: string; type: PreparedModuleType }> = {};
@@ -122,6 +126,21 @@ export async function claudeFixture(
     loader: 5,
     encoding: 0,
   };
+  const extraAssets: Record<
+    string,
+    ReleaseFile & { path: string; key: string; loader: number; encoding: number }
+  > = {};
+  for (const [name, entry] of Object.entries(options.assets ?? {})) {
+    const path = `assets/extra-${Object.keys(extraAssets).length}`;
+    files.set(`cli/${path}`, entry.bytes);
+    extraAssets[name] = {
+      ...(await descriptor(entry.bytes)),
+      path,
+      key: name.replace(/^\//, ""),
+      loader: entry.loader,
+      encoding: entry.encoding,
+    };
+  }
   const cliMapBytes = options.cliMapBytes ?? encodeJson(cliModuleMap());
   files.set("cli/module-map.json", cliMapBytes);
   const cliModuleBytes = Object.values(modules).reduce((sum, module) => sum + module.bytes, 0);
@@ -143,6 +162,7 @@ export async function claudeFixture(
       moduleMap: { path: "module-map.json", sha256: (await descriptor(cliMapBytes)).sha256 },
       modules,
       assets: {
+        ...extraAssets,
         "/help": asset,
         "/second-help": { ...asset, key: "second-help" },
         "/module-asset": { ...asset, ...modules["data.txt"], key: "module-asset" },

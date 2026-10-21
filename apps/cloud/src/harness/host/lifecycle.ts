@@ -206,7 +206,9 @@ export const createHostLifecycle = <G>(
             return {
               open: (harness: HarnessOpenInput) =>
                 Effect.gen(function* () {
-                  const runtime = yield* binding.factory.open(harness).pipe(Scope.provide(scope));
+                  const runtime = yield* binding.factory
+                    .open({ ...harness, loadedRelease: loaded })
+                    .pipe(Scope.provide(scope));
                   if (harness.checkpoint !== undefined) {
                     const access = attempt.initialAccess;
                     if (access === undefined)
