@@ -7,15 +7,23 @@ import type {
   KernelBashPort,
 } from "../kernel/KernelBashPort.ts";
 import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
+import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 
 class WorkerBashPort extends RpcTarget implements KernelBashPort {
-  readonly #port: KernelBashPort;
+  readonly #lease: ChildHostLease;
+  readonly #port: ChildHostRef<KernelBashPort>;
   readonly #pid: number;
   readonly #credentials: KernelBashCredentials;
 
-  constructor(port: KernelBashPort, pid: number, credentials: KernelBashCredentials) {
+  constructor(
+    lease: ChildHostLease,
+    port: KernelBashPort,
+    pid: number,
+    credentials: KernelBashCredentials,
+  ) {
     super();
-    this.#port = port;
+    this.#lease = lease;
+    this.#port = lease.hold(port);
     this.#pid = pid;
     this.#credentials = credentials;
   }
@@ -24,43 +32,49 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
     return { pid: this.#pid, credentials: { ...this.#credentials } };
   }
 
-  call(request: KernelSyscallRequest) {
-    return this.#port.call(request);
+  async call(request: KernelSyscallRequest) {
+    return this.#port.get().call(request);
   }
 
-  callBash(request: KernelBashCall) {
-    return this.#port.callBash(request);
+  async callBash(request: KernelBashCall) {
+    return this.#port.get().callBash(request);
   }
 
   async fork() {
-    const result = await this.#port.fork();
+    const result = await this.#port.get().fork();
     return result.kind === "fork"
-      ? { ...result, port: new WorkerBashPort(result.port, result.pid, this.#credentials) }
+      ? {
+          ...result,
+          port: new WorkerBashPort(this.#lease, result.port, result.pid, this.#credentials),
+        }
       : result;
   }
 
-  wait(pid: number, options: number) {
-    return this.#port.wait(pid, options);
+  async wait(pid: number, options: number) {
+    return this.#port.get().wait(pid, options);
   }
 
-  exec(request: Parameters<KernelBashPort["exec"]>[0]) {
-    return this.#port.exec(request);
+  async exec(request: Parameters<KernelBashPort["exec"]>[0]) {
+    return this.#port.get().exec(request);
   }
 
-  complete(result: KernelBashCompletion) {
-    return this.#port.complete(result);
+  async complete(result: KernelBashCompletion) {
+    const completed = await this.#port.get().complete(result);
+    // A completed process rejects every later call, so its fork state can go before the command.
+    this.#lease.drop(this.#port);
+    return completed;
   }
 }
 
 /** Forked ports must remain RPC capabilities when they cross the child worker boundary. */
-export function createWorkerBashHost(options: KernelBashHostOptions) {
+export function createWorkerBashHost(options: KernelBashHostOptions, lease: ChildHostLease) {
   const owner = createKernelBashHost(options);
   const credentials = {
     ...options.credentials,
     umask: options.context.filesystem.posixPolicy?.umask ?? options.credentials.umask,
   };
   return {
-    host: new WorkerBashPort(owner.port, owner.pid, credentials),
+    host: new WorkerBashPort(lease, owner.port, owner.pid, credentials),
     exited: owner.exited,
     close: owner.close,
   };
