@@ -23,7 +23,6 @@ import * as NodeStreamConsumers from "node:stream/consumers";
 import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeStringDecoder from "node:string_decoder";
 import * as NodeTimersPromises from "node:timers/promises";
-import * as NodeTls from "node:tls";
 import * as NodeTty from "node:tty";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
@@ -33,6 +32,7 @@ import * as NodeVM from "node:vm";
 import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeZlib from "node:zlib";
 import { createNodeAsyncHooks } from "../../src/isolate/NodeAsyncHooks.ts";
+import { nodeTlsModule } from "../../src/isolate/NodeTls.ts";
 
 function nativeModule(namespace: object): object {
   const value: unknown = Reflect.get(namespace, "default") ?? namespace;
@@ -71,7 +71,7 @@ export function getNativeHostModules() {
       "stream/promises": NodeStreamPromises,
       string_decoder: NodeStringDecoder,
       "timers/promises": NodeTimersPromises,
-      tls: NodeTls,
+      tls: nodeTlsModule(),
       tty: NodeTty,
       url: NodeURL,
       util: NodeUtil,

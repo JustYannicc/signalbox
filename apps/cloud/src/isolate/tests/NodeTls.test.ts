@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeTls from "node:tls";
 import { describe, expect, it } from "@effect/vitest";
-import { nodeRootCertificates } from "../NodeTls.ts";
+import { nodeRootCertificates, nodeTlsModule } from "../NodeTls.ts";
 
 describe("Node TLS bundled roots", () => {
   it("supplies parseable CA certificates when the runtime has no bundled metadata", () => {
@@ -31,5 +31,24 @@ describe("Node TLS bundled roots", () => {
     native.length = 0;
     expect(roots).toEqual([first]);
     expect(Object.isFrozen(roots)).toBe(true);
+  });
+
+  it("returns native TLS itself when the runtime already has roots", () => {
+    const native = { rootCertificates: [NodeTls.rootCertificates[0]!], connect() {} };
+    expect(nodeTlsModule(native)).toBe(native);
+    expect(nodeTlsModule({ default: native })).toBe(native);
+  });
+
+  it("adds only the bundled roots when native TLS has none", () => {
+    const connect = () => "native socket";
+    const native = { rootCertificates: [] as string[], DEFAULT_MIN_VERSION: "TLSv1.2", connect };
+    const module = nodeTlsModule({ default: native });
+    expect(Reflect.get(module, "rootCertificates")).toBe(nodeRootCertificates([]));
+    expect(Reflect.get(module, "connect")).toBe(connect);
+    Reflect.set(module, "DEFAULT_MIN_VERSION", "TLSv1.3");
+    expect(native.DEFAULT_MIN_VERSION).toBe("TLSv1.3");
+    expect(native.rootCertificates).toEqual([]);
+    const clone = Object.create(null, Object.getOwnPropertyDescriptors(module));
+    expect(clone.rootCertificates).toBe(nodeRootCertificates([]));
   });
 });
