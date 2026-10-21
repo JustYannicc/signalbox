@@ -63,7 +63,7 @@ export function planSingleModule(input: {
     },
   ];
   const secondaries = Object.entries(input.entries).filter(([name]) => name !== input.mainEntry);
-  const namespaces = new Map<string, string>();
+  const wrappers = new Map<string, string>();
   for (const [index, [name, specifier]] of secondaries.entries()) {
     const accessor = JSON.stringify(`signalbox:entry:${index}`);
     // Requiring an entry directly yields esbuild's CommonJS view: module.exports for a CommonJS
@@ -71,7 +71,7 @@ export function planSingleModule(input: {
     // namespace keeps the split build's exports, and still evaluates on first call. The .mjs
     // path selects Node interop, so a CommonJS default is module.exports even with __esModule.
     const wrapper = `signalbox:entry-wrapper:${index}.mjs`;
-    namespaces.set(
+    wrappers.set(
       wrapper,
       `import * as entry from ${JSON.stringify(specifier)};export default entry;`,
     );
@@ -92,18 +92,20 @@ export function planSingleModule(input: {
   const plugin: Esbuild.Plugin = {
     name: PLUGIN_NAMESPACE,
     setup(build) {
-      // Only the synthetic entry point and the main module's own wrapper requires are ours; any
-      // real module with a similar name resolves as usual.
+      // Only the synthetic entry point and that module's own wrapper requires are ours. Real
+      // modules with similar names resolve as usual, including an entry a wrapper imports.
       build.onResolve({ filter: /^signalbox:/ }, (args) => {
         const ours =
           args.kind === "entry-point"
             ? args.path === MAIN_SPECIFIER
-            : args.namespace === PLUGIN_NAMESPACE && namespaces.has(args.path);
+            : args.kind === "require-call" &&
+              args.namespace === PLUGIN_NAMESPACE &&
+              args.importer === MAIN_SPECIFIER &&
+              wrappers.has(args.path);
         return ours ? { path: args.path, namespace: PLUGIN_NAMESPACE } : undefined;
       });
       build.onLoad({ filter: /.*/, namespace: PLUGIN_NAMESPACE }, (args) => {
-        const contents =
-          args.path === MAIN_SPECIFIER ? lines.join("\n") : namespaces.get(args.path);
+        const contents = args.path === MAIN_SPECIFIER ? lines.join("\n") : wrappers.get(args.path);
         return contents === undefined ? null : { contents, loader: "js" };
       });
     },

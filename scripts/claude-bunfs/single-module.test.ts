@@ -172,6 +172,23 @@ describe("single-module release planning", () => {
     expect([worker.value, worker.other]).toEqual([17, 18]);
   });
 
+  it("publishes entries whose own specifiers look like its wrappers", async () => {
+    const { load } = await publish({
+      sources: {
+        "fixture:main": "",
+        "signalbox:entry-wrapper:0.mjs": "export const value=17;",
+        "signalbox:entry-wrapper:999.mjs": "export const other=18;",
+      },
+      entries: {
+        claude: "fixture:main",
+        "workers/one": "signalbox:entry-wrapper:0.mjs",
+        "workers/two": "signalbox:entry-wrapper:999.mjs",
+      },
+    });
+    expect((await load("workers/one.js")).value).toBe(17);
+    expect((await load("workers/two.js")).other).toBe(18);
+  });
+
   it("keeps an entry's own __esModule export instead of esbuild's interop marker", async () => {
     const { load } = await publish({
       sources: {
