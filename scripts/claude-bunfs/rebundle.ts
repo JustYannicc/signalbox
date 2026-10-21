@@ -1,26 +1,25 @@
 // Reuses codex-wasi-agentos's esbuild lazy-init approach at 45eca7daf24bbac603689cc3229693310d184e51.
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - build-time release transformation and CLI output.
 import * as NodeCrypto from "node:crypto";
-import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Esbuild from "esbuild";
 import { readExtraction } from "./extracted-input.ts";
-import { normalizeModule } from "./normalize.ts";
-import { publishBundle, type EmbeddedAsset } from "./bundle-artifact.ts";
+import { publishBundle, type BundleFile, type EmbeddedAsset } from "./bundle-artifact.ts";
 import { discoverEmbeddedModuleReferences } from "./embedded-entrypoints.ts";
 import { createDeferredInitialization } from "./deferred-initialization.ts";
+import { entryExports, planSingleModule } from "./single-module.ts";
+import { type BunGraphOptions, createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
 
-export interface RebundleOptions {
+export interface RebundleOptions extends BunGraphOptions {
   readonly extracted: string;
   readonly output: string;
   readonly version: string;
   readonly platform: string;
-  /** Pass the same object if transform adds modules while the graph loads. */
-  readonly layerModules?: Readonly<Record<string, string>>;
-  /** Prepared real package sources keyed by their exact import specifiers. */
-  readonly environmentPackageModules?: Readonly<Record<string, string>>;
-  /** Stable host entry names mapped to virtual layer modules. Names omit the .js extension. */
+  /**
+   * Stable host entry names mapped to virtual layer modules. Names omit the .js extension.
+   * Deferred builds publish entries as snapshot facades, so they must export functions or constants.
+   */
   readonly hostEntrypoints?: Readonly<Record<string, string>>;
   /** Prebundled host/bootstrap modules, kept outside release import remapping. */
   readonly runtimeModules?: Readonly<Record<string, string>>;
@@ -32,12 +31,6 @@ export interface RebundleOptions {
     metafile: Esbuild.Metafile,
     embeddedEntrypoints: Readonly<Record<string, string>>,
   ) => void;
-  readonly transform?: (module: {
-    key: string;
-    name: string;
-    source: string;
-    format: number;
-  }) => Promise<string>;
 }
 
 export async function rebundle(options: RebundleOptions) {
@@ -89,18 +82,19 @@ export async function rebundle(options: RebundleOptions) {
     entries[name] = specifier;
     hostEntrypoints[name] = `${name}.js`;
   }
-  const loaded = new Set<string>();
-  const requiredHostModules = new Set<string>();
-  const builtins = new Set(NodeModule.builtinModules.flatMap((name) => [name, `node:${name}`]));
+  const graph = createBunGraphPlugin({
+    extraction: input,
+    sources: sourceByName,
+    options,
+    deferSource,
+  });
+  const { loaded, requiredHostModules } = graph;
   const output = NodePath.resolve(options.output);
-  const result = await Esbuild.build({
-    entryPoints: entries,
+  const shared = {
     outdir: output,
     entryNames: "[dir]/[name]",
-    chunkNames: "chunks/[name]-[hash]",
     bundle: true,
     minifyWhitespace: true,
-    splitting: true,
     format: "esm",
     platform: "node",
     target: "es2022",
@@ -116,89 +110,44 @@ export async function rebundle(options: RebundleOptions) {
         ? `const require=(${options.requireBootstrap});`
         : 'import { createRequire as __signalboxCreateRequire } from "node:module";const require=__signalboxCreateRequire("/signalbox/claude.js");',
     },
-    plugins: [
-      ...(deferred ? [deferred.plugin] : []),
-      {
-        name: "bun-extracted-graph",
-        setup(build) {
-          build.onResolve({ filter: /.*/ }, (args) => {
-            if (options.layerModules && Object.hasOwn(options.layerModules, args.path))
-              return { path: args.path, namespace: "signalbox-layer" };
-            if (Object.hasOwn(options.environmentPackageModules ?? {}, args.path))
-              return { path: args.path, namespace: "signalbox-environment-package" };
-            if (builtins.has(args.path)) {
-              const name = args.path.startsWith("node:") ? args.path : `node:${args.path}`;
-              requiredHostModules.add(name);
-              return { path: name, external: true };
-            }
-            // Keep scanning so one rejected build reports the complete missing package set.
-            if (args.path === "ws" || args.path === "node-fetch" || args.path.startsWith("bun:")) {
-              requiredHostModules.add(args.path);
-              return { path: args.path, external: true };
-            }
-            const name = args.path.startsWith(".")
-              ? NodePath.posix.resolve(NodePath.posix.dirname(args.importer), args.path)
-              : args.path;
-            const module = input.byName.get(name) ?? input.byKey.get(name);
-            if (!module)
-              throw new Error(`BUN_IMPORT_UNRESOLVED: ${args.importer || "<entry>"}: ${args.path}`);
-            return { path: module.name, namespace: "bun-graph" };
-          });
-          build.onLoad({ filter: /.*/, namespace: "signalbox-layer" }, (args) => ({
-            contents: deferSource(options.layerModules![args.path]!, args.path),
-            loader: "js",
-          }));
-          build.onLoad({ filter: /.*/, namespace: "signalbox-environment-package" }, (args) => ({
-            contents: deferSource(options.environmentPackageModules![args.path]!, args.path),
-            loader: "js",
-          }));
-          build.onLoad({ filter: /.*/, namespace: "bun-graph" }, async (args) => {
-            const module = input.byName.get(args.path)!;
-            const key = module.key ?? module.name.replace(/^\/+/, "");
-            loaded.add(key);
-            if (module.loader === 1) {
-              const normalized = normalizeModule({
-                name: module.name,
-                key,
-                source: sourceByName.get(module.name)!,
-                format: module.format,
-                isEntry: module.index === input.manifest.graph.entry,
-              });
-              const source = options.transform
-                ? await options.transform(normalized)
-                : normalized.source;
-              return {
-                contents: deferSource(source, module.name),
-                loader: "js",
-              };
-            }
-            if (module.loader === 13) {
-              const bytes = await input.readContents(module);
-              const text =
-                module.encoding === 2 ? bytes.toString("utf16le") : bytes.toString("latin1");
-              return { contents: text, loader: "text" };
-            }
-            if (module.loader === 5) {
-              return { contents: `export default ${JSON.stringify(module.name)};`, loader: "js" };
-            }
-            throw new Error(`BUN_LOADER_REQUIRES_HOST: ${module.name}: loader ${module.loader}`);
-          });
-        },
-      },
-    ],
+  } satisfies Esbuild.BuildOptions;
+  // Split output still drives verification: lazy __esm init follows static reachability, so each
+  // entry's split graph is what that entry evaluates.
+  const split = await Esbuild.build({
+    ...shared,
+    entryPoints: entries,
+    chunkNames: "chunks/[name]-[hash]",
+    splitting: true,
+    plugins: [...(deferred ? [deferred.plugin] : []), graph.plugin],
   });
   const missingPackages = [
     ...new Set(
-      Object.values(result.metafile.outputs).flatMap((output) =>
+      Object.values(split.metafile.outputs).flatMap((output) =>
         output.imports
-          .filter((dependency) => dependency.external && !builtins.has(dependency.path))
+          .filter((dependency) => dependency.external && !NODE_BUILTINS.has(dependency.path))
           .map((dependency) => dependency.path),
       ),
     ),
   ].sort();
   if (missingPackages.length)
     throw new Error(`BUNDLE_ENVIRONMENT_MODULES_MISSING: ${missingPackages.join(", ")}`);
-  options.verify?.(result.metafile, embeddedEntrypoints);
+  options.verify?.(split.metafile, embeddedEntrypoints);
+  let published = split;
+  let facades: BundleFile[] = [];
+  if (deferred) {
+    // Deferred entries evaluate nothing until launch(), so one shared module keeps their timing.
+    const single = planSingleModule({
+      mainEntry: "claude",
+      entries,
+      exports: entryExports(split.metafile, output, entries),
+    });
+    published = await Esbuild.build({
+      ...shared,
+      entryPoints: { [single.bundleName]: single.entryPoint },
+      plugins: [single.plugin, deferred.plugin, graph.plugin],
+    });
+    facades = single.facades;
+  }
   const embeddedAssets: EmbeddedAsset[] = [];
   // Bun.file can read embedded assets without a JavaScript import. Preserve the full asset map.
   for (const module of input.manifest.modules) {
@@ -228,10 +177,11 @@ export async function rebundle(options: RebundleOptions) {
     embeddedEntrypoints,
     hostEntrypoints,
     modules: [
-      ...result.outputFiles.map((file) => ({
+      ...published.outputFiles.map((file) => ({
         path: NodePath.relative(output, file.path).split(NodePath.sep).join("/"),
         contents: file.contents,
       })),
+      ...facades,
       ...Object.entries(options.runtimeModules ?? {}).map(([path, source]) => ({
         path,
         contents: new TextEncoder().encode(source),
@@ -240,7 +190,7 @@ export async function rebundle(options: RebundleOptions) {
     assets: embeddedAssets,
     requiredHostModules: [...requiredHostModules],
     sourceModules: [...loaded],
-    metafile: result.metafile,
+    metafile: published.metafile,
   });
 }
 

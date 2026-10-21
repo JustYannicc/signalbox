@@ -255,7 +255,7 @@ describe("integrated Claude rebundling", () => {
     }
   });
 
-  it("defers release and nested dynamic initialization while retaining split workers", async () => {
+  it("defers release and nested dynamic initialization through one shared release module", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-deferred-"));
     const symbol = `signalbox.deferred.fixture.${NodeCrypto.randomUUID()}`;
     const touch = `globalThis[Symbol.for(${JSON.stringify(symbol)})]`;
@@ -311,9 +311,10 @@ describe("integrated Claude rebundling", () => {
       expect(nested.sourceFilename).toBe(WORKER_NAME);
       expect(nested.sourceDirname).toBe(NodePath.posix.dirname(WORKER_NAME));
       expect(hits).toEqual(["entry", "worker"]);
-      expect(
-        Object.keys(artifact.manifest.modules).some((path) => path.startsWith("chunks/")),
-      ).toBe(true);
+      // Split chunks cost the isolate tens of MiB of module records, so entries are facades.
+      expect(Object.keys(artifact.manifest.modules).sort()).toEqual(
+        ["claude.js", "signalbox/release.js", workerPath].sort(),
+      );
     } finally {
       Reflect.deleteProperty(globalThis, Symbol.for(symbol));
       await NodeFSP.rm(root, { recursive: true, force: true });
