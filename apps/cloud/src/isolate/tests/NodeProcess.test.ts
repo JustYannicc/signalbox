@@ -159,6 +159,40 @@ describe("Node process facet", () => {
     await new Promise<void>((resolve) => nextTick(() => resolve()));
   });
 
+  it("lets guest code replace process methods the way graceful-fs and signal-exit do", () => {
+    const process = createNodeProcess(host(44));
+    const originalCwd = process.cwd;
+    const originalChdir = process.chdir;
+    let cached: string | undefined;
+    process.cwd = () => (cached ??= originalCwd.call(process));
+    process.chdir = (directory: string) => {
+      cached = undefined;
+      originalChdir.call(process, directory);
+    };
+    const emitted: unknown[] = [];
+    const originalEmit = process.emit;
+    process.emit = (event: string | symbol, ...args: unknown[]) => {
+      emitted.push(event);
+      return originalEmit.call(process, event, ...args);
+    };
+
+    expect(process.cwd()).toBe("/work/one");
+    process.chdir("/work/next");
+    expect(process.cwd()).toBe("/work/next");
+    const received: unknown[] = [];
+    process.on("custom", (value) => received.push(value));
+    expect(process.emit("custom", 1)).toBe(true);
+    expect(emitted).toEqual(["custom"]);
+    expect(received).toEqual([1]);
+    for (const name of ["cwd", "chdir", "emit", "nextTick", "exit", "kill"]) {
+      expect(Object.getOwnPropertyDescriptor(process, name)).toMatchObject({
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  });
+
   it("measures each logical process lifetime from its own captured monotonic start", () => {
     const clock = monotonicClock(9_000_000_000_000_000_000n);
     const first = createNodeProcess({ ...host(47), monotonicNowNs: clock.now });
