@@ -19,7 +19,6 @@ import * as NodeStreamWeb from "node:stream/web";
 import * as NodeStringDecoder from "node:string_decoder";
 import * as NodeTimers from "node:timers";
 import * as NodeTimersPromises from "node:timers/promises";
-import * as NodeTls from "node:tls";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import * as NodeUtilTypes from "node:util/types";
@@ -28,6 +27,7 @@ import * as NodeVM from "node:vm";
 import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeZlib from "node:zlib";
 import { createNodeAsyncHooks } from "../../isolate/NodeAsyncHooks.ts";
+import { nodeTlsModule } from "../../isolate/NodeTls.ts";
 
 function nativeModule(namespace: object): object {
   const value: unknown = Reflect.get(namespace, "default") ?? namespace;
@@ -61,7 +61,7 @@ export const DEFAULT_NODE_NATIVE_MODULES = Object.freeze(
       string_decoder: NodeStringDecoder,
       timers: NodeTimers,
       "timers/promises": NodeTimersPromises,
-      tls: NodeTls,
+      tls: nodeTlsModule(),
       url: NodeURL,
       util: NodeUtil,
       "util/types": NodeUtilTypes,
