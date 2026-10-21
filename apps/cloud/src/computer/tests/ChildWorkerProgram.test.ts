@@ -265,6 +265,25 @@ describe("ChildWorkerProgram", () => {
       await drained;
       expect(capacity.active).toBe(0);
       await expect(result).rejects.toBe(failure);
+      await expect(program.drain()).rejects.toThrow("Close also failed");
+    }));
+
+  it("reports a cleanup rejection with no value to drain after logical exit", () =>
+    withContext(async (context) => {
+      const status = { exitCode: 0, signal: 0, coreDumped: false };
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity: new ChildWorkerCapacity(1),
+        dispatch: { run: async () => status },
+        createHost: () => ({
+          host: {},
+          exited: Promise.resolve(status),
+          close: () => Promise.reject(),
+        }),
+      });
+      await expect(program.run(context)).resolves.toEqual(status);
+      await expect(program.drain()).rejects.toBeUndefined();
     }));
 
   it("reports a closing failure when no logical exit was published", () =>
