@@ -24,8 +24,7 @@ const syntheticComparisonCases: readonly SyntheticComparisonCase[] = [
     id: "sed-edit",
     executable: "sed",
     args: ["-i", "s/needle/thread/g", "nested/input"],
-    kind: "machine",
-    reason: "unqualified-option",
+    kind: "qualified-isolate",
   },
   {
     id: "sed-extended",
