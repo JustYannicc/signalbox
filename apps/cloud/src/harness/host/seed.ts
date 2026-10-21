@@ -127,7 +127,7 @@ export async function createSeedCatalog(
 }
 export type SeedCatalog = Awaited<ReturnType<typeof createSeedCatalog>>;
 
-// A separate scope keeps the reader from retaining loaded module maps or setup options.
+// Keep catalog construction inputs out of the reader context; the lifecycle still owns loaded.
 function createPayloadReader(
   stages: Record<SeedStage, readonly SeedFile[]>,
   assetBytes: ReadonlyMap<string, Uint8Array>,

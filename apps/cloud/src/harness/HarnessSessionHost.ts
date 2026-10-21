@@ -81,20 +81,7 @@ export const createHarnessSessionHost = <G>(
           message: "Harness seed catalog is invalid.",
         }),
     });
-    const { threadId, files, modelTransport, executor, buildRuntime, bindComputer, hooks } =
-      options;
+    const { release: _release, programs: _programs, ...hostOptions } = options;
     // Release sources may close over entire bundles; the live host only needs verified assets.
-    return yield* createHostLifecycle(
-      {
-        threadId,
-        files,
-        modelTransport,
-        executor,
-        buildRuntime,
-        bindComputer,
-        ...(hooks === undefined ? {} : { hooks }),
-      },
-      loaded,
-      catalog,
-    );
+    return yield* createHostLifecycle(hostOptions, loaded, catalog);
   });

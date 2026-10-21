@@ -20,6 +20,7 @@ export interface LoadHarnessReleaseOptions extends Pick<
 
 export interface LoadedHarnessRelease {
   readonly plan: HarnessReleasePlan;
+  /** Holds verified assets and module maps only; prepared modules are verified but not retained. */
   readonly payloads: ReadonlyMap<string, Uint8Array>;
 }
 

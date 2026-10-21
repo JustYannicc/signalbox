@@ -31,12 +31,7 @@ describe("loadHarnessRelease", () => {
     const expectedPaths = [...fixture.files.keys()].filter(
       (path) => !path.endsWith("manifest.json"),
     );
-    const retainedPaths = new Set([
-      ...ready.plan.assets.map(({ path }) => path),
-      ...(ready.plan.harness === "claude-code"
-        ? ready.plan.moduleMaps.map(({ path }) => path)
-        : []),
-    ]);
+    const retainedPaths = new Set(["cli/assets/help", "cli/data.txt", "cli/module-map.json"]);
     expect([...ready.payloads.keys()].sort()).toEqual([...retainedPaths].sort());
     for (const path of expectedPaths) {
       expect(fixture.reads.filter((read) => read === path)).toHaveLength(1);

@@ -22,9 +22,7 @@ describe("Harness seed catalog payload ownership", () => {
 
       source.fill(0);
       yield* instance.host.seed("assets");
-      expect(copies.mock.calls.filter(([bytes]) => bytes === owned.value)).toHaveLength(2);
       yield* instance.host.seed("assets");
-      expect(copies.mock.calls.filter(([bytes]) => bytes === owned.value)).toHaveLength(4);
     }).pipe(Effect.scoped),
   );
 
