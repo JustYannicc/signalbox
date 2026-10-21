@@ -4,6 +4,7 @@ import {
 } from "../kernel/KernelCommandExecutor.ts";
 import type { KernelCommand, KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
 import { KernelForwardingUnavailable } from "../kernel/KernelCommandForwarder.ts";
+import type { ChildWorkerRequester } from "./ChildWorkerCapacity.ts";
 import type { ComputerExecPort } from "./Computer.ts";
 import type { ComputerEscalationEvidence, ComputerEscalationTable } from "./EscalationTable.ts";
 
@@ -59,19 +60,26 @@ export function createComputerCommands(
     return captured;
   };
   const isolate: ComputerExecPort = Object.freeze({
-    exec: (command: KernelCommand, signal: AbortSignal) =>
-      local.spawn(capture(command, signal), signal),
+    exec: (
+      command: KernelCommand,
+      signal: AbortSignal,
+      requester: ChildWorkerRequester | undefined,
+    ) => local.spawn(capture(command, signal), signal, requesterParent(options.kernel, requester)),
   });
   return Object.freeze({
     isolate,
-    async exec(command: KernelCommand, signal: AbortSignal) {
+    async exec(
+      command: KernelCommand,
+      signal: AbortSignal,
+      requester: ChildWorkerRequester | undefined,
+    ) {
       const captured = capture(command, signal);
       const evidence = await options.evidence?.(captured, signal);
       signal.throwIfAborted();
       const decision = options.escalation.decide(captured, evidence);
       return decision.kind === "machine"
         ? options.machine.spawn(captured, signal)
-        : commands.spawn(captured, signal);
+        : commands.spawn(captured, signal, requesterParent(options.kernel, requester));
     },
   });
 }
@@ -85,7 +93,11 @@ function admittedCommands(options: AdmittedComputerCommandOptions) {
   const port = (kernel: AdmittedComputerCommandOptions["kernel"]): ComputerExecPort => {
     const executor = new KernelCommandExecutor({ ...kernel, admitted: true, forwarder });
     return Object.freeze({
-      exec(command: KernelCommand, signal: AbortSignal) {
+      exec(
+        command: KernelCommand,
+        signal: AbortSignal,
+        requester: ChildWorkerRequester | undefined,
+      ) {
         signal.throwIfAborted();
         const captured = snapshotCommand(command);
         if (kernel.filesystem.realpath(captured.cwd) !== captured.cwd) {
@@ -94,7 +106,7 @@ function admittedCommands(options: AdmittedComputerCommandOptions) {
             "Command cwd must be canonical",
           );
         }
-        return executor.spawn(captured, signal);
+        return executor.spawn(captured, signal, requesterParent(kernel, requester));
       },
     });
   };
@@ -130,4 +142,15 @@ function snapshotCommand(command: KernelCommand): KernelCommand {
     cwd: command.cwd,
     env: Object.freeze(env),
   });
+}
+
+function requesterParent(
+  kernel: ComputerCommandOptions["kernel"],
+  requester: ChildWorkerRequester | undefined,
+) {
+  if (requester === undefined) return kernel.parent;
+  if (requester.processes !== kernel.host.processes) {
+    throw new TypeError("Computer requester belongs to another process table");
+  }
+  return requester.process;
 }

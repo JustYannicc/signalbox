@@ -1,5 +1,5 @@
 // @effect-diagnostics globalTimers:off - V1 observations use request-owned host timers outside Effect.
-import type { ChildWorkerPermit } from "../../computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerCapacity, ChildWorkerPermit } from "../../computer/ChildWorkerCapacity.ts";
 import type { CodeModeDelegates } from "./delegates.ts";
 import {
   messageError,
@@ -26,6 +26,7 @@ export class CodeModeCell {
   readonly #stopped = Promise.withResolvers<void>();
   readonly #cancelled = Promise.withResolvers<void>();
   readonly #lifetime: Promise<void>;
+  readonly #admissionController: AbortController;
   #closed = false;
   #final: "Result" | "Terminated" | undefined;
   #error: string | null = null;
@@ -34,22 +35,26 @@ export class CodeModeCell {
   #observerCancellation: AbortSignal | undefined;
   #terminalContent: CodeModeContent[] | undefined;
   #observing = false;
+  #admission: "queued" | "cancelled" | undefined = "queued";
   readonly id: string;
 
   constructor(options: {
     id: string;
     sessionId: string;
     request: CodeModeExecuteRequest;
-    storedValues: Readonly<Record<string, Json>>;
     loader: CodeModeCellLoaderPort;
     code: CodeModeCellCode;
-    permit: ChildWorkerPermit;
+    admissionController: AbortController;
+    cellCapacity: Pick<ChildWorkerCapacity, "acquire">;
+    storedValues: () => Readonly<Record<string, Json>>;
+    admissionSettled: () => void;
     delegates: CodeModeDelegates;
     commit: (writes: Readonly<Record<string, Json>>) => void;
   }) {
     this.id = options.id;
     this.#sessionId = options.sessionId;
     this.#delegates = options.delegates;
+    this.#admissionController = options.admissionController;
     this.#controller.signal.addEventListener("abort", () => this.#cancelled.resolve(), {
       once: true,
     });
@@ -104,9 +109,16 @@ export class CodeModeCell {
       stopped: async () => this.#stopped.resolve(),
     };
     this.#lifetime = (async () => {
+      let permit: ChildWorkerPermit | undefined;
+      let started = false;
       try {
+        permit = await options.cellCapacity.acquire(options.admissionController.signal, undefined);
+        options.admissionController.signal.throwIfAborted();
+        this.#admission = undefined;
+        options.admissionSettled();
+        started = true;
         const completion = await options.loader.run(
-          { code: options.code, request: options.request, storedValues: options.storedValues },
+          { code: options.code, request: options.request, storedValues: options.storedValues() },
           events,
         );
         // A successful RPC return alone does not attest to guest or callback teardown.
@@ -118,13 +130,22 @@ export class CodeModeCell {
           this.#error = completion.error;
         }
       } catch (error) {
+        options.admissionSettled();
         this.#closeCallbacks();
-        this.#error = messageError(error);
-        this.#final = this.#controller.signal.aborted ? "Terminated" : "Result";
+        if (options.admissionController.signal.aborted) {
+          this.#admission = "cancelled";
+          this.#final = "Terminated";
+        } else if (this.#controller.signal.aborted) {
+          this.#final = "Terminated";
+        } else {
+          this.#error = messageError(error);
+          this.#final = "Result";
+        }
         this.#wake();
-        await this.#stopped.promise;
+        if (started) await this.#stopped.promise;
       } finally {
         this.#closeCallbacks();
+        permit?.release();
       }
     })()
       .catch((error: unknown) => {
@@ -132,9 +153,12 @@ export class CodeModeCell {
         this.#final = "Result";
       })
       .finally(() => {
-        options.permit.release();
         this.#wake();
       });
+  }
+
+  get admissionState() {
+    return this.#admission;
   }
 
   async observe(yieldMs: number, observation: CellObservation): Promise<RuntimeResponse> {
@@ -190,12 +214,22 @@ export class CodeModeCell {
   async terminate() {
     if (this.#final === undefined) {
       this.#controller.abort(new Error("CodeMode cell terminated"));
+      if (this.#admission === "queued") {
+        this.#admission = "cancelled";
+        this.#admissionController.abort(new Error("CodeMode cell terminated"));
+      }
       if (this.#yielded !== undefined) this.#output = [...this.#yielded, ...this.#output];
       this.#yielded = undefined;
       this.#acceptYield = false;
       this.#closeCallbacks();
     }
     await this.#lifetime;
+  }
+
+  close() {
+    if (this.#admission === "queued")
+      this.#admissionController.abort(new Error("CodeMode cell closed"));
+    this.#closeCallbacks();
   }
 
   terminalResponse(): RuntimeResponse {

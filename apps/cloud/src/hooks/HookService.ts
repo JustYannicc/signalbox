@@ -1,8 +1,5 @@
 import type { ComputerExecPort } from "../computer/Computer.ts";
-import {
-  ChildWorkerLimitError,
-  type ChildWorkerCapacity,
-} from "../computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerCapacity, ChildWorkerRequester } from "../computer/ChildWorkerCapacity.ts";
 import {
   NodeGeneratedCodeCleanupError,
   type NodeGeneratedCode,
@@ -22,6 +19,7 @@ export type { HookExecutionResult } from "./execution/command.ts";
 type HookContext = Omit<HarnessHookRequest, "payload">;
 
 export interface HookServiceInvocationOptions extends HarnessHookInvocationOptions {
+  readonly requester: ChildWorkerRequester;
   readonly cwd: KernelCommand["cwd"];
   readonly env: KernelCommand["env"];
 }
@@ -43,7 +41,7 @@ export interface HookServiceOptions {
   readonly commands: ComputerExecPort;
   readonly generated: Pick<NodeGeneratedCode, "invoke">;
   /** The same admission pool used by every child program in this DO. */
-  readonly capacity: Pick<ChildWorkerCapacity, "tryAcquire">;
+  readonly capacity: Pick<ChildWorkerCapacity, "acquire">;
 }
 
 const encoder = new TextEncoder();
@@ -69,6 +67,7 @@ export function createHookService(options: HookServiceOptions) {
           { ...registration.command, cwd: invocation.cwd, env: invocation.env },
           encoder.encode(`${JSON.stringify(payload)}\n`),
           invocation.signal,
+          invocation.requester,
         );
       }
       if (registration.kind === "signalbox") {
@@ -88,8 +87,7 @@ export function createHookService(options: HookServiceOptions) {
           exit: successExit,
         };
       }
-      const permit = options.capacity.tryAcquire(invocation.signal);
-      if (!permit) throw new ChildWorkerLimitError();
+      const permit = await options.capacity.acquire(invocation.signal, invocation.requester);
       let cleanupConfirmed = true;
       try {
         invocation.signal.throwIfAborted();

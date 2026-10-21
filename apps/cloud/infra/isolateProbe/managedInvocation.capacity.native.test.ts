@@ -46,7 +46,7 @@ import {codeGenerationBinding} from "./infra/isolateProbe/codeGeneration.ts";
 export {CodeGeneration} from "./infra/isolateProbe/codeGeneration.ts";
 import {createNodeGeneratedCodeFetcher,NodeGeneratedCodeCleanupError} from "./src/isolate/NodeGeneratedCode.ts";
 import {createHookService} from "./src/hooks/HookService.ts";
-import {ChildWorkerCapacity,ChildWorkerLimitError} from "./src/computer/ChildWorkerCapacity.ts";
+import {ChildWorkerCapacity} from "./src/computer/ChildWorkerCapacity.ts";
 export default {async fetch(request){
   const mode=new URL(request.url).pathname.slice(1);
   if(mode!=="cooperative"&&mode!=="failed")return new Response("missing",{status:404});
@@ -80,19 +80,22 @@ export default {async fetch(request){
   const after=await control("status");
   const admissionSignal=new AbortController().signal;
   const additional=[];
-  for(let i=0;i<capacity.limit;i++){
-    const permit=capacity.tryAcquire(admissionSignal);
-    if(!permit)break;
-    additional.push(permit);
-  }
+  while(capacity.active<capacity.limit)additional.push(await capacity.acquire(admissionSignal));
   const activeAtLimit=capacity.active;
-  const refusal=await service.invoke("script",{mode},{cwd:"/work",env:{},signal:admissionSignal}).then(
-    ()=>({unexpectedSuccess:true}),error=>({typedLimitError:error instanceof ChildWorkerLimitError,code:error.code}),
+  const queuedAbort=new AbortController(),queuedReason=new Error("cancel queued hook");
+  let queuedSettled=false;
+  const queued=service.invoke("script",{mode},{cwd:"/work",env:{},signal:queuedAbort.signal}).then(
+    ()=>{queuedSettled=true;return {unexpectedSuccess:true}},
+    error=>{queuedSettled=true;return {sameAbortReason:error===queuedReason}},
   );
+  await Promise.resolve();
+  const settledBeforeAbort=queuedSettled;
+  queuedAbort.abort(queuedReason);
+  const waiting={settledBeforeAbort,...await queued};
   for(const permit of additional)permit.release();
   const activeAfterOtherPermitsRelease=capacity.active;
   const final=await control("status");
-  return Response.json({mode,limit:capacity.limit,started,activeWhileReading,during,activeBeforeAck,settledBeforeAck,result,activeAfterOutcome,after,additionalPermits:additional.length,activeAtLimit,refusal,generatedCalls,activeAfterOtherPermitsRelease,final});
+  return Response.json({mode,limit:capacity.limit,started,activeWhileReading,during,activeBeforeAck,settledBeforeAck,result,activeAfterOutcome,after,additionalPermits:additional.length,activeAtLimit,waiting,generatedCalls,activeAfterOtherPermitsRelease,final});
 }};`;
 
 beforeAll(async () => {
@@ -175,7 +178,7 @@ const common = {
   activeBeforeAck: 1,
   settledBeforeAck: false,
   activeAtLimit: 10,
-  refusal: { typedLimitError: true, code: "RESOURCE_LIMIT" },
+  waiting: { settledBeforeAbort: false, sameAbortReason: true },
   generatedCalls: 1,
 };
 

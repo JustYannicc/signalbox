@@ -33,7 +33,7 @@ export interface CommandGatewayOptions {
   readonly filesystem: KernelFileSystem;
   readonly processes: KernelProcessTable;
   readonly wakes: KernelWakeRegistry;
-  readonly capacity: Pick<ChildWorkerCapacity, "run" | "tryReserve">;
+  readonly capacity: Pick<ChildWorkerCapacity, "run" | "reserve">;
   readonly loader: ChildProgramCatalogOptions["loader"];
   readonly programs: CommandProgramCodes;
   readonly hostname: string;

@@ -1,3 +1,4 @@
+import type { ChildWorkerRequester } from "../computer/ChildWorkerCapacity.ts";
 import { ABI_VERSION, KernelProgramRegistry } from "../kernel/KernelAbi.ts";
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
 import type { KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
@@ -15,6 +16,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 export interface KernelHookInvocation {
+  readonly requester: ChildWorkerRequester;
   readonly signal: AbortSignal;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
@@ -70,6 +72,7 @@ export function createKernelHookProgram(invoke: KernelHookInvoker) {
       try {
         result = await invoke(context.args[1]!, payload, {
           signal: context.signal,
+          requester: { processes: context.processes, process: context.identity.handle },
           cwd: context.filesystem.cwd,
           env: context.env,
         });

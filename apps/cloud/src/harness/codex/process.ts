@@ -37,7 +37,7 @@ export async function runCodexProcess(
     createSession: (context) =>
       new CodexExecHandler({
         filesystem: files,
-        spawn: (command, abort) => options.computer.exec(command, abort),
+        spawn: (command, abort) => options.computer.exec(command, abort, undefined),
         notify: context.notify,
         sessionSignal: context.signal,
         baseEnv: options.environment,

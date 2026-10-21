@@ -26,7 +26,8 @@ export const CODE_MODE_UPSTREAM_COMMIT = "092d3acd6bec3e3a14bdc7e7a2810ab628ab75
 /** Register this binding at the exact companion path and seed it through the ordinary filesystem. */
 export function createCodeModeHostProgram(options: {
   readonly loader: CodeModeCellLoaderPort;
-  readonly capacity: Pick<ChildWorkerCapacity, "tryAcquire">;
+  /** Separate so a yielded cell cannot hold a command slot. */
+  readonly capacity: Pick<ChildWorkerCapacity, "acquire">;
   readonly code: CodeModeCellCode;
 }) {
   const code: CodeModeCellCode = Object.freeze({
@@ -59,7 +60,7 @@ export function createCodeModeHostProgram(options: {
           output: streams.stdout,
           signal: context.signal,
           loader: options.loader,
-          capacity: options.capacity,
+          cellCapacity: options.capacity,
           code,
         }).then(() => ({
           exitCode: 0,

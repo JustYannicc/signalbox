@@ -119,7 +119,9 @@ describe("ChildWorkerProgram", () => {
       await expect(program.run(context)).rejects.toBe(failure);
       await cleaned.promise;
       expect(capacity.active).toBe(1);
-      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      const drained = capacity
+        .acquire(context.signal, undefined)
+        .then((permit) => permit.release());
       stopped.resolve();
       await drained;
       expect(capacity.active).toBe(0);
@@ -146,8 +148,7 @@ describe("ChildWorkerProgram", () => {
       await expect(program.run(context)).rejects.toMatchObject({ code: "CLEANUP_UNCONFIRMED" });
       stopped.reject(new Error("ACK transport lost too"));
       await expect(stopped.promise).rejects.toThrow("ACK transport lost too");
-      expect(capacity.active).toBe(1);
-      expect(capacity.tryAcquire(context.signal)).toBeUndefined();
+      expect(capacity.active).toBe(capacity.limit);
     }));
 
   it("retains admission after a disconnected dispatch even after host cleanup finishes", () =>
@@ -175,8 +176,7 @@ describe("ChildWorkerProgram", () => {
         message: "RPC disconnected",
       });
       await closing.promise;
-      expect(capacity.active).toBe(1);
-      expect(capacity.tryAcquire(context.signal)).toBeUndefined();
+      expect(capacity.active).toBe(capacity.limit);
     }));
 
   it("returns logical exit while retaining admission through a late dispatch failure and gated close", () =>
@@ -214,7 +214,9 @@ describe("ChildWorkerProgram", () => {
       );
       await closing.promise;
       expect(capacity.active).toBe(1);
-      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      const drained = capacity
+        .acquire(context.signal, undefined)
+        .then((permit) => permit.release());
       closed.reject(new Error("Late close failure"));
       await drained;
       expect(capacity.active).toBe(0);
@@ -256,7 +258,9 @@ describe("ChildWorkerProgram", () => {
       await rejected;
       exited.resolve({ exitCode: 17, signal: 0, coreDumped: false });
       expect(capacity.active).toBe(1);
-      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      const drained = capacity
+        .acquire(context.signal, undefined)
+        .then((permit) => permit.release());
       closed.reject(new Error("Close also failed"));
       await drained;
       expect(capacity.active).toBe(0);

@@ -56,7 +56,7 @@ describe.skipIf(!requested)("sed edit permission admission versus GNU", () => {
         env: { LC_ALL: "C" },
       };
       try {
-        const child = await fixture.gateway.exec(command, fixture.controller.signal);
+        const child = await fixture.gateway.exec(command, fixture.controller.signal, undefined);
         let stdout: Uint8Array;
         let stderr: Uint8Array;
         let status: Awaited<typeof child.exited>;

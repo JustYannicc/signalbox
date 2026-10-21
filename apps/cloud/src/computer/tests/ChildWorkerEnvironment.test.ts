@@ -8,7 +8,10 @@ describe("Child worker environment after admission", () => {
   it("claims the original context before deriving one environment for host and command", async () => {
     const fixture = childBusyboxFixture({ env: { PATH: "/bin", PWD: "/old" } });
     const capacity = new ChildWorkerCapacity(1);
-    const reservation = capacity.tryReserve(fixture.context.signal)!;
+    const reservation = await capacity.reserve(fixture.context.signal, {
+      processes: fixture.context.processes,
+      process: fixture.context.identity.handle,
+    });
     const order: string[] = [];
     let hostEnvironment: Readonly<Record<string, string>> | undefined;
     const childEnv = vi.fn((context: KernelAsyncProgramContext) => {
@@ -57,7 +60,10 @@ describe("Child worker environment after admission", () => {
   it("never derives an environment after a rejected claim", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1);
-    const reservation = capacity.tryReserve(fixture.context.signal)!;
+    const reservation = await capacity.reserve(fixture.context.signal, {
+      processes: fixture.context.processes,
+      process: fixture.context.identity.handle,
+    });
     reservation.cancel();
     const childEnv = vi.fn(() => ({}));
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
@@ -86,7 +92,10 @@ describe("Child worker environment after admission", () => {
   it("releases a claimed slot and reports environment preparation failure to drain", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1);
-    const reservation = capacity.tryReserve(fixture.context.signal)!;
+    const reservation = await capacity.reserve(fixture.context.signal, {
+      processes: fixture.context.processes,
+      process: fixture.context.identity.handle,
+    });
     const failure = new Error("environment unavailable");
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
     const program = createChildWorkerProgram({

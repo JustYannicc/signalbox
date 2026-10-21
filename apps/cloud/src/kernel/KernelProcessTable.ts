@@ -60,6 +60,7 @@ type CompletionResult = ProcessOutcome;
 type ProcessRecord = {
   readonly pid: number;
   parentPid: number;
+  admissionOwner: object | undefined;
   readonly processGroupId: number;
   readonly handle: KernelHandle<"process">;
   child: KernelLaunchedChild | undefined;
@@ -118,6 +119,8 @@ export class KernelProcessTable {
     if (this.#closed) return reject(kernelError("CANCELLED", "Process table is closed"));
     const parentInfo = this.info(parentHandle);
     if (parentInfo.status !== "ok") return reject(parentInfo);
+    const inheritedOwner = this.admissionOwner(parentHandle);
+    if (inheritedOwner.status !== "ok") return reject(inheritedOwner);
     const inheritedMask = this.signalMask(parentHandle, 3);
     if (inheritedMask.status !== "ok") return reject(inheritedMask);
     const signalMask = options.signalMask ?? inheritedMask.value;
@@ -158,6 +161,7 @@ export class KernelProcessTable {
       Object.assign(record, {
         pid,
         parentPid: parentInfo.value.pid,
+        admissionOwner: inheritedOwner.value,
         processGroupId: processGroupId.value,
         handle: allocated.value,
         child: undefined,
@@ -206,6 +210,20 @@ export class KernelProcessTable {
           processGroupId: record.value.processGroupId,
         })
       : record;
+  }
+
+  /** Admission ownership survives POSIX reparenting; only the admitting host interprets the token. */
+  admissionOwner(handle: KernelHandle<"process"> | undefined): KernelResult<object | undefined> {
+    if (handle === undefined) return kernelOk(undefined);
+    const record = this.#record(handle);
+    return record.status === "ok" ? kernelOk(record.value.admissionOwner) : record;
+  }
+
+  setAdmissionOwner(handle: KernelHandle<"process">, owner: object): KernelResult<void> {
+    const record = this.#record(handle);
+    if (record.status !== "ok") return record;
+    record.value.admissionOwner = owner;
+    return kernelOk(undefined);
   }
 
   /** Process.wait is a repeatable observation and does not reap the child. */

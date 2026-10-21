@@ -100,7 +100,7 @@ export class ProbeFacet extends DurableObject {
 }
 
 async function run(executor,command) {
-  const child = await executor.exec(command,new AbortController().signal);
+  const child = await executor.exec(command,new AbortController().signal,undefined);
   const stdout = stream(child.stdout);
   const stderr = stream(child.stderr);
   const writer = child.stdin.getWriter();
@@ -157,7 +157,7 @@ async function policyProbe(filesystem) {
   const sentinel = new Error("policy probe reached machine port");
   const commands = createComputerCommands({kernel:{filesystem,host:{spawn(){localCalls++;throw new Error("policy probe reached child host");}}},escalation,evidence:async () => ({workspaceBytes}),machine:{spawn(value){dispatched=value;throw sentinel;}}});
   let caught;
-  try {await commands.exec(command,new AbortController().signal);} catch(error) {caught=error;}
+  try {await commands.exec(command,new AbortController().signal,undefined);} catch(error) {caught=error;}
   assert(caught === sentinel && localCalls === 0,"machine dispatch failed or retried locally");
   assert(JSON.stringify(dispatched) === JSON.stringify(command),"machine command changed");
   return {ok:true,proof:"configured machine-port selection only",files:files.length,workspaceBytes,rule,command:dispatched,localCalls,machineCalls:1};

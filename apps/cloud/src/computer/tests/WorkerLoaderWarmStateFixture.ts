@@ -43,6 +43,8 @@ import {createCompiledChildWorkerLoader} from "./src/computer/CompiledChildWorke
 import {createChildWorkerProgram} from "./src/computer/ChildWorkerProgram.ts";
 import {ChildWorkerCapacity} from "./src/computer/ChildWorkerCapacity.ts";
 import {KernelFileSystem} from "./src/kernel/KernelFileSystem.ts";
+import {KernelProcessTable} from "./src/kernel/KernelProcessTable.ts";
+import {KernelWakeRegistry} from "./src/kernel/KernelWakeRegistry.ts";
 import {createKernelSyscallHost} from "./src/kernel/KernelSyscallHost.ts";
 const modules={"main.js":${JSON.stringify(child)},"ChildWasi.js":${JSON.stringify(childWasiSource)}};
 class Owner extends RpcTarget {
@@ -58,6 +60,10 @@ export default {async fetch(request,env){
     const output=[];
     const filesystem=new KernelFileSystem({mounts:[],stdio:[{readInto:()=>0},{write:bytes=>{output.push(...bytes);return bytes.length;}},{}]});
     const args=[marker,"雪"],variables={PRIVATE:secret,PWD:"/"},signal=new AbortController().signal;
+    const wakes=new KernelWakeRegistry(),processes=new KernelProcessTable({wakes});
+    const completion=Promise.withResolvers();
+    const process=processes.spawn(undefined,()=>({completion:completion.promise,signal:()=>({status:"ok",value:undefined})}),()=>{});
+    if(process.status!=="ok")throw new Error("Warm process admission failed");
     const syscalls=createKernelSyscallHost({filesystem,args,env:variables,signal});
     const loader=kind==="direct"?env.LOADER:createCompiledChildWorkerLoader(env.LOADER,new Map([[${JSON.stringify(wasmHash)},module]]));
     const dispatch=createWorkerLoaderDispatch(loader);
@@ -66,11 +72,11 @@ export default {async fetch(request,env){
       createHost:()=>({host:new Owner(syscalls,observations),close:()=>syscalls.close()}),
     });
     try{
-      const exit=await program.run({args,env:variables,filesystem,signal});
+      const exit=await program.run({args,env:variables,filesystem,signal,identity:process.value,processes,wakes,home:undefined});
       await program.drain();
       if(exit.exitCode!==0)throw new Error("Warm child failed "+JSON.stringify(exit));
       stdout.push(new TextDecoder().decode(new Uint8Array(output)));
-    }finally{filesystem.dispose();}
+    }finally{completion.resolve({exitCode:0,signal:0,coreDumped:false});await processes.dispose();wakes.dispose();filesystem.dispose();}
   }
   return Response.json({kind,observations,stdout,active:capacity.active});
 }};`;

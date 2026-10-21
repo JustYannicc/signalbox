@@ -78,13 +78,13 @@ export const createHostLifecycle = <G>(
       const computer = Object.freeze<Computer>({
         threadId: options.threadId,
         files: storage.files,
-        async exec(command, signal) {
+        async exec(command, signal, requester) {
           if (ports === undefined)
             throw new HarnessError({
               operation: "open",
               message: "Computer ports are unavailable.",
             });
-          return ports.exec(command, signal);
+          return ports.exec(command, signal, requester);
         },
         async port(port, signal) {
           if (ports === undefined)

@@ -88,8 +88,10 @@ describe("Computer program admission", () => {
     try {
       const decision = await admission.admit(requestFor(fixture.context, program));
       expect(capacity.active).toBe(1);
-      await expect(admission.admit(requestFor(fixture.context, program))).rejects.toMatchObject({
-        code: "RESOURCE_LIMIT",
+      const queued = admission.admit({
+        ...requestFor(fixture.context, program),
+        kind: "command",
+        stdio: "piped",
       });
       if (decision.admission === undefined) throw new Error("Expected a reserved dispatch");
       const context = Object.freeze({ ...fixture.context, admission: decision.admission });
@@ -99,6 +101,9 @@ describe("Computer program admission", () => {
       await expect(program.run(context)).rejects.toThrow("does not belong");
       expect(capacityRun).not.toHaveBeenCalled();
       expect(modules).toHaveBeenCalledOnce();
+      const next = await queued;
+      expect(capacity.active).toBe(1);
+      next.cancel?.();
       expect(capacity.active).toBe(0);
     } finally {
       admission.close();
@@ -186,6 +191,44 @@ describe("Computer program admission", () => {
       admission.close();
       expect(capacity.active).toBe(0);
       expect(() => decision.assertCurrent?.()).toThrow("owner changed");
+    } finally {
+      admission.close();
+      await fixture.close();
+    }
+  });
+
+  it("cancels queued reservations on owner shutdown without leaking the next slot", async () => {
+    const fixture = childBusyboxFixture();
+    const capacity = new ChildWorkerCapacity(1);
+    const admission = createComputerProgramAdmission({
+      capacity,
+      escalation: new ComputerEscalationTable(),
+      machine: machinePort(),
+    });
+    const program = { kind: "async" as const, run: async () => exited() };
+    try {
+      const held = await capacity.acquire(fixture.context.signal, undefined);
+      const reserving = Promise.withResolvers<void>();
+      const reserve = capacity.reserve.bind(capacity);
+      vi.spyOn(capacity, "reserve").mockImplementation((...args) => {
+        const pending = reserve(...args);
+        reserving.resolve();
+        return pending;
+      });
+      const queued = admission.admit(requestFor(fixture.context, program));
+      const rejected = expect(queued).rejects.toMatchObject({ code: "ECANCELED" });
+      await reserving.promise;
+      admission.close();
+      await rejected;
+      expect(capacity.active).toBe(1);
+      held.release();
+      await expect(
+        capacity.run(fixture.context.signal, async () => 23, {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        }),
+      ).resolves.toBe(23);
+      expect(capacity.active).toBe(0);
     } finally {
       admission.close();
       await fixture.close();

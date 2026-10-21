@@ -131,6 +131,7 @@ export function createCodexHookRuntime(
     };
     try {
       const result = await hookService.invoke(id, payload, {
+        requester: invocation.requester,
         signal: invocation.signal,
         cwd: invocation.cwd,
         env: invocation.env,
@@ -219,9 +220,12 @@ export function createCodexHookRuntime(
           },
         });
         const isolateCommands = activeStandard.commands(computer.isolate);
-
         const commands = {
-          exec: (command: KernelCommand, signal: AbortSignal) => {
+          exec: (
+            command: KernelCommand,
+            signal: AbortSignal,
+            requester: Parameters<typeof isolateCommands.exec>[2],
+          ) => {
             const call: IsolateCallRecord = {
               executable: command.executable,
               argv: [...command.argv],
@@ -230,7 +234,7 @@ export function createCodexHookRuntime(
               elapsedMs: null,
             };
             isolateCalls.push(call);
-            return isolateCommands.exec(command, signal).then(
+            return isolateCommands.exec(command, signal, requester).then(
               (child) => ({
                 stdin: child.stdin,
                 stdout: child.stdout,

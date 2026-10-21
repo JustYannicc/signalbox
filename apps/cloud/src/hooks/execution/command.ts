@@ -1,3 +1,4 @@
+import type { ChildWorkerRequester } from "../../computer/ChildWorkerCapacity.ts";
 import type { ComputerExecPort } from "../../computer/Computer.ts";
 import type { KernelCommand, KernelCommandExit } from "../../kernel/KernelCommandForwarder.ts";
 
@@ -12,9 +13,10 @@ export async function runHookCommand(
   command: KernelCommand,
   input: Uint8Array,
   signal: AbortSignal,
+  requester: ChildWorkerRequester,
 ): Promise<HookExecutionResult> {
   signal.throwIfAborted();
-  const child = await computer.exec(command, signal);
+  const child = await computer.exec(command, signal, requester);
   const writer = child.stdin.getWriter();
   const stdout = child.stdout.getReader();
   const stderr = child.stderr.getReader();

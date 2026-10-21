@@ -20,7 +20,7 @@ import type { ComputerEscalationEvidence, ComputerEscalationTable } from "./Esca
 
 export interface ComputerProgramAdmissionOptions {
   readonly escalation: ComputerEscalationTable;
-  readonly capacity: Pick<ChildWorkerCapacity, "tryReserve">;
+  readonly capacity: Pick<ChildWorkerCapacity, "reserve">;
   readonly machine: KernelCommandForwarder;
   readonly evidence?: (
     command: KernelCommand,
@@ -49,6 +49,7 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
   const unused = new Set<AdmissionRecord>();
   let generation = 1;
   let closed = false;
+  const reserves = new Set<AbortController>();
   const assertOpen = (expected = generation) => {
     if (closed || expected !== generation) {
       throw new KernelProgramExecAdmissionError("ECANCELED", "Computer admission owner changed");
@@ -88,12 +89,31 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       if (implementation.kind !== "async") {
         throw new KernelProgramExecAdmissionError("ENOTSUP", "Computer requires a child program");
       }
-      const reservation = options.capacity.tryReserve(request.signal);
-      if (reservation === undefined) {
-        throw new KernelProgramExecAdmissionError("RESOURCE_LIMIT", "Command capacity is full");
+      // close() aborts queued reserves; removable links avoid AbortSignal.any retaining the session signal.
+      const controller = new AbortController();
+      const onAbort = () => controller.abort(request.signal.reason);
+      reserves.add(controller);
+      let reservation: ChildWorkerReservation;
+      try {
+        request.signal.addEventListener("abort", onAbort, { once: true });
+        if (request.signal.aborted) onAbort();
+        reservation = await options.capacity.reserve(controller.signal, {
+          processes: request.processes,
+          process: request.kind === "exec" ? request.identity?.handle : request.parent,
+        });
+      } finally {
+        request.signal.removeEventListener("abort", onAbort);
+        reserves.delete(controller);
       }
       if (!isChildWorkerReservation(reservation)) {
         throw new TypeError("Computer capacity did not issue a child worker reservation");
+      }
+      try {
+        assertOpen(admittedGeneration);
+        request.signal.throwIfAborted();
+      } catch (error) {
+        reservation.cancel();
+        throw error;
       }
       const record: AdmissionRecord = {
         owner,
@@ -171,6 +191,11 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       if (closed) return;
       closed = true;
       generation++;
+      const reason = new KernelProgramExecAdmissionError(
+        "ECANCELED",
+        "Computer admission owner changed",
+      );
+      for (const controller of reserves) controller.abort(reason);
       for (const record of unused) cancel(record);
     },
   });

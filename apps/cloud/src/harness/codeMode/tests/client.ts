@@ -43,7 +43,7 @@ export function hostClient(
     signal: controller.signal,
     loader,
     code,
-    capacity,
+    cellCapacity: capacity,
   });
   void finished.catch(() => undefined);
   let nextId = 1;

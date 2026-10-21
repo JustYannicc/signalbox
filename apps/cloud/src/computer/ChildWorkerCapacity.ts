@@ -1,13 +1,13 @@
-export class ChildWorkerLimitError extends Error {
-  readonly code = "RESOURCE_LIMIT";
-  constructor() {
-    super("Command capacity is full");
-    this.name = "ChildWorkerLimitError";
-  }
-}
+import type { KernelHandle } from "../kernel/KernelAbi.ts";
+import type { KernelProcessTable } from "../kernel/KernelProcessTable.ts";
 
 export interface ChildWorkerPermit {
   release(): void;
+}
+
+export interface ChildWorkerRequester {
+  readonly processes: Pick<KernelProcessTable, "admissionOwner" | "setAdmissionOwner">;
+  readonly process: KernelHandle<"process"> | undefined;
 }
 
 const childWorkerReservationBrand: unique symbol = Symbol("ChildWorkerReservation");
@@ -16,7 +16,7 @@ const childWorkerReservations = new WeakSet<object>();
 
 export interface ChildWorkerReservation {
   readonly [childWorkerReservationBrand]: typeof childWorkerReservationBrand;
-  run<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T>;
+  run<T>(signal: AbortSignal, work: () => Promise<T>, requester: ChildWorkerRequester): Promise<T>;
   cancel(): void;
 }
 
@@ -26,94 +26,123 @@ export function isChildWorkerReservation(value: unknown): value is ChildWorkerRe
 
 interface Waiter {
   readonly signal: AbortSignal;
-  readonly resolve: (permit: ChildWorkerPermit) => void;
-  readonly reject: (reason?: unknown) => void;
+  readonly resolve: (permit: InternalPermit) => void;
   readonly onAbort: () => void;
   state: "queued" | "granted" | "cancelled";
 }
 
+// Each child uses about 0.17 MiB of harness-side kernel state. 64 uses about 11 MiB,
+// within the harness's headroom after boot.
+const DEFAULT_HARD_LIMIT = 64;
+
+interface InternalPermit extends ChildWorkerPermit {
+  bind(requester: ChildWorkerRequester): void;
+}
+
 export class ChildWorkerCapacity {
   readonly limit: number;
+  readonly hardLimit: number;
   #active = 0;
   #draining = false;
-  #waiters: Waiter[] = [];
+  readonly #nested = new Set<Waiter>();
+  readonly #roots = new Set<Waiter>();
+  readonly #owners = new WeakSet<object>();
 
-  constructor(limit = 10) {
-    if (!Number.isInteger(limit) || limit < 1 || limit > 10) {
-      throw new RangeError("Child worker capacity must be an integer from 1 to 10");
+  constructor(
+    limit = 10,
+    { hardLimit = Math.max(DEFAULT_HARD_LIMIT, limit) }: { readonly hardLimit?: number } = {},
+  ) {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new RangeError("Child worker capacity must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(hardLimit) || hardLimit < limit) {
+      throw new RangeError("Child worker hard capacity must be a safe integer at least the limit");
     }
     this.limit = limit;
+    this.hardLimit = hardLimit;
   }
 
   get active(): number {
     return this.#active;
   }
 
-  acquire(signal: AbortSignal): Promise<ChildWorkerPermit> {
-    if (signal.aborted) return Promise.reject(signal.reason);
+  /** Undefined is a root; a requester inherits priority only while its admission owner is live. */
+  acquire(
+    signal: AbortSignal,
+    requester: ChildWorkerRequester | undefined,
+  ): Promise<ChildWorkerPermit> {
+    return this.#acquire(signal, requester);
+  }
 
-    return new Promise((resolve, reject) => {
+  #acquire(
+    signal: AbortSignal,
+    requester: ChildWorkerRequester | undefined,
+  ): Promise<InternalPermit> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    if (this.#nested.size === 0 && this.#roots.size === 0 && this.#active < this.limit) {
+      this.#active++;
+      return Promise.resolve(this.#makePermit());
+    }
+
+    const owner = requester?.processes.admissionOwner(requester.process);
+    const queue =
+      owner?.status === "ok" && owner.value !== undefined && this.#owners.has(owner.value)
+        ? this.#nested
+        : this.#roots;
+    return new Promise<InternalPermit>((resolve, reject) => {
       let waiter: Waiter;
       const onAbort = () => {
         if (waiter.state !== "queued") return;
         waiter.state = "cancelled";
-        const index = this.#waiters.indexOf(waiter);
-        if (index !== -1) this.#waiters.splice(index, 1);
-        signal.removeEventListener("abort", onAbort);
-        waiter.reject(signal.reason);
-        this.#drain();
+        queue.delete(waiter);
+        reject(signal.reason);
       };
-      waiter = { signal, resolve, reject, onAbort, state: "queued" };
-      this.#waiters.push(waiter);
+      waiter = { signal, resolve, onAbort, state: "queued" };
+      queue.add(waiter);
       signal.addEventListener("abort", onAbort, { once: true });
 
       // A custom signal can dispatch synchronously while installing its listener.
       if (signal.aborted) onAbort();
-      if (waiter.state !== "queued") signal.removeEventListener("abort", onAbort);
       this.#drain();
     });
   }
 
-  tryAcquire(signal: AbortSignal): ChildWorkerPermit | undefined {
-    return this.#tryAcquire(signal);
+  async reserve(
+    signal: AbortSignal,
+    requester: ChildWorkerRequester,
+  ): Promise<ChildWorkerReservation> {
+    const permit = await this.#acquire(signal, requester);
+    return new ChildWorkerReservationImpl(childWorkerReservationIssuer, permit);
   }
 
-  tryReserve(signal: AbortSignal): ChildWorkerReservation | undefined {
-    const permit = this.#tryAcquire(signal);
-    return permit === undefined
-      ? undefined
-      : new ChildWorkerReservationImpl(childWorkerReservationIssuer, permit);
-  }
-
-  async run<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
-    // RPC callbacks can depend on a live worker. Waiting here could require its own ancestor to finish.
-    const permit = this.#tryAcquire(signal);
-    if (permit === undefined) throw new ChildWorkerLimitError();
+  async run<T>(
+    signal: AbortSignal,
+    work: () => Promise<T>,
+    requester: ChildWorkerRequester,
+  ): Promise<T> {
+    const permit = await this.#acquire(signal, requester);
     try {
+      signal.throwIfAborted();
+      permit.bind(requester);
       return await work();
     } finally {
       permit.release();
     }
   }
 
-  #tryAcquire(signal: AbortSignal): ChildWorkerPermit | undefined {
-    signal.throwIfAborted();
-    if (this.#active >= this.limit || this.#waiters.length > 0) return undefined;
-    this.#active++;
-    return this.#makePermit();
-  }
-
   #drain(): void {
     if (this.#draining) return;
     this.#draining = true;
     try {
-      while (this.#active < this.limit) {
-        const waiter = this.#waiters.shift();
-        if (!waiter) return;
-        if (waiter.state !== "queued") continue;
-
+      while (this.#active < this.hardLimit) {
+        // Descendants must be able to finish before the roots holding their permits can exit.
+        const queue = this.#nested.size > 0 ? this.#nested : this.#roots;
+        if (queue === this.#roots && this.#active >= this.limit) return;
+        const waiter = queue.values().next().value;
+        if (waiter === undefined) return;
+        queue.delete(waiter);
         waiter.state = "granted";
-        this.#active += 1;
+        this.#active++;
         waiter.signal.removeEventListener("abort", waiter.onAbort);
         waiter.resolve(this.#makePermit());
       }
@@ -122,13 +151,29 @@ export class ChildWorkerCapacity {
     }
   }
 
-  #makePermit(): ChildWorkerPermit {
+  #makePermit(): InternalPermit {
     let released = false;
+    let owner: object | undefined;
     return {
+      bind: (requester) => {
+        if (released || owner !== undefined) {
+          throw new Error("Child worker permit was already bound or released");
+        }
+        if (requester.process === undefined) {
+          throw new Error("Child worker requester process is unavailable");
+        }
+        const token = Object.freeze({});
+        const assigned = requester.processes.setAdmissionOwner(requester.process, token);
+        if (assigned.status !== "ok")
+          throw new Error("Child worker requester process is unavailable");
+        owner = token;
+        this.#owners.add(token);
+      },
       release: () => {
         if (released) return;
         released = true;
-        this.#active -= 1;
+        if (owner !== undefined) this.#owners.delete(owner);
+        this.#active--;
         this.#drain();
       },
     };
@@ -140,9 +185,9 @@ class ChildWorkerReservationImpl implements ChildWorkerReservation {
     childWorkerReservationBrand;
   #state: "unconsumed" | "consumed" | "cancelled" | "settled" = "unconsumed";
   #released = false;
-  readonly #permit: ChildWorkerPermit;
+  readonly #permit: InternalPermit;
 
-  constructor(issuer: typeof childWorkerReservationIssuer, permit: ChildWorkerPermit) {
+  constructor(issuer: typeof childWorkerReservationIssuer, permit: InternalPermit) {
     if (issuer !== childWorkerReservationIssuer) {
       throw new TypeError("Child worker reservations can only be issued by capacity");
     }
@@ -151,7 +196,11 @@ class ChildWorkerReservationImpl implements ChildWorkerReservation {
     Object.freeze(this);
   }
 
-  readonly run = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> => {
+  readonly run = <T>(
+    signal: AbortSignal,
+    work: () => Promise<T>,
+    requester: ChildWorkerRequester,
+  ): Promise<T> => {
     if (this.#state !== "unconsumed") {
       return Promise.reject(new Error("Child worker reservation is no longer available"));
     }
@@ -159,6 +208,7 @@ class ChildWorkerReservationImpl implements ChildWorkerReservation {
 
     try {
       signal.throwIfAborted();
+      this.#permit.bind(requester);
     } catch (error) {
       this.#settle();
       return Promise.reject(error);

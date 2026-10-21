@@ -47,6 +47,47 @@ function launch(
 }
 
 describe("KernelProcessTable", () => {
+  it("inherits the admission owner on spawn and keeps it after the parent is reaped", async () => {
+    const { table, wakes } = makeTable();
+    const parentExit = deferred<KernelExitStatus>();
+    const childExit = deferred<KernelExitStatus>();
+    const parent = table.spawn(
+      undefined,
+      () => launch(parentExit.promise).child,
+      () => {},
+    );
+    if (parent.status !== "ok") throw new Error("Parent did not start");
+    const owner = Object.freeze({});
+    expect(table.setAdmissionOwner(parent.value.handle, owner).status).toBe("ok");
+    const child = table.spawn(
+      parent.value.handle,
+      () => launch(childExit.promise).child,
+      () => {},
+    );
+    if (child.status !== "ok") throw new Error("Child did not start");
+    try {
+      expect(table.admissionOwner(child.value.handle)).toEqual({ status: "ok", value: owner });
+      const waiting = table.wait(parent.value.handle);
+      if (waiting.status !== "would_block") throw new Error("Parent exited before completion");
+      parentExit.resolve(status(0));
+      expect((await wakes.wait(waiting.wakeToken)).status).toBe("ok");
+      wakes.release(waiting.wakeToken);
+      expect(table.reap(parent.value.handle).status).toBe("ok");
+      expect(table.info(child.value.handle)).toMatchObject({
+        status: "ok",
+        value: { parentPid: 1 },
+      });
+      const inherited = table.admissionOwner(child.value.handle);
+      expect(inherited.status).toBe("ok");
+      if (inherited.status === "ok") expect(inherited.value).toBe(owner);
+    } finally {
+      parentExit.resolve(status(0));
+      childExit.resolve(status(0));
+      await table.dispose();
+      wakes.dispose();
+    }
+  });
+
   it("assigns opaque virtual pids and records root, parent, and inherited group identity", async () => {
     const { table } = makeTable();
     const parentLaunch = launch(Promise.resolve(status(0)));

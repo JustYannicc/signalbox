@@ -1,5 +1,12 @@
+import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
+import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { createHookService } from "../HookService.ts";
+
+const requester = {
+  processes: new KernelProcessTable({ wakes: new KernelWakeRegistry() }),
+  process: undefined,
+};
 
 const encoder = new TextEncoder();
 const refusal = encoder.encode("A person must approve this command.\n");
@@ -48,7 +55,7 @@ function setup(failure: Error, phase: "write" | "close") {
       }),
     },
     generated: { invoke: unreadable },
-    capacity: { tryAcquire: () => ({ release() {} }) },
+    capacity: { acquire: async () => ({ release() {} }) },
   });
   return {
     run: () =>
@@ -56,6 +63,7 @@ function setup(failure: Error, phase: "write" | "close") {
         "refuse",
         { tool_input: "a".repeat(100_000) },
         {
+          requester,
           cwd: "/work",
           env: {},
           signal: new AbortController().signal,

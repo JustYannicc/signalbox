@@ -9,6 +9,7 @@ import type {
 } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { FileCommitReceipt } from "../kernel/FilePersistencePorts.ts";
+import type { ChildWorkerRequester } from "./ChildWorkerCapacity.ts";
 
 export type DriveRef = SignalboxDriveId;
 export type RecipeHash = string & Brand.Brand<"RecipeHash">;
@@ -34,7 +35,12 @@ export interface Bases {
 
 /** Shared by command hooks, harness child processes and the exec server. */
 export interface ComputerExecPort {
-  readonly exec: (command: KernelCommand, signal: AbortSignal) => Promise<KernelCommandChild>;
+  /** Pass undefined only for a root with no slot-holding ancestor. */
+  readonly exec: (
+    command: KernelCommand,
+    signal: AbortSignal,
+    requester: ChildWorkerRequester | undefined,
+  ) => Promise<KernelCommandChild>;
 }
 
 export interface ComputerPort {
@@ -54,6 +60,9 @@ export interface ComputerOpenPort {
 }
 
 /** Adapt the Computer command entry point without another execution or policy path. */
-export function computerCommandForwarder(computer: ComputerExecPort): KernelCommandForwarder {
-  return { spawn: (command, signal) => computer.exec(command, signal) };
+export function computerCommandForwarder(
+  computer: ComputerExecPort,
+  requester: ChildWorkerRequester | undefined,
+): KernelCommandForwarder {
+  return { spawn: (command, signal) => computer.exec(command, signal, requester) };
 }

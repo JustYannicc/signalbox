@@ -151,6 +151,7 @@ describe.skipIf(!standardProofCommandViewArtifactsAvailable)(
           tool_input: claudeToolScript().input,
         };
         const hook = await hookService.invoke("claude-pre-tool-use-command", payload, {
+          requester: { processes: programs.host.processes, process: undefined },
           signal: new AbortController().signal,
           cwd: "/work",
           env: { HOME: "/home/claude", PATH: "/bin" },
@@ -166,7 +167,7 @@ describe.skipIf(!standardProofCommandViewArtifactsAvailable)(
         expect(proof.fs.fs.readFileSync(CLAUDE_TOOL_FILE, "utf8")).toBe(STANDARD_PROOF_WRITE);
 
         const canonical = await runBash(
-          trusted.isolate.exec,
+          (command, signal) => trusted.isolate.exec(command, signal, undefined),
           [
             `cat ${CLAUDE_TOOL_FILE}`,
             `cat ${CLAUDE_TOOL_FILE} | cat`,
@@ -236,6 +237,7 @@ describe.skipIf(!standardProofCommandViewArtifactsAvailable)(
                 env: { PATH: "/bin" },
               },
               new AbortController().signal,
+              undefined,
             ),
           ).rejects.toMatchObject({ code: "ENOTSUP" });
           expect(proof.filesystem.descriptors.get(fd).offset).toBe(offset);

@@ -1,7 +1,14 @@
+import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
+import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
 import { NodeGeneratedCodeCleanupError } from "../../isolate/NodeGeneratedCode.ts";
 import { createHookService, type HookServiceOptions } from "../HookService.ts";
+
+const requester = {
+  processes: new KernelProcessTable({ wakes: new KernelWakeRegistry() }),
+  process: undefined,
+};
 
 const unused = async (): Promise<never> => {
   throw new Error("Wrong hook route");
@@ -24,6 +31,35 @@ function service(generated: HookServiceOptions["generated"], capacity: ChildWork
 }
 
 describe("script hook cancellation", () => {
+  it("runs queued hooks after the previous invocation releases its permit", async () => {
+    const capacity = new ChildWorkerCapacity(1);
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const calls: unknown[] = [];
+    const hooks = service(
+      {
+        async invoke(input) {
+          calls.push(input.input);
+          started.resolve();
+          await finish.promise;
+          return new Response(JSON.stringify(input.input));
+        },
+      },
+      capacity,
+    );
+    const invocation = { requester, cwd: "/work", env: {}, signal: new AbortController().signal };
+    const first = hooks.invoke("script", 1, invocation);
+    await started.promise;
+    const second = hooks.invoke("script", 2, invocation);
+    expect(calls).toEqual([1]);
+    expect(capacity.active).toBe(1);
+    finish.resolve();
+    const results = await Promise.all([first, second]);
+    expect(results.map((result) => new TextDecoder().decode(result.stdout))).toEqual(["1", "2"]);
+    expect(calls).toEqual([1, 2]);
+    expect(capacity.active).toBe(0);
+  });
+
   it("retains admission when native invocation cleanup cannot be confirmed", async () => {
     const capacity = new ChildWorkerCapacity(1);
     const failure = new NodeGeneratedCodeCleanupError(
@@ -39,12 +75,16 @@ describe("script hook cancellation", () => {
       },
       capacity,
     );
-    const invocation = { cwd: "/work", env: {}, signal: new AbortController().signal };
+    const invocation = { requester, cwd: "/work", env: {}, signal: new AbortController().signal };
     await expect(hooks.invoke("script", {}, invocation)).rejects.toBe(failure);
     expect(capacity.active).toBe(1);
-    await expect(hooks.invoke("script", {}, invocation)).rejects.toMatchObject({
-      code: "RESOURCE_LIMIT",
-    });
+    const queued = new AbortController();
+    const reason = new Error("Stop queued hook");
+    const waiting = hooks.invoke("script", {}, { ...invocation, signal: queued.signal });
+    const rejected = expect(waiting).rejects.toBe(reason);
+    expect(started).toBe(1);
+    queued.abort(reason);
+    await rejected;
     expect(started).toBe(1);
   });
 
@@ -77,7 +117,7 @@ describe("script hook cancellation", () => {
     const pending = hooks.invoke(
       "script",
       {},
-      { cwd: "/work", env: {}, signal: controller.signal },
+      { requester, cwd: "/work", env: {}, signal: controller.signal },
     );
     void pending.catch(() => undefined);
     await reading.promise;
@@ -120,7 +160,7 @@ describe("script hook cancellation", () => {
     const pending = hooks.invoke(
       "script",
       {},
-      { cwd: "/work", env: {}, signal: controller.signal },
+      { requester, cwd: "/work", env: {}, signal: controller.signal },
     );
     void pending.catch(() => undefined);
     await reading.promise;
@@ -166,7 +206,7 @@ describe("script hook cancellation", () => {
     const pending = hooks.invoke(
       "script",
       {},
-      { cwd: "/work", env: {}, signal: controller.signal },
+      { requester, cwd: "/work", env: {}, signal: controller.signal },
     );
     void pending.catch(() => undefined);
     await started.promise;

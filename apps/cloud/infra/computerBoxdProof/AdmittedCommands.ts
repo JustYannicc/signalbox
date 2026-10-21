@@ -2,7 +2,10 @@ import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
 import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
 import type { KernelCommandForwarder } from "../../src/kernel/KernelCommandForwarder.ts";
 import { KernelForwardingUnavailable } from "../../src/kernel/KernelCommandForwarder.ts";
-import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
+import {
+  ChildWorkerCapacity,
+  type ChildWorkerRequester,
+} from "../../src/computer/ChildWorkerCapacity.ts";
 import { ChildWorkerLifetimes } from "../../src/computer/ChildWorkerLifetimes.ts";
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { createComputerProgramAdmission } from "../../src/computer/ComputerProgramAdmission.ts";
@@ -27,10 +30,11 @@ export function createProofAdmittedCommands(
   const lifetimes = new ChildWorkerLifetimes();
   let fallbackRuns = 0;
   const observedCapacity = {
-    tryReserve: (signal: AbortSignal) => capacity.tryReserve(signal),
-    run: <T>(signal: AbortSignal, work: () => Promise<T>) => {
+    reserve: (signal: AbortSignal, requester: ChildWorkerRequester) =>
+      capacity.reserve(signal, requester),
+    run: <T>(signal: AbortSignal, work: () => Promise<T>, requester: ChildWorkerRequester) => {
       fallbackRuns++;
-      return capacity.run(signal, work);
+      return capacity.run(signal, work, requester);
     },
   };
   let machine: KernelCommandForwarder | undefined;
