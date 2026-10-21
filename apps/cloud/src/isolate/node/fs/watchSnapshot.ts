@@ -15,6 +15,8 @@ interface Fingerprint {
 }
 
 export interface Snapshot {
+  /** A descriptor-alias path can change when a descriptor opens or closes, with no storage write. */
+  readonly descriptorDependent: boolean;
   readonly rootType: KernelStat["type"] | "missing";
   readonly rootFingerprint?: Fingerprint;
   readonly entries: ReadonlyMap<string, Fingerprint>;
@@ -48,8 +50,10 @@ function isMissingError(error: unknown): boolean {
 
 function takeSnapshot(kernelFs: KernelFileSystem, path: string, recursive: boolean): Snapshot {
   const root = kernelFs.stat(path);
+  let descriptorDependent = kernelFs.resolvesThroughDescriptors(path);
   if (root.type !== "directory") {
     return {
+      descriptorDependent,
       rootType: root.type,
       rootFingerprint: fingerprint(root),
       entries: new Map([["", fingerprint(root)]]),
@@ -68,6 +72,7 @@ function takeSnapshot(kernelFs: KernelFileSystem, path: string, recursive: boole
 
     for (const name of names) {
       const childPath = NodePath.posix.join(directory, name);
+      if (kernelFs.resolvesThroughDescriptors(childPath)) descriptorDependent = true;
       let stat: KernelStat;
       try {
         stat = kernelFs.lstat(childPath);
@@ -81,7 +86,7 @@ function takeSnapshot(kernelFs: KernelFileSystem, path: string, recursive: boole
     }
   };
   visit(path, "");
-  return { rootType: root.type, rootFingerprint: fingerprint(root), entries };
+  return { descriptorDependent, rootType: root.type, rootFingerprint: fingerprint(root), entries };
 }
 
 export function takeWatchSnapshot(
@@ -100,7 +105,12 @@ export function takeWatchSnapshotAllowMissing(
   try {
     return takeSnapshot(kernelFs, path, recursive);
   } catch (error) {
-    if (isMissingError(error)) return { rootType: "missing", entries: new Map() };
+    if (isMissingError(error))
+      return {
+        descriptorDependent: kernelFs.resolvesThroughDescriptors(path),
+        rootType: "missing",
+        entries: new Map(),
+      };
     throw error;
   }
 }

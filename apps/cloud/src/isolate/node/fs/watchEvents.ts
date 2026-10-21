@@ -113,7 +113,12 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
       // Rescanning every watched tree each tick costs a path walk and stat per entry; skip it while
       // nothing has committed.
       const generation = this.#kernelFs.changeGeneration();
-      if (generation !== undefined && generation === this.#baseline.generation) return;
+      if (
+        generation !== undefined &&
+        generation === this.#baseline.generation &&
+        !this.#baseline.snapshot.descriptorDependent
+      )
+        return;
       next = {
         generation,
         snapshot: takeWatchSnapshotAllowMissing(

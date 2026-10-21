@@ -1,5 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { nodeFsWatchFixture } from "./testing/nodeFsWatchFixture.ts";
 
 afterEach(() => vi.useRealTimers());
@@ -262,6 +263,31 @@ describe("virtual filesystem event watchers", () => {
       size = 2n;
       await vi.advanceTimersByTimeAsync(100);
       expect(events).toEqual(["file"]);
+      watcher.close();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps rescanning descriptor-alias paths, which change when descriptors close", async () => {
+    vi.useFakeTimers();
+    const fixture = nodeFsWatchFixture();
+    try {
+      fixture.fs.mkdirSync("/proc/self/fd", { recursive: true });
+      fixture.fs.writeFileSync("/file", "data");
+      const fd = fixture.kernelFs.open("/file", KernelOpenFlags.O_RDONLY);
+      // A relative path skips alias resolution, so this creates a real entry under the alias.
+      fixture.fs.writeFileSync(`proc/self/fd/${fd}`, "");
+      const events: Array<{ type: string; name: string | NodeBuffer.Buffer | null }> = [];
+      const watcher = fixture.fs.watch("/proc/self/fd", (type, name) =>
+        events.push({ type, name }),
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      expect(events).toEqual([]);
+
+      fixture.kernelFs.close(fd);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(events.map((event) => event.name)).toContain(String(fd));
       watcher.close();
     } finally {
       fixture.close();

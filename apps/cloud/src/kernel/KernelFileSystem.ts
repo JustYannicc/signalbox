@@ -2,6 +2,7 @@ import { canonicalFileByteSelection, type KernelFileByteSelection } from "./Kern
 import type { Mount, Storage, Times } from "./storage.ts";
 import type { CreateOptions, Inode } from "./storage.ts";
 import { hasChangeGeneration } from "./ChangeGenerationStorage.ts";
+import { descriptorPathAlias, descriptorPathSuffix } from "./filesystem/KernelPathAliases.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
 import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { runSync } from "./wasi/internal_wasi_calls.ts";
@@ -187,6 +188,11 @@ export class KernelFileSystem {
       }
       return generation;
     });
+  }
+
+  /** True when an absolute path resolves through the descriptor table, which no storage write tracks. */
+  resolvesThroughDescriptors(path: string): boolean {
+    return descriptorPathAlias(path) !== undefined || descriptorPathSuffix(path) !== undefined;
   }
 
   get fileBytes(): KernelFileByteSelection {
