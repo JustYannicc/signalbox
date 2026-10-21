@@ -79,7 +79,7 @@ describe("Child worker environment after admission", () => {
     });
     try {
       await expect(program.run(fixture.context)).rejects.toThrow("no longer available");
-      await expect(program.drain()).rejects.toThrow("no longer available");
+      await expect(program.drain()).resolves.toBeUndefined();
       expect(childEnv).not.toHaveBeenCalled();
       expect(createHost).not.toHaveBeenCalled();
       expect(dispatch).not.toHaveBeenCalled();
@@ -89,7 +89,7 @@ describe("Child worker environment after admission", () => {
     }
   });
 
-  it("releases a claimed slot and reports environment preparation failure to drain", async () => {
+  it("releases a claimed slot and reports environment preparation failure to its caller only", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1);
     const reservation = await capacity.reserve(fixture.context.signal, {
@@ -111,7 +111,7 @@ describe("Child worker environment after admission", () => {
     });
     try {
       await expect(program.run(fixture.context)).rejects.toBe(failure);
-      await expect(program.drain()).rejects.toBe(failure);
+      await expect(program.drain()).resolves.toBeUndefined();
       expect(createHost).not.toHaveBeenCalled();
       expect(capacity.active).toBe(0);
     } finally {
