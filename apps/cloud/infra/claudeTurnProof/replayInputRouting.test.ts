@@ -3,6 +3,21 @@ import { describe, expect, it } from "@effect/vitest";
 import { contentDigest, selectAdjacentRecordedUserRoute } from "./replayInputRouting.ts";
 
 describe("adjacent recorded user route matching", () => {
+  it("checks ordered records when the descriptor contains only the first input digest", async () => {
+    const first = await contentDigest("first input");
+    const last = await contentDigest("last input");
+    const result = await selectAdjacentRecordedUserRoute(
+      [
+        { type: "text", text: "first input\n" },
+        { type: "text", text: "last input" },
+      ],
+      [{ routeId: "route-a", firstUserContentSha256: first }],
+      () => [first, last],
+    );
+
+    expect(result).toMatchObject({ status: "matched", routeId: "route-a" });
+  });
+
   it("matches ordered merged blocks using one CLI-added LF per nonfinal block", async () => {
     const content = [
       { type: "text", text: "first input\n" },

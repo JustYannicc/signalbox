@@ -84,9 +84,9 @@ export async function selectAdjacentRecordedUserRoute(
   );
 
   const possibleRoutes = routes.filter((route) => {
-    const digests =
-      route.userContentSha256s ??
-      (route.firstUserContentSha256 ? [route.firstUserContentSha256] : []);
+    // Only a complete digest list can rule out an adjacent sequence.
+    const digests = route.userContentSha256s;
+    if (digests === undefined) return true;
     return candidates.every(
       ({ exact, separator }) =>
         digests.includes(exact) || (separator !== null && digests.includes(separator)),
