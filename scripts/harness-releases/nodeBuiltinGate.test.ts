@@ -63,6 +63,22 @@ describe("release builtin gate", () => {
   });
 
   it.each([
+    "const p = process.getBuiltinModule('process'); p.getBuiltinModule('cluster');",
+    "const m = process.getBuiltinModule('node:module'); const r = m.createRequire(import.meta.url); r('cluster');",
+    "const get = process.getBuiltinModule; const p = get('process'); p.getBuiltinModule('cluster');",
+    "(await import('node:process')).default.getBuiltinModule('cluster');",
+    "import * as p from 'node:process'; p.default.getBuiltinModule('cluster');",
+    "import('node:process').then(p => p.getBuiltinModule('cluster'));",
+    "import('node:process').then(({default: {getBuiltinModule: g}}) => g('cluster'));",
+    "(await import('node:module')).default.createRequire(import.meta.url)('cluster');",
+    "import('node:module').then(({createRequire}) => createRequire(import.meta.url)('cluster'));",
+  ])("rejects nested and namespace builtin-loader forms: %s", async (text) => {
+    await expect(assertPackagedBuiltinCoverage([source(text)])).rejects.toThrow(
+      "NODE_BUILTIN_COVERAGE_FAILED: missing=cluster",
+    );
+  });
+
+  it.each([
     "const p = require('node:process'); p.getBuiltinModule('node:cluster');",
     "const p = (await import('process')); p.getBuiltinModule('cluster');",
     "import {createRequire} from 'node:module'; const r = createRequire(import.meta.url); const p = r('process'); p.getBuiltinModule('cluster');",

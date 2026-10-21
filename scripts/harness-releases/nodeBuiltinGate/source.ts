@@ -9,7 +9,25 @@ import {
 import { ScopedBindings } from "../../claude-bunfs/release-inventory-scope.ts";
 import type { NodeBuiltinAmbiguity } from "./coverage.ts";
 
-type Origin = "module" | "factory" | "require" | "bridge" | "process" | "builtin-loader";
+const moduleLoaders = [
+  { specifier: "module", origin: "module", member: "createRequire", memberOrigin: "factory" },
+  {
+    specifier: "process",
+    origin: "process",
+    member: "getBuiltinModule",
+    memberOrigin: "builtin-loader",
+  },
+] as const;
+type Origin = (typeof moduleLoaders)[number]["origin" | "memberOrigin"] | "require" | "bridge";
+const moduleForSpecifier = (specifier: string | undefined) =>
+  moduleLoaders.find((rule) => rule.specifier === specifier?.replace(/^node:/, ""));
+function moduleMember(value: Origin | undefined, name: string | undefined): Origin | undefined {
+  const rule = moduleLoaders.find((rule) => rule.origin === value);
+  return (
+    rule &&
+    (name === "default" ? rule.origin : name === rule.member ? rule.memberOrigin : undefined)
+  );
+}
 export interface BuiltinSource {
   readonly name: string;
   readonly source: string;
@@ -47,10 +65,8 @@ export function scanBuiltinSource(input: BuiltinSource) {
       return !binding && node.text === "process" ? "process" : undefined;
     }
     const property = member(node);
-    if (property?.name === "getBuiltinModule" && origin(property.target) === "process")
-      return "builtin-loader";
-    if (property?.name === "createRequire" && origin(property.target) === "module")
-      return "factory";
+    const providedMember = property && moduleMember(origin(property.target), property.name);
+    if (providedMember) return providedMember;
     if (property?.name === "require" && origin(property.target) === "bridge") return "require";
     if (
       property?.name === "process" &&
@@ -78,75 +94,71 @@ export function scanBuiltinSource(input: BuiltinSource) {
       if (
         node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         isNodeRequireCall(node, requires) ||
-        origin(node.expression) === "require"
-      ) {
-        const specifier = literal(node.arguments[0]);
-        if (["module", "node:module"].includes(specifier ?? "")) return "module";
-        if (["process", "node:process"].includes(specifier ?? "")) return "process";
-      }
+        origin(node.expression) === "require" ||
+        origin(node.expression) === "builtin-loader"
+      )
+        return moduleForSpecifier(literal(node.arguments[0]))?.origin;
     }
     return undefined;
   };
+  let changed = false;
+  const assign = (name: ts.BindingName, value: Origin | undefined): void => {
+    if (!value) return;
+    if (ts.isIdentifier(name)) {
+      if (bindings.lookup(name)?.origin !== value) {
+        bindings.setOrigin(name, value);
+        changed = true;
+      }
+    } else if (ts.isObjectBindingPattern(name)) {
+      for (const item of name.elements) {
+        if (item.dotDotDotToken) continue;
+        const key = item.propertyName ?? item.name;
+        if (ts.isIdentifier(key) || ts.isStringLiteralLike(key))
+          assign(item.name, moduleMember(value, key.text));
+      }
+    }
+  };
   for (const statement of file.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
-    const specifier = literal(statement.moduleSpecifier);
-    if (["process", "node:process"].includes(specifier ?? "")) {
-      const clause = statement.importClause;
-      if (clause?.name) bindings.setOrigin(clause.name, "process");
-      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings))
-        bindings.setOrigin(clause.namedBindings.name, "process");
-      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings))
-        for (const item of clause.namedBindings.elements)
-          if ((item.propertyName ?? item.name).text === "getBuiltinModule")
-            bindings.setOrigin(item.name, "builtin-loader");
-      continue;
-    }
-    if (!specifier || !["module", "node:module"].includes(specifier)) continue;
+    const rule = moduleForSpecifier(literal(statement.moduleSpecifier));
     const clause = statement.importClause;
-    if (clause?.name) bindings.setOrigin(clause.name, "module");
-    if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings))
-      bindings.setOrigin(clause.namedBindings.name, "module");
-    if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings))
+    if (!rule || !clause) continue;
+    if (clause.name) assign(clause.name, rule.origin);
+    if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings))
+      assign(clause.namedBindings.name, rule.origin);
+    if (clause.namedBindings && ts.isNamedImports(clause.namedBindings))
       for (const item of clause.namedBindings.elements)
-        if ((item.propertyName ?? item.name).text === "createRequire")
-          bindings.setOrigin(item.name, "factory");
+        assign(item.name, moduleMember(rule.origin, (item.propertyName ?? item.name).text));
   }
   const declarations: ts.VariableDeclaration[] = [];
+  const callbacks: { readonly parameter: ts.BindingName; readonly receiver: ts.CallExpression }[] =
+    [];
   const collect = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node)) declarations.push(node);
+    if (ts.isCallExpression(node)) {
+      const property = member(node.expression);
+      const receiver = property && unwrap(property.target);
+      const callback = node.arguments[0];
+      if (
+        property?.name === "then" &&
+        receiver &&
+        ts.isCallExpression(receiver) &&
+        receiver.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        callback &&
+        (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+        callback.parameters[0]
+      ) {
+        callbacks.push({ parameter: callback.parameters[0].name, receiver });
+      }
+    }
     ts.forEachChild(node, collect);
   };
   collect(file);
-  for (let pass = 0; pass <= declarations.length; pass++) {
-    let changed = false;
-    for (const declaration of declarations) {
-      if (!declaration.initializer) continue;
-      const value = origin(declaration.initializer);
-      if (value && ts.isIdentifier(declaration.name)) {
-        if (bindings.lookup(declaration.name)?.origin !== value) {
-          bindings.setOrigin(declaration.name, value);
-          changed = true;
-        }
-      } else if (
-        (value === "module" || value === "process") &&
-        ts.isObjectBindingPattern(declaration.name)
-      ) {
-        const memberName = value === "module" ? "createRequire" : "getBuiltinModule";
-        const memberOrigin = value === "module" ? "factory" : "builtin-loader";
-        for (const item of declaration.name.elements) {
-          const key = item.propertyName ?? item.name;
-          if (
-            ts.isIdentifier(item.name) &&
-            (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) &&
-            key.text === memberName &&
-            bindings.lookup(item.name)?.origin !== memberOrigin
-          ) {
-            bindings.setOrigin(item.name, memberOrigin);
-            changed = true;
-          }
-        }
-      }
-    }
+  for (let pass = 0; pass <= declarations.length + callbacks.length; pass++) {
+    changed = false;
+    for (const callback of callbacks) assign(callback.parameter, origin(callback.receiver));
+    for (const declaration of declarations)
+      if (declaration.initializer) assign(declaration.name, origin(declaration.initializer));
     if (!changed) break;
   }
   const add = (node: ts.Node, argument: ts.Expression | undefined, kind: string) => {
