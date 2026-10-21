@@ -1,52 +1,26 @@
-import { describe, expect, it } from "vite-plus/test";
-import { createNodeBridge } from "../../isolate/NodeBridge.ts";
-import { createHarnessRuntime } from "./runtime.ts";
-import { fixture } from "./tests/fixture.ts";
+import * as NodeWorkerThreads from "node:worker_threads";
+import { describe, it, onTestFinished } from "vite-plus/test";
 
 describe("Node harness terminal detection", () => {
-  it.each([false, true])("installs guest tty with supplied native tty = %s", async (supplyTty) => {
-    const f = fixture();
-    const controller = new AbortController();
-    let runtime: ReturnType<typeof createHarnessRuntime> | undefined;
-    try {
-      runtime = createHarnessRuntime(
-        {
-          ...f.input,
-          nativeModules: supplyTty
-            ? {
-                tty: {
-                  isatty() {
-                    throw new Error("Host descriptors must not be inspected");
-                  },
-                },
-              }
-            : {},
-        },
-        { lifetime: controller.signal, stdin: controller.signal, output: controller.signal },
-        () => {
-          throw new Error("No child processes in this fixture");
-        },
-        () => {
-          throw new Error("No package initialization in this fixture");
-        },
-      );
-      const bridge = createNodeBridge(runtime.modules);
-      const tty = bridge.require("tty");
-      expect(bridge.require("node:tty")).toBe(tty);
-      const isatty = Reflect.get(tty, "isatty");
-      for (const fd of [-1, 0, 1, 2, 42, NaN]) expect(isatty(fd)).toBe(false);
-      for (const name of ["ReadStream", "WriteStream"]) {
-        expect(() => Reflect.construct(Reflect.get(tty, name), [0])).toThrow(
-          expect.objectContaining({ code: "ENOTSUP", syscall: `tty.${name}` }),
+  it.each([false, true])(
+    "installs guest tty with supplied native tty = %s",
+    (supplyTty) =>
+      new Promise<void>((resolve, reject) => {
+        // The guest replaces process globals and may launch only once per realm.
+        const worker = new NodeWorkerThreads.Worker(
+          new URL("./tests/ttyWorker.ts", import.meta.url),
+          {
+            workerData: supplyTty,
+          },
         );
-      }
-    } finally {
-      controller.abort();
-      for (const stream of Object.values(runtime?.streams ?? {})) {
-        stream.on("error", () => {});
-        stream.destroy();
-      }
-      await f.close();
-    }
-  });
+        onTestFinished(async () => {
+          await worker.terminate();
+        });
+        worker.on("error", reject);
+        worker.on("exit", (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`TTY worker exited with ${code}.`));
+        });
+      }),
+  );
 });
