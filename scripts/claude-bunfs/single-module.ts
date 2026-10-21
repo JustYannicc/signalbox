@@ -101,6 +101,7 @@ export function planSingleModule(input: {
             : args.kind === "require-call" &&
               args.namespace === PLUGIN_NAMESPACE &&
               args.importer === MAIN_SPECIFIER &&
+              // The main module only requires generated wrappers; this guards that invariant.
               wrappers.has(args.path);
         return ours ? { path: args.path, namespace: PLUGIN_NAMESPACE } : undefined;
       });

@@ -177,16 +177,28 @@ describe("single-module release planning", () => {
       sources: {
         "fixture:main": "",
         "signalbox:entry-wrapper:0.mjs": "export const value=17;",
-        "signalbox:entry-wrapper:999.mjs": "export const other=18;",
       },
-      entries: {
-        claude: "fixture:main",
-        "workers/one": "signalbox:entry-wrapper:0.mjs",
-        "workers/two": "signalbox:entry-wrapper:999.mjs",
-      },
+      entries: { claude: "fixture:main", "workers/one": "signalbox:entry-wrapper:0.mjs" },
     });
     expect((await load("workers/one.js")).value).toBe(17);
-    expect((await load("workers/two.js")).other).toBe(18);
+  });
+
+  it("publishes entries that name each other's wrappers, including the main entry", async () => {
+    const { load } = await publish({
+      sources: {
+        "signalbox:entry-wrapper:0.mjs": "export const main=16;",
+        "signalbox:entry-wrapper:1.mjs": "export const one=17;",
+        "signalbox:entry-wrapper:2.mjs": "export const two=18;",
+      },
+      entries: {
+        claude: "signalbox:entry-wrapper:2.mjs",
+        "workers/one": "signalbox:entry-wrapper:1.mjs",
+        "workers/two": "signalbox:entry-wrapper:0.mjs",
+      },
+    });
+    expect((await load("claude.js")).two).toBe(18);
+    expect((await load("workers/one.js")).one).toBe(17);
+    expect((await load("workers/two.js")).main).toBe(16);
   });
 
   it("keeps an entry's own __esModule export instead of esbuild's interop marker", async () => {
