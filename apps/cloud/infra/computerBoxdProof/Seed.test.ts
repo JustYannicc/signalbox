@@ -28,8 +28,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("../childPrograms/prepare.ts", () => ({
-  prepareChildPrograms: vi.fn(async () => ({
+vi.mock("../childPrograms/basic.ts", () => ({
+  prepareBasicChildPrograms: vi.fn(async () => ({
     bash: { entrypoint: "bash", modules: {} },
     busyboxCat: { entrypoint: "busybox", modules: {} },
     ripgrep: { entrypoint: "ripgrep", modules: {} },

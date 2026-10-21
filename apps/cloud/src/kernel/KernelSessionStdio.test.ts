@@ -2,14 +2,17 @@ import { describe, expect, it } from "vite-plus/test";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
 import { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
-import { createKernelSessionStdio } from "./KernelSessionStdio.ts";
+import {
+  createKernelSessionStdio,
+  type KernelSessionOutputObserver,
+} from "./KernelSessionStdio.ts";
 import { createKernelProcessStreams } from "./KernelProcessStreams.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
 
-function fixture() {
+function fixture(observe?: KernelSessionOutputObserver) {
   const database = sqliteFixture();
   const wakes = new KernelWakeRegistry();
-  const session = createKernelSessionStdio(wakes);
+  const session = createKernelSessionStdio(wakes, undefined, observe);
   const files = new KernelFileSystem({
     mounts: [{ path: "/", storage: createFacetSqliteStorage(database.storage, () => 1n) }],
     stdio: session.stdio,
@@ -29,6 +32,53 @@ function fixture() {
 }
 
 describe("Kernel session stdio", () => {
+  it("observes only accepted partial writes and never changes SDK output", async () => {
+    const observed: number[] = [];
+    const f = fixture((fd, bytes) => {
+      expect(fd).toBe(1);
+      observed.push(...bytes);
+      bytes.fill(99);
+      throw new Error("An observer is not an output owner");
+    });
+    try {
+      const source = Uint8Array.from({ length: 100_000 }, (_, i) => i % 251);
+      // WASI NONBLOCK exposes the exact accepted prefix of a full pipe.
+      const count = f.session.stdio[1].write!(source, 4);
+      expect(typeof count).toBe("number");
+      if (typeof count !== "number") throw new Error("Expected synchronous nonblocking write");
+      expect(count).toBeGreaterThan(0);
+      expect(count).toBeLessThan(source.length);
+      expect(Uint8Array.from(observed)).toEqual(source.slice(0, count));
+      f.session.finish();
+      expect(new Uint8Array(await new Response(f.session.stdout).arrayBuffer())).toEqual(
+        source.slice(0, count),
+      );
+      f.session.assertBound(f.files);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("observes asynchronous accepted writes once while the SDK drains backpressure", async () => {
+    const observed: number[] = [];
+    const f = fixture(async (fd, bytes) => {
+      expect(fd).toBe(2);
+      observed.push(...bytes);
+      throw new Error("Rejected observation must not fail a successful write");
+    });
+    try {
+      const payload = Uint8Array.from({ length: 196_613 }, (_, i) => i % 251);
+      const received = new Response(f.session.stderr).arrayBuffer();
+      const writer = createKernelProcessStreams(f.files).stderr.getWriter();
+      await writer.write(payload);
+      await writer.close();
+      f.session.finish();
+      expect(new Uint8Array(await received)).toEqual(payload);
+      expect(Uint8Array.from(observed)).toEqual(payload);
+    } finally {
+      await f.close();
+    }
+  });
   it("binds the exact filesystem and rejects mismatched standard descriptors", async () => {
     const f = fixture();
     try {
