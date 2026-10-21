@@ -65,8 +65,13 @@ export function scanBuiltinSource(input: BuiltinSource) {
       return !binding && node.text === "process" ? "process" : undefined;
     }
     const property = member(node);
-    const providedMember = property && moduleMember(origin(property.target), property.name);
-    if (providedMember) return providedMember;
+    if (
+      property &&
+      (property.name === "default" || moduleLoaders.some((rule) => rule.member === property.name))
+    ) {
+      const providedMember = moduleMember(origin(property.target), property.name);
+      if (providedMember) return providedMember;
+    }
     if (property?.name === "require" && origin(property.target) === "bridge") return "require";
     if (
       property?.name === "process" &&
@@ -90,12 +95,13 @@ export function scanBuiltinSource(input: BuiltinSource) {
       }
     }
     if (ts.isCallExpression(node)) {
-      if (origin(node.expression) === "factory") return "require";
+      const callee = origin(node.expression);
+      if (callee === "factory") return "require";
       if (
         node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         isNodeRequireCall(node, requires) ||
-        origin(node.expression) === "require" ||
-        origin(node.expression) === "builtin-loader"
+        callee === "require" ||
+        callee === "builtin-loader"
       )
         return moduleForSpecifier(literal(node.arguments[0]))?.origin;
     }
