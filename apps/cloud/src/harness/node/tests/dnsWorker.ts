@@ -9,9 +9,17 @@ let dnsRequests = 0;
 globalThis.fetch = async (resource, init) => {
   const url = new URL(String(resource));
   NodeAssert.equal(url.origin, "https://cloudflare-dns.com");
-  NodeAssert.equal(url.searchParams.get("type"), "1");
+
   NodeAssert.ok(init?.signal);
   dnsRequests++;
+  if (url.searchParams.get("name") === "v6-only.test") {
+    return Response.json(
+      url.searchParams.get("type") === "28"
+        ? { Status: 0, Answer: [{ name: "v6-only.test.", type: 28, TTL: 90, data: "2001:db8::9" }] }
+        : { Status: 2 },
+    );
+  }
+  NodeAssert.equal(url.searchParams.get("type"), "1");
   return Response.json({
     Status: 0,
     Answer: [{ name: "example.test.", type: 1, TTL: 90, data: "192.0.2.9" }],
@@ -50,6 +58,14 @@ try {
           [{ address: "192.0.2.9", ttl: 90 }],
         );
         NodeAssert.equal(dnsRequests, 1);
+        NodeAssert.deepEqual(
+          await Reflect.get(promises, "lookup")("v6-only.test", {
+            family: 6,
+            hints: Reflect.get(dns, "V4MAPPED"),
+          }),
+          { address: "2001:db8::9", family: 6 },
+        );
+        NodeAssert.equal(dnsRequests, 2);
         Reflect.get(bridge.require("process"), "exit")(0);
       },
     }),

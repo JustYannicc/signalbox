@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { inspectNodeBuiltinCoverage, nodeBuiltinProviderSpecifiers } from "./coverage.ts";
+import { inspectNodeBuiltinCoverage } from "./coverage.ts";
 
 const builtinModules = ["dns", "dns/promises", "fs", "fs/promises", "path"];
 
@@ -66,20 +66,5 @@ describe("Node builtin coverage", () => {
         },
       ],
     });
-  });
-
-  it("derives installed names from the actual module record, including fs.promises", () => {
-    const installed = nodeBuiltinProviderSpecifiers(
-      {
-        "node:dns": {},
-        fs: { promises: {} },
-        undici: {},
-        path: undefined,
-        "dns/promises": null,
-      },
-      builtinModules,
-    );
-
-    expect(installed).toEqual(["fs", "fs/promises", "node:dns"]);
   });
 });

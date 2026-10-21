@@ -108,6 +108,32 @@ describe("Node DNS lookup", () => {
       family: 6,
     });
   });
+  it("uses IPv6 without consulting a failing IPv4 service for V4MAPPED", async () => {
+    const f = fixture((type) => (type === 28 ? { Status: 0, Answer: [aaaa] } : { Status: 2 }));
+    expect(await f.promises.lookup("v6.test", { family: 6, hints: NodeDns.V4MAPPED })).toEqual({
+      address: aaaa.data,
+      family: 6,
+    });
+    expect(
+      f.fetch.mock.calls.map(([url]) => new URL(String(url)).searchParams.get("type")),
+    ).toEqual(["28"]);
+  });
+  it("queries and maps both families when V4MAPPED includes ALL", async () => {
+    const f = fixture();
+    expect(
+      await f.promises.lookup("both.test", {
+        family: 6,
+        hints: NodeDns.V4MAPPED | NodeDns.ALL,
+        all: true,
+      }),
+    ).toEqual([
+      { address: `::ffff:${a.data}`, family: 6 },
+      { address: aaaa.data, family: 6 },
+    ]);
+    expect(
+      f.fetch.mock.calls.map(([url]) => new URL(String(url)).searchParams.get("type")),
+    ).toEqual(["1", "28"]);
+  });
   it("validates options and states unsupported interface/service behavior", async () => {
     const f = fixture();
     await expect(f.promises.lookup("test", { family: 3 })).rejects.toMatchObject({

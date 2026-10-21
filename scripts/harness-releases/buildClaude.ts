@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import { isNodeErrorCode } from "./guards.ts";
-import { assertReleaseBuiltinCoverage } from "./nodeBuiltinGate.ts";
+import { assertExtractedBuiltinCoverage } from "./nodeBuiltinGate.ts";
 import { rebundleClaudeRelease } from "../claude-bunfs/rebundle.ts";
 import type { BuiltinCapabilityManifest } from "../claude-bunfs/builtin-gap.ts";
 import {
@@ -208,10 +208,7 @@ export async function buildClaudeRelease(
       bunVersion: null,
       capabilities: options.capabilities ?? emptyCapabilities(inputs),
     });
-    const builtinCoverage = await assertReleaseBuiltinCoverage({
-      requiredSpecifiers: scan.inventory.builtins.map((entry) => entry.specifier),
-      ambiguities: scan.inventory.unresolvedReferences,
-    });
+    const builtinCoverage = await assertExtractedBuiltinCoverage(extracted);
     const sourceAfter = await freezeSources(repository);
     assertSourcesUnchanged(sourceBefore, sourceAfter);
     const provenance = {

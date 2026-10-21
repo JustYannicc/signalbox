@@ -1,3 +1,4 @@
+import * as NodeDns from "node:dns";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createNodeDns } from "../NodeDns.ts";
 
@@ -100,6 +101,24 @@ describe("Node DNS cancellation", () => {
     await expect(modules.dns.promises.lookup("new.test")).rejects.toMatchObject({
       code: "ECANCELLED",
     });
+  });
+  it("cancels V4MAPPED during its IPv6 query without starting IPv4 fallback", async () => {
+    const pending = pendingFetch();
+    const lifetime = new AbortController();
+    const fetch = vi.fn(pending.fetch);
+    const modules = createNodeDns({ fetch, signal: lifetime.signal });
+    const query = modules.dns.promises.lookup("v6.test", { family: 6, hints: NodeDns.V4MAPPED });
+    const rejected = expect(query).rejects.toMatchObject({
+      code: "ECANCELLED",
+      syscall: "getaddrinfo",
+    });
+    await pending.started.promise;
+    lifetime.abort();
+    await rejected;
+    await modules.drain();
+    expect(fetch.mock.calls.map(([url]) => new URL(String(url)).searchParams.get("type"))).toEqual([
+      "28",
+    ]);
   });
   it("applies per-resolver timeouts and bounded retries", async () => {
     vi.useFakeTimers();

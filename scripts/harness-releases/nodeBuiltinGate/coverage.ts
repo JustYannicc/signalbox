@@ -38,29 +38,6 @@ function builtinCatalog(names: readonly string[]): Set<string> {
   return new Set(names.map(canonicalSpecifier));
 }
 
-/** Get builtin names from actual module objects, including NodeBridge's fs.promises alias. */
-export function nodeBuiltinProviderSpecifiers(
-  modules: Readonly<Record<string, unknown>>,
-  builtinModules: readonly string[],
-): readonly string[] {
-  const known = builtinCatalog(builtinModules);
-  const names = new Set<string>();
-  for (const [specifier, value] of Object.entries(modules)) {
-    if (value === null || (typeof value !== "object" && typeof value !== "function")) continue;
-    const canonical = canonicalSpecifier(specifier);
-    if (known.has(canonical) || specifier.startsWith("node:")) names.add(specifier);
-  }
-
-  const fs = modules.fs ?? modules["node:fs"];
-  if (fs !== null && (typeof fs === "object" || typeof fs === "function")) {
-    const promises = Reflect.get(fs, "promises");
-    if (promises !== null && (typeof promises === "object" || typeof promises === "function"))
-      names.add("fs/promises");
-  }
-
-  return [...names].sort(compare);
-}
-
 /** Compare literal source imports with installed module keys, never routing metadata. */
 export function inspectNodeBuiltinCoverage(
   input: NodeBuiltinCoverageInput,

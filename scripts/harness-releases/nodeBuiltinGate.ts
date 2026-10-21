@@ -1,9 +1,8 @@
 import * as NodeModule from "node:module";
+import { readExtraction } from "../claude-bunfs/extracted-input.ts";
 import {
   assertNodeBuiltinCoverage,
   inspectNodeBuiltinCoverage,
-  nodeBuiltinProviderSpecifiers,
-  type NodeBuiltinAmbiguity,
 } from "./nodeBuiltinGate/coverage.ts";
 import { captureRuntimeBuiltinSpecifiers } from "./runtimeBuiltinInventory.ts";
 import { scanBuiltinSource, type BuiltinSource } from "./nodeBuiltinGate/source.ts";
@@ -11,21 +10,7 @@ import { scanBuiltinSource, type BuiltinSource } from "./nodeBuiltinGate/source.
 export { scanBuiltinSource } from "./nodeBuiltinGate/source.ts";
 export type { BuiltinSource } from "./nodeBuiltinGate/source.ts";
 
-export function inspectInstalledBuiltinSources(
-  sources: readonly BuiltinSource[],
-  installed: Readonly<Record<string, object>>,
-) {
-  const inventory = sources.map(scanBuiltinSource);
-  const coverage = inspectNodeBuiltinCoverage({
-    builtinModules: NodeModule.builtinModules,
-    requiredSpecifiers: inventory.flatMap((entry) => entry.requiredSpecifiers),
-    installedSpecifiers: nodeBuiltinProviderSpecifiers(installed, NodeModule.builtinModules),
-    ambiguities: inventory.flatMap((entry) => entry.ambiguities),
-  });
-  return { ...coverage, sources: inventory };
-}
-
-/** Runs before publication, including when the provider components came from a build cache. */
+/** Runs before publication, including when provider components came from a build cache. */
 export async function assertPackagedBuiltinCoverage(sources: readonly BuiltinSource[]) {
   const installed = await captureRuntimeBuiltinSpecifiers();
   const inventory = sources.map(scanBuiltinSource);
@@ -39,16 +24,17 @@ export async function assertPackagedBuiltinCoverage(sources: readonly BuiltinSou
   return { ...report, sources: inventory };
 }
 
-export async function assertReleaseBuiltinCoverage(input: {
-  readonly requiredSpecifiers: readonly string[];
-  readonly ambiguities: readonly NodeBuiltinAmbiguity[];
-}) {
-  const installed = await captureRuntimeBuiltinSpecifiers();
-  const report = inspectNodeBuiltinCoverage({
-    builtinModules: NodeModule.builtinModules,
-    ...input,
-    installedSpecifiers: installed,
-  });
-  assertNodeBuiltinCoverage(report);
-  return report;
+/** Original extracted code and packaged code share the same builtin-name analysis. */
+export async function assertExtractedBuiltinCoverage(directory: string) {
+  const extraction = await readExtraction(directory);
+  const sources: BuiltinSource[] = [];
+  for (const module of extraction.manifest.modules) {
+    if (module.loader !== 1) continue;
+    sources.push({
+      name: module.name,
+      source: await extraction.readSource(module),
+      format: module.format,
+    });
+  }
+  return assertPackagedBuiltinCoverage(sources);
 }

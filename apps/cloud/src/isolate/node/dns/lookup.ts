@@ -92,12 +92,21 @@ export function createLookup(
     let addresses = hosts(hostname);
     if (addresses.length === 0) {
       // Separate A/AAAA queries have no shared OS ordering. Verbatim preserves A then AAAA.
-      const results = await Promise.allSettled([
-        options.family !== 6 || options.hints & NodeDns.V4MAPPED
-          ? records(hostname, 4)
-          : Promise.resolve([]),
-        options.family !== 4 ? records(hostname, 6) : Promise.resolve([]),
-      ]);
+      // V4MAPPED consults IPv4 only as a fallback unless ALL was requested.
+      const mappedFallback =
+        options.family === 6 &&
+        Boolean(options.hints & NodeDns.V4MAPPED) &&
+        !(options.hints & NodeDns.ALL);
+      const results = await Promise.allSettled(
+        mappedFallback
+          ? [records(hostname, 6).then((ipv6) => (ipv6.length > 0 ? ipv6 : records(hostname, 4)))]
+          : [
+              options.family !== 6 || options.hints & NodeDns.V4MAPPED
+                ? records(hostname, 4)
+                : Promise.resolve([]),
+              options.family !== 4 ? records(hostname, 6) : Promise.resolve([]),
+            ],
+      );
       const failed = results.find((result) => result.status === "rejected");
       if (failed?.status === "rejected") {
         const error = failed.reason;
