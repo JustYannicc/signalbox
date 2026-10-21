@@ -3,7 +3,7 @@ import { machine, QUALIFIED, type GnuCommandQualification } from "./CommandQuali
 
 export function qualifySed(
   argv: readonly string[],
-  isRegularFile?: (file: string) => boolean,
+  canEditFile?: (file: string) => boolean,
 ): GnuCommandQualification {
   let options = true;
   let extended = false;
@@ -92,8 +92,11 @@ export function qualifySed(
     );
   }
   // GNU rejects devices and directories instead of replacing them with temp files.
-  if (inPlace && isRegularFile !== undefined && !operands.every(isRegularFile)) {
-    return machine("unqualified-script", "In-place sed requires existing regular file targets");
+  if (inPlace && canEditFile !== undefined && !operands.every(canEditFile)) {
+    return machine(
+      "unqualified-script",
+      "In-place sed needs readable regular files in writable directories",
+    );
   }
   return QUALIFIED;
 }

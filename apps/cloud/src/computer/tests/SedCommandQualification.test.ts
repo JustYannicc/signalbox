@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { qualifyGnuCommand } from "../GnuCommandCompatibility.ts";
 
-import { commandGatewayFixture } from "./CommandGatewayAdmissionFixture.ts";
+import { commandGatewayFixture, emptyChild, readAll } from "./CommandGatewayAdmissionFixture.ts";
 import { exited } from "./ChildBusyboxFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
@@ -108,6 +108,43 @@ it("forwards nonregular or unavailable edit targets before any child starts, usi
     expect(fixture.machineSpawn).toHaveBeenCalledTimes(3);
     expect(fixture.read("input")).toBe("a\n");
     expect(fixture.read("nested/input")).toBe("a\n");
+    expect(fixture.capacity.active).toBe(0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+it("forwards the whole edit when any target directory is unwritable, preserving GNU failure output", async () => {
+  const local = vi.fn(async () => {
+    throw new Error("Unwritable edit reached a child");
+  });
+  const fixture = commandGatewayFixture({ run: local });
+  fixture.write("input", "a\n");
+  fixture.write("nested/input", "a\n");
+  fixture.filesystem.chmod("/workspace/nested", 0o555);
+  const stderr = new TextEncoder().encode(
+    "sed: couldn't open temporary file nested/sedABC123: Permission denied\n",
+  );
+  fixture.machineSpawn.mockImplementationOnce(async () =>
+    emptyChild({ stderr, exited: Promise.resolve(exited(4)) }),
+  );
+  const input = command(["-i.bak", "s/a/b/", "input", "nested/input"]);
+  try {
+    const child = await fixture.gateway.exec(input, fixture.controller.signal);
+    try {
+      const [status, output] = await Promise.all([child.exited, readAll(child.stderr)]);
+      expect(status).toEqual(exited(4));
+      expect(output).toEqual(stderr);
+    } finally {
+      await child.dispose();
+    }
+    expect(local).not.toHaveBeenCalled();
+    expect(fixture.machineSpawn).toHaveBeenCalledOnce();
+    expect(fixture.machineSpawn.mock.calls[0]?.[0]).toEqual(input);
+    expect(fixture.read("input")).toBe("a\n");
+    expect(fixture.read("nested/input")).toBe("a\n");
+    expect(fixture.filesystem.readdir("/workspace").sort()).toEqual(["input", "nested"]);
+    expect(fixture.filesystem.readdir("/workspace/nested")).toEqual(["input"]);
     expect(fixture.capacity.active).toBe(0);
   } finally {
     await fixture.close();

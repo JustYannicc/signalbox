@@ -28,7 +28,7 @@ const TARGETS = new Map<string, "sed" | "grep">([
 /** Qualify only the narrow sed/grep argument subset supported by this classifier. */
 export function qualifyGnuCommand(
   command: KernelCommand,
-  filesystem?: Pick<KernelFileSystem, "stat">,
+  filesystem?: Pick<KernelFileSystem, "stat" | "access">,
 ): GnuCommandQualification {
   const program = TARGETS.get(command.executable);
   if (program === undefined) return QUALIFIED;
@@ -43,10 +43,13 @@ export function qualifyGnuCommand(
           ? undefined
           : (file) => {
               try {
-                return (
-                  filesystem.stat(file.startsWith("/") ? file : `${command.cwd}/${file}`).type ===
-                  "file"
-                );
+                const path = file.startsWith("/") ? file : `${command.cwd}/${file}`;
+                if (filesystem.stat(path).type !== "file") return false;
+                filesystem.access(path, 4, true);
+                const directory = path.slice(0, path.lastIndexOf("/")) || "/";
+                // Both temp creation and final rename need directory write/search permission.
+                filesystem.access(directory, 3, true);
+                return true;
               } catch {
                 return false;
               }
