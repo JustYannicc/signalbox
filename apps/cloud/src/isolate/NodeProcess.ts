@@ -118,11 +118,13 @@ function exposeOwnBoundMethods(target: object, names: readonly string[]): void {
       bound = (...args: unknown[]) => Reflect.apply(callable, target, args);
       boundByMethod.set(callable, bound);
     }
+    // Node's own process methods are plain writable properties. graceful-fs replaces cwd and
+    // chdir, and signal-exit replaces emit; a read-only method throws in their strict-mode code.
     Object.defineProperty(target, name, {
       value: bound,
-      configurable: false,
+      configurable: true,
       enumerable: true,
-      writable: false,
+      writable: true,
     });
   }
 }
