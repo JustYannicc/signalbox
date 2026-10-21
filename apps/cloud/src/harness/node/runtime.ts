@@ -16,6 +16,7 @@ import { createBunShim } from "../../isolate/BunShim.ts";
 import { createNodeConstants } from "../../isolate/NodeConstants.ts";
 import { createNodeOs } from "../../isolate/NodeOs.ts";
 import { createNodePath } from "../../isolate/NodePath.ts";
+import * as NodeTty from "../../isolate/NodeTty.ts";
 import { createHarnessEnvironment } from "./environment.ts";
 import type { NodeHarnessProcessInput } from "./types.ts";
 
@@ -91,6 +92,7 @@ export function createHarnessRuntime(
       console,
       process,
       readline: createNodeReadline(),
+      tty: NodeTty,
       child_process: childProcess,
       os: createNodeOs(context),
       path,
