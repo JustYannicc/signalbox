@@ -131,6 +131,7 @@ describe("nested command gateway admission", () => {
             const sibling = await fixture.gateway.isolate.exec(
               { executable: "/bin/pwd", argv: ["pwd"], cwd: "/workspace", env: {} },
               fixture.controller.signal,
+              undefined,
             );
             lateSibling = sibling;
             void sibling.exited.catch(() => undefined);
@@ -159,6 +160,7 @@ describe("nested command gateway admission", () => {
       root = await fixture.gateway.exec(
         { executable: "/bin/bash", argv: ["root-bash"], cwd: "/workspace", env: {} },
         fixture.controller.signal,
+        undefined,
       );
       await rootLogicalExit.promise;
       await expect(root.exited).resolves.toEqual(exited(37));
@@ -169,7 +171,7 @@ describe("nested command gateway admission", () => {
       });
       allowSibling.resolve();
       await siblingStarted.promise;
-      const waitingPermit = fixture.capacity.acquire(new AbortController().signal);
+      const waitingPermit = fixture.capacity.acquire(new AbortController().signal, undefined);
       const parentReleasedPermit = await waitingPermit;
       await parentAcknowledged.promise;
       expect(siblingDrainSettled).toBe(false);

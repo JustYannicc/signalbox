@@ -65,6 +65,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
           env,
         },
         fixture.controller.signal,
+        undefined,
       );
       const [stdout, stderr, status] = await Promise.all([
         readAll(child.stdout),
@@ -137,6 +138,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
           env,
         },
         fixture.controller.signal,
+        undefined,
       );
       const [stdout, stderr, status] = await Promise.all([
         readAll(child.stdout),

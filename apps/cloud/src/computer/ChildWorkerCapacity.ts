@@ -6,7 +6,7 @@ export interface ChildWorkerPermit {
 }
 
 export interface ChildWorkerRequester {
-  readonly processes: Pick<KernelProcessTable, "workerOwner" | "setWorkerOwner">;
+  readonly processes: Pick<KernelProcessTable, "admissionOwner" | "setAdmissionOwner">;
   readonly process: KernelHandle<"process"> | undefined;
 }
 
@@ -66,19 +66,25 @@ export class ChildWorkerCapacity {
     return this.#active;
   }
 
-  /** The requester selects queue priority only; run or reservation.run binds worker ownership. */
-  acquire(signal: AbortSignal, requester?: ChildWorkerRequester): Promise<ChildWorkerPermit> {
+  /** Undefined is a root; a requester inherits priority only while its admission owner is live. */
+  acquire(
+    signal: AbortSignal,
+    requester: ChildWorkerRequester | undefined,
+  ): Promise<ChildWorkerPermit> {
     return this.#acquire(signal, requester);
   }
 
-  #acquire(signal: AbortSignal, requester?: ChildWorkerRequester): Promise<InternalPermit> {
+  #acquire(
+    signal: AbortSignal,
+    requester: ChildWorkerRequester | undefined,
+  ): Promise<InternalPermit> {
     if (signal.aborted) return Promise.reject(signal.reason);
     if (this.#nested.size === 0 && this.#roots.size === 0 && this.#active < this.limit) {
       this.#active++;
       return Promise.resolve(this.#makePermit());
     }
 
-    const owner = requester?.processes.workerOwner(requester.process);
+    const owner = requester?.processes.admissionOwner(requester.process);
     const queue =
       owner?.status === "ok" && owner.value !== undefined && this.#owners.has(owner.value)
         ? this.#nested
@@ -157,7 +163,7 @@ export class ChildWorkerCapacity {
           throw new Error("Child worker requester process is unavailable");
         }
         const token = Object.freeze({});
-        const assigned = requester.processes.setWorkerOwner(requester.process, token);
+        const assigned = requester.processes.setAdmissionOwner(requester.process, token);
         if (assigned.status !== "ok")
           throw new Error("Child worker requester process is unavailable");
         owner = token;

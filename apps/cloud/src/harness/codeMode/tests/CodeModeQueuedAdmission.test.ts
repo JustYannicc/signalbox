@@ -79,7 +79,7 @@ function executeRequest(yield_time_ms: number) {
 
 async function queuedFixture() {
   const capacity = new ChildWorkerCapacity(1);
-  const held = await capacity.acquire(new AbortController().signal);
+  const held = await capacity.acquire(new AbortController().signal, undefined);
   const entered = Promise.withResolvers<CodeModeCellEvents>();
   const completion = Promise.withResolvers<void>();
   const client = hostClient(

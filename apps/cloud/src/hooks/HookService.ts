@@ -19,7 +19,7 @@ export type { HookExecutionResult } from "./execution/command.ts";
 type HookContext = Omit<HarnessHookRequest, "payload">;
 
 export interface HookServiceInvocationOptions extends HarnessHookInvocationOptions {
-  readonly requester?: ChildWorkerRequester;
+  readonly requester: ChildWorkerRequester;
   readonly cwd: KernelCommand["cwd"];
   readonly env: KernelCommand["env"];
 }
@@ -67,6 +67,7 @@ export function createHookService(options: HookServiceOptions) {
           { ...registration.command, cwd: invocation.cwd, env: invocation.env },
           encoder.encode(`${JSON.stringify(payload)}\n`),
           invocation.signal,
+          invocation.requester,
         );
       }
       if (registration.kind === "signalbox") {

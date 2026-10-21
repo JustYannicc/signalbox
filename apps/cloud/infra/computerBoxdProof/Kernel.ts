@@ -51,7 +51,7 @@ export function proofKernel(
     admissionDiagnostics: admitted.admissionDiagnostics,
     settledDiagnostics: admitted.settledDiagnostics,
     async localControl(signal: AbortSignal) {
-      await runProofCommand(await admitted.commands.isolate.exec(PROOF_COMMAND, signal));
+      await runProofCommand(await admitted.commands.isolate.exec(PROOF_COMMAND, signal, undefined));
       await admitted.drain();
       if (!sameBytes(read(held), RESULT_FILE) || admitted.snapshot().active !== 0)
         throw new Error("Child Dynamic Worker did not settle its file writes and capacity");

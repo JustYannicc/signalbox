@@ -319,7 +319,7 @@ describe("ChildWorkerReservation", () => {
         expect(capacity.active).toBe(capacity.limit);
 
         stopped.resolve(undefined);
-        const next = capacity.acquire(fixture.context.signal);
+        const next = capacity.acquire(fixture.context.signal, undefined);
         const permit = yield* Effect.promise(() => next);
         permit.release();
         yield* Effect.promise(() => draining);

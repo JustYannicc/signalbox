@@ -128,8 +128,8 @@ function composedProgramFixture(sourceKind: "static" | "lazy-factory") {
     processes: {
       info: () => ({ status: "ok", value: { pid: 2, parentPid: 1, processGroupId: 2 } }),
       lookupPid: () => ({ status: "error" }),
-      workerOwner: () => ({ status: "ok", value: undefined }),
-      setWorkerOwner: () => ({ status: "ok", value: undefined }),
+      admissionOwner: () => ({ status: "ok", value: undefined }),
+      setAdmissionOwner: () => ({ status: "ok", value: undefined }),
     },
   } as unknown as KernelAsyncProgramContext;
   const close = vi.fn();

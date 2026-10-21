@@ -45,6 +45,7 @@ describe("uniform command gateway admission", () => {
         const child = await fixture.gateway.exec(
           { executable, argv: [`${executable}-argv0`], cwd: "/workspace", env: {} },
           fixture.controller.signal,
+          undefined,
         );
         children.push(child);
         await expect(child.exited).resolves.toEqual(exited(0));
@@ -84,7 +85,7 @@ describe("uniform command gateway admission", () => {
       env: { PATH: "/bin", EMPTY: "", TOKEN: "exact" },
     };
     try {
-      child = await fixture.gateway.exec(command, fixture.controller.signal);
+      child = await fixture.gateway.exec(command, fixture.controller.signal, undefined);
       const [actualStdout, actualStderr, status] = await Promise.all([
         readAll(child.stdout),
         readAll(child.stderr),
@@ -124,7 +125,7 @@ describe("uniform command gateway admission", () => {
       env: { LANG: "C", EMPTY: "", TOKEN: "exact" },
     };
     try {
-      child = await fixture.gateway.exec(command, fixture.controller.signal);
+      child = await fixture.gateway.exec(command, fixture.controller.signal, undefined);
       const [actualStdout, actualStderr, status] = await Promise.all([
         readAll(child.stdout),
         readAll(child.stderr),
@@ -158,6 +159,7 @@ describe("uniform command gateway admission", () => {
       machineChild = await fixture.gateway.exec(
         { executable: "/bin/cat", argv: ["cat"], cwd: "/workspace", env: {} },
         fixture.controller.signal,
+        undefined,
       );
       await expect(machineChild.exited).resolves.toEqual(exited());
       expect(fixture.machineSpawn).toHaveBeenCalledOnce();
@@ -165,6 +167,7 @@ describe("uniform command gateway admission", () => {
       localChild = await fixture.gateway.isolate.exec(
         { executable: "/bin/cat", argv: ["cat"], cwd: "/workspace", env: {} },
         fixture.controller.signal,
+        undefined,
       );
       await expect(localChild.exited).resolves.toEqual(exited(17));
       expect(local).toHaveBeenCalledOnce();
@@ -174,12 +177,14 @@ describe("uniform command gateway admission", () => {
         fixture.gateway.exec(
           { executable: "cd", argv: ["cd"], cwd: "/workspace", env: {} },
           fixture.controller.signal,
+          undefined,
         ),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
       await expect(
         fixture.gateway.isolate.exec(
           { executable: "/usr/bin/unknown", argv: ["unknown"], cwd: "/workspace", env: {} },
           fixture.controller.signal,
+          undefined,
         ),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
       expect(fixture.machineSpawn).toHaveBeenCalledOnce();

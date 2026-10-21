@@ -57,7 +57,7 @@ describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
         "CPU process execution is stopped",
       );
       const drained = fixture.capacity
-        .acquire(new AbortController().signal)
+        .acquire(new AbortController().signal, undefined)
         .then((permit) => permit.release());
       const progress = await Promise.race([
         fixture.entered.then((context) => ({ kind: "entered" as const, context })),
@@ -100,7 +100,7 @@ describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
       );
       expect(fixture.programs.reap(command.handle).status).toBe("ok");
       const drained = fixture.capacity
-        .acquire(new AbortController().signal)
+        .acquire(new AbortController().signal, undefined)
         .then((permit) => permit.release());
       const progress = await Promise.race([
         fixture.entered.then((context) => ({ kind: "entered" as const, context })),
@@ -141,7 +141,7 @@ describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
       expect(background.filesystem.descriptors.has(1)).toBe(true);
       expect(background.signal.aborted).toBe(false);
       const drained = fixture.capacity
-        .acquire(new AbortController().signal)
+        .acquire(new AbortController().signal, undefined)
         .then((permit) => permit.release());
       fixture.release();
       await drained;
@@ -162,7 +162,7 @@ describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
       expect(await command.exited).toMatchObject({ status: "ok", value: exited(17) });
       expect(fixture.capacity.active).toBe(1);
       const drained = fixture.capacity
-        .acquire(new AbortController().signal)
+        .acquire(new AbortController().signal, undefined)
         .then((permit) => permit.release());
       await fixture.closeWorker();
       await fixture.aborted;
@@ -187,7 +187,7 @@ describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
       });
       expect(fixture.capacity.active).toBe(1);
       const drained = fixture.capacity
-        .acquire(new AbortController().signal)
+        .acquire(new AbortController().signal, undefined)
         .then((permit) => permit.release());
       expect(fixture.programs.processes.signal(background.identity.handle, 9).status).toBe("ok");
       await fixture.aborted;

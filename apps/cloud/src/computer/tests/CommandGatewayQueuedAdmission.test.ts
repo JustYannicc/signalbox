@@ -34,6 +34,7 @@ describe("queued command gateway admission", () => {
       const child = await fixture.gateway.exec(
         { executable: "/bin/cat", argv: ["cat", String(index)], cwd: "/workspace", env: {} },
         fixture.controller.signal,
+        undefined,
       );
       children.push(child);
       const [stdout, stderr, exit] = await Promise.all([

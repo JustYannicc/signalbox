@@ -208,7 +208,7 @@ describe("nested child worker capacity", () => {
     const release = await hold(capacity, holder);
     const child = tree.spawn(holder.identity);
     await release();
-    const held = await capacity.acquire(new AbortController().signal);
+    const held = await capacity.acquire(new AbortController().signal, undefined);
     const controller = new AbortController();
     const queued = capacity.acquire(controller.signal, child);
     const reason = new Error("cancel stale owner request");
@@ -236,7 +236,7 @@ describe("nested child worker capacity", () => {
         capacity.acquire(signal, requester),
       ]);
       const order: string[] = [];
-      const root = capacity.acquire(signal).then((permit) => {
+      const root = capacity.acquire(signal, undefined).then((permit) => {
         order.push("root");
         return permit;
       });

@@ -51,13 +51,14 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
   readonly spawn = async (
     command: KernelCommand,
     signal: AbortSignal,
+    parent: KernelHandle<"process"> | undefined = this.#parent,
   ): Promise<KernelCommandChild> => {
     throwIfAborted(signal);
     if (this.#admitted) {
       const input = {
         filesystem: this.#filesystem,
         signal,
-        ...(this.#parent === undefined ? {} : { parent: this.#parent }),
+        ...(parent === undefined ? {} : { parent }),
         ...(this.#home === undefined ? {} : { home: this.#home }),
       };
       const options = this.#fileBytes === undefined ? {} : { fileBytes: this.#fileBytes };
@@ -83,7 +84,7 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
       {
         filesystem: this.#filesystem,
         signal,
-        ...(this.#parent === undefined ? {} : { parent: this.#parent }),
+        ...(parent === undefined ? {} : { parent }),
         // KernelProgramHost fills a missing HOME from `home`; only pass it when it
         // is already part of the caller's complete environment.
         ...(preparedHome ? { home: this.#home } : {}),

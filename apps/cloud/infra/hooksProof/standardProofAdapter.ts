@@ -188,7 +188,7 @@ export function createStandardProofAdapter(
     signal: lifetime.signal,
     commands(computer: ComputerExecPort): ComputerExecPort {
       return {
-        async exec(command, signal) {
+        async exec(command, signal, requester) {
           let child: KernelCommandChild | undefined;
           try {
             await secrets.useEnvironment(
@@ -198,6 +198,7 @@ export function createStandardProofAdapter(
                 child = await computer.exec(
                   { ...command, env: { ...command.env, ...filled } },
                   current,
+                  requester,
                 );
                 commandEnvironments += 1;
                 return "";

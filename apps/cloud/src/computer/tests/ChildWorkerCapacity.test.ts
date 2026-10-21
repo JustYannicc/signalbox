@@ -51,7 +51,7 @@ describe("ChildWorkerCapacity", () => {
     const signal = new AbortController().signal;
     const wakes = new KernelWakeRegistry();
     const processes = new KernelProcessTable({ wakes });
-    const owner = vi.spyOn(processes, "workerOwner");
+    const owner = vi.spyOn(processes, "admissionOwner");
     const listen = vi.spyOn(signal, "addEventListener");
     try {
       const permit = await capacity.acquire(signal, { processes, process: undefined });
@@ -84,10 +84,10 @@ describe("ChildWorkerCapacity", () => {
   it("does not admit an eleventh worker while ten are active", async () => {
     const capacity = new ChildWorkerCapacity();
     const permits = await Promise.all(
-      Array.from({ length: 10 }, () => capacity.acquire(new AbortController().signal)),
+      Array.from({ length: 10 }, () => capacity.acquire(new AbortController().signal, undefined)),
     );
     let admitted = false;
-    const eleventh = capacity.acquire(new AbortController().signal).then((permit) => {
+    const eleventh = capacity.acquire(new AbortController().signal, undefined).then((permit) => {
       admitted = true;
       return permit;
     });
@@ -105,14 +105,14 @@ describe("ChildWorkerCapacity", () => {
   it("keeps the active count within the limit and admits queued work in FIFO order", async () => {
     const capacity = new ChildWorkerCapacity(2);
     const signals = Array.from({ length: 4 }, () => new AbortController().signal);
-    const first = await capacity.acquire(signals[0]!);
-    const second = await capacity.acquire(signals[1]!);
+    const first = await capacity.acquire(signals[0]!, undefined);
+    const second = await capacity.acquire(signals[1]!, undefined);
     const order: number[] = [];
-    const thirdPromise = capacity.acquire(signals[2]!).then((permit) => {
+    const thirdPromise = capacity.acquire(signals[2]!, undefined).then((permit) => {
       order.push(3);
       return permit;
     });
-    const fourthPromise = capacity.acquire(signals[3]!).then((permit) => {
+    const fourthPromise = capacity.acquire(signals[3]!, undefined).then((permit) => {
       order.push(4);
       return permit;
     });
@@ -138,13 +138,13 @@ describe("ChildWorkerCapacity", () => {
     const reason = new Error("cancelled");
     const alreadyAborted = new AbortController();
     alreadyAborted.abort(reason);
-    await expect(capacity.acquire(alreadyAborted.signal)).rejects.toBe(reason);
+    await expect(capacity.acquire(alreadyAborted.signal, undefined)).rejects.toBe(reason);
     expect(capacity.active).toBe(0);
 
-    const held = await capacity.acquire(new AbortController().signal);
+    const held = await capacity.acquire(new AbortController().signal, undefined);
     const cancelled = new AbortController();
-    const cancelledWaiter = capacity.acquire(cancelled.signal);
-    const nextWaiter = capacity.acquire(new AbortController().signal);
+    const cancelledWaiter = capacity.acquire(cancelled.signal, undefined);
+    const nextWaiter = capacity.acquire(new AbortController().signal, undefined);
     cancelled.abort(reason);
 
     await expect(cancelledWaiter).rejects.toBe(reason);
@@ -158,7 +158,7 @@ describe("ChildWorkerCapacity", () => {
   it("does not release a granted permit when its signal aborts", async () => {
     const capacity = new ChildWorkerCapacity(1);
     const controller = new AbortController();
-    const permit = await capacity.acquire(controller.signal);
+    const permit = await capacity.acquire(controller.signal, undefined);
 
     controller.abort();
     expect(capacity.active).toBe(1);
@@ -196,11 +196,11 @@ describe("ChildWorkerCapacity", () => {
       },
     } as unknown as AbortSignal;
 
-    const held = await capacity.acquire(new AbortController().signal);
-    await expect(capacity.acquire(signal)).rejects.toBe(reason);
+    const held = await capacity.acquire(new AbortController().signal, undefined);
+    await expect(capacity.acquire(signal, undefined)).rejects.toBe(reason);
     expect(capacity.active).toBe(1);
     held.release();
-    const permit = await capacity.acquire(new AbortController().signal);
+    const permit = await capacity.acquire(new AbortController().signal, undefined);
     expect(capacity.active).toBe(1);
     permit.release();
   });
@@ -233,8 +233,8 @@ describe("ChildWorkerCapacity", () => {
       },
     } as unknown as AbortSignal;
 
-    const held = await capacity.acquire(new AbortController().signal);
-    const pending = capacity.acquire(signal);
+    const held = await capacity.acquire(new AbortController().signal, undefined);
+    const pending = capacity.acquire(signal, undefined);
     held.release();
     const permit = await pending;
     expect(controller.signal.aborted).toBe(true);

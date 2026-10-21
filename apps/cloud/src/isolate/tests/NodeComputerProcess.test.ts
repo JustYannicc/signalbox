@@ -194,6 +194,7 @@ describe("Node child_process through Computer", () => {
           env: { ONLY: "exact", NUMBER: "4" },
         },
         expect.any(AbortSignal),
+        { processes: h.host.processes, process: expect.objectContaining({ kind: "process" }) },
       );
       expect(child.exitCode).toBe(23);
       expect(order).toEqual(["spawn", "exit", "close"]);

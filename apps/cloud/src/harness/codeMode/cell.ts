@@ -35,7 +35,7 @@ export class CodeModeCell {
   #observerCancellation: AbortSignal | undefined;
   #terminalContent: CodeModeContent[] | undefined;
   #observing = false;
-  #admission: "queued" | "admitted" | "cancelled" | "settled" = "queued";
+  #admission: "queued" | "cancelled" | undefined = "queued";
   readonly id: string;
 
   constructor(options: {
@@ -112,9 +112,9 @@ export class CodeModeCell {
       let permit: ChildWorkerPermit | undefined;
       let started = false;
       try {
-        permit = await options.cellCapacity.acquire(options.admissionController.signal);
+        permit = await options.cellCapacity.acquire(options.admissionController.signal, undefined);
         options.admissionController.signal.throwIfAborted();
-        this.#admission = "admitted";
+        this.#admission = undefined;
         options.admissionSettled();
         started = true;
         const completion = await options.loader.run(
@@ -134,8 +134,6 @@ export class CodeModeCell {
         this.#closeCallbacks();
         if (options.admissionController.signal.aborted) {
           this.#admission = "cancelled";
-          permit?.release();
-          permit = undefined;
           this.#final = "Terminated";
         } else if (this.#controller.signal.aborted) {
           this.#final = "Terminated";
@@ -148,7 +146,6 @@ export class CodeModeCell {
       } finally {
         this.#closeCallbacks();
         permit?.release();
-        if (this.#admission !== "cancelled") this.#admission = "settled";
         this.#wake();
       }
     })()

@@ -1,7 +1,14 @@
+import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
+import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
 import { NodeGeneratedCodeCleanupError } from "../../isolate/NodeGeneratedCode.ts";
 import { createHookService, type HookServiceOptions } from "../HookService.ts";
+
+const requester = {
+  processes: new KernelProcessTable({ wakes: new KernelWakeRegistry() }),
+  process: undefined,
+};
 
 const unused = async (): Promise<never> => {
   throw new Error("Wrong hook route");
@@ -40,7 +47,7 @@ describe("script hook cancellation", () => {
       },
       capacity,
     );
-    const invocation = { cwd: "/work", env: {}, signal: new AbortController().signal };
+    const invocation = { requester, cwd: "/work", env: {}, signal: new AbortController().signal };
     const first = hooks.invoke("script", 1, invocation);
     await started.promise;
     const second = hooks.invoke("script", 2, invocation);
@@ -68,7 +75,7 @@ describe("script hook cancellation", () => {
       },
       capacity,
     );
-    const invocation = { cwd: "/work", env: {}, signal: new AbortController().signal };
+    const invocation = { requester, cwd: "/work", env: {}, signal: new AbortController().signal };
     await expect(hooks.invoke("script", {}, invocation)).rejects.toBe(failure);
     expect(capacity.active).toBe(1);
     const queued = new AbortController();
@@ -110,7 +117,7 @@ describe("script hook cancellation", () => {
     const pending = hooks.invoke(
       "script",
       {},
-      { cwd: "/work", env: {}, signal: controller.signal },
+      { requester, cwd: "/work", env: {}, signal: controller.signal },
     );
     void pending.catch(() => undefined);
     await reading.promise;
@@ -153,7 +160,7 @@ describe("script hook cancellation", () => {
     const pending = hooks.invoke(
       "script",
       {},
-      { cwd: "/work", env: {}, signal: controller.signal },
+      { requester, cwd: "/work", env: {}, signal: controller.signal },
     );
     void pending.catch(() => undefined);
     await reading.promise;
@@ -199,7 +206,7 @@ describe("script hook cancellation", () => {
     const pending = hooks.invoke(
       "script",
       {},
-      { cwd: "/work", env: {}, signal: controller.signal },
+      { requester, cwd: "/work", env: {}, signal: controller.signal },
     );
     void pending.catch(() => undefined);
     await started.promise;

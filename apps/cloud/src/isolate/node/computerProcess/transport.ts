@@ -1,3 +1,4 @@
+import type { ChildWorkerRequester } from "../../../computer/ChildWorkerCapacity.ts";
 import type { ComputerExecPort } from "../../../computer/Computer.ts";
 import { kernelError, kernelOk, type KernelHandle } from "../../../kernel/KernelAbi.ts";
 import type { KernelCommandChild } from "../../../kernel/KernelCommandForwarder.ts";
@@ -55,6 +56,7 @@ export function createComputerProcessTransport(
           prepared.signal?.addEventListener("abort", abort, { once: true });
           if (prepared.signal?.aborted) abort();
           const completion = runComputerCommand(computer, prepared, spawn, {
+            requester: { processes: host.processes, process: identity.handle },
             signal: controller.signal,
             admitted(value) {
               child = value;
@@ -107,6 +109,7 @@ async function runComputerCommand(
   prepared: KernelPreparedProgram,
   spawn: NormalizedSpawn,
   lifecycle: {
+    readonly requester: ChildWorkerRequester;
     readonly signal: AbortSignal;
     readonly admitted: (child: KernelCommandChild) => void;
     readonly cancelledStatus: () => KernelExitStatus;
@@ -123,6 +126,7 @@ async function runComputerCommand(
         env: spawn.env,
       },
       lifecycle.signal,
+      lifecycle.requester,
     );
   } catch (error) {
     if (lifecycle.signal.aborted) return lifecycle.cancelledStatus();

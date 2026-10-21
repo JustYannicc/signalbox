@@ -59,7 +59,7 @@ it("runs editing sed through normal child admission and forwards unqualified bac
       ["-i.bak", "-e", "s/a/b/", "first", "second"],
       ["-i*", "s/a/b/", "input"],
     ]) {
-      const child = await fixture.gateway.exec(command(args), fixture.controller.signal);
+      const child = await fixture.gateway.exec(command(args), fixture.controller.signal, undefined);
       try {
         await expect(child.exited).resolves.toEqual(exited(0));
       } finally {
@@ -96,6 +96,7 @@ it("forwards nonregular or unavailable edit targets before any child starts, usi
       const child = await fixture.gateway.exec(
         { ...command(["-i", "s/a/b/", file]), cwd: "/workspace/nested" },
         fixture.controller.signal,
+        undefined,
       );
       try {
         await child.exited;
@@ -130,7 +131,7 @@ it("forwards the whole edit when any target directory is unwritable, preserving 
   );
   const input = command(["-i.bak", "s/a/b/", "input", "nested/input"]);
   try {
-    const child = await fixture.gateway.exec(input, fixture.controller.signal);
+    const child = await fixture.gateway.exec(input, fixture.controller.signal, undefined);
     try {
       const [status, output] = await Promise.all([child.exited, readAll(child.stderr)]);
       expect(status).toEqual(exited(4));

@@ -236,7 +236,7 @@ export async function runComputerBoxdProof(input: {
     await ownership.check("commandResult", "pending");
     try {
       await runProofCommand(
-        await commands.exec(nested ? NESTED_PROOF_COMMAND : PROOF_COMMAND, signal),
+        await commands.exec(nested ? NESTED_PROOF_COMMAND : PROOF_COMMAND, signal, undefined),
         async (diagnostics) => {
           for (const [field, name] of COMMAND_RESULT_CHECKS) {
             await ownership.check(name, diagnostics[field] ? "passed" : "failed");

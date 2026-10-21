@@ -118,6 +118,7 @@ describe("Harness request admissions", () => {
               f.harness.computer.exec(
                 { executable: "cat", argv: ["cat"], cwd: "/workspace", env: {} },
                 context.signal,
+                undefined,
               ),
             ),
           ),
@@ -180,6 +181,7 @@ describe("Harness request admissions", () => {
         f.harness.computer.exec(
           { executable: "cat", argv: ["cat"], cwd: "/workspace", env: {} },
           context.signal,
+          undefined,
         ),
       );
       yield* f.instance.adapter.terminal();

@@ -175,11 +175,12 @@ export function gateHost<G>(
           () =>
             options.bindComputer(input).pipe(
               Effect.map((ports): Omit<ComputerBindings, "files"> => ({
-                exec: (command, suppliedSignal) =>
+                exec: (command, suppliedSignal, requester) =>
                   gate.promise(async (_context, signal) => {
                     const child = await ports.exec(
                       command,
                       AbortSignal.any([suppliedSignal, signal]),
+                      requester,
                     );
                     // Waiting for this receipt keeps an admitted command inside its incoming request.
                     gate.trackExit(child.exited);

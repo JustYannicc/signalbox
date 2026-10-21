@@ -94,7 +94,11 @@ export async function proveComputerPolicy(input: ComputerPolicyProofInput) {
       unboundResolution.status === "error" && unboundResolution.error.code === "NOT_FOUND",
       "sed unexpectedly resolved in the current child catalog",
     );
-    const forwardedChild = await commands.exec(unboundCommand, new AbortController().signal);
+    const forwardedChild = await commands.exec(
+      unboundCommand,
+      new AbortController().signal,
+      undefined,
+    );
     await forwardedChild.dispose();
     assertOneCaptured(normalMachine.commands, unboundCommand, "Allowed unbound sed");
 
@@ -128,6 +132,7 @@ export async function proveComputerPolicy(input: ComputerPolicyProofInput) {
     const outsideChild = await outsidePolicyCommands.exec(
       registeredOutsidePolicy,
       new AbortController().signal,
+      undefined,
     );
     await outsideChild.dispose();
     assertOneCaptured(
@@ -156,6 +161,7 @@ export async function proveComputerPolicy(input: ComputerPolicyProofInput) {
     const orderedChild = await orderedCommands.exec(
       registeredOutsidePolicy,
       new AbortController().signal,
+      undefined,
     );
     await orderedChild.dispose();
     assertOneCaptured(
@@ -220,7 +226,7 @@ async function runCommand(
   commands: ReturnType<typeof createComputerCommands>,
   command: KernelCommand,
 ) {
-  const child = await commands.exec(command, new AbortController().signal);
+  const child = await commands.exec(command, new AbortController().signal, undefined);
   try {
     const [stdout, stderr, exit] = await Promise.all([
       readText(child.stdout),

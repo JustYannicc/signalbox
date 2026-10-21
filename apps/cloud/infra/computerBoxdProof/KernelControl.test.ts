@@ -190,7 +190,11 @@ describe("proof admitted composition with fake child bodies, not native qualific
       observed.rootBodyRuns = 0;
       test.kernel.bindNestedMachine({ spawn });
       await runProofCommand(
-        await test.kernel.commands.exec(NESTED_PROOF_COMMAND, new AbortController().signal),
+        await test.kernel.commands.exec(
+          NESTED_PROOF_COMMAND,
+          new AbortController().signal,
+          undefined,
+        ),
       );
       expect(await test.kernel.settledDiagnostics()).toEqual({
         admittedPhysicalCapacityDrained: true,

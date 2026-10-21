@@ -207,7 +207,7 @@ describe("Computer program admission", () => {
     });
     const program = { kind: "async" as const, run: async () => exited() };
     try {
-      const held = await capacity.acquire(fixture.context.signal);
+      const held = await capacity.acquire(fixture.context.signal, undefined);
       const reserving = Promise.withResolvers<void>();
       const reserve = capacity.reserve.bind(capacity);
       vi.spyOn(capacity, "reserve").mockImplementation((...args) => {

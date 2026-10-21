@@ -1,11 +1,19 @@
+import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
+import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { createHookService, type HookRegistration } from "../HookService.ts";
 import type { KernelCommandChild } from "../../kernel/KernelCommandForwarder.ts";
+
+const requester = {
+  processes: new KernelProcessTable({ wakes: new KernelWakeRegistry() }),
+  process: undefined,
+};
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const context = { harness: "claude-code", event: "pre-tool-use", sessionId: "session" } as const;
 const invokeOptions = () => ({
+  requester,
   cwd: "/work/a b",
   env: { HOME: "/home/guest", EMPTY: "", PATH: "/bin" },
   signal: new AbortController().signal,

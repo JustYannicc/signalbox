@@ -24,7 +24,6 @@ export class CodeModeSession {
   readonly #cells = new Map<string, CodeModeCell>();
   readonly #lifetimes = new Set<Promise<void>>();
   readonly #options: SessionOptions;
-  readonly #pending = new Set<AbortController>();
   #nextId = 1;
   #closing = false;
 
@@ -38,9 +37,7 @@ export class CodeModeSession {
     const onAbort = () => admission.abort(signal.reason);
     const detach = () => {
       signal.removeEventListener("abort", onAbort);
-      this.#pending.delete(admission);
     };
-    this.#pending.add(admission);
     // Detach the per-request listener after admission; AbortSignal.any would retain it for the session lifetime.
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
@@ -102,9 +99,6 @@ export class CodeModeSession {
 
   async shutdown() {
     this.#closing = true;
-    // Closing withdraws queued acquisitions so shutdown cannot wait for capacity held elsewhere.
-    for (const queued of this.#pending)
-      queued.abort(new Error("CodeMode session is shutting down"));
     await Promise.all([...this.#cells.values()].map((cell) => cell.terminate()));
     await Promise.all(this.#lifetimes);
     for (const cell of this.#cells.values()) this.#close(cell);

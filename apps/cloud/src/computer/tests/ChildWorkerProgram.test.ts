@@ -119,7 +119,9 @@ describe("ChildWorkerProgram", () => {
       await expect(program.run(context)).rejects.toBe(failure);
       await cleaned.promise;
       expect(capacity.active).toBe(1);
-      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      const drained = capacity
+        .acquire(context.signal, undefined)
+        .then((permit) => permit.release());
       stopped.resolve();
       await drained;
       expect(capacity.active).toBe(0);
@@ -212,7 +214,9 @@ describe("ChildWorkerProgram", () => {
       );
       await closing.promise;
       expect(capacity.active).toBe(1);
-      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      const drained = capacity
+        .acquire(context.signal, undefined)
+        .then((permit) => permit.release());
       closed.reject(new Error("Late close failure"));
       await drained;
       expect(capacity.active).toBe(0);
@@ -254,7 +258,9 @@ describe("ChildWorkerProgram", () => {
       await rejected;
       exited.resolve({ exitCode: 17, signal: 0, coreDumped: false });
       expect(capacity.active).toBe(1);
-      const drained = capacity.acquire(context.signal).then((permit) => permit.release());
+      const drained = capacity
+        .acquire(context.signal, undefined)
+        .then((permit) => permit.release());
       closed.reject(new Error("Close also failed"));
       await drained;
       expect(capacity.active).toBe(0);

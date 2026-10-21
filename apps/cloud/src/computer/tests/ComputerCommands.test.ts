@@ -123,7 +123,7 @@ describe("createComputerCommands", () => {
       cwd: "/workspace",
       env: { EMPTY: "", PATH: "/bin", TOKEN: "exact" },
     };
-    const child = await commands.exec(command, signal);
+    const child = await commands.exec(command, signal, undefined);
     const [actualStdout, actualStderr, exit] = await Promise.all([
       readAll(child.stdout),
       readAll(child.stderr),
@@ -156,7 +156,9 @@ describe("createComputerCommands", () => {
       cwd: "/",
       env: { EMPTY: "" },
     };
-    await expect(commands.exec(command, new AbortController().signal)).resolves.toBe(child);
+    await expect(commands.exec(command, new AbortController().signal, undefined)).resolves.toBe(
+      child,
+    );
     expect(machine.spawn).toHaveBeenCalledOnce();
     expect(machine.spawn).toHaveBeenCalledWith(command, expect.any(AbortSignal));
     expect(localRuns).toBe(0);
@@ -178,6 +180,7 @@ describe("createComputerCommands", () => {
     const child = await commands.isolate.exec(
       { executable: "/bin/probe", argv: ["probe", "--large"], cwd: "/", env: {} },
       new AbortController().signal,
+      undefined,
     );
     await expect(child.exited).resolves.toMatchObject({ exitCode: 7 });
     await child.dispose();
@@ -209,7 +212,7 @@ describe("createComputerCommands", () => {
       env: { EMPTY: "", TOKEN: "before" },
     };
     const signal = new AbortController().signal;
-    const execution = commands.exec(input, signal);
+    const execution = commands.exec(input, signal, undefined);
     const captured = await started.promise;
     expect(captured).toEqual({
       executable: "/bin/probe",
@@ -236,7 +239,7 @@ describe("createComputerCommands", () => {
       localRuns++;
       throw failed;
     });
-    const child = await commands.exec(probeCommand(), new AbortController().signal);
+    const child = await commands.exec(probeCommand(), new AbortController().signal, undefined);
     await expect(child.exited).rejects.toThrow("Child process completion failed");
     expect(localRuns).toBe(1);
     expect(machine.spawn).not.toHaveBeenCalled();
@@ -259,7 +262,7 @@ describe("createComputerCommands", () => {
     const controller = new AbortController();
     const reason = new Error("cancel before admission");
     controller.abort(reason);
-    await expect(commands.exec(probeCommand(), controller.signal)).rejects.toBe(reason);
+    await expect(commands.exec(probeCommand(), controller.signal, undefined)).rejects.toBe(reason);
     expect(evidence).not.toHaveBeenCalled();
     expect(localRuns).toBe(0);
     expect(machine.spawn).not.toHaveBeenCalled();
@@ -277,7 +280,7 @@ describe("createComputerCommands", () => {
         env: { EMPTY: "", PATH: "/bin", TOKEN: "exact" },
       };
       const signal = new AbortController().signal;
-      await expect(commands.exec(command, signal)).resolves.toBe(child);
+      await expect(commands.exec(command, signal, undefined)).resolves.toBe(child);
       expect(machine.spawn).toHaveBeenCalledExactlyOnceWith(command, signal);
     },
   );
@@ -300,7 +303,7 @@ describe("createComputerCommands", () => {
     };
     const signal = new AbortController().signal;
 
-    await expect(commands.exec(command, signal)).resolves.toBe(child);
+    await expect(commands.exec(command, signal, undefined)).resolves.toBe(child);
 
     expect(machine.spawn).toHaveBeenCalledExactlyOnceWith(command, signal);
     expect(localRuns).toBe(0);
@@ -326,7 +329,7 @@ describe("createComputerCommands", () => {
       kind: "machine",
       reason: "unsupported-executable",
     });
-    await expect(commands.exec(command, signal)).resolves.toBe(child);
+    await expect(commands.exec(command, signal, undefined)).resolves.toBe(child);
 
     expect(machine.spawn).toHaveBeenCalledExactlyOnceWith(command, signal);
     expect(localRuns).toBe(0);
@@ -343,6 +346,7 @@ describe("createComputerCommands", () => {
       commands.isolate.exec(
         { ...probeCommand(), executable: "/bin/missing", argv: ["missing"] },
         new AbortController().signal,
+        undefined,
       ),
     ).rejects.toMatchObject({ name: "KernelForwardingUnavailable", code: "POLICY_NOT_READY" });
     expect(machine.spawn).not.toHaveBeenCalled();
@@ -367,9 +371,11 @@ describe("createComputerCommands", () => {
     context.filesystem.mkdir("/workspace");
     const command = probeCommand(cwd);
     const signal = new AbortController().signal;
-    await expect(Promise.resolve().then(() => commands.exec(command, signal))).rejects.toThrow();
     await expect(
-      Promise.resolve().then(() => commands.isolate.exec(command, signal)),
+      Promise.resolve().then(() => commands.exec(command, signal, undefined)),
+    ).rejects.toThrow();
+    await expect(
+      Promise.resolve().then(() => commands.isolate.exec(command, signal, undefined)),
     ).rejects.toThrow();
     expect(evidence).not.toHaveBeenCalled();
     expect(localRuns).toBe(0);

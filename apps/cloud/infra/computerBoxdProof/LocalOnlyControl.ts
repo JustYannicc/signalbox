@@ -12,7 +12,7 @@ export async function runLocalOnlyControl(
   signal: AbortSignal,
 ) {
   const before = admitted.snapshot();
-  const child = await admitted.commands.isolate.exec(LOCAL_CAT_COMMAND, signal);
+  const child = await admitted.commands.isolate.exec(LOCAL_CAT_COMMAND, signal, undefined);
   const read = async (stream: ReadableStream<Uint8Array>) => {
     const chunks: number[] = [];
     for await (const bytes of stream) chunks.push(...bytes);
@@ -46,6 +46,7 @@ export async function runLocalOnlyControl(
         argv: ["proof-unsupported"],
       },
       signal,
+      undefined,
     );
     await unsupported.dispose();
   } catch (error) {
