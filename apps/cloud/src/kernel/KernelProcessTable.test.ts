@@ -47,7 +47,7 @@ function launch(
 }
 
 describe("KernelProcessTable", () => {
-  it("inherited on spawn, kept after the parent is reaped", async () => {
+  it("inherits the admission owner on spawn and keeps it after the parent is reaped", async () => {
     const { table, wakes } = makeTable();
     const parentExit = deferred<KernelExitStatus>();
     const childExit = deferred<KernelExitStatus>();

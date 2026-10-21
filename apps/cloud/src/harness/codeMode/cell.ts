@@ -146,7 +146,6 @@ export class CodeModeCell {
       } finally {
         this.#closeCallbacks();
         permit?.release();
-        this.#wake();
       }
     })()
       .catch((error: unknown) => {

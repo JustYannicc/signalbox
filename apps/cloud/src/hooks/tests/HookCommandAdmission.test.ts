@@ -1,9 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import {
-  commandGatewayFixture,
-  writeStdio,
-} from "../../computer/tests/CommandGatewayAdmissionFixture.ts";
-import { exited } from "../../computer/tests/ChildBusyboxFixture.ts";
+import { commandGatewayFixture, exited, writeStdio } from "../../computer/commandGatewayTesting.ts";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { createHookService } from "../HookService.ts";
 

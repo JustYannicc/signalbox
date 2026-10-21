@@ -2,11 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import {
-  commandGatewayFixture,
-  readAll,
-} from "../../../computer/tests/CommandGatewayAdmissionFixture.ts";
-import { exited } from "../../../computer/tests/ChildBusyboxFixture.ts";
+import { commandGatewayFixture, exited, readAll } from "../../../computer/commandGatewayTesting.ts";
 import { requestFixture } from "./fixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
