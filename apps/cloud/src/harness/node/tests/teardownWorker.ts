@@ -14,27 +14,25 @@ try {
     loadPackages: async () => ({}),
     loadRelease: async (bridge) => ({
       launch() {
-        const guest = bridge.require("process") as typeof hostProcess;
+        const guest = bridge.require("process") as NodeJS.Process;
         const record = (name: string) => seen.push([name, globalThis.process === guest]);
-        const { removeListener, emit } = guest;
-        guest.removeListener = (...args: Parameters<typeof removeListener>) => {
-          record("removeListener");
-          return removeListener(...args);
+        const wrap = (target: object, name: string, label = name) => {
+          const original = Reflect.get(target, name) as (...args: unknown[]) => unknown;
+          Reflect.set(target, name, (...args: unknown[]) => {
+            record(label);
+            return Reflect.apply(original, target, args);
+          });
         };
-        guest.emit = (...args: Parameters<typeof emit>) => {
+        wrap(guest, "removeListener");
+        const emit = Reflect.get(guest, "emit") as (...args: unknown[]) => unknown;
+        Reflect.set(guest, "emit", (...args: unknown[]) => {
           record(`emit:${String(args[0])}`);
-          return emit(...args);
-        };
+          return Reflect.apply(emit, guest, args);
+        });
         // Detaching the host's listener defers a warning; it must still reach the guest's emit.
         guest.on("removeListener", () => guest.emitWarning("detached"));
         guest.on("warning", () => {});
-        for (const stream of [guest.stdin, guest.stdout, guest.stderr]) {
-          const destroy = stream.destroy.bind(stream);
-          stream.destroy = (...args: Parameters<typeof destroy>) => {
-            record("destroy");
-            return destroy(...args);
-          };
-        }
+        for (const stream of [guest.stdin, guest.stdout, guest.stderr]) wrap(stream, "destroy");
         launched.resolve();
         if (!aborted) guest.exit(0);
       },
