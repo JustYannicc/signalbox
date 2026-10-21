@@ -12,6 +12,6 @@ export function createChildCoreutilsProgram(options: ChildCoreutilsProgramOption
   return createChildWorkerProgram({
     ...options,
     childEnv: (context) => ({ ...context.env, PWD: context.filesystem.cwd }),
-    createHost: (context) => createWorkerCoreutilsHost({ context }),
+    createHost: (context, lease) => createWorkerCoreutilsHost({ context }, lease),
   });
 }

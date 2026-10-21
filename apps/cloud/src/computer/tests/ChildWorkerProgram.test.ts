@@ -5,7 +5,10 @@ import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "../ChildWorkerDispatchError.ts";
 import { createChildWorkerProgram, type ChildWorkerInvocation } from "../ChildWorkerProgram.ts";
+import { createWorkerSyscalls } from "../WorkerSyscalls.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
+
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -53,6 +56,41 @@ async function withContext(run: (context: KernelAsyncProgramContext) => Promise<
 }
 
 describe("ChildWorkerProgram", () => {
+  it("leaves a host the child keeps after its command unable to reach the kernel process", () =>
+    withContext(async (context) => {
+      const argsSizes = {
+        name: "args_sizes_get",
+        args: [0, 4],
+        memorySize: 8,
+        regions: [{ pointer: 0, bytes: new Uint8Array(8) }],
+      };
+      let kept: ReturnType<typeof createWorkerSyscalls>["host"] | undefined;
+      const program = createChildWorkerProgram({
+        executable: "/bin/tool",
+        code: { mainModule: "entry.js", modules: {} },
+        capacity: new ChildWorkerCapacity(1),
+        createHost: (admitted, lease) =>
+          createWorkerSyscalls(
+            {
+              filesystem: admitted.filesystem,
+              args: admitted.args,
+              env: admitted.env,
+              signal: admitted.signal,
+            },
+            lease,
+          ),
+        dispatch: {
+          run: async (_input, host) => {
+            kept = host;
+            await expect(host.call(argsSizes)).resolves.toMatchObject({ value: 0 });
+            return { exitCode: 0, signal: 0, coreDumped: false };
+          },
+        },
+      });
+      expect(await program.run(context)).toEqual({ exitCode: 0, signal: 0, coreDumped: false });
+      await expect(kept!.call(argsSizes)).rejects.toMatchObject({ code: "EBADF" });
+    }));
+
   it("releases a disconnected invocation only after both host cleanup and its late stop ACK", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1);

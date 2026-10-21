@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createKernelBusyboxHost } from "../../kernel/KernelBusyboxHost.ts";
 import {
   KERNEL_BUSYBOX_ARTIFACT,
@@ -14,6 +14,8 @@ import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildBusyboxProgram } from "../ChildBusyboxProgram.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
+
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 // Third-party artifacts stay local. A present artifact with the wrong pin must fail.
 const artifact = new URL("../../../../../.t3/1071/programs/busybox.wasm", import.meta.url);
@@ -151,12 +153,9 @@ describe.skipIf(!available)("actual pinned Nimbus BusyBox child", () => {
         modules: { "main.js": "child entry", "busybox.wasm": { wasm: bytes.buffer } },
       },
       capacity,
-      parentRpcTarget(port) {
-        captured = port;
-        return port;
-      },
       dispatch: {
         async run(input, port) {
+          captured = port;
           expect(capacity.active).toBe(1);
           expect(input.command.argv).toEqual(["cat", "from-facet"]);
           expect(input.command.cwd).toBe("/workspace");
@@ -180,7 +179,7 @@ describe.skipIf(!available)("actual pinned Nimbus BusyBox child", () => {
       expect(fixture.filesystem.descriptors.has(1)).toBe(true);
       await expect(
         captured!.callBusybox({ name: "identity", args: [0], memorySize: 0, regions: [] }),
-      ).rejects.toThrow("unavailable");
+      ).rejects.toMatchObject({ code: "EBADF" });
     } finally {
       await fixture.close();
     }

@@ -4,22 +4,23 @@ import {
   type KernelSyscallHostOptions,
 } from "../kernel/KernelSyscallHost.ts";
 import type { KernelSyscallPort, KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
+import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 
 /** The child receives syscall capability for its own prepared kernel process only. */
 export class WorkerSyscalls extends RpcTarget implements KernelSyscallPort {
-  readonly #host: KernelSyscallPort;
+  readonly #host: ChildHostRef<KernelSyscallPort>;
 
-  constructor(host: KernelSyscallPort) {
+  constructor(host: ChildHostRef<KernelSyscallPort>) {
     super();
     this.#host = host;
   }
 
-  call(request: KernelSyscallRequest) {
-    return this.#host.call(request);
+  async call(request: KernelSyscallRequest) {
+    return this.#host.get().call(request);
   }
 }
 
-export function createWorkerSyscalls(options: KernelSyscallHostOptions) {
+export function createWorkerSyscalls(options: KernelSyscallHostOptions, lease: ChildHostLease) {
   const owner = createKernelSyscallHost(options);
-  return { host: new WorkerSyscalls(owner), close: owner.close };
+  return { host: new WorkerSyscalls(lease.hold(owner)), close: owner.close };
 }
