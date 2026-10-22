@@ -1,10 +1,12 @@
 import * as NodeAssert from "node:assert/strict";
+import type { SystemIdentity } from "@t3tools/contracts/systemIdentity";
 import type { ClaudeSdkQuery } from "@signalbox/provider-claude/ClaudeSdkQueryRunner";
 import type { PreparedClaudeSdk, SdkSpawnedProcess } from "../../ClaudeIsolateAdapter.ts";
 import type { NodeBridge } from "../../../isolate/NodeBridge.ts";
 import type { createNodeChildProcess } from "../../../isolate/NodeChildProcess.ts";
 import type { createNodeProcess } from "../../../isolate/NodeProcess.ts";
 import type { createNodeFs } from "../../../isolate/NodeFs.ts";
+import type { createNodeOs } from "../../../isolate/NodeOs.ts";
 
 type Message = Exclude<Awaited<ReturnType<ClaudeSdkQuery["next"]>>["value"], void>;
 const usage = {
@@ -21,7 +23,7 @@ const usage = {
 };
 
 /** SDK and CLI doubles, behind the real native adapter and its shared Node personality. */
-export function nativeFixture(nativeId: string) {
+export function nativeFixture(nativeId: string, systemIdentity: SystemIdentity) {
   const outputs: string[] = [];
   let consumed = 0;
   let launched = false;
@@ -102,14 +104,23 @@ export function nativeFixture(nativeId: string) {
         fs.statSync("/usr/share/git-core/templates/description").mode & 0o777,
         0o644,
       );
-      const process = bridge.require("node:process") as ReturnType<typeof createNodeProcess>;
+      const logicalProcess = bridge.require("node:process") as ReturnType<typeof createNodeProcess>;
+      const os = bridge.require("node:os") as ReturnType<typeof createNodeOs>;
+      NodeAssert.equal(logicalProcess.arch, systemIdentity.arch);
+      NodeAssert.equal(logicalProcess.platform, systemIdentity.platform);
+      NodeAssert.equal(os.arch(), logicalProcess.arch);
+      NodeAssert.equal(os.platform(), logicalProcess.platform);
+      NodeAssert.equal(os.release(), systemIdentity.release);
+      NodeAssert.equal(os.version(), systemIdentity.version);
+      NodeAssert.equal(os.machine(), systemIdentity.machine);
+      NodeAssert.equal(os.hostname(), systemIdentity.hostname);
       const children = bridge.require("node:child_process") as ReturnType<
         typeof createNodeChildProcess
       >;
-      NodeAssert.equal(process.pid, 1);
+      NodeAssert.equal(logicalProcess.pid, 1);
       let buffer = "";
       try {
-        for await (const chunk of process.stdin) {
+        for await (const chunk of logicalProcess.stdin) {
           buffer += String(chunk);
           const end = buffer.indexOf("\n");
           if (end < 0) continue;
@@ -144,7 +155,7 @@ export function nativeFixture(nativeId: string) {
             uuid: "00000000-0000-4000-8000-000000000001",
             session_id: nativeId,
           };
-          process.stdout.write(`${JSON.stringify(frame)}\n`);
+          logicalProcess.stdout.write(`${JSON.stringify(frame)}\n`);
         }
       } catch (error) {
         if (!signal.aborted) {

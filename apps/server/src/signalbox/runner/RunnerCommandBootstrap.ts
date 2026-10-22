@@ -10,10 +10,17 @@ import {
   type RunnerCommandReceipt,
 } from "@signalbox/runner-protocol/RunnerCommandProtocol";
 import { type RunnerBuild } from "@signalbox/runner-protocol/RunnerProtocol";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { prepareRunnerCommandCgroup } from "./RunnerCommandCgroup.ts";
+import {
+  applyRunnerCommandSystemIdentity,
+  resolveRunnerCommandSystemIdentity,
+  runnerCommandSystemIdentitySystem,
+  sameSystemIdentity,
+} from "./RunnerCommandSystemIdentity.ts";
 import { runRunnerCommandSession } from "./RunnerCommandSession.ts";
 import { webSocketTransport } from "./runnerSocket.ts";
 import type { RunnerExecWorkspaceAttestation } from "./RunnerExecHost.ts";
@@ -143,6 +150,7 @@ const sameConfig = (left: RunnerCommandConfig, right: RunnerCommandConfig) =>
   left.operationId === right.operationId &&
   left.machineId === right.machineId &&
   left.generation === right.generation &&
+  sameSystemIdentity(left.systemIdentity, right.systemIdentity) &&
   left.token === right.token &&
   left.workspaceReceipt === right.workspaceReceipt &&
   left.cgroupPath === right.cgroupPath;
@@ -245,9 +253,18 @@ export const runRunnerCommandBootstrap = Effect.fn("runRunnerCommandBootstrap")(
   configPath: string,
 ) {
   const config = yield* Effect.sync(() => loadRunnerCommandConfig(configPath));
+  const systemIdentity = yield* Effect.sync(() =>
+    resolveRunnerCommandSystemIdentity(config.threadId, config.systemIdentity),
+  );
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
   const expectedReceipt = receiptFor(config);
   const workspace = verifyRunnerCommandWorkspace({ configPath, config, expectedReceipt });
   prepareRunnerCommandCgroup(config);
+  applyRunnerCommandSystemIdentity(
+    systemIdentity,
+    runnerCommandSystemIdentitySystem(platform, architecture),
+  );
   yield* Effect.scoped(
     runRunnerCommandSession({
       threadId: config.threadId,

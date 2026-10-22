@@ -1,5 +1,6 @@
 // @effect-diagnostics globalFetch:off - private provider adapters perform the real SDK setup and closure calls.
 import * as Schema from "effect/Schema";
+import type { Machine as BoxdSdkMachine } from "@boxd-sh/sdk/web";
 import {
   RunnerCommandConfigJson,
   RunnerCommandReceiptJson,
@@ -10,6 +11,7 @@ import type { MachineRunnerOwner } from "../../src/computer/RunnerMachineRuntime
 import type { BoxdProofVmPort } from "./Workspace.ts";
 import { BOXD_PROOF_LAUNCH_FENCE } from "./LaunchFence.ts";
 import { BOXD_PROOF_SOURCE_INSTALL, BOXD_PROOF_BOOTSTRAP_INSTALL } from "./NativeInstall.ts";
+import { measureBoxdProofMachineIdentity } from "./Identity.ts";
 import {
   runProofCommandStage,
   runSourceStep,
@@ -56,6 +58,9 @@ function workspaceNativeStage(args: readonly string[]): ProofCommandStage | unde
 
 export interface ProofProviderSdkPort {
   readonly machines: {
+    readonly get: (
+      id: string,
+    ) => Promise<Pick<BoxdSdkMachine, "id" | "imageRef" | "resources" | "source">>;
     readonly exec: (
       id: string,
       input: { readonly command: string[]; readonly timeout: number; readonly cwd?: string },
@@ -116,6 +121,28 @@ export function proofProvider(
     if (written !== bytes.length) throw new Error("Proof upload was incomplete");
   };
   const vm: BoxdProofVmPort = {
+    measureIdentity: (id, signal) =>
+      measureBoxdProofMachineIdentity(
+        {
+          getMachine: async (machineId, probeSignal) => {
+            probeSignal.throwIfAborted();
+            const machine = await client.machines.get(machineId);
+            probeSignal.throwIfAborted();
+            return machine;
+          },
+          exec: async (machineId, command, timeoutMs, probeSignal) => {
+            probeSignal.throwIfAborted();
+            const result = await client.machines.exec(machineId, {
+              command: [...command],
+              timeout: timeoutMs,
+            });
+            probeSignal.throwIfAborted();
+            return result;
+          },
+        },
+        id,
+        signal,
+      ),
     exec: (id, args, cwd, signal) => {
       const step = workspaceNativeStage(args);
       const action = () =>

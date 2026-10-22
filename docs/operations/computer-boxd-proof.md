@@ -22,8 +22,14 @@ receipt to recover its owned resources.
 The runner writes a safe receipt before deployment and updates it during recovery,
 including failures. Both proof and recovery receipts are uploaded. They record
 the candidate, unique stage, owned VM names, checks and cleanup state without
-credentials, endpoints or command configuration. This workflow enables proof
-execution. A successful run establishes only the cases recorded in that receipt.
+credentials, service endpoints, raw image references or command configuration.
+During command workspace preparation, before the Runner sets its per-thread
+hostname, the proof captures exact stdout from `uname -srvm`, `hostname` and
+`cat /etc/os-release`. The receipt includes those outputs with a SHA-256 image
+reference, source kind and actual CPU, memory and disk values. This is an
+additional best-effort observation: a failed identity probe does not fail the
+existing command proof or change cleanup and recovery. A successful run
+establishes only the cases recorded in that receipt.
 The proof source's Bases and revision backing are test adapters, separate from
 production Bases and Artifacts wiring.
 
