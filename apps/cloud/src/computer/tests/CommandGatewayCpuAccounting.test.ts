@@ -5,7 +5,7 @@ import { commandGatewayFixture } from "../commandGatewayTesting.ts";
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe("command gateway CPU accounting", () => {
-  it("meters both command hosts through one execution over the supplied accounting", async () => {
+  it("builds both hosts over one shared CPU execution holding the accounting's only meter", async () => {
     const accounting = new KernelCpuAccounting(() => 0n);
     const fixture = commandGatewayFixture({ cpuAccounting: accounting });
     try {
