@@ -279,7 +279,20 @@ export function createChildWasi(options: ChildWasiOptions) {
     return wasm.promising(fn as (...args: WasmArgument[]) => unknown)(...args);
   }
 
-  const wasi = {
+  async function start(candidate: WebAssembly.Instance): Promise<number> {
+    const bound = bindIfNeeded(candidate);
+    const start = bound.exports._start;
+    if (start === undefined) throw new TypeError("Child WASI instance does not export _start");
+    try {
+      await invoke(start);
+      return 0;
+    } catch (error) {
+      if (error instanceof ChildWasiExit) return error.code;
+      throw error;
+    }
+  }
+
+  return {
     imports,
     bind,
     async initialize(candidate: WebAssembly.Instance): Promise<void> {
@@ -288,18 +301,9 @@ export function createChildWasi(options: ChildWasiOptions) {
       if (initialize === undefined) return;
       await invoke(initialize);
     },
-    async start(candidate: WebAssembly.Instance): Promise<number> {
-      const bound = bindIfNeeded(candidate);
-      const start = bound.exports._start;
-      if (start === undefined) throw new TypeError("Child WASI instance does not export _start");
-      try {
-        await invoke(start);
-        return 0;
-      } catch (error) {
-        if (error instanceof ChildWasiExit) return error.code;
-        throw error;
-      }
-    },
+    start,
+    startProcess: (candidate: WebAssembly.Instance) =>
+      kernelProcessExitStatus(() => start(candidate)),
     run(fn: WebAssembly.ExportValue, ...args: WasmArgument[]): Promise<unknown> {
       if (instance === undefined) throw new Error("Child WASI has not been bound");
       return invoke(fn, ...args).catch((error: unknown) => {
@@ -307,11 +311,6 @@ export function createChildWasi(options: ChildWasiOptions) {
         throw error;
       });
     },
-  };
-  return {
-    ...wasi,
-    startProcess: (candidate: WebAssembly.Instance) =>
-      kernelProcessExitStatus(() => wasi.start(candidate)),
   };
 }
 

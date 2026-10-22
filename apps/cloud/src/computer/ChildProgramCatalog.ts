@@ -154,6 +154,8 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
             args: context.args,
             env: context.env,
             signal: context.signal,
+            process: context,
+            sigpipe: "epipe",
           },
           lease,
         );

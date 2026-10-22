@@ -17,8 +17,9 @@ export type KernelSyscallResponse =
       readonly regions: readonly KernelMemoryRegion[];
     }
   | { readonly kind: "exit"; readonly code: number }
-  | { readonly kind: "signal"; readonly signal: 9 | 13 | 15 };
+  | { readonly kind: "signal"; readonly signal: KernelProcessSignalNumber };
 
 export interface KernelSyscallPort {
   readonly call: (request: KernelSyscallRequest) => Promise<KernelSyscallResponse>;
 }
+import type { KernelProcessSignalNumber } from "./KernelProcessSignal.ts";

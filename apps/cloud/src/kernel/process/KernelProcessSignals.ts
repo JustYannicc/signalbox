@@ -1,4 +1,5 @@
 import { kernelError, kernelOk, type KernelResult } from "../KernelAbi.ts";
+import { KernelProcessSignal, type KernelProcessSignalNumber } from "../KernelProcessSignal.ts";
 
 export interface KernelSignalMask {
   readonly low: number;
@@ -16,7 +17,7 @@ export function validSignalMask(mask: KernelSignalMask): boolean {
 /** Logical-process state shared by every adapter for the same process handle. */
 export class KernelProcessSignals {
   #blocked: bigint;
-  readonly #pending = new Set<number>();
+  readonly #pending = new Map<number, (signal: number) => KernelResult<void>>();
 
   constructor(mask: KernelSignalMask = { low: 0, high: 0 }) {
     this.#blocked = this.#bits(mask) & ~UNBLOCKABLE;
@@ -38,23 +39,30 @@ export class KernelProcessSignals {
   send(signal: number, deliver: (signal: number) => KernelResult<void>): KernelResult<void> {
     if (this.#isBlocked(signal)) {
       // The pinned AgentOS ABI coalesces each of its 64 signal numbers.
-      this.#pending.add(signal);
+      this.#pending.set(signal, deliver);
       return kernelOk(undefined);
     }
-    const wasPending = this.#pending.delete(signal);
+    const pending = this.#pending.get(signal);
+    this.#pending.delete(signal);
     const result = this.#deliver(signal, deliver);
-    if (wasPending && result.status !== "ok") this.#pending.add(signal);
+    if (pending && result.status !== "ok") this.#pending.set(signal, pending);
     return result;
   }
 
-  flush(deliver: (signal: number) => KernelResult<void>): KernelResult<void> {
-    for (const signal of Array.from(this.#pending)) {
+  generate(signal: KernelProcessSignalNumber): KernelResult<void> {
+    return this.send(signal, () => {
+      throw new KernelProcessSignal(signal);
+    });
+  }
+
+  flush(): KernelResult<void> {
+    for (const [signal, deliver] of Array.from(this.#pending)) {
       // Delivery may reenter this state and drain or block another pending signal.
       if (!this.#pending.has(signal) || this.#isBlocked(signal)) continue;
       this.#pending.delete(signal);
       const result = this.#deliver(signal, deliver);
       if (result.status !== "ok") {
-        this.#pending.add(signal);
+        this.#pending.set(signal, deliver);
         return result;
       }
     }
@@ -64,7 +72,8 @@ export class KernelProcessSignals {
   #deliver(signal: number, deliver: (signal: number) => KernelResult<void>): KernelResult<void> {
     try {
       return deliver(signal);
-    } catch {
+    } catch (error) {
+      if (error instanceof KernelProcessSignal) throw error;
       return kernelError("IO_ERROR", "Process signal failed");
     }
   }

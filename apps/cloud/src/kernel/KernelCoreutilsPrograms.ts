@@ -37,6 +37,7 @@ export function createKernelCoreutilsProgram(
     run: async (context: KernelAsyncProgramContext) => {
       let memory: WebAssembly.Memory | undefined;
       const runtime = createKernelAsyncWasi({
+        process: context,
         filesystem: context.filesystem,
         wakes: context.wakes,
         agentOsPreopens: true,

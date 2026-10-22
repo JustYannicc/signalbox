@@ -1,5 +1,8 @@
 import { createAgentOsWasiArgumentTransform } from "../AgentOsWasi.ts";
-import { createKernelWasiFileSystemAdapter } from "../KernelWasiSignals.ts";
+import {
+  createKernelWasiFileSystemAdapter,
+  type KernelSigpipeDisposition,
+} from "../KernelWasiFileSystemAdapter.ts";
 import type { KernelCapability, KernelHandle, KernelResult } from "../KernelAbi.ts";
 import type { KernelAsyncProgram } from "../KernelAsyncProgram.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
@@ -32,6 +35,7 @@ export type KernelProgramImplementation =
   | {
       readonly kind: "wasm";
       readonly module: WebAssembly.Module;
+      readonly sigpipe?: KernelSigpipeDisposition;
       readonly agentOsPreopens?: boolean;
       readonly cwdEnvironment?: "PWD";
     }
@@ -57,6 +61,7 @@ export interface KernelWasiRuntimeOptions {
   readonly env: Readonly<Record<string, string>>;
   readonly cwdEnvironment?: "PWD";
   readonly asyncMode: boolean;
+  readonly sigpipe?: KernelSigpipeDisposition;
   readonly agentOsPreopens?: boolean;
   readonly identity: KernelProcessIdentity | undefined;
   readonly signal: AbortSignal | undefined;
@@ -116,7 +121,12 @@ export function prepareKernelWasiRuntime(
     options.agentOsPreopens
       ? createAgentOsWasiArgumentTransform(options.prepared.filesystem)
       : undefined,
-    createKernelWasiFileSystemAdapter(options.prepared.filesystem),
+    createKernelWasiFileSystemAdapter(options.prepared.filesystem, {
+      ...(options.sigpipe === undefined ? {} : { sigpipe: options.sigpipe }),
+      ...(options.identity === undefined
+        ? {}
+        : { process: { identity: options.identity, processes: options.processes } }),
+    }),
   );
 
   const importObject = Object.create(null) as WebAssembly.Imports;

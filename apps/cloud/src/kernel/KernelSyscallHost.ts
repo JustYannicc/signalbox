@@ -1,6 +1,9 @@
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelProcessSignal } from "./KernelProcessSignal.ts";
-import { createKernelWasiFileSystemAdapter } from "./KernelWasiSignals.ts";
+import {
+  createKernelWasiFileSystemAdapter,
+  type KernelWasiSignalOptions,
+} from "./KernelWasiFileSystemAdapter.ts";
 import { createAgentOsWasiArgumentTransform } from "./AgentOsWasi.ts";
 import { runKernelExecution } from "./process/KernelExecution.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
@@ -11,7 +14,7 @@ import { validateOptions } from "./wasi/internal_wasi_options.ts";
 import { SyscallMemory } from "./syscall/SyscallMemory.ts";
 import type { KernelSyscallRequest, KernelSyscallResponse } from "./KernelSyscallPort.ts";
 
-export interface KernelSyscallHostOptions {
+export interface KernelSyscallHostOptions extends KernelWasiSignalOptions {
   readonly filesystem: KernelFileSystem;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
@@ -48,7 +51,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
   const imports = new Map(
     Object.entries({
       ...system.imports,
-      ...createKernelWasiFileSystemAdapter(options.filesystem)(memory, filesystem.imports),
+      ...createKernelWasiFileSystemAdapter(options.filesystem, options)(memory, filesystem.imports),
     }),
   );
   const transform = options.agentOsPreopens

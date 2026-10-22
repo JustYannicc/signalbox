@@ -1,3 +1,4 @@
+import type { KernelProcessSignalNumber } from "./KernelProcessSignal.ts";
 import {
   KernelResourceTable,
   attemptKernelOperation,
@@ -379,6 +380,20 @@ export class KernelProcessTable {
     return record.value.signals.send(signal, (number) => record.value.child!.signal(number));
   }
 
+  /** Generated default actions use the writer's mask even when its runner cannot receive signals. */
+  generateSignal(
+    handle: KernelHandle<"process"> | undefined,
+    signal: KernelProcessSignalNumber,
+  ): KernelResult<void> {
+    if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
+    if (handle === undefined) return this.#rootSignals.generate(signal);
+    const record = this.#record(handle);
+    if (record.status !== "ok") return record;
+    if (record.value.completionObserved || record.value.outcome)
+      return kernelError("NOT_FOUND", "Process has already exited");
+    return record.value.signals.generate(signal);
+  }
+
   /** AgentOS operations: block, unblock, replace, or query the previous mask. */
   signalMask(
     handle: KernelHandle<"process"> | undefined,
@@ -389,7 +404,14 @@ export class KernelProcessTable {
       return kernelError("INVALID_ARGUMENT", "Invalid process signal mask operation");
     }
     if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
-    if (handle === undefined) return kernelOk(this.#rootSignals.change(how, mask));
+    if (handle === undefined) {
+      const previous = this.#rootSignals.change(how, mask);
+      if (how !== 3) {
+        const delivered = this.#rootSignals.flush();
+        if (delivered.status !== "ok") return delivered;
+      }
+      return kernelOk(previous);
+    }
     const record = this.#record(handle);
     if (record.status !== "ok") return record;
     if (record.value.completionObserved || record.value.outcome) {
@@ -399,7 +421,7 @@ export class KernelProcessTable {
     if (how !== 3 && record.value.child) {
       // Commit the mask before delivery, which can reenter the guest. A refused
       // pending signal remains queued; querying the mask never delivers it.
-      const delivered = record.value.signals.flush((number) => record.value.child!.signal(number));
+      const delivered = record.value.signals.flush();
       if (delivered.status !== "ok") return delivered;
     }
     return kernelOk(previous);

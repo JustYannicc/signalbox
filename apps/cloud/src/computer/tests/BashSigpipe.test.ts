@@ -10,11 +10,14 @@ import { KernelPipe } from "../../kernel/KernelPipe.ts";
 import { createChildBash } from "../ChildBash.ts";
 import { createChildCoreutils } from "../ChildCoreutils.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
+import { coreutilsArtifactsAvailable, coreutilsModule } from "./CoreutilsArtifactFixture.ts";
 
 const bashPath = new URL("../../../../../.t3/1071/programs/bash.wasm", import.meta.url);
-const headPath = new URL("../../../../../.t3/1071/programs/coreutils/head.wasm", import.meta.url);
-const available = NodeFS.existsSync(bashPath) && NodeFS.existsSync(headPath);
-if (!available && process.env.SIGNALBOX_REQUIRE_BASH_ARTIFACT === "1")
+const bashAvailable = NodeFS.existsSync(bashPath);
+if (
+  (!bashAvailable || !coreutilsArtifactsAvailable) &&
+  process.env.SIGNALBOX_REQUIRE_BASH_ARTIFACT === "1"
+)
   throw new Error("SIGPIPE tests require the pinned Bash and coreutils head artifacts");
 
 function bashModule() {
@@ -22,23 +25,6 @@ function bashModule() {
   expect(bytes.length).toBe(KERNEL_BASH_ARTIFACT.bytes);
   expect(NodeCrypto.createHash("sha256").update(bytes).digest("hex")).toBe(
     KERNEL_BASH_ARTIFACT.sha256,
-  );
-  return new WebAssembly.Module(bytes);
-}
-
-function headModule() {
-  const bytes = NodeFS.readFileSync(headPath);
-  const provenance = JSON.parse(
-    NodeFS.readFileSync(
-      new URL("../../../infra/kernelPrograms/coreutils/provenance.json", import.meta.url),
-      "utf8",
-    ),
-  ) as {
-    readonly commands: { readonly head: { readonly bytes: number; readonly sha256: string } };
-  };
-  expect(bytes.length).toBe(provenance.commands.head.bytes);
-  expect(NodeCrypto.createHash("sha256").update(bytes).digest("hex")).toBe(
-    provenance.commands.head.sha256,
   );
   return new WebAssembly.Module(bytes);
 }
@@ -57,28 +43,31 @@ function program(fixture: ReturnType<typeof childBashFixture>, child: boolean) {
     : createKernelBashProgram({ module, credentials: bashCredentials });
 }
 
-describe.skipIf(!available)("GNU Bash SIGPIPE", () => {
-  it.each([false, true])("kills only the writer of a closed pipe, child=%s", async (child) => {
-    const fixture = childBashFixture({
-      args: ["bash", "--noprofile", "--norc", "-c", "printf y; printf survived >&2"],
-    });
-    const pipe = new KernelPipe(fixture.wakes);
-    pipe.closeReader();
-    const stdout = fixture.filesystem.descriptors.get(1).stdio;
-    if (!stdout?.write) throw new Error("Missing stdout");
-    vi.spyOn(stdout, "write").mockImplementation((bytes) => pipe.write(bytes));
-    try {
-      expect(await program(fixture, child).run(fixture.context)).toEqual({
-        exitCode: 0,
-        signal: 13,
-        coreDumped: false,
+describe.skipIf(!bashAvailable || !coreutilsArtifactsAvailable)("GNU Bash SIGPIPE", () => {
+  it.each([false, true])(
+    "terminates Bash with SIGPIPE before its next command, child=%s",
+    async (child) => {
+      const fixture = childBashFixture({
+        args: ["bash", "--noprofile", "--norc", "-c", "printf y; printf survived >&2"],
       });
-      expect(fixture.stderr()).toBe("");
-    } finally {
-      await fixture.close();
-      vi.restoreAllMocks();
-    }
-  });
+      const pipe = new KernelPipe(fixture.wakes);
+      pipe.closeReader();
+      const stdout = fixture.filesystem.descriptors.get(1).stdio;
+      if (!stdout?.write) throw new Error("Missing stdout");
+      vi.spyOn(stdout, "write").mockImplementation((bytes) => pipe.write(bytes));
+      try {
+        expect(await program(fixture, child).run(fixture.context)).toEqual({
+          exitCode: 0,
+          signal: 13,
+          coreDumped: false,
+        });
+        expect(fixture.stderr()).toBe("");
+      } finally {
+        await fixture.close();
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
   it.each([
     [false, false],
@@ -98,7 +87,7 @@ describe.skipIf(!available)("GNU Bash SIGPIPE", () => {
     expect(native.status).toBe(0);
     expect(native.stdout.byteLength).toBe(count);
     expect(native.stderr.toString()).toBe(`${pipefail ? 141 : 0}:141 0\n`);
-    const head = headModule();
+    const head = coreutilsModule("head");
     const fixture = childBashFixture({
       args: ["bash", "--noprofile", "--norc", "-c", command],
       async exec(request) {

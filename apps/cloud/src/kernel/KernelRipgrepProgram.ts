@@ -28,5 +28,6 @@ export function createKernelRipgrepProgram(
     kind: "wasm" as const,
     module: options.module,
     cwdEnvironment: "PWD" as const,
+    sigpipe: "epipe" as const,
   });
 }

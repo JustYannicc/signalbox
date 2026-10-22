@@ -19,7 +19,7 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { enterCurrentKernelCpuUser } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
-import { KernelProcessSignal } from "../KernelProcessSignal.ts";
+import { kernelProcessSignalExitStatus } from "../KernelProcessSignal.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
 import {
   prepareKernelWasiRuntime,
@@ -222,6 +222,7 @@ export function execKernelProgram(
         // Validate every import before CLOEXEC descriptors are removed.
         const runtime = beforeExecCommit(() =>
           prepareKernelWasiRuntime(implementation.module, {
+            ...(implementation.sigpipe === undefined ? {} : { sigpipe: implementation.sigpipe }),
             ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
             ...(implementation.cwdEnvironment === undefined
               ? {}
@@ -293,8 +294,7 @@ export function execKernelProgram(
     } catch (error) {
       ticket?.cancel();
       ticket?.throwCancelFailure();
-      if (error instanceof KernelProcessSignal) return error.exitStatus;
-      throw error;
+      return kernelProcessSignalExitStatus(error);
     }
   });
 }

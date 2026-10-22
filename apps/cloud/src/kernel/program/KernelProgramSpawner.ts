@@ -21,7 +21,7 @@ import type {
 } from "../KernelAsyncProgram.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import type { KernelCommand } from "../KernelCommandForwarder.ts";
-import { KernelProcessSignal } from "../KernelProcessSignal.ts";
+import { KernelProcessSignal, kernelProcessSignalExitStatus } from "../KernelProcessSignal.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import {
   KernelProcessTable,
@@ -581,8 +581,7 @@ export class KernelProgramSpawner {
               : { exitCode, signal: 0, coreDumped: false };
           } catch (error) {
             if (controller.signal.aborted) return terminatedStatus(sentSignal);
-            if (error instanceof KernelProcessSignal) return error.exitStatus;
-            throw error;
+            return kernelProcessSignalExitStatus(error);
           }
         });
       const completion = cpuProcess ? cpuProcess.run(start) : start();
@@ -644,8 +643,7 @@ export class KernelProgramSpawner {
               return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
             } catch (error) {
               if (controller.signal.aborted) return terminatedStatus(sentSignal);
-              if (error instanceof KernelProcessSignal) return error.exitStatus;
-              throw error;
+              return kernelProcessSignalExitStatus(error);
             }
           }),
         );
@@ -654,6 +652,7 @@ export class KernelProgramSpawner {
     }
 
     const runtime = createKernelWasiRuntime(implementation.module, {
+      ...(implementation.sigpipe === undefined ? {} : { sigpipe: implementation.sigpipe }),
       ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
       ...(implementation.cwdEnvironment === undefined
         ? {}
@@ -681,8 +680,7 @@ export class KernelProgramSpawner {
             : { exitCode, signal: 0, coreDumped: false },
         (error: unknown) => {
           if (controller.signal.aborted) return terminatedStatus(sentSignal);
-          if (error instanceof KernelProcessSignal) return error.exitStatus;
-          throw error;
+          return kernelProcessSignalExitStatus(error);
         },
       );
     };

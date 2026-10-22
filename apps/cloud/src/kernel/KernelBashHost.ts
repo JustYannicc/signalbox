@@ -54,7 +54,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       umask: supplied.filesystem.posixPolicy?.umask ?? inherited.umask,
     };
     const preopens = new BashPreopens(context.filesystem.descriptors, parentPreopens);
-    const syscalls = createKernelSyscallHost(context);
+    const syscalls = createKernelSyscallHost({ ...context, process: context });
     const memory = new SyscallMemory();
     const namespaces = createBashHostImports(context, credentials, () => memory, preopens);
     const imports = new Map<string, (...args: number[]) => number | Promise<number>>(

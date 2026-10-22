@@ -1,8 +1,10 @@
+export type KernelProcessSignalNumber = 9 | 13 | 15;
+
 /** Carries termination through WASM imports and replacement images without becoming an errno. */
 export class KernelProcessSignal extends Error {
-  readonly signal: 9 | 13 | 15;
+  readonly signal: KernelProcessSignalNumber;
 
-  constructor(signal: 9 | 13 | 15) {
+  constructor(signal: KernelProcessSignalNumber) {
     super(`Process received signal ${signal}`);
     this.name = "KernelProcessSignal";
     this.signal = signal;
@@ -13,11 +15,15 @@ export class KernelProcessSignal extends Error {
   }
 }
 
+export function kernelProcessSignalExitStatus(error: unknown) {
+  if (error instanceof KernelProcessSignal) return error.exitStatus;
+  throw error;
+}
+
 export async function kernelProcessExitStatus(run: () => Promise<number>) {
   try {
     return { exitCode: await run(), signal: 0, coreDumped: false };
   } catch (error) {
-    if (error instanceof KernelProcessSignal) return error.exitStatus;
-    throw error;
+    return kernelProcessSignalExitStatus(error);
   }
 }

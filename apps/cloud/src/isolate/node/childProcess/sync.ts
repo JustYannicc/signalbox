@@ -5,6 +5,7 @@ import {
   type KernelProgramHost,
   type KernelProgramPrepareOptions,
 } from "../../../kernel/KernelProgramHost.ts";
+import { KernelProcessSignal } from "../../../kernel/KernelProcessSignal.ts";
 import type { ResolvedProgram } from "../../../kernel/KernelAbi.ts";
 import { abortError, asChildProcessError, childProcessError, unwrapHostResult } from "./errors.ts";
 import { ByteCollector, normalizeOutputOptions } from "./output.ts";
@@ -13,6 +14,7 @@ import {
   isArgumentList,
   normalizeShellCommand,
   normalizeSpawn,
+  signalName,
   type NodeChildProcessDefaults,
   type NodeSyncOptions,
 } from "./arguments.ts";
@@ -136,7 +138,11 @@ function runInline(
   const stderr = new ByteCollector(outputOptions.maxBuffer);
   const input = normalizeInput(options.input, options.inputEncoding);
   const stdio = createSyncStdio(input, stdout, stderr, spawn.stdio);
-  const emptyResult = (error?: Error, status: number | null = null): NodeSpawnSyncResult => {
+  const emptyResult = (
+    error?: Error,
+    status: number | null = null,
+    signal: string | null = null,
+  ): NodeSpawnSyncResult => {
     const out = spawn.stdio[1] === "pipe" ? stdout.output(outputOptions.encoding) : null;
     const err = spawn.stdio[2] === "pipe" ? stderr.output(outputOptions.encoding) : null;
     return {
@@ -145,7 +151,7 @@ function runInline(
       stdout: out,
       stderr: err,
       status,
-      signal: null,
+      signal,
       ...(error ? { error: addCommand(error, command, out, err, status) } : {}),
     };
   };
@@ -163,6 +169,7 @@ function runInline(
 
   let prepared: ReturnType<KernelProgramHost["prepare"]> | undefined;
   let status: number | undefined;
+  let signal: string | null = null;
   let error: Error | undefined;
   try {
     const program = unwrapHostResult(host.resolve(spawn.executable), "spawn") as ResolvedProgram;
@@ -179,7 +186,8 @@ function runInline(
     }
     status = host.runInline(prepared, program, spawn.argv, spawn.env);
   } catch (value) {
-    error = asChildProcessError(value);
+    if (value instanceof KernelProcessSignal) signal = signalName(value.signal);
+    else error = asChildProcessError(value);
   } finally {
     try {
       prepared?.releaseSync();
@@ -195,7 +203,7 @@ function runInline(
       { syscall: "spawnSync" },
     );
   }
-  return emptyResult(error, status ?? null);
+  return emptyResult(error, status ?? null, signal);
 }
 
 function resolveExecutable(

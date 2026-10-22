@@ -293,6 +293,7 @@ export class KernelProgramHost {
           });
         }
         const runtime = createKernelWasiRuntime(implementation.module, {
+          ...(implementation.sigpipe === undefined ? {} : { sigpipe: implementation.sigpipe }),
           ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
           ...(implementation.cwdEnvironment === undefined
             ? {}

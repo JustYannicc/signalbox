@@ -174,6 +174,7 @@ export async function runCodexProcess(
         filesystem: files,
         wakes: options.host.wakes,
         agentOsPreopens: true,
+        sigpipe: "epipe",
         options: { version: "preview1", args: ["/bin/codex"], env: options.environment },
       });
       let memory: WebAssembly.Memory | undefined;

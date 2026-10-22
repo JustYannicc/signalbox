@@ -1,6 +1,9 @@
 import { createAgentOsWasiArgumentTransform } from "./AgentOsWasi.ts";
 import { KernelDescriptors } from "./KernelDescriptors.ts";
-import { createKernelWasiFileSystemAdapter } from "./KernelWasiSignals.ts";
+import {
+  createKernelWasiFileSystemAdapter,
+  type KernelWasiSignalOptions,
+} from "./KernelWasiFileSystemAdapter.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import type { AsyncWASIOptions } from "./Wasi.ts";
@@ -8,7 +11,7 @@ import { WasiLifecycle } from "./wasi/internal_wasi_lifecycle.ts";
 import { validateOptions } from "./wasi/internal_wasi_options.ts";
 import { runKernelExecution } from "./process/KernelExecution.ts";
 
-export interface KernelAsyncWasiOptions {
+export interface KernelAsyncWasiOptions extends KernelWasiSignalOptions {
   readonly filesystem: KernelFileSystem;
   readonly wakes: KernelWakeRegistry;
   /** Enables the pinned agentOS guest ABI for hidden preopen descriptor operands. */
@@ -37,7 +40,7 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
       },
     },
     input.agentOsPreopens ? createAgentOsWasiArgumentTransform(input.filesystem) : undefined,
-    createKernelWasiFileSystemAdapter(input.filesystem),
+    createKernelWasiFileSystemAdapter(input.filesystem, input),
     execution.signal,
   );
   return {
