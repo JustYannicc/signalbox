@@ -46,3 +46,28 @@ describe("Node harness teardown", () => {
       }),
   );
 });
+
+it("installs the release omission reporter in the executing realm and restores it", () =>
+  new Promise<void>((resolve, reject) => {
+    const worker = new NodeWorkerThreads.Worker(
+      new URL("./tests/releaseChunkOmittedWorker.ts", import.meta.url),
+    );
+    onTestFinished(async () => {
+      await worker.terminate();
+    });
+    let result: unknown;
+    worker.on("message", (message: unknown) => {
+      result = message;
+    });
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      if (code !== 0) return reject(new Error(`Release reporter worker exited with ${code}.`));
+      try {
+        if (JSON.stringify(result) !== JSON.stringify({ ok: true }))
+          throw new Error("Release reporter worker did not confirm its result");
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }));

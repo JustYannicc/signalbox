@@ -27,7 +27,7 @@ import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
 
 import type { PreparedClaudeSdk, SdkSpawnOptions } from "./claude/SdkTypes.ts";
 export type { PreparedClaudeSdk, SdkSpawnOptions, SdkSpawnedProcess } from "./claude/SdkTypes.ts";
-import type { HarnessProcessObserver } from "./HarnessProcessLifetime.ts";
+import type { HarnessProcessObserver, HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";
 
 export interface ClaudeIsolateNativeMcpBridge {
   readonly resolveMcpServers: () => Effect.Effect<
@@ -51,6 +51,7 @@ export interface ClaudeIsolateAdapterOptions {
 export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): {
   readonly open: (
     input: HarnessOpenInput,
+    reporter: HarnessRuntimeReporter,
   ) => Effect.Effect<
     ProviderAdapterV2SessionRuntime,
     HarnessError | ProviderAdapterV2Error,
@@ -58,7 +59,7 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
   >;
 } {
   return {
-    open: (input) =>
+    open: (input, reporter) =>
       Effect.gen(function* () {
         const loadedRelease = input.loadedRelease ?? options.process.loadedRelease;
         if (
@@ -82,6 +83,7 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
           ...options.process,
           ...(loadedRelease === undefined ? {} : { loadedRelease }),
           modelTransport: input.modelTransport,
+          reportReleaseChunkOmitted: reporter.releaseChunkOmitted,
           signal: lifetime.signal,
           loadRelease: async (installed, signal) => {
             bridge = installed;

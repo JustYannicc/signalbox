@@ -16,6 +16,10 @@ import * as Stream from "effect/Stream";
 
 import * as AdapterHarness from "../../AdapterHarness.ts";
 import type { HarnessOpenInput } from "../../Harness.ts";
+import type {
+  HarnessRuntimeReporter,
+  ReleaseChunkOmittedEvent,
+} from "../../HarnessProcessLifetime.ts";
 
 import { data } from "./data.ts";
 
@@ -39,6 +43,7 @@ export const fixture = Effect.gen(function* () {
   const calls: string[] = [];
   const controls: unknown[] = [];
   const opened: HarnessOpenInput[] = [];
+  let runtimeReporter: HarnessRuntimeReporter | undefined;
   let snapshot: ProviderAdapterV2ThreadSnapshot = {
     providerThread,
     providerTurns: [],
@@ -154,8 +159,9 @@ export const fixture = Effect.gen(function* () {
       AdapterHarness.layer.pipe(
         Layer.provide(
           Layer.succeed(AdapterHarness.AdapterRuntimeFactory, {
-            open: (supplied) =>
+            open: (supplied, reporter) =>
               Effect.gen(function* () {
+                runtimeReporter = reporter;
                 opened.push(supplied);
                 yield* Effect.addFinalizer(() =>
                   Effect.sync(() => {
@@ -274,5 +280,9 @@ export const fixture = Effect.gen(function* () {
       incoming,
       new ProviderAdapterEventStreamError({ driver, providerSessionId }),
     ),
+    reportReleaseChunkOmitted(event: ReleaseChunkOmittedEvent) {
+      if (runtimeReporter === undefined) throw new Error("Harness runtime reporter is unavailable");
+      runtimeReporter.releaseChunkOmitted(event);
+    },
   };
 });

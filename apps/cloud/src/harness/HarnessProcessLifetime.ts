@@ -19,6 +19,17 @@ export interface HarnessProcessStartup {
   readonly failure?: unknown;
 }
 
+export interface ReleaseChunkOmittedEvent {
+  readonly code: "RELEASE_CHUNK_OMITTED";
+  readonly chunkId: string;
+  readonly inputPath: string;
+  readonly tier: "configuration" | "corpus";
+}
+
+export interface HarnessRuntimeReporter {
+  readonly releaseChunkOmitted: (event: ReleaseChunkOmittedEvent) => void;
+}
+
 export interface HarnessProcessObserver {
   readonly started: (process: HarnessOwnedProcess) => void;
   readonly abandoned: (cause: unknown) => void;

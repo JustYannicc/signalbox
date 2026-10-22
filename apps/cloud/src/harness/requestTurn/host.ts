@@ -232,9 +232,9 @@ function gateRuntimeHost<G>(
                 ...native,
                 factory: {
                   ...native.factory,
-                  open: (input) =>
+                  open: (input, reporter) =>
                     gate
-                      .native(() => native.factory.open(input))
+                      .native(() => native.factory.open(input, reporter))
                       .pipe(
                         Effect.map((runtime) => gateNativeRuntime(runtime, gate)),
                         Effect.mapError(harnessError("open", "native factory open")),

@@ -31,6 +31,7 @@ export function createBunGraphPlugin(input: {
   readonly sources: ReadonlyMap<string, string>;
   readonly options: BunGraphOptions;
   readonly deferSource: (source: string, importer: string) => string;
+  readonly prepareSource?: (source: string, path: string, namespace: string) => string;
 }) {
   const { extraction, options, deferSource } = input;
   const loaded = new Set<string>();
@@ -40,7 +41,11 @@ export function createBunGraphPlugin(input: {
     const key = `${args.namespace}\0${args.path}`;
     let result = loads.get(key);
     if (!result) loads.set(key, (result = load()));
-    return result;
+    return result.then((value) =>
+      input.prepareSource && typeof value.contents === "string"
+        ? { ...value, contents: input.prepareSource(value.contents, args.path, args.namespace) }
+        : value,
+    );
   };
   const plugin: Esbuild.Plugin = {
     name: "bun-extracted-graph",

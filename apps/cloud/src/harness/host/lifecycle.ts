@@ -210,10 +210,10 @@ export const createHostLifecycle = <G>(
               );
             native = { binding, session, signal };
             return {
-              open: (harness: HarnessOpenInput) =>
+              open: (harness: HarnessOpenInput, reporter) =>
                 Effect.gen(function* () {
                   const runtime = yield* binding.factory
-                    .open({ ...harness, loadedRelease: loaded })
+                    .open({ ...harness, loadedRelease: loaded }, reporter)
                     .pipe(Scope.provide(scope));
                   if (harness.checkpoint !== undefined) {
                     const access = attempt.initialAccess;

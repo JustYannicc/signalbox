@@ -31,6 +31,25 @@ const finish = (f: Effect.Success<typeof running>) =>
   });
 
 describe("AdapterHarness lifecycle", () => {
+  it.effect("publishes omitted release chunks on the existing harness diagnostic stream", () =>
+    Effect.gen(function* () {
+      const f = yield* running;
+      const event = {
+        code: "RELEASE_CHUNK_OMITTED",
+        chunkId: "bun-graph:/chunks/lazy.js",
+        inputPath: "bun-graph:/chunks/lazy.js",
+        tier: "configuration",
+      } as const;
+      f.reportReleaseChunkOmitted(event);
+      expect(yield* f.next).toEqual({
+        kind: "log",
+        runId: f.turn.runId,
+        level: "warning",
+        message: JSON.stringify(event),
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "passes host inputs through and publishes started before provider JSON, saving before terminal",
     () =>

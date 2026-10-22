@@ -18,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { HarnessError, type HarnessOpenInput, type HarnessSession } from "../Harness.ts";
+import type { HarnessRuntimeReporter } from "../HarnessProcessLifetime.ts";
 import { checkpointThreadLoad } from "../HarnessThreadLoad.ts";
 import { saveCheckpoint, saveComputer, threadMatches, validateOpen } from "./checkpoint.ts";
 import { applyInterrupt, controlTurn } from "./controls.ts";
@@ -38,6 +39,7 @@ export const openAdapterSession = (
   original: HarnessOpenInput,
   createRuntime: (
     input: HarnessOpenInput,
+    reporter: HarnessRuntimeReporter,
   ) => Effect.Effect<
     ProviderAdapterV2SessionRuntime,
     HarnessError | ProviderAdapterV2Error,
@@ -61,12 +63,22 @@ export const openAdapterSession = (
         providerThread: undefined,
         revision: undefined,
       };
+      const reporter: HarnessRuntimeReporter = {
+        releaseChunkOmitted: (event) => {
+          Queue.offerUnsafe(output, {
+            kind: "log",
+            runId: state.active?.input.runId ?? null,
+            level: "warning",
+            message: JSON.stringify(event),
+          });
+        },
+      };
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           disposed = true;
         }).pipe(Effect.andThen(Queue.end(output)), Effect.asVoid),
       );
-      const runtime = yield* createRuntime(input).pipe(
+      const runtime = yield* createRuntime(input, reporter).pipe(
         Effect.mapError((cause) =>
           isHarnessError(cause)
             ? cause

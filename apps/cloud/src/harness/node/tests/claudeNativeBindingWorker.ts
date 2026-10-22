@@ -3,7 +3,10 @@ import * as NodeUtil from "node:util";
 import { ThreadId } from "@t3tools/contracts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { openAdapterSession } from "../../adapter/session.ts";
 import { makeClaudeNativeHostBinding } from "../../ClaudeNativeHostBinding.ts";
+import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../../ClaudeHostConfig.ts";
 import { nativeTurnThreadLoad, type NativeThreadLoad } from "../../HarnessThreadLoad.ts";
 import type {
   PreparedClaudeSdk,
@@ -68,7 +71,7 @@ function sdkQuery(
   }) satisfies ClaudeSdkQuery;
 }
 
-function coldSetup(override?: "prepared" | "both") {
+function coldSetup(override?: "prepared" | "both" | "omitted") {
   const f = readinessFixture();
   return Effect.scoped(
     Effect.gen(function* () {
@@ -79,6 +82,7 @@ function coldSetup(override?: "prepared" | "both") {
       const modelRequests: string[] = [];
       const installs: ClaudeAgentSdkMcpServers[] = [];
       const order: string[] = [];
+      const hasPreparedOverride = override === "prepared" || override === "both";
       let fetchedMcp = "";
       let fetchedModel = "";
       let queryOptions: unknown;
@@ -108,8 +112,26 @@ function coldSetup(override?: "prepared" | "both") {
       const binding = makeClaudeNativeHostBinding({
         process: {
           ...f.input,
+          ...(override === "omitted"
+            ? {
+                loadRelease: async () => ({
+                  launch() {
+                    const reporter = Reflect.get(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
+                    NodeAssert.equal(typeof reporter, "function");
+                    Reflect.apply(reporter, undefined, [
+                      {
+                        code: "RELEASE_CHUNK_OMITTED",
+                        chunkId: "bun-graph:/chunks/lazy.js",
+                        inputPath: "bun-graph:/chunks/lazy.js",
+                        tier: "configuration",
+                      },
+                    ]);
+                  },
+                }),
+              }
+            : {}),
           computer: services.computer,
-          ...(override === undefined
+          ...(!hasPreparedOverride
             ? {}
             : {
                 prepared: (specifier: string) => {
@@ -123,7 +145,7 @@ function coldSetup(override?: "prepared" | "both") {
         mcpSessions: services.mcpSessions,
         loadSdk: async (bridge) => {
           const module = bridge.require("node:module") as GuestModule;
-          if (override === undefined) assertPreparedAssets(module);
+          if (override === undefined || override === "omitted") assertPreparedAssets(module);
           else {
             const require = module.createRequire("/entry.js");
             NodeAssert.equal(require(latinAsset), "caller text");
@@ -160,13 +182,46 @@ function coldSetup(override?: "prepared" | "both") {
           return new Response("ordinary-model");
         },
       };
-      const runtime = yield* binding.factory.open(openInput);
       const load = nativeTurnThreadLoad(
         services.turn,
         services.session,
         services.session.providerSessionId,
       );
       const controller = new AbortController();
+      if (override === "omitted") {
+        const session = yield* openAdapterSession(openInput, binding.factory.open);
+        yield* binding.configureMcp(
+          {
+            epoch: 1,
+            servers: { executor: { url: `${origin}/thread/epoch-1/executor` } },
+          },
+          controller.signal,
+          load,
+        );
+        yield* session.turn(services.turn);
+        yield* Effect.promise(() => offeredPrompt);
+        yield* session.dispose;
+        const items = yield* Stream.runCollect(session.events);
+        const event = {
+          code: "RELEASE_CHUNK_OMITTED",
+          chunkId: "bun-graph:/chunks/lazy.js",
+          inputPath: "bun-graph:/chunks/lazy.js",
+          tier: "configuration",
+        } as const;
+        NodeAssert.ok(
+          Array.from(items).some(
+            (item) =>
+              item.kind === "log" &&
+              item.runId === services.turn.runId &&
+              item.level === "warning" &&
+              item.message === JSON.stringify(event),
+          ),
+        );
+        return;
+      }
+      const runtime = yield* binding.factory.open(openInput, {
+        releaseChunkOmitted: () => undefined,
+      });
       yield* binding.configureMcp(
         {
           epoch: 1,
@@ -262,29 +317,35 @@ function resumeSetup() {
           fetch: async () => new Response("unused"),
         },
       });
-      const runtime = yield* binding.factory.open({
-        release: {
-          harness: "claude-code",
-          version: "test",
-          manifestSha256: "resume-binding-test",
-          modules: { entry: { bytes: 1, sha256: "entry" } },
-        },
-        session: services.session,
-        computer: services.computer,
-        modelTransport: async () => new Response("unused"),
-      });
-      const secondOpen = yield* Effect.exit(
-        binding.factory.open({
+      const runtime = yield* binding.factory.open(
+        {
           release: {
             harness: "claude-code",
             version: "test",
-            manifestSha256: "second-open",
+            manifestSha256: "resume-binding-test",
             modules: { entry: { bytes: 1, sha256: "entry" } },
           },
-          session: { ...services.session, threadId: ThreadId.make("other-thread") },
+          session: services.session,
           computer: services.computer,
           modelTransport: async () => new Response("unused"),
-        }),
+        },
+        { releaseChunkOmitted: () => undefined },
+      );
+      const secondOpen = yield* Effect.exit(
+        binding.factory.open(
+          {
+            release: {
+              harness: "claude-code",
+              version: "test",
+              manifestSha256: "second-open",
+              modules: { entry: { bytes: 1, sha256: "entry" } },
+            },
+            session: { ...services.session, threadId: ThreadId.make("other-thread") },
+            computer: services.computer,
+            modelTransport: async () => new Response("unused"),
+          },
+          { releaseChunkOmitted: () => undefined },
+        ),
       );
       NodeAssert.equal(secondOpen._tag, "Failure");
       const requestedThread = {
@@ -326,11 +387,13 @@ const run =
     ? () => coldSetup("prepared")
     : NodeWorkerThreads.workerData === "both"
       ? () => coldSetup("both")
-      : NodeWorkerThreads.workerData === "cold"
-        ? coldSetup
-        : NodeWorkerThreads.workerData === "resume"
-          ? resumeSetup
-          : undefined;
+      : NodeWorkerThreads.workerData === "omitted"
+        ? () => coldSetup("omitted")
+        : NodeWorkerThreads.workerData === "cold"
+          ? coldSetup
+          : NodeWorkerThreads.workerData === "resume"
+            ? resumeSetup
+            : undefined;
 if (run === undefined || NodeWorkerThreads.parentPort === null)
   throw new Error("Invalid native binding test case.");
 const port = NodeWorkerThreads.parentPort;

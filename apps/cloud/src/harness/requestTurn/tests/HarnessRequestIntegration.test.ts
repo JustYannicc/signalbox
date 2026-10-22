@@ -112,8 +112,8 @@ describe("Harness request composition", () => {
             Effect.map((native) => ({
               ...native,
               factory: {
-                open: (open) =>
-                  native.factory.open(open).pipe(
+                open: (open, reporter) =>
+                  native.factory.open(open, reporter).pipe(
                     Effect.map((runtime) => ({
                       ...runtime,
                       ensureThread: () =>

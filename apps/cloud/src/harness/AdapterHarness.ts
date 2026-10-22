@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 
 import type { Harness, HarnessError, HarnessOpenInput } from "./Harness.ts";
+import type { HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";
 import { openAdapterSession } from "./adapter/session.ts";
 
 /** The host owns launch bindings and attaches their cleanup to the supplied Scope. */
@@ -16,6 +17,7 @@ export class AdapterRuntimeFactory extends Context.Service<
   {
     readonly open: (
       input: HarnessOpenInput,
+      reporter: HarnessRuntimeReporter,
     ) => Effect.Effect<
       ProviderAdapterV2SessionRuntime,
       HarnessError | ProviderAdapterV2Error,

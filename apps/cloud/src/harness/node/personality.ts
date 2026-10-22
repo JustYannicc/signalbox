@@ -1,5 +1,6 @@
 import { createHarnessModelTransport } from "./modelTransport.ts";
 import { installNodePersonality } from "../../isolate/NodeBootstrap.ts";
+import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../ClaudeHostConfig.ts";
 import type { NodeHarnessProcessInput } from "./types.ts";
 import type { createHarnessRuntime } from "./runtime.ts";
 
@@ -35,9 +36,16 @@ export function installHarnessPersonality(
     modules: runtime.modules,
     globals: { Bun: runtime.bun, process: runtime.process },
   });
-  const previous = new Map(
-    ["fetch", "console"].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
-  );
+  const reporter = input.reportReleaseChunkOmitted ?? (() => undefined);
+  const previous = new Map<PropertyKey, PropertyDescriptor | undefined>([
+    ...["fetch", "console"].map(
+      (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
+    ),
+    [
+      RELEASE_CHUNK_OMITTED_SYMBOL,
+      Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL),
+    ],
+  ]);
   const transport = createHarnessModelTransport(input.modelTransport, signal);
   const modelFetch = transport.fetch;
   try {
@@ -52,6 +60,12 @@ export function installHarnessPersonality(
       configurable: true,
       writable: false,
       enumerable: previous.get("console")?.enumerable ?? true,
+    });
+    Object.defineProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL, {
+      value: reporter,
+      configurable: true,
+      writable: false,
+      enumerable: false,
     });
   } catch (error) {
     for (const [name, descriptor] of previous) {
@@ -81,6 +95,12 @@ export function installHarnessPersonality(
       }
       if (Object.getOwnPropertyDescriptor(globalThis, "console")?.value !== runtime.console) {
         throw new Error("Node harness console ownership changed");
+      }
+      if (
+        Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL)?.value !==
+        reporter
+      ) {
+        throw new Error("Node harness release reporter ownership changed");
       }
       personality.restore();
       for (const [name, descriptor] of previous) {

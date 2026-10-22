@@ -2,6 +2,7 @@ import * as BunJsc from "../../src/isolate/NodeBunJsc.ts";
 import { createNodeEnvironmentResolver } from "../../src/isolate/NodeEnvironment.ts";
 import { createNodeModule, type NodePreparedModuleResolver } from "../../src/isolate/NodeModule.ts";
 import type { NodeBridge } from "../../src/isolate/NodeBridge.ts";
+import { CLAUDE_PROOF_HOST_CONFIG } from "../../src/harness/ClaudeHostConfig.ts";
 
 export interface ProofPackages {
   readonly yaml: object;
@@ -9,31 +10,7 @@ export interface ProofPackages {
 }
 
 export function createProofProcessEnvironment() {
-  return {
-    HOME: "/home/claude",
-    TMPDIR: "/tmp",
-    PATH: "/usr/local/bin:/usr/bin:/bin",
-    CLAUDE_CODE_SHELL: "/bin/bash",
-    USE_BUILTIN_RIPGREP: "0",
-    TERM: "dumb",
-    NO_COLOR: "1",
-    ANTHROPIC_API_KEY: "mock-only-dummy-key",
-    ANTHROPIC_BASE_URL: "http://mock.anthropic.invalid",
-    DISABLE_TELEMETRY: "1",
-    DISABLE_ERROR_REPORTING: "1",
-    DISABLE_AUTOUPDATER: "1",
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-    CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1",
-    CI: "1",
-    HTTP_PROXY: "",
-    HTTPS_PROXY: "",
-    ALL_PROXY: "",
-    http_proxy: "",
-    https_proxy: "",
-    all_proxy: "",
-    NO_PROXY: "*",
-    no_proxy: "*",
-  };
+  return { ...CLAUDE_PROOF_HOST_CONFIG.env };
 }
 
 export function createProofIdentity(prompt: string) {
