@@ -135,15 +135,13 @@ const harnessProcessStartupSchema = Schema.Struct({
       coreDumped: Schema.Boolean,
     }),
   ),
-  failure: Schema.optional(harnessCauseSchema),
-}) satisfies Schema.Codec<HarnessProcessStartup, unknown, never, never>;
+}) satisfies Schema.Codec<Omit<HarnessProcessStartup, "failure">, unknown, never, never>;
 
 export class HarnessError extends Schema.TaggedError<HarnessError>()("HarnessError", {
   operation: Schema.Literals(["open", "turn", "control", "export", "events", "dispose"]),
   message: Schema.String,
   cause: Schema.optionalKey(harnessCauseSchema),
   nativeStartup: Schema.optionalKey(harnessProcessStartupSchema),
-  cleanupCause: Schema.optionalKey(harnessCauseSchema),
 }) {}
 
 export interface HarnessOpenInput {

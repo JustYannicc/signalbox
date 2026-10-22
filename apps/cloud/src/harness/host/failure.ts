@@ -47,21 +47,45 @@ export const closeFailedHostStart = (input: {
 }) =>
   Effect.gen(function* () {
     const observed = yield* Effect.try(input.startup).pipe(Effect.exit);
-    const nativeStartup = Exit.isSuccess(observed) ? observed.value : undefined;
+    const snapshot = Exit.isSuccess(observed) ? observed.value : undefined;
+    const nativeStartup =
+      snapshot === undefined
+        ? undefined
+        : {
+            bootstrap: snapshot.bootstrap,
+            wasi: snapshot.wasi,
+            exit: snapshot.exit,
+          };
+    const nativeCause =
+      snapshot !== undefined && Object.hasOwn(snapshot, "failure")
+        ? Cause.combine(input.cause, Cause.die(snapshot.failure))
+        : input.cause;
     const closed = yield* Effect.exit(input.cleanup);
     const cleanupCause = Cause.combine(
       Exit.isFailure(observed) ? observed.cause : Cause.empty,
       Exit.isFailure(closed) ? closed.cause : Cause.empty,
     );
+    const cause =
+      cleanupCause.reasons.length === 0
+        ? nativeCause
+        : Cause.combine(
+            nativeCause,
+            Cause.fail(
+              new HarnessError({
+                operation: "dispose",
+                message: "Harness failed-start cleanup failed.",
+                cause: cleanupCause,
+              }),
+            ),
+          );
     const failure = new HarnessError({
       operation: input.operation,
       message:
         input.operation === "turn"
           ? "Native MCP configuration or turn start failed."
           : "Harness native acquisition failed.",
-      cause: input.cause,
+      cause,
       ...(nativeStartup === undefined ? {} : { nativeStartup }),
-      ...(cleanupCause.reasons.length === 0 ? {} : { cleanupCause }),
     });
     const journaled = yield* Effect.try(() =>
       writeHostFailure(input.database, input.bootAttemptId, input.runId, failure),
@@ -71,8 +95,16 @@ export const closeFailedHostStart = (input: {
       : new HarnessError({
           operation: input.operation,
           message: failure.message,
-          cause: input.cause,
+          cause: Cause.combine(
+            cause,
+            Cause.fail(
+              new HarnessError({
+                operation: "dispose",
+                message: "Harness failure journal write failed.",
+                cause: journaled.cause,
+              }),
+            ),
+          ),
           ...(nativeStartup === undefined ? {} : { nativeStartup }),
-          cleanupCause: Cause.combine(cleanupCause, journaled.cause),
         });
   }).pipe(Effect.uninterruptible);

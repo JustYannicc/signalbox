@@ -83,7 +83,17 @@ describe("Harness host failed starts", () => {
         expect(error).toBeInstanceOf(HarnessError);
         if (!(error instanceof HarnessError)) throw new Error("Expected public HarnessError");
         expect(error.message).toBe("Native MCP configuration or turn start failed.");
-        expect(error.nativeStartup?.failure).toBe(original);
+        expect(error.nativeStartup).toEqual({
+          bootstrap: { bytes: 42, state: "written" },
+          wasi: "failed",
+          exit: null,
+        });
+        if (!Cause.isCause(error.cause)) throw new Error("Missing native cause");
+        expect(
+          error.cause.reasons.some(
+            (reason) => Cause.isDieReason(reason) && reason.defect === original,
+          ),
+        ).toBe(true);
         const encoded = Schema.encodeSync(codec)(error);
         const json = JSON.stringify(encoded);
         expect(json).toContain("native WASI trap");
@@ -135,11 +145,7 @@ describe("Harness host failed starts", () => {
       expect(() => f.computers[0]!.stat("/bin/bash")).toThrow("disposed");
       if (Exit.isSuccess(result)) throw new Error("Expected failed start");
       expect(Cause.pretty(result.cause)).toContain("original native failure");
-      const failure = result.cause.reasons.find(Cause.isFailReason)?.error;
-      if (!(failure instanceof HarnessError)) throw new Error("Expected public HarnessError");
-      expect(Cause.isCause(failure.cleanupCause)).toBe(true);
-      if (!Cause.isCause(failure.cleanupCause)) throw new Error("Missing journal failure");
-      expect(Cause.pretty(failure.cleanupCause)).toContain("Injected transaction failure");
+      expect(Cause.pretty(result.cause)).toContain("Injected transaction failure");
     }).pipe(Effect.scoped),
   );
 

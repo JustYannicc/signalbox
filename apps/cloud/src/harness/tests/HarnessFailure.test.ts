@@ -65,14 +65,16 @@ const failure = () =>
   new HarnessError({
     operation: "open",
     message: "Native MCP configuration failed.",
-    cause: failCause(),
+    cause: Cause.fromReasons([
+      ...failCause().reasons,
+      Cause.makeDieReason(startupFailure()),
+      ...cleanupFailure().reasons,
+    ]),
     nativeStartup: {
       bootstrap: { bytes: 64, state: "failed" },
       wasi: "failed",
       exit: { exitCode: 126, signal: 0, coreDumped: false },
-      failure: startupFailure(),
     },
-    cleanupCause: cleanupFailure(),
   });
 
 describe("Harness failure details", () => {
@@ -90,6 +92,9 @@ describe("Harness failure details", () => {
       "Die",
       "Fail",
       "Interrupt",
+      "Die",
+      "Die",
+      "Fail",
     ]);
     const first = reasonAt(recovered.cause, 0);
     expect(Cause.isFailReason(first)).toBe(true);
@@ -139,9 +144,10 @@ describe("Harness failure details", () => {
       bootstrap: { bytes: 64, state: "failed" },
       wasi: "failed",
       exit: { exitCode: 126, signal: 0, coreDumped: false },
-      failure: expect.any(Error),
     });
-    expect(recovered.nativeStartup?.failure).toMatchObject({
+    const wasiFailure = reasonAt(recovered.cause, 4);
+    if (!Cause.isDieReason(wasiFailure)) throw new Error("Expected WASI failure");
+    expect(wasiFailure.defect).toMatchObject({
       message: "WASI startup failed",
       cause: expect.objectContaining({
         message: "bootstrap rejected",
@@ -149,10 +155,7 @@ describe("Harness failure details", () => {
       }),
     });
 
-    expect(Cause.isCause(recovered.cleanupCause)).toBe(true);
-    if (!Cause.isCause(recovered.cleanupCause)) throw new Error("Cleanup Cause was not restored");
-    expect(recovered.cleanupCause.reasons).toHaveLength(2);
-    const cleanupDefect = reasonAt(recovered.cleanupCause, 0);
+    const cleanupDefect = reasonAt(recovered.cause, 5);
     expect(Cause.isDieReason(cleanupDefect)).toBe(true);
     if (!Cause.isDieReason(cleanupDefect)) throw new Error("First cleanup reason was not a defect");
     expect(cleanupDefect.defect).toBeInstanceOf(AggregateError);
@@ -210,7 +213,6 @@ describe("Harness failure details", () => {
       const durable = JSON.parse(String(rows[0]?.error_json));
       const recovered = decodeHarnessError(durable);
       expect(Cause.isCause(recovered.cause)).toBe(true);
-      expect(Cause.isCause(recovered.cleanupCause)).toBe(true);
       expect(recovered.nativeStartup?.bootstrap).toEqual({ bytes: 64, state: "failed" });
       expect(recovered.nativeStartup?.wasi).toBe("failed");
       expect(encodeHarnessError(recovered)).toEqual(durable);
