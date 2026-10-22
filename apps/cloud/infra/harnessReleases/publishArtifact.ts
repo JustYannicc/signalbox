@@ -6,7 +6,7 @@ import {
   type HarnessReleaseArtifactIdentity,
 } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
 import { harnessArtifactKey } from "../../src/harnessReleases/HarnessReleaseArtifactBucket.ts";
-import { matchesClaudeHostConfiguration } from "../../src/harness/releasePlan/hostConfiguration.ts";
+import { matchesClaudeHostConfiguration } from "../../src/harness/ClaudeHostConfig.ts";
 import { artifactDirectorySource } from "./prepareArtifact.ts";
 
 export interface HarnessArtifactPublicationStore {
