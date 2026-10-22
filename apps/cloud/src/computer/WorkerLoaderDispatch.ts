@@ -47,7 +47,7 @@ function dispatchModules(input: ChildWorkerInvocation, limits: ResolvedChildWork
 export default class extends WorkerEntrypoint {
   async run(command, invocation) {
     try {
-      const host = await invocation.host();
+      using host = await invocation.host();
       const module = await import(${JSON.stringify(`./${input.mainModule}`)});
       const User = module[${JSON.stringify(input.entrypoint ?? "default")}];
       const user = new User(this.ctx, this.env);

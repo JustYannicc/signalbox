@@ -111,6 +111,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
               // The port records failure for waitpid; a fork cannot replace the root's exit result.
               const completion = Promise.resolve()
                 .then(() => run(child))
+                .finally(() => disposeFork(forked))
                 .then(
                   () => {},
                   () => {},
@@ -119,7 +120,11 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
               void completion.then(() => children.delete(completion));
               process.resume = forked.pid;
             } catch (error) {
-              await forked.port.complete({ kind: "failure", message: String(error) });
+              try {
+                await forked.port.complete({ kind: "failure", message: String(error) });
+              } finally {
+                disposeFork(forked);
+              }
               throw error;
             }
           }
@@ -184,4 +189,11 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
       while (children.size > 0) await Promise.all(children);
     },
   };
+}
+
+// RPC fork results own their returned port stubs; same-isolate results have no disposer.
+function disposeFork(result: object): void {
+  if (!(Symbol.dispose in result)) return;
+  const dispose = result[Symbol.dispose];
+  if (typeof dispose === "function") dispose.call(result);
 }

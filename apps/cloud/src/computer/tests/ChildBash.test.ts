@@ -254,6 +254,46 @@ describe.skipIf(!available)("actual pinned GNU Bash child bridge", () => {
     }
   });
 
+  it("disposes fork RPC results after their continuations complete", async () => {
+    const fixture = childBashFixture({
+      args: ["bash", "-c", 'printf "%s" "$(printf hi)"; (exit 7) & wait'],
+    });
+    const completed = new Set<number>();
+    const disposed: number[] = [];
+    function wrap(port: KernelBashPort, pid?: number): KernelBashPort {
+      return {
+        ...port,
+        async fork() {
+          const forked = await port.fork();
+          if (forked.kind === "error") return forked;
+          return {
+            ...forked,
+            port: wrap(forked.port, forked.pid),
+            [Symbol.dispose]() {
+              expect(completed.has(forked.pid)).toBe(true);
+              disposed.push(forked.pid);
+            },
+          };
+        },
+        async complete(result) {
+          await port.complete(result);
+          if (pid !== undefined) completed.add(pid);
+        },
+      };
+    }
+    try {
+      const bash = bridge(fixture, wrap(fixture.owner.port));
+      await bash.run();
+      await bash.drain();
+      expect(disposed.length).toBeGreaterThan(0);
+      expect(new Set(disposed)).toEqual(completed);
+      expect(disposed).toHaveLength(completed.size);
+      expect(fixture.stdout()).toBe("hi");
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("keeps fork heaps and captures separate through nested substitution, pipeline and wait status", async () => {
     const fixture = childBashFixture({
       args: [
