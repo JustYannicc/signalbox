@@ -30,6 +30,7 @@ export type {
  */
 export const createHarnessSessionHost = <G>(
   supplied: HarnessHostOptions<G>,
+  closeOwner: Effect.Effect<void> = Effect.void,
 ): Effect.Effect<HarnessSessionHost<G>, HarnessError, Scope.Scope> =>
   Effect.gen(function* () {
     const options = {
@@ -83,5 +84,5 @@ export const createHarnessSessionHost = <G>(
     });
     const { release: _release, programs: _programs, ...hostOptions } = options;
     // Release sources and program catalogs can hold whole bundles; the live host reads only through loaded and catalog.
-    return yield* createHostLifecycle(hostOptions, loaded, catalog);
+    return yield* createHostLifecycle(hostOptions, loaded, catalog, closeOwner);
   });

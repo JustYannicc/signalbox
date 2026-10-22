@@ -51,10 +51,13 @@ export async function runCodexProcess(
   let bootstrapState: "pending" | "written" | "failed" = "pending";
   let wasiState: HarnessProcessStartup["wasi"] = "not-started";
   let nativeExit: KernelExitStatus | undefined;
+  let startupFailure: unknown;
+  let hasStartupFailure = false;
   const startup = (): HarnessProcessStartup => ({
     bootstrap: input === undefined ? null : { bytes: input.bootstrapBytes, state: bootstrapState },
     wasi: wasiState,
     exit: nativeExit === undefined ? null : { ...nativeExit },
+    ...(hasStartupFailure ? { failure: startupFailure } : {}),
   });
   let completion: Promise<KernelExitStatus> | undefined;
   let handle: KernelHandle<"process"> | undefined;
@@ -197,6 +200,8 @@ export async function runCodexProcess(
       nativeExit = { ...status };
       wasiState = "returned";
     } catch (error) {
+      startupFailure = error;
+      hasStartupFailure = true;
       if (running) wasiState = "failed";
       if (running && signal.aborted && failures.length === 0)
         status = { exitCode: 0, signal: stopSignal, coreDumped: false };

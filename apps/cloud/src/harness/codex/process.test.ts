@@ -55,7 +55,9 @@ describe("Codex WASI process", () => {
       const failure = await process.ready.catch((cause: unknown) => cause);
       expect(failure).toBeInstanceOf(WebAssembly.RuntimeError);
       await expect(process.exited).rejects.toBe(failure);
-      expect(process.startup?.()).toMatchObject({ wasi: "failed", exit: null });
+      const snapshot = process.startup?.();
+      expect(snapshot).toMatchObject({ wasi: "failed", exit: null });
+      expect(snapshot?.failure).toBe(failure);
       expect(await output).toBe("");
       expect(await error).toBe("");
       expect(context.host.processes.size).toBe(0);
@@ -136,10 +138,48 @@ describe("Codex WASI process", () => {
       const failure = await process.ready.catch((cause: unknown) => cause);
       expect(failure).toMatchObject({ message: "Unsupported Codex import missing.must_reject" });
       await expect(process.exited).rejects.toBe(failure);
-      expect(process.startup?.()).toMatchObject({ wasi: "not-started", exit: null });
+      const snapshot = process.startup?.();
+      expect(snapshot).toMatchObject({ wasi: "not-started", exit: null });
+      expect(snapshot?.failure).toBe(failure);
       await expect(process.dispose()).rejects.toThrow(
         "Unsupported Codex import missing.must_reject",
       );
+      expect(await output).toBe("");
+      expect(await error).toBe("");
+      expect(context.host.processes.size).toBe(0);
+      expect(context.wakes.size).toBe(0);
+      expect(context.stdio.stdin.locked).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("retains the original initialization error and cause chain through cleanup", async () => {
+    const context = fixture(echoEngine());
+    const rootCause = new Error("environment source failed");
+    const cause = new Error("could not read WASI environment", { cause: rootCause });
+    const failure = new Error("WASI initialization failed", { cause });
+    const environment = new Proxy(context.options.environment, {
+      ownKeys() {
+        throw failure;
+      },
+    });
+    try {
+      const process = await startCodexHarnessProcess({ ...context.options, environment });
+      const output = collect(process.stdout);
+      const error = collect(process.stderr);
+      expect(await process.ready.catch((caught: unknown) => caught)).toBe(failure);
+      await expect(process.exited).rejects.toBe(failure);
+      const snapshot = process.startup?.();
+      expect(snapshot).toMatchObject({ wasi: "not-started", exit: null });
+      if (snapshot === undefined || !(snapshot.failure instanceof Error))
+        throw new Error("Startup snapshot did not retain its Error");
+      const retainedFailure = snapshot.failure;
+      const retainedCause = retainedFailure.cause;
+      expect(retainedFailure).toBe(failure);
+      expect(retainedCause).toBe(cause);
+      if (!(retainedCause instanceof Error)) throw new Error("Startup cause was not an Error");
+      expect(retainedCause.cause).toBe(rootCause);
       expect(await output).toBe("");
       expect(await error).toBe("");
       expect(context.host.processes.size).toBe(0);

@@ -3,6 +3,7 @@ import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -216,5 +217,41 @@ it.effect("rejects a non-absolute Codex HOME before starting the native engine",
       .pipe(Effect.exit);
     expect(Exit.isFailure(outcome)).toBe(true);
     expect(launch).not.toHaveBeenCalled();
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("closes product stdio and Computer after native acquisition fails", () =>
+  Effect.gen(function* () {
+    launch.mockReset();
+    const release = yield* Effect.promise(codexFixture);
+    const product = yield* productOptions(release.options);
+    const nativeFailure = new Error("native initialization failed", {
+      cause: new Error("missing WASI import"),
+    });
+    let processOptions: CodexHarnessProcessOptions | undefined;
+    launch.mockImplementation(async (input) => {
+      processOptions = input;
+      throw nativeFailure;
+    });
+    const result = yield* product.host
+      .open({
+        session: codexSession,
+        bootAttemptId: "failed-product-native",
+      })
+      .pipe(Effect.exit);
+    expect(Exit.isFailure(result)).toBe(true);
+    if (processOptions === undefined) throw new Error("Native acquisition was not attempted");
+    expect(processOptions.signal.aborted).toBe(true);
+    expect(() => processOptions!.stdio.assertBound(product.host.computer.files)).toThrow(
+      "disposed",
+    );
+    expect(() => product.host.computer.files.stat("/bin/bash")).toThrow("disposed");
+    if (Exit.isSuccess(result)) throw new Error("Expected native failure");
+    expect(Cause.pretty(result.cause)).toContain("native initialization failed");
+    const rows = [
+      ...product.options.files.database.sql.exec("SELECT error_json FROM harness_host_failures"),
+    ];
+    expect(rows).toHaveLength(1);
+    expect(String(rows[0]?.error_json)).toContain("missing WASI import");
   }).pipe(Effect.scoped, Effect.provide(services)),
 );
