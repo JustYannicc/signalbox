@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 
-const sha256 = "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87";
+const sha256 = "c3e8dc79b9660a21ed1873f8c900a0c1f195d274c183706cf5f68ff9e5fb9e00";
 export const bashArtifactPath = NodeURL.fileURLToPath(
   new URL("./build/bash.async.wasm", import.meta.url),
 );
@@ -21,7 +21,7 @@ export async function prepareBashArtifact(source?: string): Promise<string> {
     );
   }
   if (
-    bytes.byteLength !== 3_887_571 ||
+    bytes.byteLength !== 3_890_330 ||
     NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== sha256
   ) {
     throw new Error("GNU Bash artifact does not match its frozen source pin");

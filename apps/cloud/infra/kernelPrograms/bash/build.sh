@@ -21,7 +21,7 @@ fetch https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi
   47fccad8b2498f2239e05e1115c3ffc652bf37e7de2f88fb64b2d663c976ce2d wasi-sdk.tgz
 fetch https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-aarch64-linux.tar.gz \
   89c07ea56faf38d0fbecf36ca8ec0721756716185f265b568e133d427f299bf8 binaryen.tgz
-echo "4ea7a980f9ae121ab1382064ceabf91ead51f0735218a2bdeb372547297fc388  $HERE/patches/fd-getfd.patch" | shasum -a 256 -c -
+echo "5df897065b403d5a545431edcf7b17453d1c391206b317898013436931acbfb1  $HERE/patches/fd-getfd.patch" | shasum -a 256 -c -
 
 docker run --rm -i --network none --platform linux/arm64 --cpus 2 --memory 4g \
   --tmpfs /build:rw,exec,size=2g \
@@ -38,6 +38,7 @@ tar xzf /downloads/wasi-sdk.tgz
 tar xzf /downloads/binaryen.tgz
 SHIM=/build/Nimbus-e9f019ab4e40cb6037aff7e1a0eaf20842578ed3/packages/worker/wasm/bash
 patch -d "$SHIM" -p1 < /recipe/patches/fd-getfd.patch
+node /recipe/test-fcntl.mjs "$SHIM/nimbus-proc.c"
 export WASI_SDK=/build/wasi-sdk-25.0-arm64-linux
 export BASH_SRC=/build/bash-5.2.37
 export PATH="/build/binaryen-version_133/bin:$PATH"
@@ -68,8 +69,10 @@ const manifest = {
   imports: WebAssembly.Module.imports(module),
   exports: WebAssembly.Module.exports(module),
 };
-if (!manifest.imports.some(value => value.module === 'nimbus_proc' && value.name === 'fd_getfd'))
-  throw new Error('Patched GNU Bash lacks nimbus_proc.fd_getfd');
+for (const name of ['fd_getfd', 'fd_getflags', 'fd_setfd']) {
+  if (!manifest.imports.some(value => value.module === 'nimbus_proc' && value.name === name))
+    throw new Error(`Patched GNU Bash lacks nimbus_proc.${name}`);
+}
 fs.writeFileSync('/output/manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
 MANIFEST
 BUILD

@@ -8,6 +8,8 @@ const plans: Readonly<Record<string, NimbusMemoryPlan>> = {
   capture_cwd: (regions, args) => regions.add(args[0]!, args[1]!),
   pipe: (regions, args) => regions.add(args[0]!, 8),
   fd_getfd: none,
+  fd_getflags: none,
+  fd_setfd: none,
   dup: none,
   dup2: none,
   kill: none,

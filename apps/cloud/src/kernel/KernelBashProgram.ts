@@ -11,10 +11,10 @@ export const KERNEL_BASH_ARTIFACT = Object.freeze({
   repository: "https://github.com/AshishKumar4/Nimbus",
   revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
   path: "build/bash.async.wasm",
-  version: "5.2.37+nimbus.e9f019ab.fd-getfd.1",
-  patchSha256: "4ea7a980f9ae121ab1382064ceabf91ead51f0735218a2bdeb372547297fc388",
-  sha256: "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
-  bytes: 3_887_571,
+  version: "5.2.37+nimbus.e9f019ab.fd-flags.2",
+  patchSha256: "5df897065b403d5a545431edcf7b17453d1c391206b317898013436931acbfb1",
+  sha256: "c3e8dc79b9660a21ed1873f8c900a0c1f195d274c183706cf5f68ff9e5fb9e00",
+  bytes: 3_890_330,
 });
 
 /** GNU Bash's Asyncify continuations use the caller's canonical kernel resources. */

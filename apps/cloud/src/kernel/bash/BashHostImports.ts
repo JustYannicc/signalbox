@@ -66,6 +66,11 @@ export function createBashHostImports(
         return errno(error);
       }
     },
+    fd_getflags: (fd: number) => attempt(() => (descriptors.get(fd >>> 0).closeOnExec ? 1 : 0)),
+    fd_setfd: (fd: number, flags: number) => {
+      const result = descriptorHost.imports.fd_setfd(fd, flags);
+      return result === 0 ? 0 : -result;
+    },
     dup: (fd: number) => attempt(() => descriptors.duplicate(fd >>> 0)),
     dup2: async (source: number, target: number) => {
       try {
