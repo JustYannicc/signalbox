@@ -1,10 +1,10 @@
 import { Schema } from "effect";
-import type { ChangedInode } from "../FilePersistencePorts.ts";
-import type { Inode } from "../storage.ts";
-import type { DirtyInode } from "./RevisionTypes.ts";
-import type { FacetStorage } from "../FacetSqliteStorage.ts";
-import { createSqliteJsonParts } from "../sqlite/SqliteJsonParts.ts";
-import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
+import type { ChangedInode } from "./FilePersistencePorts.ts";
+import type { Inode } from "./storage.ts";
+import type { DirtyInode } from "./revision/RevisionTypes.ts";
+import type { FacetStorage } from "./FacetSqliteStorage.ts";
+import { createSqliteJsonParts } from "./sqlite/SqliteJsonParts.ts";
+import { KernelRevisionWorkspaceError } from "./revision/RevisionErrors.ts";
 
 const ChangedInodeJson = Schema.fromJsonString(
   Schema.Array(
