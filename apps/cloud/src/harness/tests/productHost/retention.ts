@@ -9,7 +9,7 @@ import { createHarnessSessionHost, type HarnessHostOptions } from "../../Harness
 import {
   createProductHarnessSessionHost,
   type ProductHarnessHostOptions,
-} from "../../ProductHarnessSessionHost.ts";
+} from "../../ProductClaudeHarnessSessionHost.ts";
 import { claudeFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
 import { hostSqlite } from "../hostSqlite.ts";
 import { commandLoader, programFixture } from "./commands.ts";
