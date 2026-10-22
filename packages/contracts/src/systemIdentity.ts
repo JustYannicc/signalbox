@@ -28,7 +28,6 @@ export const SystemIdentity = Schema.Struct({
 });
 export type SystemIdentity = typeof SystemIdentity.Type;
 
-// Pinned to the boxd image measured by Computer boxd proof run 39809209636.
 // Remeasure these defaults when the machine image changes.
 export const DEFAULT_SYSTEM_IDENTITY: SystemIdentityConfig = Object.freeze({
   release: "6.18.0+",
