@@ -1,13 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - os constants are static; all dynamic identity comes from host input.
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 
 import type { NodeProcessHostContext } from "./node/process/context.ts";
 import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
 import { validateNodeRuntimeIdentity } from "./node/process/context.ts";
 
 /* Adapted from Rivet agentOS's Node os bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
- * HOME/TMPDIR still override explicit host values; no synthetic identity or metrics are carried over.
+ * HOME/TMPDIR override directory values; the shared machine config owns OS identity.
  * Licensed under Apache-2.0; see ./bun/LICENSE.agentos and ./bun/NOTICE.agentos.
  */
 
@@ -68,19 +69,25 @@ function architectureEndianness(arch: string): "BE" | "LE" | undefined {
   return undefined;
 }
 
-export function createNodeOs(host: Pick<NodeProcessHostContext, "env" | "identity">) {
+export function createNodeOs(
+  host: Pick<NodeProcessHostContext, "env" | "identity" | "systemIdentity">,
+) {
   if (!host || !host.env || typeof host.env !== "object") {
     throw new TypeError("Node os requires a host environment");
   }
   validateNodeRuntimeIdentity(host.identity);
+  const system = host.systemIdentity;
+  const defaultSystem = system ?? systemIdentityForThread(`process-${host.identity.pid}`);
 
-  const isWindows = host.identity.platform === "win32";
+  const platform = system?.platform ?? host.identity.platform;
+  const arch = system?.arch ?? host.identity.arch;
+  const isWindows = platform === "win32";
   const separator = isWindows ? "\\" : "/";
   const path = isWindows ? NodePath.win32 : NodePath.posix;
 
-  return Object.freeze({
-    arch: () => host.identity.arch,
-    platform: () => host.identity.platform,
+  const os = {
+    arch: () => arch,
+    platform: () => platform,
     homedir: () => host.env.HOME || host.identity.homedir,
     tmpdir: () => {
       const directory = host.env.TMPDIR || host.env.TMP || host.env.TEMP || host.identity.tmpdir;
@@ -90,13 +97,16 @@ export function createNodeOs(host: Pick<NodeProcessHostContext, "env" | "identit
     devNull: isWindows ? "\\\\.\\nul" : "/dev/null",
     constants: nativeConstants,
     type: () => {
+      if (system) return system.type;
       if (host.identity.type) return host.identity.type;
-      const type = platformType(host.identity.platform);
+      const type = platformType(platform);
       return type ?? unsupportedNodeOperation("os.type");
     },
-    release: unsupported("release"),
-    version: unsupported("version"),
-    hostname: unsupported("hostname"),
+    release: () =>
+      platform === "linux" ? defaultSystem.release : unsupportedNodeOperation("os.release"),
+    version: () =>
+      platform === "linux" ? defaultSystem.version : unsupportedNodeOperation("os.version"),
+    hostname: () => defaultSystem.hostname,
     userInfo: (options?: { readonly encoding?: "utf8" | "buffer" }) => {
       const user = host.identity.user;
       if (!user) return unsupportedNodeOperation("os.userInfo");
@@ -113,10 +123,16 @@ export function createNodeOs(host: Pick<NodeProcessHostContext, "env" | "identit
       };
     },
     endianness: () => {
-      const endianness = host.identity.endianness ?? architectureEndianness(host.identity.arch);
+      const endianness =
+        system?.endianness ?? host.identity.endianness ?? architectureEndianness(arch);
       return endianness ?? unsupportedNodeOperation("os.endianness");
     },
-    machine: unsupported("machine"),
+    machine: () => {
+      if (system) return system.machine;
+      if (arch === "x64") return "x86_64";
+      if (arch === "arm64") return "aarch64";
+      return unsupportedNodeOperation("os.machine");
+    },
     cpus: unsupported("cpus"),
     availableParallelism: () =>
       host.identity.availableParallelism ?? unsupportedNodeOperation("os.availableParallelism"),
@@ -127,7 +143,8 @@ export function createNodeOs(host: Pick<NodeProcessHostContext, "env" | "identit
     networkInterfaces: unsupported("networkInterfaces"),
     getPriority: unsupported("getPriority"),
     setPriority: unsupported("setPriority"),
-  });
+  };
+  return Object.freeze(os);
 }
 
 export default createNodeOs;

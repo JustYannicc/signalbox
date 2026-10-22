@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Node compatibility requires the native stream and process interfaces.
 import * as NodeStream from "node:stream";
+import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import { createNodeConsole } from "../../isolate/NodeConsole.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Node compatibility requires the native stream and process interfaces.
 import type * as NodeStreamWeb from "node:stream/web";
@@ -59,6 +60,7 @@ export function createHarnessRuntime(
       env,
       streams,
       identity,
+      systemIdentity: input.systemIdentity ?? systemIdentityForThread(input.computer.threadId),
       processes: input.host.processes,
       ...(input.processHandle === undefined ? {} : { parentProcessHandle: input.processHandle }),
       ...(cpu === undefined ? {} : { cpuAccounting: cpu }),

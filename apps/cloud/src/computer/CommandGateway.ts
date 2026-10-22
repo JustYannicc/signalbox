@@ -1,4 +1,5 @@
 import { KernelProgramRegistry } from "../kernel/KernelAbi.ts";
+import type { SystemIdentity } from "@t3tools/contracts/systemIdentity";
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { KernelProcessTable } from "../kernel/KernelProcessTable.ts";
 import { KernelCpuExecution } from "../kernel/KernelCpuExecution.ts";
@@ -38,6 +39,7 @@ export interface CommandGatewayOptions {
   readonly loader: ChildProgramCatalogOptions["loader"];
   readonly programs: CommandProgramCodes;
   readonly hostname: string;
+  readonly systemIdentity?: SystemIdentity;
   readonly machine: KernelCommandForwarder;
   readonly evidence?: ComputerProgramAdmissionOptions["evidence"];
   readonly orderedMachineRules?: ConstructorParameters<typeof ComputerEscalationTable>[0];
@@ -81,7 +83,7 @@ export function createCommandGateway(options: CommandGatewayOptions) {
         loader: options.loader,
         capacity: options.capacity,
         programs: options.programs,
-        hostname: options.hostname,
+        hostname: options.systemIdentity?.hostname ?? options.hostname,
         lifetimes,
         reservationFor: admission.reservationFor,
       });
