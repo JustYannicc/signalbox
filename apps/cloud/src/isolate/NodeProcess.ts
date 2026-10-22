@@ -176,8 +176,8 @@ class HostProcess extends NodeEvents.EventEmitter {
     this.execPath = host.identity.execPath;
     this.pid = host.identity.pid;
     this.ppid = host.identity.ppid;
-    this.platform = host.identity.platform;
-    this.arch = host.identity.arch;
+    this.platform = host.systemIdentity?.platform ?? host.identity.platform;
+    this.arch = host.systemIdentity?.arch ?? host.identity.arch;
     this.version = host.identity.version;
     this.versions = Object.freeze({ ...host.identity.versions });
     this.main = host.identity.main;

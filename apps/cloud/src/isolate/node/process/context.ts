@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - native stream types describe host-provided streams; this module does not access a Node host.
 import type * as NodeStream from "node:stream";
+import type { SystemIdentity } from "@t3tools/contracts/systemIdentity";
 
 import type { KernelHandle } from "../../../kernel/KernelAbi.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
@@ -46,6 +47,7 @@ export interface NodeProcessHostContext {
   readonly filesystem: NodeProcessFileSystem;
   readonly env: NodeProcessEnvironment;
   readonly identity: NodeRuntimeIdentity;
+  readonly systemIdentity?: SystemIdentity;
   readonly streams: NodeProcessStreams;
   /** Monotonic nanoseconds for this host; defaults to the captured native clock. */
   readonly monotonicNowNs?: () => bigint;

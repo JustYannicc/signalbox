@@ -28,6 +28,7 @@ export function createKernelBusyboxHost({ context }: KernelBusyboxHostOptions) {
   const controller = new AbortController();
   const abort = () => controller.abort(context.signal.reason);
   const syscalls = createKernelSyscallHost({
+    process: context,
     ...context,
     signal: controller.signal,
     agentOsPreopens: true,

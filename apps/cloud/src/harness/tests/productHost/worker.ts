@@ -21,7 +21,8 @@ try {
     NodeWorkerThreads.workerData !== "turn" &&
     NodeWorkerThreads.workerData !== "interrupt" &&
     NodeWorkerThreads.workerData !== "dispose" &&
-    NodeWorkerThreads.workerData !== "hydrate"
+    NodeWorkerThreads.workerData !== "hydrate" &&
+    NodeWorkerThreads.workerData !== "start-failure"
   )
     throw new Error("Unknown product scenario");
   await run(NodeWorkerThreads.workerData);

@@ -12,6 +12,7 @@ import {
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
+import { systemIdentityForThread, type SystemIdentity } from "@t3tools/contracts/systemIdentity";
 import type { MachineOwnershipAttestation } from "./Machine.ts";
 import type { MachineProcessClosureAttestation } from "./MachineWorkspace.ts";
 import type {
@@ -27,6 +28,18 @@ import {
 } from "./runner/CommandRunnerIdentity.ts";
 
 export const RUNNER_MACHINE_SOCKET_TAG = "command-runner";
+
+const sameSystemIdentity = (left: SystemIdentity, right: SystemIdentity) =>
+  left.release === right.release &&
+  left.version === right.version &&
+  left.machine === right.machine &&
+  left.hostnamePolicy === right.hostnamePolicy &&
+  left.verification === right.verification &&
+  left.hostname === right.hostname &&
+  left.platform === right.platform &&
+  left.type === right.type &&
+  left.arch === right.arch &&
+  left.endianness === right.endianness;
 
 export const isRunnerMachineSocket = (
   ctx: Pick<DurableObjectState, "getTags">,
@@ -44,6 +57,8 @@ export interface RunnerMachineSocketsOptions {
   >;
   readonly endpoint: string;
   readonly threadId: ThreadId;
+  /** Share the identity already resolved for this thread's Product Computer. */
+  readonly systemIdentity?: SystemIdentity;
   /** Writes the hydration receipt, then launches. Quiesce must fence any pending launch. */
   readonly launch: (config: RunnerCommandConfig, signal: AbortSignal) => Promise<void>;
   /** Fences pending launch, then verifies outside the cgroup that descendants cannot write again. */
@@ -71,12 +86,17 @@ interface Registration {
 /** One accepted, command-only socket per fresh VM operation. Socket loss never attests closure. */
 export class RunnerMachineSockets implements MachineRunnerTransport {
   readonly #options: RunnerMachineSocketsOptions;
+  readonly #systemIdentity: SystemIdentity;
   readonly #registrations = new Map<string, Registration>();
   readonly #tokens = new Map<string, Registration>();
   readonly #sockets = new Map<WebSocket, Registration | null>();
   readonly #helloTimeouts = new Map<WebSocket, ReturnType<typeof setTimeout>>();
 
   constructor(options: RunnerMachineSocketsOptions) {
+    const systemIdentity = options.systemIdentity ?? systemIdentityForThread(options.threadId);
+    const expectedIdentity = systemIdentityForThread(options.threadId, systemIdentity);
+    if (!sameSystemIdentity(systemIdentity, expectedIdentity))
+      throw new Error("Command Runner system identity does not match its thread");
     const timeout = options.handshakeTimeoutMs ?? 30_000;
     if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 4_294_967_295)
       throw new Error("Invalid command Runner handshake timeout");
@@ -91,6 +111,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
     )
       throw new Error("Invalid command Runner endpoint");
     this.#options = Object.freeze({ ...options });
+    this.#systemIdentity = expectedIdentity;
     options.ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair(RUNNER_HEARTBEAT_PING, RUNNER_HEARTBEAT_PONG),
     );
@@ -149,6 +170,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
           endpoint: this.#options.endpoint,
           threadId: this.#options.threadId,
           ...owner,
+          systemIdentity: this.#systemIdentity,
           token: registration.token,
           workspaceReceipt: this.#options.workspaceReceipt,
           ...(cgroupPath === undefined ? {} : { cgroupPath }),

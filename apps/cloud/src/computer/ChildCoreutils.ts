@@ -24,7 +24,7 @@ export function createChildCoreutils(options: ChildCoreutilsOptions) {
       });
       wasi.bind(instance);
       coreutils.bind(instance);
-      return { exitCode: await wasi.start(instance), signal: 0, coreDumped: false } as const;
+      return wasi.startProcess(instance);
     },
   };
 }

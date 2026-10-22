@@ -1,3 +1,4 @@
+import type { KernelProcessSignalNumber, KernelSigpipeDisposition } from "./KernelProcessSignal.ts";
 import {
   KernelResourceTable,
   attemptKernelOperation,
@@ -126,12 +127,14 @@ export class KernelProcessTable {
     const signalMask = options.signalMask ?? inheritedMask.value;
     if (!validSignalMask(signalMask))
       return reject(kernelError("INVALID_ARGUMENT", "Invalid process signal mask"));
+    let parentSignals = this.#rootSignals;
     if (parentHandle !== undefined) {
       const parent = this.#record(parentHandle);
       if (parent.status !== "ok") return reject(parent);
       if (parent.value.completionObserved || parent.value.outcome) {
         return reject(kernelError("NOT_FOUND", "Parent process has already exited"));
       }
+      parentSignals = parent.value.signals;
     }
     if (this.#processes.size + this.#admissions >= this.#maxProcesses) {
       return reject(kernelError("RESOURCE_LIMIT", "Too many child processes"));
@@ -168,7 +171,7 @@ export class KernelProcessTable {
         settled: undefined,
         cleanup: cleanupOnce,
         listeners: new Set(),
-        signals: new KernelProcessSignals(signalMask),
+        signals: parentSignals.fork(signalMask),
         completionObserved: false,
         outcome: undefined,
       } satisfies Omit<ProcessRecord, "handle"> & { handle: KernelHandle<"process"> });
@@ -379,6 +382,36 @@ export class KernelProcessTable {
     return record.value.signals.send(signal, (number) => record.value.child!.signal(number));
   }
 
+  /**
+   * Generated default actions use the writer's mask even when its runner cannot receive signals.
+   * An unblocked action throws KernelProcessSignal; a blocked one stays pending and returns ok.
+   */
+  generateSignal(
+    handle: KernelHandle<"process"> | undefined,
+    signal: KernelProcessSignalNumber,
+  ): KernelResult<void> {
+    if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
+    if (handle === undefined) return this.#rootSignals.generate(signal);
+    const record = this.#record(handle);
+    if (record.status !== "ok") return record;
+    if (record.value.completionObserved || record.value.outcome)
+      return kernelError("NOT_FOUND", "Process has already exited");
+    return record.value.signals.generate(signal);
+  }
+
+  setSigpipeDisposition(
+    handle: KernelHandle<"process">,
+    disposition: KernelSigpipeDisposition,
+  ): KernelResult<void> {
+    if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
+    const record = this.#record(handle);
+    if (record.status !== "ok") return record;
+    if (record.value.completionObserved || record.value.outcome)
+      return kernelError("NOT_FOUND", "Process has already exited");
+    record.value.signals.setSigpipeDisposition(disposition);
+    return kernelOk(undefined);
+  }
+
   /** AgentOS operations: block, unblock, replace, or query the previous mask. */
   signalMask(
     handle: KernelHandle<"process"> | undefined,
@@ -389,7 +422,14 @@ export class KernelProcessTable {
       return kernelError("INVALID_ARGUMENT", "Invalid process signal mask operation");
     }
     if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
-    if (handle === undefined) return kernelOk(this.#rootSignals.change(how, mask));
+    if (handle === undefined) {
+      const previous = this.#rootSignals.change(how, mask);
+      if (how !== 3) {
+        const delivered = this.#rootSignals.flush();
+        if (delivered.status !== "ok") return delivered;
+      }
+      return kernelOk(previous);
+    }
     const record = this.#record(handle);
     if (record.status !== "ok") return record;
     if (record.value.completionObserved || record.value.outcome) {
@@ -399,7 +439,7 @@ export class KernelProcessTable {
     if (how !== 3 && record.value.child) {
       // Commit the mask before delivery, which can reenter the guest. A refused
       // pending signal remains queued; querying the mask never delivers it.
-      const delivered = record.value.signals.flush((number) => record.value.child!.signal(number));
+      const delivered = record.value.signals.flush();
       if (delivered.status !== "ok") return delivered;
     }
     return kernelOk(previous);

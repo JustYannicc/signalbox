@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { startCodexHarnessProcess } from "../CodexHarnessProcess.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { deferred, fixture } from "./tests/fixture.ts";
-import { echoEngine, exitBeforeReadyEngine, READY_LINE } from "./tests/wasm.ts";
+import { brokenStdoutEngine, echoEngine, exitBeforeReadyEngine, READY_LINE } from "./tests/wasm.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -95,6 +95,24 @@ describe("Codex WASI process", () => {
       );
       context.files.close(fd);
       expect(context.stdio.stdin.locked).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("returns a broken stdout pipe to Codex and continues writing stderr", async () => {
+    const context = fixture(brokenStdoutEngine());
+    try {
+      await context.stdio.stdout.cancel();
+      const process = await startCodexHarnessProcess(context.options);
+      const output = collect(process.stdout);
+      const error = collect(process.stderr);
+      await expect(process.ready).rejects.toThrow("Codex stdout ended before signalbox/ready");
+      await expect(process.exited).resolves.toEqual({ exitCode: 0, signal: 0, coreDumped: false });
+      expect(await output).toBe("");
+      expect(await error).toBe("survived\n");
+      expect(context.host.processes.size).toBe(0);
+      expect(context.wakes.size).toBe(0);
     } finally {
       await context.close();
     }

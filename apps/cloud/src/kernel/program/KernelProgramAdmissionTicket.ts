@@ -165,15 +165,22 @@ function snapshotDecision(candidate: unknown): KernelProgramAdmissionDecision {
         "assertCurrent",
         "onDispatch",
       ]) ||
-      !hasOnlyKeys(implementation, ["kind", "run"]) ||
+      !hasOnlyKeys(implementation, ["kind", "run", "sigpipe"]) ||
       implementation.kind !== "async" ||
+      (implementation.sigpipe !== undefined &&
+        implementation.sigpipe !== "terminate" &&
+        implementation.sigpipe !== "epipe") ||
       !isProgramRun(implementation.run)
     ) {
       throw invalidDecision();
     }
     return Object.freeze({
       kind: "forward",
-      implementation: Object.freeze({ kind: "async", run: implementation.run }),
+      implementation: Object.freeze({
+        kind: "async",
+        run: implementation.run,
+        ...(implementation.sigpipe === undefined ? {} : { sigpipe: implementation.sigpipe }),
+      }),
       ...(admission === undefined ? {} : { admission }),
       ...(cancel === undefined ? {} : { cancel }),
       ...(assertCurrent === undefined ? {} : { assertCurrent }),
@@ -209,6 +216,7 @@ function withDispatch(
   }
   return Object.freeze({
     kind: "async",
+    ...(implementation.sigpipe === undefined ? {} : { sigpipe: implementation.sigpipe }),
     run: (context) => {
       onDispatch?.(context);
       markDispatched();

@@ -37,6 +37,7 @@ export function createKernelGitHost({ context }: KernelGitHostOptions) {
   addImports(gitImports, "nimbus_fs", filesystem.imports);
   addImports(gitImports, "nimbus_proc", processes.imports);
   const syscalls = createKernelSyscallHost({
+    process: context,
     filesystem: context.filesystem,
     args: context.args,
     env: context.env,

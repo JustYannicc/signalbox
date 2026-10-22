@@ -161,6 +161,37 @@ async function createSource(ownership: ProofOwnership) {
 }
 
 describe("boxd proof ownership", () => {
+  it("stores measured machine identity once without making it a command check", async () => {
+    const events: string[] = [];
+    const storage = makeStorage(events);
+    const provider = boxdFake(events);
+    try {
+      const ownership = new ProofOwnership(
+        storage.storage,
+        "owner-identity",
+        ownershipClient(provider.client),
+      );
+      const identity = {
+        imageRefSha256: "a".repeat(64),
+        sourceKind: "fork" as const,
+        resources: { vcpu: 1, memoryBytes: 4_294_967_296, diskBytes: 10_737_418_240 },
+        unameSrvm: "Linux 6.12.8 #1 SMP x86_64\n",
+        hostname: "raw-boxd-host\n",
+        osRelease: 'ID=linux\nPRETTY_NAME="Linux"\n',
+      };
+
+      await ownership.recordMachineIdentity({ status: "captured", identity });
+
+      expect(await ownership.read()).toMatchObject({
+        machineIdentityStatus: "captured",
+        machineIdentity: identity,
+        checks: {},
+      });
+    } finally {
+      storage.close();
+    }
+  });
+
   it("saves the source allocation and arms its alarm before source create dispatch", async () => {
     const events: string[] = [];
     const stateAtDispatch: { state: ProofState | undefined; alarm: number | null | undefined } = {
