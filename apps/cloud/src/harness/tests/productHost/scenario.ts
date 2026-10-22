@@ -129,6 +129,9 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
         const release = yield* Effect.promise(() => claudeFixture());
         const programs = yield* Effect.promise(programFixture);
         const host = yield* createProductClaudeHarnessSessionHost({
+          continuations: {
+            publish: () => Effect.die(new Error("Unexpected continuation in command fixture")),
+          },
           threadId: d.threadId,
           release: release.options,
           programs,

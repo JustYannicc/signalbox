@@ -1,3 +1,4 @@
+import { createContinuationJournal } from "./continuations.ts";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -56,6 +57,10 @@ export const createHostLifecycle = <G>(
             ),
           ),
       );
+      const continuations =
+        options.continuations === undefined
+          ? undefined
+          : yield* createContinuationJournal(storage.database, options.continuations, owner.signal);
       // Computer resources close after the facet, even though they are acquired lazily.
       let poisoned = false;
       const computerScope = yield* Scope.make();
@@ -188,12 +193,16 @@ export const createHostLifecycle = <G>(
               scope,
               Effect.sync(() => sessionRoutes.close()),
             );
-            const session = yield* createHostSession(sessionRoutes);
+            const session = yield* createHostSession(sessionRoutes, continuations);
+            if (continuations !== undefined) yield* continuations.replay;
             const binding = yield* Effect.suspend(() =>
               options.buildRuntime({
                 harness: input,
                 loaded,
                 bootAttemptId: attempt.id,
+                ...(session.continuationRequests === undefined
+                  ? {}
+                  : { continuationRequests: session.continuationRequests }),
                 mcp: { origin: routes.origin, fetch: routes.fetch },
                 signal,
               }),

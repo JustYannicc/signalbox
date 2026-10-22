@@ -57,6 +57,11 @@ const reject = (message: string): Decision => ({ _tag: "rejected", message });
 
 type Projection = OrchestrationV2ThreadProjection;
 type CommandOf<T extends ThreadCommand["type"]> = Extract<ThreadCommand, { readonly type: T }>;
+const PROVIDER_CONTINUATION_SOURCE_STATUSES = new Set<OrchestrationV2Run["status"]>([
+  "running",
+  "waiting",
+  "completed",
+]);
 
 /** A thread's own branch, and the path clients address its working tree by. */
 export interface ThreadWorktree {
@@ -250,6 +255,43 @@ function dispatchMessage(
   return accept([...updates, recorded, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
 }
 
+function staleProviderContinuation(
+  projection: Projection,
+  command: CommandOf<"message.dispatch">,
+): Decision | undefined {
+  const continuation = command.providerContinuation;
+  if (continuation === undefined) return undefined;
+
+  const { thread } = projection;
+  const sourceRun = projection.runs.find((run) => run.id === continuation.sourceRunId);
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === continuation.providerThreadId,
+  );
+  if (
+    command.dispatchMode.type !== "queue_after_active" ||
+    command.createdBy !== "agent" ||
+    (command.creationSource !== "provider" && command.creationSource !== "server") ||
+    thread.archivedAt !== null ||
+    thread.deletedAt !== null ||
+    sourceRun === undefined ||
+    sourceRun.threadId !== thread.id ||
+    sourceRun.startedAt === null ||
+    !PROVIDER_CONTINUATION_SOURCE_STATUSES.has(sourceRun.status) ||
+    sourceRun.providerThreadId !== continuation.providerThreadId ||
+    thread.activeProviderThreadId !== continuation.providerThreadId ||
+    sourceRun.providerInstanceId !== thread.providerInstanceId ||
+    sourceRun.modelSelection.instanceId !== thread.providerInstanceId ||
+    providerThread === undefined ||
+    providerThread.appThreadId !== thread.id ||
+    providerThread.providerInstanceId !== thread.providerInstanceId ||
+    (continuation.driver !== undefined && providerThread.driver !== continuation.driver) ||
+    (providerThread.status !== "active" && providerThread.status !== "idle")
+  ) {
+    return reject("This provider continuation is no longer current.");
+  }
+  return undefined;
+}
+
 function updateThread(
   projection: Projection,
   type: Parameters<typeof threadEvent>[1],
@@ -344,7 +386,9 @@ export function decide(
       return decision === undefined ? reject(unsupported()) : lifecycleDecision(decision);
     }
     case "message.dispatch":
-      return dispatchMessage(projection, command, ctx);
+      return (
+        staleProviderContinuation(projection, command) ?? dispatchMessage(projection, command, ctx)
+      );
     case "run.interrupt": {
       const run = activeRun(projection);
       if (run === undefined || run.id !== command.runId) {
