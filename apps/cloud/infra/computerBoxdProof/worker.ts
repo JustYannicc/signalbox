@@ -49,6 +49,8 @@ const evidence = (state: ProofState) => ({
   vmNames: state.vmNames,
   checks: state.checks,
   cleanupConfirmed: state.cleanupConfirmed,
+  machineIdentityStatus: state.machineIdentityStatus ?? "pending",
+  ...(state.machineIdentity === undefined ? {} : { machineIdentity: state.machineIdentity }),
 });
 
 /** Disposable integration proof. This Worker is never part of the product stack. */
@@ -116,6 +118,7 @@ export class ComputerBoxdProof extends DurableObject<Env> {
           ],
           checks: {},
           cleanupConfirmed: false,
+          machineIdentityStatus: "pending",
         }
       : decodeProofState(saved);
   }

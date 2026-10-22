@@ -9,6 +9,11 @@ import {
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunnerCommandConfig } from "@signalbox/runner-protocol/RunnerCommandProtocol";
 import {
+  systemIdentityForThread,
+  type SystemIdentity,
+  type SystemIdentityConfig,
+} from "@t3tools/contracts/systemIdentity";
+import {
   isRunnerMachineSocket,
   RUNNER_MACHINE_SOCKET_TAG,
   RunnerMachineSockets,
@@ -96,13 +101,18 @@ function socketContextFixture() {
   };
 }
 
-function fixture(launchFinished = Promise.resolve(), context = socketContextFixture()) {
+function fixture(
+  launchFinished = Promise.resolve(),
+  context = socketContextFixture(),
+  systemIdentity?: SystemIdentity,
+) {
   const launched = deferred<RunnerCommandConfig>();
   const quiesce = vi.fn(async () => ({ ...owner, closed: true as const }));
   const adapter = new RunnerMachineSockets({
     ctx: context.ctx,
     endpoint: "wss://proof.invalid/api/computer/runner",
     threadId,
+    ...(systemIdentity === undefined ? {} : { systemIdentity }),
     workspaceReceipt: "/run/signalbox-command/workspace.json",
     cgroupPath: () => "/sys/fs/cgroup/signalbox-command/owned-proof",
     launch: async (config) => {
@@ -135,6 +145,45 @@ function fixture(launchFinished = Promise.resolve(), context = socketContextFixt
 }
 
 describe("RunnerMachineSockets", () => {
+  it("binds each private launch to the same thread identity used by Product Computer", async () => {
+    const systemIdentityConfig: SystemIdentityConfig = {
+      release: "6.12.0-measured",
+      version: "#7 SMP",
+      machine: "x86_64",
+      hostnamePolicy: "thread",
+      verification: "measured",
+    };
+    const systemIdentity = systemIdentityForThread(threadId, systemIdentityConfig);
+    const f = fixture(Promise.resolve(), socketContextFixture(), systemIdentity);
+    const pending = f.adapter.connect(f.input);
+    const config = await f.launched.promise;
+
+    expect(config.systemIdentity).toEqual(systemIdentity);
+    const live = socketFixture();
+    f.adapter.accept(live.socket);
+    f.adapter.message(live.socket, f.hello(config));
+    const connection = await pending;
+    await f.adapter.quiesce(f.input);
+    await connection.dispose();
+  });
+
+  it("resolves the shared default for legacy callers and rejects an identity from another thread", async () => {
+    const f = fixture();
+    const pending = f.adapter.connect(f.input);
+    const config = await f.launched.promise;
+    expect(config.systemIdentity).toEqual(systemIdentityForThread(threadId));
+    const live = socketFixture();
+    f.adapter.accept(live.socket);
+    f.adapter.message(live.socket, f.hello(config));
+    const connection = await pending;
+    await f.adapter.quiesce(f.input);
+    await connection.dispose();
+
+    expect(() =>
+      fixture(Promise.resolve(), socketContextFixture(), systemIdentityForThread("another-thread")),
+    ).toThrow("does not match its thread");
+  });
+
   it("uses hibernating acceptance, auto-responds to heartbeats, and exposes DO routing handlers", async () => {
     const f = fixture();
     const pair = f.context.setWebSocketAutoResponse.mock.calls[0]?.[0] as
@@ -174,6 +223,7 @@ describe("RunnerMachineSockets", () => {
     expect(config).toMatchObject({
       ...owner,
       threadId,
+      systemIdentity: systemIdentityForThread(threadId),
       cgroupPath: "/sys/fs/cgroup/signalbox-command/owned-proof",
     });
     expect(new URL(config.endpoint).search).toBe("");

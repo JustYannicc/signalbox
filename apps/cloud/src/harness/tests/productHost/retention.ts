@@ -25,7 +25,6 @@ async function runtimePorts(): Promise<
     commands: {
       loader: commandLoader().loader,
       capacity: new ChildWorkerCapacity(2),
-      hostname: "retention-test",
       machine: {
         spawn: async () => {
           throw new Error("Unused machine");

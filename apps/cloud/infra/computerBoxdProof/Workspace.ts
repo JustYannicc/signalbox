@@ -31,6 +31,7 @@ export type {
   BoxdProofWorkspaceOptions,
   BoxdProofWorkspaceResumeOptions,
 } from "./WorkspaceTypes.ts";
+export type { BoxdProofMachineIdentity } from "./Identity.ts";
 
 const COMMIT_CHUNK_BYTES = 64 * 1024;
 
@@ -41,6 +42,7 @@ export function createBoxdProofWorkspace(
   const tracked = snapshotTrackedFile(options.trackedFiles);
   return async (machine, at, hydration, signal): Promise<MachineWorkspaceMount> => {
     signal.throwIfAborted();
+    await observeMachineIdentity(options, machine.id, signal);
     const initialBytes = await hydrateTrackedFile(hydration, at, tracked, signal);
     const nativeWorkspace = await prepareBoxdProofNativeWorkspace(
       options.vm,
@@ -58,6 +60,24 @@ export function createBoxdProofWorkspace(
 
     return createMachineWorkspaceMount(machine.id, machine.generation, tracked, nativeWorkspace);
   };
+}
+
+async function observeMachineIdentity(
+  options: BoxdProofWorkspaceOptions,
+  machineId: string,
+  signal: AbortSignal,
+) {
+  try {
+    const identity = await options.vm.measureIdentity(machineId, signal);
+    await options.onMachineIdentity?.({ status: "captured", identity });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    try {
+      await options.onMachineIdentity?.({ status: "failed" });
+    } catch {
+      // Identity evidence is optional and cannot interrupt workspace preparation.
+    }
+  }
 }
 
 /** Reopens the same proof file after owner replacement without writing into the VM. */

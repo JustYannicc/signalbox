@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Controlled native modules run in an isolated test realm.
 import * as NodeAssert from "node:assert/strict";
+import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import * as NodeBuffer from "node:buffer";
 import * as NodeConstants from "node:constants";
 import * as NodeFS from "node:fs";
@@ -64,7 +65,14 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
             cwd: "/workspace",
           },
         };
-        const native = nativeFixture(nativeId);
+        const systemIdentity = systemIdentityForThread(d.threadId, {
+          release: "6.12.8-production",
+          version: "#1 SMP PREEMPT_DYNAMIC",
+          machine: "aarch64",
+          hostnamePolicy: "thread",
+          verification: "measured",
+        });
+        const native = nativeFixture(nativeId, systemIdentity);
         const commands = commandLoader();
         const capacity = new ChildWorkerCapacity(2);
         const persistencePorts = createMemoryFilePersistencePorts();
@@ -105,7 +113,7 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
           commands: {
             loader: commands.loader,
             capacity,
-            hostname: "recorded-host",
+            systemIdentity,
             machine: machine.port,
           },
           hydrate: async ({ files: canonical, signal }) => {
@@ -232,6 +240,7 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
           return;
         }
         const session = yield* host.open({ session: sessionInput, bootAttemptId: "recorded-boot" });
+        NodeAssert.deepEqual(host.commands.systemIdentity, systemIdentity);
         files = host.computer.files;
         NodeAssert.equal(session.providerSession.id, providerSessionId);
         for (const executable of [

@@ -10,6 +10,7 @@ import type {
   NodePreparedModuleResolve,
 } from "../../isolate/NodeModule.ts";
 import type { NodeProcessEnvironment, NodeRuntimeIdentity } from "../../isolate/NodeProcess.ts";
+import type { SystemIdentity } from "@t3tools/contracts/systemIdentity";
 
 import type { LoadedHarnessRelease } from "../HarnessReleaseLoader.ts";
 
@@ -19,6 +20,7 @@ export interface NodeHarnessProcessInput {
   readonly computer: Computer;
   readonly stdio: KernelSessionStdio;
   readonly identity: NodeRuntimeIdentity;
+  readonly systemIdentity?: SystemIdentity;
   readonly env: NodeProcessEnvironment;
   /** The running guest's kernel handle, when it is not the facet's root process. */
   readonly processHandle?: KernelHandle<"process">;

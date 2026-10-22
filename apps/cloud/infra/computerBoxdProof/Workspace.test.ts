@@ -25,6 +25,14 @@ const kernelFile: BoxdProofTrackedFile = {
   },
   posix: { mode: 0o750, uid: 1000, gid: 1000 },
 };
+const identity = {
+  imageRefSha256: "a".repeat(64),
+  sourceKind: "fork" as const,
+  resources: { vcpu: 1, memoryBytes: 4_294_967_296, diskBytes: 10_737_418_240 },
+  unameSrvm: "Linux 6.12.8 #1 SMP x86_64\n",
+  hostname: "raw-boxd-host\n",
+  osRelease: 'ID=linux\nPRETTY_NAME="Linux"\n',
+};
 
 interface FakeFile {
   readonly type: "file";
@@ -46,13 +54,22 @@ interface FakeSymlink {
 type FakeEntry = FakeFile | FakeSymlink;
 
 class FakeVm implements BoxdProofVmPort {
+  readonly operations: string[] = [];
   readonly entries = new Map<string, FakeEntry>();
   readonly stagedUploads = new Map<string, FakeFile>();
   readonly uploadPaths: string[] = [];
   refuseProtectedUploads = false;
+  failIdentity = false;
   rootKind: "directory" | "symlink" = "directory";
   private rootExists = false;
   private clock = 20n;
+
+  async measureIdentity(machineId: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    this.operations.push(`identity:${machineId}`);
+    if (this.failIdentity) throw new Error("identity unavailable");
+    return identity;
+  }
 
   async exec(
     _machineId: string,
@@ -61,6 +78,7 @@ class FakeVm implements BoxdProofVmPort {
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
+    this.operations.push("workspace-exec");
     if (argv[0] !== "-c") return failed("unsupported probe command");
     const script = argv[1] ?? "";
     if (script.includes("BOXD_PROOF:prepare")) {
@@ -238,15 +256,19 @@ describe("boxd proof workspace", () => {
     persistence.seedFile(base, "/out.bin", new Uint8Array([0, 255, 1, 2]));
     const vm = new FakeVm();
     vm.refuseProtectedUploads = true;
+    const observations: unknown[] = [];
 
-    const mount = await createBoxdProofWorkspace({ vm, trackedFiles: [kernelFile] })(
-      machine,
-      base,
-      persistence.hydration,
-      new AbortController().signal,
-    );
+    const mount = await createBoxdProofWorkspace({
+      vm,
+      trackedFiles: [kernelFile],
+      onMachineIdentity: async (observation) => {
+        observations.push(observation);
+      },
+    })(machine, base, persistence.hydration, new AbortController().signal);
 
     expect(vm.uploadPaths).toHaveLength(1);
+    expect(vm.operations[0]).toBe("identity:proof-machine");
+    expect(observations).toEqual([{ status: "captured", identity }]);
     expect(vm.uploadPaths[0]).toMatch(/^\/tmp\/\.signalbox-boxd-proof-/);
     expect(vm.stagedUploads.size).toBe(0);
     expect(vm.entries.get("out.bin")).toMatchObject({
@@ -262,6 +284,27 @@ describe("boxd proof workspace", () => {
     expect(
       await mount.canonicalCwd(command, machine.generation, new AbortController().signal),
     ).toBe(command.cwd);
+  });
+
+  it("continues workspace preparation when the optional identity probe fails", async () => {
+    const persistence = createMemoryFilePersistencePorts();
+    persistence.seedFile(base, "/out.bin", new Uint8Array([0, 255, 1, 2]));
+    const vm = new FakeVm();
+    vm.failIdentity = true;
+    const observations: unknown[] = [];
+
+    const mount = await createBoxdProofWorkspace({
+      vm,
+      trackedFiles: [kernelFile],
+      onMachineIdentity: async (observation) => {
+        observations.push(observation);
+      },
+    })(machine, base, persistence.hydration, new AbortController().signal);
+
+    expect(observations).toEqual([{ status: "failed" }]);
+    expect(vm.operations.slice(0, 2)).toEqual(["identity:proof-machine", "workspace-exec"]);
+    expect(vm.entries.get("out.bin")).toMatchObject({ bytes: new Uint8Array([0, 255, 1, 2]) });
+    expect(mount).toBeDefined();
   });
 
   it("hydrates only out.bin with exact bytes and returns the exact canonical cwd", async () => {

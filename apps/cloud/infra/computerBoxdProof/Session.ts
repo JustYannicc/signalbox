@@ -172,7 +172,9 @@ export async function runComputerBoxdProof(input: {
       },
     });
     input.publishSockets(sockets);
-    const workspacePort = kernel.workspace(provider.vm);
+    const workspacePort = kernel.workspace(provider.vm, (observation) =>
+      ownership.recordMachineIdentity(observation),
+    );
     const workspace = {
       ...workspacePort,
       apply: async (...args: Parameters<typeof workspacePort.apply>) => {

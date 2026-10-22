@@ -1,4 +1,8 @@
 import { KernelProcessTable } from "../kernel/KernelProcessTable.ts";
+import {
+  systemIdentityForThread,
+  type SystemIdentityConfig,
+} from "@t3tools/contracts/systemIdentity";
 import { createCommandGateway, type CommandGatewayOptions } from "./CommandGateway.ts";
 import { CHILD_COREUTILS_COMMANDS } from "./ChildProgramSet.ts";
 import {
@@ -10,8 +14,10 @@ import type { ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
-  "processes" | "loader"
+  "processes" | "loader" | "systemIdentity" | "hostname"
 > {
+  readonly threadId: string;
+  readonly systemIdentity?: SystemIdentityConfig;
   readonly signal: AbortSignal;
   readonly loader:
     | ChildWorkerLoaderPort
@@ -25,6 +31,7 @@ export interface ProductComputerOptions extends Omit<
 /** One thread owns the full command catalog and every admitted process, including machine work. */
 export function createProductComputer(options: ProductComputerOptions) {
   const { programs } = options;
+  const systemIdentity = systemIdentityForThread(options.threadId, options.systemIdentity);
   if (
     [
       programs.bash,
@@ -45,12 +52,19 @@ export function createProductComputer(options: ProductComputerOptions) {
           options.loader.compiledModules,
           options.loader.limits,
         );
-  const gateway = createCommandGateway({ ...options, loader, processes });
+  const gateway = createCommandGateway({
+    ...options,
+    systemIdentity,
+    hostname: systemIdentity.hostname,
+    loader,
+    processes,
+  });
   const owner = new AbortController();
   const signal = AbortSignal.any([owner.signal, options.signal]);
   let closing: Promise<void> | undefined;
   return {
     ...gateway,
+    systemIdentity,
     processes,
     exec: ((command, callerSignal, requester) =>
       gateway.exec(

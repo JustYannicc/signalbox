@@ -25,10 +25,19 @@ function controlledSdk(input: {
   readonly exec: readonly ExecAction[];
   readonly upload?: (byteLength: number) => Promise<number>;
 }) {
-  const calls: Array<"exec" | "upload" | "download"> = [];
+  const calls: Array<"get" | "exec" | "upload" | "download"> = [];
   let nextExec = 0;
   const client = {
     machines: {
+      get: async (id: string) => {
+        calls.push("get");
+        return {
+          id,
+          imageRef: "test-image",
+          resources: { vcpu: 1, memoryBytes: 1, diskBytes: 1 },
+          source: null,
+        };
+      },
       exec: async () => {
         calls.push("exec");
         const action = input.exec[nextExec++];
