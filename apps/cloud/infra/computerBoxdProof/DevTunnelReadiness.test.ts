@@ -7,6 +7,7 @@ const evidence = {
   status: "pending",
   checks: {},
   cleanupConfirmed: false,
+  machineIdentityStatus: "pending",
   vmNames: ["computer-sb-computer-boxd-12345678-source"],
 };
 const input = (signal = new AbortController().signal) => ({
